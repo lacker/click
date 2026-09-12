@@ -15303,6 +15303,28 @@ impl Parser {
         ))
     }
 
+    /// Constant conveniences are fallbacks, not C identifier reservations.
+    /// Actual macros have already expanded before this parser sees the source.
+    fn unbound_constant_expression(&self, name: &str) -> Option<C0Expression> {
+        let expression = match name {
+            "true" => C0Expression::Int32Literal(1),
+            "false" => C0Expression::Int32Literal(0),
+            "INFINITY" => C0Expression::Float64Literal(0x7ff0_0000_0000_0000),
+            "NAN" => C0Expression::Float64Literal(0x7ff8_0000_0000_0000),
+            "INFINITYF" => C0Expression::Float32Literal(0x7f80_0000),
+            "NANF" => C0Expression::Float32Literal(0x7fc0_0000),
+            _ => return None,
+        };
+        if self.out_of_scope_names.contains(name)
+            || self.variable_types.contains_key(&self.resolve_name(name))
+            || self.function_declarations.contains_key(name)
+        {
+            None
+        } else {
+            Some(expression)
+        }
+    }
+
     fn parse_primary(&mut self) -> Result<C0Expression, C0SyntaxError> {
         if self.peek() == Some(&Token::LParen) && self.peek_next() == Some(&Token::LBrace) {
             return self.parse_statement_expression();
@@ -15366,37 +15388,26 @@ impl Parser {
         }
         let at = self.error_context();
         match self.next() {
-            Some(Token::Ident(name)) => match name.as_str() {
-                // `<stdbool.h>` defines these macros as integer constants;
-                // retain that source-level meaning and let assignment or a
-                // cast perform `_Bool` normalization when required.
-                "true" => Ok(C0Expression::Int32Literal(1)),
-                "false" => Ok(C0Expression::Int32Literal(0)),
-                // These C library-style constants give the value slice a
-                // source-level way to exercise exceptional IEEE classes
-                // without importing a host-specific math header.
-                "INFINITY" => Ok(C0Expression::Float64Literal(0x7ff0_0000_0000_0000)),
-                "NAN" => Ok(C0Expression::Float64Literal(0x7ff8_0000_0000_0000)),
-                "INFINITYF" => Ok(C0Expression::Float32Literal(0x7f80_0000)),
-                "NANF" => Ok(C0Expression::Float32Literal(0x7fc0_0000)),
-                _ => match self.enum_constants.get(&name) {
-                    Some(value) => Ok(C0Expression::Int32Literal(*value as u32)),
-                    None => {
-                        if self.peek() == Some(&Token::LParen) {
-                            // A source file may call a function defined in a
-                            // different C source. The translation-unit linker
-                            // resolves that name after each source is parsed.
-                            Ok(C0Expression::Variable(self.resolve_name(&name)))
-                        } else if let Some(address) = self.bare_function_designator(&name) {
-                            Ok(address)
-                        } else {
-                            Ok(C0Expression::Variable(
-                                self.resolve_object_name(&name, at.position)?,
-                            ))
-                        }
-                    }
-                },
-            },
+            Some(Token::Ident(name)) => {
+                if let Some(value) = self.enum_constants.get(&name) {
+                    return Ok(C0Expression::Int32Literal(*value as u32));
+                }
+                if let Some(expression) = self.unbound_constant_expression(&name) {
+                    return Ok(expression);
+                }
+                if self.peek() == Some(&Token::LParen) {
+                    // A source file may call a function defined in a
+                    // different C source. The translation-unit linker
+                    // resolves that name after each source is parsed.
+                    Ok(C0Expression::Variable(self.resolve_name(&name)))
+                } else if let Some(address) = self.bare_function_designator(&name) {
+                    Ok(address)
+                } else {
+                    Ok(C0Expression::Variable(
+                        self.resolve_object_name(&name, at.position)?,
+                    ))
+                }
+            }
             Some(Token::Number(number)) => {
                 if is_floating_literal(&number) {
                     parse_float_literal_expression(&number).map_err(|reason| {

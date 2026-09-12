@@ -1,6 +1,87 @@
 use super::*;
 
 #[test]
+fn c_constant_spellings_preserve_declared_identifiers_in_both_source_paths() {
+    use crate::languages::c::compiler_import::PreparedCImport;
+
+    for name in ["true", "false", "INFINITY", "NAN", "INFINITYF", "NANF"] {
+        let source = format!(
+            "int identity(int {name}) {{ return {name}; }}\n\
+             int local(void) {{ int {name} = 7; return {name}; }}\n\
+             static const int {name} = 9;\n\
+             int global(void) {{ return {name}; }}\n"
+        );
+        let proof = format!(
+            "verifying \"names.c\";\n\
+             int identity(int {name}) {{ ensures result == {name}; }}\n\
+             int local() {{ ensures result == 7; }}\n\
+             int global() {{ ensures result == 9; }}\n"
+        );
+        verify_c0_sources(&proof, &[("names.c", &source)])
+            .unwrap_or_else(|error| panic!("ordinary {name}: {}", error.message()));
+        let imports = [PreparedCImport::for_test("names.c", &source)];
+        verify_c0_prepared_sources(&proof, &imports)
+            .unwrap_or_else(|error| panic!("prepared {name}: {}", error.message()));
+    }
+}
+
+#[test]
+fn c_constant_spellings_preserve_enumerators_and_functions() {
+    use crate::languages::c::compiler_import::PreparedCImport;
+
+    let source = "enum Constants { NAN = 3 };\n\
+        static inline int INFINITY(void) { return 4; }\n\
+        int combined(void) { return NAN + INFINITY(); }\n";
+    let proof = "verifying \"declarations.c\";\n\
+        int combined() { ensures result == 7; }\n";
+    verify_c0_sources(proof, &[("declarations.c", source)])
+        .expect("ordinary enum and function declarations");
+    let imports = [PreparedCImport::for_test("declarations.c", source)];
+    verify_c0_prepared_sources(proof, &imports).expect("prepared enum and function declarations");
+}
+
+#[test]
+fn c_constant_spellings_do_not_prove_a_false_parameter_contract() {
+    use crate::languages::c::compiler_import::PreparedCImport;
+
+    let source = "int positive(int INFINITY) { return INFINITY > 0; }";
+    let incorrect = "verifying \"positive.c\";\n\
+        int positive(int INFINITY) { ensures result == 1; }";
+    let correct = "verifying \"positive.c\";\n\
+        int positive(int INFINITY) { requires INFINITY <= 0; ensures result == 0; }";
+    assert!(verify_c0_sources(incorrect, &[("positive.c", source)]).is_err());
+    verify_c0_sources(correct, &[("positive.c", source)])
+        .expect("ordinary parameter-dependent contract");
+    let imports = [PreparedCImport::for_test("positive.c", source)];
+    assert!(verify_c0_prepared_sources(incorrect, &imports).is_err());
+    verify_c0_prepared_sources(correct, &imports).expect("prepared parameter-dependent contract");
+}
+
+#[test]
+fn c_constant_spellings_keep_actual_macro_expansion_authoritative() {
+    use crate::languages::c::compiler_import::PreparedCImport;
+
+    let source = "#define INFINITY 7\n\
+        int expanded(void) { return INFINITY; }\n\
+        #undef INFINITY\n\
+        int identity(int INFINITY) { return INFINITY; }\n";
+    let proof = "verifying \"macros.c\";\n\
+        int expanded() { ensures result == 7; }\n\
+        int identity(int INFINITY) { ensures result == INFINITY; }\n";
+    verify_c0_sources(proof, &[("macros.c", source)])
+        .expect("macros expand before resolving surviving identifiers");
+    let imports = [PreparedCImport::for_test(
+        "macros.c",
+        "# 2 \"macros.c\"\n\
+         int expanded(void) { return 7; }\n\
+         # 4 \"macros.c\"\n\
+         int identity(int INFINITY) { return INFINITY; }\n",
+    )];
+    verify_c0_prepared_sources(proof, &imports)
+        .expect("prepared expanded tokens and surviving parameter references retain their meaning");
+}
+
+#[test]
 fn location_verification_skips_unrelated_function_proofs() {
     let good_c = r#"
 int32 good(int32 x) {
