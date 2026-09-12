@@ -183,6 +183,33 @@ impl CLoopFinalExitCandidate {
     }
 }
 
+/// One certified body path that left the loop through `break`.
+///
+/// A `break` is an exit, not a back edge: the invariants are not closed on
+/// it and no measure is required to decrease. The proof layer supplies the
+/// state the path reached and the facts retained there; the loop rule joins
+/// every break exit with the guard-false exit into the single successor the
+/// enclosing frontier continues from, so no way out of the loop is dropped.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CLoopBreakExit {
+    state: CState,
+    pure_facts: Vec<Proposition>,
+}
+
+impl CLoopBreakExit {
+    pub(crate) fn new(state: CState, pure_facts: Vec<Proposition>) -> Self {
+        Self { state, pure_facts }
+    }
+
+    pub(crate) fn state(&self) -> &CState {
+        &self.state
+    }
+
+    pub(crate) fn pure_facts(&self) -> &[Proposition] {
+        &self.pure_facts
+    }
+}
+
 impl CLoopPreservationContext {
     pub fn state(&self) -> &CState {
         &self.state
@@ -2382,6 +2409,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
     initialization_proven: bool,
     preservation_proven: bool,
     final_exit_candidates: Vec<CLoopFinalExitCandidate>,
+    break_exits: Vec<CLoopBreakExit>,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let mut budget = ExecutionBudget::for_c_statement_verification(&statement);
     prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
@@ -2392,6 +2420,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
         initialization_proven,
         preservation_proven,
         final_exit_candidates,
+        break_exits,
         &mut budget,
     )
 }
@@ -2404,6 +2433,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
     initialization_proven: bool,
     preservation_proven: bool,
     final_exit_candidates: Vec<CLoopFinalExitCandidate>,
+    break_exits: Vec<CLoopBreakExit>,
     budget: &mut ExecutionBudget,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let CStatement::While {
@@ -2449,6 +2479,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         initialization_proven,
         preservation_proven,
         &final_exit_candidates,
+        &break_exits,
         budget,
         &mut variables,
         *do_while,

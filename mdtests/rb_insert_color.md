@@ -28,14 +28,19 @@ all lower.
 
 **The proof does not.** The fixup loop is `while (true)` with four `break`s —
 the root-blackening exit, the black-parent exit, and the two case-3 rotations —
-and two `continue`s, the uncle-red recolours. The `loop` tactic proves exactly
-one complete body iteration and closes the invariants at the back edge; it has
-no rule for a body path that leaves the loop, and none for one that jumps to the
-back edge early. Both are refused, in four different spellings:
-[`loop_body_break_rejected.md`](loop_body_break_rejected.md) and
-[`loop_body_continue_rejected.md`](loop_body_continue_rejected.md) are the
-reductions. So no exit of this loop can be certified, and the contract below is
-the one the fixup wants rather than one that holds.
+and two `continue`s, the uncle-red recolours. The `loop` tactic now has a rule
+for both: a `continue` is the back edge
+([`loop_body_continue_back_edge.md`](loop_body_continue_back_edge.md)) and a
+`break` is an exit joined into the loop's one successor
+([`loop_body_break_exit.md`](loop_body_break_exit.md)). This loop still cannot
+use it. Each of its four `break`s writes a colour or rotates before leaving, so
+the four exits reach four different states, and a loop statement has one
+successor; the exits are refused by name rather than dropped
+([`loop_body_break_exit_state_rejected.md`](loop_body_break_exit_state_rejected.md)).
+Describing the state a loop exits in, the way `branch ensuring` describes the
+state two arms join in, is the missing piece. So no exit of this loop can be
+certified yet, and the contract below is the one the fixup wants rather than one
+that holds.
 
 What this fixture pins is the refusal that comes first, before the loop tactic
 is reached at all: the contract's own requirement `rb_color_bit(t.model) == 0` —

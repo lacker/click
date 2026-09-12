@@ -1208,6 +1208,50 @@ fn frontier_loop_preservation_requires_one_complete_iteration() {
 }
 
 #[test]
+fn closing_invariants_on_a_break_path_is_refused() {
+    let c_source = r#"
+            int32 break_once(int32 n) {
+                int32 i = n;
+                while (i > 0) {
+                    break;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "break_once.c";
+
+            int32 break_once(int32 n) {
+                requires n >= 0;
+                ensures result >= 0;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("break_once.c", c_source)])
+        .expect_err("a `break` path has no back edge to close");
+    assert!(
+        error
+            .message()
+            .contains("has no back edge on a `break` path"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn frontier_local_loop_verifies_a_lowered_c_for_loop() {
     let c_source = r#"
             int32 count_to_three() {

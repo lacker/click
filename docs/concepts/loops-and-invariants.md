@@ -213,6 +213,55 @@ a conjunct that refutes an arm of a folded modeled instance can give the next
 conjunct the authority to read through it. That is the arm selection described
 under [structural loop measures](#structural-loop-measures).
 
+### `break` and `continue` in the body
+
+One certified iteration is a path that reaches the body's end, a `continue`, or
+a `break`. A path that stops anywhere else has not been proved and the loop is
+refused.
+
+A `continue` is the back edge, reached early. Everything the body's end owes is
+owed there: the loop's binders are bound again on the state the `continue`
+reached, the invariants are closed there with `close_invariants()` written
+after the `continue` is stepped, and a declared measure must have descended
+there.
+
+<!-- verified-example: mdtests/loop_body_continue_back_edge.md -->
+```click
+preserve by {
+    step();
+    step();
+    close_invariants();
+}
+```
+
+A `break` is an *exit*. The invariants are not closed on it — a `break` leaves
+the loop with whatever that path established — and no measure is required to
+decrease on it. Its facts join the guard-false exit and the other `break`
+exits into the loop's single successor, on the same terms as the exits of a
+short-circuit guard: everything the exits all state, plus the disjunction of
+what each states alone. A `while (true)` has no guard-false exit, so its
+successor is the join of its `break` exits alone, and a claim after the loop
+reads that disjunction
+(`mdtests/loop_body_break_exit.md`). Dropping a `break` path
+instead would prove claims the C never reaches, which is why `result == 0` is
+refused for a loop that can break out with the guard still true
+(`mdtests/loop_body_break_exit_claim_rejected.md`).
+
+Both work inside a proof `if` and a proof `match` arm
+(`mdtests/loop_body_break_in_match_arm.md`), which is how a body's `if (...)
+break;` is written: those arms are never joined, so each path reaches the loop
+rule on its own. A `branch` is the joining form and has nothing to join when
+one arm leaves the loop, so it refuses and names the proof-level spelling
+(`mdtests/loop_body_break_in_branch_arm_rejected.md`).
+
+The exits joined into one successor must reach one state. A `break` that
+assigns or stores before leaving reaches a different state than the
+guard-false exit, and the rule refuses, naming what differs
+(`mdtests/loop_body_break_exit_state_rejected.md`), rather than choosing one
+state for both or dropping a path. Describing the state a loop exits in, the
+way `branch ensuring` describes the state two arms join in, is not something
+this language can say yet.
+
 ## Memory loops
 
 Pointer-writing loops often need both arithmetic invariants and memory facts:

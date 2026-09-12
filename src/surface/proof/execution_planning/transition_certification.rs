@@ -501,6 +501,7 @@ pub(in crate::surface::proof) fn certified_loop_exit_transitions_with_proven_pha
     initialization_proven: bool,
     preservation_proven: bool,
     final_exit_candidates: &[CLoopFinalExitCandidate],
+    break_exits: &[CLoopBreakExit],
     next_opaque_call: &mut u64,
     next_kernel_variable: &mut u64,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
@@ -517,6 +518,7 @@ pub(in crate::surface::proof) fn certified_loop_exit_transitions_with_proven_pha
         initialization_proven,
         preservation_proven,
         final_exit_candidates.to_vec(),
+        break_exits.to_vec(),
         &mut budget,
     );
     *next_opaque_call = budget.next_opaque_call();

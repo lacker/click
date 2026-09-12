@@ -589,6 +589,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
             remaining: body.clone().into(),
         },
         region: ExecutionRegionKind::LoopBody,
+        in_loop_body: true,
         execution_start_state: Some(preservation.state().clone()),
         next_statement_index: loop_body_statement_index,
         ..ExecutionFrontier::default()
@@ -717,6 +718,9 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
 pub(in crate::surface::proof) struct LoopPreservationProofResult {
     pub(in crate::surface::proof) certificate: ProofCertificate,
     pub(in crate::surface::proof) final_exit_candidates: Vec<CLoopFinalExitCandidate>,
+    /// The body paths that left this loop through `break`, each an exit at
+    /// its own state. The loop rule joins them with the guard-false exit.
+    pub(in crate::surface::proof) break_exits: Vec<CLoopBreakExit>,
     /// Loop rules checked by frontier-local tactics inside this loop's
     /// preservation proof. They are evidence for termination only; the
     /// enclosing contract still uses the outer loop's checked artifact.
@@ -793,6 +797,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             remaining: body.clone().into(),
         },
         region: ExecutionRegionKind::LoopBody,
+        in_loop_body: true,
         execution_start_state: Some(preservation.state().clone()),
         next_statement_index: loop_body_statement_index,
         ..ExecutionFrontier::default()
@@ -951,6 +956,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         .collect::<Result<Vec<_>, _>>()?;
     let mut certificate_paths = Vec::new();
     let mut final_exit_candidates = Vec::new();
+    let mut break_exits = Vec::new();
     let mut nested_loop_rules = Vec::new();
     for leaf in leaves {
         let context_execution = leaf.execution_view()?.execution.clone();
@@ -977,6 +983,10 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         let region_simp = context_execution.presentation.region_simp;
         let proof_site = leaf.execution_view()?.context.constants.proof_site.clone();
         let invariants_close_requested = context_execution.core.region_invariants_close_requested;
+        // A path that left through `break` is an exit, not a back edge: it
+        // owes no invariant and no measure, and the loop rule joins it with
+        // the loop's other exits instead of returning it to the head.
+        let is_break_exit = context_frontier.loop_control.is_exit();
         let has_retained_invariant_body =
             context_execution.core.checked_invariant_lowerings.is_some();
         let statement_index = context_frontier.next_statement_index;
@@ -1035,7 +1045,9 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         // now becomes a nested proof `if` here instead of recursive search in
         // proposition reasoning.
         let mut leaf = leaf;
-        if has_retained_invariant_body {
+        if is_break_exit {
+            // Nothing is closed on an exit path, so nothing is planned here.
+        } else if has_retained_invariant_body {
             // A completed body is bound to this exact premise store. Validate
             // it before skipping preplanning; a source close request alone
             // is not evidence. Adding further `have`s would stale the body.
@@ -1056,7 +1068,9 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 leaf = proved.join()?;
             }
         }
-        let checked = if invariant_checks.is_empty()
+        let checked = if is_break_exit {
+            leaf.clone()
+        } else if invariant_checks.is_empty()
             && ranking_measures.is_empty()
             && structural_measure.is_none()
         {
@@ -1103,52 +1117,67 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 ))
             })?
         };
-        let mut join_facts = checked.facts().to_vec();
         let checked_execution = checked.execution_view()?.execution.clone();
-        join_facts.extend(
-            checked_execution
-                .core
-                .effect_facts
-                .iter()
-                .map(|fact| fact.proposition().clone()),
-        );
-        join_facts.extend(crate::kernel::certified_store_equations(
-            &checked_execution.core.effect_facts,
-        ));
-        // The body must return to the head it started from, which carries the
-        // loop's own resource context when the loop declares one.
-        let join_assumptions = assumptions_from_propositions(&join_facts);
-        if crate::kernel::c_loop_state_with_loop_binders_rebound(
-            preservation.state(),
-            &checked_execution.core.state,
-            preservation.binders(),
-            &join_assumptions,
-        )
-        .and_then(|rebound| {
-            crate::kernel::c_loop_state_components_match_at_back_edge(
-                preservation.state(),
-                &crate::kernel::c_loop_state_with_head_binder_models(
-                    &rebound,
-                    preservation.state(),
-                    preservation.binders(),
-                ),
-                &join_assumptions,
-                environment.function.composite_resource_definitions(),
-            )
-        })
-        .is_err()
-        {
-            let candidate = CLoopFinalExitCandidate::new(
+        if is_break_exit {
+            // The exit is this path's own state and the facts it retained
+            // there. The loop rule joins it with every other exit into the
+            // single successor, so nothing about this path is dropped and
+            // nothing about it is assumed to satisfy the invariants.
+            let exit = CLoopBreakExit::new(
                 (*checked_execution.core.state).clone(),
                 checked.facts().to_vec(),
             );
-            if !final_exit_candidates.contains(&candidate) {
-                final_exit_candidates.push(candidate);
+            if !break_exits.contains(&exit) {
+                break_exits.push(exit);
+            }
+        } else {
+            let mut join_facts = checked.facts().to_vec();
+            join_facts.extend(
+                checked_execution
+                    .core
+                    .effect_facts
+                    .iter()
+                    .map(|fact| fact.proposition().clone()),
+            );
+            join_facts.extend(crate::kernel::certified_store_equations(
+                &checked_execution.core.effect_facts,
+            ));
+            // The body must return to the head it started from, which carries
+            // the loop's own resource context when the loop declares one.
+            let join_assumptions = assumptions_from_propositions(&join_facts);
+            if crate::kernel::c_loop_state_with_loop_binders_rebound(
+                preservation.state(),
+                &checked_execution.core.state,
+                preservation.binders(),
+                &join_assumptions,
+            )
+            .and_then(|rebound| {
+                crate::kernel::c_loop_state_components_match_at_back_edge(
+                    preservation.state(),
+                    &crate::kernel::c_loop_state_with_head_binder_models(
+                        &rebound,
+                        preservation.state(),
+                        preservation.binders(),
+                    ),
+                    &join_assumptions,
+                    environment.function.composite_resource_definitions(),
+                )
+            })
+            .is_err()
+            {
+                let candidate = CLoopFinalExitCandidate::new(
+                    (*checked_execution.core.state).clone(),
+                    checked.facts().to_vec(),
+                );
+                if !final_exit_candidates.contains(&candidate) {
+                    final_exit_candidates.push(candidate);
+                }
             }
         }
-        let closer_tactics = if (invariant_checks.is_empty()
-            && ranking_measures.is_empty()
-            && structural_measure.is_none())
+        let closer_tactics = if is_break_exit
+            || (invariant_checks.is_empty()
+                && ranking_measures.is_empty()
+                && structural_measure.is_none())
             || invariants_close_requested
         {
             Vec::new()
@@ -1209,6 +1238,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     Ok(LoopPreservationProofResult {
         certificate,
         final_exit_candidates,
+        break_exits,
         nested_loop_rules,
     })
 }

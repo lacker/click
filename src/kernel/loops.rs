@@ -1201,6 +1201,7 @@ pub(super) fn execute_c_while_verification_paths(
         environment,
         Some(environment),
         &[],
+        &[],
         execution_semantics,
         false,
         do_while,
@@ -1390,6 +1391,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     initialization_proven: bool,
     preservation_proven: bool,
     final_exit_candidates: &[CLoopFinalExitCandidate],
+    break_exits: &[CLoopBreakExit],
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
     do_while: bool,
@@ -1408,6 +1410,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
         environment,
         (!preservation_proven).then_some(environment),
         final_exit_candidates,
+        break_exits,
         execution_semantics,
         initialization_proven,
         do_while,
@@ -1531,6 +1534,73 @@ fn join_loop_exit_paths(
     Some((facts, obligations))
 }
 
+/// Joins every way out of one loop into the single successor path the
+/// enclosing frontier continues from.
+///
+/// The guard-false exits stand at the loop's head state; a `break` exit
+/// stands where that path left the body. A loop has one successor, so the
+/// rule can only export their join when they agree on that state: the facts
+/// are then joined by [`join_loop_exit_paths`], which keeps what every exit
+/// states and disjoins what each states alone. Exits that reach different
+/// states are refused here, naming the components that differ — dropping one
+/// of them, or picking one state for all, would export an exit the C never
+/// reaches that way.
+fn join_loop_exits_at_one_state(
+    exits: Vec<(CState, Vec<ExecutionPureFact>, Vec<ProofObligation>)>,
+) -> Option<CStatementExecutionPath> {
+    let exit_state = exits.first()?.0.clone();
+    let mismatch = exits
+        .iter()
+        .skip(1)
+        .find_map(|(state, _, _)| loop_exit_state_difference(&exit_state, state));
+    let (facts, mut obligations) = join_loop_exit_paths(
+        exits
+            .into_iter()
+            .map(|(_, facts, obligations)| (facts, obligations))
+            .collect(),
+    )?;
+    if let Some(mismatch) = mismatch {
+        obligations.push(
+            ProofObligation::verification_condition(false_equals_true_proposition())
+                .with_context(format!(
+                    "loop exits reach different states, so they have no common successor: {mismatch}"
+                )),
+        );
+    }
+    Some(CStatementExecutionPath {
+        outcome: CStatementOutcome::Normal(exit_state),
+        facts,
+        obligations,
+    })
+}
+
+/// What two loop exit states disagree about, named for a refusal.
+fn loop_exit_state_difference(left: &CState, right: &CState) -> Option<String> {
+    if left == right {
+        return None;
+    }
+    let mut differences = Vec::new();
+    let changed_locals = left
+        .locals()
+        .object_values()
+        .filter(|(name, value)| right.locals().get(name) != Some(*value))
+        .map(|(name, _)| name.to_string())
+        .collect::<Vec<_>>();
+    if !changed_locals.is_empty() {
+        differences.push(format!("local `{}`", changed_locals.join("`, `")));
+    }
+    if left.memory() != right.memory() {
+        differences.push("memory".to_string());
+    }
+    if left.resources() != right.resources() {
+        differences.push("resource ownership".to_string());
+    }
+    if differences.is_empty() {
+        differences.push("the symbolic state".to_string());
+    }
+    Some(differences.join(", "))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_c_while_exit_paths(
     state: &CState,
@@ -1546,6 +1616,7 @@ fn execute_c_while_exit_paths(
     environment: &CExecutionEnvironment,
     preservation_environment: Option<&CExecutionEnvironment>,
     final_exit_candidates: &[CLoopFinalExitCandidate],
+    break_exits: &[CLoopBreakExit],
     execution_semantics: CExecutionSemantics,
     initialization_proven: bool,
     do_while: bool,
@@ -1593,7 +1664,7 @@ fn execute_c_while_exit_paths(
     // authority never leaves the head.
     let guard_state = head.guard.clone();
     let whole_loop_effect_summaries = head.summaries.clone();
-    let (preservation_obligations, mut final_exit_paths) =
+    let (preservation_obligations, mut final_exit_paths, body_break_exits) =
         if let Some(environment) = preservation_environment {
             let summary = collect_loop_preservation_summary(
                 state,
@@ -1614,9 +1685,13 @@ fn execute_c_while_exit_paths(
                 budget,
                 variables,
             )?;
-            (summary.obligations, summary.final_exit_paths)
+            (
+                summary.obligations,
+                summary.final_exit_paths,
+                summary.break_exits,
+            )
         } else {
-            (Vec::new(), Vec::new())
+            (Vec::new(), Vec::new(), Vec::new())
         };
     let mut loop_check_obligations = Vec::new();
     // A loop may only declare resources the enclosing context actually holds.
@@ -1734,6 +1809,26 @@ fn execute_c_while_exit_paths(
             break;
         }
     }
+    // Every `break` in the body is one more way out of the loop, at the
+    // state that path reached. They are certified exits, so they carry no
+    // invariant and no measure, and they join the guard-false exit below
+    // rather than exporting a second successor the enclosing frontier would
+    // have to choose between.
+    let break_exit_entries = break_exits
+        .iter()
+        .chain(body_break_exits.iter())
+        .map(|exit| {
+            (
+                head.restored_exit_state(exit.state()),
+                exit.pure_facts()
+                    .iter()
+                    .cloned()
+                    .map(ExecutionPureFact::certified)
+                    .collect::<Vec<_>>(),
+                loop_check_obligations.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
     if initial_may_exit {
         for (invariant_facts, invariant_obligations) in invariant_contexts {
             let condition_contexts = assume_condition_truthiness(
@@ -1795,15 +1890,21 @@ fn execute_c_while_exit_paths(
             // A short-circuit guard leaves the loop by one path per conjunct,
             // all at the same exit state. Every one of them is certified, and
             // the loop exports their join: what they all state, plus the
-            // disjunction of what each states alone.
-            if let Some((facts, obligations)) = join_loop_exit_paths(exits) {
-                paths.push(CStatementExecutionPath {
-                    outcome: CStatementOutcome::Normal(top_state.clone()),
-                    facts,
-                    obligations,
-                });
+            // disjunction of what each states alone. A `break` exit joins
+            // here too, on the same terms.
+            let exits = exits
+                .into_iter()
+                .map(|(facts, obligations)| (top_state.clone(), facts, obligations))
+                .chain(break_exit_entries.iter().cloned())
+                .collect::<Vec<_>>();
+            if let Some(path) = join_loop_exits_at_one_state(exits) {
+                paths.push(path);
             }
         }
+    } else if let Some(path) = join_loop_exits_at_one_state(break_exit_entries) {
+        // A guard that cannot be false, `while (true)`, has no guard-false
+        // exit: the successor is the join of the `break` exits alone.
+        paths.push(path);
     }
     if paths.is_empty() {
         let mut obligations = base_obligations;
@@ -2073,6 +2174,10 @@ pub(super) fn loop_ranking_obligations_or_refusal(
 pub(super) struct LoopPreservationSummary {
     pub(super) obligations: Vec<ProofObligation>,
     pub(super) final_exit_paths: Vec<CStatementExecutionPath>,
+    /// The body paths that left through `break`, as exits at the states they
+    /// reached. The rule joins them with the guard-false exit exactly as it
+    /// joins the ones a checked preservation proof reports.
+    pub(super) break_exits: Vec<CLoopBreakExit>,
 }
 
 pub(super) fn collect_loop_preservation_summary(
@@ -2096,6 +2201,7 @@ pub(super) fn collect_loop_preservation_summary(
 ) -> ExecutionResult<LoopPreservationSummary> {
     let mut obligations = Vec::new();
     let mut final_exit_paths = Vec::new();
+    let mut break_exits = Vec::new();
     // The body executes from the loop's own resource context; everything the
     // enclosing frame withheld is returned on the way out.
     let top_state = &head.body;
@@ -2347,11 +2453,12 @@ pub(super) fn collect_loop_preservation_summary(
                         }
                     }
                     CStatementOutcome::Break(next_state) => {
-                        let path_assumptions = assumptions_with_path_context(
-                            assumptions,
-                            &body_path.facts,
-                            &body_path.obligations,
-                        );
+                        // A `break` is an exit: the invariants are not
+                        // closed on it and no measure is required to
+                        // decrease on it. What the body wrote on the way
+                        // out is still checked against the loop's declared
+                        // effects, and the path itself becomes one of the
+                        // exits the rule joins into the loop's successor.
                         let effect_obligations = collect_loop_effect_check_obligations(
                             top_state,
                             &next_state,
@@ -2361,38 +2468,27 @@ pub(super) fn collect_loop_preservation_summary(
                             assumptions,
                             budget,
                         )?;
-                        let path_obligations = collect_invariant_check_obligations(
-                            &next_state,
-                            loop_entry_state,
-                            invariant_checks,
-                            InvariantPhase::Preservation,
-                            &path_assumptions,
-                            budget,
-                        )?;
-                        let final_path_facts = body_path.facts;
-                        let final_path_obligations = body_path.obligations;
-                        let mut final_obligations = final_path_obligations.clone();
+                        let exit_facts = body_path.facts;
+                        let exit_obligations = body_path.obligations;
+                        append_required_proof_obligations(
+                            &mut obligations,
+                            assumptions,
+                            &exit_obligations,
+                        );
                         append_required_proof_obligations_under_path_context(
-                            &mut final_obligations,
+                            &mut obligations,
                             assumptions,
                             &effect_obligations,
-                            &final_path_facts,
-                            &final_path_obligations,
+                            &exit_facts,
+                            &exit_obligations,
                         );
-                        append_required_proof_obligations_under_path_context(
-                            &mut final_obligations,
-                            assumptions,
-                            &path_obligations,
-                            &final_path_facts,
-                            &final_path_obligations,
-                        );
-                        final_exit_paths.push(CStatementExecutionPath {
-                            outcome: CStatementOutcome::Normal(
-                                head.restored_exit_state(&next_state),
-                            ),
-                            facts: final_path_facts,
-                            obligations: final_obligations,
-                        });
+                        break_exits.push(CLoopBreakExit::new(
+                            next_state,
+                            exit_facts
+                                .iter()
+                                .map(|fact| fact.proposition().clone())
+                                .collect(),
+                        ));
                     }
                     CStatementOutcome::Return { .. }
                     | CStatementOutcome::VerificationDiverges
@@ -2416,6 +2512,7 @@ pub(super) fn collect_loop_preservation_summary(
     Ok(LoopPreservationSummary {
         obligations,
         final_exit_paths,
+        break_exits,
     })
 }
 

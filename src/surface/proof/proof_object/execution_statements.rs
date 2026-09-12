@@ -592,6 +592,18 @@ impl<'a> Proof<'a> {
         if body.is_empty() {
             return Err(self.step_error("`close_invariants by` requires a nonempty proof body"));
         }
+        if self
+            .execution()
+            .is_some_and(|execution| execution.core.frontier.loop_control.is_exit())
+        {
+            // A `break` leaves the loop with whatever the path established.
+            // There is no back edge here and the invariants are not owed, so
+            // closing them would certify an obligation the rule never asks
+            // for and report success for a path the loop exports as an exit.
+            return Err(self.step_error(
+                "`close_invariants` has no back edge on a `break` path: a `break` exits the loop",
+            ));
+        }
         if !self.is_at_region_boundary() {
             return Err(self.step_error("`close_invariants by` requires the loop back edge"));
         }

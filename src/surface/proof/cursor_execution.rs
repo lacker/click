@@ -2309,6 +2309,15 @@ fn execute_step_from_frontier_position_selecting_path(
             *state = execution_state;
         }
         CStatementOutcome::Break(next_state) | CStatementOutcome::Continue(next_state) => {
+            // The control statement's own successor facts are this path's:
+            // `if (i == 3) break;` leaves the loop knowing `i == 3`, and a
+            // `break` exit that lost its guard would state nothing at all.
+            // The frontier itself was advanced when the evidence was
+            // recorded: inside a loop-body region both controls reach its
+            // typed boundary, and a concretely executed loop resumes at its
+            // own continuation.
+            *available_pure_facts = successor_pure_facts;
+            execution.core.frontier.execution_start_state = Some(execution_start_state);
             *state = next_state;
         }
         CStatementOutcome::VerificationDiverges => {

@@ -2628,6 +2628,30 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// How one arm of this split left a loop body, if it did.
+    ///
+    /// A `branch` joins its arms at the `if`'s continuation. An arm that
+    /// left the loop through `break`, or reached the back edge through
+    /// `continue`, never arrives there, so there is nothing to join and the
+    /// caller refuses instead of merging two paths that go to different
+    /// places.
+    pub(in crate::surface::proof) fn arm_loop_control(
+        &self,
+        record: &ExecutionSplit<'a>,
+        take_then: bool,
+    ) -> LoopControlExit {
+        record
+            .arm_id(take_then)
+            .and_then(|id| {
+                self.state()
+                    .open_branches()
+                    .get(id)
+                    .and_then(|branch| branch.state.execution.as_deref())
+                    .map(|execution| execution.core.frontier.loop_control)
+            })
+            .unwrap_or_default()
+    }
+
     pub(in crate::surface::proof) fn split_arms_at_function_exit(
         &self,
         record: &ExecutionSplit<'a>,

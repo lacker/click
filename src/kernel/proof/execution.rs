@@ -35,6 +35,30 @@ pub(crate) enum ExecutionRegionKind {
     BranchArm,
 }
 
+/// How a checked path inside a loop body reached that region's boundary.
+///
+/// A path that falls off the end of the body reaches the back edge and
+/// carries `BodyEnd`. `break` and `continue` reach the same typed boundary
+/// early, and the loop rule owes each of them a different obligation: a
+/// `break` is an exit, a `continue` is the back edge.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum LoopControlExit {
+    /// The body ran to its end: the ordinary back edge.
+    #[default]
+    BodyEnd,
+    /// A `break`: the path leaves the loop with whatever it established.
+    Break,
+    /// A `continue`: the path reaches the back edge before the body's end.
+    Continue,
+}
+
+impl LoopControlExit {
+    /// Whether this path leaves the loop rather than returning to its head.
+    pub(crate) fn is_exit(self) -> bool {
+        matches!(self, Self::Break)
+    }
+}
+
 /// Kernel-issued evidence for one semantic C transition accepted by this
 /// proof path.
 ///
@@ -2821,6 +2845,13 @@ pub(crate) struct ExecutionFrontier {
     pub(crate) execution_start_state: Option<CState>,
     pub(crate) next_statement_index: usize,
     pub(crate) continuations: PersistentSequence<ProofExecutionContinuation>,
+    /// Whether this frontier executes inside one loop-body region, directly
+    /// or through a bounded branch arm of it. A `break` or `continue` here
+    /// belongs to that loop, which no continuation of this frontier holds:
+    /// the enclosing loop rule consumes it at the region boundary.
+    pub(crate) in_loop_body: bool,
+    /// How this path reached the loop body's boundary, once it has.
+    pub(crate) loop_control: LoopControlExit,
 }
 
 #[derive(Clone)]
@@ -3960,6 +3991,20 @@ impl ExecutionProofCore {
         self.evidence_source = matches!(&outcome, CStatementOutcome::Normal(_))
             .then_some(source_after.clone())
             .flatten();
+        // A `break` or `continue` this frontier's own region owns, rather
+        // than one belonging to a concretely executed loop it contains.
+        let region_loop_control = if self.frontier.continuations.is_empty()
+            && (self.frontier.in_loop_body
+                || matches!(self.frontier.region, ExecutionRegionKind::LoopBody))
+        {
+            match &outcome {
+                CStatementOutcome::Break(_) => Some(LoopControlExit::Break),
+                CStatementOutcome::Continue(_) => Some(LoopControlExit::Continue),
+                _ => None,
+            }
+        } else {
+            None
+        };
         match outcome {
             CStatementOutcome::Normal(next_state) => self.evidence_state = Some(next_state),
             CStatementOutcome::Return { state, .. } => {
@@ -3967,12 +4012,18 @@ impl ExecutionProofCore {
                 self.evidence_completed = true;
             }
             CStatementOutcome::Break(state) | CStatementOutcome::Continue(state)
-                if matches!(self.frontier.region, ExecutionRegionKind::LoopBody) =>
+                if region_loop_control.is_some() =>
             {
                 // A loop-preservation proof executes one body iteration in a
                 // bounded region. Both controls reach that region's typed
-                // boundary; the enclosing loop rule consumes the distinction
-                // when it builds its back-edge and final-exit obligations.
+                // boundary, and the path stops there: the enclosing loop rule
+                // consumes the distinction, certifying a `break` as an exit
+                // and a `continue` as the back edge. A continuation on this
+                // frontier means the innermost loop is a concretely executed
+                // one this region contains, which is resumed below instead.
+                self.frontier.loop_control =
+                    region_loop_control.expect("the guard matched a loop control");
+                self.frontier.position = FrontierPosition::RegionBoundary;
                 self.evidence_state = Some(state);
                 self.evidence_completed = true;
             }

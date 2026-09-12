@@ -1434,8 +1434,11 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
         InternalProofNode::Done => {
             let Some((next, rest)) = pending.split_first() else {
                 if !proof.is_at_region_boundary() {
+                    // One certified iteration is a path that reaches the
+                    // body's end, a `continue`, or a `break`. A path that
+                    // stops anywhere else has not been proved at all.
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` must execute exactly one complete loop-body iteration"
+                        "`{claim_label}` must execute exactly one complete loop-body iteration, ending at the body's end, a `continue`, or a `break`"
                     )));
                 }
                 leaves.push(proof.clone());
@@ -2496,6 +2499,25 @@ fn advance_checked_branch_arms<'a>(
             return decline();
         };
         advanced = next;
+    }
+    // A `branch` joins its arms at the `if`'s continuation. An arm that left
+    // the loop through `break`, or jumped to the back edge through
+    // `continue`, is not there to be joined: its path ends at the loop rule,
+    // not at the statement after the `if`. Joining the arms anyway would
+    // export one successor for two paths that go to different places, so the
+    // rule refuses and names the spelling that keeps them apart.
+    for (name, take_then) in [("then", true), ("else", false)] {
+        let control = advanced.arm_loop_control(record, take_then);
+        if control != LoopControlExit::BodyEnd {
+            let keyword = if control.is_exit() {
+                "`break` leaves the loop"
+            } else {
+                "`continue` reaches the loop's back edge"
+            };
+            return Err(ClickError::new(format!(
+                "the {name} `branch` arm's {keyword}, so the arms have no common successor to join; write this case as a proof `if` on the C condition, whose arms each reach the loop rule on their own"
+            )));
+        }
     }
     let mut consumed_continuation = false;
     if !has_sole_feasible_arm {
