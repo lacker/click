@@ -352,6 +352,9 @@ appears to need one reports the need instead of adding it.
 - 2026-09-12: C1 (`rb_at`, `ctx_at`, `plug`, the seven link helpers and
   `__rb_change_child` on verbatim Linux bodies, 05257e8e) is on master. A7
   is gating; T1 (audit defect) and A8 are dispatched; A4 is in progress.
+- 2026-09-12: A7 (`let r = step(...)` names a call's scalar result when the
+  callee produces no instance, 9c7710ee) is on master; `tree_contains`
+  verifies the unguarded membership postcondition. T2 dispatched.
 
 ## Work packages
 
