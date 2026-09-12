@@ -1388,7 +1388,8 @@ Those commits were preserved for audit but not integrated. They were reverted
 on the temporary branch by `4e6ca3bb`, `f270b748`, and `809812fd`, returning
 to the earlier green docs-only source state. The temporary docs commit
 `f7d61b76` likewise was not integrated as a hash; its blocker content was
-replayed into the integrated docs commit `0b1953e4` and is consolidated here.
+incorporated into the integrated docs commit `0b1953e4` and is consolidated
+here.
 
 The concrete performance failure was an `owned-vector` verification path
 exhausting the deterministic simple budget at `500001` units (the limit was
