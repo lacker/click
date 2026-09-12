@@ -535,10 +535,13 @@ published and `unfold` and proof `match` have their constructor.
 This is a decision, not a search: each held instance's arms are visited once
 and each arm's own clauses are evaluated once. The conclusions are published
 where an instance enters the premises -- at contract lowering, at a loop head,
-at a loop back edge, and at the `unfold` that produces a child. The
+at a loop back edge, at a loop exit, and at the `unfold` that produces a
+child. A loop exit reads the invariants together with the failed guard, which
+is how an ascending walk learns that the frame it is left holding is the top
+one: `parent == 0` refutes every arm that states `fact parent != 0`. The
 regressions are `mdtests/resource_refuted_arm_model_fact.md` for both
-directions and `mdtests/loop_head_refuted_arm_closes_the_match.md` for the
-loop head, and
+directions, `mdtests/loop_head_refuted_arm_closes_the_match.md` for the loop
+head and `mdtests/loop_ascending_walk_to_root.md` for the exit, and
 [`examples/modeled-binary-tree`](https://github.com/lacker/click/tree/master/examples/modeled-binary-tree)
 is the verified walk that needs both.
 

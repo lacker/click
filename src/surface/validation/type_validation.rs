@@ -1765,6 +1765,9 @@ fn validate_resource_subject_expression_types(
                     infer_contract_expression_type(argument, variables, click_functions, context)?;
                 if let (Some(actual), Some(expected)) = (actual, parameter_types.get(index))
                     && !resource_types_compatible(name, index, actual, *expected)
+                    && !crate::surface::lowering::resource_argument_is_null_pointer_constant(
+                        argument, *expected,
+                    )
                 {
                     return Err(ClickError::new(format!(
                         "resource `{name}` argument {index} expects {}, got {} in {context}",
@@ -2870,7 +2873,11 @@ pub(super) fn validate_resource_clause(
                     context,
                 )? {
                     let expected = parameter_types[index];
-                    if !resource_types_compatible(name, index, actual, expected) {
+                    if !resource_types_compatible(name, index, actual, expected)
+                        && !crate::surface::lowering::resource_argument_is_null_pointer_constant(
+                            argument, expected,
+                        )
+                    {
                         return Err(ClickError::new(format!(
                             "resource `{name}` argument {index} expects {}, got {} in {context}",
                             describe_c0_type(expected),

@@ -1218,7 +1218,7 @@ fn lower_resource_clause_with_values_mode(
             for (index, (argument, parameter_type)) in
                 resource_arguments.iter().zip(parameter_types).enumerate()
             {
-                let argument = resource_argument_to_c_expression(argument)?;
+                let argument = resource_argument_to_typed_c_expression(argument, *parameter_type)?;
                 let value = crate::surface::proof::evaluate_resource_fragment_through_kernel(
                     &argument,
                     &assumptions,
@@ -1356,6 +1356,39 @@ fn lower_resource_clause_facts_with_values_mode(
             allow_symbolic_resource_arguments,
         )?]),
     }
+}
+
+/// Whether this resource argument is the C null pointer constant standing at
+/// a pointer-typed resource parameter.
+///
+/// A walk that ends at the root of a parent-linked structure reaches a
+/// position whose parent is null, and null is the only truthful spelling of
+/// that argument: the parameter the body reassigned means its entry value at
+/// the boundary, which is a different node. `0` is already a contract
+/// expression, so this is the C null-pointer-constant typing rule rather than
+/// new syntax.
+pub(in crate::surface) fn resource_argument_is_null_pointer_constant(
+    argument: &ContractExpression,
+    parameter_type: C0Type,
+) -> bool {
+    parameter_type.is_pointer()
+        && matches!(argument, ContractExpression::IntegerLiteral(text) if text == "0")
+}
+
+/// `resource_argument_to_c_expression` with the declared parameter type in
+/// hand, so the null pointer constant lowers to that pointer type's null
+/// value instead of an `int32` zero.
+pub(in crate::surface) fn resource_argument_to_typed_c_expression(
+    argument: &ContractExpression,
+    parameter_type: C0Type,
+) -> Result<CExpression, ClickError> {
+    if resource_argument_is_null_pointer_constant(argument, parameter_type) {
+        return Ok(c_typed_pointer_value(
+            Pointer::null(),
+            parameter_type.to_kernel_type(),
+        ));
+    }
+    resource_argument_to_c_expression(argument)
 }
 
 pub(in crate::surface) fn resource_argument_to_c_expression(

@@ -297,6 +297,27 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
                     binding.name
                 )));
             }
+            // A named contract's proof parameter stands for an instance the
+            // caller supplies, so its resource arguments name the signature's
+            // own parameters. The null pointer constant is a position a
+            // return-side clause can name, not one a caller can pass here.
+            if let ResourceClause::Named { resource, .. } = parameter
+                && let ResourceClause::Declared {
+                    arguments,
+                    parameter_types,
+                    ..
+                } = resource.as_ref()
+                && arguments.iter().zip(parameter_types).any(|(argument, ty)| {
+                    crate::surface::lowering::resource_argument_is_null_pointer_constant(
+                        argument, *ty,
+                    )
+                })
+            {
+                return Err(ClickError::new(format!(
+                    "contract proof parameter `{}` must name the signature's parameters",
+                    binding.name
+                )));
+            }
             validate_resource_clause(
                 parameter,
                 &resources,

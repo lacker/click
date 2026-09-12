@@ -366,6 +366,43 @@ The back edge publishes the same way, so a descent that unfolds a child under
 a guard hands the next iteration the model fact that guard established. The
 rule itself is in [resources](resources.md).
 
+### Ascending walks
+
+A descending walk pushes context frames; an ascending one pops them. The loop
+holds the same pair a Linux rbtree fixup loop holds — the focused subtree and
+the frames above it — and each iteration consumes one frame:
+
+<!-- verified-example: mdtests/loop_ascending_walk_to_root.md -->
+```click
+loop {
+    owns c: pctx_at(node, parent);
+    owns t: ptree_at(node, parent);
+    decreases c;
+    invariant t.model != HeapTree::Empty;
+    invariant plug(c.model, t.model) == plug(old(c.model), old(t.model));
+}
+```
+
+The body unfolds the frame, takes the C steps that move the cursor up, and
+folds the node the frame owned into a larger focused subtree built from the
+old focus and the frame's sibling. The measure is the context, because the
+focused subtree grows while the context strictly loses a frame.
+
+Both ends of such a walk come from arm refutation. At the head the guard
+`parent != 0` refutes the `Top` frame's `fact parent == 0`, so the body's
+proof `match` closes `Top` by contradiction. At the exit the same rule runs
+with the failed guard: `parent == 0` refutes the `Left` and `Right` arms'
+`fact parent != 0`, so the proof after the loop has `c.model == Context::Top`
+and can `unfold` the frame without a `match` of its own. A loop exit publishes
+refuted arms exactly as the head and the back edge do.
+
+The walk then hands its final instances to the contract's produced binders by
+refolding them under those names, at the arguments the exit reached. Those
+arguments are the caller's view: `result` is the returned pointer, and the
+root's parent is the null pointer constant rather than the parameter the body
+reassigned. The contract side of that boundary is in
+[the language reference](../reference/language/index.md).
+
 `old(name.field)` in an invariant is the function-entry instance of the
 function-level binder of that name, whatever the body did to that instance
 before the loop. A proof that unfolds and refolds the binder before the loop

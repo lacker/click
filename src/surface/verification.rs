@@ -4756,7 +4756,13 @@ fn resource_clause_to_resource_spec_with_metadata(
             let access = resource_access_to_kernel(*access);
             let arguments = arguments
                 .iter()
-                .map(resource_argument_to_c_expression)
+                .zip(parameter_types)
+                .map(|(argument, parameter_type)| {
+                    crate::surface::lowering::resource_argument_to_typed_c_expression(
+                        argument,
+                        *parameter_type,
+                    )
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let parameter_types = parameter_types
                 .iter()
