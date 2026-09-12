@@ -480,6 +480,7 @@ impl<'a> Proof<'a> {
         click_function_environment: &ClickFunctionEnvironment,
         theorem_environment: &TheoremEnvironment,
     ) -> Result<ProofStep, ClickError> {
+        let application = &self.resolve_theorem_application(application)?;
         let values = parameter_values(parameters, arguments).map_err(|error| {
             self.step_error(format!(
                 "could not bind theorem arguments: {}",

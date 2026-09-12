@@ -285,17 +285,10 @@ impl<'a> Proof<'a> {
         application: &TheoremApplication,
         surface_premises: &[ClickProposition],
     ) -> Result<CheckedFocusedTransition, ClickError> {
-        let application = TheoremApplication {
-            name: application.name.clone(),
-            arguments: application
-                .arguments
-                .iter()
-                .map(|argument| self.substitute_goal_surface_bindings_in_expression(argument))
-                .collect::<Result<Vec<_>, _>>()?,
-        };
+        let application = self.resolve_theorem_application(application)?;
         let surface_premises = surface_premises
             .iter()
-            .map(|premise| self.substitute_goal_surface_bindings_in_proposition(premise))
+            .map(|premise| self.substitute_fixed_state_locals_in_proposition(premise))
             .collect::<Result<Vec<_>, _>>()?;
         match self.context.as_ref() {
             ProofContext::Pure(context) => {
@@ -1209,10 +1202,10 @@ impl<'a> Proof<'a> {
             }
         };
         let surface_quantified =
-            self.substitute_goal_surface_bindings_in_proposition(surface_quantified)?;
+            self.substitute_fixed_state_locals_in_proposition(surface_quantified)?;
         let surface_premises = surface_premises
             .iter()
-            .map(|surface| self.substitute_goal_surface_bindings_in_proposition(surface))
+            .map(|surface| self.substitute_fixed_state_locals_in_proposition(surface))
             .collect::<Result<Vec<_>, _>>()?;
         let explicit_premises = surface_premises
             .iter()
@@ -1547,7 +1540,7 @@ impl<'a> Proof<'a> {
         if !binding_is_chosen {
             return Ok(None);
         }
-        let surface = self.substitute_goal_surface_bindings_in_proposition(surface)?;
+        let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
         let chosen_body = match checked_source {
             Proposition::Exists { var, body, .. } => match binding {
                 ContractExpression::CFragment(CExpression::Value(CValue::Int32(_))) => {

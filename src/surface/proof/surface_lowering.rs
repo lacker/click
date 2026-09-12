@@ -718,29 +718,22 @@ impl<'a> Proof<'a> {
         })
     }
 
-    pub(super) fn substitute_goal_surface_bindings_in_expression(
+    /// A written theorem application with every proof-local name it spells
+    /// resolved: goal binders first, then the proof locals a match arm, an
+    /// `unfold ... as`, a `let ... = step(...)`, or a loop binder introduced.
+    /// Every position that takes a written application resolves it here, so
+    /// a name in scope for a `have` goal is in scope as a theorem argument.
+    pub(in crate::surface::proof) fn resolve_theorem_application(
         &self,
-        expression: &ContractExpression,
-    ) -> Result<ContractExpression, ClickError> {
-        let Some(goal) = self.proposition_obligation() else {
-            return Ok(expression.clone());
-        };
-        let substitutions = contract_expression_referenced_names(expression)
-            .into_iter()
-            .filter_map(|name| {
-                goal.surface_bindings
-                    .get(&name)
-                    .cloned()
-                    .map(|value| (name, value))
-            })
-            .collect::<BTreeMap<_, _>>();
-        if substitutions.is_empty() {
-            return Ok(expression.clone());
-        }
-        substitute_contract_expression(expression, &substitutions).map_err(|message| {
-            self.step_error(format!(
-                "could not substitute expression-goal binders: {message}"
-            ))
+        application: &TheoremApplication,
+    ) -> Result<TheoremApplication, ClickError> {
+        Ok(TheoremApplication {
+            name: application.name.clone(),
+            arguments: application
+                .arguments
+                .iter()
+                .map(|argument| self.substitute_fixed_state_locals_in_expression(argument))
+                .collect::<Result<Vec<_>, _>>()?,
         })
     }
 

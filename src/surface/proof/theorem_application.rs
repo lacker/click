@@ -717,6 +717,28 @@ pub(super) fn theorem_application_bindings(
             algebraic_values.insert(parameter.name().to_string(), value);
             continue;
         };
+        // The C null pointer constant at a pointer-typed theorem parameter is
+        // that pointer type's null value, exactly as at a pure function's
+        // pointer parameter, so a whole-tree claim can be stated at the null
+        // parent (`parent_consistent(t, 0)`).
+        if crate::surface::lowering::argument_is_null_pointer_constant(argument, parameter_type) {
+            let pointer = CValue::typed_pointer(
+                crate::kernel::Pointer::null(),
+                parameter_type.to_kernel_type(),
+            );
+            if let Some(element_type) = click_array_element_type(parameter_type) {
+                array_refs.insert(
+                    parameter.name().to_string(),
+                    ClickArrayRef {
+                        memory: context.post_state.memory().clone(),
+                        pointer: crate::kernel::Pointer::null(),
+                        element_type,
+                    },
+                );
+            }
+            values.insert(parameter.name().to_string(), pointer);
+            continue;
+        }
         if parameter_is_click_array_ref(parameter) {
             let array_ref = evaluate_fixed_state_array_ref_through_kernel(
                 argument,

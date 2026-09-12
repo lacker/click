@@ -140,6 +140,18 @@ so `ih(tail)` and a complete list that repeats the other parameters are the
 same instance. Each instance carries the theorem's `requires` clauses
 substituted at the arguments given; a `using` block, or the premises the bare
 form plans, must prove exactly those.
+A theorem application's arguments and its `using` premises are written in
+the same scope as a `have` goal at that point of the proof: the goal's own
+binders first, then every proof local, including the bindings a proof
+`match` arm introduced, the names an `unfold ... as` gave its children, a
+`let r = step(...)` result, and a loop binder. The C null pointer constant
+is accepted at a pointer-typed theorem parameter and lowers to that
+type's null value, as it does at a pure function's pointer parameter.
+`instantiate` and `extract` resolve their written propositions the same way.
+See [`theorem_argument_arm_binding.md`](https://github.com/lacker/click/blob/master/mdtests/theorem_argument_arm_binding.md),
+[`theorem_argument_arm_binding_algebraic.md`](https://github.com/lacker/click/blob/master/mdtests/theorem_argument_arm_binding_algebraic.md),
+and [`theorem_argument_null_constant.md`](https://github.com/lacker/click/blob/master/mdtests/theorem_argument_null_constant.md).
+
 Bare `apply(ih(m))` is smart because it plans proofs of the fixed application
 obligations. Its expansion ends in the deterministic simple
 `apply(ih(m)) using { ... }` operation, which checks exactly the listed

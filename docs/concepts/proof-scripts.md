@@ -96,6 +96,13 @@ bindings on each arm's path. It may run at any frontier the proof has reached:
 at unchanged function entry, after executed statements, and inside a loop's
 `preserve` body.
 
+An arm's bindings are in scope in every term the arm writes: `have` goals,
+theorem arguments and `using` premises, `instantiate`, `extract`, `rewrite`,
+and `normalize() using`. A name that a `have` goal can see is a theorem
+argument at the same point; `mdtests/theorem_argument_arm_binding.md` and
+`mdtests/theorem_argument_arm_binding_algebraic.md` pin the pointer, integer,
+and model cases.
+
 <!-- verified-example: mdtests/proof_match_after_c_step.md -->
 ```click
 step();
