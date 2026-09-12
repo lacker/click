@@ -464,6 +464,9 @@ fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTacti
         ProofTactic::ArithmeticUsing(premises) => {
             Some(PostExecutionTactic::ArithmeticUsing(premises.clone()))
         }
+        ProofTactic::ArithmeticCertificate(certificate) => Some(
+            PostExecutionTactic::ArithmeticCertificate(certificate.clone()),
+        ),
         ProofTactic::Rewrite(equality) => Some(PostExecutionTactic::Rewrite(equality.clone())),
         ProofTactic::Simp => Some(PostExecutionTactic::Simp),
         _ => None,

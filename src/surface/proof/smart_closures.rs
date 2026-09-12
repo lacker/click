@@ -264,7 +264,7 @@ fn integer_plan_to_surface_certificate(
                 let surface = integer_surface_scale(source_surface, coefficient)?;
                 let certificate = IntegerCertificateNode::Scale {
                     source: *source,
-                    coefficient: ContractExpression::IntegerLiteral(coefficient.to_string()),
+                    coefficient: surface_signed_integer_literal(coefficient),
                     result: surface.clone(),
                 };
                 (surface, certificate)
@@ -342,14 +342,10 @@ fn integer_surface_ordered_parts(
         ComparisonOperator::GreaterEqual => {
             Some((right.clone(), ComparisonOperator::LessEqual, left.clone()))
         }
-        // Strict inequalities carry a hidden +1 in the checked affine claim;
-        // preserving that source spelling requires a separate constant
-        // normalization path.  Decline them here rather than manufacture a
-        // surface proposition whose claim differs from the kernel node.
-        ComparisonOperator::LessThan
-        | ComparisonOperator::GreaterThan
-        | ComparisonOperator::NotEqual
-        | ComparisonOperator::In => None,
+        ComparisonOperator::LessThan | ComparisonOperator::GreaterThan => {
+            Some((left.clone(), *operator, right.clone()))
+        }
+        ComparisonOperator::NotEqual | ComparisonOperator::In => None,
     }
 }
 
@@ -361,7 +357,7 @@ fn integer_surface_scale(
     if operator == ComparisonOperator::LessEqual && coefficient.is_negative() {
         return None;
     }
-    let coefficient = ContractExpression::IntegerLiteral(coefficient.to_string());
+    let coefficient = surface_signed_integer_literal(coefficient);
     let multiply = |expression| {
         ContractExpression::Multiply(Box::new(coefficient.clone()), Box::new(expression))
     };
@@ -372,19 +368,60 @@ fn integer_surface_scale(
     })
 }
 
+/// Build a parseable source expression for a signed integer without relying
+/// on a negative `IntegerLiteral` token.  In particular, `i32::MIN` must be
+/// represented as `Negate(2147483648)`, since its magnitude is not an i32
+/// literal even though the signed expression is valid.
+fn surface_signed_integer_literal(value: &BigInt) -> ContractExpression {
+    if value.is_negative() {
+        ContractExpression::Negate(Box::new(ContractExpression::IntegerLiteral(
+            value.abs().to_string(),
+        )))
+    } else {
+        ContractExpression::IntegerLiteral(value.to_string())
+    }
+}
+
 fn integer_surface_add(
     left: &ClickProposition,
     right: &ClickProposition,
 ) -> Option<ClickProposition> {
     let (left_left, operator, left_right) = integer_surface_ordered_parts(left)?;
     let (right_left, right_operator, right_right) = integer_surface_ordered_parts(right)?;
-    if operator != right_operator {
-        return None;
-    }
+    let operator = match (operator, right_operator) {
+        (ComparisonOperator::LessEqual, ComparisonOperator::LessEqual) => {
+            ComparisonOperator::LessEqual
+        }
+        (ComparisonOperator::LessThan, _)
+        | (_, ComparisonOperator::LessThan)
+        | (ComparisonOperator::GreaterThan, _)
+        | (_, ComparisonOperator::GreaterThan) => ComparisonOperator::LessThan,
+        _ if operator == right_operator => operator,
+        _ => return None,
+    };
     Some(ClickProposition::Comparison {
         left: ContractExpression::Add(Box::new(left_left), Box::new(right_left)),
         operator,
         right: ContractExpression::Add(Box::new(left_right), Box::new(right_right)),
+    })
+}
+
+/// Keep a normalized zero affine claim in a form that direct lowering does
+/// not constant-fold to an equality.  `0 <= 0` is mathematically the same
+/// claim, but some lowering paths canonicalize that literal proposition as
+/// `0 == 0`, changing the signed relation carried by an Add node.  Reusing an
+/// already lowered child expression gives `e <= e`, whose affine difference
+/// is still exactly zero while preserving the non-strict relation.
+fn integer_surface_zero_claim(
+    left: &ClickProposition,
+    right: &ClickProposition,
+) -> Option<ClickProposition> {
+    let (left_left, _, _) = integer_surface_ordered_parts(left)?;
+    let _ = integer_surface_ordered_parts(right)?;
+    Some(ClickProposition::Comparison {
+        left: left_left.clone(),
+        operator: ComparisonOperator::LessEqual,
+        right: left_left,
     })
 }
 
@@ -440,7 +477,7 @@ fn integer_surface_trivial(claim: &IntegerAffineClaim) -> Option<ClickPropositio
         _ => return None,
     };
     Some(ClickProposition::Comparison {
-        left: ContractExpression::IntegerLiteral(claim.constant.to_string()),
+        left: surface_signed_integer_literal(&claim.constant),
         operator,
         right: ContractExpression::IntegerLiteral("0".into()),
     })
@@ -619,7 +656,45 @@ impl<'a> Proof<'a> {
         term: &crate::kernel::Bitvector32Term,
         candidates: &[&ContractExpression],
     ) -> Option<ContractExpression> {
-        for candidate in candidates {
+        // Unsigned ordering lowers to signed ordering by xoring both sides
+        // with the sign bit.  The transformed bound is not itself present in
+        // source, so reconstruct it from the source uint32 literal while
+        // preserving the typed expression that direct lowering understands.
+        if let Some(value) = term.as_const() {
+            for candidate in candidates {
+                let Some(base) = (match *candidate {
+                    ContractExpression::CFragment(crate::kernel::CExpression::Value(
+                        crate::kernel::CValue::UInt32(crate::kernel::Bitvector32Term::Constant(
+                            base,
+                        )),
+                    )) => Some(base),
+                    _ => None,
+                }) else {
+                    continue;
+                };
+                if base ^ 0x8000_0000 == value {
+                    return Some(ContractExpression::CFragment(
+                        crate::kernel::CExpression::Value(crate::kernel::CValue::Int32(
+                            crate::kernel::Bitvector32Term::Constant(value),
+                        )),
+                    ));
+                }
+            }
+            // Generated interval nodes can introduce a small machine
+            // constant (for example the `+ 1` in a bump function) that has no
+            // separate source occurrence.  It is still source-printable as
+            // an ordinary signed literal, and the certificate checker will
+            // re-lower that literal before accepting the step.
+            if matches!(term, Bitvector32Term::Constant(_)) {
+                return Some(ContractExpression::IntegerLiteral(
+                    i32::from_ne_bytes(value.to_ne_bytes()).to_string(),
+                ));
+            }
+        }
+        // Prefer the most local/int32 source occurrence.  A uint32 cast of
+        // the same variable may lower to the same raw bitvector term, but is
+        // not a valid typed witness for an int32 interval node.
+        for candidate in candidates.iter().rev() {
             if let crate::kernel::Bitvector32Term::Constant(value) = term
                 && let ContractExpression::IntegerLiteral(literal) = *candidate
                 && literal.parse::<u32>().ok() == Some(*value)
@@ -722,12 +797,7 @@ impl<'a> Proof<'a> {
         let mut surfaces: Vec<Option<ClickProposition>> = Vec::with_capacity(plan.nodes.len());
         let claim_surface = |claim: &SignedArithmeticClaim| {
             let value = claim.constant.to_i32()?;
-            let constant = ContractExpression::IntegerLiteral(value.unsigned_abs().to_string());
-            let left = if value < 0 {
-                ContractExpression::Negate(Box::new(constant))
-            } else {
-                constant
-            };
+            let left = surface_signed_integer_literal(&BigInt::from(value));
             (claim.terms.is_empty()).then_some(ClickProposition::Comparison {
                 left,
                 operator: match claim.relation {
@@ -753,11 +823,23 @@ impl<'a> Proof<'a> {
                     left,
                     right,
                     result,
-                } => integer_surface_add(
-                    surfaces.get(*left)?.as_ref()?,
-                    surfaces.get(*right)?.as_ref()?,
-                )
-                .or_else(|| claim_surface(result)),
+                } => {
+                    // Preserve the planner's normalized affine claim
+                    // whenever it has no atoms. Reconstructing it by adding
+                    // the source propositions can leave an equivalent but
+                    // differently grouped expression (for example
+                    // `i < i + 1` for the cancellation claim `0 <= 0`).
+                    let left_surface = surfaces.get(*left)?.as_ref()?;
+                    let right_surface = surfaces.get(*right)?.as_ref()?;
+                    if result.terms.is_empty()
+                        && result.relation == SignedArithmeticRelation::LessEqual
+                    {
+                        integer_surface_zero_claim(left_surface, right_surface)
+                    } else {
+                        claim_surface(result)
+                            .or_else(|| integer_surface_add(left_surface, right_surface))
+                    }
+                }
                 SignedArithmeticNode::EqualityToLessEqual {
                     source,
                     reverse,
@@ -778,7 +860,10 @@ impl<'a> Proof<'a> {
                 .or_else(|| claim_surface(result)),
                 SignedArithmeticNode::Trivial { result } => claim_surface(result),
                 SignedArithmeticNode::IntervalCompare { .. }
-                | SignedArithmeticNode::AffineConclusion { .. } => Some(surface_goal.clone()),
+                | SignedArithmeticNode::AffineConclusion { .. }
+                | SignedArithmeticNode::AffineConclusionWithEvidence { .. } => {
+                    Some(surface_goal.clone())
+                }
                 _ => None,
             };
             surfaces.push(value);
@@ -794,7 +879,7 @@ impl<'a> Proof<'a> {
                     ..
                 } => SignedArithmeticStep::Scale {
                     source: r(*source),
-                    coefficient: ContractExpression::IntegerLiteral(coefficient.to_string()),
+                    coefficient: surface_signed_integer_literal(coefficient),
                     result: result()?,
                 },
                 SignedArithmeticNode::Add { left, right, .. } => SignedArithmeticStep::Add {
@@ -825,6 +910,17 @@ impl<'a> Proof<'a> {
                     lower,
                     upper,
                 } => SignedArithmeticStep::IntervalFromAffine {
+                    source: r(*source),
+                    term: term(machine_term)?,
+                    lower: *lower,
+                    upper: *upper,
+                },
+                SignedArithmeticNode::IntervalFromAffineDirect {
+                    source,
+                    term: machine_term,
+                    lower,
+                    upper,
+                } => SignedArithmeticStep::IntervalFromAffineDirect {
                     source: r(*source),
                     term: term(machine_term)?,
                     lower: *lower,
@@ -967,6 +1063,17 @@ impl<'a> Proof<'a> {
                 } => SignedArithmeticStep::AffineConclusion {
                     source: r(*source),
                     evidence: r(*evidence),
+                    result: surface_goal.clone(),
+                },
+                SignedArithmeticNode::AffineConclusionWithEvidence {
+                    source,
+                    left_evidence,
+                    right_evidence,
+                    ..
+                } => SignedArithmeticStep::AffineConclusionWithEvidence {
+                    source: r(*source),
+                    left_evidence: r(*left_evidence),
+                    right_evidence: r(*right_evidence),
                     result: surface_goal.clone(),
                 },
             };
@@ -1128,6 +1235,11 @@ impl<'a> Proof<'a> {
                 .selected_simp_derivation_with_surfaces(exclude_exact_goal, introduced_surfaces)?;
             anchored_pairs = premise_pairs;
             let premise_pairs = &anchored_pairs;
+            if let Some(extracted) = self.extract_special_conjunct_premises(&derivation)
+                && let Some(closed) = extracted.try_typed_atomic_simp_closure()
+            {
+                return Some(closed);
+            }
             self.check_typed_atomic_simp_candidate(
                 &goal,
                 &derivation,
@@ -1289,12 +1401,12 @@ impl<'a> Proof<'a> {
                 .iter()
                 .map(|(_, surface)| surface.clone())
                 .collect::<Vec<_>>();
-            if let Some(plan) = plan_special_arithmetic_certificate(goal, &kernels)
-                && let Ok(proof) = self.apply_step(ProofStep::ArithmeticCertificate(
-                    special_plan_to_surface_certificate(&plan, &surfaces, surface_goal),
-                ))
-            {
-                return Ok(Some(proof));
+            if let Some(plan) = plan_special_arithmetic_certificate(goal, &kernels) {
+                let certificate =
+                    special_plan_to_surface_certificate(&plan, &surfaces, surface_goal);
+                if let Ok(proof) = self.apply_step(ProofStep::ArithmeticCertificate(certificate)) {
+                    return Ok(Some(proof));
+                }
             }
         }
         // Signed arithmetic is the final fallback. All established
@@ -4130,12 +4242,51 @@ impl<'a> Proof<'a> {
     pub(super) fn try_typed_atomic_simp_closure(&self) -> Option<Self> {
         let (goal, derivation, premise_pairs, fixed_state_application_closes_goal) =
             self.selected_simp_derivation(false)?;
+        // Resource unfolding records the body conjunction as one checked
+        // fact.  Special derivations cite the exact relation leaf, so expose
+        // that leaf through the ordinary checked `extract` transition before
+        // constructing a certificate.  This keeps certificate premises
+        // top-level and preserves the source spelling/snapshot that produced
+        // the resource fact.
+        if let Some(extracted) = self.extract_special_conjunct_premises(&derivation) {
+            return extracted.try_typed_atomic_simp_closure();
+        }
         self.check_typed_atomic_simp_candidate(
             &goal,
             &derivation,
             &premise_pairs,
             fixed_state_application_closes_goal,
         )
+    }
+
+    fn extract_special_conjunct_premises(
+        &self,
+        derivation: &PropositionDerivation,
+    ) -> Option<Self> {
+        let surface_facts = match self.context.as_ref() {
+            ProofContext::Pure(context) => &context.theorem_context.surface_requirements,
+            ProofContext::FixedState(context) => context.surface_propositions,
+            ProofContext::Execution(_) => match self.focused_outcome_data() {
+                Some(data) => &data.surface_propositions,
+                None => &self.execution()?.presentation.surface_propositions,
+            },
+        };
+        let mut proof = self.clone();
+        let mut extracted = false;
+        for premise in derivation.context_premises().iter() {
+            if proof.facts().contains_top_level(premise)
+                || !proof.facts().contains_proper_conjunct(premise)
+            {
+                continue;
+            }
+            // Resolve through the surface map's exact/snapshot-blind indexes;
+            // never materialize or scan the complete proof-fact history.
+            let source = proof.available_surface_fact(surface_facts, None, premise);
+            let source = source?;
+            proof = proof.apply_step(ProofStep::Extract(source)).ok()?;
+            extracted = true;
+        }
+        extracted.then_some(proof)
     }
 
     /// Searches from exactly the Surface premises named by `simp() using`.
@@ -4272,6 +4423,7 @@ impl<'a> Proof<'a> {
         premise_pairs: &[(Proposition, ClickProposition)],
         fixed_state_application_closes_goal: bool,
     ) -> Option<Self> {
+        let surface_goal = self.surface_goal();
         let tactics = recorded_signed_order_pairs(derivation, premise_pairs)
             .and_then(|ordered| {
                 plan_recorded_signed_order_path_for_context(
@@ -4281,8 +4433,10 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| plan_recorded_bitvector_equality_path(goal, derivation, premise_pairs))
-            .or_else(|| plan_recorded_pointer_alignment(goal, derivation, premise_pairs))
-            .or_else(|| plan_recorded_pointer_word(goal, derivation, premise_pairs))
+            .or_else(|| {
+                plan_recorded_pointer_alignment(goal, derivation, premise_pairs, surface_goal?)
+            })
+            .or_else(|| plan_recorded_pointer_word(goal, derivation, premise_pairs, surface_goal?))
             .or_else(|| {
                 let recorded =
                     recorded_load_address_congruence_path_pairs(derivation, premise_pairs)?;
@@ -4565,6 +4719,24 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| {
+                let kernels = premise_pairs
+                    .iter()
+                    .map(|(premise, _)| premise.clone())
+                    .collect::<Vec<_>>();
+                let surface_goal = self.surface_goal()?;
+                let plan = plan_special_arithmetic_certificate(goal, &kernels)?;
+                Some(vec![ProofTactic::ArithmeticCertificate(
+                    special_plan_to_surface_certificate(
+                        &plan,
+                        &premise_pairs
+                            .iter()
+                            .map(|(_, surface)| surface.clone())
+                            .collect::<Vec<_>>(),
+                        surface_goal,
+                    ),
+                )])
+            })
+            .or_else(|| {
                 let finite_premises = premise_pairs
                     .iter()
                     .filter(|(premise, _)| {
@@ -4587,17 +4759,18 @@ impl<'a> Proof<'a> {
                     .iter()
                     .map(|(premise, _)| premise.clone())
                     .collect::<Vec<_>>();
-                crate::kernel::proof::fact_reasoning::check_float_reflexive_comparison(
-                    goal, &kernels,
-                )
-                .then(|| {
-                    vec![ProofTactic::ArithmeticUsing(
-                        finite_premises
+                let surface_goal = self.surface_goal()?;
+                let plan = plan_special_arithmetic_certificate(goal, &kernels)?;
+                Some(vec![ProofTactic::ArithmeticCertificate(
+                    special_plan_to_surface_certificate(
+                        &plan,
+                        &finite_premises
                             .into_iter()
                             .map(|(_, surface)| surface.clone())
-                            .collect(),
-                    )]
-                })
+                            .collect::<Vec<_>>(),
+                        surface_goal,
+                    ),
+                )])
             })?;
         // The planner selects only Surface-expressible explicit operations.
         // Apply those through the same recursive Proof driver used by
@@ -5572,5 +5745,27 @@ fn selected_premise_contains_goal(premise: &Proposition, goal: &Proposition) -> 
                 || selected_premise_contains_goal(right, goal)
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod synthesized_literal_tests {
+    use super::*;
+
+    #[test]
+    fn signed_literal_spelling_handles_int32_minimum_without_overflow() {
+        let minimum = surface_signed_integer_literal(&BigInt::from(i32::MIN));
+        assert!(matches!(
+            minimum,
+            ContractExpression::Negate(inner)
+                if matches!(inner.as_ref(), ContractExpression::IntegerLiteral(value) if value == "2147483648")
+        ));
+
+        let ordinary = surface_signed_integer_literal(&BigInt::from(-17));
+        assert!(matches!(
+            ordinary,
+            ContractExpression::Negate(inner)
+                if matches!(inner.as_ref(), ContractExpression::IntegerLiteral(value) if value == "17")
+        ));
     }
 }

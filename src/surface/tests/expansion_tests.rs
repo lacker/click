@@ -1,5 +1,12 @@
 use super::*;
 
+fn assert_no_legacy_arithmetic_leaves(certificate: &ProofCertificate) {
+    assert!(
+        !certificate.contains_arithmetic_using(),
+        "expanded certificate retained source-only ArithmeticUsing: {certificate:?}"
+    );
+}
+
 #[test]
 fn source_backed_call_requirement_expands_and_reverifies() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -961,6 +968,54 @@ fn deferred_preservation_simp_expands_at_its_original_source_site() {
         expand_c0_tactic_source_at(&source, &c_sources, position.line, position.column).unwrap();
     assert_ne!(source, expanded);
     verify_c0_sources_functions(&expanded, &c_sources, vec!["vector_copy".into()]).unwrap();
+}
+
+#[test]
+fn signed_unsigned_compound_arithmetic_expands_and_rechecks() {
+    let source = r#"
+theorem unsigned_compound(n: int32) {
+    requires 0 <= n + 1;
+    requires n + 1 <= 536870911;
+    ensures ((uint32)(n + 1)) <= 1073741823u32 by {
+        arithmetic() using {
+            0 <= n + 1;
+            n + 1 <= 536870911;
+        }
+    }
+}
+"#;
+    let verified =
+        verify_c0_sources(source, &[]).expect("compound unsigned arithmetic should verify");
+    for theorem in &verified {
+        assert_no_legacy_arithmetic_leaves(
+            &theorem
+                .expanded_proof_certificate()
+                .expect("compound arithmetic should retain an expanded certificate"),
+        );
+    }
+    let expanded = expand_c0_claim_source_by_label(source, &[], "unsigned_compound.ensures_0")
+        .expect("compound unsigned arithmetic should expand to a source certificate");
+    assert!(
+        expanded.contains("arithmetic_certificate signed_int32"),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("interval_from_affine_direct"),
+        "{expanded}"
+    );
+
+    let (result, planning) = crate::surface::proof::count_planning_statement_transitions(|| {
+        verify_c0_sources(&expanded, &[])
+    });
+    result.expect("expanded vector_grow should independently recheck");
+    assert_eq!(
+        planning, 0,
+        "explicit certificate recheck must not plan: {expanded}"
+    );
+
+    let tampered = expanded.replacen("interval_from_affine_direct", "interval_from_affine", 1);
+    verify_c0_sources(&tampered, &[])
+        .expect_err("removing the direct compound-evidence rule must invalidate the proof");
 }
 
 #[test]

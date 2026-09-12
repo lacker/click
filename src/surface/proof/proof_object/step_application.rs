@@ -63,6 +63,21 @@ fn signed_step_result_surface(step: &SignedArithmeticStep) -> Option<&ClickPropo
     }
 }
 
+fn is_positive_predecessor_goal(proposition: &crate::kernel::Proposition) -> bool {
+    let crate::kernel::Proposition::ConditionIs(
+        crate::kernel::ConditionTerm::Bitvector32SignedLessThan(left, right),
+        true,
+    ) = proposition
+    else {
+        return false;
+    };
+    let crate::kernel::Bitvector32Term::Subtract(value, amount) = left.as_ref() else {
+        return false;
+    };
+    signed_atom_matches(value, right)
+        && matches!(amount.as_ref(), crate::kernel::Bitvector32Term::Constant(1))
+}
+
 fn signed_atom_matches(
     left: &crate::kernel::Bitvector32Term,
     right: &crate::kernel::Bitvector32Term,
@@ -214,42 +229,25 @@ fn signed_add_surface_shape(
     right: &crate::kernel::Proposition,
     target: &crate::kernel::Proposition,
 ) -> bool {
-    let (
-        crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(left_left, left_right),
-        left_value,
-    ) = (match left {
-        crate::kernel::Proposition::ConditionIs(condition, value) => (condition, value),
-        _ => return false,
-    })
+    let Some((left_left, left_right, left_strict)) = signed_ordered_surface_parts(left) else {
+        return false;
+    };
+    let Some((right_left, right_right, right_strict)) = signed_ordered_surface_parts(right) else {
+        return false;
+    };
+    let Some((target_left, target_right, target_strict)) = signed_ordered_surface_parts(target)
     else {
         return false;
     };
-    let (
-        crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(right_left, right_right),
-        right_value,
-    ) = (match right {
-        crate::kernel::Proposition::ConditionIs(condition, value) => (condition, value),
-        _ => return false,
-    })
-    else {
-        return false;
-    };
-    let (
-        crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(target_left, target_right),
-        target_value,
-    ) = (match target {
-        crate::kernel::Proposition::ConditionIs(condition, value) => (condition, value),
-        _ => return false,
-    })
-    else {
-        return false;
-    };
-    if !(*left_value && *right_value && *target_value) {
+    if target_strict != (left_strict || right_strict) {
         return false;
     }
     let matches_sum = |target: &crate::kernel::Bitvector32Term,
                        first: &crate::kernel::Bitvector32Term,
                        second: &crate::kernel::Bitvector32Term| {
+        if signed_term_constant_value(second) == Some(0) && signed_atom_matches(target, first) {
+            return true;
+        }
         if let crate::kernel::Bitvector32Term::Add(target_first, target_second) = target {
             return signed_atom_matches(target_first, first)
                 && (signed_atom_matches(target_second, second)
@@ -260,6 +258,16 @@ fn signed_add_surface_shape(
                         ),
                         (Some(left), Some(right)) if left == right
                     ));
+        }
+        if let crate::kernel::Bitvector32Term::Subtract(target_first, target_second) = target {
+            return signed_atom_matches(target_first, first)
+                && matches!(
+                    (
+                        signed_term_constant_value(target_second),
+                        signed_term_constant_value(second)
+                    ),
+                    (Some(left), Some(right)) if left.saturating_neg() == right
+                );
         }
         if let (Some(target), Some(first), Some(second)) = (
             signed_term_constant_value(target),
@@ -273,6 +281,28 @@ fn signed_add_surface_shape(
     let left_matches = matches_sum(target_left, left_left, right_left);
     let right_matches = matches_sum(target_right, left_right, right_right);
     left_matches && right_matches
+}
+
+fn signed_ordered_surface_parts(
+    proposition: &crate::kernel::Proposition,
+) -> Option<(
+    &crate::kernel::Bitvector32Term,
+    &crate::kernel::Bitvector32Term,
+    bool,
+)> {
+    let crate::kernel::Proposition::ConditionIs(condition, value) = proposition else {
+        return None;
+    };
+    let (left, right, strict) = match condition {
+        crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            (left.as_ref(), right.as_ref(), false)
+        }
+        crate::kernel::ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            (left.as_ref(), right.as_ref(), true)
+        }
+        _ => return None,
+    };
+    (*value).then_some((left, right, strict))
 }
 
 fn signed_term_constant_value(term: &crate::kernel::Bitvector32Term) -> Option<i64> {
@@ -316,6 +346,114 @@ fn signed_term_constant_value(term: &crate::kernel::Bitvector32Term) -> Option<i
         }
     }
     values.pop().flatten()
+}
+
+/// Classify the failure of the bounded arithmetic planner without reviving a
+/// whole-goal checker.  The planner intentionally returns only `None`; this
+/// small, iterative shape scan keeps the established diagnostics useful for
+/// unsupported nonlinear products and for goals whose machine operations lack
+/// enough definedness evidence.
+fn signed_goal_shape_flags(goal: &crate::kernel::Proposition) -> Option<(bool, bool)> {
+    let (condition, value) = match goal {
+        crate::kernel::Proposition::ConditionIs(condition, value) => (condition, *value),
+        crate::kernel::Proposition::Not(body) => match body.as_ref() {
+            crate::kernel::Proposition::ConditionIs(condition, value) => (condition, !*value),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let (left, right) = match condition {
+        crate::kernel::ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | crate::kernel::ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | crate::kernel::ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | crate::kernel::ConditionTerm::Bitvector32Equal(left, right)
+            if value =>
+        {
+            (left.as_ref(), right.as_ref())
+        }
+        crate::kernel::ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | crate::kernel::ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | crate::kernel::ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | crate::kernel::ConditionTerm::Bitvector32Equal(left, right) => {
+            (left.as_ref(), right.as_ref())
+        }
+        _ => return None,
+    };
+    let mut machine_operation = false;
+    let mut nonlinear = false;
+    let mut pending = vec![left, right];
+    while let Some(term) = pending.pop() {
+        match term {
+            crate::kernel::Bitvector32Term::Add(left, right)
+            | crate::kernel::Bitvector32Term::Subtract(left, right)
+            | crate::kernel::Bitvector32Term::Multiply(left, right)
+            | crate::kernel::Bitvector32Term::Divide(left, right)
+            | crate::kernel::Bitvector32Term::Remainder(left, right)
+            | crate::kernel::Bitvector32Term::ShiftLeft(left, right)
+            | crate::kernel::Bitvector32Term::ArithmeticShiftRight(left, right)
+            | crate::kernel::Bitvector32Term::LogicalShiftRight(left, right)
+            | crate::kernel::Bitvector32Term::BitwiseAnd(left, right)
+            | crate::kernel::Bitvector32Term::BitwiseOr(left, right)
+            | crate::kernel::Bitvector32Term::BitwiseXor(left, right) => {
+                machine_operation = true;
+                if matches!(term, crate::kernel::Bitvector32Term::Multiply(_, _))
+                    && signed_term_constant_value(left).is_none()
+                    && signed_term_constant_value(right).is_none()
+                {
+                    nonlinear = true;
+                }
+                pending.push(left);
+                pending.push(right);
+            }
+            crate::kernel::Bitvector32Term::BitwiseNot(inner) => {
+                machine_operation = true;
+                pending.push(inner);
+            }
+            crate::kernel::Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+                pending.extend(arguments.iter());
+            }
+            _ => {}
+        }
+    }
+    Some((nonlinear, machine_operation))
+}
+
+/// Unsigned order is lowered to signed order by xoring an int32 value with
+/// the sign bit.  That xor is total; when the planner cannot prove the
+/// resulting bound, the useful failure is missing premises rather than an
+/// overflow/definedness failure for a machine operation.
+fn signed_goal_is_unsigned_signbit_bound(goal: &crate::kernel::Proposition) -> bool {
+    let crate::kernel::Proposition::ConditionIs(condition, true) = goal else {
+        return false;
+    };
+    let (left, right) = match condition {
+        crate::kernel::ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | crate::kernel::ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | crate::kernel::ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            (left.as_ref(), right.as_ref())
+        }
+        _ => return false,
+    };
+    let is_signbit_xor = |term: &crate::kernel::Bitvector32Term| {
+        let crate::kernel::Bitvector32Term::BitwiseXor(first, second) = term else {
+            return false;
+        };
+        matches!(
+            (first.as_ref(), second.as_ref()),
+            (
+                crate::kernel::Bitvector32Term::Constant(value),
+                crate::kernel::Bitvector32Term::Variable(_)
+            )
+            | (
+                crate::kernel::Bitvector32Term::Variable(_),
+                crate::kernel::Bitvector32Term::Constant(value)
+            ) if *value == 0x8000_0000
+        )
+    };
+    is_signbit_xor(left) || is_signbit_xor(right)
 }
 
 fn signed_interval(
@@ -632,7 +770,27 @@ impl<'a> Proof<'a> {
         &self,
         surface_premises: &[ClickProposition],
     ) -> Result<(KernelProofHandle, Option<ArithmeticCertificate>), ClickError> {
-        let premises = surface_premises
+        // A ranking decrease compares the loop-head value with its checked
+        // predecessor.  At the back edge the ordinary spelling of a loop
+        // invariant re-lowers against the post-body state, whereas this
+        // obligation's `n` is the retained iteration-entry value.  Preserve
+        // that distinction in the certificate's source premises; the
+        // snapshot annotation is checked by the normal direct lowering path.
+        let anchored_surface_premises = if self.goal().is_some_and(is_positive_predecessor_goal)
+            && let ProofContext::Execution(context) = self.context.as_ref()
+            && let Some(bundle) = context.constants.invariant_body_context.as_deref()
+            && let Some(selector) = bundle.iteration_entry_selector.as_ref()
+        {
+            surface_premises
+                .iter()
+                .map(|premise| {
+                    surface_at_snapshot(premise, selector).unwrap_or_else(|_| premise.clone())
+                })
+                .collect::<Vec<_>>()
+        } else {
+            surface_premises.to_vec()
+        };
+        let premises = anchored_surface_premises
             .iter()
             .map(|premise| {
                 self.lower_cited_surface_proposition(premise, "`arithmetic using` premise")
@@ -646,7 +804,7 @@ impl<'a> Proof<'a> {
             let pairs = premises
                 .iter()
                 .cloned()
-                .zip(surface_premises.iter().cloned())
+                .zip(anchored_surface_premises.iter().cloned())
                 .collect::<Vec<_>>();
             let certificate = crate::surface::checking::special_plan_to_surface_certificate(
                 &plan,
@@ -664,59 +822,85 @@ impl<'a> Proof<'a> {
         if let Some(goal) = self.goal()
             && let Some(plan) =
                 crate::surface::checking::plan_signed_arithmetic_certificate(goal, &premises)
-            && let Some(surface_goal) = self.surface_goal()
-            && let Some(certificate) = self.signed_plan_to_surface_certificate(
-                &plan,
-                &premises
-                    .iter()
-                    .cloned()
-                    .zip(surface_premises.iter().cloned())
-                    .collect::<Vec<_>>(),
-                surface_goal,
-            )
         {
-            let handle = self.apply_signed_int32_certificate(&certificate)?;
-            return Ok((
-                handle,
-                Some(ArithmeticCertificate {
-                    family: ArithmeticCertificateFamily::SignedInt32(certificate),
-                }),
-            ));
-        }
-        self.state
-            .apply_arithmetic(&premises)
-            .map(|handle| (handle, None))
-            .map_err(|error| match error {
-                PropositionCloseError::NotProposition => {
-                    self.step_error("`arithmetic` requires a proposition goal")
+            let surface_goal = self.surface_goal().cloned().or_else(|| {
+                let context = self.execution_context()?;
+                let execution = self.execution()?;
+                crate::surface::proof::surface_synthesis::synthesize_surface_proposition(
+                    goal,
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                    &execution.core.state,
+                )
+            });
+            if let Some(surface_goal) = surface_goal.as_ref() {
+                let converted = self.signed_plan_to_surface_certificate(
+                    &plan,
+                    &premises
+                        .iter()
+                        .cloned()
+                        .zip(anchored_surface_premises.iter().cloned())
+                        .collect::<Vec<_>>(),
+                    surface_goal,
+                );
+                if let Some(certificate) = converted {
+                    let cited_premise = certificate.nodes.iter().find_map(|node| {
+                        let SignedArithmeticStep::Premise { index, .. } = node else {
+                            return None;
+                        };
+                        Some(*index)
+                    });
+                    let handle =
+                        self.apply_signed_int32_certificate(&certificate)
+                            .map_err(|error| {
+                                if let Some(index) = cited_premise
+                                    && error.message().contains("not exactly available")
+                                {
+                                    return self.step_error(format!(
+                                    "`arithmetic using` premise {index} is not exactly available"
+                                ));
+                                }
+                                error
+                            })?;
+                    return Ok((
+                        handle,
+                        Some(ArithmeticCertificate {
+                            family: ArithmeticCertificateFamily::SignedInt32(certificate),
+                        }),
+                    ));
                 }
-                PropositionCloseError::ArithmeticPremiseUnavailable(index) => self.step_error(
-                    format!("`arithmetic using` premise {index} is not exactly available"),
-                ),
-                PropositionCloseError::Arithmetic(
-                    crate::kernel::proof::fact_reasoning::ArithmeticCheckError::UnsupportedGoal,
-                ) => self.step_error(
+            }
+        }
+        if let Some(goal) = self.goal() {
+            if crate::kernel::proof::signed_arithmetic::signed_arithmetic_claim(goal).is_none() {
+                return Err(self.step_error(
                     "`arithmetic` requires a supported signed int32 comparison or equality goal",
-                ),
-                PropositionCloseError::Arithmetic(
-                    crate::kernel::proof::fact_reasoning::ArithmeticCheckError::UnsupportedPremise(
-                        index,
-                    ),
-                ) => self.step_error(format!(
-                    "`arithmetic using` premise {index} is not a supported signed int32 comparison"
-                )),
-                PropositionCloseError::Arithmetic(
-                    crate::kernel::proof::fact_reasoning::ArithmeticCheckError::GoalMayBeUndefined,
-                ) => self.step_error(
-                    "`arithmetic` cannot establish that every int32 operation in the current goal is defined without overflow from exactly the listed premises",
-                ),
-                PropositionCloseError::Arithmetic(
-                    crate::kernel::proof::fact_reasoning::ArithmeticCheckError::DoesNotFollow,
-                ) => self.step_error(
-                    "the current goal does not follow from exactly the listed arithmetic premises",
-                ),
-                _ => unreachable!("kernel returned an unrelated arithmetic error"),
-            })
+                ));
+            }
+            if let Some((nonlinear, machine_operation)) = signed_goal_shape_flags(goal) {
+                if nonlinear {
+                    return Err(self.step_error(
+                        "`arithmetic` requires a supported signed int32 comparison or equality goal",
+                    ));
+                }
+                if machine_operation && !signed_goal_is_unsigned_signbit_bound(goal) {
+                    return Err(self.step_error(
+                        "`arithmetic` cannot establish that every int32 operation in the current goal is defined without overflow from exactly the listed premises",
+                    ));
+                }
+            }
+            if premises
+                .iter()
+                .all(crate::surface::checking::signed_arithmetic_premise_supported)
+            {
+                return Err(self.step_error(
+                    "current goal does not follow from exactly the listed arithmetic premises (exactly the listed premises were insufficient)",
+                ));
+            }
+        }
+        Err(self.step_error(
+            "`arithmetic` could not construct a checked arithmetic certificate from exactly the listed premises",
+        ))
     }
 
     pub(super) fn apply_arithmetic_certificate(
@@ -795,6 +979,15 @@ impl<'a> Proof<'a> {
                         .collect::<Result<_, _>>()?,
                     result: lower_result(result)?,
                 },
+                SpecialArithmeticNode::PointerWordFromAlignment { alignments, result } => {
+                    KernelNode::PointerWordFromAlignment {
+                        alignments: alignments
+                            .iter()
+                            .map(|i| premise_ref(*i))
+                            .collect::<Result<_, _>>()?,
+                        result: lower_result(result)?,
+                    }
+                }
                 SpecialArithmeticNode::FloatReflexive { finite, result } => {
                     KernelNode::FloatReflexive {
                         finite: premise_ref(*finite)?,
@@ -900,15 +1093,26 @@ impl<'a> Proof<'a> {
                     value as i32 as u32,
                 ));
             }
+            if let Some(value) =
+                signed_constant_expression(expression).and_then(|value| value.to_i32())
+            {
+                return Ok(crate::kernel::Bitvector32Term::Constant(value as u32));
+            }
+            if let ContractExpression::CFragment(crate::kernel::CExpression::Value(
+                crate::kernel::CValue::Int32(crate::kernel::Bitvector32Term::Constant(value)),
+            )) = expression
+            {
+                return Ok(crate::kernel::Bitvector32Term::Constant(*value));
+            }
             let zero = ContractExpression::IntegerLiteral("0".into());
             let surface = ClickProposition::Comparison {
                 left: expression.clone(),
                 operator: ComparisonOperator::Equal,
                 right: zero,
             };
-            let Proposition::ConditionIs(condition, true) = proof
-                .lower_surface_proposition_direct(&surface, "signed_int32 certificate term")?
-            else {
+            let lowered = proof
+                .lower_surface_proposition_direct(&surface, "signed_int32 certificate term")?;
+            let Proposition::ConditionIs(condition, true) = &lowered else {
                 return Err(proof
                     .step_error("signed_int32 certificate term did not lower to a proposition"));
             };
@@ -916,12 +1120,12 @@ impl<'a> Proof<'a> {
                 crate::kernel::ConditionTerm::Bitvector32Equal(left, right)
                     if matches!(right.as_ref(), crate::kernel::Bitvector32Term::Constant(0)) =>
                 {
-                    *left
+                    left.as_ref().clone()
                 }
                 crate::kernel::ConditionTerm::Bitvector32Equal(left, right)
                     if matches!(left.as_ref(), crate::kernel::Bitvector32Term::Constant(0)) =>
                 {
-                    *right
+                    right.as_ref().clone()
                 }
                 _ => {
                     return Err(proof
@@ -1124,6 +1328,17 @@ impl<'a> Proof<'a> {
                     lower: *lower,
                     upper: *upper,
                 },
+                SignedArithmeticStep::IntervalFromAffineDirect {
+                    source,
+                    term,
+                    lower,
+                    upper,
+                } => SignedArithmeticNode::IntervalFromAffineDirect {
+                    source: *source,
+                    term: lower_term(self, term)?,
+                    lower: *lower,
+                    upper: *upper,
+                },
                 SignedArithmeticStep::IntervalAtom { term, lower, upper } => {
                     SignedArithmeticNode::IntervalAtom {
                         carrier: SignedArithmeticCarrier::SignedInt32,
@@ -1254,6 +1469,17 @@ impl<'a> Proof<'a> {
                 } => SignedArithmeticNode::AffineConclusion {
                     source: *source,
                     evidence: *evidence,
+                    result: lower_prop(self, result, "signed_int32 conclusion")?,
+                },
+                SignedArithmeticStep::AffineConclusionWithEvidence {
+                    source,
+                    left_evidence,
+                    right_evidence,
+                    result,
+                } => SignedArithmeticNode::AffineConclusionWithEvidence {
+                    source: *source,
+                    left_evidence: *left_evidence,
+                    right_evidence: *right_evidence,
                     result: lower_prop(self, result, "signed_int32 conclusion")?,
                 },
             };

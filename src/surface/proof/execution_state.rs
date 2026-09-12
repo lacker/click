@@ -1062,6 +1062,11 @@ pub(super) enum PostExecutionTactic {
     /// premises, so it belongs to the same post-execution closer family as
     /// `normalize`.
     ArithmeticUsing(Vec<ClickProposition>),
+    /// A retained checked arithmetic certificate, emitted when expanding a
+    /// smart `arithmetic() using` closer.  This is deliberately a separate
+    /// post-execution operation so rechecking the expansion applies exactly
+    /// the supplied certificate and never invokes a planner.
+    ArithmeticCertificate(ArithmeticCertificate),
     Rewrite(ClickProposition),
     /// Surface-only control structure scheduled after terminal execution.
     /// The arms contain no semantic state: ordered finalization asks the
@@ -1339,6 +1344,7 @@ pub(super) fn post_execution_tactic_timing(
         PostExecutionTactic::Normalize => ("normalize", "simple"),
         PostExecutionTactic::NormalizeUsing(_) => ("normalize", "simple"),
         PostExecutionTactic::ArithmeticUsing(_) => ("arithmetic", "smart"),
+        PostExecutionTactic::ArithmeticCertificate(_) => ("arithmetic_certificate", "simple"),
         PostExecutionTactic::Rewrite(_) => ("rewrite", "simple"),
         PostExecutionTactic::If { .. } => ("if", "control"),
     }

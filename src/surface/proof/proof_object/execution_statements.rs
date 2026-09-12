@@ -38,14 +38,31 @@ pub(in crate::surface::proof) type NamedArithmeticPremise = (Proposition, ClickP
 /// Splits a written contract clause into the conjuncts a source proof would
 /// cite one at a time. The walk is over the written proposition only; it
 /// reads no fact context.
-fn written_conjuncts(surface: &ClickProposition, collected: &mut Vec<ClickProposition>) {
-    match surface {
-        ClickProposition::And(left, right) => {
-            written_conjuncts(left, collected);
-            written_conjuncts(right, collected);
+fn written_conjuncts(
+    surface: &ClickProposition,
+    collected: &mut Vec<ClickProposition>,
+) -> Result<(), ClickError> {
+    const MAX_NODES: usize = 4096;
+    let mut pending = vec![surface];
+    let mut visited = 0usize;
+    while let Some(current) = pending.pop() {
+        visited = visited.saturating_add(1);
+        crate::instrumentation::record_deterministic_work(1);
+        check_verification_deadline()?;
+        if visited > MAX_NODES {
+            return Err(ClickError::new(format!(
+                "written arithmetic premise exceeded structural limit {MAX_NODES}"
+            )));
         }
-        _ => collected.push(surface.clone()),
+        match current {
+            ClickProposition::And(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            _ => collected.push(current.clone()),
+        }
     }
+    Ok(())
 }
 
 impl<'a> Proof<'a> {
@@ -62,47 +79,72 @@ impl<'a> Proof<'a> {
         &self,
         bundle: &InvariantBodyContext,
         requires: &[Requirement],
-    ) -> Vec<NamedArithmeticPremise> {
-        let trivial = Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(true), true);
+    ) -> Result<(Self, Vec<NamedArithmeticPremise>), ClickError> {
         let mut candidates = bundle.loop_head_premises.clone();
         for requirement in requires {
             if let Some(proposition) = requirement.proposition() {
-                written_conjuncts(proposition, &mut candidates);
+                written_conjuncts(proposition, &mut candidates)?;
             }
         }
-        let mut cited = Vec::new();
-        for surface in candidates {
+        // Loop-head invariants are recorded as written, including a
+        // conjunction such as `0 <= i and i <= 100`.  Arithmetic consumes
+        // atomic premises, so materialize only the exact proper conjuncts it
+        // may cite.  Each extraction is an ordinary checked Proof step; the
+        // resulting certificate therefore retains provenance instead of
+        // flattening a fact in the planner's private input.
+        let mut leaves = Vec::new();
+        for candidate in candidates {
+            if matches!(candidate, ClickProposition::And(_, _)) {
+                leaves.extend(
+                    crate::surface::proof::smart_closures::collect_bounded_surface_conjunct_leaves(
+                        &candidate,
+                    )?,
+                );
+            } else {
+                leaves.push(candidate);
+            }
+        }
+        let mut proof = self.clone();
+        for surface in &leaves {
             let Ok(lowered) =
-                self.lower_cited_surface_proposition(&surface, "loop closure premise")
+                proof.lower_cited_surface_proposition(surface, "loop closure conjunct premise")
             else {
                 continue;
             };
-            if !self.facts().exact_available_across_effects(&lowered, &[]) {
+            if !proof.facts().contains_top_level(&lowered)
+                && proof.facts().contains_proper_conjunct(&lowered)
+            {
+                proof = proof.apply_step(ProofStep::Extract(surface.clone()))?;
+            }
+        }
+        let mut cited = Vec::new();
+        let mut cited_identities = std::collections::BTreeSet::new();
+        for surface in leaves {
+            let Ok(lowered) =
+                proof.lower_cited_surface_proposition(&surface, "loop closure premise")
+            else {
+                continue;
+            };
+            if !proof.facts().exact_available_across_effects(&lowered, &[]) {
                 continue;
             }
             // The premise classification is the checker's own: a clause it
             // would reject as unsupported must not be cited, or one unusable
             // premise would lose the whole candidate.
-            if crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(
-                &trivial,
-                std::slice::from_ref(&lowered),
-            )
-            .is_err()
-            {
+            if !crate::surface::checking::signed_arithmetic_premise_supported(&lowered) {
                 continue;
             }
             // Two written spellings of one clause can lower to the same fact
             // here. Cite it once: a repeated premise is checked again for no
             // gain and prints as noise in the expansion.
-            if cited
-                .iter()
-                .any(|(existing, _): &NamedArithmeticPremise| existing == &lowered)
+            if let Some(identity) = crate::kernel::proof::proposition_identity_key(&lowered)
+                && !cited_identities.insert(identity)
             {
                 continue;
             }
             cited.push((lowered, surface));
         }
-        cited
+        Ok((proof, cited))
     }
 
     /// Closes the back-edge bundle by descending its fixed structure.
@@ -222,18 +264,35 @@ impl<'a> Proof<'a> {
                 .iter()
                 .map(|(kernel, _)| kernel.clone())
                 .collect::<Vec<_>>();
-            if crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(goal, &kernels)
-                .is_ok()
-            {
-                let cited = premises
-                    .iter()
-                    .map(|(_, surface)| surface.clone())
-                    .collect::<Vec<_>>();
-                if let Some(closed) =
-                    attempt::candidate_outcome(self.apply_step(ProofStep::ArithmeticUsing(cited)))?
-                {
-                    return Ok(Some(closed));
+            // Ranking members synthesized from a `decreases` expression do
+            // not always retain a source presentation.  Reconstruct this
+            // one leaf from the current execution state so the checked plan
+            // can still be emitted as a source certificate; the kernel goal
+            // remains the authority for the result.
+            let surface_goal = self.surface_goal().cloned().or_else(|| {
+                let context = self.execution_context()?;
+                let execution = self.execution()?;
+                synthesize_surface_proposition(
+                    goal,
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                    &execution.core.state,
+                )
+            });
+            if let Some(plan) =
+                crate::surface::checking::plan_signed_arithmetic_certificate(goal, &kernels)
+                && let Some(surface_goal) = surface_goal.as_ref()
+                && let Some(certificate) =
+                    { self.signed_plan_to_surface_certificate(&plan, premises, surface_goal) }
+                && let Some(closed) = {
+                    let attempt =
+                        self.apply_step(ProofStep::ArithmeticCertificate(ArithmeticCertificate {
+                            family: ArithmeticCertificateFamily::SignedInt32(certificate),
+                        }));
+                    attempt::candidate_outcome(attempt)?
                 }
+            {
+                return Ok(Some(closed));
             }
         }
         self.try_simp_closure()
@@ -639,8 +698,8 @@ impl<'a> Proof<'a> {
         let attempted = match attempted {
             Some(completed) => Some(completed),
             None if body == [ProofTactic::Simp] => {
-                let premises =
-                    root.named_arithmetic_premises(bundle, context.function_block.requires());
+                let (root, premises) =
+                    root.named_arithmetic_premises(bundle, context.function_block.requires())?;
                 match root.plan_invariant_bundle_closure(&premises) {
                     Ok(result) => result,
                     Err(error) => return Err(error.with_search_failures(search.finish())),

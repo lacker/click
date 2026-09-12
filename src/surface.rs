@@ -3168,6 +3168,58 @@ impl ProofCertificate {
         self.steps.iter().map(ProofStep::to_proof_tactic).collect()
     }
 
+    /// Returns whether this certificate contains the source-only arithmetic
+    /// request.  The walk is iterative because certificates can contain
+    /// deeply nested branch, loop, and `have` proofs.
+    fn contains_arithmetic_using(&self) -> bool {
+        let mut pending = self.steps.iter().collect::<Vec<_>>();
+        while let Some(step) = pending.pop() {
+            match step {
+                ProofStep::ArithmeticUsing(_) => return true,
+                ProofStep::Match { arms, .. } | ProofStep::StructuralInduct { arms, .. } => {
+                    for arm in arms {
+                        pending.extend(arm.proof.steps.iter());
+                    }
+                }
+                ProofStep::CloseInvariantsBy(proof)
+                | ProofStep::Have { proof, .. }
+                | ProofStep::Open { proof, .. } => pending.extend(proof.steps.iter()),
+                ProofStep::Both {
+                    left_proof,
+                    right_proof,
+                }
+                | ProofStep::Cases {
+                    left_proof,
+                    right_proof,
+                    ..
+                }
+                | ProofStep::If {
+                    then_proof: left_proof,
+                    else_proof: right_proof,
+                    ..
+                }
+                | ProofStep::Branch {
+                    then_proof: left_proof,
+                    else_proof: right_proof,
+                    ..
+                } => {
+                    pending.extend(left_proof.steps.iter());
+                    pending.extend(right_proof.steps.iter());
+                }
+                ProofStep::Loop(clause) => {
+                    if let Some(proof) = clause.initialize_proof.as_deref() {
+                        pending.extend(proof.steps.iter());
+                    }
+                    if let Some(proof) = clause.preserve_proof.as_deref() {
+                        pending.extend(proof.steps.iter());
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     fn from_validated_proof(proof: &SourceProof) -> Self {
         let SourceProof::Script(tactics) = proof else {
             unreachable!("validated simple proof must be an explicit script")
@@ -4105,6 +4157,12 @@ pub enum SignedArithmeticStep {
         lower: i64,
         upper: i64,
     },
+    IntervalFromAffineDirect {
+        source: usize,
+        term: ContractExpression,
+        lower: i64,
+        upper: i64,
+    },
     IntervalAtom {
         term: ContractExpression,
         lower: i64,
@@ -4179,6 +4237,12 @@ pub enum SignedArithmeticStep {
         evidence: usize,
         result: ClickProposition,
     },
+    AffineConclusionWithEvidence {
+        source: usize,
+        left_evidence: usize,
+        right_evidence: usize,
+        result: ClickProposition,
+    },
 }
 
 impl ArithmeticCertificate {
@@ -4219,6 +4283,10 @@ pub enum SpecialArithmeticNode {
     },
     PointerWordEquality {
         relation: usize,
+        alignments: Vec<usize>,
+        result: ClickProposition,
+    },
+    PointerWordFromAlignment {
         alignments: Vec<usize>,
         result: ClickProposition,
     },

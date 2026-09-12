@@ -2859,10 +2859,14 @@ pub(super) fn finish_ordered_proof<'a>(
                             PostExecutionTactic::Normalize
                             | PostExecutionTactic::NormalizeUsing(_)
                             | PostExecutionTactic::ArithmeticUsing(_)
+                            | PostExecutionTactic::ArithmeticCertificate(_)
                             | PostExecutionTactic::Both(_) => {
                                 let closer_name = match post_tactic {
                                     PostExecutionTactic::Both(_) => "both",
                                     PostExecutionTactic::ArithmeticUsing(_) => "arithmetic",
+                                    PostExecutionTactic::ArithmeticCertificate(_) => {
+                                        "arithmetic_certificate"
+                                    }
                                     _ => "normalize",
                                 };
                                 let normalization_step = match post_tactic {
@@ -2871,6 +2875,9 @@ pub(super) fn finish_ordered_proof<'a>(
                                     }
                                     PostExecutionTactic::ArithmeticUsing(premises) => {
                                         ProofStep::ArithmeticUsing(premises.clone())
+                                    }
+                                    PostExecutionTactic::ArithmeticCertificate(certificate) => {
+                                        ProofStep::ArithmeticCertificate(certificate.clone())
                                     }
                                     _ => ProofStep::Normalize,
                                 };
@@ -3032,11 +3039,66 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 goal,
                                                 Some(surface_goal.clone()),
                                             )?;
-                                        match if let PostExecutionTactic::Both(both) = post_tactic {
+                                        let candidate = if let PostExecutionTactic::Both(both) =
+                                            post_tactic
+                                        {
                                             focused.apply_both_source(both)
+                                        } else if let PostExecutionTactic::ArithmeticUsing(
+                                            surface_premises,
+                                        ) = post_tactic
+                                        {
+                                            let lowered = surface_premises
+                                                .iter()
+                                                .map(|premise| {
+                                                    focused.lower_cited_surface_proposition(
+                                                        premise,
+                                                        "post-execution arithmetic premise",
+                                                    )
+                                                })
+                                                .collect::<Result<Vec<_>, _>>();
+                                            let certificate = lowered.ok().and_then(|kernels| {
+                                                let goal = focused.goal()?;
+                                                let surface_goal = focused.surface_goal()?;
+                                                let pairs = kernels
+                                                    .into_iter()
+                                                    .zip(surface_premises.iter().cloned())
+                                                    .collect::<Vec<_>>();
+                                                let kernel_premises = pairs
+                                                    .iter()
+                                                    .map(|(kernel, _)| kernel.clone())
+                                                    .collect::<Vec<_>>();
+                                                if let Some(plan) = crate::surface::checking::plan_special_arithmetic_certificate(
+                                                    goal,
+                                                    &kernel_premises,
+                                                ) {
+                                                    return Some(crate::surface::checking::special_plan_to_surface_certificate(
+                                                        &plan,
+                                                        surface_premises,
+                                                        surface_goal,
+                                                    ));
+                                                }
+                                                let plan = crate::surface::checking::plan_signed_arithmetic_certificate(
+                                                    goal,
+                                                    &kernel_premises,
+                                                )?;
+                                                focused.signed_plan_to_surface_certificate(
+                                                    &plan, &pairs, surface_goal,
+                                                ).map(|certificate| ArithmeticCertificate {
+                                                    family: ArithmeticCertificateFamily::SignedInt32(certificate),
+                                                })
+                                            });
+                                            match certificate {
+                                                Some(certificate) => focused.apply_step(
+                                                    ProofStep::ArithmeticCertificate(certificate),
+                                                ),
+                                                None => Err(ClickError::new(
+                                                    "post-execution arithmetic certificate could not be constructed",
+                                                )),
+                                            }
                                         } else {
                                             focused.apply_step(normalization_step.clone())
-                                        } {
+                                        };
+                                        match candidate {
                                             Ok(proof) => {
                                                 closed = Some(proof);
                                                 break;

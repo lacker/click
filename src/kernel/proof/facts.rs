@@ -8,7 +8,7 @@ use super::{
 };
 use crate::kernel::*;
 use crate::persistent::{PersistentMap, PersistentSet};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -874,22 +874,30 @@ impl ProofFacts {
             return true;
         }
 
-        let keys = [snapshot_blind_proposition_key(required)];
-        let mut candidates = Vec::new();
-        for key in keys {
-            if let Some(bucket) = self.by_snapshot_blind.get(&key) {
-                for candidate in bucket.iter() {
-                    if !candidates.contains(candidate) {
-                        candidates.push(candidate.clone());
-                    }
-                }
-            }
-        }
-        if candidates.is_empty() {
+        // The snapshot-blind index already bounds candidate selection. Check
+        // each candidate in place rather than cloning a deduplicated Vec:
+        // duplicate entries can only arise from index aliases, and a bridge
+        // succeeds if any one indexed fact supplies it. This keeps the loop
+        // lookup output-sized and avoids an uncharged deep Proposition Eq.
+        let key = snapshot_blind_proposition_key(required);
+        let Some(bucket) = self.by_snapshot_blind.get(&key) else {
             return false;
-        }
-        separation_bridged_fact_is_available(required, &candidates, &self.assumptions, framing)
-            || condition_bridged_fact_is_available(required, &candidates, &self.assumptions)
+        };
+        bucket.iter().any(|candidate| {
+            if crate::instrumentation::deadline_exceeded_with_work(1) {
+                return false;
+            }
+            separation_bridged_fact_is_available(
+                required,
+                std::slice::from_ref(candidate),
+                &self.assumptions,
+                framing,
+            ) || condition_bridged_fact_is_available(
+                required,
+                std::slice::from_ref(candidate),
+                &self.assumptions,
+            )
+        })
     }
 
     pub(crate) fn directly_conflicts_with(&self, fact: &Proposition) -> bool {
@@ -1655,9 +1663,50 @@ fn index_proper_conjuncts(
     let Proposition::And(left, right) = fact else {
         return index;
     };
-    for conjunct in [left.as_ref(), right.as_ref()] {
-        index = index.with_value(conjunct.clone());
-        index = index_proper_conjuncts(index, conjunct);
+    // Walk the conjunction without consuming stack for source depth.  Keep
+    // only subtrees whose depth is bounded before cloning them into the
+    // persistent set: a deep right-nested conjunction otherwise causes the
+    // first clone to recurse through the entire remaining spine.
+    const MAX_INDEXED_CONJUNCT_DEPTH: usize = 64;
+    enum Task<'a> {
+        Visit(&'a Proposition),
+        Finish(&'a Proposition),
+    }
+    let mut depths: HashMap<*const Proposition, usize> = HashMap::new();
+    let mut pending = vec![Task::Visit(left.as_ref()), Task::Visit(right.as_ref())];
+    while let Some(task) = pending.pop() {
+        if crate::instrumentation::deadline_exceeded_with_work(1) {
+            break;
+        }
+        match task {
+            Task::Visit(conjunct) => match conjunct {
+                Proposition::And(left, right) => {
+                    pending.push(Task::Finish(conjunct));
+                    pending.push(Task::Visit(right));
+                    pending.push(Task::Visit(left));
+                }
+                _ => {
+                    depths.insert(conjunct as *const Proposition, 1);
+                    index = index.with_value(conjunct.clone());
+                }
+            },
+            Task::Finish(conjunct) => {
+                let Proposition::And(left, right) = conjunct else {
+                    continue;
+                };
+                let Some(left_depth) = depths.get(&(left.as_ref() as *const Proposition)) else {
+                    break;
+                };
+                let Some(right_depth) = depths.get(&(right.as_ref() as *const Proposition)) else {
+                    break;
+                };
+                let depth = 1usize.saturating_add((*left_depth).max(*right_depth));
+                depths.insert(conjunct as *const Proposition, depth);
+                if depth <= MAX_INDEXED_CONJUNCT_DEPTH {
+                    index = index.with_value(conjunct.clone());
+                }
+            }
+        }
     }
     index
 }
@@ -2506,6 +2555,89 @@ mod integer_equality_fact_index_tests {
         }
         for pair in samples.windows(2) {
             assert!(pair[1] <= pair[0] * 3 + 32, "{samples:?}");
+        }
+    }
+
+    #[test]
+    fn proper_conjunct_index_walks_deep_conjunction_iteratively() {
+        let leaf = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Constant(0)),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        let mut fact = leaf.clone();
+        for _ in 0..10_000 {
+            fact = Proposition::And(Box::new(leaf.clone()), Box::new(fact));
+        }
+        let (indexed, work) = crate::instrumentation::measure_deterministic_work(|| {
+            index_proper_conjuncts(PersistentSet::default(), &fact)
+        });
+        assert!(indexed.contains(&leaf));
+        assert!(work > 0);
+    }
+
+    #[test]
+    fn snapshot_blind_same_bucket_lookup_scales_without_deep_dedup() {
+        let mut samples = Vec::new();
+        for size in [4usize, 16, 64, 128] {
+            let mut memories = Vec::with_capacity(size + 1);
+            let base = CMemory::new().with_block("same-bucket-facts", 8);
+            for value in 0..=size {
+                let memory = base.clone().store(
+                    Pointer {
+                        block: "same-bucket-facts".into(),
+                        offset: PointerOffsetTerm::Constant(0),
+                    },
+                    CValue::Int32(Bitvector32Term::Constant(value as u32)),
+                );
+                memories.push(crate::kernel::intern_c_memory(memory));
+            }
+            let load = |memory: &crate::kernel::SharedCMemory| {
+                Bitvector32Term::MemoryLoad(
+                    memory.clone(),
+                    Box::new(Pointer {
+                        block: "same-bucket-facts".into(),
+                        offset: PointerOffsetTerm::Constant(0),
+                    }),
+                )
+            };
+            let facts = memories[..size]
+                .iter()
+                .map(|memory| {
+                    Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32Equal(
+                            Box::new(load(memory)),
+                            Box::new(Bitvector32Term::Constant(0)),
+                        ),
+                        true,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let required = Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(load(memories.last().unwrap())),
+                    Box::new(Bitvector32Term::Constant(0)),
+                ),
+                true,
+            );
+            let proof_facts = ProofFacts::from_ordered(&facts);
+            let key = snapshot_blind_proposition_key(&required);
+            let bucket_len = proof_facts
+                .by_snapshot_blind
+                .get(&key)
+                .map(PersistentSequence::len)
+                .unwrap_or(0);
+            assert_eq!(bucket_len, size);
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assert!(!proof_facts.exact_available_across_effects(&required, &[]));
+            });
+            samples.push(work);
+        }
+        for pair in samples.windows(2) {
+            assert!(pair[1] >= pair[0]);
+            assert!(pair[1] <= pair[0] * 8 + 32, "{samples:?}");
         }
     }
 }

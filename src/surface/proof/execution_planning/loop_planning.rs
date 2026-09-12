@@ -248,7 +248,13 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
         (prefix_is_explicit && invariants_match)
             .then(|| ProofCertificate::from_proof_tactics(tactics).ok())
             .flatten()
+            .filter(|certificate| !certificate.contains_arithmetic_using())
     });
+    let source_contains_legacy_arithmetic = source_certificate.is_none()
+        && proof
+            .tactics()
+            .and_then(|tactics| ProofCertificate::from_proof_tactics(tactics).ok())
+            .is_some_and(|certificate| certificate.contains_arithmetic_using());
     let (certificate, available) = pure_goal_proof_certificate_gateway_with_checked_result(
         &claim_label,
         || {
@@ -260,6 +266,27 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
             let mut all_invariants_checked = true;
             for (invariant_index, item) in invariant_items.iter().enumerate() {
                 let proposition = item.proposition();
+                // A phase source certificate normally contains one `have`
+                // per invariant and can be checked as a whole.  If one of
+                // those bodies still contains the source-only arithmetic
+                // request, plan that invariant from its own body instead;
+                // passing the entire phase to each per-invariant planner
+                // would duplicate every sibling `have`.
+                let invariant_proof = if source_contains_legacy_arithmetic {
+                    proof
+                        .tactics()
+                        .and_then(|tactics| {
+                            tactics.iter().find_map(|tactic| match tactic {
+                                ProofTactic::Have(have) if have.proposition == *proposition => {
+                                    Some(&have.proof)
+                                }
+                                _ => None,
+                            })
+                        })
+                        .unwrap_or(proof)
+                } else {
+                    proof
+                };
                 let invariant_claim_label =
                     format!("{claim_label} (loop {loop_index} invariant {invariant_index} entry)");
                 let obligation_context =
@@ -287,7 +314,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                 let planned_step = timings_enabled.then(|| {
                     ProofTactic::Have(ProofHave {
                         proposition: proposition.clone(),
-                        proof: proof.clone(),
+                        proof: invariant_proof.clone(),
                     })
                 });
                 let _timing = planned_step.as_ref().and_then(|planned_step| {
@@ -305,7 +332,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                         expansion_capture,
                         &initialize_site,
                         proposition,
-                        proof,
+                        invariant_proof,
                         &invariant_claim_label,
                         invariant_index,
                         &planning_available,

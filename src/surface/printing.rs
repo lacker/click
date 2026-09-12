@@ -722,6 +722,15 @@ fn write_special_arithmetic_certificate(
                     .join(", "),
                 source_click_proposition(result)
             ),
+            SpecialArithmeticNode::PointerWordFromAlignment { alignments, result } => format!(
+                "pointer_word_from_alignment alignments [{}] => {};",
+                alignments
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                source_click_proposition(result)
+            ),
             SpecialArithmeticNode::FloatReflexive { finite, result } => format!(
                 "float_reflexive finite {finite} => {};",
                 source_click_proposition(result)
@@ -800,6 +809,15 @@ fn write_signed_int32_certificate(
                 upper,
             } => format!(
                 "interval_from_affine {source} ({}) ({lower}) ({upper});",
+                describe_contract_expression(term)
+            ),
+            SignedArithmeticStep::IntervalFromAffineDirect {
+                source,
+                term,
+                lower,
+                upper,
+            } => format!(
+                "interval_from_affine_direct {source} ({}) ({lower}) ({upper});",
                 describe_contract_expression(term)
             ),
             SignedArithmeticStep::IntervalAtom { term, lower, upper } => format!(
@@ -906,6 +924,15 @@ fn write_signed_int32_certificate(
                 result,
             } => format!(
                 "affine_conclusion {source} {evidence} => {};",
+                source_click_proposition(result)
+            ),
+            SignedArithmeticStep::AffineConclusionWithEvidence {
+                source,
+                left_evidence,
+                right_evidence,
+                result,
+            } => format!(
+                "affine_conclusion_pair {source} {left_evidence} {right_evidence} => {};",
                 source_click_proposition(result)
             ),
         };

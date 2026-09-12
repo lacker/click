@@ -4794,6 +4794,17 @@ impl Parser {
                         result,
                     });
                 }
+                "pointer_word_from_alignment" | "pointer_word_aligned" => {
+                    self.expect_ident_spelling("alignments")?;
+                    let alignments = self.parse_certificate_index_list("pointer alignment node")?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    nodes.push(SpecialArithmeticNode::PointerWordFromAlignment {
+                        alignments,
+                        result,
+                    });
+                }
                 "float_reflexive" | "float_reflexivity" => {
                     self.expect_ident_spelling("finite")?;
                     let finite = self.expect_index("finite classification node")?;
@@ -4949,6 +4960,19 @@ impl Parser {
                     let upper = self.expect_signed_i64("interval upper bound")?;
                     self.expect(Token::Semicolon)?;
                     SignedArithmeticStep::IntervalFromAffine {
+                        source,
+                        term,
+                        lower,
+                        upper,
+                    }
+                }
+                "interval_from_affine_direct" => {
+                    let source = self.expect_index("affine source")?;
+                    let term = self.parse_contract_expression()?;
+                    let lower = self.expect_signed_i64("interval lower bound")?;
+                    let upper = self.expect_signed_i64("interval upper bound")?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::IntervalFromAffineDirect {
                         source,
                         term,
                         lower,
@@ -5133,6 +5157,20 @@ impl Parser {
                     SignedArithmeticStep::AffineConclusion {
                         source,
                         evidence,
+                        result,
+                    }
+                }
+                "affine_conclusion_pair" => {
+                    let source = self.expect_index("affine source")?;
+                    let left_evidence = self.expect_index("left interval evidence")?;
+                    let right_evidence = self.expect_index("right interval evidence")?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::AffineConclusionWithEvidence {
+                        source,
+                        left_evidence,
+                        right_evidence,
                         result,
                     }
                 }

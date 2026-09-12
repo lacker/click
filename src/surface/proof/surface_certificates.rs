@@ -1413,21 +1413,24 @@ pub(super) fn lower_surface_atomic_derivation(
             ConditionTerm::PointerEqual(_, _) | ConditionTerm::PointerOffsetEqual(_, _),
             true
         )
-    ) && crate::kernel::proof::fact_reasoning::check_pointer_translation_arithmetic(
+    ) && let Some(plan) = crate::surface::checking::plan_special_arithmetic_certificate(
         &lowered_conclusion,
         &premise_pairs
             .iter()
             .map(|(kernel, _)| kernel.clone())
             .collect::<Vec<_>>(),
     ) {
+        let certificate = crate::surface::checking::special_plan_to_surface_certificate(
+            &plan,
+            &premise_pairs
+                .iter()
+                .map(|(_, surface)| surface.clone())
+                .collect::<Vec<_>>(),
+            &conclusion,
+        );
         return Ok((
             conclusion,
-            SourceProof::Script(vec![ProofTactic::ArithmeticUsing(
-                premise_pairs
-                    .iter()
-                    .map(|(_, surface)| surface.clone())
-                    .collect(),
-            )]),
+            SourceProof::Script(vec![ProofTactic::ArithmeticCertificate(certificate)]),
         ));
     }
     // A `rewrite` step substitutes the exact terms of its equality, so its
@@ -2332,10 +2335,25 @@ pub(super) fn lower_restricted_simp_plan(
                     "`simp() using` selected `normalize`, but the goal is not context-free",
                 ));
             }
-            if crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(goal, &[])
-                .is_ok()
+            if let Some(plan) =
+                crate::surface::checking::plan_signed_arithmetic_certificate(goal, &[])
+                && plan.conclusion == 0
+                && matches!(
+                    plan.nodes.as_slice(),
+                    [crate::kernel::proof::signed_arithmetic::SignedArithmeticNode::Trivial { .. }]
+                )
+                && let Some(surface_goal) = surface_goal
             {
-                return Ok(vec![ProofTactic::ArithmeticUsing(Vec::new())]);
+                return Ok(vec![ProofTactic::ArithmeticCertificate(
+                    ArithmeticCertificate {
+                        family: ArithmeticCertificateFamily::SignedInt32(SignedInt32Certificate {
+                            nodes: vec![SignedArithmeticStep::Trivial {
+                                result: surface_goal.clone(),
+                            }],
+                            conclusion: 0,
+                        }),
+                    },
+                )]);
             }
             if crate::kernel::proof::fact_reasoning::normalizes_context_free_leaf(goal) {
                 return Ok(vec![ProofTactic::Normalize]);
@@ -2528,11 +2546,10 @@ fn plan_explicit_signed_antisymmetry(
         signed_nonstrict_parts(kernel)
             .is_some_and(|(a, b)| a == right.as_ref() && b == left.as_ref())
     })?;
-    crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(
+    crate::surface::checking::plan_signed_arithmetic_certificate(
         goal,
         &[forward.0.clone(), reverse.0.clone()],
-    )
-    .ok()?;
+    )?;
     let (goal_left, goal_right) = match &forward.1 {
         ClickProposition::Comparison { left, right, .. } => (left.clone(), right.clone()),
         _ => return None,
@@ -3835,12 +3852,14 @@ pub(super) fn plan_recorded_bitvector_equality_path(
     Some(tactics)
 }
 
-/// A pointer-word equality decision is certified by one `arithmetic using`
-/// step naming every retained fact, or by `normalize` when it used none.
+/// A pointer-word equality decision is certified by a checked special
+/// certificate naming every retained fact, or by `normalize` when it used
+/// none.
 pub(super) fn plan_recorded_pointer_word(
     goal: &Proposition,
     derivation: &PropositionDerivation,
     premise_pairs: &[(Proposition, ClickProposition)],
+    surface_goal: &ClickProposition,
 ) -> Option<Vec<ProofTactic>> {
     let premises = derivation.pointer_word_premises()?;
     if premises.is_empty() {
@@ -3855,22 +3874,41 @@ pub(super) fn plan_recorded_pointer_word(
                 .map(|(_, surface)| surface.clone())
         })
         .collect::<Option<Vec<_>>>()?;
-    Some(vec![ProofTactic::ArithmeticUsing(surfaces)])
+    let kernels = premises.to_vec();
+    let plan = crate::surface::checking::plan_special_arithmetic_certificate(goal, &kernels)?;
+    Some(vec![ProofTactic::ArithmeticCertificate(
+        crate::surface::checking::special_plan_to_surface_certificate(
+            &plan,
+            &surfaces,
+            surface_goal,
+        ),
+    )])
 }
 
-/// A pointer-alignment decision is certified by one `arithmetic using` step
+/// A pointer-alignment decision is certified by a checked special certificate
 /// naming the retained base fact, or as `normalize` when the base is a heap
 /// allocation and the alignment is intrinsic.
 pub(super) fn plan_recorded_pointer_alignment(
     goal: &Proposition,
     derivation: &PropositionDerivation,
     premise_pairs: &[(Proposition, ClickProposition)],
+    surface_goal: &ClickProposition,
 ) -> Option<Vec<ProofTactic>> {
     match derivation.pointer_alignment_premise()? {
         None => normalizes_context_free(goal).then(|| vec![ProofTactic::Normalize]),
         Some(premise) => {
             let (_, surface) = premise_pairs.iter().find(|(kernel, _)| kernel == premise)?;
-            Some(vec![ProofTactic::ArithmeticUsing(vec![surface.clone()])])
+            let plan = crate::surface::checking::plan_special_arithmetic_certificate(
+                goal,
+                std::slice::from_ref(premise),
+            )?;
+            Some(vec![ProofTactic::ArithmeticCertificate(
+                crate::surface::checking::special_plan_to_surface_certificate(
+                    &plan,
+                    std::slice::from_ref(surface),
+                    surface_goal,
+                ),
+            )])
         }
     }
 }

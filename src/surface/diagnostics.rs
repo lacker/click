@@ -1122,7 +1122,10 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 CType::UInt64 => "uint64".to_string(),
                 _ => format!("{target_type:?}"),
             };
-            format!("({spelling})({})", describe_c_expression(expression))
+            // Contract expressions use the `(type) expression` cast syntax.
+            // Wrap the complete cast so it remains a single term when it is
+            // embedded in a generated comparison or another proposition.
+            format!("(({spelling}){})", describe_c_expression(expression))
         }
         CExpression::FloatNegate(expression) => format!("-{}", describe_c_expression(expression)),
         CExpression::FloatClassification {

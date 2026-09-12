@@ -109,7 +109,7 @@ needle = "arithmetic_certificate {"
 
 [[form]]
 id = "arithmetic-certificate-signed-int32"
-path = "mdtests/signed_int32_arithmetic_certificate_surface.md"
+path = "mdtests/signed_int32_certificate_composition.md"
 needle = "arithmetic_certificate signed_int32 {"
 
 [[form]]

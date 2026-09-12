@@ -211,20 +211,26 @@ fn ranking_bundle_rejects_a_missing_or_exchanged_member() {
         .expect_err("a closer nested against the bundle's own order must be rejected");
 }
 
-/// The premise lists of every `arithmetic() using` step printed in `region`,
-/// one entry per cited premise, in printed order.
-fn arithmetic_using_premises(region: &str) -> Vec<Vec<String>> {
+/// The premise lists of every generated signed certificate printed in
+/// `region`, one entry per cited premise, in printed order.
+fn arithmetic_certificate_premises(region: &str) -> Vec<Vec<String>> {
     let mut blocks = Vec::new();
     let mut rest = region;
-    while let Some(start) = rest.find("arithmetic() using {") {
-        rest = &rest[start + "arithmetic() using {".len()..];
+    while let Some(start) = rest.find("arithmetic_certificate signed_int32 {") {
+        rest = &rest[start + "arithmetic_certificate signed_int32 {".len()..];
         let end = rest.find('}').expect("an unterminated premise list");
         blocks.push(
             rest[..end]
-                .split(';')
+                .lines()
                 .map(str::trim)
-                .filter(|premise| !premise.is_empty())
-                .map(str::to_string)
+                .filter(|line| line.starts_with("premise "))
+                .filter_map(|line| line.split_once(": "))
+                .map(|(_, proposition)| {
+                    proposition
+                        .split_once(" => ")
+                        .map(|(source, _)| source.trim_end_matches(';').to_string())
+                        .unwrap_or_else(|| proposition.trim_end_matches(';').to_string())
+                })
                 .collect::<Vec<_>>(),
         );
         rest = &rest[end..];
@@ -235,8 +241,8 @@ fn arithmetic_using_premises(region: &str) -> Vec<Vec<String>> {
 /// A bare `close_invariants()` closes the ranking members the loop's
 /// `decreases` clause adds to the bundle, and the smart success expands into
 /// the explicit operations that produced it: a `both` per bundle member and
-/// one `arithmetic() using` per arithmetic member. The printed source must
-/// reverify through the ordinary entry point.
+/// one checked signed certificate per arithmetic member. The printed source
+/// must reverify through the ordinary entry point without replanning.
 #[test]
 fn smart_ranking_closure_expands_to_explicit_bundle_members() {
     let (click, sources) = loop_fixture("c_decreases_count_up");
@@ -260,16 +266,20 @@ fn smart_ranking_closure_expands_to_explicit_bundle_members() {
         "the expanded closer must split the bundle conjunction: {expanded}"
     );
     assert_eq!(
-        arithmetic_using_premises(closer).len(),
+        arithmetic_certificate_premises(closer).len(),
         2,
-        "both ranking members must be closed by one cited arithmetic step: {expanded}"
+        "both ranking members must be closed by one signed certificate: {expanded}"
     );
-    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+    let (result, planning) = crate::surface::proof::count_planning_statement_transitions(|| {
+        verify_c0_sources(&expanded, &sources)
+    });
+    result.unwrap_or_else(|error| {
         panic!(
             "the expanded count-up proof must reverify: {}\n{expanded}",
             error.message()
         )
     });
+    assert_eq!(planning, 0, "explicit certificates must not replan");
 }
 
 /// A tuple measure's decrease member is a disjunction over pivots, so the
@@ -324,7 +334,7 @@ fn smart_ranking_closure_cites_only_loop_head_and_contract_premises() {
         "n >= 0",
         "n <= 2147483647",
     ];
-    let blocks = arithmetic_using_premises(&expanded[closer..]);
+    let blocks = arithmetic_certificate_premises(&expanded[closer..]);
     assert!(!blocks.is_empty(), "no cited arithmetic step: {expanded}");
     for premises in blocks {
         for premise in premises {
@@ -473,6 +483,32 @@ fn pointer_loop_increment_emits_checked_equality_proof() {
         "{expanded}"
     );
     verify_c0_sources(&expanded, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+}
+
+#[test]
+fn grouped_arithmetic_using_expands_to_checked_certificate() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/c_grouped_contract_arithmetic_closer.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let click = fixture.click_source.unwrap();
+    verify_c0_sources(&click, &sources).unwrap();
+    let expanded = expand_c0_claim_source(&click, &sources, "bump", CProofClaim::Grouped).unwrap();
+    assert!(
+        expanded.contains("arithmetic_certificate signed_int32"),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("arithmetic() using"), "{expanded}");
+    let (result, planning) = crate::surface::proof::count_planning_statement_transitions(|| {
+        verify_c0_sources(&expanded, &sources)
+    });
+    result.unwrap();
+    assert_eq!(planning, 0, "explicit certificate recheck must not plan");
 }
 
 #[test]

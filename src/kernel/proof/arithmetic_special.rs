@@ -88,6 +88,8 @@ fn bitvector_payload(root: &Bitvector32Term) -> Option<usize> {
             | Bitvector32Term::Variable(_) => {}
             Bitvector32Term::Add(left, right)
             | Bitvector32Term::Subtract(left, right)
+            | Bitvector32Term::Float32Binary { left, right, .. }
+            | Bitvector32Term::Float64Binary { left, right, .. }
             | Bitvector32Term::UInt64Add(left, right)
             | Bitvector32Term::UInt64Subtract(left, right)
             | Bitvector32Term::UInt64BitwiseAnd(left, right)
@@ -96,6 +98,13 @@ fn bitvector_payload(root: &Bitvector32Term) -> Option<usize> {
             | Bitvector32Term::BitwiseOr(left, right) => {
                 pending.push(left);
                 pending.push(right);
+            }
+            Bitvector32Term::Float32Negate(value) | Bitvector32Term::Float64Negate(value) => {
+                pending.push(value)
+            }
+            Bitvector32Term::PureFunctionApplication { name, arguments } => {
+                payload = payload.checked_add(name.len())?;
+                pending.extend(arguments.iter());
             }
             Bitvector32Term::PointerAddress(pointer) => {
                 payload = payload.checked_add(pointer_payload(pointer)?)?;
@@ -299,6 +308,45 @@ fn bitvector_equal(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
                 pending.push((left_first, right_first));
                 pending.push((left_second, right_second));
             }
+            (
+                Bitvector32Term::Float32Binary {
+                    operator: left_operator,
+                    left: left_first,
+                    right: left_second,
+                },
+                Bitvector32Term::Float32Binary {
+                    operator: right_operator,
+                    left: right_first,
+                    right: right_second,
+                },
+            )
+            | (
+                Bitvector32Term::Float64Binary {
+                    operator: left_operator,
+                    left: left_first,
+                    right: left_second,
+                },
+                Bitvector32Term::Float64Binary {
+                    operator: right_operator,
+                    left: right_first,
+                    right: right_second,
+                },
+            ) if left_operator == right_operator => {
+                pending.push((left_first, right_first));
+                pending.push((left_second, right_second));
+            }
+            (
+                Bitvector32Term::PureFunctionApplication {
+                    name: left_name,
+                    arguments: left_arguments,
+                },
+                Bitvector32Term::PureFunctionApplication {
+                    name: right_name,
+                    arguments: right_arguments,
+                },
+            ) if left_name == right_name && left_arguments.len() == right_arguments.len() => {
+                pending.extend(left_arguments.iter().zip(right_arguments.iter()));
+            }
             (Bitvector32Term::PointerAddress(left), Bitvector32Term::PointerAddress(right)) => {
                 if !pointer_equal(left, right) {
                     return false;
@@ -466,6 +514,14 @@ pub(crate) enum SpecialArithmeticNode {
         alignments: Vec<usize>,
         result: Proposition,
     },
+    /// Establish a tagged pointer-word equality directly from exact
+    /// alignment facts.  Unlike `PointerWordEquality`, this rule is for a
+    /// word expression produced by the current execution rather than an
+    /// explicitly recorded word-equality relation.
+    PointerWordFromAlignment {
+        alignments: Vec<usize>,
+        result: Proposition,
+    },
     /// Prove a reflexive IEEE comparison from one exact finite classification.
     FloatReflexive { finite: usize, result: Proposition },
 }
@@ -587,6 +643,29 @@ impl SpecialArithmeticCertificate {
                 }
                 Ok(())
             }
+            SpecialArithmeticNode::PointerWordFromAlignment { alignments, result } => {
+                if crate::instrumentation::deadline_exceeded_with_work(
+                    alignments.len().saturating_add(1),
+                ) {
+                    return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
+                }
+                let mut seen = HashSet::new();
+                if alignments.is_empty() || alignments.iter().any(|index| !seen.insert(*index)) {
+                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
+                }
+                let alignment_propositions = alignments
+                    .iter()
+                    .map(|index| {
+                        premises
+                            .get(*index)
+                            .ok_or(SpecialArithmeticCheckError::InvalidPremise(*index))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if !pointer_word_from_alignment(&alignment_propositions, result) {
+                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
+                }
+                Ok(())
+            }
             SpecialArithmeticNode::FloatReflexive { finite, result } => {
                 if crate::instrumentation::deadline_exceeded_with_work(1) {
                     return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
@@ -609,6 +688,7 @@ impl SpecialArithmeticNode {
             Self::PointerTranslation { result, .. }
             | Self::PointerAlignment { result, .. }
             | Self::PointerWordEquality { result, .. }
+            | Self::PointerWordFromAlignment { result, .. }
             | Self::FloatReflexive { result, .. } => result,
         }
     }
@@ -1765,7 +1845,7 @@ fn pointer_word_equality(
         }
         _ => false,
     };
-    if *expected {
+    let structural = if *expected {
         equal
     } else {
         match (
@@ -1782,7 +1862,56 @@ fn pointer_word_equality(
             }
             _ => false,
         }
+    };
+    if structural {
+        return true;
     }
+    // The general citing fallback is only for normalizing a tagged word back
+    // to an address. Direct word-to-word claims stay on the stricter tagged
+    // normal-form path above (and must reject a wrong tag mask).
+    if !matches!(&**goal_left, Bitvector32Term::PointerAddress(_))
+        && !matches!(&**goal_right, Bitvector32Term::PointerAddress(_))
+    {
+        return false;
+    }
+    // A recorded word may contain a symbolic tag expression (for example the
+    // rbtree `word == address(parent) + (word & 1)` shape) that is outside the
+    // compact normal-form recognizer above. Reuse the bounded citing decider,
+    // while requiring it to cite the exact word relation.
+    let mut context = crate::kernel::PureFactContext::new();
+    context = context.assume_proposition(relation.clone());
+    for premise in alignment_premises {
+        context = context.assume_proposition((*premise).clone());
+    }
+    let mut used = crate::kernel::eval::pointer_tags::UsedFacts::new();
+    context.decide_pointer_word_equality_citing(left, right, &mut used) == Some(*expected)
+        && used.complete
+        && used.premises.iter().any(|premise| premise == relation)
+        && !alignment_premises.is_empty()
+}
+
+fn pointer_word_from_alignment(alignment_premises: &[&Proposition], result: &Proposition) -> bool {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(left, right), expected) = result
+    else {
+        return false;
+    };
+    if !charge_bitvector(left) || !charge_bitvector(right) {
+        return false;
+    }
+    let mut context = crate::kernel::PureFactContext::new();
+    for premise in alignment_premises {
+        let Proposition::ConditionIs(condition, true) = premise else {
+            return false;
+        };
+        if checked_pointer_alignment(condition).is_none() {
+            return false;
+        }
+        context = context.assume_proposition((*premise).clone());
+    }
+    let mut used = crate::kernel::eval::pointer_tags::UsedFacts::new();
+    context.decide_pointer_word_equality_citing(left, right, &mut used) == Some(*expected)
+        && used.complete
+        && !alignment_premises.is_empty()
 }
 
 fn float_reflexive(finite: &Proposition, result: &Proposition) -> bool {
@@ -1822,10 +1951,9 @@ fn float_reflexive(finite: &Proposition, result: &Proposition) -> bool {
     if !charge_bitvector(left) || !charge_bitvector(right) {
         return false;
     }
-    if width != finite_width
-        || !bitvector_equal(left, right)
-        || !bitvector_equal(left, finite_expression)
-    {
+    let same_result = bitvector_equal(left, right);
+    let same_finite = bitvector_equal(left, finite_expression);
+    if width != finite_width || !same_result || !same_finite {
         return false;
     }
     let reflexive = matches!(
@@ -2406,9 +2534,97 @@ mod tests {
     }
 
     #[test]
+    fn direct_tagged_word_certificate_uses_only_alignment_evidence() {
+        let next = pointer(PointerOffsetTerm::Constant(0));
+        let address = Bitvector32Term::PointerAddress(Box::new(next.clone()));
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::uint64_equal(
+                Bitvector32Term::uint64_bitwise_or(
+                    Bitvector32Term::uint64_add(
+                        address.clone(),
+                        Bitvector32Term::UInt64Constant(1),
+                    ),
+                    Bitvector32Term::UInt64Constant(2),
+                ),
+                Bitvector32Term::uint64_add(address, Bitvector32Term::UInt64Constant(3)),
+            ),
+            true,
+        );
+        let alignment = Proposition::ConditionIs(ConditionTerm::pointer_aligned(next, 8), true);
+        SpecialArithmeticCertificate {
+            nodes: vec![SpecialArithmeticNode::PointerWordFromAlignment {
+                alignments: vec![0],
+                result: goal.clone(),
+            }],
+            conclusion: 0,
+        }
+        .check(&goal, std::slice::from_ref(&alignment))
+        .unwrap();
+
+        for alignments in [vec![], vec![0, 0], vec![1], vec![2]] {
+            assert!(
+                SpecialArithmeticCertificate {
+                    nodes: vec![SpecialArithmeticNode::PointerWordFromAlignment {
+                        alignments,
+                        result: goal.clone(),
+                    }],
+                    conclusion: 0,
+                }
+                .check(&goal, std::slice::from_ref(&alignment))
+                .is_err(),
+                "malformed alignment references must be rejected"
+            );
+        }
+        assert!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerWordFromAlignment {
+                    alignments: vec![1],
+                    result: goal.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&goal, &[alignment.clone(), goal.clone()])
+            .is_err(),
+            "a word equality is not alignment evidence"
+        );
+
+        let tampered = Proposition::ConditionIs(
+            ConditionTerm::uint64_equal(
+                Bitvector32Term::uint64_bitwise_or(
+                    Bitvector32Term::uint64_add(
+                        Bitvector32Term::PointerAddress(Box::new(pointer(
+                            PointerOffsetTerm::Constant(0),
+                        ))),
+                        Bitvector32Term::UInt64Constant(1),
+                    ),
+                    Bitvector32Term::UInt64Constant(4),
+                ),
+                Bitvector32Term::uint64_add(
+                    Bitvector32Term::PointerAddress(Box::new(pointer(
+                        PointerOffsetTerm::Constant(0),
+                    ))),
+                    Bitvector32Term::UInt64Constant(4),
+                ),
+            ),
+            true,
+        );
+        assert!(matches!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerWordFromAlignment {
+                    alignments: vec![0],
+                    result: tampered.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&tampered, std::slice::from_ref(&alignment)),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        ));
+    }
+
+    #[test]
     fn tagged_word_alignment_index_scales_with_alignment_count() {
-        let pointer = pointer(PointerOffsetTerm::Constant(0));
-        let address = Bitvector32Term::PointerAddress(Box::new(pointer.clone()));
+        let base_pointer = pointer(PointerOffsetTerm::Constant(0));
+        let address = Bitvector32Term::PointerAddress(Box::new(base_pointer.clone()));
         let word = Bitvector32Term::Variable(crate::kernel::Variable(12));
         let relation = Proposition::ConditionIs(
             ConditionTerm::uint64_equal(
@@ -2428,9 +2644,12 @@ mod tests {
             ),
             true,
         );
-        let low_alignment =
-            Proposition::ConditionIs(ConditionTerm::pointer_aligned(pointer.clone(), 2), true);
-        let alignment = Proposition::ConditionIs(ConditionTerm::pointer_aligned(pointer, 8), true);
+        let low_alignment = Proposition::ConditionIs(
+            ConditionTerm::pointer_aligned(base_pointer.clone(), 2),
+            true,
+        );
+        let alignment =
+            Proposition::ConditionIs(ConditionTerm::pointer_aligned(base_pointer, 8), true);
         let mut previous = None;
         for size in [1, 4, 16, 64, 256, 1024] {
             let mut premises = vec![relation.clone()];
@@ -2450,6 +2669,60 @@ mod tests {
             assert!(valid);
             if let Some(previous) = previous {
                 assert!(work <= previous * 4);
+            }
+            previous = Some(work);
+        }
+    }
+
+    #[test]
+    fn direct_tagged_word_checker_does_not_scan_unrelated_alignments() {
+        let base_pointer = pointer(PointerOffsetTerm::Constant(0));
+        let address = Bitvector32Term::PointerAddress(Box::new(base_pointer.clone()));
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::uint64_equal(
+                Bitvector32Term::uint64_bitwise_or(
+                    Bitvector32Term::uint64_add(
+                        address.clone(),
+                        Bitvector32Term::UInt64Constant(1),
+                    ),
+                    Bitvector32Term::UInt64Constant(2),
+                ),
+                Bitvector32Term::uint64_add(address, Bitvector32Term::UInt64Constant(3)),
+            ),
+            true,
+        );
+        let alignment =
+            Proposition::ConditionIs(ConditionTerm::pointer_aligned(base_pointer, 8), true);
+        let mut previous = None;
+        for size in [1, 8, 32, 128, 256] {
+            let mut premises = vec![alignment.clone()];
+            premises.extend((0..size).map(|index| {
+                Proposition::ConditionIs(
+                    ConditionTerm::pointer_aligned(
+                        pointer(PointerOffsetTerm::Variable(crate::kernel::Variable(
+                            1000 + index,
+                        ))),
+                        8,
+                    ),
+                    true,
+                )
+            }));
+            let certificate = SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerWordFromAlignment {
+                    alignments: vec![0],
+                    result: goal.clone(),
+                }],
+                conclusion: 0,
+            };
+            let (valid, work) = crate::instrumentation::measure_deterministic_work(|| {
+                certificate.check(&goal, &premises).is_ok()
+            });
+            assert!(valid);
+            if let Some(previous) = previous {
+                assert!(
+                    work <= previous * 2,
+                    "unrelated alignment work: {work} vs {previous}"
+                );
             }
             previous = Some(work);
         }

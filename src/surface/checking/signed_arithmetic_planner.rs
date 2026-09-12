@@ -16,6 +16,7 @@ use crate::kernel::{Bitvector32Term, ConditionTerm, Proposition};
 use num_bigint::BigInt;
 use num_traits::{One, ToPrimitive, Zero};
 use std::collections::{BTreeMap, HashMap};
+use std::hash::{Hash, Hasher};
 
 const MAX_SELECTED_PREMISES: usize = 64;
 const MAX_NODES: usize = 4096;
@@ -59,6 +60,12 @@ pub(in crate::surface) fn plan_signed_arithmetic_certificate(
             ));
         }
     }
+    if comparison_terms(goal).is_some_and(|(left, right, _)| {
+        !contains_machine_operation(left) && !contains_machine_operation(right)
+    }) && let Some(plan) = plan_affine_from_selected_claims(premises, &claims, &expected)
+    {
+        return Some(plan);
+    }
     if let Some(plan) = plan_affine_one_premise(&claims, &expected) {
         return Some(plan);
     }
@@ -69,6 +76,26 @@ pub(in crate::surface) fn plan_signed_arithmetic_certificate(
         return Some(plan);
     }
     None
+}
+
+fn plan_affine_from_selected_claims(
+    premises: &[Proposition],
+    claims: &[(usize, SignedArithmeticClaim)],
+    expected: &SignedArithmeticClaim,
+) -> Option<SignedArithmeticCertificate> {
+    let mut planner = Planner::new(premises, claims);
+    let conclusion = planner.affine_claim(expected)?;
+    Some(certificate(planner.nodes, conclusion))
+}
+
+/// Classifies one explicitly named premise without trying to prove a goal.
+///
+/// Callers that assemble an exact premise slice must not invoke the planner
+/// with a fabricated goal: a context-free/trivial goal can succeed while the
+/// cited premise is completely unrelated.  Keep this predicate bounded and
+/// syntactic; the actual certificate remains the kernel's authority.
+pub(in crate::surface) fn signed_arithmetic_premise_supported(proposition: &Proposition) -> bool {
+    signed_claim(proposition).is_some_and(|claim| charge_claim_comparison(&claim).is_some())
 }
 
 fn certificate(nodes: Vec<SignedArithmeticNode>, conclusion: usize) -> SignedArithmeticCertificate {
@@ -279,6 +306,29 @@ fn decomposed_affine_difference(
                 pending.push((right, -coefficient.clone()));
                 pending.push((left, coefficient));
             }
+            Bitvector32Term::Multiply(left, right) => {
+                if let Some(value) = left.as_const() {
+                    let value = BigInt::from(value as i32);
+                    let scaled = coefficient.clone() * &value;
+                    charge_bigint_binary_work(&coefficient, &value)?;
+                    pending.push((right, scaled));
+                } else if let Some(value) = right.as_const() {
+                    let value = BigInt::from(value as i32);
+                    let scaled = coefficient.clone() * &value;
+                    charge_bigint_binary_work(&coefficient, &value)?;
+                    pending.push((left, scaled));
+                } else {
+                    let atom = SignedArithmeticAtom::from_term(term)?;
+                    charge_map_update_work(terms.len(), &atom, &coefficient)?;
+                    let previous = terms.get(&atom).cloned().unwrap_or_default();
+                    let updated = previous + coefficient;
+                    if updated.is_zero() {
+                        terms.remove(&atom);
+                    } else {
+                        terms.insert(atom, updated);
+                    }
+                }
+            }
             _ => {
                 let atom = SignedArithmeticAtom::from_term(term)?;
                 charge_map_update_work(terms.len(), &atom, &coefficient)?;
@@ -315,7 +365,7 @@ fn plan_affine_one_premise(
         if source.relation == expected.relation
             && let Some(coefficient) = scale_factor(source, expected)
             && (source.relation == SignedArithmeticRelation::Equal
-                || (coefficient >= BigInt::zero()
+                || (coefficient > BigInt::zero()
                     && (source.relation != SignedArithmeticRelation::Disequal
                         || !coefficient.is_zero())))
         {
@@ -424,27 +474,98 @@ fn plan_machine_affine_goal(
     premises: &[Proposition],
     claims: &[(usize, SignedArithmeticClaim)],
 ) -> Option<SignedArithmeticCertificate> {
-    let operation = affine_operation_term(goal)?;
+    let (left_operation, right_operation) = affine_operation_terms(goal)?;
     let expected = decomposed_signed_claim(goal)?;
     let mut planner = Planner::new(premises, claims);
-    let evidence = planner.build_interval(operation)?;
-    let source = planner.affine_claim(&expected)?;
-    let conclusion = planner.push(SignedArithmeticNode::AffineConclusion {
-        source,
-        evidence,
-        result: goal.clone(),
-    })?;
+    let left_evidence = match left_operation {
+        Some(term) => {
+            // Affine conclusions decompose their operation roots using the
+            // interval evidence.  A direct interval bound treats its root as
+            // an opaque atom, so it cannot be used here without changing the
+            // algebra represented by the conclusion.  Keep direct compound
+            // bounds available to ordinary interval comparisons, but require
+            // recursive operation evidence for this path.
+            let value = planner.build_interval_for_affine(term);
+            Some(value?)
+        }
+        None => None,
+    };
+    let right_evidence = match right_operation {
+        Some(term) => Some(planner.build_interval_for_affine(term)?),
+        None => None,
+    };
+    let source = planner.affine_claim(&expected).or_else(|| {
+        is_trivial(&expected).then(|| {
+            planner.push(SignedArithmeticNode::Trivial {
+                result: expected.clone(),
+            })
+        })?
+    });
+    let source = source?;
+    let conclusion = match (left_evidence, right_evidence) {
+        (Some(left_evidence), Some(right_evidence)) => {
+            planner.push(SignedArithmeticNode::AffineConclusionWithEvidence {
+                source,
+                left_evidence,
+                right_evidence,
+                result: goal.clone(),
+            })?
+        }
+        (Some(evidence), None) | (None, Some(evidence)) => {
+            planner.push(SignedArithmeticNode::AffineConclusion {
+                source,
+                evidence,
+                result: goal.clone(),
+            })?
+        }
+        (None, None) => return None,
+    };
     Some(certificate(planner.nodes, conclusion))
 }
 
-fn affine_operation_term(proposition: &Proposition) -> Option<&Bitvector32Term> {
+fn affine_operation_terms(
+    proposition: &Proposition,
+) -> Option<(Option<&Bitvector32Term>, Option<&Bitvector32Term>)> {
     let (left, right, _) = comparison_terms(proposition)?;
-    [left, right].into_iter().find(|term| {
+    let is_affine_operation = |term: &Bitvector32Term| {
         matches!(
             term,
-            Bitvector32Term::Add(_, _) | Bitvector32Term::Subtract(_, _)
+            Bitvector32Term::Add(_, _)
+                | Bitvector32Term::Subtract(_, _)
+                | Bitvector32Term::Multiply(_, _)
         )
-    })
+    };
+    let left_operation = is_affine_operation(left).then_some(left);
+    let right_operation = is_affine_operation(right).then_some(right);
+    (left_operation.is_some() || right_operation.is_some())
+        .then_some((left_operation, right_operation))
+}
+
+fn contains_machine_operation(root: &Bitvector32Term) -> bool {
+    let mut pending = vec![root];
+    while let Some(term) = pending.pop() {
+        match term {
+            Bitvector32Term::Add(_, _)
+            | Bitvector32Term::Subtract(_, _)
+            | Bitvector32Term::Multiply(_, _)
+            | Bitvector32Term::Divide(_, _)
+            | Bitvector32Term::Remainder(_, _)
+            | Bitvector32Term::ShiftLeft(_, _)
+            | Bitvector32Term::ArithmeticShiftRight(_, _)
+            | Bitvector32Term::LogicalShiftRight(_, _)
+            | Bitvector32Term::BitwiseAnd(_, _)
+            | Bitvector32Term::BitwiseOr(_, _)
+            | Bitvector32Term::BitwiseXor(_, _) => {
+                return true;
+            }
+            Bitvector32Term::BitwiseNot(_) => return true,
+            Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+                pending.extend(arguments.iter());
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn scale_factor(source: &SignedArithmeticClaim, target: &SignedArithmeticClaim) -> Option<BigInt> {
@@ -547,6 +668,50 @@ fn add_affine_claims(
     })
 }
 
+fn subtract_affine_claims(
+    target: &SignedArithmeticClaim,
+    left: &SignedArithmeticClaim,
+) -> Option<SignedArithmeticClaim> {
+    if target.carrier != left.carrier
+        || target.relation != SignedArithmeticRelation::LessEqual
+        || left.relation != SignedArithmeticRelation::LessEqual
+    {
+        return None;
+    }
+    charge_claim_comparison(target)?;
+    charge_claim_comparison(left)?;
+    let mut terms = target.terms.clone();
+    for (atom, coefficient) in &left.terms {
+        charge_map_update_work(terms.len(), atom, coefficient)?;
+        let previous = terms.get(atom).cloned().unwrap_or_default();
+        let updated = previous - coefficient;
+        if updated.is_zero() {
+            terms.remove(atom);
+        } else {
+            terms.insert(atom.clone(), updated);
+        }
+    }
+    charge_bigint_binary_work(&target.constant, &left.constant)?;
+    Some(SignedArithmeticClaim {
+        carrier: target.carrier,
+        relation: SignedArithmeticRelation::LessEqual,
+        terms,
+        constant: &target.constant - &left.constant,
+    })
+}
+
+fn claim_fingerprint(claim: &SignedArithmeticClaim) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::mem::discriminant(&claim.carrier).hash(&mut hasher);
+    std::mem::discriminant(&claim.relation).hash(&mut hasher);
+    for (atom, coefficient) in &claim.terms {
+        atom.hash(&mut hasher);
+        coefficient.hash(&mut hasher);
+    }
+    claim.constant.hash(&mut hasher);
+    hasher.finish()
+}
+
 fn charge_claim_comparison(claim: &SignedArithmeticClaim) -> Option<()> {
     let logarithmic = (usize::BITS - claim.terms.len().saturating_add(1).leading_zeros()) as usize;
     let mut units = claim.terms.len().saturating_add(1);
@@ -602,13 +767,65 @@ fn equality_direction(source: &SignedArithmeticClaim, reverse: bool) -> SignedAr
     }
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct DefinednessKey {
+    operator: u8,
+    left: u64,
+    right: u64,
+}
+
+fn definedness_parts_from_term(
+    term: &Bitvector32Term,
+) -> Option<(u8, &Bitvector32Term, &Bitvector32Term)> {
+    Some(match term {
+        Bitvector32Term::Add(left, right) => (0, left, right),
+        Bitvector32Term::Subtract(left, right) => (1, left, right),
+        Bitvector32Term::Multiply(left, right) => (2, left, right),
+        Bitvector32Term::ShiftLeft(left, right) => (3, left, right),
+        Bitvector32Term::Remainder(left, right) => (4, left, right),
+        _ => return None,
+    })
+}
+
+fn definedness_parts_from_proposition(
+    proposition: &Proposition,
+) -> Option<(u8, &Bitvector32Term, &Bitvector32Term)> {
+    let Proposition::ConditionIs(condition, false) = proposition else {
+        return None;
+    };
+    Some(match condition {
+        ConditionTerm::Bitvector32SignedAddOverflows(left, right) => (0, left, right),
+        ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => (1, left, right),
+        ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => (2, left, right),
+        ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => (3, left, right),
+        ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => (4, left, right),
+        _ => return None,
+    })
+}
+
+#[derive(Clone, Copy)]
+struct BoundCandidate {
+    position: usize,
+    premise: usize,
+    bound: i64,
+}
+
+#[derive(Default)]
+struct BoundCandidates {
+    lower: Option<BoundCandidate>,
+    upper: Option<BoundCandidate>,
+}
+
 struct Planner<'a> {
     premises: &'a [Proposition],
     claims: &'a [(usize, SignedArithmeticClaim)],
     nodes: Vec<SignedArithmeticNode>,
     intervals: Vec<Option<SignedArithmeticInterval>>,
     interval_cache: HashMap<SignedArithmeticAtom, usize>,
-    defined_cache: HashMap<SignedArithmeticAtom, Option<usize>>,
+    defined_cache: HashMap<DefinednessKey, Option<usize>>,
+    definedness_index: Option<HashMap<DefinednessKey, Vec<usize>>>,
+    bound_index: Option<HashMap<SignedArithmeticAtom, BoundCandidates>>,
+    term_hash_cache: HashMap<usize, u64>,
     premise_cache: HashMap<usize, usize>,
 }
 
@@ -621,6 +838,9 @@ impl<'a> Planner<'a> {
             intervals: Vec::new(),
             interval_cache: HashMap::new(),
             defined_cache: HashMap::new(),
+            definedness_index: None,
+            bound_index: None,
+            term_hash_cache: HashMap::new(),
             premise_cache: HashMap::new(),
         }
     }
@@ -671,7 +891,7 @@ impl<'a> Planner<'a> {
             if claim.relation == target.relation
                 && let Some(coefficient) = scale_factor(claim, target)
                 && (claim.relation == SignedArithmeticRelation::Equal
-                    || (coefficient >= BigInt::zero()
+                    || (coefficient > BigInt::zero()
                         && (claim.relation != SignedArithmeticRelation::Disequal
                             || !coefficient.is_zero())))
             {
@@ -685,24 +905,55 @@ impl<'a> Planner<'a> {
                     result: target.clone(),
                 });
             }
+            if claim.relation == SignedArithmeticRelation::LessEqual
+                && target.relation == SignedArithmeticRelation::LessEqual
+                && claim.terms == target.terms
+                && claim.constant >= target.constant
+            {
+                let source = self.premise(*index, claim)?;
+                let weakening = &target.constant - &claim.constant;
+                if weakening.is_zero() {
+                    return Some(source);
+                }
+                let trivial = self.push(SignedArithmeticNode::Trivial {
+                    result: SignedArithmeticClaim {
+                        carrier: SignedArithmeticCarrier::SignedInt32,
+                        relation: SignedArithmeticRelation::LessEqual,
+                        terms: BTreeMap::new(),
+                        constant: weakening,
+                    },
+                })?;
+                return self.push(SignedArithmeticNode::Add {
+                    left: source,
+                    right: trivial,
+                    result: target.clone(),
+                });
+            }
         }
-        let mut attempts = 0usize;
-        for left_position in 0..self.claims.len() {
-            for right_position in (left_position + 1)..self.claims.len() {
-                if attempts >= MAX_SELECTED_PREMISES.saturating_mul(MAX_SELECTED_PREMISES) {
-                    return None;
-                }
-                attempts += 1;
+        // Index claims by a bounded structural fingerprint, then verify only
+        // hash-collision candidates with the exact affine operation.  This
+        // preserves the useful five-premise bound case without a quadratic
+        // pair scan over unrelated facts.
+        let mut index: HashMap<u64, Vec<usize>> = HashMap::new();
+        for (position, (_, claim)) in self.claims.iter().enumerate() {
+            charge_work(1)?;
+            index
+                .entry(claim_fingerprint(claim))
+                .or_default()
+                .push(position);
+        }
+        for (left_index, left) in self.claims.iter() {
+            if left.relation != SignedArithmeticRelation::LessEqual {
+                continue;
+            }
+            let complement = subtract_affine_claims(target, left)?;
+            let Some(right_positions) = index.get(&claim_fingerprint(&complement)) else {
+                continue;
+            };
+            for right_position in right_positions {
                 charge_work(1)?;
-                let (left_index, left) = &self.claims[left_position];
-                let (right_index, right) = &self.claims[right_position];
-                if left.relation != SignedArithmeticRelation::LessEqual
-                    || right.relation != SignedArithmeticRelation::LessEqual
-                {
-                    continue;
-                }
-                let combined = add_affine_claims(left, right)?;
-                if combined != *target {
+                let (right_index, right) = &self.claims[*right_position];
+                if *right_index == *left_index || add_affine_claims(left, right)? != *target {
                     continue;
                 }
                 let left_node = self.premise(*left_index, left)?;
@@ -718,7 +969,7 @@ impl<'a> Planner<'a> {
     }
 
     fn defined(&mut self, term: &Bitvector32Term) -> Option<usize> {
-        let cache_key = SignedArithmeticAtom::from_term(term)?;
+        let cache_key = self.definedness_key_from_term(term)?;
         if let Some(index) = self.defined_cache.get(&cache_key) {
             return index.and_then(|index| {
                 self.push(SignedArithmeticNode::DefinedPremise {
@@ -728,14 +979,16 @@ impl<'a> Planner<'a> {
                 })
             });
         }
-        let mut index = None;
-        for (candidate, proposition) in self.premises.iter().enumerate() {
-            charge_work(1)?;
-            if exact_definedness(proposition, term) {
-                index = Some(candidate);
-                break;
-            }
-        }
+        self.ensure_definedness_index()?;
+        let index = self
+            .definedness_index
+            .as_ref()?
+            .get(&cache_key)
+            .and_then(|candidates| {
+                candidates.iter().copied().find(|candidate| {
+                    charge_work(1).is_some() && exact_definedness(&self.premises[*candidate], term)
+                })
+            });
         self.defined_cache.insert(cache_key, index);
         let index = index?;
         self.push(SignedArithmeticNode::DefinedPremise {
@@ -743,6 +996,202 @@ impl<'a> Planner<'a> {
             carrier: SignedArithmeticCarrier::SignedInt32,
             term: term.clone(),
         })
+    }
+
+    fn definedness_key_from_term(&mut self, term: &Bitvector32Term) -> Option<DefinednessKey> {
+        let (operator, left, right) = definedness_parts_from_term(term)?;
+        Some(DefinednessKey {
+            operator,
+            left: self.term_hash(left)?,
+            right: self.term_hash(right)?,
+        })
+    }
+
+    fn term_hash(&mut self, root: &Bitvector32Term) -> Option<u64> {
+        let root_key = root as *const Bitvector32Term as usize;
+        if let Some(hash) = self.term_hash_cache.get(&root_key) {
+            return Some(*hash);
+        }
+        enum Task<'a> {
+            Visit(&'a Bitvector32Term),
+            Finish(&'a Bitvector32Term),
+        }
+        let mut tasks = vec![Task::Visit(root)];
+        while let Some(task) = tasks.pop() {
+            charge_work(1)?;
+            match task {
+                Task::Visit(term) => {
+                    let key = term as *const Bitvector32Term as usize;
+                    if self.term_hash_cache.contains_key(&key) {
+                        continue;
+                    }
+                    match term {
+                        Bitvector32Term::Constant(_)
+                        | Bitvector32Term::Int64Constant(_)
+                        | Bitvector32Term::UInt64Constant(_)
+                        | Bitvector32Term::Variable(_) => {
+                            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                            std::mem::discriminant(term).hash(&mut hasher);
+                            term.hash(&mut hasher);
+                            self.term_hash_cache.insert(key, hasher.finish());
+                        }
+                        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+                            tasks.push(Task::Finish(term));
+                            tasks.extend(arguments.iter().rev().map(Task::Visit));
+                        }
+                        Bitvector32Term::Add(left, right)
+                        | Bitvector32Term::Subtract(left, right)
+                        | Bitvector32Term::Multiply(left, right)
+                        | Bitvector32Term::Divide(left, right)
+                        | Bitvector32Term::UnsignedDivide(left, right)
+                        | Bitvector32Term::Remainder(left, right)
+                        | Bitvector32Term::UnsignedRemainder(left, right)
+                        | Bitvector32Term::ShiftLeft(left, right)
+                        | Bitvector32Term::ArithmeticShiftRight(left, right)
+                        | Bitvector32Term::LogicalShiftRight(left, right)
+                        | Bitvector32Term::BitwiseAnd(left, right)
+                        | Bitvector32Term::BitwiseOr(left, right)
+                        | Bitvector32Term::BitwiseXor(left, right) => {
+                            tasks.push(Task::Finish(term));
+                            tasks.push(Task::Visit(right));
+                            tasks.push(Task::Visit(left));
+                        }
+                        Bitvector32Term::BitwiseNot(operand)
+                        | Bitvector32Term::Int64From32(operand)
+                        | Bitvector32Term::UInt64From32(operand)
+                        | Bitvector32Term::UInt32From64(operand)
+                        | Bitvector32Term::Int64FromUInt32(operand)
+                        | Bitvector32Term::UInt64FromInt32(operand)
+                        | Bitvector32Term::UInt64FromInt64(operand) => {
+                            tasks.push(Task::Finish(term));
+                            tasks.push(Task::Visit(operand));
+                        }
+                        _ => return None,
+                    }
+                }
+                Task::Finish(term) => {
+                    let key = term as *const Bitvector32Term as usize;
+                    if self.term_hash_cache.contains_key(&key) {
+                        continue;
+                    }
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    std::mem::discriminant(term).hash(&mut hasher);
+                    match term {
+                        Bitvector32Term::PureFunctionApplication { name, arguments } => {
+                            name.hash(&mut hasher);
+                            arguments.len().hash(&mut hasher);
+                            for argument in arguments {
+                                self.term_hash_cache
+                                    .get(&(argument as *const Bitvector32Term as usize))?
+                                    .hash(&mut hasher);
+                            }
+                        }
+                        Bitvector32Term::Add(left, right)
+                        | Bitvector32Term::Subtract(left, right)
+                        | Bitvector32Term::Multiply(left, right)
+                        | Bitvector32Term::Divide(left, right)
+                        | Bitvector32Term::UnsignedDivide(left, right)
+                        | Bitvector32Term::Remainder(left, right)
+                        | Bitvector32Term::UnsignedRemainder(left, right)
+                        | Bitvector32Term::ShiftLeft(left, right)
+                        | Bitvector32Term::ArithmeticShiftRight(left, right)
+                        | Bitvector32Term::LogicalShiftRight(left, right)
+                        | Bitvector32Term::BitwiseAnd(left, right)
+                        | Bitvector32Term::BitwiseOr(left, right)
+                        | Bitvector32Term::BitwiseXor(left, right) => {
+                            self.term_hash_cache
+                                .get(&(left.as_ref() as *const Bitvector32Term as usize))?
+                                .hash(&mut hasher);
+                            self.term_hash_cache
+                                .get(&(right.as_ref() as *const Bitvector32Term as usize))?
+                                .hash(&mut hasher);
+                        }
+                        Bitvector32Term::BitwiseNot(operand)
+                        | Bitvector32Term::Int64From32(operand)
+                        | Bitvector32Term::UInt64From32(operand)
+                        | Bitvector32Term::UInt32From64(operand)
+                        | Bitvector32Term::Int64FromUInt32(operand)
+                        | Bitvector32Term::UInt64FromInt32(operand)
+                        | Bitvector32Term::UInt64FromInt64(operand) => {
+                            self.term_hash_cache
+                                .get(&(operand.as_ref() as *const Bitvector32Term as usize))?
+                                .hash(&mut hasher);
+                        }
+                        _ => return None,
+                    }
+                    self.term_hash_cache.insert(key, hasher.finish());
+                }
+            }
+        }
+        self.term_hash_cache.get(&root_key).copied()
+    }
+
+    fn ensure_definedness_index(&mut self) -> Option<()> {
+        if self.definedness_index.is_some() {
+            return Some(());
+        }
+        let mut index: HashMap<DefinednessKey, Vec<usize>> = HashMap::new();
+        for (candidate, proposition) in self.premises.iter().enumerate() {
+            charge_work(1)?;
+            let Some((operator, left, right)) = definedness_parts_from_proposition(proposition)
+            else {
+                continue;
+            };
+            let key = DefinednessKey {
+                operator,
+                left: self.term_hash(left)?,
+                right: self.term_hash(right)?,
+            };
+            index.entry(key).or_default().push(candidate);
+        }
+        self.definedness_index = Some(index);
+        Some(())
+    }
+
+    fn ensure_bound_index(&mut self) -> Option<()> {
+        if self.bound_index.is_some() {
+            return Some(());
+        }
+        let mut index: HashMap<SignedArithmeticAtom, BoundCandidates> = HashMap::new();
+        for (position, (premise, claim)) in self.claims.iter().enumerate() {
+            charge_work(1)?;
+            if claim.relation != SignedArithmeticRelation::LessEqual || claim.terms.len() != 1 {
+                continue;
+            }
+            let (atom, coefficient) = claim.terms.iter().next()?;
+            charge_work(atom.work().saturating_add(coefficient.bits() as usize + 1))?;
+            let Some(bound) = (if coefficient == &BigInt::from(-1) {
+                claim.constant.to_i64().map(|value| value.max(SIGNED_MIN))
+            } else if coefficient == &BigInt::one() {
+                (-&claim.constant)
+                    .to_i64()
+                    .map(|value| value.min(SIGNED_MAX))
+            } else {
+                None
+            }) else {
+                continue;
+            };
+            let entry = index.entry(atom.clone()).or_default();
+            if coefficient == &BigInt::from(-1)
+                && entry.lower.is_none_or(|candidate| bound > candidate.bound)
+            {
+                entry.lower = Some(BoundCandidate {
+                    position,
+                    premise: *premise,
+                    bound,
+                });
+            } else if coefficient == &BigInt::one()
+                && entry.upper.is_none_or(|candidate| bound < candidate.bound)
+            {
+                entry.upper = Some(BoundCandidate {
+                    position,
+                    premise: *premise,
+                    bound,
+                });
+            }
+        }
+        self.bound_index = Some(index);
+        Some(())
     }
 
     fn interval_atom(&mut self, term: &Bitvector32Term) -> Option<usize> {
@@ -767,34 +1216,28 @@ impl<'a> Planner<'a> {
             self.interval_cache.insert(cache_key, index);
             return Some(index);
         }
-        if !Self::is_safe_interval_atom(term) {
-            return None;
-        }
+        let safe_atom = Self::is_safe_interval_atom(term);
         let atom = SignedArithmeticAtom::from_term(term)?;
-        let mut lower: Option<(usize, SignedArithmeticClaim, i64)> = None;
-        let mut upper: Option<(usize, SignedArithmeticClaim, i64)> = None;
-        for (index, claim) in self.claims {
-            charge_work(1)?;
-            if claim.relation != SignedArithmeticRelation::LessEqual || claim.terms.len() != 1 {
-                continue;
-            }
-            let (claim_atom, coefficient) = claim.terms.iter().next()?;
-            if claim_atom != &atom {
-                continue;
-            }
-            if coefficient == &BigInt::from(-1) {
-                let bound = claim.constant.to_i64()?.max(SIGNED_MIN);
-                if lower.as_ref().is_none_or(|(_, _, old)| bound > *old) {
-                    lower = Some((*index, claim.clone(), bound));
-                }
-            } else if coefficient == &BigInt::one() {
-                let bound = (-&claim.constant).to_i64()?.min(SIGNED_MAX);
-                if upper.as_ref().is_none_or(|(_, _, old)| bound < *old) {
-                    upper = Some((*index, claim.clone(), bound));
-                }
-            }
-        }
+        self.ensure_bound_index()?;
+        let candidates = self.bound_index.as_ref()?.get(&atom);
+        let lower = candidates
+            .and_then(|candidates| candidates.lower)
+            .and_then(|candidate| {
+                self.claims
+                    .get(candidate.position)
+                    .map(|(_, claim)| (candidate.premise, claim.clone(), candidate.bound))
+            });
+        let upper = candidates
+            .and_then(|candidates| candidates.upper)
+            .and_then(|candidate| {
+                self.claims
+                    .get(candidate.position)
+                    .map(|(_, claim)| (candidate.premise, claim.clone(), candidate.bound))
+            });
         if lower.is_none() && upper.is_none() {
+            if !safe_atom {
+                return None;
+            }
             let index = self.push_interval(
                 SignedArithmeticNode::IntervalAtom {
                     carrier: SignedArithmeticCarrier::SignedInt32,
@@ -811,16 +1254,28 @@ impl<'a> Planner<'a> {
             self.interval_cache.insert(cache_key, index);
             return Some(index);
         }
+        let affine_interval_node = |source, lower, upper| {
+            if safe_atom {
+                SignedArithmeticNode::IntervalFromAffine {
+                    source,
+                    term: term.clone(),
+                    lower,
+                    upper,
+                }
+            } else {
+                SignedArithmeticNode::IntervalFromAffineDirect {
+                    source,
+                    term: term.clone(),
+                    lower,
+                    upper,
+                }
+            }
+        };
         let Some((lower_index, lower_claim, lower_bound)) = lower else {
             let (upper_index, upper_claim, upper_bound) = upper?;
             let upper_node = self.premise(upper_index, &upper_claim)?;
             let index = self.push_interval(
-                SignedArithmeticNode::IntervalFromAffine {
-                    source: upper_node,
-                    term: term.clone(),
-                    lower: SIGNED_MIN,
-                    upper: upper_bound,
-                },
+                affine_interval_node(upper_node, SIGNED_MIN, upper_bound),
                 SignedArithmeticInterval {
                     carrier: SignedArithmeticCarrier::SignedInt32,
                     lower: SIGNED_MIN,
@@ -832,12 +1287,7 @@ impl<'a> Planner<'a> {
         };
         let lower_node = self.premise(lower_index, &lower_claim)?;
         let lower_node_index = self.push_interval(
-            SignedArithmeticNode::IntervalFromAffine {
-                source: lower_node,
-                term: term.clone(),
-                lower: lower_bound,
-                upper: SIGNED_MAX,
-            },
+            affine_interval_node(lower_node, lower_bound, SIGNED_MAX),
             SignedArithmeticInterval {
                 carrier: SignedArithmeticCarrier::SignedInt32,
                 lower: lower_bound,
@@ -847,12 +1297,7 @@ impl<'a> Planner<'a> {
         if let Some((upper_index, upper_claim, upper_bound)) = upper {
             let upper_node = self.premise(upper_index, &upper_claim)?;
             let upper_interval = self.push_interval(
-                SignedArithmeticNode::IntervalFromAffine {
-                    source: upper_node,
-                    term: term.clone(),
-                    lower: SIGNED_MIN,
-                    upper: upper_bound,
-                },
+                affine_interval_node(upper_node, SIGNED_MIN, upper_bound),
                 SignedArithmeticInterval {
                     carrier: SignedArithmeticCarrier::SignedInt32,
                     lower: SIGNED_MIN,
@@ -898,32 +1343,62 @@ impl<'a> Planner<'a> {
     }
 
     fn build_interval(&mut self, root: &Bitvector32Term) -> Option<usize> {
+        self.build_interval_with_direct(root, true)
+    }
+
+    fn build_interval_for_affine(&mut self, root: &Bitvector32Term) -> Option<usize> {
+        self.build_interval_with_direct(root, false)
+    }
+
+    fn build_interval_with_direct(
+        &mut self,
+        root: &Bitvector32Term,
+        allow_direct: bool,
+    ) -> Option<usize> {
         enum Task<'a> {
-            Visit(&'a Bitvector32Term),
+            Visit(&'a Bitvector32Term, bool),
             Build(&'a Bitvector32Term),
         }
-        let mut tasks = vec![Task::Visit(root)];
+        let mut tasks = vec![Task::Visit(root, allow_direct)];
         let mut results = Vec::new();
         while let Some(task) = tasks.pop() {
             charge_work(1)?;
             match task {
-                Task::Visit(term) => match term {
+                Task::Visit(term, allow_direct) => match term {
                     Bitvector32Term::Constant(_) => results.push(self.interval_atom(term)?),
                     Bitvector32Term::Add(left, right)
                     | Bitvector32Term::Subtract(left, right)
                     | Bitvector32Term::Multiply(left, right) => {
+                        if allow_direct && let Some(index) = self.interval_atom(term) {
+                            results.push(index);
+                            continue;
+                        }
                         tasks.push(Task::Build(term));
-                        tasks.push(Task::Visit(right));
-                        tasks.push(Task::Visit(left));
+                        // A direct bound may be the only evidence for a child
+                        // operation in an interval comparison.  It stops the
+                        // traversal at that child, so direct payloads are
+                        // disjoint rather than repeated along one path.
+                        tasks.push(Task::Visit(right, allow_direct));
+                        tasks.push(Task::Visit(left, allow_direct));
                     }
                     Bitvector32Term::Remainder(operand, divisor)
                     | Bitvector32Term::ShiftLeft(operand, divisor)
-                    | Bitvector32Term::ArithmeticShiftRight(operand, divisor)
-                    | Bitvector32Term::BitwiseAnd(operand, divisor)
-                    | Bitvector32Term::BitwiseXor(operand, divisor) => {
+                    | Bitvector32Term::ArithmeticShiftRight(operand, divisor) => {
                         divisor.as_const()?;
                         tasks.push(Task::Build(term));
-                        tasks.push(Task::Visit(operand));
+                        tasks.push(Task::Visit(operand, allow_direct));
+                    }
+                    Bitvector32Term::BitwiseAnd(left, right)
+                    | Bitvector32Term::BitwiseXor(left, right) => {
+                        let (operand, _) = if right.as_const().is_some() {
+                            (left, right)
+                        } else if left.as_const().is_some() {
+                            (right, left)
+                        } else {
+                            return None;
+                        };
+                        tasks.push(Task::Build(term));
+                        tasks.push(Task::Visit(operand, allow_direct));
                     }
                     _ => results.push(self.interval_atom(term)?),
                 },
@@ -946,13 +1421,13 @@ impl<'a> Planner<'a> {
     fn build_operation(
         &mut self,
         term: &Bitvector32Term,
-        left: Option<usize>,
-        right: Option<usize>,
+        left_index: Option<usize>,
+        right_index: Option<usize>,
     ) -> Option<usize> {
         match term {
             Bitvector32Term::Add(_, _) => {
-                let left = left?;
-                let right = right?;
+                let left = left_index?;
+                let right = right_index?;
                 let l = self.interval_at(left)?;
                 let r = self.interval_at(right)?;
                 let lower = l.lower.checked_add(r.lower)?;
@@ -986,9 +1461,8 @@ impl<'a> Planner<'a> {
                 None
             }
             Bitvector32Term::Subtract(_, _) => {
-                let left = left?;
-                let right = right?;
-                let defined = self.defined(term)?;
+                let left = left_index?;
+                let right = right_index?;
                 let l = self.interval_at(left)?;
                 let r = self.interval_at(right)?;
                 let lower = l.lower.checked_sub(r.upper)?;
@@ -999,6 +1473,7 @@ impl<'a> Planner<'a> {
                     lower,
                     upper,
                 };
+                let defined = self.defined(term).unwrap_or(left);
                 self.push_interval(
                     SignedArithmeticNode::IntervalSubtract {
                         left,
@@ -1010,9 +1485,8 @@ impl<'a> Planner<'a> {
                 )
             }
             Bitvector32Term::Multiply(_, _) => {
-                let left = left?;
-                let right = right?;
-                let defined = self.defined(term)?;
+                let left = left_index?;
+                let right = right_index?;
                 let l = self.interval_at(left)?;
                 let r = self.interval_at(right)?;
                 let values = [
@@ -1029,6 +1503,7 @@ impl<'a> Planner<'a> {
                     lower: lower as i64,
                     upper: upper as i64,
                 };
+                let defined = self.defined(term).unwrap_or(left);
                 self.push_interval(
                     SignedArithmeticNode::IntervalMultiply {
                         left,
@@ -1040,13 +1515,14 @@ impl<'a> Planner<'a> {
                 )
             }
             Bitvector32Term::Remainder(_, divisor) => {
-                let operand = right?;
+                let operand = right_index?;
                 let divisor = divisor.as_const()?.to_i32()?;
                 if divisor == 0 {
                     return None;
                 }
-                let defined = self.defined(term)?;
                 let op = self.interval_at(operand)?;
+                let bounded = divisor != -1 || !(op.lower <= SIGNED_MIN && op.upper >= SIGNED_MIN);
+                let defined = self.defined(term).or_else(|| bounded.then_some(operand))?;
                 let magnitude = i64::from(divisor).abs().saturating_sub(1);
                 let (lower, upper) = if op.lower >= 0 {
                     (0, magnitude)
@@ -1071,12 +1547,11 @@ impl<'a> Planner<'a> {
                 )
             }
             Bitvector32Term::ShiftLeft(_, shift) => {
-                let operand = right?;
+                let operand = right_index?;
                 let shift = shift.as_const()?.to_i32()?;
                 if !(0..32).contains(&shift) {
                     return None;
                 }
-                let defined = self.defined(term)?;
                 let op = self.interval_at(operand)?;
                 if op.lower < 0 {
                     return None;
@@ -1090,6 +1565,7 @@ impl<'a> Planner<'a> {
                     lower: lower as i64,
                     upper: upper as i64,
                 };
+                let defined = self.defined(term).unwrap_or(operand);
                 self.push_interval(
                     SignedArithmeticNode::IntervalShiftLeft {
                         operand,
@@ -1101,7 +1577,7 @@ impl<'a> Planner<'a> {
                 )
             }
             Bitvector32Term::ArithmeticShiftRight(_, shift) => {
-                let operand = right?;
+                let operand = right_index?;
                 let shift = shift.as_const()?.to_i32()?;
                 if !(0..32).contains(&shift) {
                     return None;
@@ -1121,9 +1597,9 @@ impl<'a> Planner<'a> {
                     interval,
                 )
             }
-            Bitvector32Term::BitwiseAnd(_, mask) => {
-                let operand = right?;
-                let mask = mask.as_const()?;
+            Bitvector32Term::BitwiseAnd(left, right) => {
+                let operand = right_index?;
+                let mask = left.as_const().or_else(|| right.as_const())?;
                 if mask > i32::MAX as u32 {
                     return None;
                 }
@@ -1141,8 +1617,15 @@ impl<'a> Planner<'a> {
                     interval,
                 )
             }
-            Bitvector32Term::BitwiseXor(_, sign_bit) => {
-                let operand = right?;
+            Bitvector32Term::BitwiseXor(left, right) => {
+                let operand = right_index?;
+                let (_operand_term, sign_bit) = if left.as_const() == Some(0x8000_0000) {
+                    (right, left)
+                } else if right.as_const() == Some(0x8000_0000) {
+                    (left, right)
+                } else {
+                    return None;
+                };
                 if sign_bit.as_const()? != 0x8000_0000 {
                     return None;
                 }
@@ -1221,7 +1704,9 @@ fn plan_interval_goal(
     let result = SignedArithmeticComparison::from_comparison(comparison);
     let left_interval = planner.interval_at(left_node)?;
     let right_interval = planner.interval_at(right_node)?;
-    if !interval_proves(&left_interval, &right_interval, comparison) {
+    if !interval_proves(&left_interval, &right_interval, comparison)
+        && !term_interval_proves(left, right, comparison, &left_interval)
+    {
         return None;
     }
     let conclusion = planner.push(SignedArithmeticNode::IntervalCompare {
@@ -1231,6 +1716,21 @@ fn plan_interval_goal(
         result: goal.clone(),
     })?;
     Some(certificate(planner.nodes, conclusion))
+}
+
+fn term_interval_proves(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    comparison: Comparison,
+    left_interval: &SignedArithmeticInterval,
+) -> bool {
+    if !matches!(comparison, Comparison::LessEqual) || left_interval.lower < 0 {
+        return false;
+    }
+    let Bitvector32Term::ArithmeticShiftRight(operand, shift) = left else {
+        return false;
+    };
+    terms_equal(operand, right) && shift.as_const().is_some_and(|value| value <= 31)
 }
 
 fn comparison_terms(
@@ -1335,6 +1835,92 @@ mod tests {
         plan.check(goal, premises)
             .expect("independent checker should accept planner output");
         plan
+    }
+
+    #[test]
+    fn two_sided_compound_affine_evidence_scales_with_shared_depth() {
+        let mut work = Vec::new();
+        for depth in [2usize, 4, 8, 16] {
+            let mut left_base = var(1);
+            let mut right_base = var(2);
+            for _ in 0..depth {
+                left_base = Bitvector32Term::Add(Box::new(left_base), Box::new(constant(0)));
+                right_base = Bitvector32Term::Add(Box::new(right_base), Box::new(constant(0)));
+            }
+            let left = Bitvector32Term::Add(Box::new(left_base), Box::new(constant(1)));
+            let right = Bitvector32Term::Add(Box::new(right_base), Box::new(constant(1)));
+            let goal = le(left, right);
+            let premises = vec![
+                le(var(1), var(2)),
+                le(constant(0), var(1)),
+                le(var(1), constant(100)),
+                le(constant(0), var(2)),
+                le(var(2), constant(100)),
+            ];
+            let (plan, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                let plan = check_plan(&goal, &premises);
+                assert!(plan.nodes.iter().any(|node| matches!(
+                    node,
+                    SignedArithmeticNode::AffineConclusionWithEvidence { .. }
+                )));
+                plan
+            });
+            assert!(!plan.nodes.is_empty());
+            work.push(measured);
+        }
+        assert!(work.windows(2).all(|pair| pair[1] > pair[0]), "{work:?}");
+        assert!(
+            work.windows(2).all(|pair| pair[1] <= 4 * pair[0] + 64),
+            "two-sided evidence should have bounded scaling: {work:?}"
+        );
+    }
+
+    #[test]
+    fn predecessor_is_less_than_nonnegative_operand() {
+        let n = var(90);
+        let goal = lt(
+            Bitvector32Term::Subtract(Box::new(n.clone()), Box::new(constant(1))),
+            n.clone(),
+        );
+        let plan = check_plan(&goal, &[le(constant(0), n)]);
+        assert!(plan.nodes.iter().any(|node| matches!(
+            node,
+            SignedArithmeticNode::AffineConclusion { .. }
+                | SignedArithmeticNode::AffineConclusionWithEvidence { .. }
+        )));
+    }
+
+    #[test]
+    fn predecessor_with_derived_leaf_and_extra_bounds() {
+        let n = var(90);
+        let predecessor = Bitvector32Term::Subtract(Box::new(n.clone()), Box::new(constant(1)));
+        let goal = lt(predecessor.clone(), n.clone());
+        let premises = vec![
+            le(constant(0), predecessor),
+            le(constant(0), n.clone()),
+            lt(constant(0), n),
+        ];
+        let plan = plan_signed_arithmetic_certificate(&goal, &premises);
+        assert!(plan.is_some(), "{plan:?}");
+        plan.expect("plan").check(&goal, &premises).expect("check");
+    }
+
+    #[test]
+    fn predecessor_with_greater_equal_bound() {
+        let n = var(90);
+        let predecessor = Bitvector32Term::Subtract(Box::new(n.clone()), Box::new(constant(1)));
+        let goal = lt(predecessor.clone(), n.clone());
+        let ge = proposition(
+            ConditionTerm::Bitvector32SignedGreaterEqual(
+                Box::new(n.clone()),
+                Box::new(constant(0)),
+            ),
+            true,
+        );
+        let premises = vec![le(constant(0), predecessor), ge];
+        let plan = plan_signed_arithmetic_certificate(&goal, &premises);
+        assert!(plan.is_some(), "{plan:?}");
+        plan.expect("plan").check(&goal, &premises).expect("check");
     }
 
     #[test]
@@ -1603,6 +2189,12 @@ mod tests {
             measurements.windows(2).all(|pair| pair[1] > pair[0]),
             "scale-factor BigInt work must scale: {measurements:?}"
         );
+        assert!(
+            measurements
+                .windows(2)
+                .all(|pair| pair[1] <= 8 * pair[0] + 64),
+            "scale-factor work should have bounded scaling: {measurements:?}"
+        );
     }
 
     #[test]
@@ -1722,5 +2314,117 @@ mod tests {
         let final_goal = le(final_in_range, constant(i32::MAX));
         let bounds = [le(constant(0), x.clone()), le(x, constant(i32::MAX))];
         assert!(plan_signed_arithmetic_certificate(&final_goal, &bounds).is_none());
+    }
+
+    #[test]
+    fn deep_affine_plans_have_bounded_work_and_node_growth() {
+        let mut measurements = Vec::new();
+        for depth in [4usize, 8, 16, 32] {
+            let x = var(71);
+            let mut term = x.clone();
+            for _ in 0..depth {
+                term = Bitvector32Term::Add(Box::new(term), Box::new(x.clone()));
+            }
+            let goal = le(term, constant(depth as i32 + 1));
+            let premises = [le(constant(0), x.clone()), le(x, constant(1))];
+            let (plan, work) =
+                crate::instrumentation::measure_deterministic_work(|| check_plan(&goal, &premises));
+            assert!(
+                plan.nodes.len() <= 12 * depth + 32,
+                "certificate node count grew beyond the expression: {} at depth {depth}",
+                plan.nodes.len()
+            );
+            measurements.push(work);
+        }
+        assert!(
+            measurements
+                .windows(2)
+                .all(|pair| pair[1] <= 4 * pair[0] + 128),
+            "deep affine planning should have bounded scaling: {measurements:?}"
+        );
+    }
+
+    #[test]
+    fn indexed_operation_lookup_scales_with_deep_terms_and_unrelated_facts() {
+        let mut measurements = Vec::new();
+        for (depth, unrelated) in [(8usize, 4usize), (16, 8), (32, 16), (64, 32)] {
+            let x = var(72);
+            let mut term = x.clone();
+            for _ in 0..depth {
+                term = Bitvector32Term::Add(Box::new(term), Box::new(x.clone()));
+            }
+            let goal = le(term, constant(depth as i32 + 1));
+            let mut premises = vec![le(constant(0), x.clone()), le(x, constant(1))];
+            premises
+                .extend((0..unrelated).map(|index| le(var(10_000 + index as u64), constant(0))));
+            let (plan, work) =
+                crate::instrumentation::measure_deterministic_work(|| check_plan(&goal, &premises));
+            assert!(plan.nodes.len() <= 12 * depth + 32);
+            measurements.push(work);
+        }
+        assert!(
+            measurements
+                .windows(2)
+                .all(|pair| pair[1] <= 3 * pair[0] + 256),
+            "indexed operation lookup should avoid depth-by-fact rescans: {measurements:?}"
+        );
+    }
+
+    #[test]
+    fn nested_affine_bounds_have_linear_certificate_size() {
+        for depth in [4usize, 8, 16, 32] {
+            let x = var(73);
+            let mut term = x.clone();
+            let mut premises = vec![le(constant(0), x.clone()), le(x, constant(1))];
+            for index in 0..depth {
+                term = Bitvector32Term::Add(Box::new(term), Box::new(constant(1)));
+                if index + 1 < depth {
+                    premises.push(le(term.clone(), constant(index as i32 + 2)));
+                }
+            }
+            let goal_term = Bitvector32Term::BitwiseAnd(Box::new(term), Box::new(constant(255)));
+            let goal = le(goal_term, constant(255));
+            let plan = plan_signed_arithmetic_certificate(&goal, &premises)
+                .unwrap_or_else(|| panic!("no plan at depth {depth}"));
+            plan.check(&goal, &premises)
+                .expect("compact plan must check");
+            let direct_nodes = plan
+                .nodes
+                .iter()
+                .filter(|node| {
+                    matches!(node, SignedArithmeticNode::IntervalFromAffineDirect { .. })
+                })
+                .count();
+            assert!(
+                direct_nodes <= 1,
+                "a nested chain needs one direct root at most"
+            );
+            assert!(plan.nodes.len() <= 12 * depth + 32);
+        }
+    }
+
+    #[test]
+    fn planner_rejects_node_count_above_the_certificate_bound() {
+        let mut planner = Planner::new(&[], &[]);
+        let result = SignedArithmeticClaim {
+            carrier: SignedArithmeticCarrier::SignedInt32,
+            relation: SignedArithmeticRelation::LessEqual,
+            terms: BTreeMap::new(),
+            constant: BigInt::zero(),
+        };
+        for _ in 0..MAX_NODES {
+            assert!(
+                planner
+                    .push(SignedArithmeticNode::Trivial {
+                        result: result.clone(),
+                    })
+                    .is_some()
+            );
+        }
+        assert!(
+            planner
+                .push(SignedArithmeticNode::Trivial { result })
+                .is_none()
+        );
     }
 }

@@ -2938,14 +2938,13 @@ fn lower_pure_simp_from_premise_pool(
 fn lower_pure_arithmetic_from_premise_pool(
     claim_label: &str,
     context: &PureTheoremContext,
+    surface_goal: &ClickProposition,
     goal: &Proposition,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     premise_pool: &[ClickProposition],
 ) -> Result<Vec<ProofTactic>, ClickError> {
-    if crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(goal, &[]).is_ok() {
-        return Ok(vec![ProofTactic::ArithmeticUsing(Vec::new())]);
-    }
+    let mut lowered_premises = Vec::with_capacity(premise_pool.len());
     for surface in premise_pool {
         let kernel = lower_pure_theorem_proposition(
             claim_label,
@@ -2957,18 +2956,50 @@ fn lower_pure_arithmetic_from_premise_pool(
             click_function_environment,
         )
         .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
-        if crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(
-            goal,
-            std::slice::from_ref(&kernel),
-        )
-        .is_ok()
-        {
-            return Ok(vec![ProofTactic::ArithmeticUsing(vec![surface.clone()])]);
-        }
+        lowered_premises.push((kernel, surface.clone()));
     }
-    Err(ClickError::new(
-        "no single available arithmetic premise proves the goal",
-    ))
+
+    let kernels = lowered_premises
+        .iter()
+        .map(|(kernel, _)| kernel.clone())
+        .collect::<Vec<_>>();
+    if crate::surface::checking::plan_signed_arithmetic_certificate(goal, &kernels).is_none() {
+        return Err(ClickError::new(
+            "no available arithmetic premises prove the goal",
+        ));
+    }
+
+    // Use the same checked Proof authority as ordinary surface arithmetic to
+    // transcribe and validate the plan.  The temporary context exposes only
+    // this exact premise pool; it is never used to search ambient facts.
+    let mut proof_context = context.clone();
+    proof_context.requires.extend(kernels);
+    let theorem_environment = TheoremEnvironment::new(&[]);
+    let proof = Proof::for_pure_surface_goal(
+        claim_label,
+        &proof_context.requires,
+        goal.clone(),
+        surface_goal.clone(),
+        &proof_context,
+        predicate_environment,
+        click_function_environment,
+        &theorem_environment,
+    )
+    .apply_step(ProofStep::ArithmeticUsing(
+        lowered_premises
+            .iter()
+            .map(|(_, surface)| surface.clone())
+            .collect(),
+    ))?;
+    let certificate = proof.completed_certificate()?;
+    let [ProofStep::ArithmeticCertificate(certificate)] = certificate.steps() else {
+        return Err(ClickError::new(
+            "checked arithmetic plan did not retain a structural certificate",
+        ));
+    };
+    Ok(vec![ProofTactic::ArithmeticCertificate(
+        certificate.clone(),
+    )])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3562,6 +3593,7 @@ fn lower_pure_induction_tactics(
                         lower_pure_arithmetic_from_premise_pool(
                             claim_label,
                             context,
+                            premise,
                             &lowered_goal,
                             predicate_environment,
                             click_function_environment,
@@ -5023,12 +5055,16 @@ fn prove_pure_theorem_tactics(
                         Ok(lowered)
                     })
                     .collect::<Result<Vec<_>, ClickError>>()?;
-                crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(
-                    &goal, &premises,
-                )
-                .map_err(|error| {
+                let certificate =
+                    crate::surface::checking::plan_signed_arithmetic_certificate(&goal, &premises)
+                        .ok_or_else(|| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `arithmetic` could not construct a checked certificate"
+                            ))
+                        })?;
+                certificate.check(&goal, &premises).map_err(|error| {
                     ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `arithmetic` failed: {error:?}"
+                        "`{claim_label}` tactic {tactic_index}: checked arithmetic certificate was rejected: {error:?}"
                     ))
                 })?;
                 closed = true;

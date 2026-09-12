@@ -911,6 +911,121 @@ fn signed_int32_arithmetic_certificate_round_trips_every_step_spelling() {
 }
 
 #[test]
+fn signed_int32_pair_affine_conclusion_round_trips_and_preserves_refs() {
+    let source = r#"
+        theorem signed_pair_certificate(n: int32) {
+            ensures n == n by {
+                arithmetic_certificate signed_int32 {
+                    premise 0: n == n => n == n;
+                    interval_atom (n) (-2147483648) (2147483647);
+                    interval_atom (n) (-2147483648) (2147483647);
+                    affine_conclusion_pair 0 1 2 => n == n;
+                    conclusion 3;
+                }
+            }
+        }
+    "#;
+    let file = parse(source).expect("pair affine certificate should parse");
+    let SourceProof::Script(tactics) = file.theorem_definitions()[0].ensures()[0].proof() else {
+        panic!("expected an explicit theorem proof");
+    };
+    let printed = super::printing::format_partial_tactic_sequence(tactics);
+    assert!(
+        printed.contains("affine_conclusion_pair 0 1 2"),
+        "{printed}"
+    );
+    let reparsed = parse(&format!(
+        "theorem signed_pair_certificate(n: int32) {{ ensures n == n by {{ {printed} }} }}"
+    ))
+    .expect("printed pair affine certificate should reparse");
+    assert_eq!(
+        reparsed.theorem_definitions()[0].ensures()[0].proof(),
+        file.theorem_definitions()[0].ensures()[0].proof()
+    );
+}
+
+#[test]
+fn signed_int32_compound_certificate_public_nodes_recheck_and_tamper() {
+    let source = r#"
+        theorem signed_compound_certificate(n: int32) {
+            requires 0 <= n;
+            requires n <= 100;
+            ensures n + 1 <= n + 2 by {
+                arithmetic() using {
+                    0 <= n;
+                    n <= 100;
+                }
+            }
+        }
+    "#;
+    let verified = verify_click_theorems(source).expect("compound arithmetic should verify");
+    let expanded = verified[0]
+        .expanded_proof_source()
+        .expect("compound arithmetic should expand");
+    assert!(expanded.contains("affine_conclusion_pair"), "{expanded}");
+
+    let rechecked_source = source.replace(
+        "by {\n                arithmetic() using {\n                    0 <= n;\n                    n <= 100;\n                }\n            }",
+        &expanded,
+    );
+    let (result, planning) = crate::surface::proof::count_planning_statement_transitions(|| {
+        verify_click_theorems(&rechecked_source)
+    });
+    result.expect("expanded compound certificate should recheck");
+    assert_eq!(planning, 0, "explicit certificate recheck must not plan");
+
+    let tampered_pair = rechecked_source.replacen("affine_conclusion_pair", "affine_conclusion", 1);
+    verify_click_theorems(&tampered_pair)
+        .expect_err("one-sided affine evidence must not replace pair evidence");
+}
+
+#[test]
+fn signed_int32_direct_compound_interval_is_publicly_checked() {
+    let source = r#"
+        theorem signed_direct_compound(n: int32) {
+            requires 0 <= n + 1;
+            ensures 0 <= n + 1 by {
+                arithmetic_certificate signed_int32 {
+                    premise 0: 0 <= n + 1 => 0 <= n + 1;
+                    interval_from_affine_direct 0 (n + 1) 0 2147483647;
+                    affine_conclusion 0 1 => 0 <= n + 1;
+                    conclusion 2;
+                }
+            }
+        }
+    "#;
+    verify_click_theorems(source).expect("direct compound interval should verify");
+    let printed = super::printing::format_partial_tactic_sequence(
+        match parse(source).unwrap().theorem_definitions()[0].ensures()[0].proof() {
+            SourceProof::Script(tactics) => tactics,
+            _ => panic!("expected an explicit theorem proof"),
+        },
+    );
+    assert!(printed.contains("interval_from_affine_direct"), "{printed}");
+    assert!(printed.contains("affine_conclusion 0 1"), "{printed}");
+    let reparsed = parse(&format!(
+        "theorem signed_direct_compound(n: int32) {{ requires 0 <= n + 1; ensures 0 <= n + 1 by {{ {printed} }} }}"
+    ))
+    .expect("printed direct compound certificate should reparse");
+    assert_eq!(
+        reparsed.theorem_definitions()[0].ensures()[0].proof(),
+        parse(source).unwrap().theorem_definitions()[0].ensures()[0].proof()
+    );
+    let tampered = source.replace("0 2147483647", "0 2147483646");
+    verify_click_theorems(&tampered)
+        .expect_err("tampering with direct compound endpoints must be rejected");
+    let out_of_range = source.replace("0 2147483647", "0 2147483648");
+    verify_click_theorems(&out_of_range)
+        .expect_err("out-of-range signed interval endpoints must be rejected");
+    let wrong_carrier = source.replace(
+        "premise 0: 0 <= n + 1 => 0 <= n + 1;",
+        "premise 0: 0 <= n + 1 => ((uint32)(n + 1)) <= 2u32;",
+    );
+    verify_click_theorems(&wrong_carrier)
+        .expect_err("unsigned conversion must not masquerade as signed certificate evidence");
+}
+
+#[test]
 fn signed_int32_interval_intersect_round_trips() {
     let source = r#"
         theorem signed_intersect_forms(n: int32) {
@@ -961,6 +1076,79 @@ fn signed_int32_arithmetic_certificate_applies_and_rejects_tampering() {
         error.message().contains("signed_int32") || error.message().contains("certificate"),
         "{error:?}"
     );
+}
+
+#[test]
+fn arithmetic_certificate_families_require_explicit_domain_bridges() {
+    let integer_in_machine = r#"
+        theorem integer_in_machine(x: Integer) {
+            requires x == x;
+            ensures x == x by {
+                arithmetic_certificate signed_int32 {
+                    premise 0: x == x => x == x;
+                    conclusion 0;
+                }
+            }
+        }
+    "#;
+    assert!(
+        verify_click_theorems(integer_in_machine).is_err(),
+        "a mathematical Integer proposition must not enter signed_int32"
+    );
+
+    let machine_in_integer = r#"
+        theorem machine_in_integer(x: int32) {
+            requires x == x;
+            ensures x == x by {
+                arithmetic_certificate {
+                    premise 0: x == x => x == x;
+                    conclusion 0;
+                }
+            }
+        }
+    "#;
+    assert!(
+        verify_click_theorems(machine_in_integer).is_err(),
+        "a signed machine proposition must not enter mathematical Integer"
+    );
+}
+
+#[test]
+fn integer_certificate_can_follow_a_checked_int32_to_integer_bridge() {
+    let source = r#"
+        theorem bridge_then_integer_arithmetic(x: int32) {
+            requires 0 <= x;
+            ensures 0 <= to_integer(x) + 1 by {
+                have to_integer(0) <= to_integer(x) by {
+                    apply(int32_less_equal_to_integer(0, x));
+                }
+                arithmetic_certificate {
+                    premise 0: to_integer(0) <= to_integer(x) => to_integer(0) <= to_integer(x);
+                    trivial => to_integer(x) + 1 >= to_integer(x);
+                    add 0, 1 => 0 <= to_integer(x) + 1;
+                    conclusion 2;
+                }
+            }
+        }
+    "#;
+    let verified =
+        verify_click_theorems(source).expect("bridge and Integer certificate should verify");
+    let expanded = verified[0]
+        .expanded_proof_source()
+        .expect("bridge and Integer certificate should expand");
+    assert!(
+        expanded.contains("int32_less_equal_to_integer"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("arithmetic_certificate {"), "{expanded}");
+    let rechecked = format!(
+        "theorem bridge_then_integer_arithmetic(x: int32) {{\n            requires 0 <= x;\n            ensures 0 <= to_integer(x) + 1 {expanded}\n        }}"
+    );
+    let (result, planning) = crate::surface::proof::count_planning_statement_transitions(|| {
+        verify_click_theorems(&rechecked)
+    });
+    result.expect("expanded bridge and Integer certificate should recheck");
+    assert_eq!(planning, 0, "explicit composition must not invoke planning");
 }
 
 #[test]
@@ -1071,6 +1259,23 @@ fn special_arithmetic_certificate_round_trips_and_rejects_bad_premises() {
     assert!(parse(&gap).is_err());
     let mismatch = source.replace("=> aligned(p, 8);", "=> aligned(p, 16);");
     assert!(parse(&mismatch).is_err());
+
+    let direct = source.replace(
+        "pointer_alignment premise 0 => aligned(p, 8);",
+        "pointer_word_from_alignment alignments [0] => aligned(p, 8);",
+    );
+    let direct_file = parse(&direct).expect("direct tagged-word node should parse");
+    let direct_printed = super::printing::format_partial_tactic_sequence(
+        match direct_file.theorem_definitions()[0].ensures()[0].proof() {
+            SourceProof::Script(tactics) => tactics,
+            _ => panic!("expected an explicit theorem proof"),
+        },
+    );
+    assert!(direct_printed.contains("pointer_word_from_alignment"));
+    parse(&format!(
+        "theorem special_certificate_forms(p: int32) {{ ensures aligned(p, 8) by {{ {direct_printed} }} }}"
+    ))
+    .expect("direct tagged-word node should round-trip");
 }
 
 #[test]
@@ -1120,17 +1325,44 @@ fn signed_arithmetic_smart_planner_expands_to_structural_certificate() {
         "coefficient-2 expansion expected: {expanded}"
     );
     let rechecked = source.replace("by { arithmetic() using { 0 <= n; n <= 100; } }", &expanded);
-    verify_click_theorems(&rechecked).unwrap_or_else(|error| {
+    assert!(
+        !expanded.contains("arithmetic() using"),
+        "expanded proof must retain a checked certificate rather than ArithmeticUsing: {expanded}"
+    );
+    let (rechecked_result, planning) =
+        crate::surface::proof::count_planning_statement_transitions(|| {
+            verify_click_theorems(&rechecked)
+        });
+    rechecked_result.unwrap_or_else(|error| {
         panic!(
             "expanded structural certificate failed: {}",
             error.message()
         )
     });
+    assert_eq!(planning, 0, "explicit signed recheck must not plan");
     let tampered = expanded.replace("scale 1 by 2", "scale 1 by 3");
     let tampered_source =
         source.replace("by { arithmetic() using { 0 <= n; n <= 100; } }", &tampered);
     verify_click_theorems(&tampered_source)
         .expect_err("a tampered scale coefficient must be rejected");
+}
+
+#[test]
+fn signed_arithmetic_using_requires_every_needed_exact_premise() {
+    let source = r#"
+        theorem signed_missing_explicit_premise(n: int32) {
+            requires 0 <= n;
+            requires n <= 100;
+            ensures n + n <= 200 by { arithmetic() using { 0 <= n; } }
+        }
+    "#;
+    let error = verify_click_theorems(source)
+        .expect_err("an omitted exact bound must not be recovered from ambient facts");
+    assert!(
+        error.message().contains("exactly the listed premises")
+            || error.message().contains("could not construct"),
+        "{error:?}"
+    );
 }
 
 #[test]
