@@ -175,7 +175,14 @@ refers to one through a snapshot form such as `at(statement(3).entry, x)` or
   (`canonicalized_pointer_value_from_int_cell`,
   `canonicalized_symbolic_load_value`), so a pointer loaded from an opaque
   cell never enters offset arithmetic as a load term, and its defining fact
-  is emitted beside it.
+  is emitted beside it. The same function names every **integer scalar** it
+  loads, one to eight bytes wide, signed or unsigned. Contract lowering
+  already materializes a cell of any of those widths with
+  `canonical_form_of_load`, so a width execution left unnamed would give one
+  cell two terms — a load variable and a load term — that only the snapshot
+  relates, and a snapshot the execution has since written no longer relates
+  them. That is how a resource body fact about a cell an execution did not
+  write survives a write to a sibling cell of the same node.
 - Surface synthesis resolves load variables it cannot otherwise express
   through the registry (`resolve_load_variables_from_registry`) —
   the sanctioned display direction: rendering a variable as source syntax
