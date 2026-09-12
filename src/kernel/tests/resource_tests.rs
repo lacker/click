@@ -19,6 +19,10 @@ fn normalized_resource_specs_validate_families_and_preserve_transfer_metadata() 
     assert_eq!(memory_view.access(), CResourceAccessMode::View);
     assert_eq!(memory_view.role(), CResourceTransferRole::Borrow);
     assert_eq!(memory_view.snapshot(), CResourceSnapshot::Entry);
+    assert_eq!(
+        memory_view.clone().with_clause_position(0, 2),
+        memory_view.clone().with_clause_position(1, 9)
+    );
 
     let memory_owner = CResourceSpec::new(
         CResourceTerm::Memory(segment),
@@ -4465,4 +4469,189 @@ fn resource_model_arm_selection_ignores_unrelated_premises() {
     for pair in samples.windows(2) {
         assert!(pair[1] <= pair[0] + 32, "{samples:?}");
     }
+}
+
+/// Expanded leaves retain the source clause position used by diagnostics.
+/// The first source aggregate contributes two stalled leaves here; the
+/// evaluator must skip the duplicate leaf and name the next source clause,
+/// rather than reporting a misleading pair of positions for one clause.
+#[test]
+fn expanded_resource_clause_diagnostics_keep_source_positions() {
+    let unowned = |variable| {
+        CResourceSpec::owned_memory(CMemorySegment {
+            base: CExpression::Load(Box::new(CExpression::Value(CValue::pointer(Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(
+                    Bitvector32Term::Variable(Variable(variable)),
+                    4,
+                ),
+            })))),
+            start: c_int32_literal(0),
+            end: c_int32_literal(1),
+            element_width: 4,
+            guard: None,
+        })
+    };
+    let CRuntimeError::FunctionContract(message) =
+        crate::kernel::functions::evaluate_function_resource_context(
+            &CState::new(),
+            &[
+                unowned(100).with_clause_position(0, 2),
+                unowned(101).with_clause_position(0, 2),
+                unowned(102).with_clause_position(1, 2),
+            ],
+            &[],
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("clause evaluation stays inside its budget")
+        .expect_err("no clause has read authority for its base")
+    else {
+        panic!("an unevaluable segment is a contract error");
+    };
+    assert!(message.contains("resource clauses 1 and 2 cannot be evaluated in any order"));
+}
+
+/// An adversarially ordered dependency chain is retried through an indexed
+/// event worklist.  Its deterministic work should grow with the explicit
+/// dependency nodes and edges, not with repeated whole-section scans.
+#[test]
+fn dependent_resource_clause_work_scales_with_dependency_nodes() {
+    let pointer = |index: usize| Pointer {
+        // Keep each node in its own block so the curve measures the clause
+        // dependency walk rather than the unrelated same-block range
+        // normalization cost of the resource algebra.
+        block: PointerBlock::Concrete(format!("dependency-{index}")),
+        offset: PointerOffsetTerm::Constant((index as i64) * 4),
+    };
+    let load = |pointer: Pointer| CExpression::TypedLoad {
+        pointer: Box::new(c_pointer_value(pointer)),
+        value_type: CType::Int32Pointer,
+        volatile: false,
+    };
+    let samples = [4_usize, 8, 16, 32]
+        .into_iter()
+        .map(|size| {
+            let pointers = (0..=size).map(pointer).collect::<Vec<_>>();
+            let memory = pointers.windows(2).fold(CMemory::new(), |memory, pair| {
+                memory.store(pair[0].clone(), CValue::pointer(pair[1].clone()))
+            });
+            let state = CState::new().with_memory(memory);
+            // Clause 0 is the only initially readable provider.  Put it last
+            // and reverse the dependents so a fixed-point implementation must
+            // rescan the whole pending suffix once per dependency depth.  An
+            // event queue instead retries only the newly unblocked successor.
+            let clauses = (1..size)
+                .rev()
+                .chain(std::iter::once(0))
+                .map(|index| {
+                    let base = if index == 0 {
+                        c_pointer_value(pointers[index].clone())
+                    } else {
+                        load(pointers[index - 1].clone())
+                    };
+                    CResourceSpec::owned_memory(CMemorySegment {
+                        base,
+                        start: c_int32_literal(0),
+                        end: c_int32_literal(1),
+                        element_width: 4,
+                        guard: None,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let ((result, work), attempts) =
+                crate::kernel::measure_resource_clause_attempts(|| {
+                    crate::instrumentation::measure_deterministic_work(|| {
+                        crate::kernel::functions::evaluate_function_resource_context(
+                            &state,
+                            &clauses,
+                            &[],
+                            &PureFactContext::new(),
+                            &mut ExecutionBudget::default(),
+                        )
+                    })
+                });
+            let result = result.unwrap();
+            assert!(
+                result.is_ok(),
+                "the dependency chain should evaluate: {result:?}"
+            );
+            assert_eq!(
+                attempts,
+                size * 2 - 1,
+                "each blocked clause should be retried once after its provider: size={size}"
+            );
+            (size, work, attempts)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        samples
+            .windows(2)
+            .all(|pair| { pair[1].1 <= pair[0].1.saturating_mul(4) + 256 }),
+        "dependent clause work should stay bounded by the dependency graph: {samples:?}"
+    );
+}
+
+/// A concrete pending load can be woken by a later symbolic range only after
+/// that range's own base has become readable.  This three-clause chain keeps
+/// the symbolic provider out of the initial section supply, so the positive
+/// result exercises the block-local fallback event rather than the initial
+/// pending scan.
+#[test]
+fn symbolic_supplied_range_wakes_concrete_pending_dependency() {
+    let seed = Pointer {
+        block: PointerBlock::Concrete("resource-clause-symbolic-seed".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let intermediate = Pointer {
+        block: PointerBlock::Concrete("resource-clause-symbolic-intermediate".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let target = Pointer {
+        block: PointerBlock::Concrete("resource-clause-symbolic-target".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let length = Bitvector32Term::Variable(Variable(9_903));
+    let load = |pointer: Pointer| CExpression::TypedLoad {
+        pointer: Box::new(c_pointer_value(pointer)),
+        value_type: CType::Int32Pointer,
+        volatile: false,
+    };
+    let owned = |base: CExpression, end: CExpression| {
+        CResourceSpec::owned_memory(CMemorySegment {
+            base,
+            start: c_int32_literal(0),
+            end,
+            element_width: 4,
+            guard: None,
+        })
+    };
+    let clauses = vec![
+        // A waits on the concrete cell at `intermediate`, but is listed first.
+        owned(load(intermediate.clone()), c_int32_literal(1)),
+        // B is the symbolic provider for that cell.  Its base load waits on C.
+        owned(
+            load(seed.clone()),
+            CExpression::Value(int32(length.clone())),
+        ),
+        // C is the only clause that can evaluate on the first pass.
+        owned(c_pointer_value(seed.clone()), c_int32_literal(1)),
+    ];
+    let memory = CMemory::new()
+        .store(seed, CValue::pointer(intermediate.clone()))
+        .store(intermediate, CValue::pointer(target));
+    let assumptions = PureFactContext::new().assume_condition(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(1), length),
+        true,
+    );
+    let result = crate::kernel::functions::evaluate_function_resource_context(
+        &CState::new().with_memory(memory),
+        &clauses,
+        &[],
+        &assumptions,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("clause evaluation stays inside its budget")
+    .expect("the symbolic provider should wake the concrete pending clause");
+    assert_eq!(result.facts().len(), 3);
 }

@@ -325,6 +325,269 @@ passes `195/195` (the upstream base adds two matching callback tests), the
 upstream callback/algebraic-equation filters pass, and the source-capability
 adapter is not a separate contract evaluator.
 
+## W3 handoff (2026-09-11)
+
+W3 started from the green pushed master checkpoint `2b7e9e32` in the isolated
+`/tmp/click-mvr-w3` worktree on `codex/mvr-w3`. The completed branch tip is
+intentionally unmerged and unpushed; the manager should cherry-pick the green
+commit reported with this handoff. No C source, Click syntax, budget,
+quarantine, or excluded semantics changed.
+
+Entry resource clauses now lower symbolically only as a provisional surface
+context, then the shared kernel `evaluate_function_resource_context` evaluates
+the complete clause set for both direct functions and body-independent named
+contracts. Pure loadability requirements become checked read views, while
+only entry instance identities are seeded; postconditions, arbitrary owned
+composite bodies, and concrete function bodies never become entry authority.
+Quantified nonnegative assumptions are supplied through the same entry setup.
+Successful composite clauses incrementally expose only their checked memory
+children to the bounded dependency worklist, so dependent arguments can be
+evaluated without a whole-context fixed-point rescan for every dependency
+depth. Named-contract refusals therefore reach the kernel evaluator; the
+surface segment check remains only a source-rich diagnostic fallback after a
+kernel refusal.
+
+Normalized specifications produced from a `MemoryAggregate` now carry source
+clause provenance on every leaf, and the kernel uses that provenance for the
+same one-based clause numbering as the surface. Provenance is deliberately
+ignored by resource equality, ordering, hashing, and contract identity.
+
+Files changed: `src/kernel/functions.rs`, `src/kernel/mod.rs`,
+`src/kernel/primitives.rs`, `src/kernel/tests/resource_tests.rs`,
+`src/surface/lowering/resource_lowering.rs`, `src/surface/proof.rs`,
+`src/surface/verification.rs`, this issue document, and the new
+`mdtests/contract_owns_composite_argument.md` plus
+`mdtests/contract_owns_composite_argument_rejects_missing_access.md`.
+
+The new direct and named-contract regression evaluates dependent composite
+arguments through three authorized dependency levels and independently keeps
+the missing-access variant rejected by the kernel. The source-position unit
+regression covers several normalized leaves from one aggregate and a second
+stalled source clause. Existing callback, explicit execution-theorem,
+automatic-formation, and certification fixtures continue to exercise their
+body-independent entry paths; their applicability and bounded candidate
+rules were not broadened. G2 is classified as already fixed upstream by
+`7e55fdc7` and retained by this work (`contract_owns_through_composite_field.md`).
+G3 is fixed here for named dependent/composite entry evaluation; the existing
+unheld-link rejection remains a rejection, with the kernel authoritative and
+the surface check diagnostic-only.
+
+The dependency work curve is deterministic over sizes `4, 8, 16, 32`, with
+observed work `70, 168, 412, 1092`; each node uses a distinct concrete block
+so the measurement charges dependency nodes/edges rather than same-block
+range normalization, and adjacent sizes satisfy the test's `4x + 256` bound.
+
+Checks passed: `cargo check --all-targets`, `cargo fmt --all -- --check`, and
+`git diff --check`; focused kernel tests `172/172`; the complete resource
+mdtest filter; the examples gate `3/3` including bounded-pool; and the
+unfiltered `scripts/check.sh` gate with `2584` tests and all `14` fixture /
+example checks passing (only the repository's existing quarantined example
+is skipped). No tooling-stop condition or stale verifier process was found.
+
+Removed paths are the old unconditional surface-only entry authority, the
+per-depth batch retry behavior, and the temporary composite reduction. The
+result preserves clause roles, snapshots, lexical scopes, local missing
+authority/guard/cycle diagnostics, no free unfolding, and no forward-language
+change. The manager should record the final commit hash when integrating; W3
+did not merge or push from this worktree.
+
+## W3 follow-up handoff (2026-09-11)
+
+The follow-up started at `09267e5a` (the W3 handoff above) and is committed as
+`8b260cc9` on `codex/mvr-w3`, still unmerged and unpushed. It was prompted by
+review reductions, not by a new language rule. The entry evaluator now takes
+an authority-only snapshot before folded composite cells and observable body
+facts are projected. It receives only explicit entry memory clauses and
+instance identities, plus pure facts from explicit `requires loadable(...)`
+clauses; projection-derived loadability, composite bodies, postconditions,
+and concrete function bodies cannot seed entry authority. Direct memory
+clauses remain available because they are themselves explicit authority (and
+are needed for checked quantities such as `pool->capacity of pool_slot(pool)`).
+
+The kernel evaluator remains the single acceptance path for direct and named
+contract clauses. The surface segment-base check runs only after a kernel
+refusal to retain source-rich diagnostics. Symbolic loadability ranges such
+as `node[0..n]` are represented as checked symbolic read views (including the
+`4*n` int32 footprint) without materializing fake cells. The three new
+regressions are `contract_dynamic_loadable_composite_argument.md`, its
+`_rejects_missing` negative, and
+`contract_owns_composite_argument_rejects_body_bootstrap.md`; together they
+cover the dynamic positive, missing-authority negative, and the body-bootstrap
+negative.
+
+The pending-clause implementation now captures checked `MissingResource`
+dependencies and indexes waiters by resource fact, memory base, and memory
+block. After the one initial source pass and one section-supply expansion,
+newly supplied facts enqueue only dependent clauses; the old repeated
+whole-pending fixed-point scans are gone. The adversarial dependency test
+uses sizes `4, 8, 16, 32`, observed deterministic work `70, 168, 412, 1092`,
+and exact clause-attempt counters `7, 15, 31, 63` (`2*n-1`). Independent
+clauses and multiple dependency depths remain covered by the existing focused
+resource tests.
+
+Files/interfaces changed in this follow-up are
+`src/surface/proof.rs`, `src/kernel/functions.rs`, `src/kernel/loops.rs`,
+`src/kernel/mod.rs`, `src/kernel/tests/resource_tests.rs`, and the three
+`mdtests/` files named above. Existing direct/callback, explicit execution
+theorem, automatic-formation, and certification paths remain covered by the
+same shared evaluator and their bounded applicability rules are unchanged.
+The earlier W3 classification still stands: G2 was already fixed upstream by
+`7e55fdc7`; G3 is fixed by W3, including named dependent/composite entry
+evaluation, with the kernel authoritative and surface diagnostics secondary.
+The MemoryAggregate source-position and surface/kernel numbering residual is
+also fixed by the preceding W3 commit and was not regressed here.
+
+Checks: `cargo check --all-targets`, `cargo fmt --check`, `cargo clippy
+--all-targets -- -D warnings`, and `git diff --check` passed; focused
+`cargo nextest run --lib resource_tests contract_execution_tests
+callback_contract_tests` passed `172/172`; the composite and dynamic fixture
+filters passed; `cargo nextest run --test examples example_projects
+--no-capture` passed; and unfiltered `scripts/check.sh` exited 0 with `2584`
+tests and all `14` fixture/example checks passing. Only the repository's
+pre-existing quarantined example is skipped. No tooling-stop condition or
+stale verifier process was observed.
+
+The replaced paths are projection-derived body facts as entry authority, the
+constant-only loadability-view shortcut, and whole-context pending-clause
+rescans. No blocker remains. No C source, Click syntax, budgets, quarantine,
+or excluded semantics changed; no free unfolding or forward-language change
+was introduced. W3 did not merge or push; the manager should cherry-pick
+`09267e5a` and then `8b260cc9` (or the coherent range) after checking the
+primary branch base.
+
+## W3 follow-up: accumulated supply and nested loadability (2026-09-11)
+
+This review follow-up started from `2538cdbf` (the preceding W3 entry
+evaluation documentation checkpoint) and is committed as `25711aa6`, still
+unmerged and unpushed. The event-driven clause queue now tests a
+newly supplied fact against the accumulated indexed section supply. A wide
+pending memory dependency can therefore wake after adjacent `[0..1]` and
+`[1..2]` supplies have been combined; candidate selection still uses the
+fact/base/block waiter index and does not rescan the section.
+
+Nested pure requirements now separate unconditional loadability atoms from
+their surrounding logic. Positive `loadable` atoms are extracted only under
+source conjunctions and lowered as checked standalone read authority. The
+entry evaluator strips only direct conjunctive `CMemoryLoadable` atoms from
+projection-derived facts, preserving unrelated conjuncts. `or`, implication,
+negation, quantifier, snapshot, range, and predicate bodies remain whole
+logical facts and cannot grant unconditional read authority. Composite bodies
+and projection observations still cannot bootstrap entry loads.
+
+The permanent regressions are
+`mdtests/contract_nested_dynamic_loadable_composite_argument.md` and
+`mdtests/contract_nested_loadable_branch_rejects_bootstrap.md`, plus the
+kernel `adjacent_supply_wakes_wide_memory_waiter` test. The dependency scaling
+fixture now reverses the dependent clause order to force one fixed-point round
+per dependency depth; sizes remain `4, 8, 16, 32`, with deterministic work
+`70, 168, 412, 1092` and attempts `7, 15, 31, 63` (`2*n-1`).
+
+Files changed in this follow-up are `src/surface/proof.rs`,
+`src/kernel/functions.rs`, `src/kernel/tests/resource_tests.rs`, the two
+new `mdtests/` files above, and this issue document. The replaced paths are
+the one-fact event wake check and the whole-proposition loadability filter;
+the old source-order dependency curve was replaced by adversarial reverse
+ordering. No new evaluator or surface authority path was added.
+
+Checks passed: `cargo check --all-targets`; `cargo fmt --all -- --check`;
+`cargo clippy --all-targets -- -D warnings`; `git diff --check`; focused
+`cargo nextest run --lib resource_tests contract_execution_tests callback_contract_tests --no-capture`
+(`172/172`); `MDTEST_FILTER=nested_ cargo nextest run --test mdtests --no-capture`;
+and `cargo nextest run --test examples example_projects --no-capture`.
+The unfiltered `scripts/check.sh` exited `0`: `2585/2585` tests and all
+`14/14` fixture/example checks passed (one existing quarantined example is
+skipped by the examples test). No tooling-stop condition or stale verifier
+process was observed. No C source, Click syntax, budget, quarantine, or
+excluded semantics changed; no free unfolding or forward-language change was
+introduced. W3 did not merge or push; the manager should cherry-pick this
+follow-up after checking the primary branch base.
+
+## W3 follow-up: interval-aware waiter index (2026-09-11)
+
+This follow-up started from `31b8f93a` and the implementation is committed as
+`ec820946` on `codex/mvr-w3`, still unmerged and unpushed. The pending-clause
+waiter index now normalizes concrete, comparable memory ranges to a fixed-depth
+sparse segment tree keyed by block and physical-byte interval nodes. Queries
+walk only the overlapping interval nodes and their boundary paths; they do not
+enumerate cells or rescan all pending clauses. Ranges with symbolic or
+un-normalizable bases/bounds retain the bounded fact/base/block fallback, so
+symbolic range wakeups remain conservative. Constant base offsets are folded
+into the block coordinate, preserving coverage across comparable bases.
+
+The `ResourceClauseWaiterIndex` interface is used by registration,
+unregistration, and event wakeup. Concrete dependencies retain an exact-fact
+key plus interval nodes; only non-concrete dependencies retain the coarse
+memory keys. Accumulated `section_supply` remains the readiness authority, so
+adjacent providers still wake a wide dependency only after their union covers
+it. The earlier `2*n-1` reverse-chain attempt curve remains unchanged at sizes
+`4, 8, 16, 32`, with deterministic work `70, 168, 412, 1092` and attempts
+`7, 15, 31, 63`. The new same-block disjoint-provider regression uses the same
+four sizes and records exact candidate visits `4, 8, 16, 32`; a coarse
+`MemoryBlock` index would visit every waiter for every provider instead.
+
+Files/interfaces changed in this follow-up are `src/kernel/functions.rs` and
+this issue document. The focused kernel worklist module now covers adjacent
+range union, constant-base and cross-width physical-byte comparability,
+same-block disjoint candidate counts, and symbolic fallback. The broader focused resource/callback/
+contract-execution gate passes `172/172`; nested mdtests and examples pass;
+and unfiltered `scripts/check.sh` passes with `2588/2588` tests and `14/14`
+fixture/example checks (one pre-existing quarantined example remains skipped).
+Formatting, clippy, and diff checks also pass.
+
+The replaced path is the coarse same-block `MemoryBlock` candidate fan-out
+for concrete ranges; symbolic fallback, clause provenance, accumulated supply,
+and the kernel's single authority are retained. No blocker remains. No C
+source, Click syntax, budget, quarantine, or excluded semantics changed; no
+free unfolding or forward-language change was introduced. W3 did not merge or
+push; the manager should cherry-pick `ec820946` and this documentation update
+after checking the primary branch base.
+
+## W3 follow-up: symbolic-event waiter fallback (2026-09-11)
+
+This follow-up starts from `4c82c4f6` and is implemented by `56958fa6` on
+`codex/mvr-w3`, still unmerged and unpushed. The interval index had one
+asymmetric boundary: a concrete dependency was registered in exact and
+interval nodes, but a symbolic or otherwise un-normalizable supplied range
+could query neither. Concrete dependencies now also register a block-local
+fallback waiter set keyed by `(clause, dependency)`. It is consulted only for
+such symbolic supplied memory events; concrete supplied events continue to
+use exact and interval lookup, preserving the same-block disjoint curve.
+Candidate clause ids are deduplicated, and unregister removes the same waiter
+from both indexes, including when one clause waits on multiple ranges in one
+block.
+
+The permanent functional regression is
+`symbolic_supplied_range_wakes_concrete_pending_dependency`: a first clause
+waits on a concrete loaded pointer, a later symbolic-range provider first
+waits on a seed cell, and a final seed clause unlocks the provider. With the
+assumption `1 <= n`, the provider's symbolic event then wakes the concrete
+pending clause and all three resources evaluate. The kernel worklist tests
+also cover fallback registration/removal and continue to cover adjacent-range
+union and physical-byte cross-width matching. The four-size same-block
+disjoint curve remains exact candidate visits `4, 8, 16, 32`; the reverse
+dependency curve remains deterministic work `70, 168, 412, 1092` and attempts
+`7, 15, 31, 63`.
+
+The fallback is intentionally conservative rather than a stronger asymptotic
+claim: one explicit symbolic supplied event may inspect all concrete waiters
+in its block, bounded by that event's block-local set. Concrete events do not
+pay this scan and remain interval-sensitive. No whole-pending or whole-section
+rescan was reintroduced.
+
+Files changed are `src/kernel/functions.rs`,
+`src/kernel/tests/resource_tests.rs`, and this issue document. Focused
+worklist/resource tests passed (6 and 90 respectively), the focused
+`resource_tests contract_execution_tests callback_contract_tests` nextest
+selection passed `173/173`, and `cargo clippy --all-targets -- -D warnings`,
+formatting, and diff checks passed. Unfiltered `scripts/check.sh` exited 0:
+`2591/2591` tests and all `14/14` fixture/example checks passed (the one
+pre-existing quarantined example remains skipped). No tooling-stop condition
+or stale verifier process was observed. No C source, Click syntax, budget,
+quarantine, excluded semantics, free unfolding, or forward-language change
+was introduced. W3 did not merge or push; the manager should cherry-pick
+`56958fa6` and this documentation commit after checking the primary branch
+base.
+
 ## Language-preservation contract
 
 Every worker must preserve the following. A proposal that needs a different

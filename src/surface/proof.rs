@@ -2171,6 +2171,20 @@ pub(super) fn initial_claim_context(
         claim_label,
     )?;
     state = population_state;
+    // Keep an authority-only snapshot before folded composite cells or
+    // observable body facts are materialized.  Those conveniences are valid
+    // for lowering the proof's later pure context, but they must not help the
+    // entry resource evaluator bootstrap a load that the clause set does not
+    // supply.
+    let entry_authority_state = state.clone();
+    let entry_loadability_facts = explicit_entry_loadability_facts(
+        function_block,
+        parsed_function,
+        &arguments,
+        &entry_authority_state,
+        predicate_environment,
+        click_function_environment,
+    )?;
     state = materialize_folded_composite_resource_cells(
         resource_environment,
         parsed_function.parameters(),
@@ -2379,19 +2393,44 @@ pub(super) fn initial_claim_context(
             requirement_pure_facts.insert(0, kernel);
         }
     }
-    // Resources are addressed in the same entry state that lowered the
-    // requirements, so a clause reading through a parameter cell and a
-    // requirement reading the same cell are justified by the same facts.
-    crate::surface::lowering::check_resource_segment_base_loadability(
-        function_block.requires(),
-        parsed_function.parameters(),
+    // Resource projection can legitimately publish loadability observations
+    // for proof planning, but those observations are not entry assumptions.
+    // Rebuild the evaluator's pure context from the non-loadability facts and
+    // the explicit loadability requirements captured before projection.
+    let mut entry_pure_facts = requirement_pure_facts
+        .iter()
+        // Projection may expose a loadability atom alongside ordinary logical
+        // content.  Remove only an unconditional conjunctive loadability atom;
+        // retain the rest of the proposition so the entry evaluator sees the
+        // same checked logical requirements without treating a branch,
+        // negation, or quantifier as an unconditional read capability.
+        .filter_map(entry_pure_fact_without_unconditional_loadability)
+        .collect::<Vec<_>>();
+    for fact in entry_loadability_facts {
+        if !entry_pure_facts.contains(&fact) {
+            entry_pure_facts.push(fact);
+        }
+    }
+    // Resource terms are first built provisionally so dependent arguments can
+    // retain their symbolic loads.  The kernel then evaluates the complete
+    // clause section against its explicit supplies and the pure requirements;
+    // this is the authority for both direct and named contracts.  A surface
+    // segment diagnostic is used only to enrich a kernel refusal, never to
+    // authorize a clause independently.
+    state = evaluate_entry_resource_context(
+        function_block,
+        parsed_function,
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+        state,
         &arguments,
-        &state,
-        &assumptions_from_propositions(&requirement_pure_facts),
-    )
-    .map_err(|error| {
-        ClickError::new(format!("`{claim_label}` setup failed: {}", error.message()))
-    })?;
+        &entry_pure_facts,
+        include_owned_composite_cores,
+        claim_label,
+        &entry_authority_state.resources().clone(),
+        &entry_authority_state.memory().clone(),
+    )?;
     for requirement in function_block.requires() {
         let Requirement::Resource(resource) = requirement.inner() else {
             continue;
@@ -2420,6 +2459,324 @@ pub(super) fn initial_claim_context(
         requirement_pure_facts,
         surface_propositions,
     ))
+}
+
+/// Removes loadability that projection derived as an entry-evaluator fact.
+///
+/// Only `And` is structurally safe to split: an atom in an `Or`, implication,
+/// negation, or quantifier is conditional and cannot become unconditional read
+/// authority.  Those propositions are retained as whole logical facts, while
+/// [`precondition_read_facts`] below recognizes only a standalone
+/// `CMemoryLoadable` proposition as a checked read view.  This keeps unrelated
+/// conjuncts from disappearing merely because one projected atom was removed.
+fn entry_pure_fact_without_unconditional_loadability(
+    proposition: &Proposition,
+) -> Option<Proposition> {
+    match proposition {
+        Proposition::CMemoryLoadable { .. } => None,
+        Proposition::And(left, right) => {
+            let left = entry_pure_fact_without_unconditional_loadability(left);
+            let right = entry_pure_fact_without_unconditional_loadability(right);
+            match (left, right) {
+                (Some(left), Some(right)) => {
+                    Some(Proposition::And(Box::new(left), Box::new(right)))
+                }
+                (Some(proposition), None) | (None, Some(proposition)) => Some(proposition),
+                (None, None) => None,
+            }
+        }
+        // Do not inspect a conditional or bound body: retaining it preserves
+        // its logic but never promotes a nested loadability atom to authority.
+        Proposition::Or(..)
+        | Proposition::Implies(..)
+        | Proposition::Not(..)
+        | Proposition::ForAll { .. }
+        | Proposition::Exists { .. } => Some(proposition.clone()),
+        _ => Some(proposition.clone()),
+    }
+}
+
+/// Collects only loadability segments that are unconditional conjuncts of a
+/// source requirement.  A separate lowered atom is used for each segment so
+/// its checked read view can be supplied to the kernel entry evaluator without
+/// lowering or authorizing the surrounding logical proposition.
+fn collect_conjunctive_loadability_segments(
+    proposition: &ClickProposition,
+    segments: &mut Vec<ContractSegment>,
+) {
+    match proposition {
+        ClickProposition::Loadable { segment } => segments.push(segment.clone()),
+        ClickProposition::And(left, right) => {
+            collect_conjunctive_loadability_segments(left, segments);
+            collect_conjunctive_loadability_segments(right, segments);
+        }
+        // A loadability atom under a branch, negation, quantifier, snapshot,
+        // or range binder is not unconditional entry authority.
+        ClickProposition::Comparison { .. }
+        | ClickProposition::FloatClassification { .. }
+        | ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Defined { .. }
+        | ClickProposition::At { .. }
+        | ClickProposition::Or(..)
+        | ClickProposition::Not(..)
+        | ClickProposition::Implies(..)
+        | ClickProposition::ForAll { .. }
+        | ClickProposition::Exists { .. }
+        | ClickProposition::RangeAll { .. }
+        | ClickProposition::RangeAny { .. }
+        | ClickProposition::PredicateCall { .. } => {}
+    }
+}
+
+fn explicit_entry_loadability_facts(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<Proposition>, ClickError> {
+    let mut facts = Vec::new();
+    for requirement in function_block.requires() {
+        match requirement.inner() {
+            Requirement::LoadableSegment { .. } => {
+                let lowered = crate::surface::lowering::requirement_propositions_with_assumptions(
+                    std::slice::from_ref(requirement),
+                    parsed_function.parameters(),
+                    arguments,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                    &PureFactContext::new(),
+                )?;
+                for fact in lowered {
+                    if matches!(fact, Proposition::CMemoryLoadable { .. }) && !facts.contains(&fact)
+                    {
+                        facts.push(fact);
+                    }
+                }
+            }
+            Requirement::Proposition(proposition) => {
+                let mut segments = Vec::new();
+                collect_conjunctive_loadability_segments(proposition, &mut segments);
+                for segment in segments {
+                    let loadable = Requirement::Proposition(ClickProposition::Loadable { segment });
+                    let lowered =
+                        crate::surface::lowering::requirement_propositions_with_assumptions(
+                            std::slice::from_ref(&loadable),
+                            parsed_function.parameters(),
+                            arguments,
+                            state,
+                            predicate_environment,
+                            click_function_environment,
+                            &PureFactContext::new(),
+                        )?;
+                    for fact in lowered {
+                        if matches!(fact, Proposition::CMemoryLoadable { .. })
+                            && !facts.contains(&fact)
+                        {
+                            facts.push(fact);
+                        }
+                    }
+                }
+            }
+            Requirement::Resource(_) | Requirement::Labeled { .. } => {}
+        }
+    }
+    Ok(facts)
+}
+
+/// Evaluates entry resource clauses once, after all pure requirements have
+/// been lowered.  Surface entry setup needs a provisional resource context in
+/// order to materialize folded composite cells, but that context is not
+/// authority: the kernel section evaluator starts from only the named
+/// instance identities that a `Named` clause must validate and derives every
+/// other read supply from clauses that it successfully evaluates.
+#[allow(clippy::too_many_arguments)]
+fn evaluate_entry_resource_context(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    resource_environment: &ResourceEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    state: CState,
+    arguments: &[CExpression],
+    pure_facts: &[Proposition],
+    include_owned_composite_cores: bool,
+    claim_label: &str,
+    entry_resources: &ResourceContext,
+    entry_memory: &CMemory,
+) -> Result<CState, ClickError> {
+    let (resource_specs, _) = crate::surface::verification::function_resource_summary(
+        function_block,
+        parsed_function,
+        resource_environment,
+    )?;
+    if resource_specs.is_empty() {
+        return Ok(state);
+    }
+
+    // The kernel evaluator resolves source parameter names through its local
+    // environment.  Entry lowering already has their exact symbolic values;
+    // install those values without rebinding frames or inspecting a concrete
+    // function body (named contracts deliberately have none).
+    let values =
+        crate::surface::lowering::parameter_values(parsed_function.parameters(), arguments)?;
+    let explicit_entry_facts = entry_resources
+        .facts()
+        .iter()
+        // Direct memory clauses are explicit entry authority too.  They are
+        // safe to expose before evaluation: unlike composite facts, they do
+        // not acquire any cells from a resource body.  In particular, a
+        // quantity such as `pool->capacity of pool_slot(pool)` may read the
+        // explicitly owned `object(pool)` clause before its containing
+        // composite is evaluated.
+        .filter(|fact| {
+            matches!(
+                fact.resource(),
+                CResource::Instance(_) | CResource::Memory(_)
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    // A function assumes its explicit pure preconditions at entry.  A loadability
+    // precondition is therefore a checked read capability for evaluating a
+    // dependent resource argument, but it is never ownership or body
+    // authority.  Keep a read view for each concrete loadability atom,
+    // matching the projection used by certification.
+    let precondition_read_facts = pure_facts
+        .iter()
+        .filter_map(|fact| {
+            let Proposition::CMemoryLoadable { base, bytes, .. } = fact else {
+                return None;
+            };
+            let range = match bytes {
+                Bitvector32Term::Multiply(left, right)
+                    if **right == Bitvector32Term::Constant(CType::Int32.byte_width()) =>
+                {
+                    CMemoryRange::new(
+                        base.clone(),
+                        Bitvector32Term::Constant(0),
+                        left.as_ref().clone(),
+                    )
+                }
+                Bitvector32Term::Multiply(left, right)
+                    if **left == Bitvector32Term::Constant(CType::Int32.byte_width()) =>
+                {
+                    CMemoryRange::new(
+                        base.clone(),
+                        Bitvector32Term::Constant(0),
+                        right.as_ref().clone(),
+                    )
+                }
+                Bitvector32Term::Constant(bytes) if bytes % CType::Int32.byte_width() == 0 => {
+                    CMemoryRange::new(
+                        base.clone(),
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Constant(bytes / CType::Int32.byte_width()),
+                    )
+                }
+                _ => CMemoryRange::new_with_element_width(
+                    base.clone(),
+                    Bitvector32Term::Constant(0),
+                    bytes.clone(),
+                    1,
+                ),
+            };
+            Some(CResourceFact::view_memory(range))
+        })
+        .collect::<Vec<_>>();
+    let mut evaluation_state = state.clone().with_resource_context(
+        ResourceContext::new()
+            .unchecked_with_facts(explicit_entry_facts)
+            .unchecked_with_facts(precondition_read_facts),
+    );
+    evaluation_state = evaluation_state.with_memory(entry_memory.clone());
+    for parameter in parsed_function.parameters() {
+        if let Some(value) = values.get(parameter.name()) {
+            evaluation_state = evaluation_state.with_local(parameter.name(), value.clone());
+        }
+    }
+    let assumptions = assumptions_from_propositions(pure_facts);
+    let definitions = crate::surface::verification::composite_resource_definitions(
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    let mut assumptions = assumptions;
+    let mut budget = ExecutionBudget::default();
+    let quantity_assumptions = match crate::kernel::quantified_resource_requirement_assumptions(
+        &evaluation_state,
+        &resource_specs,
+        &assumptions,
+        &mut budget,
+    ) {
+        Ok(Ok(propositions)) => propositions,
+        Ok(Err(error)) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` setup failed: could not evaluate the contract entry resources: {error:?}"
+            )));
+        }
+        Err(limit) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` setup failed: could not evaluate the contract entry resources: execution limit {limit:?}"
+            )));
+        }
+    };
+    for proposition in quantity_assumptions {
+        assumptions = assumptions.assume_proposition(proposition);
+    }
+    let evaluated = match crate::kernel::evaluate_function_resource_context(
+        &evaluation_state,
+        &resource_specs,
+        &definitions,
+        &assumptions,
+        &mut budget,
+    ) {
+        Ok(Ok(resources)) => resources,
+        Ok(Err(error)) => {
+            // Keep the established source-rich spelling for a dependent
+            // memory segment.  This is a diagnostic projection of the
+            // kernel's already-final refusal, not a second acceptance path;
+            // declared/composite argument failures have no surface fallback
+            // and retain the kernel's clause-positioned error.
+            if let Err(surface_error) =
+                crate::surface::lowering::check_resource_segment_base_loadability(
+                    function_block.requires(),
+                    parsed_function.parameters(),
+                    arguments,
+                    &state,
+                    &assumptions,
+                )
+            {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` setup failed: {}",
+                    surface_error.message()
+                )));
+            }
+            return Err(ClickError::new(format!(
+                "`{claim_label}` setup failed: could not evaluate the contract entry resources: {error:?}"
+            )));
+        }
+        Err(limit) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` setup failed: could not evaluate the contract entry resources: execution limit {limit:?}"
+            )));
+        }
+    };
+    let state = state.with_resource_context(evaluated);
+    project_initial_composite_resource_cores(
+        resource_environment,
+        parsed_function.parameters(),
+        arguments,
+        state,
+        pure_facts,
+        claim_label,
+        include_owned_composite_cores,
+        predicate_environment,
+        click_function_environment,
+    )
 }
 
 fn click_proposition_mentions_defined(proposition: &ClickProposition) -> bool {

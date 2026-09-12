@@ -4005,37 +4005,54 @@ pub(in crate::surface) fn function_resource_summary(
         .collect::<Vec<_>>();
     let mut borrowed_requirements = vec![false; borrowed_resources.len()];
     let mut requires = Vec::new();
+    let resource_clause_count = function_block
+        .requires()
+        .iter()
+        .filter(|requirement| matches!(requirement.inner(), Requirement::Resource(_)))
+        .count();
+    let mut resource_clause_index = 0;
     for requirement in function_block.requires() {
         let Requirement::Resource(resource) = requirement.inner() else {
             continue;
         };
+        let first_spec = requires.len();
         append_entry_resource_specs(
             resource,
             parsed_function.parameters(),
             resource_environment,
             &mut requires,
         )?;
-        if let Some(spec) = requires.last_mut() {
-            let borrowed_index = borrowed_resources
-                .iter()
-                .enumerate()
-                .find(|(index, borrowed)| !borrowed_requirements[*index] && **borrowed == resource)
-                .map(|(index, _)| index);
-            let role = if spec.is_view() || borrowed_index.is_some() {
-                if let Some(index) = borrowed_index {
-                    borrowed_requirements[index] = true;
-                }
-                CResourceTransferRole::Borrow
-            } else {
-                CResourceTransferRole::Consume
-            };
+        let borrowed_index = borrowed_resources
+            .iter()
+            .enumerate()
+            .find(|(index, borrowed)| !borrowed_requirements[*index] && **borrowed == resource)
+            .map(|(index, _)| index);
+        let role = if requires[first_spec..].iter().any(CResourceSpec::is_view)
+            || borrowed_index.is_some()
+        {
+            if let Some(index) = borrowed_index {
+                borrowed_requirements[index] = true;
+            }
+            CResourceTransferRole::Borrow
+        } else {
+            CResourceTransferRole::Consume
+        };
+        for spec in &mut requires[first_spec..] {
             *spec = spec
                 .clone()
                 .with_role(role)
-                .with_snapshot(CResourceSnapshot::Entry);
+                .with_snapshot(CResourceSnapshot::Entry)
+                .with_clause_position(resource_clause_index, resource_clause_count);
         }
+        resource_clause_index += 1;
     }
     let mut ensures = Vec::new();
+    let ensure_clause_count = function_block
+        .ensures()
+        .iter()
+        .filter(|ensure| matches!(ensure.ensure(), Ensure::Resource(_)))
+        .count();
+    let mut ensure_clause_index = 0;
     for ensure in function_block.ensures() {
         let Ensure::Resource(resource) = ensure.ensure() else {
             continue;
@@ -4050,21 +4067,24 @@ pub(in crate::surface) fn function_resource_summary(
         } else {
             CResourceSnapshot::Post
         };
-        let mut spec = resource_clause_to_resource_spec_with_metadata(
+        let specs = resource_clause_to_resource_specs_with_metadata(
             resource,
             parsed_function.parameters(),
             Some(parsed_function.return_type().to_kernel_type()),
             role,
             snapshot,
         )?;
-        // Instance ownership is identity-borrowed but field-produced: its
-        // selected identity comes from entry while its declared fields are
-        // checked against the post-call instance.  Keep that exceptional
-        // snapshot explicit in the normalized descriptor.
-        if ensure.borrowed() && spec.is_instance() {
-            spec = spec.with_snapshot(CResourceSnapshot::Post);
+        for mut spec in specs {
+            // Instance ownership is identity-borrowed but field-produced: its
+            // selected identity comes from entry while its declared fields are
+            // checked against the post-call instance.  Keep that exceptional
+            // snapshot explicit in the normalized descriptor.
+            if ensure.borrowed() && spec.is_instance() {
+                spec = spec.with_snapshot(CResourceSnapshot::Post);
+            }
+            ensures.push(spec.with_clause_position(ensure_clause_index, ensure_clause_count));
         }
-        ensures.push(spec);
+        ensure_clause_index += 1;
     }
     Ok((requires, ensures))
 }
@@ -4309,10 +4329,48 @@ pub(in crate::surface) fn append_entry_resource_specs(
     _resource_environment: &ResourceEnvironment,
     specs: &mut Vec<CResourceSpec>,
 ) -> Result<(), ClickError> {
-    specs.push(resource_clause_to_resource_spec_with_parameters(
-        resource, parameters, None,
+    specs.extend(resource_clause_to_resource_specs_with_metadata(
+        resource,
+        parameters,
+        None,
+        CResourceTransferRole::Borrow,
+        CResourceSnapshot::Entry,
     )?);
     Ok(())
+}
+
+fn resource_clause_to_resource_specs_with_metadata(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    result_type: Option<crate::kernel::CType>,
+    role: crate::kernel::CResourceTransferRole,
+    snapshot: crate::kernel::CResourceSnapshot,
+) -> Result<Vec<CResourceSpec>, ClickError> {
+    if let ResourceClause::MemoryAggregate { access, segments } = resource {
+        return segments
+            .iter()
+            .map(|segment| {
+                let leaf = match access {
+                    ResourceAccessMode::Own => ResourceClause::OwnMemory(segment.clone()),
+                    ResourceAccessMode::View => ResourceClause::ViewMemory(segment.clone()),
+                };
+                resource_clause_to_resource_spec_with_metadata(
+                    &leaf,
+                    parameters,
+                    result_type,
+                    role,
+                    snapshot,
+                )
+            })
+            .collect();
+    }
+    Ok(vec![resource_clause_to_resource_spec_with_metadata(
+        resource,
+        parameters,
+        result_type,
+        role,
+        snapshot,
+    )?])
 }
 
 fn resource_clause_to_resource_spec_with_parameters(
