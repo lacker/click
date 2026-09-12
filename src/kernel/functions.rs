@@ -12161,7 +12161,7 @@ fn evaluate_resource_clauses_against_whole_section(
     let mut supplied: Vec<CResourceFact> = Vec::new();
     let mut failures: Vec<Option<CRuntimeError>> = vec![None; resources.len()];
     let mut dependencies: Vec<Vec<CResourceFact>> = vec![Vec::new(); resources.len()];
-    let mut waiters = BTreeMap::<ResourceClauseDependencyKey, BTreeSet<usize>>::new();
+    let mut waiters = ResourceClauseWaiterIndex::default();
     for (index, resource) in resources.iter().enumerate() {
         let evaluation_state = state.clone().with_resource_context(
             state
@@ -12304,9 +12304,269 @@ enum ResourceClauseDependencyKey {
     MemoryBlock(PointerBlock),
 }
 
-fn resource_clause_dependency_keys(dependency: &CResourceFact) -> Vec<ResourceClauseDependencyKey> {
-    let mut keys = vec![ResourceClauseDependencyKey::Fact(dependency.clone())];
-    if let Some(range) = dependency.memory_range() {
+/// A sparse segment-tree coordinate space for a concrete memory block.
+///
+/// The range bounds are normalized to the block's element coordinate, using
+/// the pointer base's proven constant element offset.  Keeping the base out
+/// of the key is what lets a clause based at `p + 2` wake a clause based at
+/// `p`, while refusing to compare symbolic pointer offsets.  A non-concrete
+/// base or bound uses the bounded block/base fallback below instead.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ResourceClauseIntervalSpace {
+    block: PointerBlock,
+    element_width: u32,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ResourceClauseIntervalNode {
+    space: ResourceClauseIntervalSpace,
+    /// `level` is the base-2 logarithm of the node's element span.  The root
+    /// is level 32 and the leaves are level 0; no node represents individual
+    /// cells outside this fixed-depth index.
+    level: u8,
+    start: u32,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ResourceClauseIntervalWaiter {
+    clause: usize,
+    dependency: usize,
+}
+
+#[derive(Default)]
+struct ResourceClauseIntervalIndex {
+    exact: BTreeMap<ResourceClauseIntervalNode, BTreeSet<ResourceClauseIntervalWaiter>>,
+    /// Subtree aggregates are used only when a query fully covers a node.
+    /// Partial queries follow their two boundary paths, so a tiny supplied
+    /// range never reads the root aggregate and never wakes every waiter in a
+    /// block.  Each update touches at most 33 ancestors per canonical range
+    /// node, independent of the number of memory cells in that range.
+    subtree: BTreeMap<ResourceClauseIntervalNode, BTreeSet<ResourceClauseIntervalWaiter>>,
+}
+
+#[derive(Default)]
+struct ResourceClauseWaiterIndex {
+    coarse: BTreeMap<ResourceClauseDependencyKey, BTreeSet<usize>>,
+    intervals: ResourceClauseIntervalIndex,
+}
+
+/// Returns a concrete, block-relative interval when the base and both bounds
+/// have a checked signed integer interpretation.  The interval index is
+/// deliberately conservative: ranges that cannot be normalized into the
+/// fixed 32-bit coordinate universe remain on the symbolic block/base path.
+fn resource_clause_concrete_memory_interval(
+    range: &CMemoryRange,
+) -> Option<(ResourceClauseIntervalSpace, i64, i64)> {
+    let base_index = element_index_from_offset(&range.base().offset, range.element_width())
+        .and_then(|index| signed_bitvector_constant(&index))?;
+    let start = base_index.checked_add(signed_bitvector_constant(range.start())?)?;
+    let end = base_index.checked_add(signed_bitvector_constant(range.end())?)?;
+    if !(i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(&start)
+        || !(i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(&end)
+        || start >= end
+    {
+        return None;
+    }
+    Some((
+        ResourceClauseIntervalSpace {
+            block: range.base().block.clone(),
+            element_width: range.element_width(),
+        },
+        start,
+        end,
+    ))
+}
+
+fn resource_clause_biased_coordinate(value: i64) -> Option<u64> {
+    (i64::from(i32::MIN)..=i64::from(i32::MAX))
+        .contains(&value)
+        .then_some((value - i64::from(i32::MIN)) as u64)
+}
+
+fn resource_clause_interval_node_start(coordinate: u64, level: u8) -> u32 {
+    if level >= 32 {
+        0
+    } else {
+        ((coordinate >> level) << level) as u32
+    }
+}
+
+fn resource_clause_interval_node(
+    space: &ResourceClauseIntervalSpace,
+    level: u8,
+    start: u32,
+) -> ResourceClauseIntervalNode {
+    ResourceClauseIntervalNode {
+        space: space.clone(),
+        level,
+        start,
+    }
+}
+
+/// Canonical segment-tree decomposition of `[start, end)`.  A range is
+/// represented by O(32) aligned nodes, rather than by its cells.
+fn resource_clause_interval_nodes(
+    space: &ResourceClauseIntervalSpace,
+    start: i64,
+    end: i64,
+) -> Option<Vec<ResourceClauseIntervalNode>> {
+    let mut start = resource_clause_biased_coordinate(start)?;
+    let end = resource_clause_biased_coordinate(end)?;
+    if start >= end {
+        return None;
+    }
+    let mut nodes = Vec::new();
+    while start < end {
+        let alignment = if start == 0 {
+            32
+        } else {
+            start.trailing_zeros().min(32)
+        };
+        let remaining = end - start;
+        let magnitude = 63 - remaining.leading_zeros();
+        let level = alignment.min(magnitude).min(32) as u8;
+        let node_start = resource_clause_interval_node_start(start, level);
+        nodes.push(resource_clause_interval_node(space, level, node_start));
+        start += 1u64 << level;
+    }
+    Some(nodes)
+}
+
+fn resource_clause_interval_node_ancestors(
+    node: &ResourceClauseIntervalNode,
+) -> Vec<ResourceClauseIntervalNode> {
+    (node.level..=32)
+        .map(|level| {
+            resource_clause_interval_node(
+                &node.space,
+                level,
+                resource_clause_interval_node_start(u64::from(node.start), level),
+            )
+        })
+        .collect()
+}
+
+fn resource_clause_interval_node_bounds(node: &ResourceClauseIntervalNode) -> (u64, u64) {
+    let start = u64::from(node.start);
+    (start, start + (1u64 << node.level))
+}
+
+impl ResourceClauseIntervalIndex {
+    fn insert(
+        &mut self,
+        waiter: ResourceClauseIntervalWaiter,
+        space: &ResourceClauseIntervalSpace,
+        start: i64,
+        end: i64,
+    ) {
+        let Some(nodes) = resource_clause_interval_nodes(space, start, end) else {
+            return;
+        };
+        for node in nodes {
+            self.exact
+                .entry(node.clone())
+                .or_default()
+                .insert(waiter.clone());
+            for ancestor in resource_clause_interval_node_ancestors(&node) {
+                self.subtree
+                    .entry(ancestor)
+                    .or_default()
+                    .insert(waiter.clone());
+            }
+        }
+    }
+
+    fn remove(
+        &mut self,
+        waiter: &ResourceClauseIntervalWaiter,
+        space: &ResourceClauseIntervalSpace,
+        start: i64,
+        end: i64,
+    ) {
+        let Some(nodes) = resource_clause_interval_nodes(space, start, end) else {
+            return;
+        };
+        for node in nodes {
+            let remove_exact = self.exact.get_mut(&node).is_some_and(|waiters| {
+                waiters.remove(waiter);
+                waiters.is_empty()
+            });
+            if remove_exact {
+                self.exact.remove(&node);
+            }
+            for ancestor in resource_clause_interval_node_ancestors(&node) {
+                let remove_subtree = self.subtree.get_mut(&ancestor).is_some_and(|waiters| {
+                    waiters.remove(waiter);
+                    waiters.is_empty()
+                });
+                if remove_subtree {
+                    self.subtree.remove(&ancestor);
+                }
+            }
+        }
+    }
+
+    fn add_candidates(
+        waiters: &BTreeSet<ResourceClauseIntervalWaiter>,
+        candidates: &mut BTreeSet<usize>,
+    ) {
+        candidates.extend(waiters.iter().map(|waiter| waiter.clause));
+    }
+
+    fn query_node(
+        &self,
+        node: &ResourceClauseIntervalNode,
+        query_start: u64,
+        query_end: u64,
+        candidates: &mut BTreeSet<usize>,
+    ) {
+        let (node_start, node_end) = resource_clause_interval_node_bounds(node);
+        if node_end <= query_start || query_end <= node_start {
+            return;
+        }
+        if let Some(waiters) = self.exact.get(node) {
+            Self::add_candidates(waiters, candidates);
+        }
+        if query_start <= node_start && node_end <= query_end {
+            if let Some(waiters) = self.subtree.get(node) {
+                Self::add_candidates(waiters, candidates);
+            }
+            return;
+        }
+        if node.level == 0 {
+            return;
+        }
+        let child_level = node.level - 1;
+        let left = resource_clause_interval_node(&node.space, child_level, node.start);
+        let right_start = (u64::from(node.start) + (1u64 << child_level)) as u32;
+        let right = resource_clause_interval_node(&node.space, child_level, right_start);
+        self.query_node(&left, query_start, query_end, candidates);
+        self.query_node(&right, query_start, query_end, candidates);
+    }
+
+    fn candidates_for_fact(&self, fact: &CResourceFact) -> BTreeSet<usize> {
+        let mut candidates = BTreeSet::new();
+        let Some(range) = fact.memory_range() else {
+            return candidates;
+        };
+        let Some((space, start, end)) = resource_clause_concrete_memory_interval(range) else {
+            return candidates;
+        };
+        let Some(query_start) = resource_clause_biased_coordinate(start) else {
+            return candidates;
+        };
+        let Some(query_end) = resource_clause_biased_coordinate(end) else {
+            return candidates;
+        };
+        let root = resource_clause_interval_node(&space, 32, 0);
+        self.query_node(&root, query_start, query_end, &mut candidates);
+        candidates
+    }
+}
+
+fn resource_clause_coarse_keys(fact: &CResourceFact) -> Vec<ResourceClauseDependencyKey> {
+    let mut keys = vec![ResourceClauseDependencyKey::Fact(fact.clone())];
+    if let Some(range) = fact.memory_range() {
         keys.push(ResourceClauseDependencyKey::MemoryBase(
             range.base().clone(),
         ));
@@ -12317,11 +12577,87 @@ fn resource_clause_dependency_keys(dependency: &CResourceFact) -> Vec<ResourceCl
     keys
 }
 
+impl ResourceClauseWaiterIndex {
+    fn register(&mut self, clause: usize, dependencies: &[CResourceFact]) {
+        for (dependency_index, dependency) in dependencies.iter().enumerate() {
+            if let Some((space, start, end)) = dependency
+                .memory_range()
+                .and_then(resource_clause_concrete_memory_interval)
+            {
+                self.coarse
+                    .entry(ResourceClauseDependencyKey::Fact(dependency.clone()))
+                    .or_default()
+                    .insert(clause);
+                self.intervals.insert(
+                    ResourceClauseIntervalWaiter {
+                        clause,
+                        dependency: dependency_index,
+                    },
+                    &space,
+                    start,
+                    end,
+                );
+            } else {
+                for key in resource_clause_coarse_keys(dependency) {
+                    self.coarse.entry(key).or_default().insert(clause);
+                }
+            }
+        }
+    }
+
+    fn unregister(&mut self, clause: usize, dependencies: &[CResourceFact]) {
+        for (dependency_index, dependency) in dependencies.iter().enumerate() {
+            if let Some((space, start, end)) = dependency
+                .memory_range()
+                .and_then(resource_clause_concrete_memory_interval)
+            {
+                let key = ResourceClauseDependencyKey::Fact(dependency.clone());
+                let remove_key = self.coarse.get_mut(&key).is_some_and(|clauses| {
+                    clauses.remove(&clause);
+                    clauses.is_empty()
+                });
+                if remove_key {
+                    self.coarse.remove(&key);
+                }
+                self.intervals.remove(
+                    &ResourceClauseIntervalWaiter {
+                        clause,
+                        dependency: dependency_index,
+                    },
+                    &space,
+                    start,
+                    end,
+                );
+            } else {
+                for key in resource_clause_coarse_keys(dependency) {
+                    let remove_key = self.coarse.get_mut(&key).is_some_and(|clauses| {
+                        clauses.remove(&clause);
+                        clauses.is_empty()
+                    });
+                    if remove_key {
+                        self.coarse.remove(&key);
+                    }
+                }
+            }
+        }
+    }
+
+    fn candidates_for_supplied(&self, supplied: &CResourceFact) -> BTreeSet<usize> {
+        let mut candidates = self.intervals.candidates_for_fact(supplied);
+        for key in resource_clause_coarse_keys(supplied) {
+            if let Some(clauses) = self.coarse.get(&key) {
+                candidates.extend(clauses.iter().copied());
+            }
+        }
+        candidates
+    }
+}
+
 fn resource_clause_register_waiters(
     index: usize,
     missing: Vec<CResourceFact>,
     dependencies: &mut [Vec<CResourceFact>],
-    waiters: &mut BTreeMap<ResourceClauseDependencyKey, BTreeSet<usize>>,
+    waiters: &mut ResourceClauseWaiterIndex,
 ) {
     let mut unique = Vec::new();
     for dependency in missing {
@@ -12329,31 +12665,18 @@ fn resource_clause_register_waiters(
             continue;
         }
         unique.push(dependency.clone());
-        for key in resource_clause_dependency_keys(&dependency) {
-            waiters.entry(key).or_default().insert(index);
-        }
     }
+    waiters.register(index, &unique);
     dependencies[index] = unique;
 }
 
 fn resource_clause_unregister_waiters(
     index: usize,
     dependencies: &mut [Vec<CResourceFact>],
-    waiters: &mut BTreeMap<ResourceClauseDependencyKey, BTreeSet<usize>>,
+    waiters: &mut ResourceClauseWaiterIndex,
 ) {
     let previous = std::mem::take(&mut dependencies[index]);
-    for dependency in previous {
-        for key in resource_clause_dependency_keys(&dependency) {
-            let mut remove_key = false;
-            if let Some(indices) = waiters.get_mut(&key) {
-                indices.remove(&index);
-                remove_key = indices.is_empty();
-            }
-            if remove_key {
-                waiters.remove(&key);
-            }
-        }
-    }
+    waiters.unregister(index, &previous);
 }
 
 fn resource_clause_enqueue_waiters(
@@ -12364,14 +12687,9 @@ fn resource_clause_enqueue_waiters(
     queued: &mut [bool],
     pending: &mut VecDeque<usize>,
     dependencies: &[Vec<CResourceFact>],
-    waiters: &BTreeMap<ResourceClauseDependencyKey, BTreeSet<usize>>,
+    waiters: &ResourceClauseWaiterIndex,
 ) {
-    let mut candidates = BTreeSet::new();
-    for key in resource_clause_dependency_keys(supplied) {
-        if let Some(indices) = waiters.get(&key) {
-            candidates.extend(indices.iter().copied());
-        }
-    }
+    let candidates = waiters.candidates_for_supplied(supplied);
     for index in candidates {
         if evaluated[index].is_none()
             && !queued[index]
@@ -12412,7 +12730,7 @@ mod resource_clause_worklist_tests {
         ));
         let assumptions = PureFactContext::new();
         let mut dependencies = vec![Vec::new()];
-        let mut waiters = BTreeMap::new();
+        let mut waiters = ResourceClauseWaiterIndex::default();
         resource_clause_register_waiters(0, vec![wide.clone()], &mut dependencies, &mut waiters);
         let evaluated = vec![None];
         let mut queued = vec![false];
@@ -12445,6 +12763,116 @@ mod resource_clause_worklist_tests {
             &waiters,
         );
         assert_eq!(pending, VecDeque::from([0]));
+    }
+
+    /// Same-block disjoint ranges have one real dependency edge apiece.  The
+    /// interval index must visit those edges, not every waiter sharing the
+    /// block key.  The exact candidate count is the regression: the old
+    /// `MemoryBlock` index would produce `size * size` visits here.
+    #[test]
+    fn same_block_disjoint_waiters_use_interval_candidates() {
+        let base = Pointer {
+            block: PointerBlock::Concrete("resource-clause-disjoint".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let samples = [4_usize, 8, 16, 32]
+            .into_iter()
+            .map(|size| {
+                let mut dependencies = vec![Vec::new(); size];
+                let mut waiters = ResourceClauseWaiterIndex::default();
+                for index in 0..size {
+                    let start = (index * 2) as u32;
+                    let dependency = CResourceFact::view_memory(CMemoryRange::new(
+                        base.clone(),
+                        Bitvector32Term::Constant(start),
+                        Bitvector32Term::Constant(start + 1),
+                    ));
+                    resource_clause_register_waiters(
+                        index,
+                        vec![dependency],
+                        &mut dependencies,
+                        &mut waiters,
+                    );
+                }
+                let mut candidate_visits = 0;
+                for index in 0..size {
+                    let start = (index * 2) as u32;
+                    let supplied = CResourceFact::view_memory(CMemoryRange::new(
+                        base.clone(),
+                        Bitvector32Term::Constant(start),
+                        Bitvector32Term::Constant(start + 1),
+                    ));
+                    let candidates = waiters.candidates_for_supplied(&supplied);
+                    candidate_visits += candidates.len();
+                    assert_eq!(
+                        candidates.into_iter().collect::<Vec<_>>(),
+                        vec![index],
+                        "a disjoint supplied range woke unrelated same-block waiters: size={size} index={index}"
+                    );
+                }
+                (size, candidate_visits)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            samples,
+            vec![(4, 4), (8, 8), (16, 16), (32, 32)],
+            "same-block interval candidate work should follow actual dependency edges"
+        );
+    }
+
+    #[test]
+    fn comparable_constant_bases_share_interval_space() {
+        let block = PointerBlock::Concrete("resource-clause-base-aware".to_string());
+        let dependency_base = Pointer {
+            block: block.clone(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let supplied_base = Pointer {
+            block,
+            offset: PointerOffsetTerm::Constant(8),
+        };
+        let dependency = CResourceFact::view_memory(CMemoryRange::new(
+            dependency_base,
+            Bitvector32Term::Constant(2),
+            Bitvector32Term::Constant(3),
+        ));
+        let supplied = CResourceFact::view_memory(CMemoryRange::new(
+            supplied_base,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ));
+        let mut dependencies = vec![Vec::new()];
+        let mut waiters = ResourceClauseWaiterIndex::default();
+        resource_clause_register_waiters(0, vec![dependency], &mut dependencies, &mut waiters);
+        assert_eq!(
+            waiters.candidates_for_supplied(&supplied),
+            BTreeSet::from([0])
+        );
+    }
+
+    #[test]
+    fn symbolic_memory_waiters_keep_conservative_block_fallback() {
+        let base = Pointer {
+            block: PointerBlock::Concrete("resource-clause-symbolic".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let dependency = CResourceFact::view_memory(CMemoryRange::new(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Variable(Variable(9_901)),
+        ));
+        let supplied = CResourceFact::view_memory(CMemoryRange::new(
+            base,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ));
+        let mut dependencies = vec![Vec::new()];
+        let mut waiters = ResourceClauseWaiterIndex::default();
+        resource_clause_register_waiters(0, vec![dependency], &mut dependencies, &mut waiters);
+        assert_eq!(
+            waiters.candidates_for_supplied(&supplied),
+            BTreeSet::from([0])
+        );
     }
 }
 
