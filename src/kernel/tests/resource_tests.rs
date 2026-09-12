@@ -2639,6 +2639,7 @@ fn cached_support_updates_ignore_unrelated_cached_supports() {
         }
         context = context.unchecked_with_fact(target.clone());
         let target_occurrence = context.owned_occurrences_for_fact(&target)[0];
+        let before_cache_allocations = crate::persistent::persistent_node_allocations();
         let (context, cache_work) = crate::instrumentation::measure_deterministic_work(|| {
             context.with_cached_supported_expansion_for_occurrence(
                 target_occurrence,
@@ -2649,19 +2650,42 @@ fn cached_support_updates_ignore_unrelated_cached_supports() {
                 )],
             )
         });
+        let cache_allocations =
+            crate::persistent::persistent_node_allocations() - before_cache_allocations;
+        let before_remove_allocations = crate::persistent::persistent_node_allocations();
         let (remaining, remove_work) = crate::instrumentation::measure_deterministic_work(|| {
             context
                 .without_exact_representation_for_occurrence(target_occurrence)
                 .expect("the target support should be removable")
         });
+        let remove_allocations =
+            crate::persistent::persistent_node_allocations() - before_remove_allocations;
         assert_eq!(remaining.cached_supported_expansions(&target).len(), 0);
-        samples.push((size, cache_work, remove_work));
+        samples.push((
+            size,
+            cache_work,
+            remove_work,
+            cache_allocations,
+            remove_allocations,
+        ));
     }
     for pair in samples.windows(2) {
         assert!(
             pair[1].1 <= pair[0].1.saturating_mul(2).saturating_add(8)
                 && pair[1].2 <= pair[0].2.saturating_mul(2).saturating_add(8),
             "support cache updates scanned unrelated cached authorities: {samples:?}"
+        );
+    }
+    let base_height = usize::BITS as usize - samples[0].0.leading_zeros() as usize;
+    for (size, _, _, cache_allocations, remove_allocations) in samples {
+        let height = usize::BITS as usize - size.leading_zeros() as usize;
+        // A global canonical-map rebuild grows with every unrelated cache;
+        // this logarithmic bound rejects that shape while allowing the
+        // persistent paths for the affected support bucket.
+        let bound = 32 * (height - base_height + 1);
+        assert!(
+            cache_allocations <= bound && remove_allocations <= bound,
+            "support cache updates scaled with unrelated cache count at size {size}: cache={cache_allocations}, remove={remove_allocations}, bound={bound}"
         );
     }
 }
