@@ -624,6 +624,13 @@ enough to become the first regression of the package that fixes them.
     `click expand` of a `loop` whose `preserve` has `match`, `unfold`, and
     a proof `if` with `initialize` omitted emits a script failing with
     "resource match requires constructor evidence" (T5/T8 class).
+61. **Smaller A26 findings, not scheduled.** Contract-lowering refutation
+    from a plain arithmetic requirement (`requires n > 0` against an arm's
+    `fact k == 0`) does not fire while the same shape at a loop head does
+    (only `!=`-shaped facts go through the exact negation); a proof `if`
+    whose arms contain a proof `match`, at the top level of a function
+    proof, is declined by the grouped driver, so a two-frame rbtree ascent
+    decided by a C `if` is stated through a pure predicate instead.
 
 ## Design decisions
 
@@ -956,6 +963,12 @@ appears to need one reports the need instead of adding it.
   always an exit candidate; both reductions fail; `c_do_while.md` repaired).
   The insert fixture is past the exit join and stops at its own
   `initialize`. A26 in progress; C3 resumes after it.
+- 2026-09-12: A26 (ba0d9c30) is on master: a ranked loop verifies inside a
+  proof `match` arm, a decided `branch` works in `preserve`, and refutation
+  runs at frontier case splits and on unfolded children; the path-budget
+  item did not reproduce. Every verifier gap on the insert path is closed;
+  C3 resumes with the insert fixture stopping at its own `initialize`
+  (the frame-to-`parent` lemma before the loop).
 
 ## Work packages
 
