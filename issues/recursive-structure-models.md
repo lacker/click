@@ -542,6 +542,14 @@ appears to need one reports the need instead of adding it.
   arguments at the current cursor (gaps 19 and 20), and a fresh loop binder
   is refused by name. The descent reaches `close_invariants()` and stops
   on gap 27. A13 dispatched; T4 and T6 in progress.
+- 2026-09-12: T4 (63ec6190) is on master: a wide execution join distributes
+  a deferred `if` only into the arms its split selects and certificates
+  are shared `Arc` vectors, so the retained certificate is linear in width
+  and a 32-arm match verifies in 0.8 s instead of 9.3 s. Two notes, not
+  scheduled: the deterministic tactic-work counter does not observe
+  certificate assembly, so `click profile` could not point at this class
+  of cost; and a generated 44-arm match declines to verify on a bound T4
+  did not identify.
 
 ## Work packages
 
