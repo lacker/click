@@ -12306,21 +12306,21 @@ enum ResourceClauseDependencyKey {
 
 /// A sparse segment-tree coordinate space for a concrete memory block.
 ///
-/// The range bounds are normalized to the block's element coordinate, using
-/// the pointer base's proven constant element offset.  Keeping the base out
-/// of the key is what lets a clause based at `p + 2` wake a clause based at
-/// `p`, while refusing to compare symbolic pointer offsets.  A non-concrete
-/// base or bound uses the bounded block/base fallback below instead.
+/// The range bounds are normalized to the block's physical byte coordinate,
+/// using the pointer base's proven constant byte offset and checked element
+/// widths.  Keeping the base out of the key is what lets a clause based at
+/// `p + 2` wake a clause based at `p`, while refusing to compare symbolic
+/// pointer offsets.  A non-concrete base or bound uses the bounded block/base
+/// fallback below instead.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct ResourceClauseIntervalSpace {
     block: PointerBlock,
-    element_width: u32,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct ResourceClauseIntervalNode {
     space: ResourceClauseIntervalSpace,
-    /// `level` is the base-2 logarithm of the node's element span.  The root
+    /// `level` is the base-2 logarithm of the node's byte span.  The root
     /// is level 32 and the leaves are level 0; no node represents individual
     /// cells outside this fixed-depth index.
     level: u8,
@@ -12350,27 +12350,33 @@ struct ResourceClauseWaiterIndex {
     intervals: ResourceClauseIntervalIndex,
 }
 
-/// Returns a concrete, block-relative interval when the base and both bounds
-/// have a checked signed integer interpretation.  The interval index is
-/// deliberately conservative: ranges that cannot be normalized into the
+/// Returns a concrete, block-relative byte interval when the base and both
+/// bounds have a checked signed integer interpretation.  The interval index
+/// is deliberately conservative: ranges that cannot be normalized into the
 /// fixed 32-bit coordinate universe remain on the symbolic block/base path.
 fn resource_clause_concrete_memory_interval(
     range: &CMemoryRange,
 ) -> Option<(ResourceClauseIntervalSpace, i64, i64)> {
-    let base_index = element_index_from_offset(&range.base().offset, range.element_width())
-        .and_then(|index| signed_bitvector_constant(&index))?;
-    let start = base_index.checked_add(signed_bitvector_constant(range.start())?)?;
-    let end = base_index.checked_add(signed_bitvector_constant(range.end())?)?;
+    let base_offset = range.base().offset.as_const()?;
+    let start_elements = signed_bitvector_constant(range.start())?;
+    let end_elements = signed_bitvector_constant(range.end())?;
+    if start_elements >= end_elements {
+        return None;
+    }
+    let element_width = i64::from(range.element_width());
+    let start = base_offset.checked_add(start_elements.checked_mul(element_width)?)?;
+    let byte_count = end_elements
+        .checked_sub(start_elements)?
+        .checked_mul(element_width)?;
+    let end = start.checked_add(byte_count)?;
     if !(i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(&start)
         || !(i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(&end)
-        || start >= end
     {
         return None;
     }
     Some((
         ResourceClauseIntervalSpace {
             block: range.base().block.clone(),
-            element_width: range.element_width(),
         },
         start,
         end,
@@ -12840,6 +12846,33 @@ mod resource_clause_worklist_tests {
             supplied_base,
             Bitvector32Term::Constant(0),
             Bitvector32Term::Constant(1),
+        ));
+        let mut dependencies = vec![Vec::new()];
+        let mut waiters = ResourceClauseWaiterIndex::default();
+        resource_clause_register_waiters(0, vec![dependency], &mut dependencies, &mut waiters);
+        assert_eq!(
+            waiters.candidates_for_supplied(&supplied),
+            BTreeSet::from([0])
+        );
+    }
+
+    #[test]
+    fn concrete_memory_waiters_share_physical_byte_space_across_widths() {
+        let base = Pointer {
+            block: PointerBlock::Concrete("resource-clause-byte-space".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let dependency = CResourceFact::view_memory(CMemoryRange::new_with_element_width(
+            base.clone(),
+            Bitvector32Term::Constant(8),
+            Bitvector32Term::Constant(12),
+            1,
+        ));
+        let supplied = CResourceFact::view_memory(CMemoryRange::new_with_element_width(
+            base,
+            Bitvector32Term::Constant(2),
+            Bitvector32Term::Constant(3),
+            4,
         ));
         let mut dependencies = vec![Vec::new()];
         let mut waiters = ResourceClauseWaiterIndex::default();
