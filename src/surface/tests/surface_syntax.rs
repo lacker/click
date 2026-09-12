@@ -1304,6 +1304,22 @@ fn special_certificate_accepts_deep_identity_and_rejects_late_mismatch() {
         parse(&mismatch_source).is_err(),
         "a late deep premise mismatch must reject without recursive equality"
     );
+
+    let call_mismatch = r#"
+        theorem special_call_mismatch(p: int32) {
+            ensures aligned(p, 8) by {
+                arithmetic_certificate special {
+                    premise 0: first(p) => second(p);
+                    pointer_alignment premise 0 => aligned(p, 8);
+                    conclusion 0;
+                }
+            }
+        }
+    "#;
+    assert!(
+        parse(call_mismatch).is_err(),
+        "special premise token comparison must reject differing call names"
+    );
 }
 
 #[test]
