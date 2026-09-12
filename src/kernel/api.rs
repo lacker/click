@@ -329,7 +329,11 @@ fn c_loop_preservation_contexts_with_mode(
         )
     })? {
         let condition_contexts = if do_while {
-            vec![(invariant_facts.clone(), invariant_obligations.clone())]
+            vec![CConditionAssumption {
+                branch: CConditionBranch::Decided(true),
+                facts: invariant_facts.clone(),
+                obligations: invariant_obligations.clone(),
+            }]
         } else {
             assume_condition_truthiness(
                 &top_state,
@@ -342,7 +346,15 @@ fn c_loop_preservation_contexts_with_mode(
             )
             .map_err(|error| format!("could not assume the loop condition: {error:?}"))?
         };
-        for (facts, obligations) in condition_contexts {
+        for assumption in condition_contexts {
+            // A guard operand this function may not read leaves the head's
+            // premises undefined; there is no iteration to describe here.
+            if let Some(outcome) = assumption.undecided_outcome() {
+                return Err(undecided_loop_guard_context(outcome));
+            }
+            let CConditionAssumption {
+                facts, obligations, ..
+            } = assumption;
             let context_assumptions = assumptions_with_path_context(assumptions, &facts, &[]);
             if let Some(obligation) = obligations.iter().find(|obligation| {
                 !required_obligation_is_exactly_discharged(

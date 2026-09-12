@@ -1141,7 +1141,7 @@ fn certification_proves_exists_obligation_from_facts(
 /// errors carry a sentence written for the user; the structured variants have
 /// no kernel-side rendering of their payload, so they are named by kind rather
 /// than dumped as internal state.
-pub(super) fn describe_certification_runtime_error(error: &CRuntimeError) -> String {
+pub(in crate::kernel) fn describe_certification_runtime_error(error: &CRuntimeError) -> String {
     match error {
         CRuntimeError::PointerConversion(message) | CRuntimeError::FunctionContract(message) => {
             message.clone()
