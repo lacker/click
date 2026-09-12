@@ -458,7 +458,7 @@ primary branch base.
 ## W3 follow-up: accumulated supply and nested loadability (2026-09-11)
 
 This review follow-up started from `2538cdbf` (the preceding W3 entry
-evaluation documentation checkpoint) and is committed as `58c3fa21`, still
+evaluation documentation checkpoint) and is committed as `25711aa6`, still
 unmerged and unpushed. The event-driven clause queue now tests a
 newly supplied fact against the accumulated indexed section supply. A wide
 pending memory dependency can therefore wake after adjacent `[0..1]` and
