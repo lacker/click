@@ -474,6 +474,12 @@ enough to become the first regression of the package that fixes them.
     guard does not parse in C0 (assignment expression;
     kernel-scale-preprocessing) and is pinned as
     `mdtests/rb_next_conjunctive_guard.md`.
+45. **Small pure-proof limits from C2b, not scheduled.** `normalize()`
+    and `normalize() using` cannot close pointer-equality transitivity
+    (`a == b`, `b == c` to `a == c`); only `simp()` does. A raw `if parent
+    == p` as a pure function's outermost test unfolds to one opaque
+    bitvector operation, so every predicate test is written `if <int32
+    test> == 1`.
 
 ## Design decisions
 
@@ -753,6 +759,12 @@ appears to need one reports the need instead of adding it.
   owns are published as views at contract lowering, loop heads, and per
   guard conjunct; the translated `rb_next` ascent guard verifies and
   audits on the parameter spelling. A18 and C2b in progress.
+- 2026-09-12: C2b (427e2463) is on master: `examples/rbtree-model` is on
+  the node-keyed model with 89 theorems and 33 functions, `rb_reparent`,
+  `rb_parent_consistent` with preservation by rotation, recolor, leaf
+  insertion, and both splices, and `plug` with `plug_inorder_transport`
+  and `plug_parent_consistent_transport`; audit 161 of 161 sites. A18 in
+  progress; A20 after it; then C3.
 
 ## Work packages
 
