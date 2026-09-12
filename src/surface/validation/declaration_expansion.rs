@@ -1190,6 +1190,42 @@ fn expand_declared_resource_expression(
     expression: ContractExpression,
     resource_definitions: &DeclaredResourceScope,
 ) -> Result<ContractExpression, ClickError> {
+    // Let chains are common in generated specifications and can be much
+    // deeper than the surrounding expression tree. Peel consecutive lets
+    // iteratively so expanding their bodies does not retain one large match
+    // frame per binding.
+    let mut lets = Vec::new();
+    let mut expression = expression;
+    while let ContractExpression::Let {
+        name,
+        click_type,
+        value,
+        body,
+    } = expression
+    {
+        lets.push((
+            name,
+            click_type,
+            expand_declared_resource_expression(*value, resource_definitions)?,
+        ));
+        expression = *body;
+    }
+    let mut expanded = expand_declared_resource_expression_node(expression, resource_definitions)?;
+    while let Some((name, click_type, value)) = lets.pop() {
+        expanded = ContractExpression::Let {
+            name,
+            click_type,
+            value: Box::new(value),
+            body: Box::new(expanded),
+        };
+    }
+    Ok(expanded)
+}
+
+fn expand_declared_resource_expression_node(
+    expression: ContractExpression,
+    resource_definitions: &DeclaredResourceScope,
+) -> Result<ContractExpression, ClickError> {
     match expression {
         ContractExpression::ResourceField(mut access) => {
             if let Some(name) = resource_definitions.children.borrow().get(&access.identity) {
