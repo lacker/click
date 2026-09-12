@@ -995,11 +995,13 @@ fn validate_algebraic_proposition(
             click_type: c_type,
             name,
             body,
+            ..
         }
         | ClickProposition::Exists {
             click_type: c_type,
             name,
             body,
+            ..
         } => {
             let mut variables = variables.clone();
             match c_type {
@@ -1029,12 +1031,14 @@ fn validate_algebraic_proposition(
             end,
             item,
             body,
+            ..
         }
         | ClickProposition::RangeAny {
             start,
             end,
             item,
             body,
+            ..
         } => {
             validate_algebraic_expression(
                 start,
@@ -2465,11 +2469,13 @@ fn validate_generic_proposition_types(
             click_type: c_type,
             name,
             body,
+            ..
         }
         | ClickProposition::Exists {
             click_type: c_type,
             name,
             body,
+            ..
         } => {
             let mut variables = variables.clone();
             variables.insert(name.clone(), c_type.clone());

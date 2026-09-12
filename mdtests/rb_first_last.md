@@ -16,6 +16,16 @@ result has no left child. The empty tree is the same contract, not a second one:
 points at the result, `rb_at(0)` is `RbTree::Empty`, and `plug(Top, Empty)` is
 `Empty`.
 
+`rb_at`'s `Node` arm carries parent/child consistency as a body fact,
+`rb_parent_is(left_model, p) == 1` and its mirror: each submodel's own parent
+payload is this node. That is D2's intent, and it is dischargeable at `fold`
+only because a pure function that reads no memory now anchors its pointer
+arguments to one canonical snapshot rather than the ambient one (package A20;
+see [`docs/concepts/resources.md`](../docs/concepts/resources.md) and
+[`rb_at_link_helpers.md`](rb_at_link_helpers.md)). The descent folds the frame
+and the focused subtree on every iteration, so both facts are re-established
+each time round the loop.
+
 `rb_first` also states its result's *position*: on a non-empty tree the result
 is the head of `rb_inorder`. `exists` cannot quantify a `List`-typed variable,
 so the `Cons(result, rest)` form is not spellable; `rb_list_starts_with` says
@@ -123,6 +133,14 @@ function plug(ctx: Context, sub: RbTree) -> RbTree
     }
 }
 
+function rb_parent_is(tree: RbTree, p: struct rb_node*) -> int32 {
+    match tree {
+        RbTree::Empty => 1,
+        RbTree::Node(identity, parent, color, left, right) =>
+            if parent == p { 1 } else { 0 },
+    }
+}
+
 resource rb_at(p: struct rb_node*) {
     field model: RbTree;
     match model {
@@ -141,6 +159,8 @@ resource rb_at(p: struct rb_node*) {
             fact (p->__rb_parent_color & 1) == color_bit(color);
             fact left.model == left_model;
             fact right.model == right_model;
+            fact rb_parent_is(left_model, p) == 1;
+            fact rb_parent_is(right_model, p) == 1;
         },
     }
 }

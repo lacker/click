@@ -13,21 +13,20 @@ With the parent inside the model, the node's own arm still owns
 parent's address with the color in bit 0. Nothing is owned through a payload:
 `parent` is compared and its address is taken, never dereferenced.
 
-Parent/child consistency is *not* a body fact here, and that is a verifier
-limitation rather than a modeling choice. The intended arm fact is
-`rb_parent_is(left_model, p) == 1` — the left submodel's own parent payload is
-this node — and `fold` refuses it with `fold requires the instance body facts
-for the proposed fields` at every constructor fold, including
-`set_parent`'s, while the identical proposition is an available checked fact
-immediately before that fold (`have rb_parent_is(left_model, node) == 1 by {
-assumption(); }` closes). The deciding feature is the *pointer* argument:
-`fact color_bit(color) >= 0` over the `Color` payload and
-`fact rb_color_bit(left_model) >= 0` over the `RbTree` payload both discharge,
-while any pure call taking `p` or the pointer payload `identity` does not —
-`fact rb_parent_is(RbTree::Empty, identity) == 1`, a constant truth, fails the
-same way. `rb_parent_is` is therefore stated in contracts, where nothing is
-discharged exactly, and consistency is a `requires` for the proofs that need
-it.
+Parent/child consistency *is* a body fact here, as D2 intends:
+`rb_parent_is(left_model, p) == 1` says the left submodel's own parent payload
+is this node, and the mirror says it of the right. Every constructor `fold`
+discharges both exactly, from the facts the matching `unfold` published.
+
+This is what package A20 unblocked. Until then every such fold refused with
+`fold requires the instance body facts for the proposed fields` while the
+identical proposition was an available checked fact immediately before it. The
+deciding feature was the *pointer* argument: a pure function's pointer
+parameter is an array-ref argument carrying the ambient memory snapshot, so
+`rb_parent_is(left_model, node)` proved before `execute()` and the same
+proposition demanded by a fold after it were two different terms. A function
+that reads no memory is now anchored to one canonical snapshot, so the two are
+one term; see [`docs/concepts/resources.md`](../docs/concepts/resources.md).
 
 The tagged word is stated as two facts rather than the single
 `p->__rb_parent_color == address(parent) + color_bit(color)`. Their conjunction
@@ -239,6 +238,8 @@ resource rb_at(p: struct rb_node*) {
             fact (p->__rb_parent_color & 1) == color_bit(color);
             fact left.model == left_model;
             fact right.model == right_model;
+            fact rb_parent_is(left_model, p) == 1;
+            fact rb_parent_is(right_model, p) == 1;
         },
     }
 }

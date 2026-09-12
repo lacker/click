@@ -1943,6 +1943,7 @@ fn contract_substitution_renames_colliding_logical_binders() {
     let proposition = ClickProposition::ForAll {
         click_type: ClickType::C(C0Type::Int32),
         name: "i".to_string(),
+        written_name: None,
         body: Box::new(ClickProposition::Comparison {
             left: current_var("argument"),
             operator: ComparisonOperator::Equal,
@@ -1953,10 +1954,17 @@ fn contract_substitution_renames_colliding_logical_binders() {
 
     let substituted = lowering::substitute_click_proposition(&proposition, &substitutions)
         .expect("surface substitution should succeed");
-    let ClickProposition::ForAll { name, body, .. } = substituted else {
+    let ClickProposition::ForAll {
+        name,
+        written_name,
+        body,
+        ..
+    } = substituted
+    else {
         panic!("substitution should preserve the logical binder");
     };
     assert_ne!(name, "i");
+    assert_eq!(written_name.as_deref(), Some("i"));
     assert_eq!(
         body.as_ref(),
         &ClickProposition::Comparison {
@@ -2259,6 +2267,40 @@ fn integer_resource_fields_enforce_types_facts_and_snapshots() {
         expand_c0_claim_source_by_label(source, &[("change.c", c_source)], "change.contract")
             .unwrap();
     verify_c0_sources(&expanded, &[("change.c", c_source)]).unwrap();
+}
+
+#[test]
+fn memory_free_pure_functions_are_classified_memory_independent() {
+    let file = parser::parse(
+        r#"
+        spec enum Tree { Leaf, Node(int32*, Tree) }
+        function identity_is(t: Tree, q: int32*) -> int32 {
+            match t {
+                Tree::Leaf => 1,
+                Tree::Node(identity, sub) => if identity == q { 1 } else { 0 },
+            }
+        }
+        function identity_is_twice(t: Tree, q: int32*) -> int32 {
+            identity_is(t, q) + identity_is(t, q)
+        }
+        function head_is(p: int32*, x: int32) -> int32 {
+            if p[0] == x { 1 } else { 0 }
+        }
+        function head_is_twice(p: int32*, x: int32) -> int32 {
+            head_is(p, x) + head_is(p, x)
+        }
+    "#,
+    )
+    .unwrap();
+    let environment = ClickFunctionEnvironment::new(file.click_function_definitions());
+    // A predicate over payloads, and its caller, read nothing.
+    assert!(environment.is_memory_independent("identity_is"));
+    assert!(environment.is_memory_independent("identity_is_twice"));
+    // Indexing a parameter reads memory, and so does calling something that does.
+    assert!(!environment.is_memory_independent("head_is"));
+    assert!(!environment.is_memory_independent("head_is_twice"));
+    // An undeclared name is never assumed memory-free.
+    assert!(!environment.is_memory_independent("absent"));
 }
 
 #[test]

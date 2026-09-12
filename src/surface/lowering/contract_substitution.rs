@@ -148,10 +148,12 @@ pub(in crate::surface) fn unfold_click_predicates_in_proposition_with_active(
         ClickProposition::ForAll {
             click_type: c_type,
             name,
+            written_name,
             body,
         } => Ok(ClickProposition::ForAll {
             click_type: c_type.clone(),
             name: name.clone(),
+            written_name: written_name.clone(),
             body: Box::new(unfold_click_predicates_in_proposition_with_active(
                 predicate_environment,
                 unfolded_predicates,
@@ -162,10 +164,12 @@ pub(in crate::surface) fn unfold_click_predicates_in_proposition_with_active(
         ClickProposition::Exists {
             click_type: c_type,
             name,
+            written_name,
             body,
         } => Ok(ClickProposition::Exists {
             click_type: c_type.clone(),
             name: name.clone(),
+            written_name: written_name.clone(),
             body: Box::new(unfold_click_predicates_in_proposition_with_active(
                 predicate_environment,
                 unfolded_predicates,
@@ -177,11 +181,13 @@ pub(in crate::surface) fn unfold_click_predicates_in_proposition_with_active(
             start,
             end,
             item,
+            written_item,
             body,
         } => Ok(ClickProposition::RangeAll {
             start: start.clone(),
             end: end.clone(),
             item: item.clone(),
+            written_item: written_item.clone(),
             body: Box::new(unfold_click_predicates_in_proposition_with_active(
                 predicate_environment,
                 unfolded_predicates,
@@ -193,11 +199,13 @@ pub(in crate::surface) fn unfold_click_predicates_in_proposition_with_active(
             start,
             end,
             item,
+            written_item,
             body,
         } => Ok(ClickProposition::RangeAny {
             start: start.clone(),
             end: end.clone(),
             item: item.clone(),
+            written_item: written_item.clone(),
             body: Box::new(unfold_click_predicates_in_proposition_with_active(
                 predicate_environment,
                 unfolded_predicates,
@@ -354,12 +362,17 @@ fn substitute_click_proposition_nonlogical(
         ClickProposition::ForAll {
             click_type: c_type,
             name,
+            written_name,
             body,
         } => {
             let scoped = substitutions.without_binding(name);
+            let original_name = name.clone();
             let (name, body) = prepare_click_proposition_binding_body(name, body, &scoped)?;
             Ok(ClickProposition::ForAll {
                 click_type: c_type.clone(),
+                written_name: written_name
+                    .clone()
+                    .or_else(|| (name != original_name).then_some(original_name)),
                 name,
                 body: Box::new(body),
             })
@@ -367,12 +380,17 @@ fn substitute_click_proposition_nonlogical(
         ClickProposition::Exists {
             click_type: c_type,
             name,
+            written_name,
             body,
         } => {
             let scoped = substitutions.without_binding(name);
+            let original_name = name.clone();
             let (name, body) = prepare_click_proposition_binding_body(name, body, &scoped)?;
             Ok(ClickProposition::Exists {
                 click_type: c_type.clone(),
+                written_name: written_name
+                    .clone()
+                    .or_else(|| (name != original_name).then_some(original_name)),
                 name,
                 body: Box::new(body),
             })
@@ -381,14 +399,20 @@ fn substitute_click_proposition_nonlogical(
             start,
             end,
             item,
+            written_item,
             body,
         } => {
             let scoped = substitutions.without_binding(item);
+            let original_item = item.clone();
             let (item, body) = prepare_click_proposition_binding_body(item, body, &scoped)?;
+            let written_item = written_item
+                .clone()
+                .or_else(|| (item != original_item).then_some(original_item));
             Ok(ClickProposition::RangeAll {
                 start: substitute_contract_expression_in(start, substitutions)?,
                 end: substitute_contract_expression_in(end, substitutions)?,
                 item,
+                written_item,
                 body: Box::new(body),
             })
         }
@@ -396,14 +420,20 @@ fn substitute_click_proposition_nonlogical(
             start,
             end,
             item,
+            written_item,
             body,
         } => {
             let scoped = substitutions.without_binding(item);
+            let original_item = item.clone();
             let (item, body) = prepare_click_proposition_binding_body(item, body, &scoped)?;
+            let written_item = written_item
+                .clone()
+                .or_else(|| (item != original_item).then_some(original_item));
             Ok(ClickProposition::RangeAny {
                 start: substitute_contract_expression_in(start, substitutions)?,
                 end: substitute_contract_expression_in(end, substitutions)?,
                 item,
+                written_item,
                 body: Box::new(body),
             })
         }
@@ -731,12 +761,14 @@ fn collect_click_proposition_binding_names(
             end,
             item,
             body,
+            ..
         }
         | ClickProposition::RangeAny {
             start,
             end,
             item,
             body,
+            ..
         } => {
             collect_contract_expression_binding_names(start, names);
             collect_contract_expression_binding_names(end, names);
@@ -970,41 +1002,49 @@ pub(in crate::surface) fn reduce_constructor_iota_in_proposition(
         ClickProposition::ForAll {
             click_type,
             name,
+            written_name,
             body,
         } => ClickProposition::ForAll {
             click_type: click_type.clone(),
             name: name.clone(),
+            written_name: written_name.clone(),
             body: Box::new(reduce_constructor_iota_in_proposition(body)?),
         },
         ClickProposition::Exists {
             click_type,
             name,
+            written_name,
             body,
         } => ClickProposition::Exists {
             click_type: click_type.clone(),
             name: name.clone(),
+            written_name: written_name.clone(),
             body: Box::new(reduce_constructor_iota_in_proposition(body)?),
         },
         ClickProposition::RangeAll {
             start,
             end,
             item,
+            written_item,
             body,
         } => ClickProposition::RangeAll {
             start: expression(start)?,
             end: expression(end)?,
             item: item.clone(),
+            written_item: written_item.clone(),
             body: Box::new(reduce_constructor_iota_in_proposition(body)?),
         },
         ClickProposition::RangeAny {
             start,
             end,
             item,
+            written_item,
             body,
         } => ClickProposition::RangeAny {
             start: expression(start)?,
             end: expression(end)?,
             item: item.clone(),
+            written_item: written_item.clone(),
             body: Box::new(reduce_constructor_iota_in_proposition(body)?),
         },
         ClickProposition::PredicateCall { name, arguments } => ClickProposition::PredicateCall {
@@ -1368,22 +1408,26 @@ fn rewrite_click_proposition_expression(
             click_type: c_type,
             name,
             body,
+            ..
         }
         | ClickProposition::Exists {
             click_type: c_type,
             name,
             body,
+            ..
         } => {
             let (body, changed) = rewrite_proposition(body);
             let rewritten = match proposition {
                 ClickProposition::ForAll { .. } => ClickProposition::ForAll {
                     click_type: c_type.clone(),
                     name: name.clone(),
+                    written_name: proposition.written_quantifier_name().map(str::to_string),
                     body: Box::new(body),
                 },
                 ClickProposition::Exists { .. } => ClickProposition::Exists {
                     click_type: c_type.clone(),
                     name: name.clone(),
+                    written_name: proposition.written_quantifier_name().map(str::to_string),
                     body: Box::new(body),
                 },
                 _ => unreachable!(),
@@ -1395,12 +1439,14 @@ fn rewrite_click_proposition_expression(
             end,
             item,
             body,
+            ..
         }
         | ClickProposition::RangeAny {
             start,
             end,
             item,
             body,
+            ..
         } => {
             let (start, start_changed) = expression(start);
             let (end, end_changed) = expression(end);
@@ -1410,12 +1456,14 @@ fn rewrite_click_proposition_expression(
                     start,
                     end,
                     item: item.clone(),
+                    written_item: proposition.written_quantifier_name().map(str::to_string),
                     body: Box::new(body),
                 },
                 ClickProposition::RangeAny { .. } => ClickProposition::RangeAny {
                     start,
                     end,
                     item: item.clone(),
+                    written_item: proposition.written_quantifier_name().map(str::to_string),
                     body: Box::new(body),
                 },
                 _ => unreachable!(),
@@ -2046,6 +2094,20 @@ pub(in crate::surface) fn apply_contract_let_expressions_to_proposition(
     proposition: ClickProposition,
     bindings: &[ContractLetBinding],
 ) -> Result<ClickProposition, String> {
+    let mut capture_names = BTreeSet::new();
+    for binding in bindings {
+        if let Some(value) = binding.value() {
+            collect_contract_expression_referenced_names(value, &mut capture_names);
+        }
+    }
+    apply_contract_let_expressions_inner(proposition, bindings, &capture_names)
+}
+
+fn apply_contract_let_expressions_inner(
+    proposition: ClickProposition,
+    bindings: &[ContractLetBinding],
+    capture_names: &BTreeSet<String>,
+) -> Result<ClickProposition, String> {
     match proposition {
         ClickProposition::Comparison {
             left,
@@ -2082,63 +2144,104 @@ pub(in crate::surface) fn apply_contract_let_expressions_to_proposition(
             proposition,
         } => Ok(ClickProposition::At {
             selector,
-            proposition: Box::new(apply_contract_let_expressions_to_proposition(
+            proposition: Box::new(apply_contract_let_expressions_inner(
                 *proposition,
                 bindings,
+                capture_names,
             )?),
         }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
-            Box::new(apply_contract_let_expressions_to_proposition(
-                *left, bindings,
+            Box::new(apply_contract_let_expressions_inner(
+                *left,
+                bindings,
+                capture_names,
             )?),
-            Box::new(apply_contract_let_expressions_to_proposition(
-                *right, bindings,
+            Box::new(apply_contract_let_expressions_inner(
+                *right,
+                bindings,
+                capture_names,
             )?),
         )),
         ClickProposition::Or(left, right) => Ok(ClickProposition::Or(
-            Box::new(apply_contract_let_expressions_to_proposition(
-                *left, bindings,
+            Box::new(apply_contract_let_expressions_inner(
+                *left,
+                bindings,
+                capture_names,
             )?),
-            Box::new(apply_contract_let_expressions_to_proposition(
-                *right, bindings,
+            Box::new(apply_contract_let_expressions_inner(
+                *right,
+                bindings,
+                capture_names,
             )?),
         )),
         ClickProposition::Not(body) => Ok(ClickProposition::Not(Box::new(
-            apply_contract_let_expressions_to_proposition(*body, bindings)?,
+            apply_contract_let_expressions_inner(*body, bindings, capture_names)?,
         ))),
         ClickProposition::Implies(left, right) => Ok(ClickProposition::Implies(
-            Box::new(apply_contract_let_expressions_to_proposition(
-                *left, bindings,
+            Box::new(apply_contract_let_expressions_inner(
+                *left,
+                bindings,
+                capture_names,
             )?),
-            Box::new(apply_contract_let_expressions_to_proposition(
-                *right, bindings,
+            Box::new(apply_contract_let_expressions_inner(
+                *right,
+                bindings,
+                capture_names,
             )?),
         )),
         ClickProposition::ForAll {
             click_type: c_type,
             name,
+            written_name,
             body,
         } => {
             let scoped = contract_lets_without_name(bindings, &name);
+            let original_name = name.clone();
+            let (name, body) = prepare_contract_let_binding_body(
+                &name,
+                *body,
+                &scoped,
+                capture_names,
+                c_type == ClickType::Integer,
+            )?;
+            let written_name =
+                written_name.or_else(|| (name != original_name).then_some(original_name));
             Ok(ClickProposition::ForAll {
                 click_type: c_type,
                 name,
-                body: Box::new(apply_contract_let_expressions_to_proposition(
-                    *body, &scoped,
+                written_name,
+                body: Box::new(apply_contract_let_expressions_inner(
+                    body,
+                    &scoped,
+                    capture_names,
                 )?),
             })
         }
         ClickProposition::Exists {
             click_type: c_type,
             name,
+            written_name,
             body,
         } => {
             let scoped = contract_lets_without_name(bindings, &name);
+            let original_name = name.clone();
+            let (name, body) = prepare_contract_let_binding_body(
+                &name,
+                *body,
+                &scoped,
+                capture_names,
+                c_type == ClickType::Integer,
+            )?;
+            let written_name =
+                written_name.or_else(|| (name != original_name).then_some(original_name));
             Ok(ClickProposition::Exists {
                 click_type: c_type,
                 name,
-                body: Box::new(apply_contract_let_expressions_to_proposition(
-                    *body, &scoped,
+                written_name,
+                body: Box::new(apply_contract_let_expressions_inner(
+                    body,
+                    &scoped,
+                    capture_names,
                 )?),
             })
         }
@@ -2146,15 +2249,24 @@ pub(in crate::surface) fn apply_contract_let_expressions_to_proposition(
             start,
             end,
             item,
+            written_item,
             body,
         } => {
             let scoped = contract_lets_without_name(bindings, &item);
+            let original_item = item.clone();
+            let (item, body) =
+                prepare_contract_let_binding_body(&item, *body, &scoped, capture_names, false)?;
+            let written_item =
+                written_item.or_else(|| (item != original_item).then_some(original_item));
             Ok(ClickProposition::RangeAll {
                 start: apply_contract_lets_to_expression(start, bindings)?,
                 end: apply_contract_lets_to_expression(end, bindings)?,
                 item,
-                body: Box::new(apply_contract_let_expressions_to_proposition(
-                    *body, &scoped,
+                written_item,
+                body: Box::new(apply_contract_let_expressions_inner(
+                    body,
+                    &scoped,
+                    capture_names,
                 )?),
             })
         }
@@ -2162,15 +2274,24 @@ pub(in crate::surface) fn apply_contract_let_expressions_to_proposition(
             start,
             end,
             item,
+            written_item,
             body,
         } => {
             let scoped = contract_lets_without_name(bindings, &item);
+            let original_item = item.clone();
+            let (item, body) =
+                prepare_contract_let_binding_body(&item, *body, &scoped, capture_names, false)?;
+            let written_item =
+                written_item.or_else(|| (item != original_item).then_some(original_item));
             Ok(ClickProposition::RangeAny {
                 start: apply_contract_lets_to_expression(start, bindings)?,
                 end: apply_contract_lets_to_expression(end, bindings)?,
                 item,
-                body: Box::new(apply_contract_let_expressions_to_proposition(
-                    *body, &scoped,
+                written_item,
+                body: Box::new(apply_contract_let_expressions_inner(
+                    body,
+                    &scoped,
+                    capture_names,
                 )?),
             })
         }
@@ -2184,6 +2305,46 @@ pub(in crate::surface) fn apply_contract_let_expressions_to_proposition(
             })
         }
     }
+}
+
+/// Freshen a clause binder before alias expansion when an alias initializer
+/// contains that name free. The initializer is inserted later, inside this
+/// proposition, so performing the rename first preserves its declaration
+/// meaning without expanding the initializer merely to detect capture.
+fn prepare_contract_let_binding_body(
+    binder: &str,
+    body: ClickProposition,
+    bindings: &[ContractLetBinding],
+    capture_names: &BTreeSet<String>,
+    integer: bool,
+) -> Result<(String, ClickProposition), String> {
+    if !capture_names.contains(binder) {
+        return Ok((binder.to_string(), body));
+    }
+    let mut referenced_names = BTreeSet::new();
+    collect_click_proposition_referenced_names(&body, &mut referenced_names);
+    let referenced_bindings = referenced_contract_let_bindings(bindings, referenced_names);
+    let values = referenced_bindings
+        .iter()
+        .filter_map(|binding| {
+            binding
+                .value()
+                .map(|value| (binding.name.clone(), value.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let substitutions = ContractSubstitutions::new(&values);
+    if !substitutions_reference_name(&substitutions, binder) {
+        return Ok((binder.to_string(), body));
+    }
+
+    let fresh = fresh_click_binding_name_for_proposition(binder, &body, &substitutions);
+    let replacement = if integer {
+        ContractExpression::Binding(fresh.clone())
+    } else {
+        ContractExpression::CBinding(fresh.clone())
+    };
+    let renaming = BTreeMap::from([(binder.to_string(), replacement)]);
+    Ok((fresh, substitute_click_proposition(&body, &renaming)?))
 }
 
 pub(in crate::surface) fn wrap_contract_where_lets_proposition(
@@ -2211,6 +2372,7 @@ pub(in crate::surface) fn wrap_contract_where_lets_proposition(
         proposition = ClickProposition::Exists {
             click_type: ClickType::C(*c_type),
             name: binding.name.clone(),
+            written_name: None,
             body: Box::new(ClickProposition::And(
                 Box::new(condition),
                 Box::new(proposition),
@@ -2229,12 +2391,25 @@ pub(in crate::surface) fn apply_contract_lets_to_expression(
     // with an indexed worklist: the old fixed-point loop rescanned every
     // binding once per dependency depth, which made a linear alias chain
     // quadratic before lowering even had a chance to preserve sharing.
+    let referenced_names = contract_expression_referenced_names(&expression);
+    let referenced_bindings = referenced_contract_let_bindings(bindings, referenced_names);
+    let substitutions = contract_let_substitutions(bindings);
+    let expression = substitute_contract_expression(&expression, &substitutions)?;
+    Ok(wrap_contract_lets_expression(
+        expression,
+        &referenced_bindings,
+    ))
+}
+
+fn referenced_contract_let_bindings(
+    bindings: &[ContractLetBinding],
+    mut referenced_names: BTreeSet<String>,
+) -> Vec<ContractLetBinding> {
     let binding_indices = bindings
         .iter()
         .enumerate()
         .filter_map(|(index, binding)| binding.value().map(|_| (binding.name.as_str(), index)))
         .collect::<BTreeMap<_, _>>();
-    let mut referenced_names = contract_expression_referenced_names(&expression);
     let mut pending = referenced_names.iter().cloned().collect::<Vec<_>>();
     let mut referenced_indices = BTreeSet::new();
     while let Some(name) = pending.pop() {
@@ -2253,16 +2428,10 @@ pub(in crate::surface) fn apply_contract_lets_to_expression(
             }
         }
     }
-    let referenced_bindings = referenced_indices
+    referenced_indices
         .into_iter()
         .map(|index| bindings[index].clone())
-        .collect::<Vec<_>>();
-    let substitutions = contract_let_substitutions(bindings);
-    let expression = substitute_contract_expression(&expression, &substitutions)?;
-    Ok(wrap_contract_lets_expression(
-        expression,
-        &referenced_bindings,
-    ))
+        .collect()
 }
 
 pub(in crate::surface) fn wrap_contract_lets_expression(
@@ -2481,12 +2650,14 @@ pub(in crate::surface) fn collect_click_proposition_referenced_names(
             end,
             item,
             body,
+            ..
         }
         | ClickProposition::RangeAny {
             start,
             end,
             item,
             body,
+            ..
         } => {
             collect_contract_expression_referenced_names(start, names);
             collect_contract_expression_referenced_names(end, names);

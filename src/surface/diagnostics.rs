@@ -510,6 +510,47 @@ pub(super) fn describe_missing_resource_fact(
     )
 }
 
+/// The conditions that tell several statement successors apart.
+///
+/// A refusal that only says "got 2" leaves the reader to guess which `if`
+/// inside an inlined helper is undecided. Each successor's own path facts name
+/// the branch it took, so reporting the facts that are *not* common to every
+/// successor names the undecided condition and its polarity, bounded by the
+/// same item limit as every other fact list.
+pub(super) fn describe_undecided_statement_successors(
+    transitions: &[crate::surface::CertifiedStatementTransition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let item_limit = diagnostic_item_limit();
+    let mut lines = Vec::new();
+    for (index, transition) in transitions.iter().take(item_limit).enumerate() {
+        let distinguishing = transition
+            .path_facts
+            .iter()
+            .filter(|fact| {
+                !transitions
+                    .iter()
+                    .all(|other| other.path_facts.contains(fact))
+            })
+            .take(item_limit)
+            .map(|fact| describe_pure_fact(fact, parameters, arguments))
+            .collect::<Vec<_>>();
+        if distinguishing.is_empty() {
+            continue;
+        }
+        lines.push(format!(
+            "  successor {}: {}",
+            index + 1,
+            distinguishing.join(", ")
+        ));
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!("undecided condition:\n{}\n", lines.join("\n"))
+}
+
 pub(super) fn describe_proof_context(
     pure_facts: &[Proposition],
     resource_facts: &[CResourceFact],
@@ -1767,6 +1808,7 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             click_type,
             name,
             body,
+            ..
         } => format!(
             "forall ({name}: {}) {{ {} }}",
             describe_click_type(click_type),
@@ -1776,6 +1818,7 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             click_type,
             name,
             body,
+            ..
         } => format!(
             "exists ({name}: {}) {{ {} }}",
             describe_click_type(click_type),
@@ -1786,6 +1829,7 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             end,
             item,
             body,
+            ..
         } => format!(
             "({}..{}).all({item} => {})",
             describe_contract_expression(start),
@@ -1797,6 +1841,7 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             end,
             item,
             body,
+            ..
         } => format!(
             "({}..{}).any({item} => {})",
             describe_contract_expression(start),

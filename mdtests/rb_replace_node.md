@@ -21,8 +21,10 @@ guards be decided from the requirements, and what lets the two child instances
 be refolded at the new parent for free: an `RbTree::Empty` arm owns nothing and
 states only `p == 0`.
 
-Only the root frame is contracted. The left-child frame is blocked by the
-re-keying, not by the helper: see the note at the end of this file.
+All three frames are contracted. `Context::Top` sends the helper down its root
+branch; `Context::Left` and `Context::Right` send it into `parent->rb_left ==
+old`, whose cell the frame owns through its own `identity` payload rather than
+through any C name — see the note at the end of this file.
 
 ```c filename=rbtree.h
 #ifndef RBTREE_H
@@ -94,6 +96,18 @@ void replace_root_node(struct rb_node *victim, struct rb_node *new_node,
                        struct rb_node *parent, struct rb_root *root) {
     rb_replace_node(victim, new_node, root);
 }
+
+void replace_left_child(struct rb_node *victim, struct rb_node *new_node,
+                        struct rb_node *parent, struct rb_node *grandparent,
+                        struct rb_root *root) {
+    rb_replace_node(victim, new_node, root);
+}
+
+void replace_right_child(struct rb_node *victim, struct rb_node *new_node,
+                         struct rb_node *parent, struct rb_node *grandparent,
+                         struct rb_root *root) {
+    rb_replace_node(victim, new_node, root);
+}
 ```
 
 ```click
@@ -109,6 +123,7 @@ spec enum RbTree {
 spec enum Context {
     Top,
     Left(struct rb_node*, struct rb_node*, Color, RbTree, Context),
+    Right(struct rb_node*, struct rb_node*, Color, RbTree, Context),
 }
 
 function color_bit(color: Color) -> int {
@@ -172,6 +187,22 @@ resource ctx_at(child: struct rb_node*, root: struct rb_root*) {
             fact sibling.model == sibling_model;
             fact up.model == up_model;
         },
+        Context::Right(identity, grandparent, color, sibling_model, up_model) => {
+            owns identity->__rb_parent_color;
+            owns identity->rb_left;
+            owns identity->rb_right;
+            owns sibling: rb_at(identity->rb_left);
+            owns up: ctx_at(identity, root);
+            fact identity != 0;
+            fact aligned(identity, 8);
+            fact aligned(grandparent, 8);
+            fact identity->rb_right == child;
+            fact identity->__rb_parent_color
+                == address(grandparent) + (identity->__rb_parent_color & 1);
+            fact (identity->__rb_parent_color & 1) == color_bit(color);
+            fact sibling.model == sibling_model;
+            fact up.model == up_model;
+        },
     }
 }
 
@@ -221,6 +252,105 @@ void replace_root_node(struct rb_node* victim, struct rb_node* new_node,
     simp();
 }
 
+
+void replace_left_child(struct rb_node* victim, struct rb_node* new_node,
+                        struct rb_node* parent, struct rb_node* grandparent,
+                        struct rb_root* root) {
+    consumes c: ctx_at(victim, root);
+    consumes t: rb_at(victim);
+    consumes new_node->__rb_parent_color;
+    consumes new_node->rb_left;
+    consumes new_node->rb_right;
+    requires parent != 0;
+    requires aligned(grandparent, 8);
+    requires c.model
+        == Context::Left(parent, grandparent, Color::Black, RbTree::Empty, Context::Top);
+    requires t.model
+        == RbTree::Node(victim, parent, Color::Black, RbTree::Empty, RbTree::Empty);
+    requires victim->rb_left == 0;
+    requires victim->rb_right == 0;
+    requires new_node != 0;
+    requires aligned(new_node, 8);
+    produces d: ctx_at(new_node, root);
+    produces u: rb_at(new_node);
+    ensures d.model == old(c.model);
+    ensures u.model == rb_substitute(old(t.model), new_node);
+} by {
+    unfold(t) as { left: l, right: r };
+    unfold(c) as { sibling: s, up: up };
+    unfold(l);
+    unfold(r);
+    have color_bit(Color::Black) == 1 by {
+        unfold(color_bit(Color::Black));
+        normalize();
+    }
+    execute();
+    let l2 = fold(rb_at(new_node->rb_left), { model: RbTree::Empty }, {});
+    let r2 = fold(rb_at(new_node->rb_right), { model: RbTree::Empty }, {});
+    let u = fold(rb_at(new_node), {
+        model: RbTree::Node(new_node, parent, Color::Black, RbTree::Empty, RbTree::Empty)
+    }, { left: l2, right: r2 });
+    let d = fold(ctx_at(new_node, root), { model: old(c.model) }, { sibling: s, up: up });
+    have u.model == rb_substitute(old(t.model), new_node) by {
+        rewrite(old(t.model)
+            == RbTree::Node(victim, parent, Color::Black, RbTree::Empty, RbTree::Empty));
+        unfold(rb_substitute(
+            RbTree::Node(victim, parent, Color::Black, RbTree::Empty, RbTree::Empty),
+            new_node));
+        normalize();
+    }
+    simp();
+}
+void replace_right_child(struct rb_node* victim, struct rb_node* new_node,
+                        struct rb_node* parent, struct rb_node* grandparent,
+                        struct rb_root* root) {
+    consumes c: ctx_at(victim, root);
+    consumes t: rb_at(victim);
+    consumes new_node->__rb_parent_color;
+    consumes new_node->rb_left;
+    consumes new_node->rb_right;
+    requires parent != 0;
+    requires aligned(grandparent, 8);
+    requires c.model
+        == Context::Right(parent, grandparent, Color::Black, RbTree::Empty, Context::Top);
+    requires t.model
+        == RbTree::Node(victim, parent, Color::Black, RbTree::Empty, RbTree::Empty);
+    requires victim->rb_left == 0;
+    requires victim->rb_right == 0;
+    requires new_node != 0;
+    requires aligned(new_node, 8);
+    produces d: ctx_at(new_node, root);
+    produces u: rb_at(new_node);
+    ensures d.model == old(c.model);
+    ensures u.model == rb_substitute(old(t.model), new_node);
+} by {
+    unfold(t) as { left: l, right: r };
+    unfold(c) as { sibling: s, up: up };
+    unfold(s);
+    unfold(l);
+    unfold(r);
+    have color_bit(Color::Black) == 1 by {
+        unfold(color_bit(Color::Black));
+        normalize();
+    }
+    execute();
+    let l2 = fold(rb_at(new_node->rb_left), { model: RbTree::Empty }, {});
+    let r2 = fold(rb_at(new_node->rb_right), { model: RbTree::Empty }, {});
+    let u = fold(rb_at(new_node), {
+        model: RbTree::Node(new_node, parent, Color::Black, RbTree::Empty, RbTree::Empty)
+    }, { left: l2, right: r2 });
+    let s2 = fold(rb_at(parent->rb_left), { model: RbTree::Empty }, {});
+    let d = fold(ctx_at(new_node, root), { model: old(c.model) }, { sibling: s2, up: up });
+    have u.model == rb_substitute(old(t.model), new_node) by {
+        rewrite(old(t.model)
+            == RbTree::Node(victim, parent, Color::Black, RbTree::Empty, RbTree::Empty));
+        unfold(rb_substitute(
+            RbTree::Node(victim, parent, Color::Black, RbTree::Empty, RbTree::Empty),
+            new_node));
+        normalize();
+    }
+    simp();
+}
 ```
 
 ```expect
@@ -229,42 +359,35 @@ pass
 
 ## Why the victim has no children here
 
-With a child present, `rb_set_parent(victim->rb_left, new)` rewrites that
-child's packed word, and the child's instance has to be refolded as
-`rb_at(victim->rb_left)` with `new` as its parent payload. That fold needs the
-arm fact `(p->__rb_parent_color & 1) == color_bit(color)` for the rewritten
-word, which instantiates to
+Keeping both children `RbTree::Empty` is what lets the two `if (victim->rb_left)`
+guards be decided from the requirements alone and the two child instances be
+refolded at the new parent for free: an `RbTree::Empty` arm owns nothing and
+states only `p == 0`. The general case, where `rb_set_parent` rewrites each
+child's packed word and each child is refolded with `new` in its parent payload,
+is [`rb_replace_node_with_children.md`](rb_replace_node_with_children.md).
 
-```text
-(((old & 1) | address(new)) & 1) == color_bit(color)
-```
+## Reading a frame's cells through its payload
 
-and the fold refuses with `fold requires the instance body facts for the
-proposed fields`, because a fold discharges its body facts exactly rather than
-proving them. `mdtests/rb_at_link_helpers.md`'s `set_parent` performs the same
-rewrite and the same refold successfully, and the difference is that there the
-retargeted node is a named C parameter. Here it is only reachable as
-`victim->rb_left`, and a `have` over that chained place does not lower (`the
-kernel lowering produced 3 paths, not one`). This is package A17's third item.
+`ctx_at(child, root)`'s `Left` and `Right` arms own `identity`'s cells through
+the frame's own pointer payload. A requirement pins that payload to the
+wrapper's `parent`, so after `unfold(c)` the frame owns exactly `parent`'s three
+cells and states `parent->rb_left == victim`. The inlined `__rb_change_child`
+then reads `parent->rb_left`, and that read has to see the same cell the arm
+spoke about — across `*new = *victim`, a write to a separate object whose
+separation from `parent`'s cells is a resource fact and not a memory-DAG edge.
 
-## Why only the root frame
+It does, because an `unfold` names the cells it exposes the way contract
+lowering does, and that projection now substitutes the arm's *constructor
+bindings* as well as the resource's own parameters, so a clause written over
+`identity` denotes a cell it can name. Until it did, the clause did not
+evaluate, the cell stayed unnamed, the copy re-minted its load identity, and
+`execute()` refused with `step() requires exactly one statement successor …,
+got 2`. That was gap 43 in
+[`issues/recursive-structure-models.md`](../issues/recursive-structure-models.md);
+its reduction is `mdtests/guard_after_sibling_write_through_unfold.md`.
 
-`replace_left_child` is not here, and the reason is the node-keyed frame rather
-than the helper. `ctx_at(child, root)`'s `Left` arm owns `identity`'s cells
-through its own payload, and `unfold` binds that payload to a fresh value that
-is equal to the wrapper's `parent` only through the model equation the
-requirement states. The inlined `__rb_change_child` then reads `parent->rb_left`
-while the frame owns `identity->rb_left`, so its inner test is undecided and
-`execute()` refuses with `step() requires exactly one statement successor …,
-got 2`. Pinning the frame with `requires c.model == Context::Left(parent,
-grandparent, Color::Black, RbTree::Empty, Context::Top)` does not help, and
-neither does adding the victim's word as a requirement: what is missing is a
-bridge from a C pointer to a frame payload that survives `unfold`.
-
-The bridge itself exists and is worth recording. An equational requirement
-`t.model == rb_reparent(t.model, parent)` and `extract` of a field equality of
-a same-constructor equality yield `payload == parent` inside a proof `match`
-arm; what is not available is that equality applying to the *unfolded* frame's
-owned cells. The old `ctx_at(child, parent, root)` spelling had it for free and
-cannot be used for `rb_first`/`rb_next` (gap 35), so this is the cost of the
-re-key and the next thing a frame-owning proof needs.
+The `Right` frame additionally needs `parent->rb_left == old` to be *false*. It
+is: the frame's sibling is `rb_at(identity->rb_left)` at `RbTree::Empty`, so
+unfolding it gives `parent->rb_left == 0` while the victim is non-null, and one
+null and one non-null pointer send the helper down its `else` path with no
+requirement about the left link at all (package A11).

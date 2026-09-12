@@ -481,7 +481,33 @@ pub(crate) fn concrete_memory_range_bounds(range: &CMemoryRange) -> Option<(i64,
 
 fn memory_footprint_for_fact(fact: &CResourceFact) -> ResourceMemoryFootprint {
     if let Some(range) = fact.memory_range() {
-        return ResourceMemoryFootprint::Exact(std::sync::Arc::from(vec![range.clone()]));
+        let mut ranges = vec![range.clone()];
+        let mut uncertain = false;
+        let mut source_snapshot = None;
+        collect_memory_load_ranges(
+            &range.base().offset,
+            &mut ranges,
+            &mut uncertain,
+            &mut source_snapshot,
+        );
+        collect_memory_load_ranges_from_term(
+            range.start(),
+            &mut ranges,
+            &mut uncertain,
+            &mut source_snapshot,
+        );
+        collect_memory_load_ranges_from_term(
+            range.end(),
+            &mut ranges,
+            &mut uncertain,
+            &mut source_snapshot,
+        );
+        if uncertain {
+            return ResourceMemoryFootprint::Unknown;
+        }
+        ranges.sort();
+        ranges.dedup();
+        return ResourceMemoryFootprint::Exact(std::sync::Arc::from(ranges));
     }
     // A composite core is the result of one or more body loads.  Until the
     // lowering supplies those prerequisite ranges explicitly, treating it as
@@ -491,6 +517,179 @@ fn memory_footprint_for_fact(fact: &CResourceFact) -> ResourceMemoryFootprint {
         ResourceMemoryFootprint::Unknown
     } else {
         ResourceMemoryFootprint::None
+    }
+}
+
+/// Add the checked scalar cells that were read to form a projected address.
+/// A memory resource's final range is not sufficient when its base or bounds
+/// contain a load (for example, `owner->items[owner->length]`).  The compact
+/// term walk is deliberately conservative for expression forms whose load
+/// children are not exposed by this routine: those projections become an
+/// unknown footprint instead of escaping invalidation.
+fn collect_memory_load_ranges(
+    offset: &PointerOffsetTerm,
+    ranges: &mut Vec<CMemoryRange>,
+    uncertain: &mut bool,
+    source_snapshot: &mut Option<CMemorySnapshotIdentity>,
+) {
+    collect_memory_load_work(
+        [MemoryLoadFootprintWork::Offset(offset, 0)],
+        ranges,
+        uncertain,
+        source_snapshot,
+    );
+}
+
+const MAX_MEMORY_LOAD_FOOTPRINT_DEPTH: usize = 64;
+
+enum MemoryLoadFootprintWork<'a> {
+    Offset(&'a PointerOffsetTerm, usize),
+    Term(&'a Bitvector32Term, usize),
+}
+
+fn collect_memory_load_ranges_from_term(
+    term: &Bitvector32Term,
+    ranges: &mut Vec<CMemoryRange>,
+    uncertain: &mut bool,
+    source_snapshot: &mut Option<CMemorySnapshotIdentity>,
+) {
+    collect_memory_load_work(
+        [MemoryLoadFootprintWork::Term(term, 0)],
+        ranges,
+        uncertain,
+        source_snapshot,
+    );
+}
+
+fn collect_memory_load_work<'a>(
+    initial: impl IntoIterator<Item = MemoryLoadFootprintWork<'a>>,
+    ranges: &mut Vec<CMemoryRange>,
+    uncertain: &mut bool,
+    source_snapshot: &mut Option<CMemorySnapshotIdentity>,
+) {
+    let mut work = initial.into_iter().collect::<Vec<_>>();
+    while let Some(item) = work.pop() {
+        match item {
+            MemoryLoadFootprintWork::Offset(offset, depth) => {
+                if depth > MAX_MEMORY_LOAD_FOOTPRINT_DEPTH {
+                    *uncertain = true;
+                    continue;
+                }
+                match offset {
+                    PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
+                    PointerOffsetTerm::Add(left, right) => {
+                        work.push(MemoryLoadFootprintWork::Offset(left, depth + 1));
+                        work.push(MemoryLoadFootprintWork::Offset(right, depth + 1));
+                    }
+                    PointerOffsetTerm::Int32Scaled { value, .. }
+                    | PointerOffsetTerm::Int64Scaled { value, .. } => {
+                        work.push(MemoryLoadFootprintWork::Term(value, depth + 1));
+                    }
+                }
+            }
+            MemoryLoadFootprintWork::Term(term, depth) => {
+                if depth > MAX_MEMORY_LOAD_FOOTPRINT_DEPTH {
+                    *uncertain = true;
+                    continue;
+                }
+                match term {
+                    Bitvector32Term::MemoryLoad(memory, pointer) => {
+                        // MemoryLoad is shared by every CValue variant. Only
+                        // the checked source snapshot can provide the loaded
+                        // scalar's ABI width; absent evidence is ambiguous.
+                        let Some(value) = memory.memory().known_value(pointer) else {
+                            *uncertain = true;
+                            continue;
+                        };
+                        let width = value.byte_width();
+                        if width == 0 {
+                            *uncertain = true;
+                            continue;
+                        }
+                        let snapshot = CMemorySnapshotIdentity::of(memory.memory());
+                        if source_snapshot.is_some_and(|previous| previous != snapshot) {
+                            *uncertain = true;
+                            continue;
+                        }
+                        *source_snapshot = Some(snapshot);
+                        ranges.push(CMemoryRange::new_with_element_width(
+                            pointer.as_ref().clone(),
+                            Bitvector32Term::Constant(0),
+                            Bitvector32Term::Constant(1),
+                            width,
+                        ));
+                        work.push(MemoryLoadFootprintWork::Offset(&pointer.offset, depth + 1));
+                    }
+                    Bitvector32Term::PointerAddress(pointer) => {
+                        work.push(MemoryLoadFootprintWork::Offset(&pointer.offset, depth + 1));
+                    }
+                    Bitvector32Term::Add(left, right)
+                    | Bitvector32Term::Subtract(left, right)
+                    | Bitvector32Term::Multiply(left, right)
+                    | Bitvector32Term::Divide(left, right)
+                    | Bitvector32Term::UnsignedDivide(left, right)
+                    | Bitvector32Term::Remainder(left, right)
+                    | Bitvector32Term::UnsignedRemainder(left, right)
+                    | Bitvector32Term::ShiftLeft(left, right)
+                    | Bitvector32Term::ArithmeticShiftRight(left, right)
+                    | Bitvector32Term::LogicalShiftRight(left, right)
+                    | Bitvector32Term::BitwiseAnd(left, right)
+                    | Bitvector32Term::BitwiseOr(left, right)
+                    | Bitvector32Term::BitwiseXor(left, right)
+                    | Bitvector32Term::Int64Add(left, right)
+                    | Bitvector32Term::Int64Subtract(left, right)
+                    | Bitvector32Term::Int64Multiply(left, right)
+                    | Bitvector32Term::Int64Divide(left, right)
+                    | Bitvector32Term::Int64Remainder(left, right)
+                    | Bitvector32Term::Int64ShiftLeft(left, right)
+                    | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+                    | Bitvector32Term::Int64BitwiseAnd(left, right)
+                    | Bitvector32Term::Int64BitwiseOr(left, right)
+                    | Bitvector32Term::Int64BitwiseXor(left, right)
+                    | Bitvector32Term::UInt64Add(left, right)
+                    | Bitvector32Term::UInt64Subtract(left, right)
+                    | Bitvector32Term::UInt64Multiply(left, right)
+                    | Bitvector32Term::UInt64Divide(left, right)
+                    | Bitvector32Term::UInt64Remainder(left, right)
+                    | Bitvector32Term::UInt64ShiftLeft(left, right)
+                    | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+                    | Bitvector32Term::UInt64BitwiseAnd(left, right)
+                    | Bitvector32Term::UInt64BitwiseOr(left, right)
+                    | Bitvector32Term::UInt64BitwiseXor(left, right)
+                    | Bitvector32Term::Float32Binary { left, right, .. }
+                    | Bitvector32Term::Float64Binary { left, right, .. } => {
+                        work.push(MemoryLoadFootprintWork::Term(left, depth + 1));
+                        work.push(MemoryLoadFootprintWork::Term(right, depth + 1));
+                    }
+                    Bitvector32Term::BitwiseNot(value)
+                    | Bitvector32Term::Float32Negate(value)
+                    | Bitvector32Term::Float64Negate(value)
+                    | Bitvector32Term::Int64From32(value)
+                    | Bitvector32Term::Int64FromUInt32(value)
+                    | Bitvector32Term::UInt64From32(value)
+                    | Bitvector32Term::UInt32From64(value)
+                    | Bitvector32Term::UInt64FromInt32(value)
+                    | Bitvector32Term::UInt64FromInt64(value)
+                    | Bitvector32Term::Int64BitwiseNot(value)
+                    | Bitvector32Term::UInt64BitwiseNot(value) => {
+                        work.push(MemoryLoadFootprintWork::Term(value, depth + 1));
+                    }
+                    Bitvector32Term::Constant(_)
+                    | Bitvector32Term::Int64Constant(_)
+                    | Bitvector32Term::UInt64Constant(_)
+                    | Bitvector32Term::Variable(_) => {}
+                    // These forms can hide load-bearing children behind a
+                    // separate semantic object. Until checked read evidence
+                    // is exposed for that object, invalidate conservatively.
+                    Bitvector32Term::If { .. }
+                    | Bitvector32Term::RangeFold { .. }
+                    | Bitvector32Term::PureFunctionApplication { .. }
+                    | Bitvector32Term::ClickFunctionApplication { .. }
+                    | Bitvector32Term::AlgebraicMatch { .. }
+                    | Bitvector32Term::IntegerToMachine { .. } => *uncertain = true,
+                }
+            }
+        }
     }
 }
 
@@ -5003,6 +5202,117 @@ mod support_removal_tests {
             Bitvector32Term::Constant(i32::MAX as u32),
         );
         assert_eq!(concrete_memory_range_bounds(&range), None);
+    }
+
+    #[test]
+    fn memory_load_footprints_use_checked_snapshot_widths() {
+        let short_pointer = Pointer {
+            block: "typed-loads".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let wide_pointer = Pointer {
+            block: "typed-loads".into(),
+            offset: PointerOffsetTerm::Constant(8),
+        };
+        let memory = CMemory::new()
+            .with_block("typed-loads", 24)
+            .store(short_pointer.clone(), int16(0))
+            .store(
+                wide_pointer.clone(),
+                CValue::Float64(Bitvector32Term::Constant(0)),
+            );
+        let short_load = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(&memory),
+            Box::new(short_pointer.clone()),
+        );
+        let wide_load = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(&memory),
+            Box::new(wide_pointer.clone()),
+        );
+        let fact = CResourceFact::view_memory(CMemoryRange::new(
+            Pointer {
+                block: "result".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            short_load,
+            wide_load,
+        ));
+        let ResourceMemoryFootprint::Exact(ranges) = memory_footprint_for_fact(&fact) else {
+            panic!("known typed source cells should yield an exact footprint");
+        };
+        assert!(
+            ranges
+                .iter()
+                .any(|range| range.base() == &short_pointer && range.element_width() == 2)
+        );
+        assert!(
+            ranges
+                .iter()
+                .any(|range| range.base() == &wide_pointer && range.element_width() == 8)
+        );
+    }
+
+    #[test]
+    fn memory_load_footprints_reject_mixed_source_snapshots() {
+        let pointer = Pointer {
+            block: "mixed-loads".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let first = CMemory::new()
+            .with_block("mixed-loads", 8)
+            .store(pointer.clone(), int16(0));
+        let second = first.clone().store(pointer.clone(), int16(1));
+        let first_load = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(&first),
+            Box::new(pointer.clone()),
+        );
+        let second_load = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(&second),
+            Box::new(pointer),
+        );
+        let fact = CResourceFact::view_memory(CMemoryRange::new(
+            Pointer {
+                block: "mixed-result".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            first_load,
+            second_load,
+        ));
+        assert_eq!(
+            memory_footprint_for_fact(&fact),
+            ResourceMemoryFootprint::Unknown
+        );
+    }
+
+    #[test]
+    fn memory_load_footprint_depth_is_bounded_conservatively() {
+        let pointer = Pointer {
+            block: "deep-load".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = CMemory::new()
+            .with_block("deep-load", 8)
+            .store(pointer.clone(), int16(0));
+        let load = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(&memory),
+            Box::new(pointer),
+        );
+        let mut nested = load;
+        for _ in 0..(MAX_MEMORY_LOAD_FOOTPRINT_DEPTH + 8) {
+            nested = Bitvector32Term::Add(Box::new(nested), Box::new(Bitvector32Term::Constant(0)));
+        }
+        let fact = CResourceFact::view_memory(CMemoryRange::new(
+            Pointer {
+                block: "deep-result".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            nested,
+        ));
+        assert_eq!(
+            memory_footprint_for_fact(&fact),
+            ResourceMemoryFootprint::Unknown
+        );
     }
 
     #[test]

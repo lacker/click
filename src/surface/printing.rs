@@ -38,6 +38,7 @@ pub(super) fn source_click_proposition(proposition: &ClickProposition) -> String
                 click_type: c_type,
                 name,
                 body,
+                ..
             } => (
                 5,
                 format!(
@@ -50,6 +51,7 @@ pub(super) fn source_click_proposition(proposition: &ClickProposition) -> String
                 click_type: c_type,
                 name,
                 body,
+                ..
             } => (
                 5,
                 format!(
@@ -63,6 +65,7 @@ pub(super) fn source_click_proposition(proposition: &ClickProposition) -> String
                 end,
                 item,
                 body,
+                ..
             } => (
                 5,
                 format!(
@@ -77,6 +80,7 @@ pub(super) fn source_click_proposition(proposition: &ClickProposition) -> String
                 end,
                 item,
                 body,
+                ..
             } => (
                 5,
                 format!(

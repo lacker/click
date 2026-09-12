@@ -765,7 +765,12 @@ impl<'a> Proof<'a> {
             view.tactic_index,
         )?;
         let surface_goal = match self.surface_goal() {
-            Some(ClickProposition::Exists { name, body, .. }) if name == &witness.name => {
+            Some(ClickProposition::Exists {
+                name,
+                written_name,
+                body,
+                ..
+            }) if written_name.as_ref().unwrap_or(name) == &witness.name => {
                 let substitutions = BTreeMap::from([(name.clone(), witness.value.clone())]);
                 Some(
                     substitute_click_proposition(body, &substitutions).map_err(|message| {
@@ -779,8 +784,9 @@ impl<'a> Proof<'a> {
                 start,
                 end,
                 item,
+                written_item,
                 body,
-            }) if item == &witness.name => {
+            }) if written_item.as_ref().unwrap_or(item) == &witness.name => {
                 let substitutions = BTreeMap::from([(item.clone(), witness.value.clone())]);
                 let start =
                     substitute_contract_expression(start, &substitutions).map_err(|message| {
@@ -864,7 +870,12 @@ impl<'a> Proof<'a> {
                     self.step_error(format!("could not apply Integer witness: {error:?}"))
                 })?;
         let surface_goal = match self.surface_goal() {
-            Some(ClickProposition::Exists { name, body, .. }) if name == &witness.name => {
+            Some(ClickProposition::Exists {
+                name,
+                written_name,
+                body,
+                ..
+            }) if written_name.as_ref().unwrap_or(name) == &witness.name => {
                 let substitutions = BTreeMap::from([(name.clone(), witness.value.clone())]);
                 Some(
                     substitute_click_proposition(body, &substitutions).map_err(|message| {

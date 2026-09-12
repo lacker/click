@@ -1567,6 +1567,76 @@ fn selected_callback_does_not_visit_unrelated_functions() {
     check_unrelated_functions(true);
 }
 
+#[test]
+fn callback_fact_lookup_scales_with_calls_not_unrelated_supported_facts() {
+    fn callback_fact(name: &str, pointer: Pointer, state: CState) -> Proposition {
+        Proposition::Predicate {
+            name: CFunctionContract::predicate_name_for(name),
+            arguments: vec![
+                Term::CState(state),
+                Term::CValue(CValue::typed_pointer(
+                    pointer,
+                    CType::FunctionPointer(CallbackSignature::from_encoded(91_000)),
+                )),
+            ],
+        }
+    }
+
+    let target = Pointer::symbolic_function(Variable(92_000));
+    let mut samples = Vec::new();
+    for calls in [1usize, 2, 4, 8, 16] {
+        for unrelated in [4usize, 16, 64, 256, 1024] {
+            let mut assumptions = PureFactContext::new().assume_proposition(callback_fact(
+                "Target",
+                target.clone(),
+                CState::new(),
+            ));
+            for index in 0..unrelated {
+                assumptions = assumptions.assume_proposition(callback_fact(
+                    "Unrelated",
+                    Pointer::symbolic_function(Variable(93_000 + index as u64)),
+                    CState::new(),
+                ));
+            }
+            let before_allocations = crate::persistent::persistent_node_allocations();
+            let (found, work) = crate::instrumentation::measure_deterministic_work(|| {
+                (0..calls)
+                    .map(|_| assumptions.function_contract_facts_for(&target).count())
+                    .sum::<usize>()
+            });
+            let allocations = crate::persistent::persistent_node_allocations() - before_allocations;
+            assert_eq!(found, calls);
+            assert_eq!(
+                allocations, 0,
+                "lookup must not allocate for unrelated facts"
+            );
+            samples.push((calls, unrelated, work));
+        }
+    }
+
+    for calls in [1usize, 2, 4, 8, 16] {
+        let row = samples
+            .iter()
+            .filter(|(sample_calls, _, _)| *sample_calls == calls)
+            .collect::<Vec<_>>();
+        assert!(
+            row.windows(2).all(|pair| pair[1].2 == pair[0].2),
+            "unrelated supported callback facts changed lookup work at {calls} calls: {row:?}"
+        );
+    }
+    for pair in samples
+        .iter()
+        .filter(|(_, unrelated, _)| *unrelated == 4)
+        .collect::<Vec<_>>()
+        .windows(2)
+    {
+        assert!(
+            pair[1].2 <= pair[0].2 * 2,
+            "callback lookup work should grow linearly with selected calls: {samples:?}"
+        );
+    }
+}
+
 fn check_unrelated_functions(select: bool) {
     let contracts = [interface(0), interface(1)];
     let contracts = contracts.iter().collect::<Vec<_>>();

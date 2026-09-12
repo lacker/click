@@ -3423,6 +3423,7 @@ impl Parser {
             return Ok(ClickProposition::Exists {
                 click_type: ClickType::C(c_type),
                 name: binding.name,
+                written_name: None,
                 body: Box::new(ClickProposition::And(Box::new(condition), Box::new(body))),
             });
         }
@@ -3486,6 +3487,7 @@ impl Parser {
             return Ok(ClickProposition::ForAll {
                 click_type,
                 name,
+                written_name: None,
                 body: Box::new(body),
             });
         }
@@ -3546,6 +3548,7 @@ impl Parser {
             return Ok(ClickProposition::Exists {
                 click_type,
                 name,
+                written_name: None,
                 body: Box::new(body),
             });
         }
@@ -3734,12 +3737,14 @@ impl Parser {
                 start,
                 end,
                 item,
+                written_item: None,
                 body: Box::new(body),
             }),
             "any" => Ok(ClickProposition::RangeAny {
                 start,
                 end,
                 item,
+                written_item: None,
                 body: Box::new(body),
             }),
             _ => unreachable!("range proposition method checked above"),

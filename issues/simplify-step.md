@@ -9,11 +9,22 @@ every other kernel consumer decides by exact routes or emits an obligation
 (see the kernel authority boundary in
 [proof-objects.md](../docs/internals/proof-objects.md)). One route is left.
 
-Implementation design and delegation plan added on 2026-09-11, against
-`96f1e06542c0c804078418956f081b456b431b18`. The detailed plan below is ready
-for a coordinating agent to use. It does not claim that the implementation or
-the historical experiments have been rerun on that base. Read the feasibility
-checkpoints before dispatching the final integration work.
+Implementation is paused as of 2026-09-12. The 2026-09-11 plan correctly
+identified many local proof-construction requirements, but its premise that no
+verification architecture was missing is no longer supported. Two independent
+end-to-end attempts grew into 300--400 line C-string-specific prototypes and
+still could not produce a retained explicit proof. Both were discarded before
+merge. The common blocker is loss of exact source identity: the explicit proof
+builder cannot identify the caller requirement to project with `choose`, and a
+generated kernel load no longer identifies the source access that can spell its
+defining equation.
+
+Do not resume the package/delegation plan preserved at the end of this issue.
+The authoritative next step is the bounded source-identity redesign below.
+Keep the current hidden `Planning` compatibility path until both identity kinds
+have been demonstrated by vertical, retained-proof regressions. Do not add more
+C-string matchers, hardcoded source names, ambient-fact scans, or
+proposition-shape heuristics to bridge the gap.
 
 ## Violated invariant
 
@@ -32,9 +43,11 @@ Click; this one does not.
 The kernel side is already done: `prepare_verified_function_call` emits a
 requirement the exact routes miss as `ProofObligation::verification_condition`
 with the context `"<callee> precondition"` and the lowering-provenance
-chain that `intro` consumes. The gap is purely on the surface: the emitted
-requirement is discharged as a prerequisite instead of being presented as
-a goal the proof states.
+chain that `intro` consumes. The obligation-reporting gap described here is on
+the surface: the emitted requirement is discharged as a prerequisite instead
+of being presented as a goal the proof states. Later work exposed a separate
+cross-layer provenance gap for naming the source requirements and loads used
+to construct that explicit proof.
 
 ## Intended design
 
@@ -57,9 +70,10 @@ An emitted requirement becomes an ordinary goal closed before the step.
 
 ## What has been established
 
-Two attempts built the mechanism and measured what it closes. Nothing from
-them is on master; the design below is the retained result, and the next
-implementation starts from it rather than from a branch.
+Two early attempts built the mechanism and measured what it closes. Those
+prototype branches were not merged; several independently reviewed components
+described below subsequently landed as green commits. The prototypes remain
+historical evidence, not implementation sources to copy.
 
 **Reporting the requirement.** In `transition_certification.rs`, the
 `Contextual` arm's checked-derivation leg is gated on
@@ -130,7 +144,7 @@ requirement is spelled literally, and failing that with its leading
 definedness-guard conjuncts left to the lowering that regenerates them.
 
 **Measured reach.** With the three prerequisites below landed, that
-mechanism discharged seven of the twelve affected fixtures by a planned
+mechanism discharged seven of the twelve affected mdtests by a planned
 `have`, plus the two hand-written spelling fixtures
 (`static_local_array_requirement_stated_explicitly`,
 `loadable_range_requirement_stated_explicitly`), which had relied on the
@@ -149,9 +163,33 @@ vacuously satisfiable; loads through foreign static objects and
 `loadable(p[a..b])` ranges over an external argument synthesize and
 round-trip.
 
+**Additional green infrastructure landed during the 2026-09-12 campaign.**
+These changes are useful independently and remain on master:
+
+- exact alpha/canonical-load identity and indexed availability behavior;
+- source-backed retry authorization and retained-`have` orchestration for the
+  cases whose source identity is already available;
+- explicit dynamic snapshot transport support and its wrong-epoch and
+  invalidation regressions;
+- static, multidimensional, quantified-range, symbolic external-range, and
+  constant-one external-range synthesis, including the production `strlen`
+  carrier shape;
+- constructor disequality, retained algebraic orientation, and the relevant
+  stack-safety repairs; and
+- the exact two-candidate carrier-admission path landed in `9cfee80a`: after
+  source/call authorization, try the registry spelling and at most one
+  synthesized spelling, accepting either only after exact alpha/canonical-load
+  re-lowering. Its callee/interface/argument/ordinal authorization negatives
+  and the full repository gate pass.
+
+The presence of these prerequisites must not be read as evidence that final
+cutover is close. They remove local obstacles, but neither supplies the source
+identity needed by the remaining dynamic and load-equation consumers.
+
 ## Remaining gaps
 
-Twelve fixtures have automatic proofs that rely on the hidden discharge:
+The historical census below identified twelve mdtests with automatic proofs
+that relied on hidden discharge:
 `cstr_dynamic_indexed_read`, `cstr_dynamic_indexed_read_requires_permission`,
 `cstr_dynamic_loadability`, `stdlib_external_contracts`,
 `exists_loadable_range`, `forall_loadable_range`, `file_scope_static_arrays`,
@@ -159,65 +197,97 @@ Twelve fixtures have automatic proofs that rely on the hidden discharge:
 `static_array_parity_fixed_multidimensional`, `static_local_arrays`,
 `contract_refinement_uses_implied_requirement`, plus `examples/bounded-pool`
 and `examples/owned-string`. Their C and their proofs stay as they are; the
-planner must close them. Two capabilities are missing, both supplied by
-the deleted derivation leg:
+planner must close them. Re-run this census on the restart base: several local
+capabilities have since landed, so this list is an acceptance corpus, not a
+claim that all fourteen inputs still fail for the same reason.
 
-1. **Planning a witness, a snapshot transport, and range coverage together.**
-   The `cstr` family's remaining red requirement is
-   `exists len. loadable(bytes[len..len + 1])` (with its definedness guard
-   as a body conjunct). After `witness`, the body owes a loadability at the
-   current point while the covering `loadable(bytes[0..len + 1])` sits at
-   the caller's entry snapshot, across the caller's own local-declaration
-   snapshot. `simp` closes the coverage alone and the covering range alone;
-   no planner selects the `transport` source and composes the three. The
-   hand-written form in `mdtests/cstr_readable_witness_stated_before_call.md`
-   shows the target shape. The premise set is the named call arguments and
-   their recorded facts; do not scan ambient facts.
-2. **A spelling for a load-defining equation.** `examples/bounded-pool` and
+Two architectural identity gaps now dominate the remaining work:
+
+1. **Exact caller-requirement identity.** The dynamic C-string obligation is
+   an existential containing an addition-definedness guard and a quantified
+   one-byte range:
+
+   ```text
+   exists len:CInt32 {
+       !signed_add_overflows(len, 1) &&
+       forall k:CInt32 {
+           (0 <= k && k < len) => loadable((bytes + k)[0..1])
+       }
+   }
+   ```
+
+   This is the generated callee/read obligation, not the source declaration of
+   `cstr_readable`. The caller source requirement is an existential whose body
+   contains the entry covering leaf `loadable(bytes[0..len + 1])` together with
+   its bounds, non-null, and terminator clauses. The current prelude declaration
+   is authoritative; the redesign must preserve the identity connecting that
+   source requirement to the generated obligation without conflating their
+   proposition shapes.
+
+   The covering `loadable(bytes[0..len + 1])` is an entry-snapshot leaf of a
+   caller `cstr_readable(...)` requirement. `Choose` deliberately requires the
+   exact caller declaration ordinal. The call-requirement carrier identifies
+   the callee requirement, source registry entry, call arguments, and snapshot;
+   it does not identify which caller requirement may be projected. Recovering
+   that ordinal by scanning proof facts, choosing the first matching shape, or
+   hardcoding `bytes` is ambiguous and violates the verification-efficiency
+   contract.
+
+2. **Exact generated-load source identity.** `examples/bounded-pool` and
    `examples/owned-string` raise requirements whose head conjunct is
-   `Var(loadvar) == load(snapshot, p)`, which `synthesize_surface_proposition`
-   cannot write. Add the synthesizer with a round-trip test, as the static
-   and range spellings were added.
+   `Var(loadvar) == load(snapshot, p)`. By the time the kernel load variable is
+   minted, the distinction between source `Field`, `UnionField`, and `Index`
+   access occurrences has been erased. Pointer/hash inference from proof
+   material would be ambiguous, and printing an internal load variable as a
+   source identifier is invalid. Faithful synthesis therefore needs retained
+   provenance for the originating source access, not another load-expression
+   heuristic.
+
+The witness/transport/coverage operations themselves are not known to be the
+architectural gap. Once the exact caller requirement is selected, existing
+checked `Choose`, `Witness`, `TransportUsing`, and coverage operations provide
+the candidate vocabulary. The vertical probe must establish the exact checked
+composition; it may not rename an entry snapshot to the current one or
+transport a target without the source range and required frame evidence.
+Likewise, the carrier-admission path can retain a faithful load equation once
+its source access is nameable. The missing input in both cases is source
+identity.
 
 Also known: `auto` reports it has no explicit simple certificate for an
 existential over `CInt32`, pre-existing; and a `both` on a guard conjunct
 leaves a body below it unrenderable when the written form cannot travel
 with either arm, the conjunct-guard record the normalization planner lacks.
 
-Found by the function-contracts campaign (2026-09-11), two more simple
-discharges `simp` does not perform:
+Two additional local gaps found by the function-contracts campaign are now
+closed and are not part of the redesign: checked disequality of distinct
+algebraic constructors, and retained orientation of the relevant pure-function
+equation across a call.
 
-3. **A constructor disequality.** Goal `r.model != Mark::Clear()` with
-   premise `r.model == Mark::Set()` is left as `¬(algebraic(…) =
-   algebraic(…))` with every candidate rejected on shape. Distinct
-   constructors of one `spec enum` are unequal by definition; this is one
-   checked rule, not a search.
-4. **Orienting a pure-function equation across a call.** After
-   `step(AugmentRotate(rotated))`, the retained pre-call fact
-   `shape_left(old(r.model)) == middle_model` is not used to close
-   `rotated.model == Shape::Node(...)`; `mdtests/augment_rotate_model_callback.md`
-   restates it with an explicit `rewrite`. The `rewrite` finds the fact, so
-   the gap is selection, not availability.
+## Eventual intended regression
 
-## Intended regression
+This is the final behavior after the redesign restart gates pass, not a current
+implementation package.
 
 `mdtests/call_precondition_disjunction_is_an_obligation.md` with
 `by { execute(); simp(); }`: the expansion contains
 `have x > 0 or y > 0 by { left(); }` before the step, re-verifies through
 the ordinary entry point, and is rejected when that `have` is deleted. The
-twelve fixtures above verify unchanged and their expansions print the
+12 mdtests and two examples above verify unchanged and their expansions print the
 discharging `have`. A requirement with a hidden guard in front of a written
 implication introduces both in order through the chain. Requirement
 checking is flat in unrelated caller facts.
 
-## Acceptance criteria
+## Eventual acceptance criteria
+
+These criteria govern final completion after the bounded redesign and vertical
+probes. They do not authorize immediate `Planning` removal.
 
 - `StatementPrerequisitePolicy::Planning` and the checked-derivation leg in
   `transition_certification.rs` are deleted; `step()` discharges a call
   requirement by exact routes only.
 - Every emitted call requirement in both fixture harnesses is closed by a
   retained `have` that expansion prints, or by an explicit one in the
-  source; the twelve fixtures and two examples above verify with their
+  source; the 12 mdtests and two examples above verify with their
   current C and proof text.
 - No new kernel rule, no new `ProofStep` variant, no grammar change, no
   ambient-fact scan in the planner.
@@ -231,7 +301,181 @@ obligation needs the caller's termination plan at the call site, which the
 whole-program termination pass does not provide. The `arithmetic` smart
 tactic is documented in the [arithmetic certificate reference](../docs/reference/tactics/index.md).
 
-## Implementation design and delegation plan
+## 2026-09-12 bounded source-identity redesign
+
+This section is authoritative for the next work on the issue. Its purpose is
+to settle one coherent representation before implementation resumes. It is a
+design phase, not authorization to land another chain of disconnected helper
+commits.
+
+### Decision
+
+Introduce proof-local, immutable identities for source occurrences that must
+survive lowering:
+
+- a **requirement source identity** names one top-level caller requirement
+  declaration and its source presentation; and
+- a **load source identity** names one source memory-access occurrence whose
+  lowering produced a generated load.
+
+These identities are provenance, not propositions and not proof authority.
+They may select the source object that an ordinary checked operation names,
+but they cannot make an unavailable fact available, equate snapshots, choose a
+logical branch, or discharge a requirement. Every generated proof must still
+be accepted by the existing simple proof operations.
+
+Use separate typed identities even if they share an internal numeric owner/key
+representation. Do not overload a callee requirement ordinal, load variable,
+pointer term, structural hash, display name, or proof-fact vector position as a
+source identity. Memory epoch remains an independent semantic dimension; the
+same load source occurrence at a different epoch does not become interchangeable.
+
+### Required identity properties
+
+The redesign must specify and test all of the following before implementation
+packages are dispatched:
+
+1. **Minting.** State exactly where each identity is allocated. A source
+   occurrence is minted once by the owning parsed/lowered function context,
+   not rediscovered during smart retry.
+2. **Ownership.** Include enough owner identity that IDs from different
+   functions, contracts, or instantiated callback contexts cannot collide.
+3. **Propagation.** Provide a field-by-field lifecycle from source AST through
+   C0/lowering, kernel terms or proof-local presentation records, obligations,
+   proof facts/projections, synthesis, and expansion.
+4. **Substitution and instantiation.** Define when an instantiated occurrence
+   keeps its source ID and where its argument substitution is recorded. The ID
+   names the occurrence; the substitution names this use of it.
+5. **Persistence.** Copies and persistent proof siblings may share immutable
+   source registries without cloning whole environments per function or tactic.
+6. **Lookup.** Hot-path lookup is by shallow stable identity. It must not use
+   linear exact-premise searches, deep structural map keys, or scans of all
+   ambient facts. Exact structural comparison may validate a small selected
+   record, never serve as an unbounded selection algorithm.
+7. **Ambiguity.** Missing, stale, multiply applicable, wrong-owner, or
+   wrong-snapshot identity is a prompt bounded refusal. Never choose the first
+   plausible source.
+8. **Semantic neutrality.** Document whether the metadata participates in
+   equality, hashing, ordering, serialization, diagnostics, and certificate
+   identity. Default to exclusion unless two values with different provenance
+   must be kept distinct for sound downstream presentation. Any exception
+   needs an explicit regression.
+9. **Erasure.** A retained expanded proof contains ordinary source-level
+   operations, not an opaque source-ID operation. Re-verification must not need
+   the smart planner or a hidden provenance oracle.
+
+### Architecture questions to resolve
+
+Produce a short design record in this issue, with concrete type shapes and a
+pipeline table, answering these questions:
+
+- Is the common owner a parsed function, a validated function block, a kernel
+  function instance, or an explicit immutable `ProofSourceRegistry`?
+- How does a call's exact source-argument occurrence query the bounded set of
+  relevant caller requirement IDs without structural fact scans?
+- How does a requirement source identity pass through labels, resource and
+  definedness wrappers, lowering-introduction records, `ChosenProjection`, the
+  retained `Choose` certificate, and expansion without being confused with a
+  proof-fact vector position?
+- Does `Choose` continue to retain the declaration ordinal in its certificate
+  while resolving it through a requirement source ID during construction?
+- Where is a load source ID attached before C0 `Field`/`UnionField`/`Index`
+  lowering erases the source form, and how does it reach
+  `mint_load_variable`/registered-load presentation?
+- How are callback instantiation, generic substitution, function inlining,
+  repeated source accesses, and identical-looking accesses at different source
+  locations distinguished?
+- Which source table entry contains the exact Surface spelling and qualified
+  scope required for round-trip lowering?
+- How are source registries bounded and shared so explicit-simple projects
+  remain approximately linear in input and certificate size?
+
+Do not begin production implementation while any answer depends on "find the
+matching proposition/load/pointer later." That is the implicit reconstruction
+this redesign is meant to remove.
+
+### Bounded vertical prototypes
+
+After the type/lifecycle design is reviewed, implement two vertical probes on
+one integration base. These probes are the feasibility test for the redesign;
+they are not separate opportunities for special-case logic.
+
+**Caller-requirement probe.** Keep the production C body unchanged. Use
+proof-side/synthetic contract variants that place the relevant caller
+requirement at a nonzero ordinal and use an alternate pointer parameter name.
+The retained expansion must identify that exact source requirement, then
+contain ordinary `Choose`, `Witness`, one or more explicit entry-to-current
+`TransportUsing` and checked coverage steps, using only the bounded
+compositions supported by the existing checker. It must verify in a fresh
+process. Duplicate plausible caller requirements, a wrong argument,
+wrong epoch, intervening invalidating write, or deletion of the transport must
+fail. The implementation must contain no `cstr`-named matcher, hardcoded source
+name, or ambient fact scan.
+
+**Generated-load probe.** Reduce one unchanged real obligation from each of
+`bounded-pool` and `owned-string`. A source identity must let synthesis spell
+the actual originating access and memory point, round-trip to the exact load
+equation, retain an ordinary `have`, and verify cold. Identical-looking accesses
+at different source locations and the same access at a different memory epoch
+must remain distinct. An unnameable or stale source identity must refuse rather
+than emit an internal variable or infer from a pointer hash.
+
+If either vertical probe requires a new trusted rule, new proof-step syntax,
+whole-context scan, special-case source name, or unverifiable expansion, stop
+and revise the identity design. Do not land only the latest local helper and
+continue the previous workaround cascade.
+
+### Restart gates
+
+Implementation of the final planner and `Planning` removal resumes only when:
+
+- the identity types, owners, minting points, and complete propagation table
+  are written and independently reviewed;
+- deterministic complexity bounds and at least four-size scaling regressions
+  are specified for registry construction, lookup, cloning, and substitution;
+- both vertical probes pass ordinary verification, expansion, deletion
+  checks, and cold re-verification on the same green base;
+- no probe contains a source-pattern special case or relies on hidden
+  `Planning` after expansion; and
+- the current `Planning`/`Contextual` census has been refreshed and every
+  remaining consumer has an assigned exact or smart-construction replacement.
+
+Until then, retain the compatibility path and keep master green. Design work
+may update this issue and add minimal reductions in an isolated worktree, but
+do not merge unused metadata, speculative carrier fields, or helpers without a
+production consumer.
+
+### Implementation after restart
+
+Once the restart gates pass, use one coordinated vertical integration branch:
+
+1. land the reviewed source registry and identity propagation as one coherent
+   representation change with scaling tests;
+2. make dynamic C-string and load-equation proof construction ordinary
+   consumers of that representation, preserving exact carrier admission and
+   checked proof operations;
+3. expand and cold-reverify the full affected corpus, fixing only gaps that are
+   expressible through the agreed general identity/operation interfaces;
+4. refresh the policy census, route every smart consumer, and only then delete
+   `StatementPrerequisitePolicy::Planning` and the remaining hidden
+   `Contextual` derivation routes; and
+5. run the complete acceptance matrix and unfiltered `scripts/check.sh` before
+   deleting this issue.
+
+Parallel agents may independently audit the identity lifecycle, scaling, and
+expanded certificates. Do not split ownership of the identity representation,
+retry state machine, or final policy cutover, and do not run competing
+implementations of the same vertical probe.
+
+## Superseded 2026-09-11 implementation and delegation plan
+
+The remainder is preserved as historical detail and a source of regressions.
+It is not the current dispatch plan. Where it conflicts with the bounded
+source-identity redesign above, the redesign governs.
+
+> **Historical only:** do not dispatch the packages, dependency order, or
+> cutover below. Reuse individual regressions only after the redesign restart
+> gates select and validate the replacement interfaces.
 
 ### Assessment and decision boundaries
 
@@ -596,7 +840,7 @@ the required canonical equation, including any regenerated guards. Never
 replace the obligation with `true` on the strength of the synthesizer's
 interpretation. A mismatched snapshot must fail the round-trip check.
 
-### Work packages and ownership
+### Historical work packages and ownership
 
 These are logical implementation chunks, not a request to run every worker
 at once. Use the slots actually available. The coordinator owns shared API
@@ -619,7 +863,7 @@ assumption. Do not have agents edit the same checkout concurrently.
   hidden discharge to identify the current failing obligations. Preserve
   structured reductions/tests, not raw internal dumps. Historical counts
   are a starting point; record additions or cases already repaired upstream.
-- Identify exact owning smart sites for the twelve fixtures and two examples.
+- Identify exact owning smart sites for the 12 mdtests and two examples.
   Preserve their original C and proof text as acceptance inputs. Distinguish
   the separate two explicit-spelling fixtures and the pre-existing `auto`
   limitation from regressions introduced by this change.
@@ -795,7 +1039,7 @@ against stale independently chosen interfaces.
   entry only after implementation, regression coverage, and documentation are
   complete; a design-only change must retain the issue.
 
-### Dependency order and practical dispatch
+### Historical dependency order and practical dispatch
 
 Recommended order for a coordinator with three worker slots:
 
@@ -837,7 +1081,7 @@ the primary is clean and still at the recorded base; if it moved, update the
 integration branch and rerun affected gates. Integrate with Git, never by
 copying partially edited files.
 
-### Acceptance matrix and verification procedure
+### Historical acceptance matrix and verification procedure
 
 Use the actual source locations selected by parsing/current tooling; do not
 hardcode stale line numbers from this design. Production workflows and tests
@@ -850,7 +1094,7 @@ recursive Click subprocess wrappers or parse stderr to recover obligations.
 | --- | --- |
 | Basic audit boundary | Disjunction example verifies automatically; expansion retains the necessary `have`; ordinary cold verification succeeds; deleting that `have` rejects the call |
 | Explicit simple checking | A bare missing-precondition `step` fails without planner invocation; a matching explicit `have` succeeds; unrelated simple statements retain behavior |
-| Historical affected corpus | All twelve named mdtests, both named examples, and both explicit-spelling fixtures verify with original C and proof text; any newly discovered affected case is also covered |
+| Historical affected corpus | All 12 named mdtests, both named examples, and both explicit-spelling fixtures verify with original C and proof text; any newly discovered affected case is also covered |
 | Generated proof coverage | Relevant smart sites in each affected family expand and re-verify; generated `have` bodies contain explicit checked proof operations; already-exact obligations need no gratuitous `have` |
 | Binder identity | Capture, shadowing, connective nesting, sort distinctions, binder-name changes, and changed non-binder terms are tested |
 | Guard fidelity | Hidden guards before written implications/universals, existential conjunct guards, and nested `both` all remain provable/renderable only with their full obligations |

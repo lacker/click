@@ -1074,6 +1074,43 @@ this checkpoint. This is a green partial D checkpoint, not a complete W5
 claim. No existing C source, syntax, budget, quarantine, or unrelated
 semantics changed.
 
+#### W5 checkpoint E handoff (2026-09-12)
+
+Checkpoint E starts from the pushed D/master head; the E1 implementation and
+tests are at `49ed348b` on `codex/mvr-w5e` (building on `a5ec4580`). The
+callback evidence in this checkpoint is
+limited to the exact-pointer `PureFactContext` lookup curve; it is not an
+end-to-end callback application or invalidation test, and it does not close
+the full W5 callback claim. That curve varies calls `1, 2, 4, 8, 16`
+independently from unrelated supported facts `4, 16, 64, 256, 1024`, with
+zero lookup allocations and work flat in the unrelated axis. No callback
+provenance sidecar or unconditional predicate retention was added.
+
+The concrete composite reduction did expose a real gap: a memory projection
+whose base or bounds contain a lowered memory load survived a write to that
+prerequisite cell when only the final range was indexed. `a5ec4580` extends
+the typed exact footprint with recursively discovered scalar load cells in
+pointer offsets and range bounds, conservatively retaining `Unknown` for
+term forms whose load-bearing children are not exposed. The regression
+`observed_projection_tracks_loaded_address_prerequisite` and
+`observed_projection_tracks_loaded_base_and_start_prerequisites` prove that a
+selector write retires stale projections derived through the end, base, and
+start while preserving the owner and a disjoint supported sibling. A bounded
+deep-term and typed snapshot-width/mixed-snapshot regression keep the walk
+iterative/conservative and avoid assuming every load is four bytes; widths
+come from the checked source snapshot, while missing or mixed snapshots
+become `Unknown`. A temporary pre-fix reproduction failed at the stale
+projection assertion.
+Existing join, nested-observation, overlap/disjoint, barrier, alias, and
+interval curves remain covered by the focused resource tests.
+
+This is a green partial E checkpoint, not a complete W5 claim. Composite
+producers still do not expose a general checked load-evidence object for
+arbitrary declared predicate bodies or opaque nested composite cores; those
+remain conservative or require a later design. The callback/table and scope
+claims are not broadened beyond the reductions above. No existing C source,
+syntax, budget, quarantine, or unrelated semantics changed.
+
 ### W6 — Unify existing binder transport and snapshot substitution
 
 **Dependencies:** W2 logically; default dispatch after W5 to avoid conflicts.

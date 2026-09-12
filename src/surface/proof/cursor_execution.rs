@@ -1313,6 +1313,7 @@ fn annotate_surface_at_snapshot(
             } => ClickProposition::ForAll {
                 click_type: c_type.clone(),
                 name: name.clone(),
+                written_name: proposition.written_quantifier_name().map(str::to_string),
                 body: child(),
             },
             ClickProposition::Exists {
@@ -1322,6 +1323,7 @@ fn annotate_surface_at_snapshot(
             } => ClickProposition::Exists {
                 click_type: c_type.clone(),
                 name: name.clone(),
+                written_name: proposition.written_quantifier_name().map(str::to_string),
                 body: child(),
             },
             ClickProposition::RangeAll {
@@ -1330,6 +1332,7 @@ fn annotate_surface_at_snapshot(
                 start: expression_at_snapshot(start),
                 end: expression_at_snapshot(end),
                 item: item.clone(),
+                written_item: proposition.written_quantifier_name().map(str::to_string),
                 body: child(),
             },
             ClickProposition::RangeAny {
@@ -1338,6 +1341,7 @@ fn annotate_surface_at_snapshot(
                 start: expression_at_snapshot(start),
                 end: expression_at_snapshot(end),
                 item: item.clone(),
+                written_item: proposition.written_quantifier_name().map(str::to_string),
                 body: child(),
             },
             ClickProposition::PredicateCall { name, arguments } => {
@@ -1951,9 +1955,10 @@ fn execute_step_from_frontier_position_selecting_path(
             )));
         }
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires exactly one statement successor for `{}`, got {}\n{}",
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires exactly one statement successor for `{}`, got {}\n{}{}",
             describe_c_statement_head(&step_statement),
             transitions.len(),
+            describe_undecided_statement_successors(&transitions, parameters, arguments),
             describe_proof_context(
                 available_pure_facts,
                 &current_resources,

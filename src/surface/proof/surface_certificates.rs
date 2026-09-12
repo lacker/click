@@ -5924,6 +5924,7 @@ pub(super) fn comparison_snapshot_variants(
     if let ClickProposition::ForAll {
         click_type: c_type,
         name,
+        written_name,
         body,
     } = proposition
     {
@@ -5933,6 +5934,7 @@ pub(super) fn comparison_snapshot_variants(
                 .map(|body| ClickProposition::ForAll {
                     click_type: c_type.clone(),
                     name: name.clone(),
+                    written_name: written_name.clone(),
                     body: Box::new(body),
                 })
                 .collect(),
