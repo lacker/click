@@ -5171,6 +5171,29 @@ pub struct ExecutionPureFact {
     pub(super) certified: bool,
     pub(super) certified_store: Option<CertifiedMemoryStore>,
     pub(super) transport: Option<CertifiedExecutionFactTransport>,
+    /// Exact producer metadata for a kernel-minted load variable.  This is
+    /// carried with the certified fact rather than recovered from the current
+    /// state, since the producer's snapshot and pointer are the authority.
+    pub(super) generated_load_binding: Option<GeneratedLoadBinding>,
+}
+
+/// The source-independent identity of one kernel-generated load equation.
+/// Consumers must use the complete `(variable, snapshot, pointer)` key; the
+/// source expression is retained only as the exact equation operand produced
+/// by the kernel.  A variable-level tombstone is represented by
+/// [`GeneratedLoadBinding::Ambiguous`] when one path observes incompatible
+/// bindings for the same variable.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) enum GeneratedLoadBinding {
+    Exact {
+        variable: Variable,
+        snapshot: CMemorySnapshotIdentity,
+        pointer: Pointer,
+        load: Bitvector32Term,
+    },
+    Ambiguous {
+        variable: Variable,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

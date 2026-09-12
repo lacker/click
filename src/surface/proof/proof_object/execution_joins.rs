@@ -1022,6 +1022,7 @@ impl<'a> Proof<'a> {
         parent: &ExecutionProofState,
         arms: [&ExecutionProofState; 2],
     ) -> Result<(), ClickError> {
+        self.merge_branch_generated_load_bindings(execution, parent, arms)?;
         for arm in arms {
             let introduced = arm
                 .branch_surface_facts
@@ -1040,6 +1041,34 @@ impl<'a> Proof<'a> {
                 }
                 execution.presentation.branch_surface_facts.insert(fact);
             }
+        }
+        Ok(())
+    }
+
+    /// Propagates only producer observations appended by each arm after the
+    /// split root. The presentation map is persistent, while the event
+    /// sequence supplies an identity-checked, output-sized arm delta. A
+    /// conflicting exact observation is reduced to the existing variable
+    /// tombstone by `record_generated_load_bindings`.
+    fn merge_branch_generated_load_bindings(
+        &self,
+        execution: &mut ExecutionProofState,
+        parent: &ExecutionProofState,
+        arms: [&ExecutionProofState; 2],
+    ) -> Result<(), ClickError> {
+        for (name, arm) in [("then", arms[0]), ("else", arms[1])] {
+            let introduced = arm
+                .presentation
+                .generated_load_binding_events
+                .suffix_since(&parent.presentation.generated_load_binding_events)
+                .ok_or_else(|| {
+                    self.step_error(format!(
+                        "{name} execution load bindings do not descend from the split root"
+                    ))
+                })?;
+            execution
+                .presentation
+                .record_generated_load_bindings(&introduced);
         }
         Ok(())
     }

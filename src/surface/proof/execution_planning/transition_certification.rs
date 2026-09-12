@@ -1272,6 +1272,8 @@ fn certified_transitions_from_execution(
                         path_facts.push(source);
                     }
                 }
+                let generated_load_bindings =
+                    generated_load_bindings_from_facts(&execution_facts);
                 return Ok(CertifiedStatementTransition {
                     theorem: path.theorem().clone(),
                     context: executed_under.clone(),
@@ -1284,8 +1286,10 @@ fn certified_transitions_from_execution(
                     prerequisite_derivations,
                     planning_premises: Vec::new(),
                     fact_transports: transported_facts,
+                    generated_load_bindings,
                 });
             }
+            let generated_load_bindings = generated_load_bindings_from_facts(&execution_facts);
             Ok(CertifiedStatementTransition {
                 theorem: path.theorem().clone(),
                 context: executed_under.clone(),
@@ -1303,10 +1307,53 @@ fn certified_transitions_from_execution(
                 prerequisite_derivations,
                 planning_premises: Vec::new(),
                 fact_transports: Vec::new(),
+                generated_load_bindings,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok((transitions, loop_rule))
+}
+
+/// Retain only producer-issued load metadata, with a variable-level
+/// tombstone when one checked path observes incompatible exact keys.  The
+/// transition owns this small output-sized vector; no proof-state or memory
+/// scan is involved.
+fn generated_load_bindings_from_facts(
+    facts: &[ExecutionPureFact],
+) -> Vec<crate::kernel::GeneratedLoadBinding> {
+    let mut bindings =
+        std::collections::BTreeMap::<Variable, crate::kernel::GeneratedLoadBinding>::new();
+    for fact in facts {
+        let Some(binding) = fact.generated_load_binding() else {
+            continue;
+        };
+        let variable = match binding {
+            crate::kernel::GeneratedLoadBinding::Exact { variable, .. }
+            | crate::kernel::GeneratedLoadBinding::Ambiguous { variable } => *variable,
+        };
+        let next = match bindings.get(&variable) {
+            Some(crate::kernel::GeneratedLoadBinding::Ambiguous { .. }) => continue,
+            Some(crate::kernel::GeneratedLoadBinding::Exact {
+                snapshot,
+                pointer,
+                load,
+                ..
+            }) => match binding {
+                crate::kernel::GeneratedLoadBinding::Exact {
+                    snapshot: next_snapshot,
+                    pointer: next_pointer,
+                    load: next_load,
+                    ..
+                } if snapshot == next_snapshot && pointer == next_pointer && load == next_load => {
+                    continue;
+                }
+                _ => crate::kernel::GeneratedLoadBinding::Ambiguous { variable },
+            },
+            None => binding.clone(),
+        };
+        bindings.insert(variable, next);
+    }
+    bindings.into_values().collect()
 }
 
 /// Replaces a transported fact's source with its target at the source's
@@ -1384,5 +1431,144 @@ mod condition_transition_tests {
             error.message().contains("missing condition prerequisite"),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn generated_load_binding_collection_tombstones_conflicting_keys() {
+        let memory = crate::kernel::intern_c_memory(CMemory::new());
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let load =
+            |pointer: Pointer| Bitvector32Term::MemoryLoad(memory.clone(), Box::new(pointer));
+        let variable = Variable(0xfeed);
+        let producer_fact = |pointer: Pointer| {
+            let mut facts = Vec::new();
+            crate::kernel::record_load_variable_defining_fact(variable, load(pointer), &mut facts);
+            facts.pop().expect("producer emits defining fact")
+        };
+        let same = generated_load_bindings_from_facts(&[
+            producer_fact(pointer.clone()),
+            producer_fact(pointer),
+        ]);
+        assert!(matches!(
+            same.as_slice(),
+            [crate::kernel::GeneratedLoadBinding::Exact { .. }]
+        ));
+
+        let conflicting = generated_load_bindings_from_facts(&[
+            producer_fact(Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Constant(0),
+            }),
+            producer_fact(Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Constant(4),
+            }),
+        ]);
+        assert!(matches!(
+            conflicting.as_slice(),
+            [crate::kernel::GeneratedLoadBinding::Ambiguous {
+                variable: Variable(0xfeed)
+            }]
+        ));
+    }
+
+    #[test]
+    fn real_load_execution_publishes_producer_binding_on_transition() {
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(8),
+        };
+        let statement = CStatement::Return(CExpression::TypedLoad {
+            pointer: Box::new(CExpression::Value(CValue::pointer(pointer.clone()))),
+            value_type: CType::Int32,
+            volatile: false,
+        });
+        let state =
+            CState::new().with_resource_context(ResourceContext::new().unchecked_with_fact(
+                CResourceFact::own_memory(CMemoryRange::new(
+                    pointer.clone(),
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(1),
+                )),
+            ));
+        let mut next_opaque_call = 0;
+        let mut next_kernel_variable = 0;
+        let (transitions, _) = certified_statement_transitions(
+            &state,
+            &[],
+            &statement,
+            &CExecutionEnvironment::new(),
+            None,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            "real load transition test",
+            &mut next_opaque_call,
+            &mut next_kernel_variable,
+            StatementPrerequisitePolicy::Explicit,
+            StatementFactTransportPolicy::None,
+            None,
+        )
+        .expect("a symbolic external load should produce a checked transition");
+        let [transition] = transitions.as_slice() else {
+            panic!("expected one load transition: {transitions:?}");
+        };
+        assert!(matches!(
+            transition.generated_load_bindings.as_slice(),
+            [crate::kernel::GeneratedLoadBinding::Exact {
+                pointer: recorded_pointer,
+                ..
+            }] if recorded_pointer == &pointer
+        ));
+        assert!(matches!(
+            transition.outcome,
+            CStatementOutcome::Return { .. }
+        ));
+
+        // Feed the producer-issued transition metadata through the same
+        // persistent presentation store used by the execution cursor. This
+        // keeps the test on the production path past transition planning,
+        // rather than manufacturing a metadata-only fact.
+        let mut execution = ExecutionProofState::at_entry(
+            state,
+            ExecutionFrontier::default(),
+            RecordedSnapshots::new(),
+            SurfacePropositionMap::default(),
+            PersistentSequence::default(),
+        );
+        execution
+            .presentation
+            .record_generated_load_bindings(&transition.generated_load_bindings);
+        assert_eq!(execution.presentation.generated_load_bindings.len(), 1);
+        assert_eq!(
+            execution.presentation.generated_load_binding_events.len(),
+            1
+        );
+    }
+
+    #[test]
+    fn generated_load_collection_scales_with_producer_fact_output() {
+        let memory = crate::kernel::intern_c_memory(CMemory::new());
+        for size in [8usize, 32, 128, 512] {
+            let mut facts = Vec::with_capacity(size);
+            for index in 0..size {
+                let pointer = Pointer {
+                    block: PointerBlock::ExternalArgument,
+                    offset: PointerOffsetTerm::Constant((index * 4) as i64),
+                };
+                crate::kernel::record_load_variable_defining_fact(
+                    Variable(0x1000 + index as u64),
+                    Bitvector32Term::MemoryLoad(memory.clone(), Box::new(pointer)),
+                    &mut facts,
+                );
+            }
+            let bindings = generated_load_bindings_from_facts(&facts);
+            assert_eq!(bindings.len(), size);
+            assert!(bindings.iter().all(|binding| matches!(
+                binding,
+                crate::kernel::GeneratedLoadBinding::Exact { .. }
+            )));
+        }
     }
 }

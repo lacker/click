@@ -1830,6 +1830,11 @@ fn execute_step_from_frontier_position_selecting_path(
                     describe_evidence_refusal(&refusal, parameters, arguments)
                 ))
             })?;
+        for transition in &transitions {
+            execution
+                .presentation
+                .record_generated_load_bindings(&transition.generated_load_bindings);
+        }
         let mut completed_outcomes = Vec::new();
         for transition in transitions {
             let mut completed_execution_facts = transition.execution_facts;
@@ -1945,6 +1950,9 @@ fn execute_step_from_frontier_position_selecting_path(
         .into_iter()
         .next()
         .expect("one statement transition was required");
+    execution
+        .presentation
+        .record_generated_load_bindings(&transition.generated_load_bindings);
     let introduced_facts = transition.introduced_facts.clone();
     if matches!(loop_step_policy, LoopStepPolicy::ApplyVerifiedRule)
         && let Some(loop_index) = loop_index

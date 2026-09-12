@@ -2460,6 +2460,11 @@ pub struct CertifiedStatementTransition {
     /// provenance cannot perturb execution paths or fresh identities.
     pub(crate) planning_premises: Vec<Proposition>,
     pub(crate) fact_transports: Vec<CertifiedFactTransport>,
+    /// Kernel-produced load equation metadata from this exact transition.
+    /// This is carried separately from propositions so presentation can use
+    /// the producer's snapshot/pointer identity without inferring it from
+    /// ambient state.
+    pub(crate) generated_load_bindings: Vec<crate::kernel::GeneratedLoadBinding>,
 }
 
 #[doc(hidden)]

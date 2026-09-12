@@ -2379,18 +2379,31 @@ fn mint_load_variable(
 /// stream, deduplicated by proposition. The equation is kernel-certified by
 /// construction: the load variable represents this load. It must not demand
 /// a checkable assumption derivation downstream.
-fn record_load_variable_defining_fact(
+pub(crate) fn record_load_variable_defining_fact(
     variable: Variable,
     load: Bitvector32Term,
     facts: &mut Vec<ExecutionPureFact>,
 ) {
+    let Bitvector32Term::MemoryLoad(memory, pointer) = &load else {
+        // `load_variable_for_term` currently returns a memory load's
+        // canonical operand.  Keep this guard explicit so future changes
+        // cannot attach producer metadata to an unrelated term.
+        return;
+    };
+    let defining_load = load.clone();
     let defining = ExecutionPureFact::certified(Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
             Box::new(Bitvector32Term::Variable(variable)),
-            Box::new(load),
+            Box::new(load.clone()),
         ),
         true,
-    ));
+    ))
+    .with_generated_load_binding(GeneratedLoadBinding::Exact {
+        variable,
+        snapshot: CMemorySnapshotIdentity::of(memory.memory()),
+        pointer: pointer.as_ref().clone(),
+        load: defining_load,
+    });
     if !facts
         .iter()
         .any(|fact| fact.proposition == defining.proposition)
@@ -2498,5 +2511,78 @@ mod tests {
             true,
         );
         assert!(cache.resolution_equal(&left, &right, &equal));
+    }
+
+    #[test]
+    fn minted_load_fact_carries_exact_producer_binding() {
+        let memory = crate::kernel::intern_c_memory(CMemory::new());
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(12),
+        };
+        let load = Bitvector32Term::MemoryLoad(memory.clone(), Box::new(pointer.clone()));
+        let (variable, canonical) = load_variable_for_term(&load).expect("load identity");
+        let mut facts = Vec::new();
+        record_load_variable_defining_fact(variable, canonical.clone(), &mut facts);
+        let [fact] = facts.as_slice() else {
+            panic!("expected one defining fact: {facts:?}");
+        };
+        assert!(matches!(
+            fact.generated_load_binding(),
+            Some(GeneratedLoadBinding::Exact {
+                variable: recorded,
+                snapshot,
+                pointer: recorded_pointer,
+                load: recorded_load,
+            }) if *recorded == variable
+                && *snapshot == CMemorySnapshotIdentity::of(memory.memory())
+                && recorded_pointer == &pointer
+                && recorded_load == &canonical
+        ));
+    }
+
+    #[test]
+    fn transported_equal_equation_from_a_new_epoch_drops_binding() {
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(20),
+        };
+        let first_memory = crate::kernel::intern_c_memory(CMemory::new());
+        let first_load =
+            Bitvector32Term::MemoryLoad(first_memory.clone(), Box::new(pointer.clone()));
+        let mut facts = Vec::new();
+        let mut next_variable = 0;
+        let variable = mint_load_variable(
+            &first_load,
+            &mut next_variable,
+            &mut facts,
+            &PureFactContext::new(),
+        )
+        .expect("load identity");
+        let [fact] = facts.as_slice() else {
+            panic!("expected one defining fact: {facts:?}");
+        };
+        assert!(fact.generated_load_binding().is_some());
+
+        // A fresh arena represents a new epoch. Its empty CMemory is
+        // structurally equal to the first one, but its embedded snapshot
+        // identity is intentionally different.
+        crate::kernel::primitives::start_fresh_c_memory_arena();
+        let second_memory = crate::kernel::intern_c_memory(CMemory::new());
+        let second_load = Bitvector32Term::MemoryLoad(second_memory.clone(), Box::new(pointer));
+        let replacement = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(variable)),
+                Box::new(second_load),
+            ),
+            true,
+        );
+        assert_eq!(fact.proposition(), &replacement);
+        assert_ne!(
+            CMemorySnapshotIdentity::of(first_memory.memory()),
+            CMemorySnapshotIdentity::of(second_memory.memory())
+        );
+        let transported = fact.clone().with_proposition(replacement);
+        assert!(transported.generated_load_binding().is_none());
     }
 }
