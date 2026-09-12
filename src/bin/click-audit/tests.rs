@@ -728,3 +728,72 @@ void object_retain_many(struct object* obj, int32 amount) {
     }
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn audit_reports_a_witness_the_expansion_cannot_spell() {
+    // `mdtests/resource_witness_unfold_fold.md` reduced. The closer's
+    // certificate has to cite the `where` fact of the resource's existential
+    // witness, whose kernel value renders as the diagnostic
+    // `symbolic-pointer:...@0`. Audit used to report only the parse error
+    // that unparseable text produced (`unexpected character @`); the site now
+    // fails with the language gap it actually hit.
+    let directory =
+        std::env::temp_dir().join(format!("click-audit-witness-{}", std::process::id()));
+    if directory.exists() {
+        fs::remove_dir_all(&directory).unwrap();
+    }
+    fs::create_dir(&directory).unwrap();
+    let c_source = r#"struct node {
+    int32 value;
+    unsigned long word;
+};
+
+struct node* unpack(struct node* node) {
+    return (struct node*)(node->word & ~1);
+}"#;
+    let click_source = r#"resource packed(node: struct node*) {
+    owns object(node);
+    let next: struct node* where aligned(next, 8) and node->word == address(next) + (node->word & 1);
+}
+
+verifying "unpack.c";
+
+struct node* unpack(struct node* node) {
+    requires node != 0;
+    owns packed(node);
+    ensures address(result) == (node->word & ~1);
+} by {
+    unfold(packed(node));
+    execute();
+    fold(packed(node));
+    simp();
+}
+"#;
+    let click_path = directory.join("witness.click");
+    fs::write(directory.join("unpack.c"), c_source).unwrap();
+    fs::write(&click_path, click_source).unwrap();
+    verify_c0_sources(click_source, &[("unpack.c", c_source)])
+        .expect("the witness fold/unfold proof should verify");
+
+    let closer_line = click_source
+        .lines()
+        .position(|line| line.trim() == "simp();")
+        .expect("proof should contain the closer")
+        + 1;
+    let sites = inventory_sites(std::slice::from_ref(&click_path)).unwrap();
+    let site = sites
+        .iter()
+        .find(|site| site.position.line == closer_line)
+        .expect("the closer should be an auditable site");
+    let error = expand_location(&format_location(&site_location(site)))
+        .expect_err("the expansion needs a name the language does not give it");
+    assert!(
+        error.contains("the expansion needs a name for the witness `next` of `packed`"),
+        "{error}"
+    );
+    assert!(
+        !error.contains("unexpected character"),
+        "the refusal should replace the parse error, not report it: {error}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}

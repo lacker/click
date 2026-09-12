@@ -261,6 +261,22 @@ enough to become the first regression of the package that fixes them.
     non-empty sibling is undecided. Cross-composition separation is not
     sound to project blindly; the fix is in how ownership from separate
     unfolds is composed at the frontier. Not scheduled until C3 needs it.
+23. **One audit disagreement remains after T5.** T5 fixed gap 17 (c) and
+    (d) and made (a) an honest refusal; the examples audit is 401 of 457
+    with the quarantined multifile-registry session failure. (b),
+    `marked_linked_list.click:92:9`, is not a step-count bug as T3 guessed:
+    on recheck the arm's `step()` under `RequireProven` reproves the C
+    guard from the surface lowering of the condition, whose load reads the
+    whole current snapshot, while the C guard evaluates against the
+    snapshot its own load resolved; after the recursive call they differ
+    by a cell the load cannot alias, so neither arm is excluded. The fix
+    is a decided-arm step that selects the transition the arm's polarity
+    already decided instead of reproving the guard, which the certificate
+    vocabulary lacks. Also noted: `augment_rotate_model_callback.md`'s
+    certificate relies on a case fact cited under a spelling that no
+    longer lowers to it, the same class as (d), and will resurface if the
+    surface-map acceptance rule is tightened. Package T6, not scheduled
+    ahead of the rbtree proofs.
 
 ## Design decisions
 
@@ -481,6 +497,8 @@ appears to need one reports the need instead of adding it.
   the verbatim `__rb_change_child` `Right` frame verified and audited on a
   general frame; ec8ffc4a) is on master. Its nested-match finding predates
   A9 and should be re-checked.
+- 2026-09-12: T5 (2cb5669f) is on master; examples audit 401 of 457 with
+  one real disagreement left (gap 23, package T6). A12 in progress.
 
 ## Work packages
 
@@ -675,6 +693,12 @@ across a recursive call, the multi-leaf closer stitching, and the
 witness it cannot spell instead of emitting unparseable text; replace the
 raw `CMemory` dump. Regressions per mode as `verify -> expand -> reverify`
 tests. Depends on T3.
+
+**T6. Decided-arm step on recheck (gap 23).** Scope: let a rechecked
+`branch`/`if` arm select the C transition its polarity decided rather than
+reprove the guard against a differently resolved snapshot; then revisit the
+stale-spelling case-fact acceptance so `augment_rotate_model_callback.md`
+does not depend on it. Depends on T5 and A9.
 
 ### Phase B: models on the fixed scaffold
 
