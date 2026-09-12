@@ -945,31 +945,31 @@ one scoped open with owned footprints and no artificial C changes. Add
 deterministic curves varying calls and unrelated supported facts independently.
 Update G1 status only after these tests and the full gate pass.
 
-#### W5 implementation handoff (2026-09-12)
+#### W5 checkpoint A handoff (2026-09-12)
 
-W5's reduction confirmed that callback calls with owned footprints and an
-allowed mutation remain sound on the existing three-call, one-open helper;
-the G1 table-cell reload fix already preserves the callback contracts across
-the unrelated callback footprints. The concrete gap was in composite
-observation: `observe` published the body's view cores with
-`unchecked_with_facts`, unlike the support-indexed projections returned by
-contract calls. Those views therefore had no reverse dependency on the folded
-owner, so nested observations could lose the owner provenance needed for
-precise invalidation. No unconditional callback-fact retention was added.
+The first W5 reduction confirmed that callback calls with owned footprints and
+an allowed mutation remain sound on the existing three-call, one-open helper;
+the concrete implementation gap was composite observation: `observe`
+published body view cores with `unchecked_with_facts`, unlike support-indexed
+projections returned by contract calls. Those views therefore had no reverse
+dependency on the folded owner. No unconditional callback-fact retention was
+added, and callback-cell provenance is not claimed here.
 
-The fix adds an indexed `directly_supporting_owned_fact` lookup that follows
-an observed view back to its owned support (including nested projections),
-then publishes observation views with `unchecked_with_supported_facts`. The
-support lookup remains local to the resource shape index and retains the
-existing explicit-view fallback where no owned support exists. A regression
-checks duplicate explicit/supported views, transitive support lookup, and
-four-size scaling with unrelated resource facts.
+Checkpoint A attaches observation projections to an opaque, thread-arena
+resource occurrence. Persistent entry-to-occurrence maps distinguish equal
+authorities across forks, replacement, and normalization; occurrence-keyed
+reverse indexes remove only the projections of the consumed authority, while
+observation evidence validates the affected support without scanning unrelated
+facts. Joins and cached expansions preserve support only when the same
+occurrence survives both descendants. The surface observer now uses the exact
+support occurrence, including when observing a view that is itself already
+supported. Explicit unsupported views remain explicit.
 
-The isolated W5 checkpoint is the implementation commit recorded in the
-handoff message. Focused composite-observation, callback, named-borrow,
-consumption, and 94-test resource-algebra suites pass; formatting and diff
-checks pass. The full `scripts/check.sh` gate remains for the manager's final
-integration run.
+The checkpoint adds equal-occurrence removal, fork identity, normalization and
+join/cached-expansion preservation, stale-support evidence, and four-size
+unrelated-fact scaling regressions. It is a green partial W5 checkpoint; the
+observe-then-consume/replace C fixture and the remaining R3/R6 mutation and
+callback-cell regressions are outstanding for later W5 checkpoints.
 
 ### W6 — Unify existing binder transport and snapshot substitution
 

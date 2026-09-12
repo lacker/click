@@ -2324,8 +2324,57 @@ fn consuming_support_removes_only_its_derived_views() {
     assert!(remaining.contains_exact_representation(&other_view));
     assert!(remaining.satisfies_fact(&other_view, &PureFactContext::new()));
     assert!(!remaining.storage.supported_by.is_empty());
-    assert!(remaining.has_supported_projection(&other_view, &other_authority));
-    assert!(!remaining.has_supported_projection(&view, &authority));
+    assert_eq!(
+        remaining
+            .directly_supporting_owned_entry(&other_view, &PureFactContext::new())
+            .map(|(_, support)| support),
+        Some(&other_authority),
+    );
+    assert!(
+        remaining
+            .directly_supporting_owned_entry(&view, &PureFactContext::new())
+            .is_none(),
+        "consuming an authority must remove its indexed projection",
+    );
+}
+
+#[test]
+fn equal_support_occurrences_keep_their_own_projections() {
+    let authority = CResourceFact::own_composite("authority".to_string(), Vec::new());
+    let first_view = CResourceFact::view_token("first_derived".to_string(), vec![int32(7)]);
+    let second_view = CResourceFact::view_token("second_derived".to_string(), vec![int32(8)]);
+    let context = ResourceContext::new()
+        .unchecked_with_fact(authority.clone())
+        .unchecked_with_fact(authority.clone())
+        .unchecked_with_supported_facts_from_entry(0, &authority, [first_view.clone()])
+        .unchecked_with_supported_facts_from_entry(1, &authority, [second_view.clone()]);
+
+    let remaining = context
+        .without_exact_representation(&authority)
+        .expect("one equal authority occurrence should be removable");
+    assert!(!remaining.contains_exact_representation(&first_view));
+    assert!(remaining.contains_exact_representation(&second_view));
+    assert_eq!(
+        remaining
+            .directly_supporting_owned_entry(&second_view, &PureFactContext::new())
+            .map(|(_, support)| support),
+        Some(&authority),
+    );
+}
+
+#[test]
+fn forked_siblings_allocate_distinct_occurrence_identity() {
+    let authority = CResourceFact::own_composite("authority".to_string(), Vec::new());
+    let root = ResourceContext::new();
+    let left = root.clone().unchecked_with_fact(authority.clone());
+    let right = root.unchecked_with_fact(authority.clone());
+    let left_occurrence = left
+        .directly_supporting_owned_entry(&authority, &PureFactContext::new())
+        .map(|(occurrence, _)| occurrence);
+    let right_occurrence = right
+        .directly_supporting_owned_entry(&authority, &PureFactContext::new())
+        .map(|(occurrence, _)| occurrence);
+    assert_ne!(left_occurrence, right_occurrence);
 }
 
 #[test]
@@ -2338,7 +2387,9 @@ fn owned_support_lookup_follows_observation_projection() {
         .unchecked_with_supported_facts(&authority, [projected.clone()]);
 
     assert_eq!(
-        context.directly_supporting_owned_fact(&projected, &PureFactContext::new()),
+        context
+            .directly_supporting_owned_entry(&projected, &PureFactContext::new())
+            .map(|(_, support)| support),
         Some(&authority),
         "an observed view must retain the owned support that can invalidate it",
     );
@@ -2354,7 +2405,9 @@ fn owned_support_lookup_scales_with_unrelated_supported_facts() {
             .unchecked_with_fact(authority.clone())
             .unchecked_with_supported_facts(&authority, [projected.clone()]);
         let (support, work) = crate::instrumentation::measure_deterministic_work(|| {
-            context.directly_supporting_owned_fact(&projected, &PureFactContext::new())
+            context
+                .directly_supporting_owned_entry(&projected, &PureFactContext::new())
+                .map(|(_, support)| support)
         });
         assert_eq!(support, Some(&authority));
         samples.push((size, work));
@@ -2375,8 +2428,19 @@ fn normalization_preserves_projection_support() {
     let context = ResourceContext::new()
         .unchecked_with_fact(authority.clone())
         .unchecked_with_supported_facts(&authority, [view])
-        .with_cached_supported_expansion(&authority, vec![expanded.clone()])
-        .normalized(&PureFactContext::new());
+        .with_cached_supported_expansion(&authority, vec![expanded.clone()]);
+    let authority_occurrence = context
+        .directly_supporting_owned_entry(&authority, &PureFactContext::new())
+        .map(|(occurrence, _)| occurrence);
+    assert!(authority_occurrence.is_some());
+    let context = context.normalized(&PureFactContext::new());
+    assert_eq!(
+        context
+            .directly_supporting_owned_entry(&authority, &PureFactContext::new())
+            .map(|(occurrence, _)| occurrence),
+        authority_occurrence,
+        "normalization must preserve the support occurrence",
+    );
     assert_eq!(
         context.cached_supported_expansion(&authority),
         Some([expanded].as_slice())
@@ -2386,7 +2450,12 @@ fn normalization_preserves_projection_support() {
         .without_exact_representation(&authority)
         .expect("normalization should retain the authority");
     assert!(remaining.is_empty());
-    assert!(remaining.storage.expansions_by_support.is_empty());
+    assert!(
+        remaining
+            .storage
+            .expansions_by_support_occurrence
+            .is_empty()
+    );
 }
 
 #[test]
@@ -2480,7 +2549,7 @@ fn resource_join_preserves_only_common_projection_support() {
     let mixed = ResourceContext::common_exact_descendant(&left, &explicit_right, &root)
         .expect("both contexts descend from the same root");
     assert_eq!(mixed.facts(), [authority]);
-    assert!(mixed.storage.expansions_by_support.is_empty());
+    assert!(mixed.storage.expansions_by_support_occurrence.is_empty());
 }
 
 #[test]

@@ -787,7 +787,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
     let viewed_resource = CResourceFact::View(requested_resource.resource().clone());
     let observation_support = state
         .resources()
-        .directly_supporting_owned_fact(&requested_resource, &assumptions);
+        .directly_supporting_owned_entry(&requested_resource, &assumptions);
     let abstract_resource = state
         .resources()
         .directly_supporting_fact(&requested_resource, &assumptions)
@@ -1070,11 +1070,15 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
     // or changing the support must invalidate the observation, while unrelated
     // framed resources remain untouched. A view-only observation has no owned
     // authority to carry this relation and keeps the legacy explicit view.
-    let resources = if let Some(support) = observation_support {
+    let resources = if let Some((support_entry, support)) = observation_support {
         state
             .resources()
             .clone()
-            .unchecked_with_supported_facts(support, viewed_contained_resources)
+            .unchecked_with_supported_facts_from_occurrence(
+                support_entry,
+                support,
+                viewed_contained_resources,
+            )
     } else {
         state
             .resources()

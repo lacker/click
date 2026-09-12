@@ -3554,6 +3554,34 @@ pub struct CCountedPopulation {
 type ResourceEntryId = u64;
 type ResourceEntryIds = PersistentSet<ResourceEntryId>;
 
+/// Identity of an owned resource occurrence, distinct from local entry IDs.
+/// Occurrences are never recycled by replacement or normalization.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) struct ResourceOccurrenceId {
+    arena: u64,
+    ordinal: u64,
+}
+
+impl ResourceOccurrenceId {
+    fn fresh() -> Self {
+        static NEXT_ARENA: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        thread_local! {
+            static ALLOCATOR: std::cell::Cell<Option<(u64, u64)>> =
+                const { std::cell::Cell::new(None) };
+        }
+        ALLOCATOR.with(|allocator| {
+            let (arena, ordinal) = allocator.get().unwrap_or_else(|| {
+                (
+                    NEXT_ARENA.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                    0,
+                )
+            });
+            allocator.set(Some((arena, ordinal + 1)));
+            Self { arena, ordinal }
+        })
+    }
+}
+
 /// An immutable resource composition snapshot.
 ///
 /// One pointer-sized storage root keeps recursive execution frames shallow.
@@ -3570,22 +3598,30 @@ pub(super) struct ResourceContextStorage {
     /// entries after a removal.
     pub(super) facts: PersistentMap<ResourceEntryId, CResourceFact>,
     pub(super) next_entry_id: ResourceEntryId,
+    pub(super) occurrence_by_entry: PersistentMap<ResourceEntryId, ResourceOccurrenceId>,
+    pub(super) entry_by_occurrence: PersistentMap<ResourceOccurrenceId, ResourceEntryId>,
     pub(super) index: ResourceContextIndex,
     /// Derived view entries name the exact owned resource that supports them.
     /// Ordinary entries are explicit and therefore absent from this map.
     pub(super) supported_by: PersistentMap<ResourceEntryId, CResourceFact>,
-    /// Reverse support index used to remove only the projections of a
-    /// consumed owned resource, without scanning the ambient context. The
-    /// support key is a value because all production callers install
-    /// projections only after the resource context has normalized equal
-    /// owned units into one counted entry; unnormalized duplicate authorities
-    /// are confined to low-level construction tests.
+    /// Exact owned-entry identity for each supported projection. The fact
+    /// cache above is useful for diagnostics, but this occurrence index is
+    /// authoritative when one of several equal owned entries is consumed.
+    pub(super) support_occurrence_by_projection:
+        PersistentMap<ResourceEntryId, ResourceOccurrenceId>,
+    /// Value-keyed reverse support index retained for compatibility with
+    /// normalization and diagnostics. Removal and evidence use the
+    /// occurrence-keyed index below, so equal authorities cannot alias.
     pub(super) projections_by_support: PersistentMap<CResourceFact, ResourceEntryIds>,
+    /// Occurrence-keyed reverse index; unlike the fact-keyed compatibility
+    /// index above, this cannot conflate equal support occurrences.
+    pub(super) projections_by_support_occurrence:
+        PersistentMap<ResourceOccurrenceId, ResourceEntryIds>,
     /// Certified, snapshot-stable owned expansions for folded resource
     /// generations. Reusing these avoids re-lowering the same body into
     /// fresh symbolic load identities at each later transition.
-    pub(super) expansions_by_support:
-        PersistentMap<CResourceFact, std::sync::Arc<Vec<CResourceFact>>>,
+    pub(super) expansions_by_support_occurrence:
+        PersistentMap<ResourceOccurrenceId, std::sync::Arc<Vec<CResourceFact>>>,
     /// Persistent mutation ancestry used by checked Proof joins. The origin
     /// distinguishes unrelated snapshots; the history names only exact facts
     /// whose multiplicity or representation changed.
@@ -3638,7 +3674,7 @@ impl PartialEq for ResourceContext {
         }
         self.facts() == other.facts()
             && self.storage.supported_by == other.storage.supported_by
-            && self.storage.expansions_by_support == other.storage.expansions_by_support
+            && self.cached_expansions() == other.cached_expansions()
     }
 }
 
@@ -3650,9 +3686,7 @@ impl std::hash::Hash for ResourceContext {
         for entry in self.storage.supported_by.iter() {
             entry.hash(state);
         }
-        for entry in self.storage.expansions_by_support.iter() {
-            entry.hash(state);
-        }
+        self.cached_expansions().hash(state);
     }
 }
 
@@ -3666,18 +3700,30 @@ impl Ord for ResourceContext {
                     .iter()
                     .cmp(other.storage.supported_by.iter())
             })
-            .then_with(|| {
-                self.storage
-                    .expansions_by_support
-                    .iter()
-                    .cmp(other.storage.expansions_by_support.iter())
-            })
+            .then_with(|| self.cached_expansions().cmp(&other.cached_expansions()))
     }
 }
 
 impl PartialOrd for ResourceContext {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+impl ResourceContext {
+    fn cached_expansions(&self) -> Vec<(CResourceFact, Vec<CResourceFact>)> {
+        let mut expansions = self
+            .storage
+            .expansions_by_support_occurrence
+            .iter()
+            .filter_map(|(occurrence, expansion)| {
+                let entry = self.storage.entry_by_occurrence.get(occurrence)?;
+                let support = self.storage.facts.get(entry)?;
+                Some((support.clone(), expansion.as_ref().clone()))
+            })
+            .collect::<Vec<_>>();
+        expansions.sort();
+        expansions
     }
 }
 

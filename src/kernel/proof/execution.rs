@@ -1021,7 +1021,7 @@ impl CheckedResourceObservation {
 
         let observation_support = before_state
             .resources()
-            .directly_supporting_owned_fact(observed, assumptions);
+            .directly_supporting_owned_entry(observed, assumptions);
         let observation_authority = before_state
             .resources()
             .directly_supporting_fact(observed, assumptions)
@@ -1074,14 +1074,20 @@ impl CheckedResourceObservation {
         if resource_delta != expected_views.as_slice() {
             return Err("resource observation produced an unchecked resource delta");
         }
-        if let Some(support) = observation_support
-            && expected_views.iter().any(|fact| {
+        if let Some((support_occurrence, support)) = observation_support {
+            if !after_state
+                .resources()
+                .support_occurrence_is_live(support_occurrence, support)
+            {
+                return Err("resource observation support is stale or malformed");
+            }
+            if expected_views.iter().any(|fact| {
                 !after_state
                     .resources()
-                    .has_supported_projection(fact, support)
-            })
-        {
-            return Err("resource observation views are missing their owned support");
+                    .has_supported_projection(fact, support_occurrence, support)
+            }) {
+                return Err("resource observation views are missing their owned support");
+            }
         }
 
         let introduced = after_facts
