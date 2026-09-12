@@ -533,6 +533,29 @@ enough to become the first regression of the package that fixes them.
     decided at plan time; no regression needs it now); `if identity == node
     { 1 } else { 0 }` in a `have` goal lowers to one opaque operation (gap
     45 in a C proof).
+53. **C3: the verbatim `__rb_insert` parses but nothing verifies.** C3
+    fixed the one C0 parse failure (a pointer declaration list `struct
+    rb_node *parent = ..., *gparent, *tmp;`) so the mainline `__rb_insert`,
+    `rb_insert_color`, `dummy_rotate`, and the `rbtree_augmented.h` helpers
+    parse unchanged. Then, in order: (a) the loop-frame pre-pass fails on
+    the contract clause `requires rb_color_bit(t.model) == 0` with "named
+    resource instance is not owned (resource clause 1 of 2)", bisected to
+    that one requirement on the `rb_at`/`ctx_at` pair (pinned as
+    `mdtests/rb_insert_color.md`); (b) **the `loop` tactic has no rule for
+    `break` or `continue` in a body**: the four `break`s and two
+    `continue`s of the fixup loop are refused four ways (`must execute
+    exactly one complete loop-body iteration`; `evidence was recorded
+    after the trace completed`; `loop control has no enclosing loop` for a
+    `break` inside a `branch` arm; `close_invariants by` requires the loop
+    back edge` for a body ending in `continue`), pinned as
+    `mdtests/loop_body_break_rejected.md` and
+    `loop_body_continue_rejected.md`; (c) `decreases c;` accepts only a
+    direct contained child, while the uncle-red case climbs two frames
+    (`node = gparent`); (d) a pure function refuses the null constant for a
+    `struct rb_node*` parameter; (e) a `produces` instance needs `result`,
+    and `__rb_insert` is `void` with a reassigned `node`, so the final
+    cursor has no C name. Packages A23 (b), A24 (a, c, d, e), and C2c (a
+    context-level red-black predicate the exit claim needs).
 
 ## Design decisions
 
@@ -843,6 +866,9 @@ appears to need one reports the need instead of adding it.
   `examples/modeled-binary-tree` is verified and audited (37 of 37 sites),
   and the docs walk `tree_leftmost` as the canonical modeled-loop proof.
   C3 in progress.
+- 2026-09-12: C3 stopped at gap 53; its parser fix and pinned reductions
+  are on master (cffe7116). A23, A24, C2c dispatched; C3 resumes after
+  them.
 
 ## Work packages
 
@@ -1138,6 +1164,31 @@ identity already does for arguments. Bounded to exact equalities. Acceptance:
 `mdtests/rb_ascending_walk_to_root.md` ported to `rb_at(p)`/`ctx_at(child,
 root)` with `decreases`, verified and audited; a negative where the
 equality is not exact. Depends on A21. C3 depends on it.
+
+**A23. `break` and `continue` in a ranked loop body (gap 53 b).** Scope:
+each `break` path is certified as an exit and joined with the guard-false
+exit (A17's join); each `continue` path is certified as a back edge; both
+inside nested `branch` arms and proof `match` arms; `close_invariants()`
+closes at a `continue`; the region kinds let a control statement find its
+loop. Regressions: C3's two reductions as positives, `break` from a
+nested `if`, `continue` with a structural measure, a negative `break` that
+skips an invariant. C3 and C5 depend on it.
+
+**A24. Insert-fixup contract blockers (gap 53 a, c, d, e).** Scope: the
+loop-frame pre-pass failure on a `requires` over a resource field; a
+structural loop measure that accepts a strict descendant reached through
+nested arms (`up.up`); the null constant as a pure function's pointer
+argument; a `produces` instance whose argument is a reassigned local or
+the root cell rather than `result` (use the exit-state spelling A14
+chose, or `root->rb_node` for the whole tree). Regressions per item on
+the rbtree pair. C3 depends on it.
+
+**C2c. Context-level red-black predicate.** Scope, pure library: a
+predicate over `Context` and the focused subtree from which `is_rb_root`
+of the plug follows, with per-frame construction and destruction lemmas
+and the insert-fixup case theorems restated at the frame level (uncle
+red, inner, outer, on both sides), so C3's loop invariant is one
+predicate over `(ctx.model, sub.model)`. Fixtures only. C3 depends on it.
 
 **C2b. Port the pure red-black library to the re-keyed model.** Scope:
 `examples/rbtree-model` on `RbTree::Node(identity, parent, color, left,
