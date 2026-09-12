@@ -8281,6 +8281,286 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
 }
 
 #[test]
+fn choose_projection_retains_unfolded_source_token_and_is_consumed_by_extract() {
+    let click_file = crate::surface::parse(
+        r#"
+            predicate selected(x: int32) {
+                exists (k: int32) { k == x and k >= 0 }
+            }
+            int32 identity(int32 x) {
+                requires source: selected(x);
+                ensures result == x;
+            }
+        "#,
+    )
+    .expect("the predicate-backed existential requirement should parse");
+    let function_block = &click_file.function_blocks()[0];
+    let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+        .expect("test function should parse");
+    let function = parsed_function.to_kernel_function();
+    let predicates = PredicateEnvironment::new(click_file.predicate_definitions());
+    let click_functions = ClickFunctionEnvironment::new(click_file.click_function_definitions());
+    let theorems = TheoremEnvironment::new(click_file.theorem_definitions());
+    let resources = ResourceEnvironment::new(click_file.resource_definitions());
+    let execution_environment = CExecutionEnvironment::new();
+    let state = CState::new();
+    let argument = CExpression::Value(int32(7));
+    let arguments = vec![argument.clone()];
+    let source = Proposition::Predicate {
+        name: "selected".to_string(),
+        arguments: vec![
+            Term::CState(state.clone()),
+            Term::CValue(CValue::Int32(Bitvector32Term::Constant(7))),
+        ],
+    };
+    let root = Proof::for_execution_frontier(
+        "chosen projection",
+        0,
+        ExecutionProofState::at_entry(
+            state.clone(),
+            ExecutionFrontier::default(),
+            RecordedSnapshots::new(),
+            SurfacePropositionMap::default(),
+            PersistentSequence::default(),
+        ),
+        vec![source.clone()],
+        ExecutionProofConstants {
+            function_entry_state: Some(state.clone()),
+            execution_start_facts: vec![source].into(),
+            ..ExecutionProofConstants::default()
+        },
+        function_block,
+        &function,
+        &parsed_function,
+        &arguments,
+        &execution_environment,
+        &resources,
+        &predicates,
+        &click_functions,
+        &theorems,
+    );
+    let unfolded = root
+        .apply_step(ProofStep::UnfoldPredicate("selected".to_string()))
+        .expect("the selected requirement should unfold");
+    let scope_goal = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+    };
+    let scope = unfolded
+        .begin_have(scope_goal)
+        .expect("a proposition scope should open at the entry frontier");
+    let chosen = scope
+        .body()
+        .apply_step(ProofStep::Choose(ProofChoice {
+            name: "candidate".to_string(),
+            source: ProofFactSource::RequirementLabel("source".to_string()),
+        }))
+        .expect("choose should use the checked unfolded existential");
+    let projection = chosen
+        .execution()
+        .and_then(|execution| execution.presentation.chosen_projection.as_ref())
+        .expect("choose should retain a checked source projection")
+        .clone();
+    assert_eq!(projection.source_index, 0);
+    assert!(matches!(
+        projection.source_requirement,
+        Proposition::Predicate { ref name, .. } if name == "selected"
+    ));
+    assert!(matches!(
+        projection.checked_source,
+        Proposition::Exists { .. }
+    ));
+    assert!(!projection.leaves.is_empty());
+    let wrong_binder = substitute_click_proposition(
+        &projection.leaves[0].surface,
+        &BTreeMap::from([(
+            "candidate".to_string(),
+            ContractExpression::CFragment(CExpression::Variable("other".to_string())),
+        )]),
+    )
+    .expect("renaming a citation should be capture-safe");
+    assert!(chosen.apply_step(ProofStep::Extract(wrong_binder)).is_err());
+    let wrong_epoch_selector = SnapshotSelector::ProgramPoint(ProgramPointRef {
+        region: CodeRegionRef::Function,
+        kind: ProgramPointKind::Exit,
+    });
+    let wrong_epoch_expression = |expression: &ContractExpression| match expression {
+        ContractExpression::At { expression, .. } => ContractExpression::At {
+            selector: wrong_epoch_selector.clone(),
+            expression: expression.clone(),
+        },
+        other => panic!("chosen projection must retain its source snapshot: {other:?}"),
+    };
+    let wrong_epoch = match &projection.leaves[0].surface {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => ClickProposition::Comparison {
+            left: wrong_epoch_expression(left),
+            operator: *operator,
+            right: wrong_epoch_expression(right),
+        },
+        other => panic!("chosen projection must retain its source snapshot: {other:?}"),
+    };
+    assert!(chosen.apply_step(ProofStep::Extract(wrong_epoch)).is_err());
+    let extracted = chosen
+        .apply_step(ProofStep::Extract(projection.leaves[0].surface.clone()))
+        .expect("extract should consume the checked chosen-body leaf");
+    assert!(matches!(
+        extracted.certificate().steps(),
+        [ProofStep::Choose(_), ProofStep::Extract(_)]
+    ));
+    let nested = chosen
+        .begin_have(ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        })
+        .expect("a nested proposition scope should open");
+    assert!(
+        nested
+            .body()
+            .execution()
+            .expect("nested scope should retain execution context")
+            .presentation
+            .chosen_projection
+            .is_none()
+    );
+}
+
+#[test]
+fn choose_projection_walk_is_deterministic_across_selected_body_sizes() {
+    let click_file = crate::surface::parse(
+        r#"
+            int32 identity(int32 x) {
+                requires source: exists (k: int32) { k == x };
+                ensures result == x;
+            }
+        "#,
+    )
+    .expect("the existential requirement should parse");
+    let function_block = &click_file.function_blocks()[0];
+    let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+        .expect("test function should parse");
+    let function = parsed_function.to_kernel_function();
+    let predicates = PredicateEnvironment::new(&[]);
+    let click_functions = ClickFunctionEnvironment::new(&[]);
+    let theorems = TheoremEnvironment::new(&[]);
+    let resources = ResourceEnvironment::new(&[]);
+    let execution_environment = CExecutionEnvironment::new();
+    let state = CState::new();
+    let arguments = vec![CExpression::Value(int32(7))];
+
+    fn balanced_and(mut leaves: Vec<Proposition>) -> Proposition {
+        while leaves.len() > 1 {
+            let mut next = Vec::with_capacity(leaves.len().div_ceil(2));
+            let mut pairs = leaves.into_iter();
+            while let Some(left) = pairs.next() {
+                let Some(right) = pairs.next() else {
+                    next.push(left);
+                    break;
+                };
+                next.push(Proposition::And(Box::new(left), Box::new(right)));
+            }
+            leaves = next;
+        }
+        leaves
+            .pop()
+            .expect("a selected body must have at least one leaf")
+    }
+
+    let run = |size: u32| {
+        let chosen_variable = Variable(9_300_000);
+        let body = balanced_and(
+            (0..size)
+                .map(|index| {
+                    Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32Equal(
+                            Box::new(Bitvector32Term::Variable(chosen_variable)),
+                            Box::new(Bitvector32Term::Constant(index)),
+                        ),
+                        true,
+                    )
+                })
+                .collect(),
+        );
+        let source = Proposition::Exists {
+            name: "source_value".to_string(),
+            var: chosen_variable,
+            sort: Sort::CInt32,
+            body: Box::new(body),
+        };
+        let before = fact_node_allocations();
+        let root = Proof::for_execution_frontier(
+            "chosen projection scaling",
+            0,
+            ExecutionProofState::at_entry(
+                state.clone(),
+                ExecutionFrontier::default(),
+                RecordedSnapshots::new(),
+                SurfacePropositionMap::default(),
+                PersistentSequence::default(),
+            ),
+            vec![source.clone()],
+            ExecutionProofConstants {
+                function_entry_state: Some(state.clone()),
+                execution_start_facts: vec![source].into(),
+                ..ExecutionProofConstants::default()
+            },
+            function_block,
+            &function,
+            &parsed_function,
+            &arguments,
+            &execution_environment,
+            &resources,
+            &predicates,
+            &click_functions,
+            &theorems,
+        );
+        let chosen = root
+            .apply_step(ProofStep::Choose(ProofChoice {
+                name: "candidate".to_string(),
+                source: ProofFactSource::RequirementLabel("source".to_string()),
+            }))
+            .expect("the selected existential should check");
+        let leaves = chosen
+            .execution()
+            .and_then(|execution| execution.presentation.chosen_projection.as_ref())
+            .map_or(0, |projection| projection.leaves.len());
+        (leaves, fact_node_allocations() - before)
+    };
+
+    let mut samples = Vec::new();
+    for size in [8_u32, 32, 128, 512] {
+        let _ = run(size);
+        let first = crate::instrumentation::measure_deterministic_work(|| run(size));
+        let second = crate::instrumentation::measure_deterministic_work(|| run(size));
+        assert_eq!(
+            first.0.0, second.0.0,
+            "leaf count must be deterministic at {size}"
+        );
+        assert_eq!(
+            first.0.0, size as usize,
+            "all selected leaves must be retained at {size}"
+        );
+        assert_eq!(
+            first.0.1, second.0.1,
+            "walk allocation work must be deterministic at {size}"
+        );
+        samples.push((size, first.1));
+    }
+    let (base_size, base_work) = samples[0];
+    for (size, work) in samples {
+        assert!(
+            work <= base_work + 64 * (size - base_size) as usize,
+            "selected-body projection work exceeded the linear bound at {size}: {work}"
+        );
+    }
+}
+
+#[test]
 fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
     let click_file = crate::surface::parse(
         r#"

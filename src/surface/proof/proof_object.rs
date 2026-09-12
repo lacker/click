@@ -527,6 +527,16 @@ impl CheckedFocusedTransition {
             checked_facts,
         }
     }
+
+    fn clear_chosen_projection(&mut self) {
+        if let Some(branch) = self.branch.as_mut()
+            && let Some(execution) = branch.state.execution.as_deref()
+        {
+            let mut execution = execution.clone();
+            execution.presentation.chosen_projection = None;
+            branch.state.execution = Some(Arc::new(execution));
+        }
+    }
 }
 
 /// Proof-local surface names introduced by checked refinements such as
@@ -623,6 +633,37 @@ pub(in crate::surface::proof) struct ExecutionProofPresentation {
     /// suffix since the split root, keeping merge work output-sized.
     pub(in crate::surface::proof) generated_load_binding_events:
         PersistentSequence<crate::kernel::GeneratedLoadBinding>,
+    /// The one selected existential whose body leaves may still be cited by
+    /// an enclosing `extract`.  A later `choose` replaces this active record;
+    /// nested `have`/scope boundaries start without one. This is
+    /// presentation-only provenance: the kernel's exact conjunct index remains
+    /// the authority for extraction.
+    pub(in crate::surface::proof) chosen_projection: Option<ChosenProjection>,
+}
+
+/// Surface spellings for the checked leaves of a selected existential body.
+/// The source requirement and snapshot are retained alongside every checked
+/// leaf so a spelling cannot silently drift to the current heap after a C
+/// declaration.  This record is intentionally branch-local and is never a
+/// proof fact in its own right.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::surface::proof) struct ChosenProjection {
+    /// Exact source token selected before any checked predicate unfolding.
+    pub(in crate::surface::proof) source_requirement: Proposition,
+    /// The existential proposition after the active, checked unfolding path.
+    pub(in crate::surface::proof) checked_source: Proposition,
+    pub(in crate::surface::proof) source_index: usize,
+    pub(in crate::surface::proof) chosen_name: String,
+    pub(in crate::surface::proof) chosen_variable: crate::kernel::Variable,
+    pub(in crate::surface::proof) source_snapshot: crate::kernel::CMemorySnapshotIdentity,
+    pub(in crate::surface::proof) source_selector: SnapshotSelector,
+    pub(in crate::surface::proof) leaves: Vec<ChosenProjectionLeaf>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::surface::proof) struct ChosenProjectionLeaf {
+    pub(in crate::surface::proof) surface: ClickProposition,
+    pub(in crate::surface::proof) kernel: Proposition,
 }
 
 pub(in crate::surface::proof) type ExecutionProofState =
@@ -685,6 +726,7 @@ impl ExecutionProofState {
                 outcome_provenance: Arc::new(Vec::new()),
                 generated_load_bindings: PersistentMap::default(),
                 generated_load_binding_events: PersistentSequence::default(),
+                chosen_projection: None,
             },
         )
     }

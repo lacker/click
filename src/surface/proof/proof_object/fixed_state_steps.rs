@@ -5,6 +5,8 @@ use super::*;
 use crate::kernel::proof::{CheckedProofCasePartition, OutcomeEvidenceFork};
 use crate::surface::planning::proposition_search::PropositionSearch;
 
+const MAX_CHOSEN_PROJECTION_WORK: usize = 4096;
+
 /// A source-sized decision graph. Both arms point to the shared continuation;
 /// walking an arm never visits the syntax or outcomes of its sibling.
 struct OutcomeCase<'a> {
@@ -396,6 +398,7 @@ impl<'a> Proof<'a> {
             )
             .map_err(|message| self.step_error(message))?;
         }
+        let checked_source = source.clone();
         let Proposition::Exists {
             var, sort, body, ..
         } = source
@@ -438,7 +441,7 @@ impl<'a> Proof<'a> {
         let mut locals = self.state().locals().clone();
         locals.values = locals.values.with_inserted(
             choice.name.clone(),
-            ContractExpression::CFragment(CExpression::Value(chosen)),
+            ContractExpression::CFragment(CExpression::Value(chosen.clone())),
         );
         locals.next_choice_variable += 1;
         let added_facts = if self.facts().contains_top_level(&chosen_fact) {
@@ -447,7 +450,156 @@ impl<'a> Proof<'a> {
             vec![chosen_fact.clone()]
         };
         let facts = self.facts().with_kernel_checked_fact(chosen_fact.clone());
-        Ok(self.checked_fact_transition(locals, facts, false, added_facts, vec![chosen_fact]))
+        let mut transition =
+            self.checked_fact_transition(locals, facts, false, added_facts, vec![chosen_fact]);
+        if let Some(projection) = self.build_chosen_projection(
+            &view,
+            view.requirement_facts
+                .get(source_index)
+                .expect("validated requirement source index")
+                .clone(),
+            checked_source,
+            source_index,
+            chosen_variable,
+            choice,
+            &chosen,
+        )? && let Some(branch) = transition.branch.as_mut()
+            && let Some(execution) = branch.state.execution.as_deref()
+        {
+            let mut execution = execution.clone();
+            execution.presentation.chosen_projection = Some(projection);
+            branch.state.execution = Some(Arc::new(execution));
+        }
+        Ok(transition)
+    }
+
+    /// Retains the source spelling of a chosen existential's body leaves for
+    /// the narrow `extract` adapter.  The record is deliberately built from
+    /// the selected source only; it never consults ambient facts or asks the
+    /// kernel to establish a new proposition.
+    fn build_chosen_projection(
+        &self,
+        view: &FixedStateOperationView<'_>,
+        source_requirement: Proposition,
+        checked_source: Proposition,
+        source_index: usize,
+        chosen_variable: Variable,
+        choice: &ProofChoice,
+        chosen: &CValue,
+    ) -> Result<Option<ChosenProjection>, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(None);
+        };
+        // The ordinal is the source token: do not recover an apparently equal
+        // requirement from another declaration or from an ambient fact.
+        if view.requirement_facts.get(source_index) != Some(&source_requirement) {
+            return Ok(None);
+        }
+        let Some(entry_state) = context.constants.function_entry_state.as_ref() else {
+            return Ok(None);
+        };
+        let source_snapshot = crate::kernel::CMemorySnapshotIdentity::of(view.pre_state.memory());
+        if source_snapshot != crate::kernel::CMemorySnapshotIdentity::of(entry_state.memory()) {
+            return Ok(None);
+        }
+        let source_selector = SnapshotSelector::ProgramPoint(ProgramPointRef {
+            region: CodeRegionRef::Function,
+            kind: ProgramPointKind::Entry,
+        });
+        // The body passed by `apply_fixed_state_choose` is the existential
+        // body before substitution. Build the substituted body from the
+        // selected requirement, preserving the original binder identity.
+        let instantiated = match (&checked_source, chosen) {
+            (Proposition::Exists { var, body, .. }, CValue::Int32(value)) => {
+                substitute_int32_variable_in_proposition(body, *var, value.clone())
+            }
+            (Proposition::Exists { var, body, .. }, CValue::Pointer(pointer)) => {
+                crate::kernel::substitute_pointer_variable_in_proposition(
+                    body,
+                    *var,
+                    pointer.pointer(),
+                )
+            }
+            _ => return Ok(None),
+        };
+        let mut leaves = Vec::new();
+        let mut pending = vec![instantiated];
+        let bound_names = BTreeMap::from([(chosen_variable, choice.name.clone())]);
+        let mut work = 0usize;
+        while let Some(proposition) = pending.pop() {
+            check_verification_deadline()?;
+            work = work.saturating_add(1);
+            if work > MAX_CHOSEN_PROJECTION_WORK {
+                return Err(self.step_error(
+                    "chosen existential body is too large to retain a bounded source projection",
+                ));
+            }
+            match proposition {
+                Proposition::And(left, right) => {
+                    pending.push(*right);
+                    pending.push(*left);
+                    continue;
+                }
+                leaf => {
+                    let Some(surface) = synthesize_surface_proposition_with_bound_variable_names(
+                        &leaf,
+                        view.parameters,
+                        view.arguments,
+                        entry_state,
+                        &bound_names,
+                    ) else {
+                        return Ok(None);
+                    };
+                    let surface = surface_at_snapshot(&surface, &source_selector)?;
+                    let validation_surface = substitute_click_proposition(
+                        &surface,
+                        &BTreeMap::from([(
+                            choice.name.clone(),
+                            ContractExpression::CFragment(CExpression::Value(chosen.clone())),
+                        )]),
+                    )
+                    .map_err(|message| {
+                        self.step_error(format!(
+                            "could not substitute chosen existential body leaf: {message}"
+                        ))
+                    })?;
+                    let lowered = lower_fixed_state_proposition_with_assumptions(
+                        &validation_surface,
+                        self.facts().assumptions(),
+                        view.parameters,
+                        view.arguments,
+                        view.pre_state,
+                        view.pre_state,
+                        None,
+                        view.recorded_snapshots,
+                        view.predicate_environment,
+                        view.click_function_environment,
+                    )
+                    .map_err(|message| {
+                        self.step_error(format!(
+                            "could not lower chosen existential body leaf: {message}"
+                        ))
+                    })?;
+                    if lowered != leaf {
+                        return Ok(None);
+                    }
+                    leaves.push(ChosenProjectionLeaf {
+                        surface,
+                        kernel: leaf,
+                    });
+                }
+            }
+        }
+        Ok((!leaves.is_empty()).then_some(ChosenProjection {
+            source_requirement,
+            checked_source,
+            source_index,
+            chosen_name: choice.name.clone(),
+            chosen_variable,
+            source_snapshot,
+            source_selector,
+            leaves,
+        }))
     }
 
     fn apply_pure_integer_choose(
@@ -1048,7 +1200,10 @@ impl<'a> Proof<'a> {
         &self,
         surface: &ClickProposition,
     ) -> Result<KernelProofHandle, ClickError> {
-        let proposition = self.lower_cited_surface_proposition(surface, "`extract` proposition")?;
+        let proposition = match self.chosen_projection_for_extract(surface)? {
+            Some(proposition) => proposition,
+            None => self.lower_cited_surface_proposition(surface, "`extract` proposition")?,
+        };
         self.state.apply_extract(proposition).map_err(|error| match error {
             PropositionCloseError::ExtractUnavailable(proposition) => self.step_error(format!(
                 "`extract` proposition is not a proper conjunct, a discharged implication consequent, or a field equality of an exact same-constructor equality: {}",
@@ -1059,6 +1214,80 @@ impl<'a> Proof<'a> {
             }
             _ => unreachable!("kernel returned an unrelated extract error"),
         })
+    }
+
+    /// Resolves an `extract` citation only through the current chosen
+    /// existential's checked presentation record.  Returning the recorded
+    /// kernel leaf does not grant authority: `ProofState::apply_extract`
+    /// still performs the exact proper-conjunct membership check.
+    fn chosen_projection_for_extract(
+        &self,
+        surface: &ClickProposition,
+    ) -> Result<Option<Proposition>, ClickError> {
+        let Some(Obligation::Proposition(_)) = self.focused_obligation() else {
+            return Ok(None);
+        };
+        let Some(execution) = self.execution() else {
+            return Ok(None);
+        };
+        let Some(view) = self.execution_proposition_fixed_state_view() else {
+            return Ok(None);
+        };
+        let entry_snapshot = self
+            .execution_context()
+            .and_then(|context| context.constants.function_entry_state.as_ref())
+            .map(|state| crate::kernel::CMemorySnapshotIdentity::of(state.memory()));
+        let expected_selector = SnapshotSelector::ProgramPoint(ProgramPointRef {
+            region: CodeRegionRef::Function,
+            kind: ProgramPointKind::Entry,
+        });
+        let Some(projection) = execution.presentation.chosen_projection.as_ref() else {
+            return Ok(None);
+        };
+        if view.requirement_facts.get(projection.source_index)
+            != Some(&projection.source_requirement)
+            || entry_snapshot != Some(projection.source_snapshot)
+            || projection.source_selector != expected_selector
+        {
+            return Ok(None);
+        }
+        let mut checked_source = projection.source_requirement.clone();
+        let unfolded_predicates = self.active_unfolded_predicates();
+        if !matches!(checked_source, Proposition::Exists { .. }) && !unfolded_predicates.is_empty()
+        {
+            checked_source = unfold_predicates_in_proposition(
+                view.predicate_environment,
+                view.click_function_environment,
+                &unfolded_predicates,
+                &checked_source,
+                self.facts().assumptions(),
+            )
+            .map_err(|message| self.step_error(message))?;
+        }
+        if checked_source != projection.checked_source {
+            return Ok(None);
+        }
+        let Some(binding) = self.local_binding(&projection.chosen_name) else {
+            return Ok(None);
+        };
+        let binding_is_chosen = match binding {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(variable),
+            ))) => *variable == projection.chosen_variable,
+            ContractExpression::CFragment(CExpression::Value(CValue::Pointer(pointer))) => {
+                pointer.pointer().offset == PointerOffsetTerm::Variable(projection.chosen_variable)
+            }
+            _ => false,
+        };
+        if !binding_is_chosen {
+            return Ok(None);
+        }
+        let surface = self.substitute_goal_surface_bindings_in_proposition(surface)?;
+        Ok(projection
+            .leaves
+            .iter()
+            .find(|leaf| leaf.surface == surface)
+            .map(|leaf| leaf.kernel.clone()))
     }
 
     /// The fixed-state data a result-aware checker consumes, resolved

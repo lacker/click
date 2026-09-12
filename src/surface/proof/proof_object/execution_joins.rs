@@ -1023,6 +1023,13 @@ impl<'a> Proof<'a> {
         arms: [&ExecutionProofState; 2],
     ) -> Result<(), ClickError> {
         self.merge_branch_generated_load_bindings(execution, parent, arms)?;
+        // A chosen existential projection is usable only when both sibling
+        // paths retained the same checked source record.  Otherwise it is
+        // branch-local presentation and must not leak through the join.
+        execution.presentation.chosen_projection = (arms[0].presentation.chosen_projection
+            == arms[1].presentation.chosen_projection)
+            .then(|| arms[0].presentation.chosen_projection.clone())
+            .flatten();
         for arm in arms {
             let introduced = arm
                 .branch_surface_facts
