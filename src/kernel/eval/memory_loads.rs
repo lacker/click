@@ -744,6 +744,28 @@ fn canonicalized_symbolic_load_value_with_identity(
             let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
             return Some(CValue::UInt16(Bitvector32Term::Variable(fresh)));
         }
+        // The wider integer scalars name their loads for the same reason.
+        // Adoption is atomic across producers: contract lowering already
+        // materializes a `uint32`, `int64`, or `uint64` cell with
+        // `canonical_form_of_load`, so leaving execution's load of the same
+        // cell unnamed would split one value into two terms that only
+        // the snapshot could reconnect — and a snapshot the execution has
+        // since written cannot. A resource body fact about a `uint64` cell
+        // (the rbtree's packed parent word) then survives a write to a
+        // sibling cell of the same node, which the fold after that write
+        // needs.
+        CValue::UInt32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+            return Some(CValue::UInt32(Bitvector32Term::Variable(fresh)));
+        }
+        CValue::Int64(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+            return Some(CValue::Int64(Bitvector32Term::Variable(fresh)));
+        }
+        CValue::UInt64(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+            return Some(CValue::UInt64(Bitvector32Term::Variable(fresh)));
+        }
         _ => {}
     }
     let CValue::Pointer(pointer_value) = &value else {

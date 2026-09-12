@@ -445,6 +445,7 @@ fn split_execution_proof_branch_contexts(
                     case_path.push(ProofCaseChoice {
                         condition: surface_c_condition(condition),
                         value: transition.is_true,
+                        match_arm: None,
                     });
                     case_path
                 },
