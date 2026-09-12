@@ -1649,6 +1649,7 @@ fn verify_theorem_ensure(
                         source_tactics.as_deref(),
                         predicate_environment,
                         click_function_environment,
+                        theorem_environment,
                         induction_setup.as_ref(),
                     )
                 },
@@ -2594,6 +2595,7 @@ fn pure_theorem_surface_certificate(
     source_tactics: Option<&[ProofTactic]>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
     induction_setup: Option<&PureInductionSetup>,
 ) -> Result<ProofCertificate, ClickError> {
     fn contains_restricted_simp(tactics: &[ProofTactic]) -> bool {
@@ -2639,7 +2641,28 @@ fn pure_theorem_surface_certificate(
     if let Some(tactics) = source_tactics
         && let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics)
     {
-        return Ok(certificate);
+        if !certificate.contains_arithmetic_using() {
+            return Ok(certificate);
+        }
+        let root = Proof::for_pure_surface_goal(
+            claim_label,
+            &context.requires,
+            goal.clone(),
+            surface_goal.clone(),
+            context,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+        );
+        if let Some(proof) = root.try_authoritative_linear_script(tactics)? {
+            let certificate = proof.completed_certificate()?;
+            if !certificate.contains_arithmetic_using() {
+                return Ok(certificate);
+            }
+        }
+        return Err(ClickError::new(format!(
+            "smart proof for `{claim_label}` retained source-only `ArithmeticUsing` instead of a checked certificate"
+        )));
     }
 
     if context.requires.contains(goal)

@@ -54,6 +54,7 @@ fn entry(arguments: impl IntoIterator<Item = String>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn rejects_unknown_subcommands() {
@@ -69,5 +70,53 @@ mod tests {
     #[test]
     fn dispatches_verify_help_without_spawning() {
         entry(["verify".to_string(), "--help".to_string()]).unwrap();
+    }
+
+    #[test]
+    fn arithmetic_tools_agree_on_expanded_certificate() {
+        let directory = std::env::temp_dir().join(format!(
+            "click-arithmetic-tool-parity-{}",
+            std::process::id()
+        ));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        let source_path = directory.join("parity.click");
+        let expanded_path = directory.join("parity-expanded.click");
+        let source = r#"theorem arithmetic_tool_parity(n: int32) {
+    requires n <= 10;
+    ensures n <= 10 by {
+        arithmetic() using { n <= 10; }
+    }
+}
+"#;
+        fs::write(&source_path, source).unwrap();
+
+        entry(["verify".to_string(), source_path.display().to_string()])
+            .expect("click verify should accept the smart arithmetic request");
+        entry([
+            "expand".to_string(),
+            "--claim".to_string(),
+            "arithmetic_tool_parity.ensures_0".to_string(),
+            "--output".to_string(),
+            expanded_path.display().to_string(),
+            source_path.display().to_string(),
+        ])
+        .expect("click expand should emit the checked arithmetic certificate");
+        let expanded = fs::read_to_string(&expanded_path).unwrap();
+        assert!(expanded.contains("arithmetic_certificate"), "{expanded}");
+        assert!(!expanded.contains("arithmetic()"), "{expanded}");
+
+        entry(["verify".to_string(), expanded_path.display().to_string()])
+            .expect("click verify should recheck the expanded certificate");
+        entry(["profile".to_string(), source_path.display().to_string()])
+            .expect("click profile should verify the original arithmetic proof");
+        entry(["profile".to_string(), expanded_path.display().to_string()])
+            .expect("click profile should verify the expanded arithmetic proof");
+        entry(["audit".to_string(), source_path.display().to_string()])
+            .expect("click audit should reach the same expansion fixed point");
+
+        fs::remove_dir_all(directory).unwrap();
     }
 }

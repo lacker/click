@@ -7,6 +7,34 @@ fn assert_no_legacy_arithmetic_leaves(certificate: &ProofCertificate) {
     );
 }
 
+fn assert_no_legacy_c_arithmetic_leaves(verified: &[VerifiedCTheorem]) {
+    for theorem in verified {
+        assert_no_legacy_arithmetic_leaves(
+            &theorem
+                .expanded_proof_certificate()
+                .expect("verified C claim should retain an expansion certificate"),
+        );
+    }
+}
+
+fn assert_no_legacy_pure_arithmetic_leaves(verified: &[VerifiedPureTheorem]) {
+    for theorem in verified {
+        assert_no_legacy_arithmetic_leaves(
+            &theorem
+                .proof_certificate()
+                .expect("verified pure theorem should retain a certificate"),
+        );
+    }
+}
+
+#[test]
+fn arithmetic_using_is_input_only_and_not_serializable_provenance() {
+    let source = ProofCertificate::from_proof_tactics(&[ProofTactic::ArithmeticUsing(vec![])])
+        .expect("the source smart request remains a valid input tactic");
+    assert!(source.contains_arithmetic_using());
+    assert!(ProofCertificate::from_steps(source.steps().to_vec()).is_err());
+}
+
 #[test]
 fn source_backed_call_requirement_expands_and_reverifies() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1016,6 +1044,64 @@ theorem unsigned_compound(n: int32) {
     let tampered = expanded.replacen("interval_from_affine_direct", "interval_from_affine", 1);
     verify_c0_sources(&tampered, &[])
         .expect_err("removing the direct compound-evidence rule must invalidate the proof");
+}
+
+#[test]
+fn arithmetic_producers_retain_only_structural_certificates() {
+    let pure = r#"
+theorem pure_arithmetic_producer(n: int32) {
+    requires n <= 10;
+    ensures n <= 10 by { arithmetic() using { n <= 10; } }
+}
+"#;
+    let verified = verify_click_theorems(pure).expect("pure arithmetic should verify");
+    assert_no_legacy_pure_arithmetic_leaves(&verified);
+
+    for (fixture_name, claim, replacement) in [
+        (
+            "mdtests/c_grouped_contract_arithmetic_closer.md",
+            "bump",
+            None,
+        ),
+        (
+            "mdtests/c_pointer_local_loop_invariant.md",
+            "last_element",
+            None,
+        ),
+        (
+            "mdtests/aligned_symbolic_displacement.md",
+            "element_is_aligned",
+            Some((
+                "    simp();\n}",
+                "    have aligned(p + i, 8) by { simp(); }\n    simp();\n}",
+            )),
+        ),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fixture_name);
+        let source = std::fs::read_to_string(&path).unwrap();
+        let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+        let sources = fixture
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let click_source = fixture.click_source.as_deref().unwrap();
+        let click_source = replacement.map_or_else(
+            || click_source.to_string(),
+            |(from, to)| click_source.replace(from, to),
+        );
+        let verified = verify_c0_sources(&click_source, &sources)
+            .unwrap_or_else(|error| panic!("{fixture_name}: {}", error.message()));
+        assert_no_legacy_c_arithmetic_leaves(&verified);
+        let expanded = expand_c0_claim_source(&click_source, &sources, claim, CProofClaim::Grouped)
+            .unwrap_or_else(|error| panic!("{fixture_name}: {}", error.message()));
+        assert!(
+            !expanded.contains("arithmetic()"),
+            "{fixture_name}: {expanded}"
+        );
+        verify_c0_sources(&expanded, &sources)
+            .unwrap_or_else(|error| panic!("{fixture_name}: {}", error.message()));
+    }
 }
 
 #[test]

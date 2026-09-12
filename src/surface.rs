@@ -3150,9 +3150,15 @@ impl ProofCertificate {
                 error.path(),
             ))
         })?;
-        Ok(Self {
+        let certificate = Self {
             steps: std::sync::Arc::new(steps),
-        })
+        };
+        if certificate.contains_arithmetic_using() {
+            return Err(ClickError::new(
+                "generated proof certificate retained source-only `ArithmeticUsing`; expand the smart request before serialization",
+            ));
+        }
+        Ok(certificate)
     }
 
     /// Steps that were already admitted by a certificate constructor. Nested
@@ -3710,43 +3716,39 @@ fn validate_certificate_steps(
 ) -> Result<(), CertificateError> {
     for (index, step) in steps.iter().enumerate() {
         path.push(CertificatePathSegment::Tactic(index));
-        // ArithmeticUsing is classified smart for scheduling, but remains a
-        // checked leaf for legacy preplanned pure proofs. New proof-object
-        // applications replace it with ArithmeticCertificate provenance.
-        let result = if matches!(step, ProofStep::ArithmeticUsing(_)) {
-            Ok(())
-        } else {
-            match certificate_step_class(step) {
-                tactic_class @ TacticClass::Smart(_) => Err(CertificateError {
-                    tactic_class,
-                    path: path.clone(),
-                }),
-                TacticClass::Control(ControlTactic::Loop) => {
-                    let ProofStep::Loop(clause) = step else {
-                        unreachable!("step class and variant must agree")
-                    };
-                    let mut result = Ok(());
-                    for (segment, phase) in [
-                        (
-                            CertificatePathSegment::LoopInitialize,
-                            &clause.initialize_proof,
-                        ),
-                        (CertificatePathSegment::LoopPreserve, &clause.preserve_proof),
-                    ] {
-                        if phase.is_none() {
-                            path.push(segment);
-                            result = Err(CertificateError {
-                                tactic_class: TacticClass::Smart(SmartTacticKind::Auto),
-                                path: path.clone(),
-                            });
-                            path.pop();
-                            break;
-                        }
+        // ArithmeticUsing remains accepted by the source-tactic constructor
+        // as a smart request, but generated certificate steps must already
+        // carry the checked structural ArithmeticCertificate provenance.
+        let result = match certificate_step_class(step) {
+            tactic_class @ TacticClass::Smart(_) => Err(CertificateError {
+                tactic_class,
+                path: path.clone(),
+            }),
+            TacticClass::Control(ControlTactic::Loop) => {
+                let ProofStep::Loop(clause) = step else {
+                    unreachable!("step class and variant must agree")
+                };
+                let mut result = Ok(());
+                for (segment, phase) in [
+                    (
+                        CertificatePathSegment::LoopInitialize,
+                        &clause.initialize_proof,
+                    ),
+                    (CertificatePathSegment::LoopPreserve, &clause.preserve_proof),
+                ] {
+                    if phase.is_none() {
+                        path.push(segment);
+                        result = Err(CertificateError {
+                            tactic_class: TacticClass::Smart(SmartTacticKind::Auto),
+                            path: path.clone(),
+                        });
+                        path.pop();
+                        break;
                     }
-                    result
                 }
-                TacticClass::Simple(_) | TacticClass::Control(_) => Ok(()),
+                result
             }
+            TacticClass::Simple(_) | TacticClass::Control(_) => Ok(()),
         };
         path.pop();
         result?;
