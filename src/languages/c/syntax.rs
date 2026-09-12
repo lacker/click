@@ -158,6 +158,13 @@ pub struct C0Function {
     static_arrays: BTreeMap<String, C0StaticArray>,
     static_aggregates: BTreeMap<String, C0StaticAggregate>,
     static_aggregate_arrays: BTreeMap<String, C0StaticAggregateArray>,
+    /// The struct name of each automatic local of struct-pointer type, keyed
+    /// by its C spelling. A sidecar names a local by that spelling, so this is
+    /// what gives `have p->value == root->value` a layout for `p`; globals,
+    /// static locals and aggregates already travel in the maps above. A
+    /// spelling declared twice in one function with two struct types is
+    /// dropped rather than guessed.
+    local_struct_pointers: BTreeMap<String, String>,
     string_literals: Vec<C0StringLiteral>,
 }
 
@@ -2276,6 +2283,7 @@ impl C0Function {
             static_arrays: BTreeMap::new(),
             static_aggregates: BTreeMap::new(),
             static_aggregate_arrays: BTreeMap::new(),
+            local_struct_pointers: BTreeMap::new(),
             string_literals: Vec::new(),
         }
     }
@@ -2338,6 +2346,12 @@ impl C0Function {
 
     pub fn static_locals(&self) -> &BTreeMap<String, C0StaticLocal> {
         &self.static_locals
+    }
+
+    /// The struct name of each automatic local of struct-pointer type, by its
+    /// C spelling.
+    pub fn local_struct_pointers(&self) -> &BTreeMap<String, String> {
+        &self.local_struct_pointers
     }
 
     pub fn static_arrays(&self) -> &BTreeMap<String, C0StaticArray> {
@@ -5159,6 +5173,11 @@ struct Parser {
     enum_constants: BTreeMap<String, i32>,
     typedefs: BTreeMap<String, ParsedType>,
     variable_structs: BTreeMap<String, String>,
+    /// The struct name of each automatic struct-pointer local declared in the
+    /// function currently being parsed, keyed by its C spelling. `None` marks
+    /// a spelling declared twice with different struct types, which is
+    /// dropped rather than guessed.
+    local_struct_pointers: BTreeMap<String, Option<String>>,
     variable_struct_values: BTreeMap<String, String>,
     variable_array_shapes: BTreeMap<String, Vec<u32>>,
     incomplete_array_names: BTreeSet<String>,
@@ -5355,6 +5374,7 @@ impl Parser {
             enum_constants: BTreeMap::new(),
             typedefs: BTreeMap::new(),
             variable_structs: BTreeMap::new(),
+            local_struct_pointers: BTreeMap::new(),
             variable_struct_values: BTreeMap::new(),
             variable_array_shapes: BTreeMap::new(),
             incomplete_array_names: BTreeSet::new(),
@@ -6388,6 +6408,10 @@ impl Parser {
         }
 
         let static_locals = std::mem::take(&mut self.static_locals);
+        let local_struct_pointers = std::mem::take(&mut self.local_struct_pointers)
+            .into_iter()
+            .filter_map(|(name, struct_name)| Some((name, struct_name?)))
+            .collect();
         let string_literals = std::mem::take(&mut self.string_literals);
         let inline_body = header.name != header.source_name;
         Ok(C0Function {
@@ -6412,6 +6436,7 @@ impl Parser {
             static_arrays: std::mem::take(&mut self.static_arrays),
             static_aggregates: std::mem::take(&mut self.static_aggregates),
             static_aggregate_arrays: std::mem::take(&mut self.static_aggregate_arrays),
+            local_struct_pointers,
             string_literals,
         })
     }
@@ -10833,13 +10858,27 @@ impl Parser {
                 {
                     return Err(self.error_here("local arrays of struct type are not supported"));
                 }
-                self.variable_structs.insert(
-                    name.clone(),
-                    parsed_type
-                        .struct_name
-                        .clone()
-                        .expect("struct_name checked above"),
-                );
+                let struct_name = parsed_type
+                    .struct_name
+                    .clone()
+                    .expect("struct_name checked above");
+                self.variable_structs
+                    .insert(name.clone(), struct_name.clone());
+                // A sidecar spells a local by its source name, so index this
+                // declaration under that spelling. Two declarations of one
+                // spelling with different struct types leave no layout.
+                if array_shape.is_none()
+                    && matches!(c_type, C0Type::Int32Pointer | C0Type::UInt8Pointer)
+                {
+                    self.local_struct_pointers
+                        .entry(source_name.clone())
+                        .and_modify(|existing| {
+                            if existing.as_deref() != Some(struct_name.as_str()) {
+                                *existing = None;
+                            }
+                        })
+                        .or_insert_with(|| Some(struct_name.clone()));
+                }
             }
             let declaration = C0Statement::Declare {
                 c_type,

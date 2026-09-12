@@ -508,6 +508,40 @@ and its contained child resources, still come only from an explicit `unfold`.
 A loop head selects an arm the same way, with its invariants playing the part
 the requirements play in a contract.
 
+A selected arm supplies its facts as well as its cells. The `Maybe::Some` arm
+above states `fact p->value == value`, which names a constructor binding and
+so travels nowhere: only `unfold` or a proof `match` names that binding. An arm
+fact that names no binding of its own does travel, so a resource whose `Some`
+arm also states `fact p != 0` makes that an entry premise, and a walk that
+starts with `if (p == 0)` decides the guard instead of needing an infeasible
+`branch`. Contract certification derives the same facts at its own entry state
+rather than accepting them from the checked execution, so the two contexts
+agree on what the contract assumed
+(`mdtests/resource_selected_arm_fact_at_contract.md`).
+
+### Refuting an arm
+
+The same decision runs backwards. A folded instance's body holds wherever the
+instance is held, so a premise that contradicts an arm's own binding-free fact
+says the model is not that constructor. `tree_at`'s `HeapTree::Empty` arm
+states `fact p == 0` and its `HeapTree::Node` arm states `fact p != 0`, so a
+guard on a child link decides the child's model both ways: `root->left != 0`
+publishes `left.model != HeapTree::Empty`, which is exactly the evidence arm
+selection reads, and `root->left == 0` refutes the `Node` arm instead. When
+refutation leaves exactly one arm and that arm's constructor carries no
+fields, the model has only one value left, so the equation itself is
+published and `unfold` and proof `match` have their constructor.
+
+This is a decision, not a search: each held instance's arms are visited once
+and each arm's own clauses are evaluated once. The conclusions are published
+where an instance enters the premises -- at contract lowering, at a loop head,
+at a loop back edge, and at the `unfold` that produces a child. The
+regressions are `mdtests/resource_refuted_arm_model_fact.md` for both
+directions and `mdtests/loop_head_refuted_arm_closes_the_match.md` for the
+loop head, and
+[`examples/modeled-binary-tree`](https://github.com/lacker/click/tree/master/examples/modeled-binary-tree)
+is the verified walk that needs both.
+
 An arm's cells need not hang off the resource's own parameters. A constructor
 field declared `struct tag*` makes its binding a struct base for the whole
 arm, so a frame keyed by one node can own the cells of another node the model

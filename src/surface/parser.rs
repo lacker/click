@@ -42,6 +42,7 @@ pub(super) fn parse_with_layouts_and_aggregate_objects(
     aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
     global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, GlobalArrayShape>>,
     qualified_objects: BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>,
+    local_struct_pointers_by_function: BTreeMap<String, BTreeMap<String, String>>,
 ) -> Result<ClickFile, ClickError> {
     let mut parser = Parser::new_with_layouts_and_aggregate_objects(
         source,
@@ -52,6 +53,7 @@ pub(super) fn parse_with_layouts_and_aggregate_objects(
         global_array_shapes_by_function,
     )?;
     parser.qualified_objects = Some(qualified_objects);
+    parser.local_struct_pointers_by_function = local_struct_pointers_by_function;
     parser.parse_file()
 }
 
@@ -210,6 +212,12 @@ struct Parser {
     aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
     aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
     global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, GlobalArrayShape>>,
+    /// The struct name of each automatic struct-pointer local of each C
+    /// function, from the C parser. A contract's own parameters come from its
+    /// signature; these are the body's locals, so a `have` or `fact` that
+    /// names one has the same layout the parameter would have. A parameter of
+    /// the same spelling wins: the contract is written against the signature.
+    local_struct_pointers_by_function: BTreeMap<String, BTreeMap<String, String>>,
     current_aggregate_objects: BTreeMap<String, String>,
     current_struct_array_params: BTreeSet<String>,
     current_global_array_shapes: BTreeMap<String, GlobalArrayShape>,
@@ -461,6 +469,7 @@ impl Parser {
             aggregate_objects_by_function,
             aggregate_array_objects_by_function,
             global_array_shapes_by_function,
+            local_struct_pointers_by_function: BTreeMap::new(),
             current_aggregate_objects: BTreeMap::new(),
             current_struct_array_params: BTreeSet::new(),
             current_global_array_shapes: BTreeMap::new(),
@@ -1766,6 +1775,18 @@ impl Parser {
         let mut decreases = None;
         let mut constructs = Vec::new();
         let mut ensures = Vec::new();
+        // A local of struct-pointer type is a memory base in this function's
+        // proof just as a parameter is. The signature wins a shared spelling.
+        for (name, struct_name) in self
+            .local_struct_pointers_by_function
+            .get(signature.name())
+            .into_iter()
+            .flatten()
+        {
+            struct_params
+                .entry(name.clone())
+                .or_insert_with(|| struct_name.clone());
+        }
         let previous_struct_params =
             std::mem::replace(&mut self.current_struct_params, struct_params);
         let aggregate_objects = self

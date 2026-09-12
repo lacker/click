@@ -382,6 +382,7 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     ) = parse_c_layouts(click_source, sources)?;
     let resource_struct_layouts = struct_layouts.clone();
     let file = parser::parse_with_layouts_and_aggregate_objects(
@@ -392,6 +393,7 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     )?;
     let parsed_sources = parse_verified_sources_context(&file, sources)?;
     let predicate_definitions = combined_predicate_definitions(&file)?;
@@ -483,6 +485,7 @@ fn parse_c0_click_file_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     ) = parse_c_layouts(click_source, sources)?;
     parser::parse_with_layouts_and_aggregate_objects(
         click_source,
@@ -492,6 +495,7 @@ fn parse_c0_click_file_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     )
 }
 
@@ -1102,6 +1106,7 @@ fn verify_c0_sources_with_context(
             aggregate_array_objects,
             global_array_shapes,
             qualified_objects,
+            local_struct_pointers,
         ) = parse_c_layouts(click_source, c_sources)?;
         let resource_struct_layouts = struct_layouts.clone();
         let file = parser::parse_with_layouts_and_aggregate_objects(
@@ -1112,6 +1117,7 @@ fn verify_c0_sources_with_context(
             aggregate_array_objects,
             global_array_shapes,
             qualified_objects,
+            local_struct_pointers,
         )?;
         let parsed_sources = parse_verified_sources_context(&file, c_sources)?;
         let expansion_functions = expansion_capture
@@ -2281,6 +2287,7 @@ fn c0_external_dependencies_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     ) = parse_c_layouts(click_source, sources)?;
     let file = parser::parse_with_layouts_and_aggregate_objects(
         click_source,
@@ -2290,6 +2297,7 @@ fn c0_external_dependencies_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     )?;
     let parsed_sources = parse_verified_sources_context(&file, sources)?;
     let function_blocks = combined_external_function_blocks(&file)?;
@@ -2906,10 +2914,14 @@ pub(in crate::surface) fn c_function_termination_plans(
                 }
             }
         }
-        if recursive_measure.is_some() || !loop_measures.is_empty() {
-            if selected {
-                requested.insert(function.signature().name().to_string());
-            }
+        // A plan is a demand for certified termination, and only a function
+        // this run verifies can answer it. A location-scoped run (`verify_at`,
+        // which every audit site uses) verifies one proof unit and the C it
+        // calls, so planning an unselected function's loops would fail
+        // certification for a loop rule this run was never going to build.
+        // A whole-file run selects everything, so nothing is dropped there.
+        if selected && (recursive_measure.is_some() || !loop_measures.is_empty()) {
+            requested.insert(function.signature().name().to_string());
             plans.push(c_function_termination_plan(
                 function.signature().name(),
                 recursive_measure,
@@ -3019,6 +3031,7 @@ pub(in crate::surface) fn parse_c_layouts(
         BTreeMap<String, BTreeSet<String>>,
         BTreeMap<String, BTreeMap<String, parser::GlobalArrayShape>>,
         BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>,
+        BTreeMap<String, BTreeMap<String, String>>,
     ),
     ClickError,
 > {
@@ -3028,6 +3041,7 @@ pub(in crate::surface) fn parse_c_layouts(
     let mut aggregate_array_objects = BTreeMap::new();
     let mut global_array_shapes = BTreeMap::new();
     let mut qualified_objects = BTreeMap::new();
+    let mut local_struct_pointers = BTreeMap::new();
     let verifying_paths = super::verifying_source_paths(click_source)?;
     if let Some(imports) = c_sources.imports {
         if c_sources.prepared_duplicates {
@@ -3344,6 +3358,13 @@ pub(in crate::surface) fn parse_c_layouts(
                 }))
                 .collect();
             global_array_shapes.insert(function.name().to_string(), function_global_array_shapes);
+            // An automatic local of struct-pointer type is a memory base in
+            // this function's contract exactly as a parameter is; the C
+            // parser is the only place its struct name exists.
+            local_struct_pointers.insert(
+                function.name().to_string(),
+                function.local_struct_pointers().clone(),
+            );
         }
     }
     Ok((
@@ -3353,6 +3374,7 @@ pub(in crate::surface) fn parse_c_layouts(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     ))
 }
 

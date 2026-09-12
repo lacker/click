@@ -2457,6 +2457,26 @@ pub(super) fn initial_claim_context(
             ))
         })?;
     }
+    // D7's other half: the arm the requirements select for a folded matched
+    // instance publishes its own facts, not only its cells. Published last, on
+    // the finished entry state, so the same entry state reaches the checked
+    // execution and the contract's certification; an earlier publication would
+    // feed the resource projection and the two would no longer agree.
+    let composite_definitions = crate::surface::verification::composite_resource_definitions(
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    for fact in crate::kernel::selected_instance_arm_binding_free_facts(
+        state.resources(),
+        &composite_definitions,
+        &state,
+        &assumptions_from_propositions(&requirement_pure_facts),
+    ) {
+        if !requirement_pure_facts.contains(&fact) {
+            requirement_pure_facts.push(fact);
+        }
+    }
     Ok((
         state,
         arguments,

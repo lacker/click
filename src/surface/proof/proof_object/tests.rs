@@ -9904,13 +9904,19 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         )];
         let (body, scope) = root
             .state
-            .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], &[], |_, _| {
-                PropositionPresentation {
+            .open_invariant_body(
+                &CState::new(),
+                &CState::new(),
+                &checks,
+                &[],
+                &[],
+                &[],
+                |_, _| PropositionPresentation {
                     surface: None,
                     surface_bindings: PersistentMap::default(),
                     ..PropositionPresentation::default()
-                }
-            })
+                },
+            )
             .unwrap();
         let completed = body.apply_normalize().ok().unwrap();
         let retained =

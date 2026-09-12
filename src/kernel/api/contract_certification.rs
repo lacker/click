@@ -1633,6 +1633,19 @@ pub(super) fn c_function_contract_certification_assumptions(
         assumptions = assumptions.assume_proposition(proposition);
     }
     entry_state.resources = entry_resources.clone();
+    // D7's other half, derived here rather than accepted from the caller: the
+    // arm the requirements select for a folded matched instance supplies its
+    // own binding-free facts. Contract lowering publishes the same facts to
+    // the checked execution, so the two entry contexts agree instead of the
+    // execution assuming a premise certification cannot derive.
+    for proposition in crate::kernel::selected_instance_arm_binding_free_facts(
+        &entry_resources,
+        function.composite_resource_definitions(),
+        &entry_state,
+        &assumptions,
+    ) {
+        assumptions = assumptions.assume_proposition(proposition);
+    }
     Ok(assumptions)
 }
 

@@ -355,6 +355,25 @@ that omits a constructor is refused exactly as at function entry
 constructors survive: the region splits, each arm certifies its own path, and
 the preservation certificate is reassembled as the `match` that produced them.
 
+The invariants and the loop condition are the head's premises, so they also
+refute arms. A premise that contradicts an arm's own binding-free fact says
+the binder's model is not that constructor, and the body gets that as an
+ordinary premise: `invariant node != 0` against a list resource's `Nil` arm
+`fact p == 0` publishes `l.model != CellList::Nil`, which is what lets the
+`Nil` arm close by `contradiction` on the model instead of unfolding a cell
+the arm does not own (`mdtests/loop_head_refuted_arm_closes_the_match.md`).
+The back edge publishes the same way, so a descent that unfolds a child under
+a guard hands the next iteration the model fact that guard established. The
+rule itself is in [resources](resources.md).
+
+`old(name.field)` in an invariant is the function-entry instance of the
+function-level binder of that name, whatever the body did to that instance
+before the loop. A proof that unfolds and refolds the binder before the loop
+does not change what `old(...)` means
+(`mdtests/loop_invariant_old_model_after_refold.md`); an explicit `at(...)`
+snapshot still names a state, and an instance it does not hold is an error
+there.
+
 Loop frames do not erase semantic lifetime state. A body that frees or
 allocates heap storage, or calls a function whose contract consumes or
 produces a resource, must leave the heap lifetime and resource context
