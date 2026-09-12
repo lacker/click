@@ -535,6 +535,16 @@ sequence:
 - `examples/recursive-zero-list/`: read-only recursive C traversal over a
   guarded list resource, with both structural-resource and numeric termination
   proofs kept separate from its ordinary partial contract.
+- `examples/modeled-binary-tree/`: a matched recursive resource whose model
+  records each node's address, payload, and both submodels. It verifies the
+  unchanged initializer, both rotations against `heap_rotate_left` and
+  `heap_rotate_right` with in-order preservation, and the recursive
+  depth-first search's model preservation, alongside pure in-order and
+  membership theorems. The negative rotations are
+  `mdtests/rotation_model_rejects_dropped_subtree.md`,
+  `mdtests/rotation_model_rejects_reused_child.md`, and
+  `mdtests/rotation_model_rejects_swapped_order.md`, with
+  `mdtests/rotation_model_preserved.md` as their passing sibling.
 - `examples/owned-vector/`: composite-resource example over vector metadata and
   dependent backing storage, including viewed reads, runtime-sized allocation,
   malloc-copy-free growth, and a resource-neutral in-capacity push shared by

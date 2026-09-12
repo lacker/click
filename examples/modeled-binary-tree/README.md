@@ -85,11 +85,81 @@ list, using the standard library's append-associativity theorem. The C contract
 also guarantees `heap_inorder(rotated.model) == heap_inorder(old(t.model))`:
 node identities, their order, and their multiplicities are unchanged.
 
+## Verified C right rotation
+
+`heap_rotate_right` mirrors `heap_rotate_left`, and `heap_left` is the
+accessor its contract needs to state that the root's left child is nonempty.
+The unchanged `tree_rotate_right` consumes a tree whose root and left child
+are nonempty and produces the returned tree with model
+`heap_rotate_right(old(t.model))`.
+
+The proof mirrors the left one: two entry matches name the root and pivot,
+unfolding exposes the far-left and middle subtrees as independent resources,
+and after the original four C statements explicit folds reconstruct the lower
+node and the returned pivot. `heap_rotate_right_preserves_inorder`, proved
+through its per-node helper from the standard library's append-associativity
+theorem, gives the contract's second guarantee
+`heap_inorder(rotated.model) == heap_inorder(old(t.model))`.
+
+## Membership
+
+`heap_member` is the recursive `int32`-valued membership test over the model:
+it returns 1 when the target is the node's own address, otherwise searches the
+left subtree and then the right one, in the order the C search uses. The
+standard library already has list membership as `list_contains`, so no new
+list function is needed.
+
+`heap_member_is_inorder_membership` proves
+`heap_member(tree, target) == list_contains(heap_inorder(tree), target)` by
+structural induction, using the library's `list_contains_append` and
+`list_contains_cons`. Membership in the model is therefore exactly membership
+in the derived in-order sequence, which is what the rotation theorems preserve.
+
+## Verified C depth-first search
+
+The unchanged recursive `tree_contains` is verified against
+`owns t: tree_at(root); ensures t.model == old(t.model);`. The proof matches
+the entry model, unfolds the root in the nonempty case, spells the two C `if`
+statements with `branch`, hands each recursive call the matching child
+instance through the call binder map (`step(tree_contains(root->left, target),
+{ t: l })`), and refolds the root from the returned children on every path.
+Recursion therefore descends through a matched, modeled resource without
+losing or duplicating any subtree.
+
+The result claim `result == heap_member(old(t.model), target)` is **not**
+verified, and neither is structural termination. Both are blocked on verifier
+gaps recorded in
+[`recursive-structure-models.md`](../../issues/recursive-structure-models.md):
+a proposition equating a model's `struct tree_node*` payload with a C pointer
+cannot be lowered, so the C test `root == target` cannot be connected to the
+model's identity test; and `decreases resource tree_at(root);` is refused
+because the structural measure does not accept a resource with fields.
+
+## Negative rotation regressions
+
+Three focused mdtests keep the model honest against rotations that are wrong
+in a specific way, each with the same resource, contract, and proof script as
+the passing [rotation_model_preserved](../../mdtests/rotation_model_preserved.md):
+
+- [rotation_model_rejects_dropped_subtree](../../mdtests/rotation_model_rejects_dropped_subtree.md)
+  never relinks the middle subtree;
+- [rotation_model_rejects_reused_child](../../mdtests/rotation_model_rejects_reused_child.md)
+  links the old root into both of the pivot's slots; and
+- [rotation_model_rejects_swapped_order](../../mdtests/rotation_model_rejects_swapped_order.md)
+  builds a perfectly well-formed tree that holds the same nodes in a different
+  in-order sequence.
+
+The first two fail at the fold, because linear ownership cannot produce the
+proposed parent from the links the C actually stored. The third folds without
+complaint and fails at the `have` that would state the rotated model, which is
+the case ownership alone cannot catch.
+
 ## Remaining C proofs
 
 The generic `Tree<T>` theorems above remain pure model exercises; mirroring
-is not a C operation. Traversal termination, membership, and right rotation
-are not yet verified.
+is not a C operation. Traversal termination and the membership result of
+`tree_contains` are not yet verified; the iterative walks `tree_leftmost` and
+`tree_rightmost` have no contracts yet.
 
 Further recursive-model algorithms are tracked by
 [`recursive-structure-models.md`](../../issues/recursive-structure-models.md),
