@@ -174,6 +174,90 @@ own `owns t: tree_at(root)` binder, and the `HeapTree::Node` arm's `left` and
 pass, so the measure is the modeled resource rather than a pointer or a
 counter.
 
+## Verified C iterative walks
+
+`tree_leftmost` and `tree_rightmost` are unchanged, and their contracts are the
+zipper of decision D3: the walk consumes the whole tree and produces a context
+and a focused subtree at the node it stopped on.
+
+```click
+struct tree_node* tree_leftmost(struct tree_node* root) {
+    consumes t: tree_at(root);
+    requires t.model != HeapTree::Empty;
+    produces ctx: ctx_at(result);
+    produces sub: tree_at(result);
+    ensures plug(ctx.model, sub.model) == old(t.model);
+    ensures heap_left(sub.model) == HeapTree::Empty;
+}
+```
+
+`Context` is `Top | Left(parent, value, sibling, up) | Right(...)`, and
+`ctx_at(child)` is the resource that holds everything the tree has except the
+focused subtree: the parent's three cells, the untaken sibling as a
+`tree_at`, and the frame above as another `ctx_at`. This C has no parent
+pointers, so the frame is keyed by the focused child and carries the parent in
+its payload; the rbtree frames of D3 take the parent as a second argument
+because those loops already maintain it as a C local. `plug(ctx, sub)` rebuilds
+the whole model from a context and the focused subtree, so
+`plug(ctx.model, sub.model) == old(t.model)` says the walk lost nothing.
+
+The loop declares both binders, and its measure is the focused subtree:
+
+```click
+loop {
+    owns ctx: ctx_at(root);
+    owns t: tree_at(root);
+    decreases t;
+    invariant t.model != HeapTree::Empty;
+    invariant plug(ctx.model, t.model) == old(t.model);
+}
+```
+
+One iteration matches the binder's model, unfolds it, folds the left child's
+frame from the parent's cells, the right subtree and the old context, and
+steps `root = root->left`. `close_invariants()` then rebinds `ctx` to the new
+frame and `t` to the left subtree by proved argument equality, and the
+structural measure sees a direct contained child of what the head held.
+
+Two arm-selection decisions carry the walk. `requires t.model !=
+HeapTree::Empty` selects the `HeapTree::Node` arm at contract lowering, and
+that arm supplies its own `fact p != 0`, so `if (root == 0)` is decided by
+`step()` with no `branch`. The same decision runs backwards inside the loop:
+the guard `root->left != 0` contradicts the `HeapTree::Empty` arm's `fact
+p == 0`, so the child the unfold produces has model `!= HeapTree::Empty`,
+which is the next iteration's invariant. After the loop the guard is false, the
+same rule refutes the `HeapTree::Node` arm instead, and because `Empty` carries
+no fields the equation `left_model == HeapTree::Empty` is published outright;
+that is the postcondition `heap_left(sub.model) == HeapTree::Empty`.
+
+Two focused negatives cover the frame:
+[loop_decreases_rejects_unrelated_node](../../mdtests/loop_decreases_rejects_unrelated_node.md)
+moves the cursor to a node of another tree the contract owns, and
+[loop_context_frame_refold_rejected](../../mdtests/loop_context_frame_refold_rejected.md)
+folds a second frame from children the first frame already consumed.
+
+## Transporting a context's sequence
+
+A fixup replaces the focused subtree, so a proof about the whole tree needs
+that the surrounding context carries an in-order equality down to the root:
+
+```click
+theorem plug_inorder_transport(ctx: Context, a: HeapTree, b: HeapTree) {
+    requires heap_inorder(a) == heap_inorder(b);
+    ensures heap_inorder(plug(ctx, a)) == heap_inorder(plug(ctx, b)) by {
+        induct(ctx) as ih { ... }
+    }
+}
+```
+
+Each frame arm plugs its own node between the context and the subtree, so the
+residual goal is this theorem for `up` at the two *larger* subtrees
+`Node(parent, value, a, sibling)` and `Node(parent, value, b, sibling)`, not at
+`a` and `b`. The hypothesis is therefore instantiated at the complete parameter
+list, `ih(up, Node(...), Node(...))`, and its requirement at those arguments is
+established by the `have` just above the application. A hypothesis fixed at the
+theorem's own `a` and `b` has no applicable instance here.
+
 ## Negative rotation regressions
 
 Three focused mdtests keep the model honest against rotations that are wrong
@@ -196,11 +280,12 @@ the case ownership alone cannot catch.
 ## Remaining C proofs
 
 The generic `Tree<T>` theorems above remain pure model exercises; mirroring
-is not a C operation. `tree_contains` terminates by its structural measure;
-the iterative walks `tree_leftmost` and `tree_rightmost` have no contracts
-yet.
+is not a C operation. Every C function in this project now has a contract:
+`tree_contains` terminates by its structural measure, and the iterative walks
+terminate by theirs.
 
 Further recursive-model algorithms are tracked by
 [`recursive-structure-models.md`](../../issues/recursive-structure-models.md),
-and structural termination of the iterative walks is tracked by
+and structural termination of the ascending and rotate-then-ascend loop shapes
+is tracked by
 [`structural-loop-termination.md`](../../issues/structural-loop-termination.md).

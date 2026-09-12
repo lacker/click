@@ -580,7 +580,24 @@ fn synthesized_surface_matches_proposition(
     arguments: &[CExpression],
     state: &CState,
 ) -> bool {
-    let Ok(parameter_values) = parameter_values(parameters, arguments) else {
+    // A retained call requirement may carry a caller variable as the
+    // selected pointer argument. The normal contract environment builder
+    // expects already-evaluated call values, so resolve only this exact
+    // pointer variable through the current state's indexed local binding for
+    // the round-trip check. Other expressions remain rejected.
+    let resolved_arguments = arguments
+        .iter()
+        .map(|argument| match argument {
+            CExpression::Variable(name) => match state.locals().get(name) {
+                Some(CValue::Pointer(pointer)) => {
+                    CExpression::Value(CValue::Pointer(pointer.clone()))
+                }
+                _ => argument.clone(),
+            },
+            _ => argument.clone(),
+        })
+        .collect::<Vec<_>>();
+    let Ok(parameter_values) = parameter_values(parameters, &resolved_arguments) else {
         return false;
     };
     let array_refs = array_refs_for_parameters(parameters, &parameter_values, state.memory());
@@ -765,8 +782,33 @@ fn synthesize_named_range_loadable_segment(
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
+    // A one-element byte range is either the producer's folded representation
+    // of `bytes[index..index + 1]` or its exact constant byte count. Handle it
+    // before the historical folded-range paths so the source index comes from
+    // the exact external parameter displacement rather than a same-block
+    // inference.
+    if base.block == PointerBlock::ExternalArgument
+        && is_one_element_byte_count(bytes)
+        && let Some(special) = synthesize_external_symbolic_element_range(
+            base,
+            bytes,
+            parameters,
+            arguments,
+            state,
+            bound_variables,
+        )
+    {
+        return Some(special);
+    }
+    let named_pointer_state = if base.block == PointerBlock::ExternalArgument
+        && is_reduced_one_element_byte_count(bytes)
+    {
+        None
+    } else {
+        Some(state)
+    };
     if let Some(byte_count) = bytes.as_const() {
-        let (named, width, start) = named_pointer_bases(parameters, arguments, state)
+        let (named, width, start) = named_pointer_bases(parameters, arguments, named_pointer_state)
             .filter_map(|(name, pointer, width)| {
                 if pointer.offset == PointerOffsetTerm::Constant(0) || byte_count % width != 0 {
                     return None;
@@ -824,11 +866,12 @@ fn synthesize_named_range_loadable_segment(
     };
     // The named pointer this range starts from, and the element index the
     // requirement's base pointer sits at within it.
-    let named =
-        named_pointer_bases(parameters, arguments, state).find_map(|(name, pointer, width)| {
+    let named = named_pointer_bases(parameters, arguments, named_pointer_state).find_map(
+        |(name, pointer, width)| {
             (width == scale && base.element_index_from_base_with_width(&pointer, width)? == **start)
                 .then_some(name)
-        })?;
+        },
+    )?;
     let start = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
         start,
         parameters,
@@ -859,13 +902,157 @@ fn synthesize_named_range_loadable_segment(
     })
 }
 
+/// Recover the written range for a one-element byte load emitted by
+/// `loadable(bytes[index..index + 1])`. This is deliberately narrower than
+/// `Pointer::element_index_from_base_with_width`: only a declared external
+/// parameter, an exact direct displacement from that parameter's pointer, and
+/// a one-byte element are authoritative enough to reconstruct the spelling.
+/// The producer may retain either the exact constant `1` or the unreduced
+/// `(index + 1) - index` form.
+fn synthesize_external_symbolic_element_range(
+    base: &Pointer,
+    bytes: &Bitvector32Term,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
+) -> Option<ClickProposition> {
+    let (name, index) = parameters
+        .iter()
+        .zip(arguments)
+        .find_map(|(parameter, argument)| {
+            let named_base = match argument {
+                CExpression::Value(CValue::Pointer(pointer)) => pointer,
+                // Call-site arguments normally have already been evaluated
+                // to values, but a retained call requirement can carry the
+                // caller's exact variable expression instead. Resolve only
+                // that selected name through the current state's indexed
+                // local binding; do not infer a pointer from ambient facts.
+                CExpression::Variable(name) => match state.locals().get(name) {
+                    Some(CValue::Pointer(pointer)) => pointer,
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            if parameter
+                .c_type()
+                .pointee_type()?
+                .to_kernel_type()
+                .byte_width()
+                != 1
+                || named_base.c_type().pointee_type()?.byte_width() != 1
+                || named_base.block != PointerBlock::ExternalArgument
+                || base.block != PointerBlock::ExternalArgument
+            {
+                return None;
+            }
+            let index = match &base.offset {
+                PointerOffsetTerm::Add(left, right) if left.as_ref() == &named_base.offset => {
+                    int32_scaled_value(right, 1)?
+                }
+                PointerOffsetTerm::Add(left, right) if right.as_ref() == &named_base.offset => {
+                    int32_scaled_value(left, 1)?
+                }
+                // `bytes` itself can be at offset zero, in which case the
+                // canonical pointer offset drops the zero-valued add.
+                _ if named_base.offset == PointerOffsetTerm::Constant(0) => {
+                    int32_scaled_value(&base.offset, 1)?
+                }
+                _ => return None,
+            };
+            let one_element = Bitvector32Term::Subtract(
+                Box::new(Bitvector32Term::add(
+                    index.clone(),
+                    Bitvector32Term::Constant(1),
+                )),
+                Box::new(index.clone()),
+            );
+            if !matches!(bytes, Bitvector32Term::Constant(1)) && bytes != &one_element {
+                return None;
+            }
+            (!matches!(index, Bitvector32Term::Constant(_))).then_some((parameter.name(), index))
+        })?;
+    if matches!(bytes, Bitvector32Term::Constant(1)) {
+        // Keep the byte count constant in the re-lowered proposition by
+        // moving the symbolic index into the named pointer expression and
+        // spelling a zero-based one-byte range over that displaced pointer.
+        let semantic_base =
+            synthesize_surface_pointer(base, parameters, arguments, state, bound_variables)?;
+        let surface_base = ContractExpression::CFragment(semantic_base.clone());
+        let start = CExpression::Value(int32(0));
+        let end = CExpression::Value(int32(1));
+        return Some(ClickProposition::Loadable {
+            segment: ContractSegment {
+                state: ContractSegmentState::Current,
+                base: semantic_base,
+                start: start.clone(),
+                end: end.clone(),
+                surface: ContractSegmentSurface::Range {
+                    base: surface_base,
+                    start: ContractExpression::CFragment(start),
+                    end: ContractExpression::CFragment(end),
+                },
+            },
+        });
+    }
+    let start = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
+        &index,
+        parameters,
+        arguments,
+        state,
+        bound_variables,
+    )?)?;
+    let end_term = Bitvector32Term::add(index, Bitvector32Term::Constant(1));
+    let end = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
+        &end_term,
+        parameters,
+        arguments,
+        state,
+        bound_variables,
+    )?)?;
+    let named = CExpression::Variable(name.to_string());
+    Some(ClickProposition::Loadable {
+        segment: ContractSegment {
+            state: ContractSegmentState::Current,
+            base: named.clone(),
+            start: start.clone(),
+            end: end.clone(),
+            surface: ContractSegmentSurface::Range {
+                base: ContractExpression::CFragment(named),
+                start: ContractExpression::CFragment(start),
+                end: ContractExpression::CFragment(end),
+            },
+        },
+    })
+}
+
+fn is_reduced_one_element_byte_count(bytes: &Bitvector32Term) -> bool {
+    let Bitvector32Term::Subtract(end, start) = bytes else {
+        return false;
+    };
+    *end.as_ref() == Bitvector32Term::add(start.as_ref().clone(), Bitvector32Term::Constant(1))
+}
+
+fn is_one_element_byte_count(bytes: &Bitvector32Term) -> bool {
+    matches!(bytes, Bitvector32Term::Constant(1)) || is_reduced_one_element_byte_count(bytes)
+}
+
+fn int32_scaled_value(offset: &PointerOffsetTerm, width: i64) -> Option<Bitvector32Term> {
+    match offset {
+        PointerOffsetTerm::Int32Scaled { value, byte_width } if *byte_width == width => {
+            Some(value.as_ref().clone())
+        }
+        _ => None,
+    }
+}
+
 /// Every pointer this proof context can name, with the element width its
 /// declared type steps by: the call's own parameters first, then the state's
 /// pointer locals. The walk is over those two named lists only.
 fn named_pointer_bases<'a>(
     parameters: &'a [syntax::C0Parameter],
     arguments: &'a [CExpression],
-    state: &'a CState,
+    state: Option<&'a CState>,
 ) -> impl Iterator<Item = (String, crate::kernel::CPointerValue, u32)> + 'a {
     parameters
         .iter()
@@ -881,12 +1068,14 @@ fn named_pointer_bases<'a>(
                 .byte_width();
             Some((parameter.name().to_string(), base.clone(), width))
         })
-        .chain(state.locals().object_values().filter_map(|(name, value)| {
-            let CValue::Pointer(base) = value else {
-                return None;
-            };
-            let width = base.c_type().pointee_type()?.byte_width();
-            Some((name.to_string(), base.clone(), width))
+        .chain(state.into_iter().flat_map(|state| {
+            state.locals().object_values().filter_map(|(name, value)| {
+                let CValue::Pointer(base) = value else {
+                    return None;
+                };
+                let width = base.c_type().pointee_type()?.byte_width();
+                Some((name.to_string(), base.clone(), width))
+            })
         }))
 }
 

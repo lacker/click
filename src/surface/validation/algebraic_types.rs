@@ -1315,6 +1315,53 @@ fn expression_is_integer_match_result(
 }
 
 fn validate_algebraic_expression(
+    mut expression: &ContractExpression,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    predicates: &BTreeMap<&str, &PredicateDefinition>,
+    definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
+    context: &str,
+) -> Result<Option<AlgebraicTypeApplication>, ClickError> {
+    // Integer aliases do not introduce an algebraic scope, so their bodies
+    // can be validated as one iterative chain. This keeps deep generated
+    // alias sequences off the call stack while retaining value-before-body
+    // validation and the existing type error for an algebraic initializer.
+    loop {
+        let ContractExpression::Let {
+            name,
+            click_type: Some(ClickType::Integer),
+            value,
+            body,
+        } = expression
+        else {
+            return validate_algebraic_expression_node(
+                expression,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            );
+        };
+        let value_type = validate_algebraic_expression(
+            value,
+            variables,
+            click_functions,
+            predicates,
+            definitions,
+            context,
+        )?;
+        if let Some(actual) = value_type {
+            return Err(ClickError::new(format!(
+                "let binding `{name}` expects Integer, got {} in {context}",
+                describe_click_type(&ClickType::Algebraic(actual))
+            )));
+        }
+        expression = body;
+    }
+}
+
+fn validate_algebraic_expression_node(
     expression: &ContractExpression,
     variables: &BTreeMap<String, C0Type>,
     click_functions: &BTreeMap<String, ClickFunctionType>,

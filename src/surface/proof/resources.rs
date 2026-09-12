@@ -324,9 +324,10 @@ fn materialize_folded_composite_resource_memory(
 /// This is the contract-lowering and loop-head half of decision D7. The
 /// decision itself is the kernel's [`crate::kernel::select_resource_model_arm`]:
 /// a constructor premise, an existential witness, or disequalities that leave
-/// one variant. When nothing selects an arm the instance stays folded, exactly
-/// as it does today, and a read through it fails with the note
-/// `folded_matched_instance_note` adds.
+/// one variant. When the premises leave several arms possible, what every one
+/// of them owns is projected instead; see [`common_possible_instance_arm`].
+/// When they leave the model open the instance stays folded, and a read through
+/// it fails with the note `folded_matched_instance_note` adds.
 ///
 /// The returned definition is the arm scope `resource_match_arm_scopes` builds:
 /// its `contains` holds only the arm's own memory clauses, so projecting it
@@ -349,7 +350,6 @@ pub(in crate::surface) fn selected_resource_instance_arm(
     let AlgebraicValue::Algebraic(model) = instance.fields().get(field_index)? else {
         return None;
     };
-    let selection = crate::kernel::select_resource_model_arm(model, assumptions)?;
     let scopes = crate::surface::validation::resource_match_arm_scopes(
         definition,
         |name| {
@@ -360,10 +360,85 @@ pub(in crate::surface) fn selected_resource_instance_arm(
         |name| resource_environment.get(name),
     )
     .ok()?;
-    scopes
+    match crate::kernel::select_resource_model_arm(model, assumptions) {
+        Some(selection) => scopes
+            .into_iter()
+            .find(|(variant, _, _)| variant == selection.variant())
+            .map(|(_, _, arm)| arm),
+        // No single arm: what every arm the premises leave possible owns is
+        // still readable, and that is what this projects.
+        None => common_possible_instance_arm(
+            scopes,
+            &crate::kernel::possible_resource_model_arm_variants(model, assumptions),
+        ),
+    }
+}
+
+/// The arm scope holding exactly the memory clauses every possible arm owns.
+///
+/// This is decision D7 extended from the arm a section's premises select to the
+/// arms they leave possible (gap 39). `requires c.model != Context::Top` on a
+/// three-constructor frame decides nothing, but the `Left` and `Right` arms it
+/// leaves both own `parent->rb_right`, so that cell is readable however the
+/// model turns out.
+///
+/// Two clauses agree when they are the same clause: the arms of one instance
+/// share the resource's own parameters, so a segment written over them denotes
+/// the same cells in each arm. A segment naming a constructor binding is never
+/// published, because each arm's binding is its own unknown and two arms that
+/// happen to spell one the same way are not talking about the same cell.
+///
+/// The result carries no facts and no children: an arm nothing selected states
+/// nothing, and only an explicit `unfold` produces a contained instance. Cost
+/// is the clauses of this one instance's arms.
+fn common_possible_instance_arm(
+    scopes: Vec<(String, Vec<(String, ClickType)>, ResourceDefinition)>,
+    possible: &[String],
+) -> Option<ResourceDefinition> {
+    if possible.len() < 2 {
+        return None;
+    }
+    let mut arms = possible
+        .iter()
+        .map(|variant| {
+            let (_, bindings, arm) = scopes
+                .iter()
+                .find(|(candidate, _, _)| candidate == variant)?;
+            let bound = bindings
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<BTreeSet<_>>();
+            let clauses = arm
+                .composite_body()?
+                .contains()
+                .iter()
+                .filter(|clause| match clause {
+                    ResourceClause::OwnMemory(segment) => {
+                        contract_segment_referenced_names(segment)
+                            .iter()
+                            .all(|name| !bound.contains(name.as_str()))
+                    }
+                    _ => false,
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            Some((arm.clone(), clauses))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let (mut common, first) = arms.remove(0);
+    let clauses = first
         .into_iter()
-        .find(|(variant, _, _)| variant == selection.variant())
-        .map(|(_, _, arm)| arm)
+        .filter(|clause| arms.iter().all(|(_, other)| other.contains(clause)))
+        .collect::<Vec<_>>();
+    if clauses.is_empty() {
+        return None;
+    }
+    let body = common.composite_body.as_mut()?;
+    body.contains = clauses;
+    body.facts = Vec::new();
+    body.children = Vec::new();
+    body.witnesses = Vec::new();
+    Some(common)
 }
 
 pub(super) fn project_initial_composite_resource_cores(
@@ -817,6 +892,13 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
                 )
             ))
         })?;
+    // The first lookup may have matched a supported view rather than the
+    // requested owned spelling. Resolve support from the representation that
+    // actually supplied this observation, so nested observations retain the
+    // same exact authority.
+    let observation_support = state
+        .resources()
+        .directly_supporting_owned_entry(&abstract_resource, &assumptions);
     let (observed_quantity, counted_resource, explicit_quantity) = match resource {
         ResourceClause::Named { .. } => {
             return Err(ClickError::new(
@@ -1063,10 +1145,25 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         .collect::<Vec<_>>();
     // Holding the folded composite certifies its instantiated body. Observation
     // only adds the body's duplicable cores, so it must not revalidate ownership.
-    let resources = state
-        .resources()
-        .clone()
-        .unchecked_with_facts(viewed_contained_resources);
+    // Keep the projected views attached to that exact owned support: consuming
+    // or changing the support must invalidate the observation, while unrelated
+    // framed resources remain untouched. A view-only observation has no owned
+    // authority to carry this relation and keeps the legacy explicit view.
+    let resources = if let Some((support_entry, support)) = observation_support {
+        state
+            .resources()
+            .clone()
+            .unchecked_with_supported_facts_from_occurrence(
+                support_entry,
+                support,
+                viewed_contained_resources,
+            )
+    } else {
+        state
+            .resources()
+            .clone()
+            .unchecked_with_facts(viewed_contained_resources)
+    };
     Ok((
         state.with_memory(memory).with_resource_context(resources),
         abstract_resource,
@@ -2609,6 +2706,7 @@ fn fold_composite_resources_on_outcome_with_facts(
         })?;
         let mut closing_view = false;
         let mut folded_representation_already_present = false;
+        let mut folded_authority_occurrence = None;
         if closure == ResourceBodyClosure::Initialize {
             let CFunctionOutcome::Return { value, state } = &mut outcome else {
                 unreachable!("the return outcome was checked above");
@@ -2961,10 +3059,10 @@ fn fold_composite_resources_on_outcome_with_facts(
                 &post_state,
                 &value,
             )?;
-            let resources = post_state
+            let (resources, inserted_occurrence) = post_state
                 .resources()
                 .clone()
-                .try_compose_with_fact(abstract_resource.clone(), &assumptions)
+                .try_compose_with_fact_with_occurrence(abstract_resource.clone(), &assumptions)
                 .map_err(|error| {
                     ClickError::new(format!(
                         "`{claim_label}` path {path_index}: `fold({})` produced {}",
@@ -2972,6 +3070,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                         describe_resource_context_validity_error(error, parameters, arguments)
                     ))
                 })?;
+            folded_authority_occurrence = inserted_occurrence;
             post_state = post_state.with_resource_context(resources);
         }
         if closure == ResourceBodyClosure::Initialize && !lowered_contained.is_empty() {
@@ -2983,16 +3082,27 @@ fn fold_composite_resources_on_outcome_with_facts(
                 &value,
             )?;
             let assumptions = pure_facts.assumptions();
-            let Some(authority) = post_state
-                .resources()
-                .directly_supporting_fact(&abstract_resource, assumptions)
-                .cloned()
-            else {
+            let Some(authority_occurrence) = folded_authority_occurrence.or_else(|| {
+                post_state
+                    .resources()
+                    .unique_owned_occurrence_for_fact(&abstract_resource)
+                    .map(|(occurrence, _)| occurrence)
+            }) else {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` path {path_index}: `fold({})` lost its folded authority",
+                    "`{claim_label}` path {path_index}: `fold({})` has an ambiguous folded authority",
                     describe_resource_clause(resource)
                 )));
             };
+            if !post_state
+                .resources()
+                .owned_occurrence_matches(authority_occurrence, &abstract_resource)
+            {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` path {path_index}: `fold({})` changed its folded authority snapshot",
+                    describe_resource_clause(resource)
+                )));
+            }
+            let authority = &abstract_resource;
             let projections = lowered_contained
                 .iter()
                 .filter_map(|fact| fact.core_with_assumptions(assumptions))
@@ -3002,7 +3112,11 @@ fn fold_composite_resources_on_outcome_with_facts(
                 let resources = post_state
                     .resources()
                     .clone()
-                    .unchecked_with_supported_facts(&authority, projections);
+                    .unchecked_with_supported_facts_from_occurrence(
+                        authority_occurrence,
+                        authority,
+                        projections,
+                    );
                 post_state = post_state.with_resource_context(resources);
             }
         }

@@ -1951,7 +1951,8 @@ fn execute_step_from_frontier_position_selecting_path(
             )));
         }
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires exactly one statement successor for {step_statement:?}, got {}\n{}",
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires exactly one statement successor for `{}`, got {}\n{}",
+            describe_c_statement_head(&step_statement),
             transitions.len(),
             describe_proof_context(
                 available_pure_facts,

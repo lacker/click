@@ -42,6 +42,7 @@ pub(super) fn parse_with_layouts_and_aggregate_objects(
     aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
     global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, GlobalArrayShape>>,
     qualified_objects: BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>,
+    local_struct_pointers_by_function: BTreeMap<String, BTreeMap<String, String>>,
 ) -> Result<ClickFile, ClickError> {
     let mut parser = Parser::new_with_layouts_and_aggregate_objects(
         source,
@@ -52,6 +53,7 @@ pub(super) fn parse_with_layouts_and_aggregate_objects(
         global_array_shapes_by_function,
     )?;
     parser.qualified_objects = Some(qualified_objects);
+    parser.local_struct_pointers_by_function = local_struct_pointers_by_function;
     parser.parse_file()
 }
 
@@ -210,6 +212,12 @@ struct Parser {
     aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
     aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
     global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, GlobalArrayShape>>,
+    /// The struct name of each automatic struct-pointer local of each C
+    /// function, from the C parser. A contract's own parameters come from its
+    /// signature; these are the body's locals, so a `have` or `fact` that
+    /// names one has the same layout the parameter would have. A parameter of
+    /// the same spelling wins: the contract is written against the signature.
+    local_struct_pointers_by_function: BTreeMap<String, BTreeMap<String, String>>,
     current_aggregate_objects: BTreeMap<String, String>,
     current_struct_array_params: BTreeSet<String>,
     current_global_array_shapes: BTreeMap<String, GlobalArrayShape>,
@@ -461,6 +469,7 @@ impl Parser {
             aggregate_objects_by_function,
             aggregate_array_objects_by_function,
             global_array_shapes_by_function,
+            local_struct_pointers_by_function: BTreeMap::new(),
             current_aggregate_objects: BTreeMap::new(),
             current_struct_array_params: BTreeSet::new(),
             current_global_array_shapes: BTreeMap::new(),
@@ -1760,12 +1769,28 @@ impl Parser {
             .iter()
             .map(|parameter| parameter.name().to_string())
             .collect::<BTreeSet<_>>();
+        let previous_integer_params = std::mem::take(&mut self.current_integer_params);
+        let previous_integer_lets = std::mem::take(&mut self.current_integer_lets);
+        let previous_integer_literal_context =
+            std::mem::replace(&mut self.integer_literal_context, false);
         let mut contract_lets = Vec::new();
         let mut contract_let_names = BTreeSet::new();
         let mut requires = Vec::new();
         let mut decreases = None;
         let mut constructs = Vec::new();
         let mut ensures = Vec::new();
+        // A local of struct-pointer type is a memory base in this function's
+        // proof just as a parameter is. The signature wins a shared spelling.
+        for (name, struct_name) in self
+            .local_struct_pointers_by_function
+            .get(signature.name())
+            .into_iter()
+            .flatten()
+        {
+            struct_params
+                .entry(name.clone())
+                .or_insert_with(|| struct_name.clone());
+        }
         let previous_struct_params =
             std::mem::replace(&mut self.current_struct_params, struct_params);
         let aggregate_objects = self
@@ -1832,6 +1857,21 @@ impl Parser {
                         }
                     };
                     contract_lets.push(ContractLetBinding { kind, ..binding });
+                    if matches!(
+                        contract_lets
+                            .last()
+                            .and_then(|binding| binding.click_type.as_ref()),
+                        Some(ClickType::Integer)
+                    ) {
+                        self.integer_literal_context = true;
+                        self.current_integer_lets.insert(
+                            contract_lets
+                                .last()
+                                .expect("just pushed let binding")
+                                .name
+                                .clone(),
+                        );
+                    }
                 }
                 Some("requires") => {
                     let requirement = self.parse_requirement()?;
@@ -2009,6 +2049,9 @@ impl Parser {
         self.current_aggregate_objects = previous_aggregate_objects;
         self.current_global_array_shapes = previous_global_array_shapes;
         self.current_struct_array_params = previous_struct_array_params;
+        self.current_integer_params = previous_integer_params;
+        self.current_integer_lets = previous_integer_lets;
+        self.integer_literal_context = previous_integer_literal_context;
 
         let requires: Vec<Requirement> = requires
             .into_iter()
@@ -8135,5 +8178,41 @@ mod integer_quantifier_parser_tests {
         let mut restored =
             Parser::new("forall (z: Integer) { exists (z: int32) { z == 0 } and z > 0 }").unwrap();
         assert!(restored.parse_proposition().is_ok());
+    }
+
+    #[test]
+    fn function_integer_let_scope_is_available_then_restored() {
+        let source = r#"
+            int32 first(int32 x) {
+                let saved: Integer = to_integer(x);
+                ensures saved == saved;
+            }
+            int32 second(int32 saved) {
+                ensures saved == saved;
+            }
+        "#;
+        let file = Parser::new(source)
+            .unwrap()
+            .parse_file_items()
+            .expect("adjacent function contracts should parse");
+        let Ensure::Proposition(ClickProposition::Comparison { left, .. }) =
+            file.function_blocks()[0].ensures()[0].ensure()
+        else {
+            panic!("expected the first function's proposition");
+        };
+        assert!(matches!(
+            left,
+            ContractExpression::Let { body, .. }
+                if matches!(body.as_ref(), ContractExpression::Binding(name) if name == "saved")
+        ));
+        let Ensure::Proposition(ClickProposition::Comparison { left, .. }) =
+            file.function_blocks()[1].ensures()[0].ensure()
+        else {
+            panic!("expected the second function's proposition");
+        };
+        assert!(matches!(
+            left,
+            ContractExpression::CFragment(CExpression::Variable(name)) if name == "saved"
+        ));
     }
 }

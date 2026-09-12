@@ -590,9 +590,9 @@ impl<'a> Proof<'a> {
             } => self.apply_induct(parameter, hypothesis),
             ProofStep::ApplyInduction {
                 hypothesis,
-                argument,
+                arguments,
                 premises,
-            } => self.apply_induction(hypothesis, argument, premises),
+            } => self.apply_induction(hypothesis, arguments, premises),
             ProofStep::ApplyTheoremUsing {
                 application,
                 premises,
@@ -1989,7 +1989,7 @@ impl<'a> Proof<'a> {
     fn apply_induction(
         &self,
         hypothesis: &str,
-        argument: &ContractExpression,
+        arguments: &[ContractExpression],
         surface_premises: &[ClickProposition],
     ) -> Result<CheckedFocusedTransition, ClickError> {
         let ProofContext::Pure(context) = self.context.as_ref() else {
@@ -2000,7 +2000,7 @@ impl<'a> Proof<'a> {
                 context,
                 setup,
                 hypothesis,
-                argument,
+                arguments,
                 surface_premises,
             );
         }
@@ -2010,6 +2010,13 @@ impl<'a> Proof<'a> {
         if hypothesis != setup.hypothesis {
             return Err(self.step_error(format!("unknown induction hypothesis `{hypothesis}`")));
         }
+        // Measure induction quantifies one `int32` variable: its hypothesis
+        // holds every other theorem parameter at its current value.
+        let [argument] = arguments else {
+            return Err(self.step_error(format!(
+                "induction hypothesis `{hypothesis}` expects one argument"
+            )));
+        };
         let explicit_premises = surface_premises
             .iter()
             .map(|premise| self.lower_surface_proposition(premise, "induction premise"))
@@ -2089,16 +2096,24 @@ impl<'a> Proof<'a> {
         _context: &PureProofContext<'_>,
         setup: &PureStructuralInductionBranchSetup,
         hypothesis: &str,
-        argument: &ContractExpression,
+        arguments: &[ContractExpression],
         surface_premises: &[ClickProposition],
     ) -> Result<CheckedFocusedTransition, ClickError> {
         if hypothesis != setup.hypothesis {
             return Err(self.step_error(format!("unknown induction hypothesis `{hypothesis}`")));
         }
+        // The inducted position must name a field this arm's pattern bound,
+        // whatever the remaining positions instantiate. This is a bounded
+        // test against the arm's own bindings.
+        if !super::super::pure_theorems::structural_induction_descends(setup, arguments) {
+            return Err(self.step_error(
+                "structural induction hypothesis expects an immediate recursive field",
+            ));
+        }
         let Some(application) = setup
             .applications
             .iter()
-            .find(|candidate| candidate.argument == *argument)
+            .find(|candidate| candidate.arguments == *arguments)
         else {
             return Err(self.step_error(
                 "structural induction hypothesis expects an immediate recursive field",

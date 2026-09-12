@@ -110,6 +110,24 @@ pub(in crate::surface::proof) fn substitute_lexical_bindings_in_proposition(
     substitute_click_proposition(proposition, &substitutions)
 }
 
+/// The first C local a proposition reads that the execution frontier has
+/// declared but not yet assigned.
+///
+/// Such a local has no value at this frontier, so its place evaluation
+/// produces no path and the kernel reports a path count. The local's own name
+/// is what a reader needs: the proof is standing before the statement that
+/// gives it a value.
+pub(in crate::surface::proof) fn unassigned_local_read_by(
+    proposition: &ClickProposition,
+    state: &crate::kernel::CState,
+) -> Option<String> {
+    let mut names = BTreeSet::new();
+    collect_click_proposition_referenced_names(proposition, &mut names);
+    names
+        .into_iter()
+        .find(|name| state.locals().is_uninitialized_object(name))
+}
+
 pub(super) fn promote_integer_comparison(
     surface: &ClickProposition,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
@@ -338,7 +356,15 @@ impl<'a> Proof<'a> {
                     context.click_function_environment,
                 )
                 .map_err(|message| {
-                    self.step_error(format!("could not lower {description}: {message}"))
+                    match unassigned_local_read_by(&surface, &execution.core.state) {
+                        Some(local) => self.step_error(format!(
+                            "could not lower {description}: local `{local}` has no value at this \
+                             frontier; the execution has not run its assignment yet"
+                        )),
+                        None => {
+                            self.step_error(format!("could not lower {description}: {message}"))
+                        }
+                    }
                 })
             }
         }
@@ -446,7 +472,15 @@ impl<'a> Proof<'a> {
                     context.click_function_environment,
                 )
                 .map_err(|message| {
-                    self.step_error(format!("could not lower {description}: {message}"))
+                    match unassigned_local_read_by(&surface, &execution.core.state) {
+                        Some(local) => self.step_error(format!(
+                            "could not lower {description}: local `{local}` has no value at this \
+                             frontier; the execution has not run its assignment yet"
+                        )),
+                        None => {
+                            self.step_error(format!("could not lower {description}: {message}"))
+                        }
+                    }
                 })
             }
         }

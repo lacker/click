@@ -382,6 +382,7 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     ) = parse_c_layouts(click_source, sources)?;
     let resource_struct_layouts = struct_layouts.clone();
     let file = parser::parse_with_layouts_and_aggregate_objects(
@@ -392,6 +393,7 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     )?;
     let parsed_sources = parse_verified_sources_context(&file, sources)?;
     let predicate_definitions = combined_predicate_definitions(&file)?;
@@ -483,6 +485,7 @@ fn parse_c0_click_file_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     ) = parse_c_layouts(click_source, sources)?;
     parser::parse_with_layouts_and_aggregate_objects(
         click_source,
@@ -492,6 +495,7 @@ fn parse_c0_click_file_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     )
 }
 
@@ -1102,6 +1106,7 @@ fn verify_c0_sources_with_context(
             aggregate_array_objects,
             global_array_shapes,
             qualified_objects,
+            local_struct_pointers,
         ) = parse_c_layouts(click_source, c_sources)?;
         let resource_struct_layouts = struct_layouts.clone();
         let file = parser::parse_with_layouts_and_aggregate_objects(
@@ -1112,6 +1117,7 @@ fn verify_c0_sources_with_context(
             aggregate_array_objects,
             global_array_shapes,
             qualified_objects,
+            local_struct_pointers,
         )?;
         let parsed_sources = parse_verified_sources_context(&file, c_sources)?;
         let expansion_functions = expansion_capture
@@ -1177,8 +1183,18 @@ fn verify_c0_sources_with_context(
     let function_source_registry = Arc::new(FunctionSourceRegistry::from_function_blocks(
         &external_and_user_function_blocks,
     )?);
-    let (mut termination_plans, mut requested_termination) =
-        c_function_termination_plans(&file, selected_functions.as_ref())?;
+    // A sidecar contract names a C function with its ordinary spelling, but a
+    // header `static inline` body executes under a translation-unit-qualified
+    // name, which is the name its call sites carry and the name the kernel
+    // function has. Every termination table the kernel reads is keyed by that
+    // executing name, so a helper's own ranked loop is planned where its body
+    // runs instead of under a spelling no call graph mentions.
+    let termination_kernel_names = executing_function_names(&parsed_sources);
+    let (mut termination_plans, mut requested_termination) = c_function_termination_plans(
+        &file,
+        selected_functions.as_ref(),
+        &termination_kernel_names,
+    )?;
     let standard_library_theorems = standard_library_theorem_definitions()?;
     let (
         predicate_environment,
@@ -1463,7 +1479,10 @@ fn verify_c0_sources_with_context(
             }
         }
         let function_termination_loop_rules = termination_loop_rules
-            .entry(function_block.signature().name().to_string())
+            .entry(executing_function_name(
+                &termination_kernel_names,
+                function_block.signature().name(),
+            ))
             .or_default();
         for rule in function_verified
             .iter()
@@ -1905,14 +1924,18 @@ fn verify_c0_sources_with_context(
                     }
                 }
                 if !loop_measures.is_empty() {
+                    let executing_name = executing_function_name(
+                        &termination_kernel_names,
+                        function_block.signature.name(),
+                    );
                     if let Some(plan) = termination_plans
                         .iter_mut()
-                        .find(|plan| plan.function_name() == function_block.signature.name())
+                        .find(|plan| plan.function_name() == executing_name)
                     {
                         plan.extend_loop_measures(loop_measures);
                     } else {
                         termination_plans.push(c_function_termination_plan(
-                            function_block.signature.name(),
+                            &executing_name,
                             None,
                             loop_measures,
                         ));
@@ -2040,16 +2063,19 @@ fn verify_c0_sources_with_context(
     }
 
     let partial_rules = function_environment.verified_function_rules();
+    let inline_bodies = function_environment.inline_body_functions();
     let termination_rules = c_verified_function_termination_rules(
         &partial_rules,
         &termination_plans,
         &termination_loop_rules,
+        &inline_bodies,
     )
     .map_err(|error| ClickError::new(format!("could not certify C termination: {error}")))?;
     for name in &requested_termination {
+        let executing_name = executing_function_name(&termination_kernel_names, name);
         if !termination_rules
             .iter()
-            .any(|rule| rule.function_name() == name)
+            .any(|rule| rule.function_name() == executing_name)
         {
             return Err(ClickError::new(format!(
                 "could not certify termination for `{name}`: every reachable loop, recursive cycle, and callee must have a checked ranking proof"
@@ -2281,6 +2307,7 @@ fn c0_external_dependencies_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     ) = parse_c_layouts(click_source, sources)?;
     let file = parser::parse_with_layouts_and_aggregate_objects(
         click_source,
@@ -2290,6 +2317,7 @@ fn c0_external_dependencies_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     )?;
     let parsed_sources = parse_verified_sources_context(&file, sources)?;
     let function_blocks = combined_external_function_blocks(&file)?;
@@ -2728,9 +2756,48 @@ pub(in crate::surface) fn loop_termination_measure(
     )))
 }
 
+/// Maps each Click-visible C spelling to the name its body executes under.
+/// Only a header-provided `static inline` helper has two names; every other
+/// function maps to itself and is left out of the map.
+pub(in crate::surface) fn executing_function_names(
+    parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
+) -> BTreeMap<String, String> {
+    let mut names = BTreeMap::new();
+    let mut ambiguous = BTreeSet::new();
+    for (kernel_name, (_, function)) in parsed_sources {
+        if function.source_name() == kernel_name.as_str() {
+            continue;
+        }
+        if names
+            .insert(function.source_name().to_string(), kernel_name.clone())
+            .is_some()
+        {
+            ambiguous.insert(function.source_name().to_string());
+        }
+    }
+    // Two translation units defining the same helper make the spelling
+    // ambiguous, and `parsed_function_for_source_name` refuses a contract that
+    // names it. Leave such a name unmapped rather than binding a plan to one
+    // unit's body.
+    for name in ambiguous {
+        names.remove(&name);
+    }
+    names
+}
+
+/// The name `source_name`'s body executes under, which is its own spelling
+/// unless it is a header-provided `static inline` helper.
+fn executing_function_name(names: &BTreeMap<String, String>, source_name: &str) -> String {
+    names
+        .get(source_name)
+        .cloned()
+        .unwrap_or_else(|| source_name.to_string())
+}
+
 pub(in crate::surface) fn c_function_termination_plans(
     file: &ClickFile,
     selected_functions: Option<&BTreeSet<String>>,
+    executing_names: &BTreeMap<String, String>,
 ) -> Result<
     (
         Vec<crate::kernel::CFunctionTerminationPlan>,
@@ -2906,12 +2973,16 @@ pub(in crate::surface) fn c_function_termination_plans(
                 }
             }
         }
-        if recursive_measure.is_some() || !loop_measures.is_empty() {
-            if selected {
-                requested.insert(function.signature().name().to_string());
-            }
+        // A plan is a demand for certified termination, and only a function
+        // this run verifies can answer it. A location-scoped run (`verify_at`,
+        // which every audit site uses) verifies one proof unit and the C it
+        // calls, so planning an unselected function's loops would fail
+        // certification for a loop rule this run was never going to build.
+        // A whole-file run selects everything, so nothing is dropped there.
+        if selected && (recursive_measure.is_some() || !loop_measures.is_empty()) {
+            requested.insert(function.signature().name().to_string());
             plans.push(c_function_termination_plan(
-                function.signature().name(),
+                executing_function_name(executing_names, function.signature().name()),
                 recursive_measure,
                 loop_measures,
             ));
@@ -3019,6 +3090,7 @@ pub(in crate::surface) fn parse_c_layouts(
         BTreeMap<String, BTreeSet<String>>,
         BTreeMap<String, BTreeMap<String, parser::GlobalArrayShape>>,
         BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>,
+        BTreeMap<String, BTreeMap<String, String>>,
     ),
     ClickError,
 > {
@@ -3028,6 +3100,7 @@ pub(in crate::surface) fn parse_c_layouts(
     let mut aggregate_array_objects = BTreeMap::new();
     let mut global_array_shapes = BTreeMap::new();
     let mut qualified_objects = BTreeMap::new();
+    let mut local_struct_pointers = BTreeMap::new();
     let verifying_paths = super::verifying_source_paths(click_source)?;
     if let Some(imports) = c_sources.imports {
         if c_sources.prepared_duplicates {
@@ -3344,6 +3417,13 @@ pub(in crate::surface) fn parse_c_layouts(
                 }))
                 .collect();
             global_array_shapes.insert(function.name().to_string(), function_global_array_shapes);
+            // An automatic local of struct-pointer type is a memory base in
+            // this function's contract exactly as a parameter is; the C
+            // parser is the only place its struct name exists.
+            local_struct_pointers.insert(
+                function.name().to_string(),
+                function.local_struct_pointers().clone(),
+            );
         }
     }
     Ok((
@@ -3353,6 +3433,7 @@ pub(in crate::surface) fn parse_c_layouts(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     ))
 }
 
@@ -4734,7 +4815,13 @@ fn resource_clause_to_resource_spec_with_metadata(
             let access = resource_access_to_kernel(*access);
             let arguments = arguments
                 .iter()
-                .map(resource_argument_to_c_expression)
+                .zip(parameter_types)
+                .map(|(argument, parameter_type)| {
+                    crate::surface::lowering::resource_argument_to_typed_c_expression(
+                        argument,
+                        *parameter_type,
+                    )
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let parameter_types = parameter_types
                 .iter()

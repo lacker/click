@@ -328,6 +328,152 @@ enough to become the first regression of the package that fixes them.
     ("resource rewrite changed more than a definitional representation")
     because `Bool`, `Float32`, and `Float64` loads still read back as raw
     `MemoryLoad` terms; the same adoption argument as A10.
+29. **An ascending walk stops at the contract boundary.** Found by A13
+    after the loop mechanics worked (the loop-head refutation closes the
+    `Top` arm): with `consumes t: ptree_at(p, parent); produces sub:
+    ptree_at(result, ...)` the produced binder cannot reuse the name the
+    loop rebinds ("duplicate resource instance binding sub"), and the walk
+    has no way to rename its final instance without a fold it cannot
+    perform; with `owns` on both sides the exit clause re-reads a parameter
+    the loop reassigned ("could not lower resource ptree_at argument 1: the
+    kernel evaluation produced 0 paths"), since a returned instance's
+    arguments must be the entry-time ones. Before that, the refold of the
+    parent node from the old subtree plus the sibling was unfinished
+    ("loop binder sub has no owned ptree_at instance at its arguments
+    here"). Every rbtree fixup loop ascends, so this blocks C3, C4's
+    `rb_next`/`rb_prev`, and C5. Package A14.
+30. **Smaller findings from A13, not scheduled.** A `have` whose explicit
+    script fails can report only "body did not construct a completed proof
+    object" with no goal or tactic (`checked_have_with_proof` returns
+    `Ok(None)` on some routes); `unfold(pure_fn(...))` inside a nested
+    proof `match` arm fails the same way while the enclosing arm succeeds.
+    A13 also fixed a pre-existing audit defect in passing: a location-scoped
+    verification planned C termination for every function in the file, so
+    any file with a ranked loop failed every other claim's audit sites.
+31. **Soundness hole: a `while` guard with an unevaluable conjunct drops
+    it.** Found by A14, reproduced with no resources or loop binders:
+    `while (a != 0 && p[0] != 0) { a = 0; }` in a function that does not
+    own `p`, contracted `ensures result == 0`, verifies and audits clean
+    although the loop never runs when `p[0] == 0`. The second conjunct's
+    branch is dropped instead of refused and the exit assumes the negation
+    of the first conjunct alone. When both conjuncts are evaluable the loop
+    tactic refuses correctly. P1 regardless of rbtree. Package S1.
+32. **An induction hypothesis fixes every non-inducted parameter.** Found
+    by A14: `induct(ctx) as ih` yields `ih` of one argument, so the
+    context-transport lemma `heap_inorder(a) == heap_inorder(b) implies
+    heap_inorder(plug(ctx, a)) == heap_inorder(plug(ctx, b))` cannot be
+    proved (the `Left` arm needs the hypothesis at different `a`, `b`).
+    This is the shape of the rbtree fixup invariant, so it blocks the
+    rotate-then-ascend fixture and C3. Package A16.
+33. **A ranked loop cannot call a contract-less inline helper.** Found by
+    A14: `c_verified_function_termination_rules` builds its call graph from
+    verified rules only, so an inlined straight-line helper such as
+    `rb_parent` is never terminating and `decreases` fails with "every
+    reachable loop, recursive cycle, and callee must have a checked
+    ranking proof". Every rbtree fixup loop calls `rb_parent`. Package A15.
+34. **Smaller A14 findings, not scheduled.** A body that reassigns a
+    parameter cannot refold its borrowed instance at the entry position
+    (`fold(tree_at(old(root)), ...)` is refused; arguments are current-state
+    only); the grouped driver declines a top-level `match c.model` after a
+    loop while the same shape on the subtree binder works; the loop
+    tactic's "requires exactly one statement successor" refusal dumps the
+    raw `While` node (S1 fixes this diagnostic); the verbatim `rb_next`
+    guard `while ((parent = rb_parent(node)) && node == parent->rb_right)`
+    does not parse in C0 (assignment expressions), which
+    kernel-scale-preprocessing owns.
+35. **The parent-as-parameter spelling is unspellable for top-level
+    traversals.** Found by C4: `rb_first(root)` and `rb_next(node)` have no
+    C local naming the focused node's parent, and both `rb_at(p, parent)`
+    (D2) and `ctx_at(child, parent, root)` (amended D3) need it in every
+    loop binder and every `produces` clause; pure functions cannot return
+    pointers (gap 8) and `exists` cannot bind a `produces` argument. A13
+    keyed the scaffold frame by the child alone because `tree_at(p)` takes
+    no parent. Decision: re-key the rbtree model by node with the parent as
+    a model payload, `RbTree::Node(identity, parent, color, left, right)`,
+    the node's own arm stating its parent word from the payload, and a
+    child's parent tied to `p` by a pure `int32` predicate over the child's
+    model (`rb_parent_is(left_model, p) == 1`); the frame becomes
+    `ctx_at(child, root)` with the parent in the `Left`/`Right` payload.
+    This is a spelling change within D1 to D3. Package C1b re-spells C1,
+    A14's rbtree ascent, and C4's replacement, and delivers the traversal
+    descents.
+36. **A `while` guard with two evaluable conjuncts is refused.** After S1,
+    `while (a != 0 && p[0] != 0)` with both operands readable still refuses
+    with "requires exactly one statement successor, got 2": the `loop`
+    tactic certifies one successor and a conjunctive guard has two exit
+    paths. The verbatim `rb_next` ascent `while ((parent = rb_parent(node))
+    && node == parent->rb_right)` has this shape (once the assignment
+    expression is handled by the preprocessing issue). Package A17.
+37. **Proof-shape limits met by C4.** Four nested proof `match` scrutinees
+    are declined ("proof-shape limitation") while three work; refolding a
+    child after the inlined `rb_set_parent` needs the arm fact `((old & 1)
+    | address(new)) & 1 == color_bit(color)`, which `fold` requires
+    exactly and `simp` cannot close for a child named only by
+    `victim->rb_left` (`have` lowers to three paths); a loop inside a
+    `static inline` helper cannot be addressed from a contracted wrapper
+    (`step()` executes the whole inlined call). Package A17 owns the first
+    two; the third is not needed for the Linux functions, which are
+    top-level.
+38. **Gap 37 (b) was misdiagnosed; the blocker is load identity across an
+    unfold.** A17 showed the bit-mask arithmetic already closes when the
+    children are contract instances; it fails when the children come from
+    `unfold(t) as { left: l, right: r }`: the child's cell is named through
+    a symbolic pointer and the C's own read of the same cell in the same
+    epoch mints a second load variable, and the fold's exact check has no
+    route between `V_u & 1 == color_bit(lc)` and the goal over `V_c`. The
+    two are related only by a pointer equality. Equating two registered
+    loads at provably equal pointers in one epoch inside the exact check is
+    the load-equality prover deliberately kept out of the kernel; the fix
+    belongs on the surface, as an explicit step that names the identity
+    (`rewrite` of the load through the pointer equality, or `normalize()
+    using` the equality) and a kernel rule that accepts it as one
+    certified step. Package A18. C4's general-children `rb_replace_node`
+    and every fixup that unfolds a child then writes its word depend on it.
+39. **A guard prefix does not publish the read authority common to the
+    arms it leaves possible.** A17: the verbatim `rb_next` guard `parent !=
+    0 && node == parent->rb_right` is undecided at a loop head because
+    `parent->rb_right` is owned by the folded `ctx_at` frame and no single
+    arm is selected; the first conjunct refutes `Top`, and both remaining
+    arms own `parent->rb_right`. D7 extension: after a guard prefix, publish
+    as views the cells owned by every arm still possible. Package A19.
+40. **Smaller A17 findings, not scheduled.** Two ascent loops in one
+    function fail the second loop's `close_invariants` with plain guards
+    (pre-existing); `simp` cannot use a loop's exported exit disjunction by
+    itself because the fact is kernel-minted with no surface spelling
+    (`cases(...)` works); the S1 successor-refusal diagnostic no longer has
+    a reachable shape.
+41. **Soundness hole 2, closed by C1b: capture in pure-function unfold.**
+    `unfold(f(args))` substituted arguments and then reduced the body's
+    `match`, capturing a match-arm binding that shared a name with a
+    parameter, so `unfold(reparent(Node(node, node, ...), parent))`
+    produced the old parent and a false equation closed under `requires
+    node != parent`. `prepare_contract_match_arm` now renames the binding
+    out of the way (regressions `spec_function_arm_binding_capture*.md`).
+42. **A body fact applying a pure predicate to a pointer is not discharged
+    at fold.** C1b: `fact rb_parent_is(left_model, p) == 1` makes every
+    fold refuse although the identical proposition is an available checked
+    fact just before; `fact color_bit(color) >= 0` discharges, and even the
+    constant `rb_parent_is(RbTree::Empty, identity) == 1` does not. So
+    parent/child consistency is stated in contracts, not in the body,
+    which deviates from D2. Package A20.
+43. **A frame's identity payload does not stand for the C local that names
+    the same node on unfolded cells.** C1b: `rb_replace_node`'s non-root
+    frame fails with "requires exactly one statement successor, got 2"
+    because `unfold` binds the frame's `identity` freshly and the inlined
+    `__rb_change_child` reads `parent->rb_left` while the frame owns
+    `identity->rb_left`; the re-keyed ascending walk has the same problem
+    at its exit refutation (`fact parent != 0` no longer names the C local),
+    so `rb_ascending_walk_to_root.md` stays on the parameter spelling. The
+    bridge exists: `requires t.model == rb_reparent(t.model, parent)` plus
+    `extract` yields `identity == parent` in the arm; what is missing is
+    that equality reaching the unfolded frame's owned cells and guards.
+    Package A20.
+44. **Two `RbTree` shapes.** `examples/rbtree-model` (C2) still has the
+    four-payload `Node`; the rbtree fixtures now use the five-payload
+    re-keyed one. Package C2b ports the pure library. The verbatim `rb_next`
+    guard does not parse in C0 (assignment expression;
+    kernel-scale-preprocessing) and is pinned as
+    `mdtests/rb_next_conjunctive_guard.md`.
 
 ## Design decisions
 
@@ -564,6 +710,49 @@ appears to need one reports the need instead of adding it.
   did not identify.
 - 2026-09-12: T6 (2ed15042) is on master; gap 23 closed as stale (gap 28).
   All tooling packages T1 to T6 are landed. A13 in progress.
+- 2026-09-12: A13 (6335d1eb) is on master: refuted arms publish negative
+  model facts at unfold, loop head, back edge, and contract lowering; the
+  selected arm's facts are published at contract lowering; struct-pointer
+  locals have layouts; `old(name.field)` in a loop invariant reads the
+  entry instance. **B1's core is delivered**: the unchanged `tree_leftmost`
+  and `tree_rightmost` verify and audit (35 of 35 sites) with `Context`,
+  `ctx_at(child)`, `plug`, loop binders, a loop-body `match`, and
+  `decreases t;`. A14 and C4 dispatched.
+- 2026-09-12: A14 (660c7643) is on master: ascending walks verify and
+  audit on the scaffold and the rbtree shapes; a resource argument may be
+  the null constant, and a loop exit publishes refuted arms. No binder
+  renaming rule was needed. It found the soundness hole (gap 31), the
+  induction-hypothesis limit (gap 32), and the inline-helper termination
+  gap (gap 33); S1, A15, A16 dispatched, C4 in progress. C3 waits on A15
+  and A16.
+- 2026-09-12: A15 (819cb5b1) is on master: inlined helpers are call-graph
+  nodes for termination, and a sidecar-contracted inline helper with its
+  own ranked loop is keyed by its executing name. Two notes, not
+  scheduled: a contract-less inline helper that contains a loop cannot be
+  proven at all today (the caller's `execute()` has no loop region for it,
+  so a symbolic argument unrolls until the budget is exhausted), and the
+  termination SCC step runs a reachability query per ordered function pair,
+  quadratic in function count, which a kernel-scale import would hit.
+- 2026-09-12: A16 (24517c61; `ih` over all theorem parameters,
+  `plug_inorder_transport` verifies), S1 (841126d4; the while-guard
+  soundness hole closed in `assume_condition_truthiness` with six failing
+  regressions, no fixture relied on it), and C4 (32992501; `rb_replace_node`
+  for a childless victim on the verbatim body) are on master. C4's
+  traversal functions are blocked by gap 35; C1b and A17 dispatched. C3
+  waits on C1b and A17.
+- 2026-09-12: A17 (1472f6f8) is on master: every exit of a short-circuit
+  guard is certified and joined, and proof nesting goes from an effective
+  five levels to eleven. Its masked-word part was a misdiagnosis (gap 38);
+  A18 and A19 dispatched. C1b in progress.
+- 2026-09-12: C1b (368c4aec) is on master: the rbtree model is keyed by
+  node with the parent in the payload; **the unchanged Linux `rb_first`
+  and `rb_last` verify and audit** (19 of 19 sites), with the seven link
+  helpers, `__rb_change_child` in all three frames, and `rb_replace_node`
+  at the root; soundness hole 2 closed. C2b dispatched; A20 after A18.
+- 2026-09-12: A19 (eec257aa) is on master: the cells every possible arm
+  owns are published as views at contract lowering, loop heads, and per
+  guard conjunct; the translated `rb_next` ascent guard verifies and
+  audits on the parameter spelling. A18 and C2b in progress.
 
 ## Work packages
 
@@ -763,6 +952,89 @@ loop-body `match`, and `decreases sub;`, plus the ascending and
 rotate-then-ascend fixtures and the two context negatives. Depends on
 A12.
 
+**A14. Ascending and rotate-then-ascend walks (gap 29).**
+Scope: let a `produces` binder at the exit take the name the loop rebinds
+(or let the loop's final instance be renamed at the boundary), evaluate a
+returned `owns` instance's arguments at entry when the parameter was
+reassigned, and finish the refold of a parent node from its old subtree and
+sibling inside an ascending `preserve`. Acceptance: an ascending walk over
+`ptree_at(p, parent)`/`pctx_at(child, parent)` frames with `decreases
+ctx;`, verified and audited; a rotate-then-ascend loop that folds a rotated
+subtree and continues at the parent frame; and the same on the rbtree
+shapes `rb_at(p, parent)`/`ctx_at(child, parent, root)` with a verbatim
+`rb_next`-style ascent. Depends on A13; C3, C4's ascending half, and C5
+depend on it.
+
+**S1. Refuse an unevaluable guard conjunct (gap 31).** Scope: an
+unevaluable guard operand makes the guard undecided and refuses, never
+drops a branch; audit every condition shape; failing regressions per
+shape; bounded diagnostic for the successor refusal. Soundness: lands
+ahead of everything.
+
+**A15. Ranked loops may call contract-less inline helpers (gap 33).**
+Scope: classify an inlined helper in the termination call graph by its
+body (straight-line is terminating; a loop needs its own ranking; a
+recursive helper needs a rule), bounded to the body. Regressions: A14's
+`rb_ascending_walk_to_root.md` with `decreases`, a numeric case, and
+negatives. C3 and C5 depend on it.
+
+**A16. Induction hypotheses over all theorem parameters (gap 32).**
+Scope: `ih` takes the theorem's full parameter list, the inducted position
+accepting a strict structural descendant and the others any well-typed
+term, with the theorem's `requires` checked at the instance. Regressions:
+`plug_inorder_transport` on the scaffold, a two-parameter list theorem,
+negatives for a non-descendant and a violated premise. C3 depends on it.
+
+**C1b. Re-key the rbtree model by node (gap 35).** Scope: `rb_at(p)` with
+`RbTree::Node(identity, parent, color, left, right)`, `ctx_at(child,
+root)` with the parent in the frame payload, `rb_parent_is`, `plug`; re-verify
+C1's link helpers and `__rb_change_child`, A14's ascending walk, and C4's
+`rb_replace_node` on the new spelling (old fixtures replaced, not kept in
+parallel); then the unchanged `rb_first`, `rb_last`, and the descending
+half of `rb_next`/`rb_prev`, with results stated through `rb_inorder`.
+Depends on A14, A15, C4. C3 and C5 depend on it.
+
+**A17. Conjunctive loop guards and deeper proof shapes (gaps 36, 37).**
+Scope: let the `loop` tactic certify a guard with several exit paths
+(each exit path assumes its own conjunct's negation and the earlier
+conjuncts' truth), so `while (a && b)` verifies without a C rewrite; lift
+the three-scrutinee nesting limit on proof `match`; and make a bit-masked
+parent-word fact closable after `rb_set_parent` for a child named through
+a field path. Regressions: a two-conjunct guard loop, a four-level match,
+and C4's general-children `rb_replace_node`. C3's ascent depends on the
+guard part; C1b's `rb_next` ascent depends on it too.
+
+**A18. Load identity across an unfold (gap 38).** Scope: a surface step
+that equates a load variable minted by C execution with the load the
+unfolded child's body named for the same cell, justified by the pointer
+equality the context holds, checked by the kernel as one bounded step
+(no search in the exact check). Regressions: A17's `sp7` reduction and
+C4's general-children `rb_replace_node`. C3 and C5 depend on it.
+
+**A19. Read authority common to the possible arms (gap 39).** Scope:
+after a guard prefix or a section requirement refutes some arms of a
+folded matched instance, publish as views the cells every remaining arm
+owns, at contract lowering, loop heads, and within a guard's own
+short-circuit evaluation. Regression: the verbatim `rb_next` ascent guard
+on the re-keyed frame. C1b's `rb_next` and C3's fixup guards depend on
+it.
+
+**A20. Pointer-argument body facts and payload-to-local identity (gaps 42,
+43).** Scope: make a body fact applying a pure function to a pointer
+argument dischargeable at fold exactly as a scalar one; and let a proved
+equality between a frame's identity payload and a C local (`identity ==
+parent`) apply to the unfolded frame's owned cells and to guard reads, so
+`rb_replace_node`'s non-root frames and the re-keyed ascent verify.
+Regressions: `rb_parent_is` as a body fact; `rb_replace_node` `Left` and
+`Right` frames; `rb_ascending_walk_to_root.md` ported to `rb_at(p)`/`ctx_at`.
+Depends on A18 (same fold check). C3 depends on it.
+
+**C2b. Port the pure red-black library to the re-keyed model.** Scope:
+`examples/rbtree-model` on `RbTree::Node(identity, parent, color, left,
+right)`, keeping every theorem, and adding the parent-consistency predicate
+and its preservation by rotation and recolor. Fixtures only. C3 depends on
+it.
+
 **T4. Make wide execution joins linear.**
 Scope: profile the frontier split and join path on the N-arm match and
 nested `branch` fixtures from gap 15, remove the deep clones or make them
@@ -836,7 +1108,7 @@ Scope: the fixup loop contracted over `ctx_at(node, root)` and
 `rb_at(node, parent)` with entry model almost-red-black at `node` and exit
 model red-black with `inorder(plug(...))` unchanged; `decreases ctx;`.
 Regressions: the verbatim function; a negative that skips a recolor. Depends
-on A4, A8, A9, A10, A11, B1, C1, C2.
+on A4, A8, A9, A10, A11, A14, A15, A16, B1, C1, C2.
 
 **C4. Traversal and replacement.**
 Scope: `rb_first`, `rb_last`, `rb_next`, `rb_prev`, `rb_replace_node`, with

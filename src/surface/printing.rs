@@ -293,18 +293,18 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         }
         ProofTactic::ApplyInduction {
             hypothesis,
-            argument,
+            arguments,
         } => line(
             output,
             &prefix,
             &format!(
                 "apply({hypothesis}({}));",
-                describe_contract_expression(argument)
+                describe_induction_arguments(arguments)
             ),
         ),
         ProofTactic::ApplyInductionUsing {
             hypothesis,
-            argument,
+            arguments,
             premises,
         } => {
             line(
@@ -312,7 +312,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 &prefix,
                 &format!(
                     "apply({hypothesis}({})) using {{",
-                    describe_contract_expression(argument)
+                    describe_induction_arguments(arguments)
                 ),
             );
             for premise in premises {
@@ -1042,6 +1042,16 @@ fn resource_access(resource: &ResourceClause) -> ResourceAccessMode {
         ResourceClause::MemoryAggregate { access, .. } => *access,
         ResourceClause::Declared { access, .. } => *access,
     }
+}
+
+/// An induction hypothesis is applied at the theorem's parameter list, so its
+/// arguments print exactly like an ordinary theorem application's.
+fn describe_induction_arguments(arguments: &[ContractExpression]) -> String {
+    arguments
+        .iter()
+        .map(describe_contract_expression)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn format_theorem_application(application: &TheoremApplication) -> String {

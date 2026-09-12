@@ -68,6 +68,26 @@ without importing those pointer comparisons. Resource-consuming or mutating
 structural calls across a loop back edge remain tracked in the hard-bucket
 `issues/recursion.md`.
 
+Termination is also a claim about everything the loop body calls: every
+reachable loop, recursive cycle, and callee needs a checked ranking proof. A
+callee with a contract answers with a verified rule of its own. A
+header-provided `static inline` helper has no contract boundary — its body
+executes at the call site — so it is read as a node of the caller's own call
+graph instead. A helper whose body is straight-line, with no loop, no
+recursion, and no call to anything not itself terminating, terminates by
+construction, so a ranked loop may call one:
+`mdtests/c_decreases_loop_inline_helper.md`, and the rbtree ascent of
+`mdtests/rb_ascending_walk_to_root.md`, which climbs through the unchanged
+Linux `rb_parent` under `decreases c;`. A helper carrying a loop still needs
+that loop ranked and certified, and a recursive helper is a cycle needing a
+checked rule; both are refused otherwise
+(`mdtests/c_decreases_rejects_inline_helper_loop.md` and
+`mdtests/c_decreases_rejects_recursive_inline_helper.md`). A helper's own
+ranked loop is planned under the translation-unit-qualified name its body
+executes under rather than the ordinary spelling its sidecar contract uses,
+which is what lets the plan reach the function the call site names
+(`mdtests/inline_helper_ranked_loop.md`).
+
 The [`perpetual-service`](https://github.com/lacker/click/tree/master/examples/perpetual-service) example
 combines this partial-correctness boundary with an opaque verified call and a
 composite resource transferred through every iteration.
@@ -162,6 +182,36 @@ The failed condition describes an exit *if one occurs*. Invariant preservation
 does not prove that such an iteration is eventually reached. Termination needs
 a separate well-founded argument; ordinary C verification does not require
 one.
+
+### Short-circuit guards
+
+A guard with `&&` or `||` leaves the loop by one path per operand that can end
+it. `while (a != 0 && p[0] != 0)` exits when `a` is zero, and also when `a` is
+nonzero and `p[0]` is zero; the second path never evaluates the first operand
+away. Every one of those paths reaches the same exit state, so the loop rule
+certifies them together and the exit states their join: everything they all
+state — which includes every invariant — plus the disjunction of what each
+states alone, here `a == 0 or p[0] == 0`. A proof that needs to know which
+operand failed splits on that disjunction with `cases`:
+
+<!-- verified-example: mdtests/loop_conjunctive_guard_exit_join.md -->
+```click
+have p[0] == 0 by {
+    cases(a == 0 or p[0] == 0) {
+        contradiction(a == 0);
+    } {
+        assumption();
+    }
+}
+```
+
+The negation of the first operand alone is *not* assumed at the exit: the loop
+really can stop with `a` nonzero. An operand the function has no authority to
+read leaves the guard undecided rather than dropping its path, and the loop is
+refused — but an operand is read under the truth of the operands before it, so
+a conjunct that refutes an arm of a folded modeled instance can give the next
+conjunct the authority to read through it. That is the arm selection described
+under [structural loop measures](#structural-loop-measures).
 
 ## Memory loops
 
@@ -313,6 +363,18 @@ selected arm's cells as read authority at the loop head, which is what lets a
 guard such as `root->left != 0` read through the focused subtree the binder
 holds.
 
+A guard's own earlier conjuncts count as premises for the conjunct after them.
+A short-circuit conjunct is read under the truth of the ones before it, so a
+prefix that refutes an arm publishes what the arms it leaves possible agree on,
+and the next conjunct may read what the prefix unlocked. The `rb_next` ascent
+`while (parent != 0 && node == parent->rb_right)` is the shape: no arm of a
+three-constructor frame is selected at the head, `parent != 0` refutes the
+`Top` arm, and both remaining arms own `parent->rb_right`, so the second
+conjunct reads it through the folded frame — as a view, with ownership
+untouched. A cell only one possible arm owns is not published and the guard
+stays undecided, which refuses the loop. The verified example is
+`mdtests/rb_ascent_parent_link_guard.md`.
+
 Unlike the numeric components, the structural descent is not a member of the
 back-edge invariant bundle. The back edge decides it directly and names the
 binder when it does not descend, as in
@@ -354,6 +416,62 @@ that omits a constructor is refused exactly as at function entry
 `mdtests/loop_body_proof_match_two_live_arms.md` is the shape where both
 constructors survive: the region splits, each arm certifies its own path, and
 the preservation certificate is reassembled as the `match` that produced them.
+
+The invariants and the loop condition are the head's premises, so they also
+refute arms. A premise that contradicts an arm's own binding-free fact says
+the binder's model is not that constructor, and the body gets that as an
+ordinary premise: `invariant node != 0` against a list resource's `Nil` arm
+`fact p == 0` publishes `l.model != CellList::Nil`, which is what lets the
+`Nil` arm close by `contradiction` on the model instead of unfolding a cell
+the arm does not own (`mdtests/loop_head_refuted_arm_closes_the_match.md`).
+The back edge publishes the same way, so a descent that unfolds a child under
+a guard hands the next iteration the model fact that guard established. The
+rule itself is in [resources](resources.md).
+
+### Ascending walks
+
+A descending walk pushes context frames; an ascending one pops them. The loop
+holds the same pair a Linux rbtree fixup loop holds — the focused subtree and
+the frames above it — and each iteration consumes one frame:
+
+<!-- verified-example: mdtests/loop_ascending_walk_to_root.md -->
+```click
+loop {
+    owns c: pctx_at(node, parent);
+    owns t: ptree_at(node, parent);
+    decreases c;
+    invariant t.model != HeapTree::Empty;
+    invariant plug(c.model, t.model) == plug(old(c.model), old(t.model));
+}
+```
+
+The body unfolds the frame, takes the C steps that move the cursor up, and
+folds the node the frame owned into a larger focused subtree built from the
+old focus and the frame's sibling. The measure is the context, because the
+focused subtree grows while the context strictly loses a frame.
+
+Both ends of such a walk come from arm refutation. At the head the guard
+`parent != 0` refutes the `Top` frame's `fact parent == 0`, so the body's
+proof `match` closes `Top` by contradiction. At the exit the same rule runs
+with the failed guard: `parent == 0` refutes the `Left` and `Right` arms'
+`fact parent != 0`, so the proof after the loop has `c.model == Context::Top`
+and can `unfold` the frame without a `match` of its own. A loop exit publishes
+refuted arms exactly as the head and the back edge do.
+
+The walk then hands its final instances to the contract's produced binders by
+refolding them under those names, at the arguments the exit reached. Those
+arguments are the caller's view: `result` is the returned pointer, and the
+root's parent is the null pointer constant rather than the parameter the body
+reassigned. The contract side of that boundary is in
+[the language reference](../reference/language/index.md).
+
+`old(name.field)` in an invariant is the function-entry instance of the
+function-level binder of that name, whatever the body did to that instance
+before the loop. A proof that unfolds and refolds the binder before the loop
+does not change what `old(...)` means
+(`mdtests/loop_invariant_old_model_after_refold.md`); an explicit `at(...)`
+snapshot still names a state, and an instance it does not hold is an error
+there.
 
 Loop frames do not erase semantic lifetime state. A body that frees or
 allocates heap storage, or calls a function whose contract consumes or

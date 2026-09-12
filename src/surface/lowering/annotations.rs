@@ -2676,29 +2676,39 @@ impl AnnotationLowerer<'_> {
         }
     }
 
+    /// The value a fixed snapshot gives one resource field.
+    ///
+    /// Only an explicit `at(...)` snapshot fixes one. That snapshot names a
+    /// state, so a field the instance does not hold there is an error: no
+    /// other reading exists.
+    ///
+    /// `old(...)` is not a named state but the function entry, and a binder's
+    /// entry field always has a symbolic reading of its own -- the kernel's
+    /// entry projection, which the caller emits when this answers `None`.
+    /// Reading it out of whatever state this lowering was handed instead made
+    /// `old(name.field)` in a loop invariant mean the generation that state
+    /// held, so a proof that unfolded and refolded the binder before the loop
+    /// changed what `old(...)` meant, and the frontier and contract
+    /// certification lowered the same invariant two ways.
     fn fixed_resource_field(
         &self,
         access: &ResourceFieldAccess,
         environment: &SpecElaborationContext,
     ) -> Result<Option<AlgebraicValue>, String> {
-        let snapshot = environment.snapshot_state.as_ref().or_else(|| {
-            (environment.at_function_entry && !environment.function_contract)
-                .then_some(self.entry_state)
-        });
-        snapshot
-            .map(|state| {
-                state
-                    .resource_instance_at_path(access.identity, &access.children)
-                    .and_then(|instance| instance.fields().get(access.field_index))
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!(
-                            "resource instance `{}` is not owned at this snapshot",
-                            access.owner
-                        )
-                    })
-            })
-            .transpose()
+        if let Some(state) = environment.snapshot_state.as_ref() {
+            return state
+                .resource_instance_at_path(access.identity, &access.children)
+                .and_then(|instance| instance.fields().get(access.field_index))
+                .cloned()
+                .map(Some)
+                .ok_or_else(|| {
+                    format!(
+                        "resource instance `{}` is not owned at this snapshot",
+                        access.owner
+                    )
+                });
+        }
+        Ok(None)
     }
 
     fn contract_expression_is_integer(
@@ -3833,14 +3843,19 @@ impl AnnotationLowerer<'_> {
                     return Err("expected an algebraic resource field".into());
                 };
                 let algebraic_type = self.cached_algebraic_kernel_type(ty)?;
-                let node = if let Some(value) = self.fixed_resource_field(access, environment)? {
-                    let AlgebraicValue::Algebraic(AlgebraicTerm {
+                let fixed = match self.fixed_resource_field(access, environment)? {
+                    Some(AlgebraicValue::Algebraic(AlgebraicTerm {
                         node: AlgebraicTermNode::Variable(variable),
                         ..
-                    }) = value
-                    else {
+                    })) => Some(variable),
+                    // A named snapshot has only the value it holds; the
+                    // function entry also has its symbolic projection.
+                    Some(_) if environment.snapshot_state.is_some() => {
                         return Err("only entry-bound symbolic resource fields support fixed snapshots in this slice".into());
-                    };
+                    }
+                    Some(_) | None => None,
+                };
+                let node = if let Some(variable) = fixed {
                     SpecAlgebraicExpressionNode::Variable(variable)
                 } else {
                     SpecAlgebraicExpressionNode::ResourceField(

@@ -1,5 +1,5 @@
 use super::*;
-use crate::kernel::{CComparisonOperator, CFloatBinaryOperator, CFloatCondition};
+use crate::kernel::{CComparisonOperator, CFloatBinaryOperator, CFloatCondition, CUpdateOperator};
 use crate::surface::validation::describe_click_type;
 use std::fmt::Write;
 
@@ -1241,6 +1241,168 @@ pub(super) fn describe_binary_c_expression(
         describe_c_expression(left),
         describe_c_expression(right)
     )
+}
+
+/// How much of one statement's own C spelling a diagnostic may carry.
+const MAX_STATEMENT_HEAD_BYTES: usize = 512;
+
+/// Names a statement the way its C reads, without its body.
+///
+/// `Debug` on a statement is an implementation dump: a `While` node carries
+/// its whole body, every lowered invariant and effect check, every resource
+/// spec, and the snapshots inside them, so its size has no relation to what
+/// the reader of a refusal needs. What a refusal needs is which statement the
+/// cursor is on, and for a loop or a branch, the guard that produced the
+/// successors it is complaining about.
+pub(super) fn describe_c_statement_head(statement: &CStatement) -> String {
+    let head = match statement {
+        CStatement::Skip => ";".to_string(),
+        CStatement::Break => "break;".to_string(),
+        CStatement::Continue => "continue;".to_string(),
+        CStatement::ContinueWithStep { step } => {
+            format!("continue; (with {})", describe_c_statement_head(step))
+        }
+        CStatement::Declare { name, .. } => format!("declaration of `{name}`"),
+        CStatement::DeclareAggregate { name, .. } => format!("aggregate declaration of `{name}`"),
+        CStatement::CopyAggregate { target, source, .. } => format!(
+            "{} = {};",
+            describe_c_expression(target),
+            describe_c_expression(source)
+        ),
+        CStatement::Assign { name, expression } => {
+            format!("{name} = {};", describe_c_expression(expression))
+        }
+        CStatement::CallAssign {
+            target,
+            function_name,
+            arguments,
+        } => format!(
+            "{target} = {function_name}({});",
+            describe_c_expression_list(arguments)
+        ),
+        CStatement::Call {
+            function_name,
+            arguments,
+        } => format!(
+            "{function_name}({});",
+            describe_c_expression_list(arguments)
+        ),
+        CStatement::HeapAllocate {
+            target,
+            bytes,
+            zeroed,
+        } => format!(
+            "{target} = {}({});",
+            if *zeroed { "calloc" } else { "malloc" },
+            describe_c_expression(bytes)
+        ),
+        CStatement::HeapFree { pointer } => {
+            format!("free({});", describe_c_expression(pointer))
+        }
+        CStatement::Assert { condition, label } => format!(
+            "assert{}({});",
+            label
+                .as_ref()
+                .map(|label| format!(" {label}"))
+                .unwrap_or_default(),
+            describe_c_expression(condition)
+        ),
+        CStatement::Seq(first, _) => describe_c_statement_head(first),
+        CStatement::Return(expression) => {
+            format!("return {};", describe_c_expression(expression))
+        }
+        CStatement::Store { pointer, value } => format!(
+            "*{} = {};",
+            describe_c_expression(pointer),
+            describe_c_expression(value)
+        ),
+        CStatement::TypedStore { pointer, value, .. } => format!(
+            "*{} = {};",
+            describe_c_expression(pointer),
+            describe_c_expression(value)
+        ),
+        CStatement::Update {
+            target,
+            operator,
+            operand,
+        } => format!(
+            "{} {}= {};",
+            describe_c_expression(target),
+            describe_c_update_operator(*operator),
+            describe_c_expression(operand)
+        ),
+        CStatement::If { condition, .. } => {
+            format!("if ({})", describe_c_guard(condition))
+        }
+        CStatement::While {
+            condition,
+            do_while,
+            ..
+        } => {
+            if *do_while {
+                format!("do ... while ({})", describe_c_guard(condition))
+            } else {
+                format!("while ({})", describe_c_guard(condition))
+            }
+        }
+        CStatement::Switch { expression, .. } => {
+            format!("switch ({})", describe_c_guard(expression))
+        }
+    };
+    truncate_utf8_with_suffix(&head, MAX_STATEMENT_HEAD_BYTES, "…")
+}
+
+/// A guard already sits inside the parentheses the statement writes, so drop
+/// the outermost pair the expression printer adds around a binary operator.
+fn describe_c_guard(condition: &CExpression) -> String {
+    let rendered = describe_c_expression(condition);
+    let Some(inner) = rendered
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return rendered;
+    };
+    // Only strip a pair that really encloses the whole expression: `(a) + (b)`
+    // starts and ends with a parenthesis without being parenthesized.
+    let mut depth = 0usize;
+    for character in inner.chars() {
+        match character {
+            '(' => depth += 1,
+            ')' => match depth.checked_sub(1) {
+                Some(next) => depth = next,
+                None => return rendered,
+            },
+            _ => {}
+        }
+    }
+    if depth == 0 {
+        inner.to_string()
+    } else {
+        rendered
+    }
+}
+
+fn describe_c_expression_list(expressions: &[CExpression]) -> String {
+    expressions
+        .iter()
+        .map(describe_c_expression)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn describe_c_update_operator(operator: CUpdateOperator) -> &'static str {
+    match operator {
+        CUpdateOperator::Add => "+",
+        CUpdateOperator::Subtract => "-",
+        CUpdateOperator::Multiply => "*",
+        CUpdateOperator::Divide => "/",
+        CUpdateOperator::Remainder => "%",
+        CUpdateOperator::ShiftLeft => "<<",
+        CUpdateOperator::ShiftRight => ">>",
+        CUpdateOperator::BitwiseAnd => "&",
+        CUpdateOperator::BitwiseOr => "|",
+        CUpdateOperator::BitwiseXor => "^",
+    }
 }
 
 pub(super) fn describe_contract_expression(expression: &ContractExpression) -> String {

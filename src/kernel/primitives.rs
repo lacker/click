@@ -3554,6 +3554,34 @@ pub struct CCountedPopulation {
 type ResourceEntryId = u64;
 type ResourceEntryIds = PersistentSet<ResourceEntryId>;
 
+/// Identity of an owned resource occurrence, distinct from local entry IDs.
+/// Occurrences are never recycled by replacement or normalization.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) struct ResourceOccurrenceId {
+    arena: u64,
+    ordinal: u64,
+}
+
+impl ResourceOccurrenceId {
+    fn fresh() -> Self {
+        static NEXT_ARENA: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        thread_local! {
+            static ALLOCATOR: std::cell::Cell<Option<(u64, u64)>> =
+                const { std::cell::Cell::new(None) };
+        }
+        ALLOCATOR.with(|allocator| {
+            let (arena, ordinal) = allocator.get().unwrap_or_else(|| {
+                (
+                    NEXT_ARENA.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                    0,
+                )
+            });
+            allocator.set(Some((arena, ordinal + 1)));
+            Self { arena, ordinal }
+        })
+    }
+}
+
 /// An immutable resource composition snapshot.
 ///
 /// One pointer-sized storage root keeps recursive execution frames shallow.
@@ -3570,18 +3598,37 @@ pub(super) struct ResourceContextStorage {
     /// entries after a removal.
     pub(super) facts: PersistentMap<ResourceEntryId, CResourceFact>,
     pub(super) next_entry_id: ResourceEntryId,
+    pub(super) occurrence_by_entry: PersistentMap<ResourceEntryId, ResourceOccurrenceId>,
+    pub(super) entry_by_occurrence: PersistentMap<ResourceOccurrenceId, ResourceEntryId>,
     pub(super) index: ResourceContextIndex,
     /// Derived view entries name the exact owned resource that supports them.
     /// Ordinary entries are explicit and therefore absent from this map.
     pub(super) supported_by: PersistentMap<ResourceEntryId, CResourceFact>,
-    /// Reverse support index used to remove only the projections of a
-    /// consumed owned resource, without scanning the ambient context.
+    /// Exact owned-entry identity for each supported projection. The fact
+    /// cache above is useful for diagnostics, but this occurrence index is
+    /// authoritative when one of several equal owned entries is consumed.
+    pub(super) support_occurrence_by_projection:
+        PersistentMap<ResourceEntryId, ResourceOccurrenceId>,
+    /// Value-keyed reverse support index retained for compatibility with
+    /// normalization and diagnostics. Removal and evidence use the
+    /// occurrence-keyed index below, so equal authorities cannot alias.
     pub(super) projections_by_support: PersistentMap<CResourceFact, ResourceEntryIds>,
+    /// Occurrence-keyed reverse index; unlike the fact-keyed compatibility
+    /// index above, this cannot conflate equal support occurrences.
+    pub(super) projections_by_support_occurrence:
+        PersistentMap<ResourceOccurrenceId, ResourceEntryIds>,
     /// Certified, snapshot-stable owned expansions for folded resource
     /// generations. Reusing these avoids re-lowering the same body into
     /// fresh symbolic load identities at each later transition.
-    pub(super) expansions_by_support:
-        PersistentMap<CResourceFact, std::sync::Arc<Vec<CResourceFact>>>,
+    pub(super) expansions_by_support_occurrence:
+        PersistentMap<ResourceOccurrenceId, std::sync::Arc<Vec<CResourceFact>>>,
+    /// Canonical cache buckets keyed by support fact and rank among equal
+    /// owned authorities. Independently built equivalent snapshots can
+    /// compare their support graph without exposing opaque occurrence
+    /// allocation order, while invalidation remains occurrence-keyed above.
+    /// Nesting by fact lets rekeying touch only the affected bucket.
+    pub(super) expansions_by_support_entry:
+        PersistentMap<CResourceFact, PersistentMap<usize, std::sync::Arc<Vec<CResourceFact>>>>,
     /// Persistent mutation ancestry used by checked Proof joins. The origin
     /// distinguishes unrelated snapshots; the history names only exact facts
     /// whose multiplicity or representation changed.
@@ -3634,7 +3681,8 @@ impl PartialEq for ResourceContext {
         }
         self.facts() == other.facts()
             && self.storage.supported_by == other.storage.supported_by
-            && self.storage.expansions_by_support == other.storage.expansions_by_support
+            && compare_support_graph(self, other) == std::cmp::Ordering::Equal
+            && self.storage.expansions_by_support_entry == other.storage.expansions_by_support_entry
     }
 }
 
@@ -3646,8 +3694,15 @@ impl std::hash::Hash for ResourceContext {
         for entry in self.storage.supported_by.iter() {
             entry.hash(state);
         }
-        for entry in self.storage.expansions_by_support.iter() {
-            entry.hash(state);
+        for (projection, occurrence) in self.storage.support_occurrence_by_projection.iter() {
+            projection.hash(state);
+            self.storage.entry_by_occurrence.get(occurrence).hash(state);
+        }
+        for (fact, bucket) in self.storage.expansions_by_support_entry.iter() {
+            fact.hash(state);
+            for entry in bucket.iter() {
+                entry.hash(state);
+            }
         }
     }
 }
@@ -3662,18 +3717,66 @@ impl Ord for ResourceContext {
                     .iter()
                     .cmp(other.storage.supported_by.iter())
             })
-            .then_with(|| {
-                self.storage
-                    .expansions_by_support
-                    .iter()
-                    .cmp(other.storage.expansions_by_support.iter())
-            })
+            .then_with(|| compare_support_graph(self, other))
+            .then_with(|| compare_cached_expansions(self, other))
+    }
+}
+
+fn compare_cached_expansions(
+    left: &ResourceContext,
+    right: &ResourceContext,
+) -> std::cmp::Ordering {
+    let mut left_facts = left.storage.expansions_by_support_entry.iter();
+    let mut right_facts = right.storage.expansions_by_support_entry.iter();
+    loop {
+        match (left_facts.next(), right_facts.next()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (Some((left_fact, left_bucket)), Some((right_fact, right_bucket))) => {
+                let ordering = left_fact
+                    .cmp(right_fact)
+                    .then_with(|| left_bucket.iter().cmp(right_bucket.iter()));
+                if ordering != std::cmp::Ordering::Equal {
+                    return ordering;
+                }
+            }
+        }
     }
 }
 
 impl PartialOrd for ResourceContext {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+/// Compare only the support graph, using each snapshot's stable entry
+/// ordinals instead of the process-local opaque occurrence allocation. This
+/// avoids materializing or sorting the ambient resource population.
+fn compare_support_graph(left: &ResourceContext, right: &ResourceContext) -> std::cmp::Ordering {
+    let mut left_entries = left.storage.support_occurrence_by_projection.iter();
+    let mut right_entries = right.storage.support_occurrence_by_projection.iter();
+    loop {
+        match (left_entries.next(), right_entries.next()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (
+                Some((left_projection, left_occurrence)),
+                Some((right_projection, right_occurrence)),
+            ) => {
+                let ordering = left_projection.cmp(right_projection).then_with(|| {
+                    left.storage
+                        .entry_by_occurrence
+                        .get(left_occurrence)
+                        .cmp(&right.storage.entry_by_occurrence.get(right_occurrence))
+                });
+                if ordering != std::cmp::Ordering::Equal {
+                    return ordering;
+                }
+            }
+        }
     }
 }
 

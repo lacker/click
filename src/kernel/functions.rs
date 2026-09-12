@@ -9530,19 +9530,24 @@ fn evaluate_contract_return_resources(
                 .collect::<Vec<_>>()
         },
     );
-    let return_resources = match crate::instrumentation::measure_operation(
-        interface_name,
-        "contract resource transition",
-        "ensured resource composition",
-        || {
-            caller_resources_after_requirements
-                .clone()
-                .try_compose_with_facts_delaying_normalization(newly_ensured_resources, assumptions)
-        },
-    ) {
-        Ok(resources) => resources,
-        Err(error) => return Ok(Err(resource_context_runtime_error(error))),
-    };
+    let (return_resources, inserted_ensured_occurrences) =
+        match crate::instrumentation::measure_operation(
+            interface_name,
+            "contract resource transition",
+            "ensured resource composition",
+            || {
+                caller_resources_after_requirements
+                    .clone()
+                    .try_compose_with_facts_delaying_normalization_with_occurrences(
+                        newly_ensured_resources,
+                        assumptions,
+                    )
+            },
+        ) {
+            Ok(resources) => resources,
+            Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+        };
+    let mut source_ranks = BTreeMap::<CResourceFact, usize>::new();
     let Some(projected_cores_by_support) = crate::instrumentation::measure_operation(
         interface_name,
         "contract resource transition",
@@ -9554,6 +9559,12 @@ fn evaluate_contract_return_resources(
                 .iter()
                 .filter(|support| support.is_own())
                 .map(|support| {
+                    let source_rank = source_ranks.entry(support.clone()).or_default();
+                    let support_occurrence = ensured_resources
+                        .owned_occurrences_for_fact(support)
+                        .get(*source_rank)
+                        .copied()?;
+                    *source_rank += 1;
                     let singleton = ResourceContext::new().unchecked_with_fact(support.clone());
                     let expanded = expand_all_composite_resource_facts(
                         &singleton,
@@ -9576,7 +9587,7 @@ fn evaluate_contract_return_resources(
                         .collect::<BTreeSet<_>>()
                         .into_iter()
                         .collect::<Vec<_>>();
-                    Some((support.clone(), expansion, projected))
+                    Some((support.clone(), support_occurrence, expansion, projected))
                 })
                 .collect::<Option<Vec<_>>>()
         },
@@ -9590,14 +9601,50 @@ fn evaluate_contract_return_resources(
     // certified ownership, not independent persistent caller capabilities.
     // Record their exact support so consuming that ownership removes only
     // its projections through the reverse index.
-    let return_resources = projected_cores_by_support.into_iter().fold(
-        return_resources,
-        |resources, (support, expansion, projected)| {
-            resources
-                .unchecked_with_supported_facts(&support, projected)
-                .with_cached_supported_expansion(&support, expansion)
-        },
-    );
+    let mut destination_occurrences = std::collections::BTreeMap::<
+        CResourceFact,
+        Vec<crate::kernel::primitives::ResourceOccurrenceId>,
+    >::new();
+    for (fact, occurrence) in inserted_ensured_occurrences {
+        destination_occurrences
+            .entry(fact)
+            .or_default()
+            .push(occurrence);
+    }
+    let mut destination_source_ranks = std::collections::BTreeMap::<CResourceFact, usize>::new();
+    let mut destination_by_source_occurrence = std::collections::BTreeMap::new();
+    for (support, source_occurrence, _, _) in &projected_cores_by_support {
+        let rank = destination_source_ranks.entry(support.clone()).or_default();
+        let Some(destination_occurrence) = destination_occurrences
+            .get(support)
+            .and_then(|occurrences| occurrences.get(*rank))
+            .copied()
+        else {
+            return Ok(Err(CRuntimeError::FunctionContract(format!(
+                "ensured resource support was not preserved after call: {support:?}"
+            ))));
+        };
+        *rank += 1;
+        destination_by_source_occurrence.insert(*source_occurrence, destination_occurrence);
+    }
+    let mut return_resources = return_resources;
+    for (support, source_occurrence, expansion, projected) in projected_cores_by_support {
+        let Some(support_occurrence) = destination_by_source_occurrence
+            .get(&source_occurrence)
+            .copied()
+        else {
+            return Ok(Err(CRuntimeError::FunctionContract(format!(
+                "ensured resource support was not preserved after call: {support:?}"
+            ))));
+        };
+        return_resources = return_resources
+            .unchecked_with_supported_facts_from_occurrence(support_occurrence, &support, projected)
+            .with_cached_supported_expansion_for_occurrence(
+                support_occurrence,
+                &support,
+                expansion,
+            );
+    }
     Ok(Ok(return_resources))
 }
 
@@ -10731,6 +10778,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     child_evaluation.resources = body.clone();
     let child_assumptions = assumptions.clone().require_owned_expression_loads();
     let mut resource_bindings = BTreeMap::from([(Variable(u64::MAX), instance.identity)]);
+    let mut introduced_children: Vec<ResourceInstance> = Vec::new();
     for child in selected.into_iter().flat_map(|arm| &arm.children) {
         crate::instrumentation::record_deterministic_work(1);
         // The child's own definition supplies the parameter types its
@@ -10844,6 +10892,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             child_instance = actual.clone();
         }
         resource_bindings.insert(child.binding, identity);
+        introduced_children.push(child_instance.clone());
         body = body
             .try_compose_into_valid_context_delaying_normalization(
                 [CResourceFact::own(CResource::Instance(
@@ -10964,6 +11013,22 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             return Err("fold requires the instance body facts for the proposed fields");
         }
         facts.push(proposition);
+    }
+    if unfold {
+        // A child instance is born here, so this is where the premises the
+        // proof already carries first say something about its model: a guard
+        // that refutes one of the child's arms (D7 in reverse) publishes the
+        // model fact that refutation forces. A descending loop learns
+        // `left.model != Empty` from `root->left != 0`, and the walk that
+        // stops learns `left.model == Empty` from `root->left == 0`.
+        for child in &introduced_children {
+            facts.extend(refuted_instance_arm_model_facts_for_instance(
+                child,
+                definitions,
+                &next,
+                assumptions,
+            ));
+        }
     }
     Ok((next, if unfold { facts } else { vec![] }))
 }
@@ -11541,17 +11606,21 @@ pub(super) fn expand_all_composite_resource_facts(
         .facts()
         .iter()
         .filter(|fact| matches!(fact.resource(), CResource::Composite { .. }))
-        .filter_map(|support| {
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .flat_map(|support| {
             context
-                .cached_supported_expansion(support)
-                .map(|expansion| (support.clone(), expansion.to_vec()))
+                .cached_supported_expansions(&support)
+                .into_iter()
+                .map(move |(occurrence, expansion)| (support.clone(), occurrence, expansion))
         })
         .collect::<Vec<_>>();
-    for (support, expansion) in supports {
+    for (support, support_occurrence, expansion) in supports {
         if expansion.as_slice() == [support.clone()] {
             continue;
         }
-        cached = cached.without_exact_representation(&support)?;
+        cached = cached.without_exact_representation_for_occurrence(support_occurrence)?;
         let missing = expansion
             .into_iter()
             .filter(|fact| {
@@ -13643,7 +13712,7 @@ pub(super) fn selected_instance_arm_views(
 }
 
 /// The cells owned by the match arm this context's premises select for
-/// `instance`, as views.
+/// `instance`, or by every arm they leave possible, as views.
 ///
 /// This is the kernel half of decision D7. The decision is
 /// [`select_resource_model_arm`]; what it selects is published as read
@@ -13652,9 +13721,19 @@ pub(super) fn selected_instance_arm_views(
 /// `if`-bodied composite owns. Ownership is untouched: only an explicit
 /// `unfold` moves the arm's cells into the proof state.
 ///
-/// Cost is the selected arm's own clauses. An instance whose arm is not
-/// selected, or whose arm names a constructor binding in a memory clause,
-/// publishes nothing.
+/// When the premises select no single arm they may still have refuted some,
+/// and the arms they leave possible can agree about a cell. `parent != 0`
+/// refutes an ascending frame's `Top` arm, and the `Left` and `Right` arms
+/// both own `parent->rb_right`, so that cell is readable however the model
+/// turns out. What is published is then the intersection of the possible arms'
+/// own memory clauses: a cell one possible arm does not own is never
+/// published, and an arm whose clauses cannot be evaluated here makes the
+/// intersection empty rather than being skipped.
+///
+/// Cost is the selected arm's own clauses, or one evaluation of each possible
+/// arm's clauses. An instance whose model carries no variant evidence at all,
+/// or whose arms name a constructor binding in a memory clause, publishes
+/// nothing.
 fn selected_instance_arm_read_authority(
     instance: &ResourceInstance,
     definitions: &[CCompositeResourceDefinition],
@@ -13673,16 +13752,245 @@ fn selected_instance_arm_read_authority(
     let Some(AlgebraicValue::Algebraic(model)) = instance.fields().get(body.field_index) else {
         return Vec::new();
     };
-    let Some(selection) = select_resource_model_arm(model, assumptions) else {
+    let variants = match select_resource_model_arm(model, assumptions) {
+        Some(selection) => vec![selection.variant().to_owned()],
+        None => possible_resource_model_arm_variants(model, assumptions),
+    };
+    if variants.is_empty() {
+        return Vec::new();
+    }
+    let Ok(evaluation) = instance_body_evaluation(state, instance, definition) else {
         return Vec::new();
     };
-    let Some(arm) = body
-        .arms
+    let mut common: Option<Vec<CResourceFact>> = None;
+    for variant in &variants {
+        let Some(arm) = body.arms.iter().find(|arm| &arm.variant == variant) else {
+            return Vec::new();
+        };
+        let Some(views) = instance_arm_memory_views(&evaluation, arm, assumptions) else {
+            return Vec::new();
+        };
+        common = Some(match common {
+            // Order follows the first arm's clauses, so one possible arm and a
+            // selected arm publish the same list in the same order.
+            Some(common) => common
+                .into_iter()
+                .filter(|fact| views.contains(fact))
+                .collect(),
+            None => views,
+        });
+        if common.as_ref().is_some_and(Vec::is_empty) {
+            return Vec::new();
+        }
+    }
+    common.unwrap_or_default()
+}
+
+/// The cells one arm's own memory clauses own at `evaluation`, as views, or
+/// `None` when those clauses cannot be evaluated there.
+fn instance_arm_memory_views(
+    evaluation: &CState,
+    arm: &CResourceMatchArm,
+    assumptions: &PureFactContext,
+) -> Option<Vec<CResourceFact>> {
+    crate::instrumentation::record_deterministic_work(1);
+    let evaluation_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
+    let mut budget = ExecutionBudget::default();
+    let Ok(Ok(body_resources)) = evaluate_function_resource_context_with_normalization(
+        evaluation,
+        &arm.contains,
+        &[],
+        &evaluation_assumptions,
+        &mut budget,
+        false,
+    ) else {
+        return None;
+    };
+    Some(
+        body_resources
+            .0
+            .facts()
+            .iter()
+            .filter_map(|fact| match fact.resource() {
+                CResource::Memory(range) => Some(CResourceFact::view_memory(range.clone())),
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
+/// The variants a context's premises leave possible for a matched model whose
+/// arm they do not decide.
+///
+/// This is the other side of [`select_resource_model_arm`] and reads the same
+/// evidence index: premises that rule a field-free constructor out, keyed by
+/// the exact value they describe. Selection answers when one variant is left;
+/// this answers with the two or more that are, so read authority the survivors
+/// agree on can still be published.
+///
+/// A witnessed variant, a model that already carries a constructor, and an
+/// unrefuted model are all selection's business, not this one: they answer
+/// empty. So does a context that has excluded every declared variant, which is
+/// inconsistent and not this decision's business to exploit.
+///
+/// Cost is the premises about this exact value plus the declared variants of
+/// its type.
+pub(crate) fn possible_resource_model_arm_variants(
+    model: &AlgebraicTerm,
+    assumptions: &PureFactContext,
+) -> Vec<String> {
+    let AlgebraicTermNode::Variable(variable) = &model.node else {
+        return Vec::new();
+    };
+    let declared = model
+        .algebraic_type
+        .variants
         .iter()
-        .find(|arm| arm.variant == selection.variant())
+        .map(|variant| variant.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut excluded = BTreeSet::new();
+    let mut premises = Vec::new();
+    for (premise, evidence) in assumptions.algebraic_variant_evidence(*variable) {
+        if !declared.contains(evidence.variant.as_str()) {
+            continue;
+        }
+        match evidence.kind {
+            AlgebraicVariantEvidenceKind::Witnessed => return Vec::new(),
+            AlgebraicVariantEvidenceKind::Excluded => {
+                if excluded.insert(evidence.variant.as_str()) {
+                    premises.push(premise);
+                }
+            }
+        }
+    }
+    if excluded.is_empty() {
+        return Vec::new();
+    }
+    let possible = declared
+        .difference(&excluded)
+        .map(|variant| (*variant).to_owned())
+        .collect::<Vec<_>>();
+    if possible.len() < 2 {
+        return Vec::new();
+    }
+    for premise in premises {
+        super::assumptions::record_reasoning_provenance(assumptions, premise);
+    }
+    possible
+}
+
+/// The negation of one already-lowered body fact, in the shape the exact
+/// checkers decide.
+///
+/// A resource body fact lowers to a bare condition in every case this rule
+/// acts on, and a bare condition's negation is the same condition at the
+/// other truth value; nothing else is turned inside out here.
+fn refutation_of_body_fact(proposition: &Proposition) -> Option<Proposition> {
+    match proposition {
+        Proposition::ConditionIs(condition, value) => {
+            Some(Proposition::ConditionIs(condition.clone(), !value))
+        }
+        _ => None,
+    }
+}
+
+/// The model facts a context's premises force on the folded matched instances
+/// it holds by refuting arms: decision D7 applied to refutation.
+///
+/// An owned folded instance's body holds wherever the instance is held, so a
+/// premise that refutes an arm's own binding-free fact refutes the arm.
+/// `root->left != 0` against `tree_at`'s `HeapTree::Empty` arm `fact p == 0`
+/// says the child instance's model is not `HeapTree::Empty`; `root->left == 0`
+/// against the `Node` arm's `fact p != 0` says it is not a `Node`.
+///
+/// Two conclusions are published, both as ordinary propositions:
+///
+/// - `model != Variant` for each refuted arm whose constructor is field-free.
+///   That is exactly the `Excluded` evidence [`select_resource_model_arm`]
+///   reads, so on a two-constructor model the surviving arm is then selected.
+///   An arm with fields has no negative to state, for the same reason
+///   `model != Some(3)` leaves `Some` possible.
+/// - `model == Variant` when refutation leaves exactly one arm and that arm's
+///   constructor is field-free, because then the model has only one value
+///   left. This is what gives `unfold` and proof `match` a constructor after
+///   a guard has excluded every other arm.
+///
+/// Only a fact that names no binding of its own arm takes part: a binding is
+/// an unknown of the arm, so a fact about one says nothing until the arm is
+/// selected. The arm's own `owns` clauses are evaluated first, exactly as arm
+/// selection evaluates the selected arm's cells, so a binding-free fact that
+/// reads a cell the arm owns has the authority to read it.
+///
+/// This is a decision, never a search: each held instance's arms are visited
+/// once, each arm's own clauses are evaluated once, and the refutation is the
+/// exact-fact check. An instance whose model already carries a constructor is
+/// skipped. Nothing outside the instances held and their own arms is visited.
+pub(crate) fn refuted_instance_arm_model_facts(
+    context: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+    state: &CState,
+    assumptions: &PureFactContext,
+) -> Vec<Proposition> {
+    if definitions.is_empty() {
+        return Vec::new();
+    }
+    context
+        .facts()
+        .iter()
+        .filter_map(|fact| match fact.resource() {
+            CResource::Instance(instance) => Some(instance),
+            _ => None,
+        })
+        .flat_map(|instance| {
+            refuted_instance_arm_model_facts_for_instance(instance, definitions, state, assumptions)
+        })
+        .collect()
+}
+
+/// [`refuted_instance_arm_model_facts`] for one held instance.
+pub(in crate::kernel) fn refuted_instance_arm_model_facts_for_instance(
+    instance: &ResourceInstance,
+    definitions: &[CCompositeResourceDefinition],
+    state: &CState,
+    assumptions: &PureFactContext,
+) -> Vec<Proposition> {
+    let Some(definition) = definitions
+        .iter()
+        .find(|definition| definition.name() == instance.name())
     else {
         return Vec::new();
     };
+    let Some(body) = definition.matched.as_ref() else {
+        return Vec::new();
+    };
+    let Some(AlgebraicValue::Algebraic(model)) = instance.fields().get(body.field_index) else {
+        return Vec::new();
+    };
+    // A model that already carries a constructor needs no exclusion, and only
+    // a symbolic value has variant evidence at all.
+    if !matches!(model.node, AlgebraicTermNode::Variable(_)) {
+        return Vec::new();
+    }
+    // The positive conclusion needs the arms to be the declared variants
+    // exactly once each; the negative one does not, but one gate keeps the
+    // two readings of "every other arm" the same.
+    let variants = model
+        .algebraic_type
+        .variants
+        .iter()
+        .map(|variant| variant.name.as_str())
+        .collect::<BTreeSet<_>>();
+    if variants.len() != body.arms.len()
+        || body
+            .arms
+            .iter()
+            .any(|arm| !variants.contains(arm.variant.as_str()))
+    {
+        return Vec::new();
+    }
     let Ok(evaluation) = instance_body_evaluation(state, instance, definition) else {
         return Vec::new();
     };
@@ -13690,26 +13998,218 @@ fn selected_instance_arm_read_authority(
         .clone()
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
+    let constructor = |arm: &CResourceMatchArm| {
+        let term = AlgebraicTerm {
+            algebraic_type: model.algebraic_type.clone(),
+            node: AlgebraicTermNode::Constructor {
+                variant: arm.variant.clone(),
+                fields: Vec::new(),
+            },
+        };
+        (arm.bindings.is_empty() && term.is_well_formed()).then_some(term)
+    };
+    let mut published = Vec::new();
+    let mut surviving = Vec::new();
+    for arm in &body.arms {
+        crate::instrumentation::record_deterministic_work(1);
+        if !arm_is_refuted_by_a_binding_free_fact(
+            &evaluation,
+            arm,
+            &evaluation_assumptions,
+            assumptions,
+        ) {
+            surviving.push(arm);
+            continue;
+        }
+        let Some(excluded) = constructor(arm) else {
+            continue;
+        };
+        let negation = Proposition::Not(Box::new(Proposition::Equal(
+            Term::Algebraic(model.clone()),
+            Term::Algebraic(excluded),
+        )));
+        if !required_obligation_is_exactly_discharged(assumptions, &negation) {
+            published.push(negation);
+        }
+    }
+    if let [survivor] = surviving.as_slice()
+        && let Some(selected) = constructor(survivor)
+    {
+        published.push(Proposition::Equal(
+            Term::Algebraic(model.clone()),
+            Term::Algebraic(selected),
+        ));
+    }
+    published
+}
+
+/// Whether `assumptions` refutes one of `arm`'s own facts that names no
+/// binding of the arm.
+///
+/// A fact naming a binding says nothing before the arm is selected: the
+/// binding is an unknown the constructor would supply. A budget or evaluation
+/// failure is not a refutation: the arm simply publishes nothing.
+fn arm_is_refuted_by_a_binding_free_fact(
+    evaluation: &CState,
+    arm: &CResourceMatchArm,
+    evaluation_assumptions: &PureFactContext,
+    assumptions: &PureFactContext,
+) -> bool {
+    arm_binding_free_facts(evaluation, arm, evaluation_assumptions)
+        .iter()
+        .any(|fact| {
+            refutation_of_body_fact(fact).is_some_and(|negation| {
+                required_obligation_is_exactly_discharged(assumptions, &negation)
+            })
+        })
+}
+
+/// One arm's own facts that name no binding of the arm, lowered against the
+/// instance's body in `evaluation`.
+///
+/// Facts are restricted to the comparison shape for the same reason arm
+/// selection restricts its guards: a comparison of C expressions is what a
+/// path condition decides. The arm's `owns` clauses are evaluated first,
+/// exactly as arm selection evaluates the selected arm's cells, so a fact that
+/// reads a cell the arm owns has the authority to read it. A fact that needs a
+/// conditional proof, or that the budget cannot lower, contributes nothing.
+///
+/// Cost is this arm's own clauses. Nothing outside the arm is visited.
+fn arm_binding_free_facts(
+    evaluation: &CState,
+    arm: &CResourceMatchArm,
+    evaluation_assumptions: &PureFactContext,
+) -> Vec<Proposition> {
+    let bound = arm.bindings.iter().cloned().collect::<BTreeSet<_>>();
+    let binding_free = arm
+        .facts
+        .iter()
+        .filter(|fact| !spec_proposition_mentions_any_name(fact, &bound))
+        .collect::<Vec<_>>();
+    if binding_free.is_empty() {
+        return Vec::new();
+    }
     let mut budget = ExecutionBudget::default();
     let Ok(Ok(body_resources)) = evaluate_function_resource_context_with_normalization(
-        &evaluation,
+        evaluation,
         &arm.contains,
         &[],
-        &evaluation_assumptions,
+        evaluation_assumptions,
         &mut budget,
         false,
     ) else {
         return Vec::new();
     };
-    body_resources
-        .0
+    let body_state = evaluation.clone().with_resource_context(body_resources.0);
+    let body_assumptions =
+        evaluation_assumptions
+            .clone()
+            .assume_proposition(Proposition::CResourceComposition(
+                body_state.resources().clone(),
+            ));
+    let bindings = BTreeMap::new();
+    binding_free
+        .into_iter()
+        .filter_map(|fact| {
+            crate::instrumentation::record_deterministic_work(1);
+            let paths =
+                crate::kernel::spec::lower_spec_proposition_at_state_with_algebraic_bindings(
+                    &body_state,
+                    fact,
+                    None,
+                    &body_assumptions,
+                    &bindings,
+                    &mut budget,
+                )
+                .ok()?;
+            let [path] = paths.as_slice() else {
+                return None;
+            };
+            (path.facts.is_empty() && path.obligations.is_empty()).then(|| path.proposition.clone())
+        })
+        .collect()
+}
+
+/// The facts of the arm a context's premises select for each folded matched
+/// instance it holds, restricted to the facts that name no constructor
+/// binding.
+///
+/// This is the other half of decision D7 at contract lowering: A1 published
+/// the selected arm's cells as read authority, and this publishes what that
+/// arm says about them. `consumes t: tree_at(root); requires t.model !=
+/// HeapTree::Empty;` selects the `Node` arm, whose `fact p != 0` is then an
+/// entry premise, so a walk that starts with `if (root == 0)` decides the
+/// guard instead of needing an infeasible `branch`.
+///
+/// A fact naming a binding stays unpublished: the binding is an unknown of the
+/// arm, and only an `unfold` or a proof `match` names it. Cost is the selected
+/// arm's own clauses per instance held.
+pub(crate) fn selected_instance_arm_binding_free_facts(
+    context: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+    state: &CState,
+    assumptions: &PureFactContext,
+) -> Vec<Proposition> {
+    if definitions.is_empty() {
+        return Vec::new();
+    }
+    context
         .facts()
         .iter()
         .filter_map(|fact| match fact.resource() {
-            CResource::Memory(range) => Some(CResourceFact::view_memory(range.clone())),
+            CResource::Instance(instance) => Some(instance),
             _ => None,
         })
+        .flat_map(|instance| {
+            let Some(definition) = definitions
+                .iter()
+                .find(|definition| definition.name() == instance.name())
+            else {
+                return Vec::new();
+            };
+            let Some(body) = definition.matched.as_ref() else {
+                return Vec::new();
+            };
+            let Some(AlgebraicValue::Algebraic(model)) = instance.fields().get(body.field_index)
+            else {
+                return Vec::new();
+            };
+            let Some(selection) = select_resource_model_arm(model, assumptions) else {
+                return Vec::new();
+            };
+            let Some(arm) = body
+                .arms
+                .iter()
+                .find(|arm| arm.variant == selection.variant())
+            else {
+                return Vec::new();
+            };
+            let Ok(evaluation) = instance_body_evaluation(state, instance, definition) else {
+                return Vec::new();
+            };
+            let evaluation_assumptions = assumptions
+                .clone()
+                .allow_symbolic_contract_loads()
+                .prefer_symbolic_external_loads();
+            arm_binding_free_facts(&evaluation, arm, &evaluation_assumptions)
+        })
         .collect()
+}
+
+/// Whether a resource body fact is a comparison of C expressions in which one
+/// of `names` occurs. A fact of any other shape answers `true`, so the
+/// refutation rule leaves it alone.
+fn spec_proposition_mentions_any_name(fact: &SpecProposition, names: &BTreeSet<String>) -> bool {
+    let SpecProposition::Comparison { left, right, .. } = fact else {
+        return true;
+    };
+    [left, right].into_iter().any(|side| match side {
+        SpecExpression::Value(_) => false,
+        SpecExpression::CExpression(expression) => names
+            .iter()
+            .any(|name| c_expression_mentions_variable(expression, name)),
+        _ => true,
+    })
 }
 
 /// Incrementally exposes the memory cells beneath one newly evaluated

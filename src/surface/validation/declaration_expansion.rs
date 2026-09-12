@@ -552,18 +552,24 @@ fn expand_declared_resource_tactic_with_expressions(
         }
         ProofTactic::ApplyInduction {
             hypothesis,
-            argument,
+            arguments,
         } => Ok(ProofTactic::ApplyInduction {
             hypothesis,
-            argument: expand_declared_resource_expression(argument, resource_definitions)?,
+            arguments: arguments
+                .into_iter()
+                .map(|argument| expand_declared_resource_expression(argument, resource_definitions))
+                .collect::<Result<_, _>>()?,
         }),
         ProofTactic::ApplyInductionUsing {
             hypothesis,
-            argument,
+            arguments,
             premises,
         } => Ok(ProofTactic::ApplyInductionUsing {
             hypothesis,
-            argument: expand_declared_resource_expression(argument, resource_definitions)?,
+            arguments: arguments
+                .into_iter()
+                .map(|argument| expand_declared_resource_expression(argument, resource_definitions))
+                .collect::<Result<_, _>>()?,
             premises: premises
                 .into_iter()
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
@@ -1187,6 +1193,42 @@ fn expand_declared_resource_proposition(
 }
 
 fn expand_declared_resource_expression(
+    expression: ContractExpression,
+    resource_definitions: &DeclaredResourceScope,
+) -> Result<ContractExpression, ClickError> {
+    // Let chains are common in generated specifications and can be much
+    // deeper than the surrounding expression tree. Peel consecutive lets
+    // iteratively so expanding their bodies does not retain one large match
+    // frame per binding.
+    let mut lets = Vec::new();
+    let mut expression = expression;
+    while let ContractExpression::Let {
+        name,
+        click_type,
+        value,
+        body,
+    } = expression
+    {
+        lets.push((
+            name,
+            click_type,
+            expand_declared_resource_expression(*value, resource_definitions)?,
+        ));
+        expression = *body;
+    }
+    let mut expanded = expand_declared_resource_expression_node(expression, resource_definitions)?;
+    while let Some((name, click_type, value)) = lets.pop() {
+        expanded = ContractExpression::Let {
+            name,
+            click_type,
+            value: Box::new(value),
+            body: Box::new(expanded),
+        };
+    }
+    Ok(expanded)
+}
+
+fn expand_declared_resource_expression_node(
     expression: ContractExpression,
     resource_definitions: &DeclaredResourceScope,
 ) -> Result<ContractExpression, ClickError> {

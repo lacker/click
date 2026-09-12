@@ -659,3 +659,43 @@ int32 pick(struct node* node) {
     assert!(!message.contains("CBlock {"), "{message}");
     assert!(message.len() < 2000, "{message}");
 }
+
+/// The one-successor refusal used to print the `While` node with `Debug`,
+/// which attaches the body, every lowered invariant and effect check, and
+/// every resource spec to the message. A statement head is the statement's own
+/// C spelling and nothing else.
+#[test]
+fn statement_head_names_the_guard_without_the_loop_node() {
+    use crate::kernel::{
+        c_and, c_assign, c_int32_literal, c_load, c_not_equal, c_variable, c_while,
+    };
+
+    let condition = c_and(
+        c_not_equal(c_variable("a"), c_int32_literal(0)),
+        c_not_equal(c_load(c_variable("p")), c_int32_literal(0)),
+    );
+    let body = c_assign("unmistakable_body_local", c_int32_literal(0));
+    let loop_statement = c_while(condition, Vec::new(), body);
+    let head = super::diagnostics::describe_c_statement_head(&loop_statement);
+
+    assert_eq!(head, "while ((a != 0) && (*p != 0))");
+    assert!(!head.contains("unmistakable_body_local"), "{head}");
+    assert!(!head.contains("invariant_checks"), "{head}");
+
+    // A guard spelled past the printer's byte budget is truncated rather than
+    // allowed to set the size of the diagnostic.
+    let mut wide = c_not_equal(c_variable("a"), c_int32_literal(0));
+    for _ in 0..200 {
+        wide = c_and(
+            wide,
+            c_not_equal(c_variable("another_long_operand_name"), c_int32_literal(0)),
+        );
+    }
+    let wide_head = super::diagnostics::describe_c_statement_head(&c_while(
+        wide,
+        Vec::new(),
+        c_assign("a", c_int32_literal(0)),
+    ));
+    assert!(wide_head.len() <= 512, "{}", wide_head.len());
+    assert!(wide_head.ends_with('…'), "{wide_head}");
+}

@@ -384,15 +384,51 @@ impl ResourceContext {
                     .into_iter()
                     .flat_map(ResourceEntryIds::iter)
                 {
+                    let support = context
+                        .storage
+                        .support_occurrence_by_projection
+                        .get(entry)
+                        .copied();
                     *counts
-                        .entry(context.storage.supported_by.get(entry).cloned())
+                        .entry((support, context.storage.supported_by.get(entry).cloned()))
                         .or_insert(0usize) += 1;
                 }
                 counts
             };
+            let cached_expansions = |context: &Self| {
+                context
+                    .storage
+                    .index
+                    .exact
+                    .get(&fact)
+                    .into_iter()
+                    .flat_map(ResourceEntryIds::iter)
+                    .filter_map(|entry| {
+                        let occurrence = context.occurrence(*entry);
+                        let cache_key = if context
+                            .storage
+                            .projections_by_support_occurrence
+                            .get(&occurrence)
+                            .is_some()
+                        {
+                            occurrence
+                        } else {
+                            let (_, rank) = context.support_cache_key(*entry);
+                            ResourceOccurrenceId {
+                                arena: 0,
+                                ordinal: rank as u64,
+                            }
+                        };
+                        context
+                            .storage
+                            .expansions_by_support_occurrence
+                            .get(&occurrence)
+                            .map(|expansion| (cache_key, expansion.clone()))
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            };
             if representations(self) != representations(other)
-                || self.storage.expansions_by_support.get(&fact)
-                    != other.storage.expansions_by_support.get(&fact)
+                || cached_expansions(self) != cached_expansions(other)
             {
                 return false;
             }
@@ -414,8 +450,8 @@ impl ResourceContext {
         let mut changed = left.changed_facts_since(ancestor)?;
         changed.extend(right.changed_facts_since(ancestor)?);
         let representations = |context: &Self, fact: &CResourceFact| {
-            let mut explicit = 0;
-            let mut supported = BTreeMap::<CResourceFact, usize>::new();
+            let mut explicit = 0usize;
+            let mut supported = BTreeMap::<(CResourceFact, ResourceOccurrenceId), usize>::new();
             for entry in context
                 .storage
                 .index
@@ -425,7 +461,17 @@ impl ResourceContext {
                 .flat_map(ResourceEntryIds::iter)
             {
                 if let Some(support) = context.storage.supported_by.get(entry) {
-                    *supported.entry(support.clone()).or_default() += 1;
+                    let Some(support_entry) = context
+                        .storage
+                        .support_occurrence_by_projection
+                        .get(entry)
+                        .copied()
+                    else {
+                        continue;
+                    };
+                    *supported
+                        .entry((support.clone(), support_entry))
+                        .or_default() += 1;
                 } else {
                     explicit += 1;
                 }
@@ -444,24 +490,65 @@ impl ResourceContext {
                         .map(|right_count| (support, left_count.min(*right_count)))
                 })
                 .collect::<Vec<_>>();
-            let expansion = left
+            let shared_owned = if fact.is_own() {
+                let left_occurrences = left
+                    .storage
+                    .index
+                    .exact
+                    .get(fact)
+                    .into_iter()
+                    .flat_map(ResourceEntryIds::iter)
+                    .map(|entry| left.occurrence(*entry))
+                    .collect::<BTreeSet<_>>();
+                right
+                    .storage
+                    .index
+                    .exact
+                    .get(fact)
+                    .into_iter()
+                    .flat_map(ResourceEntryIds::iter)
+                    .map(|entry| right.occurrence(*entry))
+                    .filter(|occurrence| left_occurrences.contains(occurrence))
+                    .collect::<BTreeSet<_>>()
+            } else {
+                BTreeSet::new()
+            };
+            let common_expansions = left
                 .storage
-                .expansions_by_support
+                .index
+                .exact
                 .get(fact)
-                .filter(|left_expansion| {
-                    right.storage.expansions_by_support.get(fact) == Some(*left_expansion)
+                .into_iter()
+                .flat_map(ResourceEntryIds::iter)
+                .filter_map(|entry| {
+                    let occurrence = left.occurrence(*entry);
+                    let left_expansion = left
+                        .storage
+                        .expansions_by_support_occurrence
+                        .get(&occurrence)?;
+                    let right_entry = right.storage.entry_by_occurrence.get(&occurrence)?;
+                    if right.fact(*right_entry) != fact {
+                        return None;
+                    }
+                    let right_expansion = right
+                        .storage
+                        .expansions_by_support_occurrence
+                        .get(&occurrence)?;
+                    (left_expansion == right_expansion)
+                        .then(|| (occurrence, left_expansion.clone()))
                 })
-                .map(|expansion| expansion.as_ref().clone());
+                .collect::<Vec<_>>();
             common_representations.push((
                 fact.clone(),
                 left_explicit.min(right_explicit),
                 supported,
-                expansion,
+                shared_owned,
+                common_expansions,
             ));
         }
 
         let mut common = left.clone();
-        for fact in &changed {
+        for (fact, _, _, shared_owned, common_expansions) in &common_representations {
             let entries = common
                 .storage
                 .index
@@ -470,31 +557,64 @@ impl ResourceContext {
                 .cloned()
                 .unwrap_or_default();
             for entry in entries.iter().copied() {
-                if common.storage.facts.contains_key(&entry) {
+                let preserve = fact.is_own() && shared_owned.contains(&common.occurrence(entry));
+                if !preserve && common.storage.facts.contains_key(&entry) {
                     common.remove_entry(entry);
                 }
             }
+            if fact.is_own() {
+                let retained_expansions = common_expansions
+                    .iter()
+                    .map(|(occurrence, _)| *occurrence)
+                    .collect::<BTreeSet<_>>();
+                let retained_entries = common
+                    .storage
+                    .index
+                    .exact
+                    .get(fact)
+                    .into_iter()
+                    .flat_map(ResourceEntryIds::iter)
+                    .copied()
+                    .collect::<Vec<_>>();
+                for entry in retained_entries {
+                    let occurrence = common.occurrence(entry);
+                    if common
+                        .storage
+                        .expansions_by_support_occurrence
+                        .contains_key(&occurrence)
+                        && !retained_expansions.contains(&occurrence)
+                    {
+                        common =
+                            common.without_cached_supported_expansion_for_occurrence(occurrence);
+                    }
+                }
+            }
         }
-        for (fact, explicit, _, _) in &common_representations {
-            for _ in 0..*explicit {
+        for (fact, explicit, _, shared_owned, _) in &common_representations {
+            let additions = (*explicit).saturating_sub(shared_owned.len());
+            for _ in 0..additions {
                 common.insert_fact(fact.clone());
             }
         }
-        for (fact, _, supported, _) in &common_representations {
-            for (support, count) in supported {
+        for (fact, _, supported, _, _) in &common_representations {
+            for ((support, support_occurrence), count) in supported.iter() {
                 if !common.storage.index.exact.contains_key(support) {
                     continue;
                 }
                 for _ in 0..*count {
-                    common.insert_fact_with_support(fact.clone(), Some(support.clone()));
+                    if common
+                        .storage
+                        .entry_by_occurrence
+                        .get(support_occurrence)
+                        .is_some_and(|entry| common.fact(*entry) == support)
+                    {
+                        common.insert_fact_with_support_occurrence(
+                            fact.clone(),
+                            Some(support.clone()),
+                            Some(*support_occurrence),
+                        );
+                    }
                 }
-            }
-        }
-        for (support, _, _, expansion) in common_representations {
-            if let Some(expansion) = expansion
-                && common.storage.index.exact.contains_key(&support)
-            {
-                common = common.with_cached_supported_expansion(&support, expansion);
             }
         }
         Some(common)
@@ -511,12 +631,68 @@ impl ResourceContext {
             .expect("resource index refers to a live entry")
     }
 
+    pub(crate) fn occurrence(&self, entry: ResourceEntryId) -> ResourceOccurrenceId {
+        *self
+            .storage
+            .occurrence_by_entry
+            .get(&entry)
+            .expect("resource index refers to a live occurrence")
+    }
+
+    pub(crate) fn owned_occurrence_matches(
+        &self,
+        occurrence: ResourceOccurrenceId,
+        fact: &CResourceFact,
+    ) -> bool {
+        self.storage
+            .entry_by_occurrence
+            .get(&occurrence)
+            .is_some_and(|entry| self.storage.facts.get(entry) == Some(fact) && fact.is_own())
+    }
+
+    fn support_cache_key(&self, entry: ResourceEntryId) -> (CResourceFact, usize) {
+        let fact = self.fact(entry).clone();
+        let rank = self
+            .storage
+            .index
+            .exact
+            .get(&fact)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .filter(|candidate| self.fact(**candidate).is_own())
+            .take_while(|candidate| **candidate != entry)
+            .count();
+        (fact, rank)
+    }
+
     fn insert_fact(&mut self, fact: CResourceFact) {
         self.insert_fact_with_support(fact, None);
     }
 
     fn insert_fact_with_support(&mut self, fact: CResourceFact, support: Option<CResourceFact>) {
+        let support_entry = support.as_ref().and_then(|support| {
+            self.storage
+                .index
+                .exact
+                .get(support)
+                .into_iter()
+                .flat_map(ResourceEntryIds::iter)
+                .find(|entry| self.fact(**entry) == support && self.fact(**entry).is_own())
+                .copied()
+        });
+        let support_occurrence =
+            support_entry.and_then(|entry| self.storage.occurrence_by_entry.get(&entry).copied());
+        self.insert_fact_with_support_occurrence(fact, support, support_occurrence);
+    }
+
+    fn insert_fact_with_support_occurrence(
+        &mut self,
+        fact: CResourceFact,
+        support: Option<CResourceFact>,
+        support_occurrence: Option<ResourceOccurrenceId>,
+    ) {
         let entry = self.storage.next_entry_id;
+        let occurrence = ResourceOccurrenceId::fresh();
         let next_entry_id = self
             .storage
             .next_entry_id
@@ -540,13 +716,42 @@ impl ResourceContext {
                 )
             },
         );
+        let support_occurrence_by_projection = support_occurrence.map_or_else(
+            || self.storage.support_occurrence_by_projection.clone(),
+            |support_occurrence| {
+                self.storage
+                    .support_occurrence_by_projection
+                    .with_inserted(entry, support_occurrence)
+            },
+        );
+        let projections_by_support_occurrence = support_occurrence.map_or_else(
+            || self.storage.projections_by_support_occurrence.clone(),
+            |support_occurrence| {
+                insert_resource_index_entry(
+                    &self.storage.projections_by_support_occurrence,
+                    support_occurrence,
+                    entry,
+                )
+            },
+        );
         self.storage = std::sync::Arc::new(ResourceContextStorage {
             facts: self.storage.facts.with_inserted(entry, fact.clone()),
             next_entry_id,
+            occurrence_by_entry: self
+                .storage
+                .occurrence_by_entry
+                .with_inserted(entry, occurrence),
+            entry_by_occurrence: self
+                .storage
+                .entry_by_occurrence
+                .with_inserted(occurrence, entry),
             index: self.storage.index.with_inserted(entry, &fact),
             supported_by,
+            support_occurrence_by_projection,
             projections_by_support,
-            expansions_by_support: self.storage.expansions_by_support.clone(),
+            projections_by_support_occurrence,
+            expansions_by_support_occurrence: self.storage.expansions_by_support_occurrence.clone(),
+            expansions_by_support_entry: self.storage.expansions_by_support_entry.clone(),
             origin: self.storage.origin.clone(),
             history: Some(std::sync::Arc::new(ResourceContextChange {
                 fact,
@@ -557,11 +762,10 @@ impl ResourceContext {
     }
 
     fn remove_entry(&mut self, entry: ResourceEntryId) -> CResourceFact {
-        let fact = self.fact(entry).clone();
         let projections = self
             .storage
-            .projections_by_support
-            .get(&fact)
+            .projections_by_support_occurrence
+            .get(&self.occurrence(entry))
             .cloned()
             .unwrap_or_default();
         for projection in projections.iter().copied() {
@@ -575,20 +779,47 @@ impl ResourceContext {
         let fact = self.fact(entry).clone();
         let support = self.storage.supported_by.get(&entry).cloned();
         let supported_by = self.storage.supported_by.without_key(&entry);
+        let support_occurrence = self
+            .storage
+            .support_occurrence_by_projection
+            .get(&entry)
+            .copied();
+        let support_occurrence_by_projection = self
+            .storage
+            .support_occurrence_by_projection
+            .without_key(&entry);
         let projections_by_support = support.as_ref().map_or_else(
             || self.storage.projections_by_support.clone(),
             |support| {
                 remove_resource_index_entry(&self.storage.projections_by_support, support, entry)
             },
         );
-        let expansions_by_support = self.storage.expansions_by_support.without_key(&fact);
+        let projections_by_support_occurrence = support_occurrence.map_or_else(
+            || self.storage.projections_by_support_occurrence.clone(),
+            |support_occurrence| {
+                remove_resource_index_entry(
+                    &self.storage.projections_by_support_occurrence,
+                    &support_occurrence,
+                    entry,
+                )
+            },
+        );
+        let occurrence = self.occurrence(entry);
         self.storage = std::sync::Arc::new(ResourceContextStorage {
             facts: self.storage.facts.without_key(&entry),
             next_entry_id: self.storage.next_entry_id,
+            occurrence_by_entry: self.storage.occurrence_by_entry.without_key(&entry),
+            entry_by_occurrence: self.storage.entry_by_occurrence.without_key(&occurrence),
             index: self.storage.index.without_entry(entry, &fact),
             supported_by,
+            support_occurrence_by_projection,
             projections_by_support,
-            expansions_by_support,
+            projections_by_support_occurrence,
+            expansions_by_support_occurrence: self
+                .storage
+                .expansions_by_support_occurrence
+                .without_key(&occurrence),
+            expansions_by_support_entry: self.storage.expansions_by_support_entry.clone(),
             origin: self.storage.origin.clone(),
             history: Some(std::sync::Arc::new(ResourceContextChange {
                 fact: fact.clone(),
@@ -596,20 +827,93 @@ impl ResourceContext {
             })),
             materialized: std::sync::OnceLock::new(),
         });
+        if fact.is_own() {
+            self.rekey_cached_support_entries(&fact);
+        }
         fact
+    }
+
+    /// Rebuild only the canonical cache keys for one support fact. Removing
+    /// an earlier equal authority changes the rank of every later equal
+    /// authority; leaving the old `(fact, rank)` entries in place would let a
+    /// later insertion inherit stale expansion evidence.
+    fn rekey_cached_support_entries(&mut self, fact: &CResourceFact) {
+        let mut bucket = PersistentMap::default();
+        let mut rank = 0usize;
+        for entry in self
+            .storage
+            .index
+            .exact
+            .get(fact)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+        {
+            crate::instrumentation::record_deterministic_work(1);
+            if self.fact(*entry).is_own() {
+                if let Some(expansion) = self
+                    .storage
+                    .expansions_by_support_occurrence
+                    .get(&self.occurrence(*entry))
+                {
+                    bucket = bucket.with_inserted(rank, expansion.clone());
+                }
+                rank += 1;
+            }
+        }
+        let expansions_by_support_entry = if bucket.is_empty() {
+            self.storage.expansions_by_support_entry.without_key(fact)
+        } else {
+            self.storage
+                .expansions_by_support_entry
+                .with_inserted(fact.clone(), bucket)
+        };
+        self.storage = std::sync::Arc::new(ResourceContextStorage {
+            facts: self.storage.facts.clone(),
+            next_entry_id: self.storage.next_entry_id,
+            occurrence_by_entry: self.storage.occurrence_by_entry.clone(),
+            entry_by_occurrence: self.storage.entry_by_occurrence.clone(),
+            index: self.storage.index.clone(),
+            supported_by: self.storage.supported_by.clone(),
+            support_occurrence_by_projection: self.storage.support_occurrence_by_projection.clone(),
+            projections_by_support: self.storage.projections_by_support.clone(),
+            projections_by_support_occurrence: self
+                .storage
+                .projections_by_support_occurrence
+                .clone(),
+            expansions_by_support_occurrence: self.storage.expansions_by_support_occurrence.clone(),
+            expansions_by_support_entry,
+            origin: self.storage.origin.clone(),
+            history: self.storage.history.clone(),
+            materialized: std::sync::OnceLock::new(),
+        });
     }
 
     fn replace_facts(
         &mut self,
-        facts: impl IntoIterator<Item = CResourceFact>,
+        facts: impl IntoIterator<Item = (Option<ResourceOccurrenceId>, CResourceFact)>,
         changed_facts: impl IntoIterator<Item = CResourceFact>,
     ) {
+        // Normalization rebuilds the indexed representation, but unchanged
+        // facts keep their opaque authority occurrence. This lets the
+        // support relation be restored after an unrelated merge without
+        // manufacturing a fresh scope for an observation.
         let mut replacement_facts = PersistentMap::default();
         let mut replacement_index = ResourceContextIndex::default();
+        let mut replacement_occurrences = PersistentMap::default();
+        let mut replacement_entries = PersistentMap::default();
         let mut next_entry_id = 0_u64;
-        for fact in facts {
+        for (occurrence, fact) in facts {
+            // Normalization carries the occurrence alongside its slot. Equal
+            // facts therefore cannot exchange authorities merely because a
+            // BTreeMap happens to return them in a different order. A slot
+            // whose fact was merged or otherwise replaced has no occurrence
+            // and receives a fresh authority below.
+            let occurrence = occurrence.unwrap_or_else(ResourceOccurrenceId::fresh);
             replacement_facts = replacement_facts.with_inserted(next_entry_id, fact.clone());
             replacement_index = replacement_index.with_inserted(next_entry_id, &fact);
+            replacement_occurrences =
+                replacement_occurrences.with_inserted(next_entry_id, occurrence);
+            replacement_entries = replacement_entries.with_inserted(occurrence, next_entry_id);
             next_entry_id = next_entry_id
                 .checked_add(1)
                 .expect("resource entry id space exhausted");
@@ -624,10 +928,15 @@ impl ResourceContext {
         self.storage = std::sync::Arc::new(ResourceContextStorage {
             facts: replacement_facts,
             next_entry_id,
+            occurrence_by_entry: replacement_occurrences,
+            entry_by_occurrence: replacement_entries,
             index: replacement_index,
             supported_by: PersistentMap::default(),
+            support_occurrence_by_projection: PersistentMap::default(),
             projections_by_support: PersistentMap::default(),
-            expansions_by_support: PersistentMap::default(),
+            projections_by_support_occurrence: PersistentMap::default(),
+            expansions_by_support_occurrence: PersistentMap::default(),
+            expansions_by_support_entry: PersistentMap::default(),
             origin: self.storage.origin.clone(),
             history,
             materialized: std::sync::OnceLock::new(),
@@ -672,6 +981,131 @@ impl ResourceContext {
     ) -> Option<&CResourceFact> {
         self.direct_match_candidates(required)
             .find(|available| resource_fact_entails(available, required, assumptions))
+    }
+
+    /// Select an exact owned occurrence for a fact-only API. Equal owned
+    /// facts are distinct authorities, so callers that need to attach a
+    /// projection must reject an ambiguous value-only lookup.
+    pub(crate) fn unique_owned_occurrence_for_fact(
+        &self,
+        required: &CResourceFact,
+    ) -> Option<(ResourceOccurrenceId, &CResourceFact)> {
+        let mut entries = self
+            .storage
+            .index
+            .exact
+            .get(required)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .filter(|entry| self.fact(**entry).is_own())
+            .copied();
+        let entry = entries.next()?;
+        if entries.next().is_some() {
+            return None;
+        }
+        Some((self.occurrence(entry), self.fact(entry)))
+    }
+
+    pub(crate) fn owned_occurrences_for_fact(
+        &self,
+        required: &CResourceFact,
+    ) -> Vec<ResourceOccurrenceId> {
+        self.storage
+            .index
+            .exact
+            .get(required)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .filter(|entry| self.fact(**entry).is_own())
+            .map(|entry| self.occurrence(*entry))
+            .collect()
+    }
+
+    /// Finds the owned authority that directly supports a requirement. A
+    /// supported projection records an owned fact (never another projection)
+    /// as its support, so this is deliberately one indexed hop rather than a
+    /// recursive search through caller-controlled metadata.
+    pub(crate) fn directly_supporting_owned_entry(
+        &self,
+        required: &CResourceFact,
+        assumptions: &PureFactContext,
+    ) -> Option<(ResourceOccurrenceId, &CResourceFact)> {
+        self.direct_match_candidate_positions(required)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .filter_map(|entry| {
+                let candidate = self.fact(*entry);
+                if !resource_fact_entails(candidate, required, assumptions) {
+                    return None;
+                }
+                if candidate.is_own() {
+                    return Some((self.occurrence(*entry), candidate));
+                }
+                self.storage.supported_by.get(entry).and_then(|support| {
+                    self.storage
+                        .support_occurrence_by_projection
+                        .get(entry)
+                        .copied()
+                        .filter(|support_occurrence| {
+                            self.storage
+                                .entry_by_occurrence
+                                .get(support_occurrence)
+                                .is_some_and(|entry| self.storage.facts.get(entry) == Some(support))
+                                && support.is_own()
+                        })
+                        .map(|support_occurrence| (support_occurrence, support))
+                })
+            })
+            .next()
+    }
+
+    /// Whether an exact projected representation is attached to the supplied
+    /// owned support. This is kept indexed by the projected fact so proof
+    /// evidence can validate the support relation without scanning the frame.
+    pub(crate) fn has_supported_projection(
+        &self,
+        fact: &CResourceFact,
+        support_occurrence: ResourceOccurrenceId,
+        support: &CResourceFact,
+    ) -> bool {
+        self.storage
+            .index
+            .exact
+            .get(fact)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .any(|entry| {
+                self.storage.supported_by.get(entry) == Some(support)
+                    && self.storage.support_occurrence_by_projection.get(entry)
+                        == Some(&support_occurrence)
+            })
+    }
+
+    /// Validate every projection indexed under one exact support occurrence.
+    /// The reverse index bounds this check by the affected support rather than
+    /// scanning unrelated resources in the frame.
+    pub(crate) fn support_occurrence_is_live(
+        &self,
+        support_occurrence: ResourceOccurrenceId,
+        support: &CResourceFact,
+    ) -> bool {
+        let Some(support_entry) = self.storage.entry_by_occurrence.get(&support_occurrence) else {
+            return false;
+        };
+        if self.storage.facts.get(support_entry) != Some(support) || !support.is_own() {
+            return false;
+        }
+        self.storage
+            .projections_by_support_occurrence
+            .get(&support_occurrence)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .all(|entry| {
+                self.storage.facts.contains_key(entry)
+                    && self.storage.supported_by.get(entry) == Some(support)
+                    && self.storage.support_occurrence_by_projection.get(entry)
+                        == Some(&support_occurrence)
+            })
     }
 
     pub(crate) fn proves_owned_resources_separate(
@@ -1048,37 +1482,112 @@ impl ResourceContext {
     ///
     /// The reverse support index makes later removal proportional to the
     /// projections of this authority rather than the size of the context.
+    #[allow(dead_code)]
     pub(crate) fn unchecked_with_supported_facts(
-        mut self,
+        self,
         support: &CResourceFact,
         facts: impl IntoIterator<Item = CResourceFact>,
     ) -> Self {
         debug_assert!(support.is_own());
         debug_assert!(self.storage.index.exact.contains_key(support));
+        let support_entry =
+            self.unique_owned_occurrence_for_fact(support)
+                .map(|(occurrence, _)| {
+                    self.storage
+                        .entry_by_occurrence
+                        .get(&occurrence)
+                        .copied()
+                        .expect("owned occurrence must refer to a live entry")
+                });
+        self.unchecked_with_supported_facts_from_entry(
+            support_entry.expect("supported projections require an owned support entry"),
+            support,
+            facts,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn unchecked_with_supported_facts_from_entry(
+        self,
+        support_entry: ResourceEntryId,
+        support: &CResourceFact,
+        facts: impl IntoIterator<Item = CResourceFact>,
+    ) -> Self {
+        debug_assert!(support.is_own());
+        debug_assert_eq!(self.fact(support_entry), support);
+        let support_occurrence = self.occurrence(support_entry);
+        self.unchecked_with_supported_facts_from_occurrence(support_occurrence, support, facts)
+    }
+
+    pub(crate) fn unchecked_with_supported_facts_from_occurrence(
+        mut self,
+        support_occurrence: ResourceOccurrenceId,
+        support: &CResourceFact,
+        facts: impl IntoIterator<Item = CResourceFact>,
+    ) -> Self {
+        debug_assert!(support.is_own());
+        debug_assert!(
+            self.storage
+                .entry_by_occurrence
+                .get(&support_occurrence)
+                .is_some_and(|entry| self.fact(*entry) == support)
+        );
         for fact in facts {
             debug_assert!(fact.is_view());
-            self.insert_fact_with_support(fact, Some(support.clone()));
+            self.insert_fact_with_support_occurrence(
+                fact,
+                Some(support.clone()),
+                Some(support_occurrence),
+            );
         }
         self
     }
 
+    #[allow(dead_code)]
     pub(crate) fn with_cached_supported_expansion(
-        mut self,
+        self,
         support: &CResourceFact,
         expansion: Vec<CResourceFact>,
     ) -> Self {
         debug_assert!(support.is_own());
         debug_assert!(self.storage.index.exact.contains_key(support));
+        let (support_occurrence, _) = self
+            .unique_owned_occurrence_for_fact(support)
+            .expect("cached expansions require one unambiguous owned support entry");
+        self.with_cached_supported_expansion_for_occurrence(support_occurrence, support, expansion)
+    }
+
+    pub(crate) fn with_cached_supported_expansion_for_occurrence(
+        mut self,
+        support_occurrence: ResourceOccurrenceId,
+        support: &CResourceFact,
+        expansion: Vec<CResourceFact>,
+    ) -> Self {
+        debug_assert!(
+            self.storage
+                .entry_by_occurrence
+                .get(&support_occurrence)
+                .is_some_and(|entry| self.fact(*entry) == support)
+        );
+        let expansion = std::sync::Arc::new(expansion);
         self.storage = std::sync::Arc::new(ResourceContextStorage {
             facts: self.storage.facts.clone(),
             next_entry_id: self.storage.next_entry_id,
+            occurrence_by_entry: self.storage.occurrence_by_entry.clone(),
+            entry_by_occurrence: self.storage.entry_by_occurrence.clone(),
             index: self.storage.index.clone(),
             supported_by: self.storage.supported_by.clone(),
+            support_occurrence_by_projection: self.storage.support_occurrence_by_projection.clone(),
             projections_by_support: self.storage.projections_by_support.clone(),
-            expansions_by_support: self
+            projections_by_support_occurrence: self
                 .storage
-                .expansions_by_support
-                .with_inserted(support.clone(), std::sync::Arc::new(expansion)),
+                .projections_by_support_occurrence
+                .clone(),
+            expansions_by_support_occurrence: self
+                .storage
+                .expansions_by_support_occurrence
+                .with_inserted(support_occurrence, expansion.clone()),
+            expansions_by_support_entry: self.storage.expansions_by_support_entry.clone(),
             origin: self.storage.origin.clone(),
             history: Some(std::sync::Arc::new(ResourceContextChange {
                 fact: support.clone(),
@@ -1086,17 +1595,114 @@ impl ResourceContext {
             })),
             materialized: std::sync::OnceLock::new(),
         });
+        self.rekey_cached_support_entries(support);
         self
     }
 
+    #[allow(dead_code)]
     pub(crate) fn cached_supported_expansion(
         &self,
         support: &CResourceFact,
     ) -> Option<&[CResourceFact]> {
-        self.storage
-            .expansions_by_support
-            .get(support)
+        self.cached_expansion_for_fact(support)
             .map(|expansion| expansion.as_slice())
+    }
+
+    /// Return every cached expansion attached to an exact support occurrence.
+    /// Fact-only lookup is intentionally plural: equal authorities may carry
+    /// distinct folded snapshots and silently selecting one would discard the
+    /// other authority's evidence.
+    pub(crate) fn cached_supported_expansions(
+        &self,
+        support: &CResourceFact,
+    ) -> Vec<(ResourceOccurrenceId, Vec<CResourceFact>)> {
+        self.storage
+            .index
+            .exact
+            .get(support)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .filter_map(|entry| {
+                self.storage
+                    .expansions_by_support_occurrence
+                    .get(&self.occurrence(*entry))
+                    .map(|expansion| (self.occurrence(*entry), expansion.as_ref().clone()))
+            })
+            .collect()
+    }
+
+    fn cached_expansion_for_fact(
+        &self,
+        support: &CResourceFact,
+    ) -> Option<&std::sync::Arc<Vec<CResourceFact>>> {
+        self.cached_expansion_with_occurrence_for_fact(support)
+            .map(|(_, expansion)| expansion)
+    }
+
+    fn cached_expansion_with_occurrence_for_fact(
+        &self,
+        support: &CResourceFact,
+    ) -> Option<(ResourceOccurrenceId, &std::sync::Arc<Vec<CResourceFact>>)> {
+        let mut matches = self
+            .storage
+            .index
+            .exact
+            .get(support)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .filter_map(|entry| {
+                self.storage
+                    .expansions_by_support_occurrence
+                    .get(&self.occurrence(*entry))
+                    .map(|expansion| (self.occurrence(*entry), expansion))
+            });
+        let result = matches.next()?;
+        matches.next().is_none().then_some(result)
+    }
+
+    fn without_cached_supported_expansion_for_occurrence(
+        mut self,
+        occurrence: ResourceOccurrenceId,
+    ) -> Self {
+        let support_entry = *self
+            .storage
+            .entry_by_occurrence
+            .get(&occurrence)
+            .expect("cached expansion occurrence must be live");
+        self.storage = std::sync::Arc::new(ResourceContextStorage {
+            facts: self.storage.facts.clone(),
+            next_entry_id: self.storage.next_entry_id,
+            occurrence_by_entry: self.storage.occurrence_by_entry.clone(),
+            entry_by_occurrence: self.storage.entry_by_occurrence.clone(),
+            index: self.storage.index.clone(),
+            supported_by: self.storage.supported_by.clone(),
+            support_occurrence_by_projection: self.storage.support_occurrence_by_projection.clone(),
+            projections_by_support: self.storage.projections_by_support.clone(),
+            projections_by_support_occurrence: self
+                .storage
+                .projections_by_support_occurrence
+                .clone(),
+            expansions_by_support_occurrence: self
+                .storage
+                .expansions_by_support_occurrence
+                .without_key(&occurrence),
+            expansions_by_support_entry: self.storage.expansions_by_support_entry.clone(),
+            origin: self.storage.origin.clone(),
+            history: self.storage.history.clone(),
+            materialized: std::sync::OnceLock::new(),
+        });
+        let support = self.fact(support_entry).clone();
+        self.rekey_cached_support_entries(&support);
+        self
+    }
+
+    pub(crate) fn without_exact_representation_for_occurrence(
+        mut self,
+        occurrence: ResourceOccurrenceId,
+    ) -> Option<Self> {
+        let entry = *self.storage.entry_by_occurrence.get(&occurrence)?;
+        self.remove_entry(entry);
+        Some(self)
     }
 
     /// Finds an owned support whose certified expansion contains `target`.
@@ -1114,13 +1720,17 @@ impl ResourceContext {
         let entries = self.storage.index.exact.get(&core)?;
         entries
             .iter()
-            .filter_map(|entry| self.storage.supported_by.get(entry))
-            .find(|support| {
+            .filter_map(|entry| {
+                let support = self.storage.supported_by.get(entry)?;
+                let support_occurrence =
+                    self.storage.support_occurrence_by_projection.get(entry)?;
                 self.storage
-                    .expansions_by_support
-                    .get(*support)
-                    .is_some_and(|expansion| expansion.iter().any(|fact| fact == target))
+                    .expansions_by_support_occurrence
+                    .get(support_occurrence)
+                    .filter(|expansion| expansion.iter().any(|fact| fact == target))
+                    .map(|_| support)
             })
+            .next()
     }
 
     pub fn try_compose_with_fact(
@@ -1145,11 +1755,48 @@ impl ResourceContext {
         facts: impl IntoIterator<Item = CResourceFact>,
         assumptions: &PureFactContext,
     ) -> Result<Self, ResourceContextValidityError> {
-        let context = self.unchecked_with_facts(facts);
+        self.try_compose_with_facts_delaying_normalization_with_occurrences(facts, assumptions)
+            .map(|(context, _)| context)
+    }
+
+    /// Compose facts while retaining the exact occurrence allocated for each
+    /// input. Callers that publish derived projections must use this relation
+    /// instead of rediscovering a support by its fact value: an equal caller
+    /// authority may already be live in the destination context.
+    pub(crate) fn try_compose_with_facts_delaying_normalization_with_occurrences(
+        mut self,
+        facts: impl IntoIterator<Item = CResourceFact>,
+        assumptions: &PureFactContext,
+    ) -> Result<(Self, Vec<(CResourceFact, ResourceOccurrenceId)>), ResourceContextValidityError>
+    {
+        let mut inserted = Vec::new();
+        for fact in facts {
+            let entry = self.storage.next_entry_id;
+            self.insert_fact(fact.clone());
+            inserted.push((fact, self.occurrence(entry)));
+        }
+        let context = self;
         if let Some(error) = context.validity_error(assumptions) {
             return Err(error);
         }
-        Ok(context)
+        Ok((context, inserted))
+    }
+
+    pub(crate) fn try_compose_with_fact_with_occurrence(
+        self,
+        fact: CResourceFact,
+        assumptions: &PureFactContext,
+    ) -> Result<(Self, Option<ResourceOccurrenceId>), ResourceContextValidityError> {
+        let (context, mut inserted) = self
+            .try_compose_with_facts_delaying_normalization_with_occurrences(
+                std::iter::once(fact.clone()),
+                assumptions,
+            )?;
+        let occurrence = inserted.pop().map(|(_, occurrence)| occurrence);
+        let context = context.normalized(assumptions);
+        let occurrence =
+            occurrence.filter(|occurrence| context.owned_occurrence_matches(*occurrence, &fact));
+        Ok((context, occurrence))
     }
 
     /// Extends a context whose validity has already been checked, validating
@@ -1854,7 +2501,9 @@ impl ResourceContext {
     }
 
     pub(in crate::kernel) fn normalized(mut self, assumptions: &PureFactContext) -> Self {
-        if !self.storage.supported_by.is_empty() || !self.storage.expansions_by_support.is_empty() {
+        if !self.storage.supported_by.is_empty()
+            || !self.storage.expansions_by_support_occurrence.is_empty()
+        {
             let supported = self.supported_projection_pairs();
             let expansions = self.cached_support_expansions();
             let entries = self
@@ -1869,10 +2518,21 @@ impl ResourceContext {
             self.storage = std::sync::Arc::new(ResourceContextStorage {
                 facts: self.storage.facts.clone(),
                 next_entry_id: self.storage.next_entry_id,
+                occurrence_by_entry: self.storage.occurrence_by_entry.clone(),
+                entry_by_occurrence: self.storage.entry_by_occurrence.clone(),
                 index: self.storage.index.clone(),
                 supported_by: self.storage.supported_by.clone(),
+                support_occurrence_by_projection: self
+                    .storage
+                    .support_occurrence_by_projection
+                    .clone(),
                 projections_by_support: self.storage.projections_by_support.clone(),
-                expansions_by_support: PersistentMap::default(),
+                projections_by_support_occurrence: self
+                    .storage
+                    .projections_by_support_occurrence
+                    .clone(),
+                expansions_by_support_occurrence: PersistentMap::default(),
+                expansions_by_support_entry: PersistentMap::default(),
                 origin: self.storage.origin.clone(),
                 history: self.storage.history.clone(),
                 materialized: std::sync::OnceLock::new(),
@@ -1884,8 +2544,10 @@ impl ResourceContext {
         }
         let mut changed_facts = BTreeSet::new();
         let retained = self
+            .storage
+            .facts
             .iter()
-            .filter_map(|fact| {
+            .filter_map(|(entry, fact)| {
                 if fact.has_valid_instance_access()
                     && fact
                         .owned_quantity_term()
@@ -1894,25 +2556,25 @@ impl ResourceContext {
                     changed_facts.insert(fact.clone());
                     None
                 } else {
-                    Some(fact.clone())
+                    Some((Some(self.occurrence(*entry)), fact.clone()))
                 }
             })
             .collect::<Vec<_>>();
         let mut slots = retained.iter().cloned().map(Some).collect::<Vec<_>>();
         let mut index = ResourceNormalizationIndex::default();
-        for (position, fact) in retained.iter().enumerate() {
+        for (position, (_, fact)) in retained.iter().enumerate() {
             index.insert(position, fact);
         }
         let mut i = 0;
         while i < slots.len() {
-            let Some(fact) = slots[i].clone() else {
+            let Some((_, fact)) = slots[i].clone() else {
                 i += 1;
                 continue;
             };
             let mut changed = false;
             for j in index.candidates_after(i, &fact) {
                 crate::instrumentation::record_deterministic_work(1);
-                let Some(right) = slots[j].as_ref() else {
+                let Some((_, right)) = slots[j].as_ref() else {
                     continue;
                 };
                 if let Some(merged) = normalize_resource_fact_pair(&fact, right, assumptions) {
@@ -1922,7 +2584,10 @@ impl ResourceContext {
                     index.remove(i, &fact);
                     index.remove(j, right);
                     slots[j] = None;
-                    slots[i] = Some(merged.clone());
+                    // The merged fact is a new authority. Do not inherit
+                    // either input occurrence, but keep every untouched slot
+                    // tied to its original occurrence.
+                    slots[i] = Some((None, merged.clone()));
                     index.insert(i, &merged);
                     changed = true;
                     break;
@@ -1939,51 +2604,81 @@ impl ResourceContext {
         self
     }
 
-    fn supported_projection_pairs(&self) -> Vec<(CResourceFact, CResourceFact)> {
+    fn supported_projection_pairs(
+        &self,
+    ) -> Vec<(Option<ResourceOccurrenceId>, CResourceFact, CResourceFact)> {
         self.storage
             .supported_by
             .iter()
-            .map(|(entry, support)| (support.clone(), self.fact(*entry).clone()))
+            .map(|(entry, support)| {
+                (
+                    self.storage
+                        .support_occurrence_by_projection
+                        .get(entry)
+                        .copied(),
+                    support.clone(),
+                    self.fact(*entry).clone(),
+                )
+            })
             .collect()
     }
 
     fn restore_supported_projection_pairs(
         mut self,
-        supported: Vec<(CResourceFact, CResourceFact)>,
+        supported: Vec<(Option<ResourceOccurrenceId>, CResourceFact, CResourceFact)>,
     ) -> Self {
-        for (support, projection) in supported {
+        for (support_entry, support, projection) in supported {
             if !self.storage.index.exact.contains_key(&support) {
                 continue;
             }
-            let already_present = self
-                .storage
-                .projections_by_support
-                .get(&support)
-                .into_iter()
-                .flat_map(ResourceEntryIds::iter)
-                .any(|entry| self.fact(*entry) == &projection);
+            let already_present = support_entry.is_some_and(|support_entry| {
+                self.has_supported_projection(&projection, support_entry, &support)
+            });
             if !already_present {
-                self.insert_fact_with_support(projection, Some(support));
+                if let Some(support_occurrence) = support_entry.filter(|occurrence| {
+                    self.storage
+                        .entry_by_occurrence
+                        .get(occurrence)
+                        .is_some_and(|entry| self.storage.facts.get(entry) == Some(&support))
+                }) {
+                    self.insert_fact_with_support_occurrence(
+                        projection,
+                        Some(support),
+                        Some(support_occurrence),
+                    );
+                } else if support_entry.is_none() {
+                    self.insert_fact_with_support(projection, Some(support));
+                }
             }
         }
         self
     }
 
-    fn cached_support_expansions(&self) -> Vec<(CResourceFact, Vec<CResourceFact>)> {
+    fn cached_support_expansions(&self) -> Vec<(ResourceOccurrenceId, Vec<CResourceFact>)> {
         self.storage
-            .expansions_by_support
+            .expansions_by_support_occurrence
             .iter()
-            .map(|(support, expansion)| (support.clone(), expansion.as_ref().clone()))
+            .map(|(support_occurrence, expansion)| {
+                (*support_occurrence, expansion.as_ref().clone())
+            })
             .collect()
     }
 
     fn restore_cached_support_expansions(
         mut self,
-        expansions: Vec<(CResourceFact, Vec<CResourceFact>)>,
+        expansions: Vec<(ResourceOccurrenceId, Vec<CResourceFact>)>,
     ) -> Self {
-        for (support, expansion) in expansions {
-            if self.storage.index.exact.contains_key(&support) {
-                self = self.with_cached_supported_expansion(&support, expansion);
+        for (support_occurrence, expansion) in expansions {
+            let Some(entry) = self.storage.entry_by_occurrence.get(&support_occurrence) else {
+                continue;
+            };
+            let support = self.fact(*entry).clone();
+            if support.is_own() {
+                self = self.with_cached_supported_expansion_for_occurrence(
+                    support_occurrence,
+                    &support,
+                    expansion,
+                );
             }
         }
         self

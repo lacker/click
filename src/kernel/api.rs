@@ -329,11 +329,16 @@ fn c_loop_preservation_contexts_with_mode(
         )
     })? {
         let condition_contexts = if do_while {
-            vec![(invariant_facts.clone(), invariant_obligations.clone())]
+            vec![CConditionAssumption {
+                branch: CConditionBranch::Decided(true),
+                facts: invariant_facts.clone(),
+                obligations: invariant_obligations.clone(),
+            }]
         } else {
             assume_condition_truthiness(
                 &top_state,
                 condition,
+                definitions,
                 assumptions,
                 &invariant_facts,
                 &invariant_obligations,
@@ -342,7 +347,15 @@ fn c_loop_preservation_contexts_with_mode(
             )
             .map_err(|error| format!("could not assume the loop condition: {error:?}"))?
         };
-        for (facts, obligations) in condition_contexts {
+        for assumption in condition_contexts {
+            // A guard operand this function may not read leaves the head's
+            // premises undefined; there is no iteration to describe here.
+            if let Some(outcome) = assumption.undecided_outcome() {
+                return Err(undecided_loop_guard_context(outcome));
+            }
+            let CConditionAssumption {
+                facts, obligations, ..
+            } = assumption;
             let context_assumptions = assumptions_with_path_context(assumptions, &facts, &[]);
             if let Some(obligation) = obligations.iter().find(|obligation| {
                 !required_obligation_is_exactly_discharged(
@@ -363,6 +376,19 @@ fn c_loop_preservation_contexts_with_mode(
                 .into_iter()
                 .map(|fact| fact.proposition().clone())
                 .collect::<Vec<_>>();
+            // D7 applied to refutation at the loop head. The invariants and
+            // the loop condition together may refute an arm of a binder's
+            // model, and the body needs that conclusion as a premise: an
+            // ascending loop learns `ctx.model != Context::Top` from
+            // `parent != 0` against the `Top` arm's `fact parent == 0`, which
+            // is what lets its proof `match` close that arm by contradiction
+            // instead of unfolding a frame it does not hold.
+            pure_facts.extend(crate::kernel::refuted_instance_arm_model_facts(
+                top_state.resources(),
+                definitions,
+                &top_state,
+                &context_assumptions,
+            ));
             pure_facts.sort();
             pure_facts.dedup();
             contexts.push(CLoopPreservationContext {

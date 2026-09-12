@@ -945,6 +945,35 @@ one scoped open with owned footprints and no artificial C changes. Add
 deterministic curves varying calls and unrelated supported facts independently.
 Update G1 status only after these tests and the full gate pass.
 
+#### W5 checkpoint A handoff (2026-09-12)
+
+The first W5 reduction confirmed that callback calls with owned footprints and
+an allowed mutation remain sound on the existing three-call, one-open helper;
+the concrete implementation gap was composite observation: `observe`
+published body view cores with `unchecked_with_facts`, unlike support-indexed
+projections returned by contract calls. Those views therefore had no reverse
+dependency on the folded owner. No unconditional callback-fact retention was
+added, and callback-cell provenance is not claimed here.
+
+Checkpoint A attaches observation projections to an opaque, thread-arena
+resource occurrence. Persistent entry-to-occurrence maps distinguish equal
+authorities across forks, replacement, and normalization; occurrence-keyed
+reverse indexes remove only the projections of the consumed authority, while
+observation evidence validates the affected support without scanning unrelated
+facts. Joins and cached expansions preserve support only when the same
+occurrence survives both descendants. The surface observer now uses the exact
+support occurrence, including when observing a view that is itself already
+supported. Explicit unsupported views remain explicit.
+Resource-context equality deliberately compares the observable support topology
+of a snapshot; provenance-sensitive transition and evidence checks use the
+opaque occurrence directly and never infer authority identity from equality.
+
+The checkpoint adds equal-occurrence removal, fork identity, normalization and
+join/cached-expansion preservation, stale-support evidence, and four-size
+unrelated-fact scaling regressions. It is a green partial W5 checkpoint; the
+observe-then-consume/replace C fixture and the remaining R3/R6 mutation and
+callback-cell regressions are outstanding for later W5 checkpoints.
+
 ### W6 — Unify existing binder transport and snapshot substitution
 
 **Dependencies:** W2 logically; default dispatch after W5 to avoid conflicts.

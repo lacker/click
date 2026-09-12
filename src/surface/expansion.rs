@@ -1753,6 +1753,7 @@ fn parse_source_with_c_layouts_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     ) = parse_c_layouts(click_source, sources)?;
     parser::parse_with_layouts_and_aggregate_objects(
         click_source,
@@ -1762,6 +1763,7 @@ fn parse_source_with_c_layouts_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
+        local_struct_pointers,
     )
 }
 

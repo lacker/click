@@ -1,29 +1,34 @@
-# `__rb_change_child` over an rbtree context frame
+# `__rb_change_child` over a node-keyed rbtree context frame
 
 `ctx_at(child, root)` is the zipper frame for the rbtree: it is keyed by the
-focused child, owns the ancestors' cells, and bottoms out at `Top`, which owns
-`root->rb_node`. `plug` rebuilds the whole model from a frame and the focused
-subtree, so a frame plus a subtree is a whole tree.
+focused child alone, owns the ancestors' cells through the frame's own payloads,
+and bottoms out at `Top`, which owns `root->rb_node`. `plug` rebuilds the whole
+model from a frame and the focused subtree, so a frame plus a subtree is a whole
+tree. This is the node-keyed spelling decided for gap 35 in
+[`issues/recursive-structure-models.md`](../issues/recursive-structure-models.md):
+`rb_at(p)` carries the parent in the model, and a `Left`/`Right` frame carries
+the node it owns and *that* node's parent as its first two payloads, so `plug`
+can rebuild each ancestor and the arm can still state its packed parent word.
 
-`__rb_change_child` writes exactly one of `parent->rb_left`,
-`parent->rb_right`, or `root->rb_node` — always a cell the frame owns — so its
-effect is stated on the frame: the same context model now focuses the new
-subtree. The helper's two nested `if`s are decided before execution, so no
-path is left to search: `Context::Top` fixes `parent == 0`, `Context::Left`
-gives `parent->rb_left == child`, and in the `Right` case the requirement
-`parent->rb_left != old_child` sends the helper down its `else` path. That
-last requirement reads a cell of a still-folded frame, which is exactly what
-arm selection at contract lowering grants: the constructor equality entails
-one arm, and that arm owns `parent->rb_left`.
+`__rb_change_child` writes exactly one of `parent->rb_left`, `parent->rb_right`,
+or `root->rb_node` — always a cell the frame owns — so its effect is stated on
+the frame: the same context model now focuses the new subtree. The helper's two
+nested `if`s are decided before execution. `Context::Top` fixes `parent == 0`,
+`Context::Left` gives `identity->rb_left == child`, and in the `Right` case the
+empty left sibling makes `identity->rb_left` null while the caller's child
+exists, so one null and one non-null pointer send the helper down its `else`
+path with no requirement about `parent->rb_left` at all (package A11).
 
-Each case is a separate contracted wrapper around the one unchanged helper,
+Each frame is a separate contracted wrapper around the one unchanged helper,
 because a requirement has to entail a single frame constructor before the
-frame's cells are readable and its payload is named. The frames here are one
-level deep with an empty sibling, which is what a requirement can spell today:
-a general frame would have to relate the `parent` the model carries to the
-helper's `parent` argument, and a pointer payload cannot yet be compared with
-a C pointer, while an existential requirement cannot bind the arm's `Color`,
-`RbTree` and `Context` payloads.
+frame's cells are readable and its payloads are named, and naming them is what
+ties the helper's `parent` argument to the frame's own node. One contract over
+all three frames — the shape package A10 reached when the frame took the parent
+as a resource argument — additionally needs a bridge from the C `parent` to the frame's payload under a proof `match`. The
+bridge exists: an equational requirement `c.model == ctx_with_parent(c.model,
+parent)` plus `extract` of the field equality of a same-constructor equality
+yields `payload == parent`. What is still missing for the general `Right` frame
+is the sibling case analysis underneath it, so the three wrappers stay here.
 
 ```c filename=rbtree.h
 #ifndef RBTREE_H
@@ -88,7 +93,7 @@ spec enum Color { Red, Black }
 
 spec enum RbTree {
     Empty,
-    Node(struct rb_node*, Color, RbTree, RbTree),
+    Node(struct rb_node*, struct rb_node*, Color, RbTree, RbTree),
 }
 
 spec enum Context {
@@ -109,10 +114,10 @@ function plug(ctx: Context, sub: RbTree) -> RbTree
 {
     match ctx {
         Context::Top => sub,
-        Context::Left(parent, grandparent, color, sibling_model, up_model) =>
-            plug(up_model, RbTree::Node(parent, color, sub, sibling_model)),
-        Context::Right(parent, grandparent, color, sibling_model, up_model) =>
-            plug(up_model, RbTree::Node(parent, color, sibling_model, sub)),
+        Context::Left(identity, grandparent, color, sibling_model, up_model) =>
+            plug(up_model, RbTree::Node(identity, grandparent, color, sub, sibling_model)),
+        Context::Right(identity, grandparent, color, sibling_model, up_model) =>
+            plug(up_model, RbTree::Node(identity, grandparent, color, sibling_model, sub)),
     }
 }
 
@@ -123,36 +128,38 @@ theorem plug_top_is_the_subtree(sub: RbTree) {
     }
 }
 
-theorem plug_left_frame(parent: struct rb_node*, grandparent: struct rb_node*,
+theorem plug_left_frame(identity: struct rb_node*, grandparent: struct rb_node*,
                         color: Color, sibling: RbTree, sub: RbTree) {
-    ensures plug(Context::Left(parent, grandparent, color, sibling, Context::Top), sub)
-        == RbTree::Node(parent, color, sub, sibling) by {
-        unfold(plug(Context::Left(parent, grandparent, color, sibling, Context::Top), sub));
-        unfold(plug(Context::Top, RbTree::Node(parent, color, sub, sibling)));
+    ensures plug(Context::Left(identity, grandparent, color, sibling, Context::Top), sub)
+        == RbTree::Node(identity, grandparent, color, sub, sibling) by {
+        unfold(plug(Context::Left(identity, grandparent, color, sibling, Context::Top), sub));
+        unfold(plug(Context::Top,
+            RbTree::Node(identity, grandparent, color, sub, sibling)));
         normalize();
     }
 }
 
-theorem plug_right_frame(parent: struct rb_node*, grandparent: struct rb_node*,
+theorem plug_right_frame(identity: struct rb_node*, grandparent: struct rb_node*,
                          color: Color, sibling: RbTree, sub: RbTree) {
-    ensures plug(Context::Right(parent, grandparent, color, sibling, Context::Top), sub)
-        == RbTree::Node(parent, color, sibling, sub) by {
-        unfold(plug(Context::Right(parent, grandparent, color, sibling, Context::Top), sub));
-        unfold(plug(Context::Top, RbTree::Node(parent, color, sibling, sub)));
+    ensures plug(Context::Right(identity, grandparent, color, sibling, Context::Top), sub)
+        == RbTree::Node(identity, grandparent, color, sibling, sub) by {
+        unfold(plug(Context::Right(identity, grandparent, color, sibling, Context::Top), sub));
+        unfold(plug(Context::Top,
+            RbTree::Node(identity, grandparent, color, sibling, sub)));
         normalize();
     }
 }
 
-resource rb_at(p: struct rb_node*, parent: struct rb_node*) {
+resource rb_at(p: struct rb_node*) {
     field model: RbTree;
     match model {
         RbTree::Empty => { fact p == 0; },
-        RbTree::Node(identity, color, left_model, right_model) => {
+        RbTree::Node(identity, parent, color, left_model, right_model) => {
             owns p->__rb_parent_color;
             owns p->rb_left;
             owns p->rb_right;
-            owns left: rb_at(p->rb_left, p);
-            owns right: rb_at(p->rb_right, p);
+            owns left: rb_at(p->rb_left);
+            owns right: rb_at(p->rb_right);
             fact p != 0;
             fact p == identity;
             fact aligned(p, 8);
@@ -173,35 +180,35 @@ resource ctx_at(child: struct rb_node*, root: struct rb_root*) {
             fact root != 0;
             fact root->rb_node == child;
         },
-        Context::Left(parent, grandparent, color, sibling_model, up_model) => {
-            owns parent->__rb_parent_color;
-            owns parent->rb_left;
-            owns parent->rb_right;
-            owns sibling: rb_at(parent->rb_right, parent);
-            owns up: ctx_at(parent, root);
-            fact parent != 0;
-            fact aligned(parent, 8);
+        Context::Left(identity, grandparent, color, sibling_model, up_model) => {
+            owns identity->__rb_parent_color;
+            owns identity->rb_left;
+            owns identity->rb_right;
+            owns sibling: rb_at(identity->rb_right);
+            owns up: ctx_at(identity, root);
+            fact identity != 0;
+            fact aligned(identity, 8);
             fact aligned(grandparent, 8);
-            fact parent->rb_left == child;
-            fact parent->__rb_parent_color
-                == address(grandparent) + (parent->__rb_parent_color & 1);
-            fact (parent->__rb_parent_color & 1) == color_bit(color);
+            fact identity->rb_left == child;
+            fact identity->__rb_parent_color
+                == address(grandparent) + (identity->__rb_parent_color & 1);
+            fact (identity->__rb_parent_color & 1) == color_bit(color);
             fact sibling.model == sibling_model;
             fact up.model == up_model;
         },
-        Context::Right(parent, grandparent, color, sibling_model, up_model) => {
-            owns parent->__rb_parent_color;
-            owns parent->rb_left;
-            owns parent->rb_right;
-            owns sibling: rb_at(parent->rb_left, parent);
-            owns up: ctx_at(parent, root);
-            fact parent != 0;
-            fact aligned(parent, 8);
+        Context::Right(identity, grandparent, color, sibling_model, up_model) => {
+            owns identity->__rb_parent_color;
+            owns identity->rb_left;
+            owns identity->rb_right;
+            owns sibling: rb_at(identity->rb_left);
+            owns up: ctx_at(identity, root);
+            fact identity != 0;
+            fact aligned(identity, 8);
             fact aligned(grandparent, 8);
-            fact parent->rb_right == child;
-            fact parent->__rb_parent_color
-                == address(grandparent) + (parent->__rb_parent_color & 1);
-            fact (parent->__rb_parent_color & 1) == color_bit(color);
+            fact identity->rb_right == child;
+            fact identity->__rb_parent_color
+                == address(grandparent) + (identity->__rb_parent_color & 1);
+            fact (identity->__rb_parent_color & 1) == color_bit(color);
             fact sibling.model == sibling_model;
             fact up.model == up_model;
         },
@@ -211,7 +218,7 @@ resource ctx_at(child: struct rb_node*, root: struct rb_root*) {
 void change_child_root(struct rb_node* old_child, struct rb_node* new_child,
                        struct rb_node* parent, struct rb_root* root) {
     consumes c: ctx_at(old_child, root);
-    owns s: rb_at(new_child, parent);
+    owns s: rb_at(new_child);
     requires parent == 0;
     requires c.model == Context::Top;
     produces d: ctx_at(new_child, root);
@@ -228,7 +235,7 @@ void change_child_left(struct rb_node* old_child, struct rb_node* new_child,
                        struct rb_node* parent, struct rb_node* grandparent,
                        struct rb_root* root) {
     consumes c: ctx_at(old_child, root);
-    owns s: rb_at(new_child, parent);
+    owns s: rb_at(new_child);
     requires c.model
         == Context::Left(parent, grandparent, Color::Black, RbTree::Empty, Context::Top);
     produces d: ctx_at(new_child, root);
@@ -245,17 +252,20 @@ void change_child_right(struct rb_node* old_child, struct rb_node* new_child,
                         struct rb_node* parent, struct rb_node* grandparent,
                         struct rb_root* root) {
     consumes c: ctx_at(old_child, root);
-    owns s: rb_at(new_child, parent);
+    owns s: rb_at(new_child);
+    requires old_child != 0;
     requires c.model
         == Context::Right(parent, grandparent, Color::Black, RbTree::Empty, Context::Top);
-    requires parent->rb_left != old_child;
     produces d: ctx_at(new_child, root);
     ensures d.model == old(c.model);
     ensures s.model == old(s.model);
 } by {
     unfold(c) as { sibling: sib, up: u };
+    unfold(sib);
     execute();
-    let d = fold(ctx_at(new_child, root), { model: old(c.model) }, { sibling: sib, up: u });
+    let refolded_sib = fold(rb_at(parent->rb_left), { model: RbTree::Empty }, {});
+    let d = fold(ctx_at(new_child, root), { model: old(c.model) },
+                 { sibling: refolded_sib, up: u });
     simp();
 }
 ```

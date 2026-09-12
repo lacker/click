@@ -659,18 +659,24 @@ fn instantiate_proof_tactic(
         },
         ProofTactic::ApplyInduction {
             hypothesis,
-            argument,
+            arguments,
         } => ProofTactic::ApplyInduction {
             hypothesis: hypothesis.clone(),
-            argument: expression(argument)?,
+            arguments: arguments
+                .iter()
+                .map(&expression)
+                .collect::<Result<Vec<_>, _>>()?,
         },
         ProofTactic::ApplyInductionUsing {
             hypothesis,
-            argument,
+            arguments,
             premises,
         } => ProofTactic::ApplyInductionUsing {
             hypothesis: hypothesis.clone(),
-            argument: expression(argument)?,
+            arguments: arguments
+                .iter()
+                .map(&expression)
+                .collect::<Result<Vec<_>, _>>()?,
             premises: premises
                 .iter()
                 .map(proposition)

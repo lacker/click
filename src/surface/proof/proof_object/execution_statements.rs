@@ -617,6 +617,7 @@ impl<'a> Proof<'a> {
                 &bundle.checks,
                 &bundle.ranking_measures,
                 &bundle.binders,
+                context.function.composite_resource_definitions(),
                 |goal, introductions| {
                     let both_children = if introductions.len() == 2
                         && bundle.checks.len() == 2

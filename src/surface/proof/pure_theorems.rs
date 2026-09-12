@@ -135,7 +135,9 @@ pub(super) struct PureInductionSetup {
 
 #[derive(Clone, Debug)]
 pub(super) struct PureStructuralInductionApplication {
-    pub(super) argument: ContractExpression,
+    /// The theorem's parameter list as this application spells it: either
+    /// every parameter in declaration order, or the inducted position alone.
+    pub(super) arguments: Vec<ContractExpression>,
     pub(super) surface_premises: Vec<ClickProposition>,
     pub(super) kernel_premises: Vec<Proposition>,
     pub(super) implication: Proposition,
@@ -145,8 +147,163 @@ pub(super) struct PureStructuralInductionApplication {
 #[derive(Clone, Debug)]
 pub(super) struct PureStructuralInductionBranchSetup {
     pub(super) hypothesis: String,
+    /// The inducted parameter's position in the theorem's declaration order.
+    /// The argument there must descend; every other position may name any
+    /// well-typed term.
+    pub(super) parameter_index: usize,
+    /// This arm's bindings of the inducted datatype: the only values the
+    /// inducted position may name.
+    pub(super) recursive_bindings: Vec<String>,
     pub(super) applications: Vec<PureStructuralInductionApplication>,
     pub(super) algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
+}
+
+/// The single replacement measure a nonnegative-`int32` induction hypothesis
+/// takes. That form quantifies one `int32` variable, so it holds every other
+/// theorem parameter at its current value and never takes a parameter list.
+fn single_measure_induction_argument<'a>(
+    hypothesis: &str,
+    arguments: &'a [ContractExpression],
+) -> Result<&'a ContractExpression, ClickError> {
+    let [argument] = arguments else {
+        return Err(ClickError::new(format!(
+            "induction hypothesis `{hypothesis}` expects one argument"
+        )));
+    };
+    Ok(argument)
+}
+
+/// The bare parameter or binding name an induction argument spells, when it
+/// spells one rather than a compound term.
+pub(super) fn induction_argument_name(argument: &ContractExpression) -> Option<&str> {
+    match argument {
+        ContractExpression::Binding(name)
+        | ContractExpression::AlgebraicVariable { name, .. }
+        | ContractExpression::CFragment(CExpression::Variable(name)) => Some(name),
+        _ => None,
+    }
+}
+
+/// The argument occupying the inducted position of one hypothesis
+/// application. This is the only position that must descend; a one-argument
+/// application spells that position alone.
+pub(super) fn structural_induction_descent_argument(
+    parameter_index: usize,
+    arguments: &[ContractExpression],
+) -> Option<&ContractExpression> {
+    if arguments.len() == 1 {
+        arguments.first()
+    } else {
+        arguments.get(parameter_index)
+    }
+}
+
+/// Checks the descent of one hypothesis application: the inducted position
+/// names a field this arm's pattern bound, of the datatype being inducted on.
+/// This is a bounded structural test against the arm's own binding list, not
+/// a search through the proof state.
+pub(super) fn structural_induction_descends(
+    setup: &PureStructuralInductionBranchSetup,
+    arguments: &[ContractExpression],
+) -> bool {
+    structural_induction_descent_argument(setup.parameter_index, arguments)
+        .and_then(induction_argument_name)
+        .is_some_and(|name| {
+            setup
+                .recursive_bindings
+                .iter()
+                .any(|binding| binding == name)
+        })
+}
+
+/// The substitution one `ih(...)` application makes in the theorem's own
+/// clauses.
+///
+/// A proof may spell every parameter in declaration order, which is how the
+/// hypothesis is instantiated at parameters other than the inducted one, or
+/// spell the inducted position alone, which leaves every other parameter at
+/// its current value. A position that names its own parameter substitutes
+/// nothing, so the theorem's own elaboration of that parameter is retained.
+fn structural_induction_hypothesis_substitution(
+    theorem: &TheoremDefinition,
+    parameter: &str,
+    hypothesis: &str,
+    arguments: &[ContractExpression],
+) -> Result<BTreeMap<String, ContractExpression>, ClickError> {
+    let parameters = theorem.parameters();
+    if arguments.len() == 1 {
+        return Ok(BTreeMap::from([(
+            parameter.to_string(),
+            arguments[0].clone(),
+        )]));
+    }
+    if arguments.len() != parameters.len() {
+        return Err(ClickError::new(format!(
+            "induction hypothesis `{hypothesis}` expects {} argument(s) in declaration order, or `{parameter}` alone, got {}",
+            parameters.len(),
+            arguments.len()
+        )));
+    }
+    let mut substitution = BTreeMap::new();
+    for (definition, argument) in parameters.iter().zip(arguments) {
+        if induction_argument_name(argument) == Some(definition.name()) {
+            continue;
+        }
+        substitution.insert(definition.name().to_string(), argument.clone());
+    }
+    Ok(substitution)
+}
+
+/// Collects the hypothesis parameter lists an arm's script spells, in order
+/// and without repetition. Each one becomes exactly one instantiated
+/// hypothesis premise, so an arm costs one instance per written application
+/// rather than an enumeration of candidate instances.
+fn collect_structural_induction_arguments(
+    tactics: &[ProofTactic],
+    hypothesis: &str,
+    collected: &mut Vec<Vec<ContractExpression>>,
+) {
+    for tactic in tactics {
+        match tactic {
+            ProofTactic::ApplyTheorem(application)
+            | ProofTactic::ApplyTheoremUsing { application, .. }
+                if application.name == hypothesis =>
+            {
+                if !collected.contains(&application.arguments) {
+                    collected.push(application.arguments.clone());
+                }
+            }
+            ProofTactic::If(proof_if) => {
+                collect_structural_induction_arguments(
+                    &proof_if.then_tactics,
+                    hypothesis,
+                    collected,
+                );
+                collect_structural_induction_arguments(
+                    &proof_if.else_tactics,
+                    hypothesis,
+                    collected,
+                );
+            }
+            ProofTactic::Both(both) => {
+                collect_structural_induction_arguments(&both.left_tactics, hypothesis, collected);
+                collect_structural_induction_arguments(&both.right_tactics, hypothesis, collected);
+            }
+            ProofTactic::Cases(proof_cases) => {
+                collect_structural_induction_arguments(
+                    &proof_cases.left_tactics,
+                    hypothesis,
+                    collected,
+                );
+                collect_structural_induction_arguments(
+                    &proof_cases.right_tactics,
+                    hypothesis,
+                    collected,
+                );
+            }
+            _ => {}
+        }
+    }
 }
 
 pub(super) fn pure_induction_hypothesis(
@@ -271,6 +428,8 @@ fn prepare_pure_induction_tactics(
                     "a pure theorem proof may contain only one top-level `induct` tactic",
                 )),
                 ProofTactic::ApplyTheorem(application) if application.name == hypothesis => {
+                    // Measure induction quantifies one `int32` variable, so
+                    // its hypothesis names only the replacement measure.
                     let [argument] = application.arguments.as_slice() else {
                         return Err(ClickError::new(format!(
                             "induction hypothesis `{hypothesis}` expects one argument"
@@ -278,7 +437,7 @@ fn prepare_pure_induction_tactics(
                     };
                     Ok(ProofTactic::ApplyInduction {
                         hypothesis: hypothesis.to_string(),
-                        argument: argument.clone(),
+                        arguments: vec![argument.clone()],
                     })
                 }
                 ProofTactic::ApplyTheoremUsing {
@@ -292,7 +451,7 @@ fn prepare_pure_induction_tactics(
                     };
                     Ok(ProofTactic::ApplyInductionUsing {
                         hypothesis: hypothesis.to_string(),
-                        argument: argument.clone(),
+                        arguments: vec![argument.clone()],
                         premises: premises.clone(),
                     })
                 }
@@ -407,16 +566,12 @@ fn prepare_structural_induction_arm_tactics(
         .iter()
         .map(|tactic| match tactic {
             ProofTactic::ApplyTheorem(application) if application.name == setup.hypothesis => {
-                let [argument] = application.arguments.as_slice() else {
-                    return Err(ClickError::new(format!(
-                        "induction hypothesis `{}` expects one argument",
-                        setup.hypothesis
-                    )));
-                };
+                // Every written application was instantiated when the arm's
+                // premises were built, so this is a lookup, not a search.
                 let Some(selected) = setup
                     .applications
                     .iter()
-                    .find(|candidate| candidate.argument == *argument)
+                    .find(|candidate| candidate.arguments == application.arguments)
                 else {
                     return Err(ClickError::new(
                         "structural induction hypothesis expects an immediate recursive field",
@@ -424,26 +579,18 @@ fn prepare_structural_induction_arm_tactics(
                 };
                 Ok(ProofTactic::ApplyInductionUsing {
                     hypothesis: setup.hypothesis.clone(),
-                    argument: argument.clone(),
+                    arguments: application.arguments.clone(),
                     premises: selected.surface_premises.clone(),
                 })
             }
             ProofTactic::ApplyTheoremUsing {
                 application,
                 premises,
-            } if application.name == setup.hypothesis => {
-                let [argument] = application.arguments.as_slice() else {
-                    return Err(ClickError::new(format!(
-                        "induction hypothesis `{}` expects one argument",
-                        setup.hypothesis
-                    )));
-                };
-                Ok(ProofTactic::ApplyInductionUsing {
-                    hypothesis: setup.hypothesis.clone(),
-                    argument: argument.clone(),
-                    premises: premises.clone(),
-                })
-            }
+            } if application.name == setup.hypothesis => Ok(ProofTactic::ApplyInductionUsing {
+                hypothesis: setup.hypothesis.clone(),
+                arguments: application.arguments.clone(),
+                premises: premises.clone(),
+            }),
             ProofTactic::If(proof_if) => Ok(ProofTactic::If(ProofIf {
                 condition: proof_if.condition.clone(),
                 then_tactics: prepare_structural_induction_arm_tactics(
@@ -756,13 +903,38 @@ fn check_pure_structural_induction(
             branch_surface_requires.push(surface);
             branch_requires.push(kernel);
         }
+        let recursive_bindings = arm
+            .bindings
+            .iter()
+            .zip(&variant.fields)
+            .filter(|(_, field_type)| *field_type == &root_value_type)
+            .map(|(binding, _)| binding.clone())
+            .collect::<Vec<_>>();
+        // Every immediate recursive field keeps its hypothesis at the
+        // theorem's current parameters, and the arm's script adds one
+        // instance for each parameter list it spells.
+        let mut application_arguments = recursive_bindings
+            .iter()
+            .map(|binding| vec![ContractExpression::Binding(binding.clone())])
+            .collect::<Vec<_>>();
+        collect_structural_induction_arguments(
+            &arm.tactics,
+            hypothesis,
+            &mut application_arguments,
+        );
         let mut applications = Vec::new();
-        for (binding, field_type) in arm.bindings.iter().zip(&variant.fields) {
-            if field_type != &root_value_type {
-                continue;
+        for arguments in application_arguments {
+            let child_substitution = structural_induction_hypothesis_substitution(
+                theorem, parameter, hypothesis, &arguments,
+            )?;
+            let descends = structural_induction_descent_argument(parameter_index, &arguments)
+                .and_then(induction_argument_name)
+                .is_some_and(|name| recursive_bindings.iter().any(|binding| binding == name));
+            if !descends {
+                return Err(ClickError::new(
+                    "structural induction hypothesis expects an immediate recursive field",
+                ));
             }
-            let argument = ContractExpression::Binding(binding.clone());
-            let child_substitution = BTreeMap::from([(parameter.clone(), argument.clone())]);
             let mut surface_premises = Vec::new();
             let mut kernel_premises = Vec::new();
             for requirement in theorem
@@ -806,9 +978,14 @@ fn check_pure_structural_induction(
                 .fold(conclusion.clone(), |body, premise| {
                     Proposition::Implies(Box::new(premise.clone()), Box::new(body))
                 });
-            branch_requires.push(implication.clone());
+            // Two spellings of the same instance, such as `ih(tail)` and the
+            // complete list that repeats the other parameters, state one
+            // premise.
+            if !branch_requires.contains(&implication) {
+                branch_requires.push(implication.clone());
+            }
             applications.push(PureStructuralInductionApplication {
-                argument,
+                arguments,
                 surface_premises,
                 kernel_premises,
                 implication,
@@ -824,6 +1001,8 @@ fn check_pure_structural_induction(
         }
         let branch_setup = PureStructuralInductionBranchSetup {
             hypothesis: hypothesis.clone(),
+            parameter_index,
+            recursive_bindings,
             applications,
             algebraic_values: branch_algebraic_values,
         };
@@ -3544,8 +3723,9 @@ fn lower_pure_induction_tactics(
             }
             ProofTactic::ApplyInduction {
                 hypothesis,
-                argument,
+                arguments,
             } => {
+                let argument = single_measure_induction_argument(hypothesis, arguments)?;
                 let application_premises = induction_application_surface_premises(setup, argument)?;
                 for premise in &application_premises {
                     if current_pool.contains(premise) {
@@ -3627,7 +3807,7 @@ fn lower_pure_induction_tactics(
                 .map_err(ClickError::new)?;
                 lowered.push(ProofTactic::ApplyInductionUsing {
                     hypothesis: hypothesis.clone(),
-                    argument: argument.clone(),
+                    arguments: vec![argument.clone()],
                     premises: application_premises,
                 });
                 if !current_pool.contains(&substituted) {
@@ -3639,9 +3819,10 @@ fn lower_pure_induction_tactics(
             }
             ProofTactic::ApplyInductionUsing {
                 hypothesis,
-                argument,
+                arguments,
                 premises,
             } => {
+                let argument = single_measure_induction_argument(hypothesis, arguments)?;
                 let substituted = substitute_click_proposition(
                     &setup.surface_goal,
                     &BTreeMap::from([(setup.parameter.clone(), argument.clone())]),
@@ -3649,7 +3830,7 @@ fn lower_pure_induction_tactics(
                 .map_err(ClickError::new)?;
                 lowered.push(ProofTactic::ApplyInductionUsing {
                     hypothesis: hypothesis.clone(),
-                    argument: argument.clone(),
+                    arguments: vec![argument.clone()],
                     premises: premises.clone(),
                 });
                 if !current_pool.contains(&substituted) {
@@ -4537,7 +4718,7 @@ fn prove_pure_theorem_tactics(
             }
             ProofTactic::ApplyInduction {
                 hypothesis,
-                argument,
+                arguments,
             } => {
                 if !induction_active {
                     return Err(ClickError::new(format!(
@@ -4547,7 +4728,7 @@ fn prove_pure_theorem_tactics(
                 apply_pure_induction_hypothesis(
                     induction_setup.expect("active induction has a setup"),
                     hypothesis,
-                    argument,
+                    single_measure_induction_argument(hypothesis, arguments)?,
                     None,
                     claim_label,
                     tactic_index,
@@ -4559,7 +4740,7 @@ fn prove_pure_theorem_tactics(
             }
             ProofTactic::ApplyInductionUsing {
                 hypothesis,
-                argument,
+                arguments,
                 premises,
             } => {
                 if !induction_active {
@@ -4570,7 +4751,7 @@ fn prove_pure_theorem_tactics(
                 apply_pure_induction_hypothesis(
                     induction_setup.expect("active induction has a setup"),
                     hypothesis,
-                    argument,
+                    single_measure_induction_argument(hypothesis, arguments)?,
                     Some(premises),
                     claim_label,
                     tactic_index,

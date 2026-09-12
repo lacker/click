@@ -1249,6 +1249,7 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
         checks: &[crate::kernel::CLoopInvariantCheck],
         ranking_measures: &[crate::kernel::CExpression],
         binders: &[crate::kernel::CLoopBinder],
+        definitions: &[crate::kernel::CCompositeResourceDefinition],
         presentation: impl FnOnce(
             &Proposition,
             &[Option<Arc<crate::kernel::LoweringIntroductions>>],
@@ -1289,6 +1290,20 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
             binders,
             facts.assumptions(),
         )?;
+        // D7 applied to refutation: a premise that refutes a field-free arm's
+        // own fact says the folded instance's model is not that constructor.
+        // A descending loop's back edge learns `left.model != Empty` from the
+        // guard `root->left != 0` exactly here, which is what lets the next
+        // iteration's invariant select the arm its measure and its `unfold`
+        // need.
+        for fact in crate::kernel::refuted_instance_arm_model_facts(
+            back_edge_state.resources(),
+            definitions,
+            &back_edge_state,
+            facts.assumptions(),
+        ) {
+            facts = facts.with_fact(fact);
+        }
         let mut obligations = crate::kernel::c_loop_invariant_obligations_at_back_edge(
             &back_edge_state,
             loop_entry,
@@ -2400,7 +2415,7 @@ mod tests {
             let ((body, scope), opening_work) =
                 crate::instrumentation::measure_deterministic_work(|| {
                     frontier
-                        .open_invariant_body(&entry, &entry, &checks, &[], &[], |_, _| ())
+                        .open_invariant_body(&entry, &entry, &checks, &[], &[], &[], |_, _| ())
                         .unwrap()
                 });
             assert!(
@@ -2547,7 +2562,15 @@ mod tests {
             ),
         );
         let (body, scope) = frontier
-            .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], &[], |_, _| ())
+            .open_invariant_body(
+                &CState::new(),
+                &CState::new(),
+                &checks,
+                &[],
+                &[],
+                &[],
+                |_, _| (),
+            )
             .unwrap();
         assert!(body.apply_normalize().is_err());
         assert!(
@@ -2656,7 +2679,15 @@ mod tests {
                     .is_err()
             );
             let (body, scope) = unprepared
-                .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], &[], |_, _| ())
+                .open_invariant_body(
+                    &CState::new(),
+                    &CState::new(),
+                    &checks,
+                    &[],
+                    &[],
+                    &[],
+                    |_, _| (),
+                )
                 .unwrap();
             let completed = body.apply_normalize().ok().unwrap();
             let prepared = unprepared.retain_invariant_body(scope, &completed).unwrap();

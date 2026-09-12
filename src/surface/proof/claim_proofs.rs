@@ -150,11 +150,51 @@ fn proof_shape_hint(tactics: &[ProofTactic]) -> Option<(usize, &'static str)> {
     })
 }
 
+/// How deeply a tactic sequence nests execution regions: every `match`,
+/// `branch`, or proof `if` written inside another one is one level. This is
+/// the number the checked drivers bound, so a proof past the bound is told
+/// what the bound is instead of being declined without a reason.
+fn proof_region_nesting_depth(tactics: &[ProofTactic]) -> usize {
+    fn arms_depth(arms: &[&[ProofTactic]]) -> usize {
+        1 + arms
+            .iter()
+            .map(|arm| proof_region_nesting_depth(arm))
+            .max()
+            .unwrap_or(0)
+    }
+    tactics
+        .iter()
+        .map(|tactic| match tactic {
+            ProofTactic::Match(proof_match) => arms_depth(
+                &proof_match
+                    .arms
+                    .iter()
+                    .map(|arm| arm.tactics.as_slice())
+                    .collect::<Vec<_>>(),
+            ),
+            ProofTactic::Branch(branch) => {
+                arms_depth(&[&branch.then_tactics, &branch.else_tactics])
+            }
+            ProofTactic::If(proof_if) => {
+                arms_depth(&[&proof_if.then_tactics, &proof_if.else_tactics])
+            }
+            _ => 0,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 fn unsupported_proof_shape(
     proof_label: &str,
     grouped: bool,
     tactics: &[ProofTactic],
 ) -> ClickError {
+    let nesting = proof_region_nesting_depth(tactics);
+    if nesting > MAX_CHECKED_PROOF_REGION_NESTING {
+        return ClickError::new(format!(
+            "`{proof_label}`: this proof nests {nesting} execution regions; the checked proof drivers support at most {MAX_CHECKED_PROOF_REGION_NESTING}. Move an inner `match`, `branch`, or proof `if` into a contracted helper, or prove part of it in a `have`."
+        ));
+    }
     let route = if grouped {
         "grouped contract"
     } else {

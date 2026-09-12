@@ -1086,6 +1086,17 @@ impl CLocalEnvironment {
         self.bindings.contains_key(name)
     }
 
+    /// Whether this name is a declared automatic object whose value the
+    /// execution has not produced yet. Reading it has no defined path, so a
+    /// proposition that names it cannot lower; a diagnostic uses this to name
+    /// the local instead of reporting a path count.
+    pub fn is_uninitialized_object(&self, name: &str) -> bool {
+        matches!(
+            self.bindings.get(name),
+            Some(CLocalBinding::UninitializedObject { .. })
+        )
+    }
+
     pub fn object_values(&self) -> impl Iterator<Item = (&str, &CValue)> {
         self.bindings
             .iter()
