@@ -3087,7 +3087,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             surface_premises,
                                         ) = post_tactic
                                         {
-                                            let lowered = surface_premises
+                                            let kernels = surface_premises
                                                 .iter()
                                                 .map(|premise| {
                                                     focused.lower_cited_surface_proposition(
@@ -3095,10 +3095,26 @@ pub(super) fn finish_ordered_proof<'a>(
                                                         "post-execution arithmetic premise",
                                                     )
                                                 })
-                                                .collect::<Result<Vec<_>, _>>();
-                                            let certificate = lowered.ok().and_then(|kernels| {
-                                                let goal = focused.goal()?;
-                                                let surface_goal = focused.surface_goal()?;
+                                                .collect::<Result<Vec<_>, _>>()?;
+                                            for (premise_index, premise) in
+                                                kernels.iter().enumerate()
+                                            {
+                                                if !focused
+                                                    .facts()
+                                                    .exact_available_across_effects(premise, &[])
+                                                {
+                                                    return Err(focused.step_error(format!(
+                                                        "post-execution `arithmetic using` premise {premise_index} is not exactly available"
+                                                    )));
+                                                }
+                                            }
+                                            (|| -> Result<_, ClickError> {
+                                                let goal = focused
+                                                    .goal()
+                                                    .ok_or_else(|| focused.step_error("post-execution arithmetic requires a proposition goal"))?;
+                                                let surface_goal = focused
+                                                    .surface_goal()
+                                                    .ok_or_else(|| focused.step_error("post-execution arithmetic requires a source goal"))?;
                                                 let pairs = kernels
                                                     .into_iter()
                                                     .zip(surface_premises.iter().cloned())
@@ -3107,34 +3123,78 @@ pub(super) fn finish_ordered_proof<'a>(
                                                     .iter()
                                                     .map(|(kernel, _)| kernel.clone())
                                                     .collect::<Vec<_>>();
-                                                if let Some(plan) = crate::surface::checking::plan_special_arithmetic_certificate(
+                                                let certificate = if let Some(plan) = crate::surface::checking::plan_special_arithmetic_certificate(
                                                     goal,
                                                     &kernel_premises,
                                                 ) {
-                                                    return Some(crate::surface::checking::special_plan_to_surface_certificate(
+                                                    crate::surface::checking::special_plan_to_surface_certificate(
                                                         &plan,
                                                         surface_premises,
                                                         surface_goal,
-                                                    ));
-                                                }
-                                                let plan = crate::surface::checking::plan_signed_arithmetic_certificate(
+                                                    )
+                                                } else if let Some(plan) = crate::surface::checking::plan_integer_affine_certificate(
                                                     goal,
                                                     &kernel_premises,
-                                                )?;
-                                                focused.signed_plan_to_surface_certificate(
-                                                    &plan, &pairs, surface_goal,
-                                                ).map(|certificate| ArithmeticCertificate {
-                                                    family: ArithmeticCertificateFamily::SignedInt32(certificate),
-                                                })
-                                            });
-                                            match certificate {
-                                                Some(certificate) => focused.apply_step(
+                                                ) {
+                                                    let snapshot = surface_snapshot_selector(surface_goal);
+                                                    let integer_pairs = if let Some(selector) = snapshot {
+                                                        pairs
+                                                            .iter()
+                                                            .map(|(kernel, surface)| {
+                                                                surface_at_snapshot(surface, &selector)
+                                                                    .map(|anchored| (kernel.clone(), anchored))
+                                                            })
+                                                            .collect::<Result<Vec<_>, _>>()
+                                                            .map_err(|error| {
+                                                                focused.step_error(format!(
+                                                                    "post-execution Integer premise snapshot could not be serialized: {error:?}"
+                                                                ))
+                                                            })?
+                                                    } else {
+                                                        pairs.clone()
+                                                    };
+                                                    let certificate = crate::surface::proof::smart_closures::integer_plan_to_surface_certificate(
+                                                        &plan,
+                                                        &integer_pairs,
+                                                        surface_goal,
+                                                    )
+                                                    .ok_or_else(|| {
+                                                        focused.step_error(
+                                                            "post-execution Integer arithmetic certificate could not be transcribed",
+                                                        )
+                                                    })?;
+                                                    ArithmeticCertificate::integer(certificate)
+                                                } else {
+                                                    let plan = crate::surface::checking::plan_signed_arithmetic_certificate(
+                                                        goal,
+                                                        &kernel_premises,
+                                                    )
+                                                    .ok_or_else(|| {
+                                                        focused.step_error(
+                                                            "post-execution arithmetic certificate could not be constructed",
+                                                        )
+                                                    })?;
+                                                    let certificate = focused
+                                                        .signed_plan_to_surface_certificate(
+                                                            &plan,
+                                                            &pairs,
+                                                            surface_goal,
+                                                        )
+                                                        .ok_or_else(|| {
+                                                            focused.step_error(
+                                                                "post-execution signed arithmetic certificate could not be transcribed",
+                                                            )
+                                                        })?;
+                                                    ArithmeticCertificate {
+                                                        family: ArithmeticCertificateFamily::SignedInt32(
+                                                            certificate,
+                                                        ),
+                                                    }
+                                                };
+                                                focused.apply_step(
                                                     ProofStep::ArithmeticCertificate(certificate),
-                                                ),
-                                                None => Err(ClickError::new(
-                                                    "post-execution arithmetic certificate could not be constructed",
-                                                )),
-                                            }
+                                                )
+                                            })()
                                         } else {
                                             focused.apply_step(normalization_step.clone())
                                         };

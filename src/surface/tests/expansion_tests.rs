@@ -2231,6 +2231,33 @@ fn grouped_post_execution_simp_publishes_checked_obligations_through_proof() {
 }
 
 #[test]
+fn grouped_post_execution_arithmetic_rejects_unavailable_irrelevant_extra() {
+    let c_source = r#"
+        int32 bump(int32 n) { return n + 1; }
+    "#;
+    let click_source = r#"
+        verifying "bump.c";
+
+        int32 bump(int32 n) {
+            requires 0 <= n;
+            requires n <= 100;
+            ensures result <= 101;
+        } by {
+            execute();
+            arithmetic() using { 0 <= n; n <= 100; n <= 99; }
+        }
+    "#;
+    let error = verify_c0_sources(click_source, &[("bump.c", c_source)])
+        .expect_err("an unavailable irrelevant post-execution premise must be rejected");
+    assert!(
+        error
+            .message()
+            .contains("post-execution `arithmetic using` premise 2 is not exactly available"),
+        "{error:?}"
+    );
+}
+
+#[test]
 fn grouped_post_execution_simp_applies_planned_steps_once_through_proof() {
     let c_source = r#"
         int32 identity(int32 x) {
