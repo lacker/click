@@ -665,6 +665,7 @@ pub(in crate::surface::proof) struct ChosenProjection {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::surface::proof) struct ChosenProjectionLeaf {
+    pub(in crate::surface::proof) source_token: ProjectionSourceToken,
     pub(in crate::surface::proof) surface: ClickProposition,
     pub(in crate::surface::proof) kernel: Proposition,
 }

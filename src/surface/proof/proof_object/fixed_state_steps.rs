@@ -7,6 +7,124 @@ use crate::surface::planning::proposition_search::PropositionSearch;
 
 const MAX_CHOSEN_PROJECTION_WORK: usize = 4096;
 
+fn proposition_at_connective_path<'a>(
+    root: &'a Proposition,
+    path: &[usize],
+) -> Option<&'a Proposition> {
+    let mut current = root;
+    for direction in path {
+        let Proposition::And(left, right) = current else {
+            return None;
+        };
+        current = match direction {
+            0 => left,
+            1 => right,
+            _ => return None,
+        };
+    }
+    Some(current)
+}
+
+pub(super) fn projection_leaf_for_extract<'a>(
+    leaves: &'a [ChosenProjectionLeaf],
+    surface: &ClickProposition,
+    chosen_body: &Proposition,
+    source_id: &RequirementSourceId,
+) -> Option<&'a ChosenProjectionLeaf> {
+    let mut matching = leaves.iter().filter(|leaf| leaf.surface == *surface);
+    let leaf = matching.next()?;
+    if matching.next().is_some()
+        || leaf.source_token.source_id != *source_id
+        || proposition_at_connective_path(chosen_body, &leaf.source_token.connective_path)
+            != Some(&leaf.kernel)
+    {
+        return None;
+    }
+    Some(leaf)
+}
+
+#[cfg(test)]
+mod projection_path_tests {
+    use super::*;
+
+    fn source_id() -> RequirementSourceId {
+        RequirementSourceId {
+            owner: CallerSourceOwnerId::ordinary("path-test.c", "f"),
+            outer_ordinal: 0,
+        }
+    }
+
+    fn surface_leaf() -> ClickProposition {
+        ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Constant(0),
+            ))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Constant(0),
+            ))),
+        }
+    }
+
+    fn kernel_leaf(value: bool) -> Proposition {
+        Proposition::ConditionIs(ConditionTerm::Constant(value), true)
+    }
+
+    fn leaf(id: RequirementSourceId, path: Vec<usize>, value: bool) -> ChosenProjectionLeaf {
+        ChosenProjectionLeaf {
+            source_token: ProjectionSourceToken {
+                source_id: id,
+                connective_path: path,
+            },
+            surface: surface_leaf(),
+            kernel: kernel_leaf(value),
+        }
+    }
+
+    #[test]
+    fn projection_paths_are_iterative_and_fail_closed() {
+        let left = kernel_leaf(true);
+        let middle = kernel_leaf(false);
+        let right = kernel_leaf(true);
+        let body = Proposition::And(
+            Box::new(Proposition::And(
+                Box::new(left.clone()),
+                Box::new(middle.clone()),
+            )),
+            Box::new(right.clone()),
+        );
+        assert_eq!(
+            proposition_at_connective_path(&body, &[0, 1]),
+            Some(&middle)
+        );
+        assert_eq!(proposition_at_connective_path(&body, &[1]), Some(&right));
+        assert_eq!(proposition_at_connective_path(&body, &[2]), None);
+        assert_eq!(proposition_at_connective_path(&body, &[0, 0, 0]), None);
+    }
+
+    #[test]
+    fn projection_leaf_selection_rejects_duplicate_surface_and_bad_tokens() {
+        let id = source_id();
+        let body = Proposition::And(Box::new(kernel_leaf(true)), Box::new(kernel_leaf(true)));
+        let duplicate = vec![
+            leaf(id.clone(), vec![0], true),
+            leaf(id.clone(), vec![1], true),
+        ];
+        assert!(projection_leaf_for_extract(&duplicate, &surface_leaf(), &body, &id).is_none());
+
+        let malformed_path = vec![leaf(id.clone(), vec![2], true)];
+        assert!(
+            projection_leaf_for_extract(&malformed_path, &surface_leaf(), &body, &id).is_none()
+        );
+        let wrong_id = RequirementSourceId {
+            outer_ordinal: 1,
+            ..id.clone()
+        };
+        let wrong_token = vec![leaf(wrong_id, vec![0], true)];
+        assert!(projection_leaf_for_extract(&wrong_token, &surface_leaf(), &body, &id).is_none());
+    }
+}
+
 /// A source-sized decision graph. Both arms point to the shared continuation;
 /// walking an arm never visits the syntax or outcomes of its sibling.
 struct OutcomeCase<'a> {
@@ -612,10 +730,10 @@ impl<'a> Proof<'a> {
             _ => return Ok(None),
         };
         let mut leaves = Vec::new();
-        let mut pending = vec![instantiated];
+        let mut pending = vec![(instantiated, Vec::new())];
         let bound_names = BTreeMap::from([(chosen_variable, choice.name.clone())]);
         let mut work = 0usize;
-        while let Some(proposition) = pending.pop() {
+        while let Some((proposition, connective_path)) = pending.pop() {
             check_verification_deadline()?;
             work = work.saturating_add(1);
             if work > MAX_CHOSEN_PROJECTION_WORK {
@@ -625,8 +743,12 @@ impl<'a> Proof<'a> {
             }
             match proposition {
                 Proposition::And(left, right) => {
-                    pending.push(*right);
-                    pending.push(*left);
+                    let mut right_path = connective_path.clone();
+                    right_path.push(1);
+                    pending.push((*right, right_path));
+                    let mut left_path = connective_path;
+                    left_path.push(0);
+                    pending.push((*left, left_path));
                     continue;
                 }
                 leaf => {
@@ -673,6 +795,10 @@ impl<'a> Proof<'a> {
                         return Ok(None);
                     }
                     leaves.push(ChosenProjectionLeaf {
+                        source_token: ProjectionSourceToken {
+                            source_id: source_selection.source_id.clone(),
+                            connective_path,
+                        },
                         surface,
                         kernel: leaf,
                     });
@@ -1407,11 +1533,35 @@ impl<'a> Proof<'a> {
             return Ok(None);
         }
         let surface = self.substitute_goal_surface_bindings_in_proposition(surface)?;
-        Ok(projection
-            .leaves
-            .iter()
-            .find(|leaf| leaf.surface == surface)
-            .map(|leaf| leaf.kernel.clone()))
+        let chosen_body = match checked_source {
+            Proposition::Exists { var, body, .. } => match binding {
+                ContractExpression::CFragment(CExpression::Value(CValue::Int32(_))) => {
+                    substitute_int32_variable_in_proposition(
+                        &body,
+                        var,
+                        Bitvector32Term::Variable(projection.chosen_variable),
+                    )
+                }
+                ContractExpression::CFragment(CExpression::Value(CValue::Pointer(pointer))) => {
+                    crate::kernel::substitute_pointer_variable_in_proposition(
+                        &body,
+                        var,
+                        pointer.pointer(),
+                    )
+                }
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
+        };
+        let Some(leaf) = projection_leaf_for_extract(
+            &projection.leaves,
+            &surface,
+            &chosen_body,
+            &projection.source_id,
+        ) else {
+            return Ok(None);
+        };
+        Ok(Some(leaf.kernel.clone()))
     }
 
     /// The fixed-state data a result-aware checker consumes, resolved

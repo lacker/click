@@ -8721,6 +8721,13 @@ fn choose_projection_retains_unfolded_source_token_and_is_consumed_by_extract() 
         Proposition::Exists { .. }
     ));
     assert!(!projection.leaves.is_empty());
+    assert_eq!(projection.leaves[0].source_token.source_id, source_id);
+    assert_eq!(projection.leaves[0].source_token.connective_path, vec![0]);
+    assert_eq!(
+        projection.leaves[1].source_token.source_id,
+        projection.source_id
+    );
+    assert_eq!(projection.leaves[1].source_token.connective_path, vec![1]);
     let wrong_binder = substitute_click_proposition(
         &projection.leaves[0].surface,
         &BTreeMap::from([(
