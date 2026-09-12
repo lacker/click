@@ -1,8 +1,8 @@
 # json-c refcount setter
 
-This pilot extends the json-c-shaped struct slice from field reads to a single
-field write. The C0 lowering still treats the struct as one `int32` field at
-the start of the object, and the contract uses a field-sized write resource.
+This regression checks a single field write in a synthetic json-c-shaped
+struct. The object has one `int32` field, and the contract uses a field-sized
+write resource.
 
 ```c filename=json_object_set_ref_count.c
 struct json_object {

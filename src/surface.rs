@@ -533,6 +533,11 @@ pub struct CompositeResourceBody {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceChildBody {
     name: String,
+    /// The child's own declared resource. It is the parent's definition for a
+    /// directly recursive child and another declared resource otherwise; its
+    /// parameters and fields are what the child's arguments and field
+    /// equations are checked against.
+    resource: String,
     identity: Variable,
     arguments: Vec<ContractExpression>,
     field_bindings: Vec<usize>,

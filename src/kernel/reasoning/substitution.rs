@@ -3748,6 +3748,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
                             .iter()
                             .map(|child| CResourceChildSpec {
                                 name: child.name.clone(),
+                                resource: child.resource.clone(),
                                 binding: child.binding,
                                 field_bindings: child.field_bindings.clone(),
                                 arguments: child
@@ -6739,6 +6740,7 @@ fn substitute_pointer_variable_in_c_function(
                             .iter()
                             .map(|child| CResourceChildSpec {
                                 name: child.name.clone(),
+                                resource: child.resource.clone(),
                                 binding: child.binding,
                                 field_bindings: child.field_bindings.clone(),
                                 arguments: child

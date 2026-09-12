@@ -1,9 +1,9 @@
 # json-c refcount getter
 
-This is the first library-shaped pilot proof. The fixture in
+This is a synthetic library-shaped regression proof. The fixture in
 `examples/jsonc-refcount/json_object_ref_count.c` uses a tiny json-c-shaped
-object with a reference-count field. The current struct slice supports a
-single `int32` field and lowers `obj->ref_count` to a field load.
+object with a single `int32` reference-count field. The expression
+`obj->ref_count` lowers to a field load.
 
 ```c filename=json_object_ref_count.c
 struct json_object {

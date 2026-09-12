@@ -566,7 +566,7 @@ clear, and cast back is a checked rewrite on the word's address form.
 
 ## Library-shaped mdtests
 
-- `mdtests/jsonc_refcount_getter.md`: first json-c-shaped pilot proof,
+- `mdtests/jsonc_refcount_getter.md`: synthetic reference-count getter proof,
   using a viewed field resource for a reference-count getter.
 - `mdtests/jsonc_refcount_setter.md`: first-field struct write
   using an owned field resource.

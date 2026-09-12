@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -209,7 +209,7 @@ fn verify_changed(
                 Vec::new(),
             )
         } else if let Some((baseline_click, baseline_sources)) =
-            load_baseline_sidecar(&repo, revision, &sidecar)?
+            load_baseline_sidecar(&repo, &baseline_commit, &sidecar)?
         {
             let baseline_refs = source_refs(&baseline_sources);
             let selection =
@@ -237,8 +237,11 @@ fn verify_changed(
             &reasons,
             full_rebuild,
         );
-        if explain_only || selected.is_empty() {
-            skipped += usize::from(selected.is_empty());
+        if explain_only {
+            continue;
+        }
+        if !full_rebuild && selected.is_empty() {
+            skipped += 1;
             continue;
         }
         let dependencies = c0_external_dependencies(&click_source, &refs).map_err(click_message)?;
@@ -258,27 +261,15 @@ fn verify_changed(
             })
         })?;
         print_external_dependencies(&dependencies, &verified_theorems);
-        if full_rebuild {
-            // The rebuild verified the current sources; attest the requested
-            // baseline too only when its sidecar and sources are identical,
-            // so the next `--changed-since {revision}` run can select instead
-            // of rebuilding again.
-            let also_attest = match load_baseline_sidecar(&repo, revision, &sidecar)? {
-                Some(baseline)
-                    if baseline_matches_current(
-                        &baseline,
-                        &(click_source.clone(), sources.clone()),
-                    ) =>
-                {
-                    vec![baseline_commit.clone()]
-                }
-                _ => Vec::new(),
-            };
-            if let Err(message) = record_full_verification(&sidecar, &also_attest) {
-                eprintln!(
-                    "click-verify: warning: could not record incremental baseline: {message}"
-                );
-            }
+        if full_rebuild
+            && let Err(message) = record_full_verification(
+                &sidecar,
+                &click_source,
+                &sources,
+                std::slice::from_ref(&baseline_commit),
+            )
+        {
+            eprintln!("click-verify: warning: could not record incremental baseline: {message}");
         }
         verified += 1;
         println!("  result: verified");
@@ -464,11 +455,14 @@ fn valid_marker(contents: &str, commit: &str, relative: &Path, fingerprint: &str
     contents == marker_contents(commit, relative, fingerprint, &environment_switches())
 }
 
-/// A full rebuild verifies the current sources, so it may attest the
-/// requested baseline only when the baseline's sidecar and C sources are
-/// byte-identical to the current ones.
-fn baseline_matches_current(baseline: &LoadedSidecar, current: &LoadedSidecar) -> bool {
-    baseline == current
+/// Compare the commit's complete input bundle with the snapshot that was
+/// actually verified, including transitively included headers.
+fn baseline_matches_verified(
+    baseline: &LoadedSidecar,
+    click_source: &str,
+    sources: &[(String, String)],
+) -> bool {
+    baseline.0 == click_source && baseline.1 == sources
 }
 
 fn has_full_verification_marker(repo: &Path, commit: &str, sidecar: &Path) -> Result<bool, String> {
@@ -488,10 +482,15 @@ fn has_full_verification_marker(repo: &Path, commit: &str, sidecar: &Path) -> Re
     }
 }
 
-/// Records that `sidecar` was fully verified at `HEAD`, and at each commit in
-/// `also_attest` (a `--changed-since` baseline whose sources match the
-/// current ones), unless tracked sources are dirty.
-fn record_full_verification(sidecar: &Path, also_attest: &[String]) -> Result<(), String> {
+/// Attest only commits whose complete input bundle equals the verified
+/// snapshot. Re-reading the working tree here could certify a different
+/// program if a file changed after verification.
+fn record_full_verification(
+    sidecar: &Path,
+    click_source: &str,
+    sources: &[(String, String)],
+    also_attest: &[String],
+) -> Result<(), String> {
     let sidecar = fs::canonicalize(sidecar)
         .map_err(|error| format!("failed to resolve `{}`: {error}", sidecar.display()))?;
     let repo = git_repo_root(&sidecar)?;
@@ -503,52 +502,13 @@ fn record_full_verification(sidecar: &Path, also_attest: &[String]) -> Result<()
             repo.display()
         )
     })?;
-    let (click_source, inputs) = load_sidecar_inputs(&sidecar)?;
-    if inputs.is_prepared() {
-        return Ok(());
-    }
-    let mut tracked = vec![relative.to_path_buf()];
-    let parent = relative.parent().unwrap_or_else(|| Path::new(""));
-    tracked.extend(
-        verifying_source_paths(&click_source)
-            .map_err(click_message)?
-            .into_iter()
-            .map(|name| parent.join(name)),
-    );
-    for path in &tracked {
-        let status = Command::new("git")
-            .args([
-                "-C",
-                &repo.display().to_string(),
-                "ls-files",
-                "--error-unmatch",
-                "--",
-            ])
-            .arg(path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|error| format!("failed to inspect tracked sources: {error}"))?;
-        if !status.success() {
-            return Ok(());
-        }
-    }
-    for staged in [false, true] {
-        let mut command = Command::new("git");
-        command.args(["-C", &repo.display().to_string(), "diff"]);
-        if staged {
-            command.arg("--cached");
-        }
-        command.arg("--quiet").arg("HEAD").arg("--");
-        command.args(&tracked);
-        let status = command
-            .status()
-            .map_err(|error| format!("failed to inspect git worktree: {error}"))?;
-        if !status.success() {
-            return Ok(());
-        }
-    }
     for attested in std::iter::once(&commit).chain(also_attest) {
+        let Some(baseline) = load_baseline_sidecar(&repo, attested, &sidecar)? else {
+            continue;
+        };
+        if !baseline_matches_verified(&baseline, click_source, sources) {
+            continue;
+        }
         let marker = verification_marker_path(&repo, attested, &sidecar)?;
         let parent = marker
             .parent()
@@ -684,8 +644,8 @@ fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
         })
     })?;
     print_external_dependencies(&dependencies, &verified);
-    if !inputs.is_prepared()
-        && let Err(message) = record_full_verification(click_path, &[])
+    if let CInput::Bundle(sources) = &inputs
+        && let Err(message) = record_full_verification(click_path, &click_source, sources, &[])
     {
         eprintln!("click-verify: warning: could not record incremental baseline: {message}");
     }
@@ -753,6 +713,10 @@ fn load_sidecar_inputs(click_path: &Path) -> Result<(String, CInput), String> {
     let inputs = read_c_inputs(click_path, &click_source)?;
     Ok((click_source, inputs))
 }
+
+#[cfg(test)]
+#[path = "click-verify/incremental_tests.rs"]
+mod incremental_tests;
 
 #[cfg(test)]
 mod tests {
@@ -838,12 +802,12 @@ mod tests {
             "verifying \"a.c\";".to_string(),
             vec![("a.c".to_string(), "int32 f() { return 0; }".to_string())],
         );
-        assert!(baseline_matches_current(&current, &current));
+        assert!(baseline_matches_verified(&current, &current.0, &current.1));
         let edited: LoadedSidecar = (
             current.0.clone(),
             vec![("a.c".to_string(), "int32 f() { return 1; }".to_string())],
         );
-        assert!(!baseline_matches_current(&edited, &current));
+        assert!(!baseline_matches_verified(&edited, &current.0, &current.1));
     }
 
     #[test]

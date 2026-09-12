@@ -9,6 +9,64 @@ struct DeclaredResourceInfo {
     parameter_types: Vec<C0Type>,
     kind: ResourceKind,
     has_fields: bool,
+    /// Each matched-arm child slot of this resource and the resource that
+    /// slot declares, or `None` when two arms give one slot name different
+    /// resources. A child may name another declared resource, so the slot's
+    /// family is a property of this definition rather than of the proof.
+    child_slots: std::sync::Arc<BTreeMap<String, Option<String>>>,
+}
+
+/// Declared resources plus what the expansion has learned about the resource
+/// instances a proof names. `unfold(parent) as { slot: name }` introduces
+/// `name` before any definition is available to the parser, so the parser
+/// records the parent's family provisionally and the slot decides the real
+/// one here.
+struct DeclaredResourceScope {
+    definitions: BTreeMap<String, DeclaredResourceInfo>,
+    /// Instances introduced as matched-arm children, by identity. These
+    /// override whatever family the parser recorded.
+    children: std::cell::RefCell<BTreeMap<Variable, String>>,
+    /// Every other instance family seen in declaration order.
+    instances: std::cell::RefCell<BTreeMap<Variable, String>>,
+}
+
+impl DeclaredResourceScope {
+    fn get(&self, name: &str) -> Option<&DeclaredResourceInfo> {
+        self.definitions.get(name)
+    }
+
+    fn contains_key(&self, name: &str) -> bool {
+        self.definitions.contains_key(name)
+    }
+
+    /// The resource of the instance `identity`, if the expansion has seen a
+    /// declaration that fixes it.
+    fn instance_resource(&self, identity: Variable) -> Option<String> {
+        if let Some(name) = self.children.borrow().get(&identity) {
+            return Some(name.clone());
+        }
+        self.instances.borrow().get(&identity).cloned()
+    }
+
+    /// Record the resource of `identity`. An explicit `fold(name(...), ...)`
+    /// construction names its own resource, so it also replaces whatever
+    /// child slot the identity was introduced by.
+    fn record_instance(&self, identity: Variable, name: &str, construction: bool) {
+        if construction {
+            self.children.borrow_mut().remove(&identity);
+        }
+        if !self.children.borrow().contains_key(&identity) {
+            self.instances
+                .borrow_mut()
+                .insert(identity, name.to_string());
+        }
+    }
+
+    fn record_child(&self, identity: Variable, name: &str) {
+        self.children
+            .borrow_mut()
+            .insert(identity, name.to_string());
+    }
 }
 
 // Only immutable surface syntax is shared. Lowered environments, authorities,
@@ -57,6 +115,39 @@ pub(in crate::surface) fn combined_external_function_blocks(
     Ok(function_blocks)
 }
 
+/// Every matched-arm child slot of `definition`, mapped to the resource it
+/// declares. A slot two arms spell with different resources maps to `None`;
+/// the proof's own `fold` spelling then decides, and this pass checks
+/// nothing about it.
+fn matched_arm_child_slots(definition: &ResourceDefinition) -> BTreeMap<String, Option<String>> {
+    let mut slots: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let Some(matched) = definition
+        .composite_body()
+        .and_then(|body| body.matched.as_ref())
+    else {
+        return slots;
+    };
+    for arm in &matched.arms {
+        for clause in &arm.body.contains {
+            let ResourceClause::Named { binding, resource } = clause else {
+                continue;
+            };
+            let ResourceClause::Declared { name, .. } = resource.as_ref() else {
+                continue;
+            };
+            slots
+                .entry(binding.name.clone())
+                .and_modify(|existing| {
+                    if existing.as_deref() != Some(name.as_str()) {
+                        *existing = None;
+                    }
+                })
+                .or_insert_with(|| Some(name.clone()));
+        }
+    }
+    slots
+}
+
 pub(in crate::surface) fn expand_declared_resource_clauses(
     mut file: ClickFile,
 ) -> Result<ClickFile, ClickError> {
@@ -89,6 +180,7 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
                     } else {
                         ResourceKind::Token
                     },
+                    child_slots: std::sync::Arc::new(matched_arm_child_slots(definition)),
                 },
             ))
         })
@@ -100,7 +192,13 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
             has_fields: false,
             parameter_types: vec![C0Type::Int32Pointer, C0Type::Int32],
             kind: ResourceKind::Token,
+            child_slots: Default::default(),
         });
+    let resource_definitions = DeclaredResourceScope {
+        definitions: resource_definitions,
+        children: Default::default(),
+        instances: Default::default(),
+    };
 
     file.resource_definitions = file
         .resource_definitions
@@ -162,7 +260,7 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
 
 fn expand_declared_resources_in_function_block(
     function: &mut FunctionBlock,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<(), ClickError> {
     function.decreases = function
         .decreases
@@ -206,7 +304,7 @@ fn expand_declared_resources_in_function_block(
 
 fn expand_declared_resource_definition(
     mut definition: ResourceDefinition,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<ResourceDefinition, ClickError> {
     if let Some(composite_body) = definition.composite_body {
         definition.composite_body = Some(expand_declared_composite_resource_body(
@@ -219,7 +317,7 @@ fn expand_declared_resource_definition(
 
 fn expand_declared_composite_resource_body(
     composite_body: CompositeResourceBody,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<CompositeResourceBody, ClickError> {
     Ok(CompositeResourceBody {
         children: composite_body.children,
@@ -267,7 +365,7 @@ fn expand_declared_composite_resource_body(
 
 fn expand_declared_resource_requirement(
     requirement: Requirement,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<Requirement, ClickError> {
     match requirement {
         Requirement::Labeled { label, requirement } => Ok(Requirement::Labeled {
@@ -297,7 +395,7 @@ fn expand_declared_resource_requirement(
 
 fn expand_declared_resource_ensure_clause(
     mut clause: EnsureClause,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<EnsureClause, ClickError> {
     clause.ensure = match clause.ensure {
         Ensure::Proposition(ClickProposition::PredicateCall { name, arguments })
@@ -322,7 +420,7 @@ fn expand_declared_resource_ensure_clause(
 
 fn expand_declared_resource_structural_clause(
     mut clause: StructuralClause,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<StructuralClause, ClickError> {
     clause.items = clause
         .items
@@ -349,7 +447,7 @@ fn expand_declared_resource_structural_clause(
 
 fn expand_declared_resource_structural_item(
     mut item: StructuralItem,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<StructuralItem, ClickError> {
     item.claim = expand_declared_resource_proposition(item.claim, resource_definitions)?;
     Ok(item)
@@ -357,7 +455,7 @@ fn expand_declared_resource_structural_item(
 
 fn expand_declared_resource_proof(
     proof: SourceProof,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<SourceProof, ClickError> {
     match proof {
         SourceProof::Default => Ok(proof),
@@ -377,7 +475,7 @@ fn expand_declared_resource_proof(
 #[inline(never)]
 fn expand_declared_resource_tactic(
     tactic: ProofTactic,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<ProofTactic, ClickError> {
     match tactic {
         tactic @ (ProofTactic::ApplyTheorem(_)
@@ -422,7 +520,7 @@ fn expand_declared_resource_tactic(
 #[inline(never)]
 fn expand_declared_resource_tactic_with_expressions(
     tactic: ProofTactic,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<ProofTactic, ClickError> {
     match tactic {
         ProofTactic::ApplyTheorem(mut application) => {
@@ -519,7 +617,7 @@ fn expand_declared_resource_tactic_with_expressions(
 #[inline(never)]
 fn expand_declared_resource_tactic_with_propositions(
     tactic: ProofTactic,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<ProofTactic, ClickError> {
     match tactic {
         ProofTactic::ArithmeticUsing(premises) => Ok(ProofTactic::ArithmeticUsing(
@@ -573,7 +671,7 @@ fn expand_declared_resource_tactic_with_propositions(
 #[inline(never)]
 fn expand_declared_resource_tactic_with_resources(
     tactic: ProofTactic,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<ProofTactic, ClickError> {
     match tactic {
         ProofTactic::UnfoldResource(resource) => Ok(ProofTactic::UnfoldResource(
@@ -595,7 +693,7 @@ fn expand_declared_resource_tactic_with_resources(
 #[inline(never)]
 fn expand_declared_resource_tactic_with_nested_proofs(
     tactic: ProofTactic,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<ProofTactic, ClickError> {
     match tactic {
         ProofTactic::Have(have) => Ok(ProofTactic::Have(ProofHave {
@@ -731,7 +829,7 @@ fn expand_declared_resource_tactic_with_nested_proofs(
 
 fn expand_declared_resource_clause(
     resource: ResourceClause,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<ResourceClause, ClickError> {
     match resource {
         ResourceClause::Named {
@@ -759,6 +857,45 @@ fn expand_declared_resource_clause(
                 return Err(ClickError::new(format!(
                     "resource `{name}` has no fields; use ordinary unnamed ownership"
                 )));
+            }
+            // The parent's family decides what its child slots are. An
+            // explicit fold names it; for an unfolded child instance the
+            // parser could only record the family it was unfolded from, so
+            // prefer what an earlier declaration fixed.
+            let construction = binding.fold_fields.is_some();
+            let parent = if construction {
+                name.clone()
+            } else {
+                resource_definitions
+                    .instance_resource(binding.identity)
+                    .unwrap_or_else(|| name.clone())
+            };
+            resource_definitions.record_instance(binding.identity, &name, construction);
+            if let Some(children) = binding.child_bindings.as_ref() {
+                let slots = resource_definitions
+                    .get(&parent)
+                    .map(|info| info.child_slots.clone())
+                    .unwrap_or_default();
+                for (slot, child, identity) in children.iter() {
+                    let Some(declared) = slots.get(slot) else {
+                        return Err(ClickError::new(format!(
+                            "resource `{parent}` has no child slot `{slot}`"
+                        )));
+                    };
+                    let Some(declared) = declared else {
+                        continue;
+                    };
+                    match resource_definitions.instance_resource(*identity) {
+                        // An introduced child takes the slot's resource.
+                        None => resource_definitions.record_child(*identity, declared),
+                        Some(actual) if actual != *declared => {
+                            return Err(ClickError::new(format!(
+                                "child `{child}` is `{actual}`, but slot `{slot}` of `{parent}` owns `{declared}`"
+                            )));
+                        }
+                        Some(_) => {}
+                    }
+                }
             }
             if let Some(fields) = binding.fold_fields.take() {
                 binding.fold_fields = Some(
@@ -830,7 +967,7 @@ fn expand_declared_resource_clause(
 
 fn expand_declared_resource_subject(
     resource: ResourceSubject,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<ResourceSubject, ClickError> {
     match resource {
         ResourceSubject::Declared {
@@ -858,7 +995,7 @@ fn expand_declared_resource_subject(
 
 fn expand_declared_resource_proposition(
     proposition: ClickProposition,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<ClickProposition, ClickError> {
     match proposition {
         ClickProposition::Comparison {
@@ -993,10 +1130,13 @@ fn expand_declared_resource_proposition(
 
 fn expand_declared_resource_expression(
     expression: ContractExpression,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<ContractExpression, ClickError> {
     match expression {
         ContractExpression::ResourceField(mut access) => {
+            if let Some(name) = resource_definitions.children.borrow().get(&access.identity) {
+                access.resource_name.clone_from(name);
+            }
             let info = resource_definitions
                 .get(&access.resource_name)
                 .ok_or_else(|| {
@@ -1042,7 +1182,7 @@ fn expand_declared_resource_expression(
 #[inline(never)]
 fn expand_declared_resource_binary_expression(
     expression: ContractExpression,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<ContractExpression, ClickError> {
     let recurse =
         |expression| expand_declared_resource_expression(expression, resource_definitions);
@@ -1093,7 +1233,7 @@ fn expand_declared_resource_binary_expression(
 #[inline(never)]
 fn expand_declared_resource_expression_children(
     expression: ContractExpression,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<ContractExpression, ClickError> {
     let recurse =
         |expression| expand_declared_resource_expression(expression, resource_definitions);
@@ -1200,7 +1340,7 @@ fn expand_declared_resource_expression_children(
 fn declared_resource_info(
     name: &str,
     actual: usize,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
 ) -> Result<DeclaredResourceInfo, ClickError> {
     declared_resource_info_with_fields(name, actual, resource_definitions, false)
 }
@@ -1208,7 +1348,7 @@ fn declared_resource_info(
 fn declared_resource_info_with_fields(
     name: &str,
     actual: usize,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    resource_definitions: &DeclaredResourceScope,
     allow_fields: bool,
 ) -> Result<DeclaredResourceInfo, ClickError> {
     let Some(info) = resource_definitions.get(name) else {
@@ -1230,7 +1370,7 @@ fn declared_resource_info_with_fields(
 
 fn reject_counted_field_resource(
     resource: &ResourceClause,
-    definitions: &BTreeMap<String, DeclaredResourceInfo>,
+    definitions: &DeclaredResourceScope,
 ) -> Result<(), ClickError> {
     match resource {
         ResourceClause::Declared { name, .. }

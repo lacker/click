@@ -1,4 +1,4 @@
-# json-c Refcount Pilot
+# json-c reference-count example
 
 This directory is a synthetic, frozen library-shaped example project. Its C
 was written for Click and is not copied from the json-c repository. It must not
@@ -28,6 +28,6 @@ The current support is intentionally narrow:
 - `views obj[0..1]` or `consumes obj[0..1]` as the memory access resource
   (ownership bounds the field writes; no effect clause)
 
-Keep this pilot narrow. Add the smallest C0, memory-model, and proof features
-needed by this fixture before broadening to heap allocation or ownership
-transfer.
+This is a regression example, not a launch target. Current development
+priorities are the P1 work and rbtree demo described in
+[the launch roadmap](../../docs/internals/roadmap.md).

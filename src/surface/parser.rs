@@ -192,6 +192,11 @@ struct Parser {
     contract_proof_bindings: BTreeMap<String, Vec<(String, Variable, String)>>,
     next_resource_identity: u64,
     current_resource_bindings: BTreeMap<String, (Variable, String)>,
+    /// Instances introduced by `unfold(parent) as { slot: name }`. The slot's
+    /// resource is declared by the parent's matched arm, which may not be
+    /// parsed yet, so the recorded family is the parent's and every family
+    /// comparison against these instances is left to declaration expansion.
+    child_slot_identities: BTreeSet<Variable>,
     current_resource_fields: BTreeMap<String, ResourceFieldAccess>,
     current_resource_targets: BTreeMap<String, ResourceClause>,
     match_nesting: usize,
@@ -429,6 +434,7 @@ impl Parser {
             contract_proof_bindings: BTreeMap::new(),
             next_resource_identity: 0,
             current_resource_bindings: BTreeMap::new(),
+            child_slot_identities: BTreeSet::new(),
             current_resource_fields: BTreeMap::new(),
             current_resource_targets: BTreeMap::new(),
             tokens,
@@ -2755,7 +2761,7 @@ impl Parser {
             else {
                 return Err(self.error(format!("unknown resource instance `{instance}`")));
             };
-            if family != declaration.family {
+            if family != declaration.family && !self.child_slot_identities.contains(&identity) {
                 return Err(self.error(format!(
                     "binder `{binder}` expects resource `{}`, but `{instance}` is `{family}`",
                     declaration.family
@@ -2813,7 +2819,9 @@ impl Parser {
                 }
                 let identity = match self.current_resource_bindings.get(&name) {
                     Some((identity, family)) => {
-                        if *family != declaration.family {
+                        if *family != declaration.family
+                            && !self.child_slot_identities.contains(identity)
+                        {
                             return Err(
                                 self.error("produced instance changes the named resource family")
                             );
@@ -3637,20 +3645,20 @@ impl Parser {
             if self.current_contract_bindings.contains(&name) {
                 return Err(self.error("child resource name conflicts with a C or pure binding"));
             }
-            let identity =
-                if let Some((identity, existing)) = self.current_resource_bindings.get(&name) {
-                    if existing != family {
-                        return Err(self.error("child resource has the wrong family"));
-                    }
-                    *identity
-                } else if introduce {
-                    let identity = Variable(self.next_resource_identity);
-                    self.next_resource_identity += 1;
-                    identity
-                } else {
-                    return Err(self.error(format!("unknown child resource `{name}`")));
-                };
+            let identity = if let Some((identity, _)) = self.current_resource_bindings.get(&name) {
+                // A child slot's resource comes from the parent's matched
+                // arm, which the parser cannot resolve; declaration
+                // expansion checks the supplied instance against it.
+                *identity
+            } else if introduce {
+                let identity = Variable(self.next_resource_identity);
+                self.next_resource_identity += 1;
+                identity
+            } else {
+                return Err(self.error(format!("unknown child resource `{name}`")));
+            };
             if introduce {
+                self.child_slot_identities.insert(identity);
                 self.current_resource_bindings
                     .insert(name.clone(), (identity, family.clone()));
                 self.current_resource_targets.insert(
@@ -3714,17 +3722,18 @@ impl Parser {
                 {
                     return Err(self.error("fold result conflicts with a C or pure binding"));
                 }
-                let identity =
-                    if let Some((identity, previous)) = self.current_resource_bindings.get(&name) {
-                        if previous != resource_name {
-                            return Err(self.error("fold result changes the named resource family"));
-                        }
-                        *identity
-                    } else {
-                        let identity = Variable(self.next_resource_identity);
-                        self.next_resource_identity += 1;
-                        identity
-                    };
+                let identity = if let Some((identity, previous)) =
+                    self.current_resource_bindings.get(&name)
+                {
+                    if previous != resource_name && !self.child_slot_identities.contains(identity) {
+                        return Err(self.error("fold result changes the named resource family"));
+                    }
+                    *identity
+                } else {
+                    let identity = Variable(self.next_resource_identity);
+                    self.next_resource_identity += 1;
+                    identity
+                };
                 self.expect(Token::Comma)?;
                 self.expect(Token::LBrace)?;
                 let mut fields = Vec::new();

@@ -45,8 +45,9 @@ resource facts over a range. The context is not just a bag of pure facts:
 `ResourceFamilyAlgebra` defines how each family validates, combines, transfers,
 and consumes its facts.
 
-In the first-layer model, the viewed element is the stable read view of memory.
-Algebraically, it is the core of the owned element:
+In the current model, the viewed element grants read authority over memory.
+It does not freeze the contents against an owner's writes. Algebraically, it
+is the core of the owned element:
 
 ```text
 core(own(memory(p[lo..hi]))) = view(memory(p[lo..hi]))

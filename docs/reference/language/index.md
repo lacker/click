@@ -1165,18 +1165,49 @@ Unfolding a recursive body requires `as { ... }` to name its selected children;
 refolding requires the explicit child map. Unfold consumes the parent, so it
 cannot be projected or unfolded again unless a new owned parent is constructed.
 
-Each child currently uses the parent's resource definition. Equations for all
-child fields must bind them to immediate constructor fields of the matching
-types. In particular, the matched model strictly descends to a proper submodel.
+A child names one declared field-bearing resource: the parent's own definition
+or another one. Its arguments and field equations are checked against that
+definition, so a child of another family carries that family's fields:
+
+<!-- verified-example: mdtests/resource_cross_family_children.md -->
+```click
+resource ctx_at(node: struct tree_node*) {
+    field model: Context;
+    match model {
+        Context::Top => {},
+        Context::Left(up_node, value, right_model, up_model) => {
+            owns node->value;
+            owns node->left;
+            owns node->right;
+            owns right: tree_at(node->right);
+            owns up: ctx_at(up_node);
+            fact node != 0;
+            fact node->value == value;
+            fact right.model == right_model;
+            fact up.model == up_model;
+        },
+    }
+}
+```
+
+Here `ctx_at` owns a `tree_at`, and `tree_at` never owns a `ctx_at`; two
+definitions that own each other are still rejected as a composite resource
+cycle. `Context::Top => {}` shows that an arm may own nothing at all, and
+`fold(ctx_at(node), { model: Context::Top }, {})` constructs it.
+
+Equations for all child fields must bind them to immediate constructor fields
+of the matching types. In particular, a child of the parent's own family
+strictly descends to a proper submodel.
 Child arguments may be read-only C expressions, including stored pointer
 fields such as `p->left`. Loads must be readable from the immediate body's
 owned memory, not from a still-folded child or unrelated ambient ownership.
 Fold checks this memory before interpreting the child arguments. Expression
 safety and path premises must be proved; argument evaluation does not split
 the proof into cases. See `mdtests/resource_tree_node_init.md`.
-Mixed resource families, witnesses, nested resource matches/guards, arbitrary
-match scrutinees, and passing child paths as contract arguments remain
-unsupported. No operation automatically unfolds an entire recursive structure.
+Memory and token families in a child slot, witnesses, nested resource
+matches/guards, arbitrary match scrutinees, a struct field reached through a
+constructor binding such as `up_node->value`, and passing child paths as
+contract arguments remain unsupported. No operation automatically unfolds an entire recursive structure.
 
 A declaration alone grants no ownership, and binding an instance does not
 implicitly expose its memory body.
