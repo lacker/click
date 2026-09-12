@@ -77,6 +77,10 @@ pub(in crate::surface::proof) struct InvariantBodyContext {
     /// ambient fact context. A spelling that is not exactly available where
     /// the member is proved is dropped before any candidate is tried.
     pub(in crate::surface::proof) loop_head_premises: Vec<ClickProposition>,
+    /// The binders this loop's `owns name: resource(...)` clauses declare.
+    /// The back edge binds those names again on whatever the body ends
+    /// holding before any invariant reads a binder field.
+    pub(in crate::surface::proof) binders: Vec<crate::kernel::CLoopBinder>,
 }
 
 /// The per-proof constants of an execution proof: which claim is being

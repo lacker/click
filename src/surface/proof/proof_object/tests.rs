@@ -9520,6 +9520,7 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
                 &[],
                 &[surface.clone(), legacy_surface.clone()],
                 &[],
+                &[],
                 false,
             )
             .unwrap()
@@ -9622,7 +9623,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         )];
         let (body, scope) = root
             .state
-            .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], |_, _| {
+            .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], &[], |_, _| {
                 PropositionPresentation {
                     surface: None,
                     surface_bindings: PersistentMap::default(),

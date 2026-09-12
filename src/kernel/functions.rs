@@ -2979,7 +2979,7 @@ fn forced_refinement_instance_bindings(
     Ok(Some(bindings))
 }
 
-fn arbitrary_resource_instance_fields(
+pub(super) fn arbitrary_resource_instance_fields(
     schema: &ResourceFieldSchema,
     budget: &mut ExecutionBudget,
 ) -> ResourceArguments {

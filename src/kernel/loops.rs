@@ -1432,18 +1432,6 @@ fn execute_c_while_exit_paths(
         }
     }
 
-    let entry_obligations = if initialization_proven {
-        Vec::new()
-    } else {
-        collect_invariant_check_obligations(
-            state,
-            state,
-            invariant_checks,
-            InvariantPhase::Entry,
-            assumptions,
-            budget,
-        )?
-    };
     let head = prepare_loop_top_state(
         state,
         effect_checks,
@@ -1453,6 +1441,22 @@ fn execute_c_while_exit_paths(
         budget,
         variables,
     )?;
+    // Entry invariants are checked at the real loop entry, with the loop's
+    // binders already bound to the instances they name there. `old(...)` keeps
+    // reading the state as the enclosing proof wrote it, under the identities
+    // that proof used.
+    let entry_obligations = if initialization_proven {
+        Vec::new()
+    } else {
+        collect_invariant_check_obligations(
+            &head.entry,
+            state,
+            invariant_checks,
+            InvariantPhase::Entry,
+            assumptions,
+            budget,
+        )?
+    };
     let top_state = head.top.clone();
     let whole_loop_effect_summaries = head.summaries.clone();
     let (preservation_obligations, mut final_exit_paths) =
@@ -1463,6 +1467,7 @@ fn execute_c_while_exit_paths(
                 condition,
                 invariant_checks,
                 effect_checks,
+                resource_specs,
                 ranking_measures,
                 &whole_loop_effect_summaries,
                 body,
@@ -1877,6 +1882,7 @@ pub(super) fn collect_loop_preservation_summary(
     condition: &CExpression,
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
+    resource_specs: &[CResourceSpec],
     ranking_measures: &[CExpression],
     whole_loop_effect_summaries: &[Proposition],
     body: &CStatement,
@@ -1892,6 +1898,7 @@ pub(super) fn collect_loop_preservation_summary(
     // The body executes from the loop's own resource context; everything the
     // enclosing frame withheld is returned on the way out.
     let top_state = &head.body;
+    let binders = c_loop_binders(resource_specs);
     let composite_resource_definitions = environment
         .functions
         .values()
@@ -1944,6 +1951,26 @@ pub(super) fn collect_loop_preservation_summary(
                 match body_path.outcome {
                     CStatementOutcome::Normal(next_state)
                     | CStatementOutcome::Continue(next_state) => {
+                        // The back edge binds the loop's names again exactly as
+                        // the head did. A body that refolded its instance under
+                        // another name still hands the binder back, and a body
+                        // that ends with no instance at those arguments fails
+                        // here, named.
+                        let back_edge_assumptions = assumptions_with_path_context(
+                            assumptions,
+                            &body_path.facts,
+                            &body_path.obligations,
+                        );
+                        let (next_state, binder_failure) =
+                            match c_loop_state_with_loop_binders_rebound(
+                                top_state,
+                                &next_state,
+                                &binders,
+                                &back_edge_assumptions,
+                            ) {
+                                Ok(rebound) => (rebound, None),
+                                Err(failure) => (next_state, Some(failure)),
+                            };
                         for (may_continue, condition_contexts) in [
                             (
                                 true,
@@ -2008,15 +2035,27 @@ pub(super) fn collect_loop_preservation_summary(
                                     ));
                                 }
                                 let mut state_obligations = condition_obligations.clone();
-                                if may_continue
-                                    && let Err(message) =
-                                        c_loop_state_components_match_at_back_edge_inner(
-                                            top_state,
+                                // A binder the body did not hand back is the
+                                // whole verdict for this edge; the ownership
+                                // join would only repeat it less precisely.
+                                let join_failure = if !may_continue {
+                                    None
+                                } else if let Some(failure) = &binder_failure {
+                                    Some(failure.clone())
+                                } else {
+                                    c_loop_state_components_match_at_back_edge_inner(
+                                        top_state,
+                                        &c_loop_state_with_head_binder_models(
                                             &next_state,
-                                            &composite_resource_definitions,
-                                            &path_assumptions,
-                                        )
-                                {
+                                            top_state,
+                                            &binders,
+                                        ),
+                                        &composite_resource_definitions,
+                                        &path_assumptions,
+                                    )
+                                    .err()
+                                };
+                                if let Some(message) = join_failure {
                                     state_obligations.push(
                                         ProofObligation::verification_condition(
                                             false_equals_true_proposition(),
@@ -2229,6 +2268,10 @@ pub(super) fn collect_whole_loop_effect_summaries(
 pub(super) struct CLoopHead {
     pub(super) top: CState,
     pub(super) body: CState,
+    /// The loop's entry state with each binder bound to the instance it
+    /// names. Entry invariant checks read binder fields from here, so a loop
+    /// binder that renames an enclosing instance is available at entry too.
+    pub(super) entry: CState,
     pub(super) summaries: Vec<Proposition>,
     /// Why a declared loop resource could not be taken from the enclosing
     /// resource context. A non-empty list is a verification failure.
@@ -2332,11 +2375,35 @@ pub(super) fn prepare_loop_top_state(
         top_state = top_state.with_memory(framed_memory);
         summaries = collect_whole_loop_effect_summaries(entry_state, &top_state, &effect_ranges);
     }
-    let (body_state, resource_failures) =
-        loop_body_resource_context(entry_state, &top_state, resource_specs, assumptions, budget)?;
+    // A loop binder takes the instance the enclosing context holds and gives
+    // it fresh fields: the head is an arbitrary visit, so only the invariants
+    // say what model the binder carries there. The enclosing frame continues
+    // from that same head, which is why the loop's exit sees the final model.
+    let (entry_state, head_state, top_state, mut resource_failures) =
+        match rebind_loop_binder_instances(entry_state, resource_specs, assumptions, budget)? {
+            Ok(rebound) => {
+                let head_state =
+                    havoc_loop_binder_instance_fields(&rebound, resource_specs, budget);
+                let top_state = top_state.with_resource_context(head_state.resources().clone());
+                (rebound, head_state, top_state, Vec::new())
+            }
+            Err(failure) => (
+                entry_state.clone(),
+                entry_state.clone(),
+                top_state,
+                vec![failure],
+            ),
+        };
+    // The loop's declarations are evaluated where the loop starts, over the
+    // head's models: the clause arguments are the ones at loop entry, and the
+    // models are the fresh ones an arbitrary visit carries.
+    let (body_state, body_failures) =
+        loop_body_resource_context(&head_state, &top_state, resource_specs, assumptions, budget)?;
+    resource_failures.extend(body_failures);
     Ok(CLoopHead {
         top: top_state,
         body: body_state,
+        entry: entry_state,
         summaries,
         resource_failures,
     })
@@ -2421,6 +2488,301 @@ fn loop_body_resource_context(
 /// Whether a declared loop resource asks only to read.
 fn resource_spec_is_view(spec: &CResourceSpec) -> bool {
     spec.is_view()
+}
+
+/// One `owns name: resource(args);` loop binder: the name the header writes
+/// and the instance identity it binds.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CLoopBinder {
+    identity: Variable,
+    name: String,
+}
+
+/// The binders a loop's `owns name: resource(args);` clauses declare.
+pub(crate) fn c_loop_binders(resource_specs: &[CResourceSpec]) -> Vec<CLoopBinder> {
+    resource_specs
+        .iter()
+        .filter_map(|spec| {
+            Some(CLoopBinder {
+                identity: spec.instance_identity()?,
+                name: spec.instance_binder().unwrap_or("<unnamed>").to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Binds each `owns name: resource(args);` loop binder to the owned instance
+/// it names, whatever identity the surrounding proof gave that instance.
+///
+/// A loop header names an instance the way a callee contract does, and there
+/// is no binder map: the binder takes the unique owned instance of its family
+/// whose arguments, evaluated in this state, are provably the declared ones.
+/// The same rule runs at the loop head and at the back edge, so a body that
+/// refolded its instance under another name still hands the loop binder back.
+///
+/// The search reads the family's shape bucket of the resource context and
+/// checks the arguments of those instances alone, so it costs the instances
+/// of one family rather than the surrounding context.
+fn rebind_loop_binder_instances(
+    state: &CState,
+    resource_specs: &[CResourceSpec],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<CState, String>> {
+    if !resource_specs.iter().any(CResourceSpec::is_instance) {
+        return Ok(Ok(state.clone()));
+    }
+    let mut state = state.clone();
+    let mut claimed: BTreeSet<Variable> = BTreeSet::new();
+    for spec in resource_specs {
+        let Some(identity) = spec.instance_identity() else {
+            continue;
+        };
+        let binder = spec.instance_binder().unwrap_or("<unnamed>").to_string();
+        let Some(inner) = spec.instance_resource_spec() else {
+            continue;
+        };
+        let (name, arguments) =
+            match evaluate_function_resource_spec(&state, &inner, assumptions, budget)? {
+                Ok(CResourceFact::Own(CResource::Composite { name, arguments }, quantity))
+                    if quantity.as_const() == Some(1) =>
+                {
+                    (name, arguments)
+                }
+                Ok(_) => {
+                    return Ok(Err(format!(
+                        "loop binder `{binder}` requires one owned resource definition"
+                    )));
+                }
+                Err(error) => {
+                    return Ok(Err(format!(
+                        "loop binder `{binder}` could not be evaluated here: {error:?}"
+                    )));
+                }
+            };
+        state = match rebind_one_loop_binder_instance(
+            &state,
+            identity,
+            &binder,
+            &name,
+            &arguments,
+            &mut claimed,
+            assumptions,
+        ) {
+            Ok(state) => state,
+            Err(failure) => return Ok(Err(failure)),
+        };
+    }
+    Ok(Ok(state))
+}
+
+/// Binds the loop's names again on a state the body reached, taking each
+/// binder's family and arguments from the instance it held at the loop head.
+///
+/// The head already decided what every binder names; a back edge only has to
+/// find that resource again in whatever the body ended holding. Nothing here
+/// re-reads the loop's source clauses, so the same rule serves the kernel's
+/// own back edge and the surface `close_invariants` join.
+pub(crate) fn c_loop_state_with_loop_binders_rebound(
+    loop_head_state: &CState,
+    state: &CState,
+    binders: &[CLoopBinder],
+    assumptions: &PureFactContext,
+) -> Result<CState, String> {
+    if binders.is_empty() {
+        return Ok(state.clone());
+    }
+    let mut rebound = state.clone();
+    let mut claimed: BTreeSet<Variable> = BTreeSet::new();
+    for binder in binders {
+        let Some(head) = loop_head_state.resources().owned_instance(binder.identity) else {
+            continue;
+        };
+        let (name, arguments) = (head.name.clone(), head.arguments.clone());
+        rebound = rebind_one_loop_binder_instance(
+            &rebound,
+            binder.identity,
+            &binder.name,
+            &name,
+            &arguments,
+            &mut claimed,
+            assumptions,
+        )?;
+    }
+    Ok(rebound)
+}
+
+/// Moves one loop binder onto the instance it names in `state`.
+///
+/// The binder keeps the instance it already names when that instance still
+/// has the right family and arguments. Otherwise exactly one owned instance
+/// of that family may match, and it is renamed to the binder's identity. The
+/// candidates come from the family's shape bucket, so the search costs the
+/// instances of that family rather than the whole resource context.
+fn rebind_one_loop_binder_instance(
+    state: &CState,
+    identity: Variable,
+    binder: &str,
+    name: &str,
+    arguments: &ResourceArguments,
+    claimed: &mut BTreeSet<Variable>,
+    assumptions: &PureFactContext,
+) -> Result<CState, String> {
+    let arguments_match = |instance: &ResourceInstance| {
+        instance.arguments.len() == arguments.len()
+            && instance
+                .arguments
+                .iter()
+                .zip(arguments.iter())
+                .all(|(held, declared)| {
+                    crate::kernel::resource_arguments_proven_equal(held, declared, assumptions)
+                })
+    };
+    if state
+        .resources()
+        .owned_instance(identity)
+        .is_some_and(|instance| instance.name == name && arguments_match(instance))
+    {
+        claimed.insert(identity);
+        return Ok(state.clone());
+    }
+    let mut candidates = state
+        .resources()
+        .owned_instances_of_shape(name, arguments.len())
+        .into_iter()
+        .filter(|instance| !claimed.contains(&instance.identity) && arguments_match(instance))
+        .cloned()
+        .collect::<Vec<_>>();
+    let Some(selected) = candidates.pop() else {
+        return Err(format!(
+            "loop binder `{binder}` has no owned `{name}` instance at its arguments here"
+        ));
+    };
+    if !candidates.is_empty() {
+        return Err(format!(
+            "loop binder `{binder}` matches {} owned `{name}` instances at its arguments; a loop binder must name exactly one",
+            candidates.len() + 1
+        ));
+    }
+    claimed.insert(identity);
+    let held = CResourceFact::own(CResource::Instance(selected.clone()));
+    let Some(rebound) = ResourceInstance::new(
+        identity,
+        selected.name.clone(),
+        selected.arguments.clone(),
+        selected.schema.clone(),
+        selected.fields.clone(),
+    ) else {
+        return Err(format!(
+            "loop binder `{binder}` names an instance whose fields do not match its schema"
+        ));
+    };
+    // The rename removes one exact instance fact and adds it back under the
+    // binder's identity. Incremental consumption touches that fact's own
+    // bucket instead of normalizing the ambient context.
+    let Some(resources) = state
+        .resources()
+        .clone()
+        .without_fact_incrementally(&held, assumptions)
+    else {
+        return Err(format!(
+            "loop binder `{binder}` could not take the instance it names"
+        ));
+    };
+    Ok(state.clone().with_resource_context(
+        resources.unchecked_with_fact(CResourceFact::own(CResource::Instance(rebound))),
+    ))
+}
+
+/// The back-edge state as the ownership join compares it: each loop binder
+/// carrying the model it had at the head.
+///
+/// A binder's fields are what its invariants constrain, and a body is expected
+/// to change them; those changes are checked as invariant preservation, not as
+/// a change of ownership. The join therefore compares the binder's family and
+/// arguments and sets its model aside.
+pub(crate) fn c_loop_state_with_head_binder_models(
+    next_state: &CState,
+    head_state: &CState,
+    binders: &[CLoopBinder],
+) -> CState {
+    let mut state = next_state.clone();
+    for binder in binders {
+        let identity = binder.identity;
+        let Some(head) = head_state.resources().owned_instance(identity) else {
+            continue;
+        };
+        let Some(held) = state.resources().owned_instance(identity).cloned() else {
+            continue;
+        };
+        if held.fields == head.fields {
+            continue;
+        }
+        let Some(compared) = ResourceInstance::new(
+            identity,
+            held.name.clone(),
+            held.arguments.clone(),
+            held.schema.clone(),
+            head.fields.clone(),
+        ) else {
+            continue;
+        };
+        let Some(resources) = state.resources().clone().without_fact_incrementally(
+            &CResourceFact::own(CResource::Instance(held)),
+            &PureFactContext::new(),
+        ) else {
+            continue;
+        };
+        state = state.with_resource_context(
+            resources.unchecked_with_fact(CResourceFact::own(CResource::Instance(compared))),
+        );
+    }
+    state
+}
+
+/// Gives each loop binder instance fresh symbolic fields.
+///
+/// A loop head is an arbitrary visit, so the model a binder carries there is
+/// whatever the invariants state about it, never the model it happened to
+/// carry at loop entry. This is the resource-field counterpart of havocking
+/// the locals the body writes.
+fn havoc_loop_binder_instance_fields(
+    state: &CState,
+    resource_specs: &[CResourceSpec],
+    budget: &mut ExecutionBudget,
+) -> CState {
+    let mut state = state.clone();
+    for spec in resource_specs {
+        let Some(identity) = spec.instance_identity() else {
+            continue;
+        };
+        let Some(instance) = state.resources().owned_instance(identity).cloned() else {
+            continue;
+        };
+        let fields =
+            crate::kernel::functions::arbitrary_resource_instance_fields(&instance.schema, budget);
+        let Some(havoced) = ResourceInstance::new(
+            identity,
+            instance.name.clone(),
+            instance.arguments.clone(),
+            instance.schema.clone(),
+            fields,
+        ) else {
+            continue;
+        };
+        let held = CResourceFact::own(CResource::Instance(instance));
+        let Some(resources) = state
+            .resources()
+            .clone()
+            .without_fact_incrementally(&held, &PureFactContext::new())
+        else {
+            continue;
+        };
+        state = state.with_resource_context(
+            resources.unchecked_with_fact(CResourceFact::own(CResource::Instance(havoced))),
+        );
+    }
+    state
 }
 
 /// The read-only form of a resource the loop did not declare. Memory and

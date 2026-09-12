@@ -153,6 +153,10 @@ pub struct CLoopPreservationContext {
     loop_entry_state: CState,
     pure_facts: Vec<Proposition>,
     whole_loop_effect_facts: Vec<Proposition>,
+    /// The binders this loop's `owns name: resource(...)` clauses declare.
+    /// The back edge binds those names again on whatever the body ends
+    /// holding, so the join needs them beside the head state.
+    binders: Vec<crate::kernel::CLoopBinder>,
 }
 
 /// A body state produced by a checked preservation proof that may be the
@@ -198,6 +202,11 @@ impl CLoopPreservationContext {
     /// remain available separately on the checked path.
     pub fn whole_loop_effect_facts(&self) -> &[Proposition] {
         &self.whole_loop_effect_facts
+    }
+
+    /// The binders this loop's header declares.
+    pub fn binders(&self) -> &[crate::kernel::CLoopBinder] {
+        &self.binders
     }
 }
 
@@ -303,8 +312,15 @@ fn c_loop_preservation_contexts_with_mode(
         &[],
         &mut budget,
     )
-    .map_err(|error| format!("could not assume loop invariants: {error:?}"))?
-    {
+    .map_err(|error| {
+        loop_head_invariant_failure(
+            &top_state,
+            loop_entry_state,
+            invariant_checks,
+            assumptions,
+            error,
+        )
+    })? {
         let condition_contexts = if do_while {
             vec![(invariant_facts.clone(), invariant_obligations.clone())]
         } else {
@@ -347,10 +363,48 @@ fn c_loop_preservation_contexts_with_mode(
                 loop_entry_state: loop_entry_state.clone(),
                 pure_facts,
                 whole_loop_effect_facts: whole_loop_effect_summaries.clone(),
+                binders: crate::kernel::c_loop_binders(resource_specs),
             });
         }
     }
     Ok(contexts)
+}
+
+/// Names the loop invariant that could not be read at the abstract loop head.
+///
+/// The usual cause is an invariant that reads a resource instance the loop did
+/// not declare: the body holds exactly the loop's own resources, so a binder
+/// the header does not name has no model to read there. Retrying the checks
+/// one at a time costs one lowering per invariant and only on the failing
+/// path.
+fn loop_head_invariant_failure(
+    top_state: &CState,
+    loop_entry_state: &CState,
+    invariant_checks: &[CLoopInvariantCheck],
+    assumptions: &PureFactContext,
+    error: ExecutionLimit,
+) -> String {
+    let mut budget = ExecutionBudget::default();
+    for check in invariant_checks {
+        if assume_invariant_checks(
+            top_state,
+            loop_entry_state,
+            std::slice::from_ref(check),
+            assumptions,
+            &[],
+            &[],
+            &mut budget,
+        )
+        .is_err()
+        {
+            let context = invariant_context(check, InvariantPhase::Preservation)
+                .unwrap_or("a loop invariant");
+            return format!(
+                "{context}: could not be read at the loop head; a loop invariant may only read the resource instances the loop declares"
+            );
+        }
+    }
+    format!("could not assume loop invariants: {error:?}")
 }
 
 pub fn c_loop_invariant_obligations_at_back_edge(

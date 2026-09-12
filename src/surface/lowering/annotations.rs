@@ -1234,6 +1234,7 @@ fn loop_resource_declarations(
         }
         let declaration = declarations.entry(*loop_index).or_default();
         for resource in clause.resources() {
+            let resource = &loop_resource_with_field_schema(resource, resource_environment)?;
             collect_owned_resource_memory_segments(
                 resource,
                 resource_environment,
@@ -1250,6 +1251,49 @@ fn loop_resource_declarations(
         }
     }
     Ok(declarations)
+}
+
+/// A loop binder's checked field schema, taken from the resource definition
+/// it names.
+///
+/// Contract binders are given their schema when the file is checked, because
+/// a contract clause is reached from the function block. A loop binder lives
+/// inside a proof script and is reached only here, at the one place its
+/// declaration is lowered.
+fn loop_resource_with_field_schema(
+    resource: &ResourceClause,
+    resource_environment: &ResourceEnvironment,
+) -> Result<ResourceClause, ClickError> {
+    let ResourceClause::Named { binding, resource } = resource else {
+        return Ok(resource.clone());
+    };
+    if binding.schema.is_some() {
+        return Ok(ResourceClause::Named {
+            binding: binding.clone(),
+            resource: resource.clone(),
+        });
+    }
+    let ResourceClause::Declared { name, .. } = resource.as_ref() else {
+        return Err(ClickError::new(
+            "named ownership requires a declared resource",
+        ));
+    };
+    let schema = resource_environment
+        .get(name)
+        .and_then(ResourceDefinition::field_schema)
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "loop binder `{}` names resource `{name}`, which has no checked fields",
+                binding.name
+            ))
+        })?;
+    Ok(ResourceClause::Named {
+        binding: ResourceInstanceBinding {
+            schema: Some(schema.clone()),
+            ..binding.clone()
+        },
+        resource: resource.clone(),
+    })
 }
 
 fn collect_owned_resource_memory_segments(

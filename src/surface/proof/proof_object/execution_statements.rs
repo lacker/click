@@ -475,6 +475,7 @@ impl<'a> Proof<'a> {
                 &bundle.iteration_entry_state,
                 &bundle.checks,
                 &bundle.ranking_measures,
+                &bundle.binders,
                 |goal, introductions| {
                     let both_children = if introductions.len() == 2
                         && bundle.checks.len() == 2
@@ -622,6 +623,7 @@ impl<'a> Proof<'a> {
         loop_head_state: &CState,
         condition: &CExpression,
         invariant_checks: &[CLoopInvariantCheck],
+        binders: &[crate::kernel::CLoopBinder],
         composite_resource_definitions: &[CCompositeResourceDefinition],
     ) -> Result<(), ClickError> {
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
@@ -646,8 +648,19 @@ impl<'a> Proof<'a> {
             &execution.core.effect_facts,
         ));
         let assumptions = assumptions_from_propositions(&closer_facts);
-        let invariant_obligations = crate::kernel::c_loop_invariant_obligations_at_back_edge(
+        // The back edge binds the loop's names again before anything reads
+        // them: whatever the body called the instance it ends holding, the
+        // binder names it, and a body that ends with no instance at those
+        // arguments fails here by name.
+        let back_edge_state = crate::kernel::c_loop_state_with_loop_binders_rebound(
+            loop_head_state,
             &execution.core.state,
+            binders,
+            &assumptions,
+        )
+        .map_err(|message| self.step_error(format!("loop state join: {message}")))?;
+        let invariant_obligations = crate::kernel::c_loop_invariant_obligations_at_back_edge(
+            &back_edge_state,
             loop_entry_state,
             invariant_checks,
             &assumptions,
@@ -659,22 +672,26 @@ impl<'a> Proof<'a> {
                 .map(|obligation| obligation.proposition().clone()),
         );
         let assumptions = assumptions_from_propositions(&closer_facts);
-        if !crate::kernel::c_loop_condition_may_continue(
-            &execution.core.state,
-            condition,
-            &assumptions,
-        )
-        .map_err(|message| self.step_error(format!("loop condition classification: {message}")))?
+        if !crate::kernel::c_loop_condition_may_continue(&back_edge_state, condition, &assumptions)
+            .map_err(|message| {
+                self.step_error(format!("loop condition classification: {message}"))
+            })?
         {
             return Ok(());
         }
         // Heap lifetime and resource ownership are compared against the head
         // the body actually started from. That is the loop entry context for
         // an ordinary loop, and the loop's own narrower resource context when
-        // the loop declares `owns` or `views` clauses of its own.
+        // the loop declares `owns` or `views` clauses of its own. A binder's
+        // model is what its invariants constrain, so the ownership comparison
+        // sets it aside; the invariant obligations above checked it.
         crate::kernel::c_loop_state_components_match_at_back_edge(
             loop_head_state,
-            &execution.core.state,
+            &crate::kernel::c_loop_state_with_head_binder_models(
+                &back_edge_state,
+                loop_head_state,
+                binders,
+            ),
             &assumptions,
             composite_resource_definitions,
         )
@@ -696,6 +713,7 @@ impl<'a> Proof<'a> {
         invariant_checks: &[CLoopInvariantCheck],
         ranking_measures: &[CExpression],
         invariant_surfaces: &[ClickProposition],
+        binders: &[crate::kernel::CLoopBinder],
         composite_resource_definitions: &[CCompositeResourceDefinition],
         do_while: bool,
     ) -> Result<Option<Self>, ClickError> {
@@ -704,6 +722,7 @@ impl<'a> Proof<'a> {
             loop_head_state,
             condition,
             invariant_checks,
+            binders,
             composite_resource_definitions,
         )?;
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {

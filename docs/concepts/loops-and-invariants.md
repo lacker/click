@@ -176,6 +176,100 @@ The arithmetic invariants prove access bounds. The loop's owned resources
 summarize what memory the loop may write; with no clause of its own it may
 write exactly what the function owns.
 
+## Modeled instances in loops
+
+A loop header can also name a resource instance, with the binder syntax a
+contract uses:
+
+<!-- verified-example: mdtests/loop_binder_counter_model.md -->
+```click
+loop {
+    owns c: counter(p);
+    invariant c.count == old(c.count) + i;
+}
+```
+
+The loop then behaves like a callee contract for that instance. At the loop
+head it consumes the enclosing owned instance whose family and arguments
+match, and binds `c` to it for the body. Exactly one instance must match; two
+matching instances are an ambiguity the loop refuses rather than resolves, and
+none is an error. An instance the loop does not declare stays with the
+enclosing frame: the body can neither read nor write through it, and it is
+returned after the loop.
+
+The head is an arbitrary visit, so the model `c` carries there is arbitrary
+too. Only the invariants say anything about it, and `old(c.count)` still means
+the function-entry model of the function's own binder of that name. There is
+no loop-entry snapshot of a model.
+
+The body holds `c` and works with the ordinary proof operations. Here one
+iteration opens the instance, writes the cell it owns, and folds it again with
+the model that write produced:
+
+<!-- verified-example: mdtests/loop_binder_counter_model.md -->
+```c
+void bump_n(struct cell* p, int32 n) {
+    int32 i;
+    i = 0;
+    while (i < n) {
+        p->value = p->value + 1;
+        i = i + 1;
+    }
+}
+```
+
+<!-- verified-example: mdtests/loop_binder_counter_model.md -->
+```click
+resource counter(p: struct cell*) {
+    field count: int32;
+    owns p->value;
+    fact p->value == count;
+}
+
+void bump_n(struct cell* p, int32 n) {
+    requires n >= 0;
+    requires n <= 1000;
+    owns c: counter(p);
+    requires c.count == 0;
+    ensures c.count == old(c.count) + n;
+} by {
+    step();
+    step();
+    loop {
+        owns c: counter(p);
+        invariant i >= 0;
+        invariant i <= n;
+        invariant c.count == old(c.count) + i;
+
+        initialize by simp;
+        preserve by {
+            unfold(c);
+            step();
+            step();
+            let c = fold(counter(p), { count: old(c.count) + i });
+            close_invariants();
+        }
+    }
+    have i == n by simp;
+    execute();
+    simp();
+}
+```
+
+`close_invariants()` selects the instance the same way the head did, with the
+arguments read in the current state, and binds the loop's name to it whatever
+the body called it. A body that folds its result as `let d = fold(counter(p),
+...)` still hands `c` back, because `d` is the owned `counter(p)`. A body that
+ends without an instance at those arguments fails at the back edge, named.
+The ownership join compares the binder's family and arguments and leaves its
+model to the invariants, which is what lets an iteration change the model at
+all.
+
+After the loop, the name denotes the final instance, with the invariants and
+the negated guard available; above, `i == n` turns the invariant into the
+postcondition. A loop binder may reuse an enclosing binder's name, as `c` does
+here; that is a rebinding of the same instance rather than a second one.
+
 Loop frames do not erase semantic lifetime state. A body that frees or
 allocates heap storage, or calls a function whose contract consumes or
 produces a resource, must leave the heap lifetime and resource context

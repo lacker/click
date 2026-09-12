@@ -2885,6 +2885,21 @@ impl Parser {
     }
 
     fn parse_owned_resource_binding(&mut self) -> Result<ResourceClause, ClickError> {
+        self.parse_owned_resource_binding_allowing_rebinding(false)
+    }
+
+    /// A loop header binder, which may reuse an enclosing binder's name. The
+    /// loop rebinds that name to the instance it selects at entry, so a reused
+    /// name keeps the enclosing instance identity and must name the same
+    /// resource family.
+    fn parse_loop_resource_binding(&mut self) -> Result<ResourceClause, ClickError> {
+        self.parse_owned_resource_binding_allowing_rebinding(true)
+    }
+
+    fn parse_owned_resource_binding_allowing_rebinding(
+        &mut self,
+        rebinding: bool,
+    ) -> Result<ResourceClause, ClickError> {
         if let Some(name) = self.peek_ident()
             && self.peek_next() != Some(&Token::Colon)
             && let Some(parameter) = self.contract_resource_parameters.get(name).cloned()
@@ -2898,7 +2913,10 @@ impl Parser {
         }
         let name = self.expect_ident("resource instance name")?;
         self.expect(Token::Colon)?;
-        if self.current_resource_bindings.contains_key(&name)
+        let rebound = rebinding
+            .then(|| self.current_resource_bindings.get(&name).cloned())
+            .flatten();
+        if (rebound.is_none() && self.current_resource_bindings.contains_key(&name))
             || self.current_contract_bindings.contains(&name)
         {
             return Err(self.error(format!("duplicate resource instance binding `{name}`")));
@@ -2911,8 +2929,21 @@ impl Parser {
         else {
             return Err(self.error("named ownership requires a field-bearing declared resource"));
         };
-        let identity = Variable(self.next_resource_identity);
-        self.next_resource_identity += 1;
+        let identity = match rebound {
+            Some((identity, family)) => {
+                if &family != resource_name {
+                    return Err(self.error(format!(
+                        "loop binder `{name}` rebinds an instance of resource `{family}`, not `{resource_name}`"
+                    )));
+                }
+                identity
+            }
+            None => {
+                let identity = Variable(self.next_resource_identity);
+                self.next_resource_identity += 1;
+                identity
+            }
+        };
         self.current_resource_bindings
             .insert(name.clone(), (identity, resource_name.clone()));
         let target = ResourceClause::Named {
@@ -4011,8 +4042,17 @@ impl Parser {
                 // so they are region declarations rather than proof items.
                 if self.peek_ident() == Some("owns") {
                     self.position += 1;
-                    let resource = self.parse_owned_resource_target()?;
+                    let resource = self.parse_loop_resource_binding()?;
                     self.expect(Token::Semicolon)?;
+                    if let ResourceClause::Named { binding, .. } = &resource
+                        && resources.iter().any(|existing| {
+                            matches!(existing, ResourceClause::Named { binding: other, .. }
+                                if other.name == binding.name)
+                        })
+                    {
+                        return Err(self
+                            .error(format!("duplicate loop resource binder `{}`", binding.name)));
+                    }
                     resources.push(resource);
                     continue;
                 }
