@@ -3198,7 +3198,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
             .filter(|(child, _)| child.is_view())
             .map(|(_, occurrence)| *occurrence)
             .collect::<BTreeSet<_>>();
-        let dependencies = inserted_unfolded_occurrences
+        let mut dependencies = inserted_unfolded_occurrences
             .into_iter()
             .filter(|(child, _)| child.is_view())
             .map(|(child, occurrence)| {
@@ -3224,7 +3224,17 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 }
                 found_destination = true;
                 let child_binding = state.resources().loan_dependency(occurrence);
-                if child_binding
+                if child_binding.is_none()
+                    && !state.resources().view_occurrence_is_principal(occurrence)
+                {
+                    dependencies.push((
+                        occurrence,
+                        crate::kernel::LoanViewBinding {
+                            viewed: child.clone(),
+                            ..binding.clone()
+                        },
+                    ));
+                } else if child_binding
                     .as_ref()
                     .is_none_or(|existing| !same_loan_authority(existing, &binding))
                 {

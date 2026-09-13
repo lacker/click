@@ -44,6 +44,16 @@ pub(in crate::surface) fn verify_loop_execution_proofs(
         }),
     )?;
 
+    let initial_state = install_borrowed_contract_inputs(
+        initial_state,
+        &function,
+        &arguments,
+        &requirement_facts,
+        parsed_function.parameters(),
+        function_environment,
+        &label,
+    )?;
+
     let entry_state = c_function_contract_entry_state(
         &initial_state,
         &function,

@@ -5591,7 +5591,7 @@ int32 answer() {
 verifying "reader.c";
 
 int32 reader(int32 p[]) {
-    owns p[0..1];
+    views p[0..1];
     ensures result == p[0];
 } by {
     execute();

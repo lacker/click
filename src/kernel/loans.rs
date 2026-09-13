@@ -15,7 +15,7 @@ use super::{
 };
 use crate::persistent::{PersistentMap, PersistentSet};
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -227,6 +227,50 @@ fn update_active_memory_subtree(
     Ok(subtree)
 }
 
+fn concrete_ranges_are_disjoint(left: &CMemoryRange, right: &CMemoryRange) -> bool {
+    if left.base() == right.base() {
+        let (Some(left_start), Some(left_end), Some(right_start), Some(right_end)) = (
+            left.start().as_const(),
+            left.end().as_const(),
+            right.start().as_const(),
+            right.end().as_const(),
+        ) else {
+            return false;
+        };
+        let left_width = i64::from(left.element_width());
+        let right_width = i64::from(right.element_width());
+        let (Some(left_start), Some(left_end), Some(right_start), Some(right_end)) = (
+            i64::from(left_start).checked_mul(left_width),
+            i64::from(left_end).checked_mul(left_width),
+            i64::from(right_start).checked_mul(right_width),
+            i64::from(right_end).checked_mul(right_width),
+        ) else {
+            return false;
+        };
+        return left_end <= right_start || right_end <= left_start;
+    }
+    let (left_base, left_bytes) = left.byte_footprint();
+    let (right_base, right_bytes) = right.byte_footprint();
+    let (Some(left_start), Some(right_start), Some(left_length), Some(right_length)) = (
+        left_base.offset.as_const(),
+        right_base.offset.as_const(),
+        left_bytes.as_const(),
+        right_bytes.as_const(),
+    ) else {
+        return false;
+    };
+    if left_base.block != right_base.block {
+        return false;
+    }
+    let (Some(left_end), Some(right_end)) = (
+        left_start.checked_add(i64::from(left_length)),
+        right_start.checked_add(i64::from(right_length)),
+    ) else {
+        return false;
+    };
+    left_end <= right_start || right_end <= left_start
+}
+
 /// A read derived from ownership in the current context. This is useful for
 /// checking the owner's own computation, but it is not transferable loan
 /// authority and contains no loan identity.
@@ -257,7 +301,9 @@ impl OwnedResourceObservation {
 struct LoanScopeRecord {
     loan: LoanId,
     root: LoanShareId,
-    close_right: LoanParticipantId,
+    /// The participant allowed to end this scope. A borrowed contract input
+    /// has no local close right: its lender lives outside the modular proof.
+    close_right: Option<LoanParticipantId>,
     active: bool,
     parent: Option<LoanScopeId>,
     parent_share: Option<LoanShareId>,
@@ -265,17 +311,28 @@ struct LoanScopeRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+enum LoanOrigin {
+    /// Ownership was placed in this ledger's escrow and may be recovered by
+    /// exactly this participant after the scope closes.
+    Escrowed(LoanParticipantId),
+    /// A checked child scope pins an already-live parent share.
+    Reborrowed,
+    /// Modular verification began with a caller-supplied shared borrow. The
+    /// caller and its ownership escrow are deliberately outside this ledger.
+    BorrowedContractInput,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct LoanRecord {
     scope: LoanScopeId,
     support: ResourceOccurrenceId,
-    escrow: CResourceFact,
+    escrow: Option<CResourceFact>,
     /// Every checked viewed projection authorized by this loan.  A composite
     /// loan keeps its folded head plus all primitive body views here so a
     /// child binding cannot be minted from the head alone.
     permitted: Vec<CResourceFact>,
-    recovery_right: LoanParticipantId,
+    origin: LoanOrigin,
     recovered: bool,
-    recoverable: bool,
     /// Primitive body pieces whose memory remains protected while a
     /// composite head is lent.  The head is retained as the restoration
     /// recipe, while this checked list supplies the actual write footprint.
@@ -303,6 +360,12 @@ struct LoanLedgerData {
     active_memory_index: PersistentMap<ResourceMemoryIntervalNode, PersistentSet<LoanId>>,
     active_memory_subtree: PersistentMap<ResourceMemoryIntervalNode, PersistentSet<LoanId>>,
     active_memory_loans: usize,
+    /// Active root loans whose symbolic footprint cannot enter the concrete
+    /// dyadic index. Their presence is a constant-time, fail-closed barrier
+    /// for assumption-free writes. The assumption-aware path inspects only
+    /// this explicit exceptional set and requires a proof of disjointness.
+    unindexed_memory_roots: usize,
+    unindexed_memory: PersistentMap<LoanId, Vec<CMemoryRange>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -421,7 +484,6 @@ impl LoanRefusalSubject {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn for_resource(resource: CResourceFact) -> Self {
         Self::resource(resource)
     }
@@ -464,7 +526,7 @@ impl LoanRefusalSubject {
         }
     }
 
-    fn with_support_id(support: ResourceOccurrenceId) -> Self {
+    pub(crate) fn with_support_id(support: ResourceOccurrenceId) -> Self {
         Self {
             support: Some((support.arena(), support.ordinal())),
             ..Self::none()
@@ -702,6 +764,15 @@ enum LoanTransitionEvidence {
         loan: LoanId,
         root: LoanShareId,
     },
+    BorrowedContractInput {
+        holder: LoanParticipantId,
+        support: ResourceOccurrenceId,
+        viewed: CResourceFact,
+        backing: Vec<CResourceFact>,
+        scope: LoanScopeId,
+        loan: LoanId,
+        root: LoanShareId,
+    },
     Reborrow {
         parent: LoanViewBinding,
         lender: LoanParticipantId,
@@ -785,6 +856,41 @@ pub(crate) struct CompositeLoanBacking {
     pieces: Vec<CResourceFact>,
 }
 
+/// Definition-checked primitive footprint for an externally supplied folded
+/// view. The surface initializer is the only producer; the transition stores
+/// the checked pieces so later rechecks need no definition lookup. Recursive
+/// children are deliberately excluded until the ledger has an opaque
+/// capability that protects their complete footprint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BorrowedContractInputBacking {
+    support: ResourceOccurrenceId,
+    head: CResourceFact,
+    pieces: Vec<CResourceFact>,
+}
+
+impl BorrowedContractInputBacking {
+    pub(crate) fn from_checked_expansion(
+        support: ResourceOccurrenceId,
+        head: CResourceFact,
+        pieces: Vec<CResourceFact>,
+    ) -> Option<Self> {
+        (head.is_view()
+            && matches!(head.resource(), CResource::Composite { .. })
+            && pieces.iter().all(|piece| {
+                piece.is_view()
+                    && matches!(
+                        piece.resource(),
+                        CResource::Memory(_) | CResource::Token { .. }
+                    )
+            }))
+        .then_some(Self {
+            support,
+            head,
+            pieces,
+        })
+    }
+}
+
 impl CompositeLoanBacking {
     pub(crate) fn from_checked_expansion(
         support: ResourceOccurrenceId,
@@ -848,6 +954,13 @@ impl StableViewRecovery {
                     ..
                 }
                 | LoanTransitionEvidence::LendComposite {
+                    scope,
+                    loan,
+                    root,
+                    support,
+                    ..
+                }
+                | LoanTransitionEvidence::BorrowedContractInput {
                     scope,
                     loan,
                     root,
@@ -1419,36 +1532,35 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
         if !requirement.fact.is_view() {
             continue;
         }
-        if let Some(range) = requirement.fact.memory_range()
-            && (range.start().as_const().is_none() || range.end().as_const().is_none())
-        {
-            // The ordered sweep below is intentionally concrete-only.  A
-            // symbolic family needs an explicit separation/overlap proof;
-            // treating its ordering as an index decision would manufacture
-            // a loan union without checked byte bounds.
-            return Err(StableViewPlanError::UnsupportedPartition);
-        }
         let view_occurrences =
             caller_resources.view_occurrences_for_fact(&requirement.fact, assumptions);
         if !view_occurrences.is_empty() {
-            let Some(binding) = view_occurrences
+            let binding = view_occurrences
                 .iter()
-                .find_map(|occurrence| parent_view_bindings.get(occurrence).cloned())
-            else {
-                return Err(StableViewPlanError::Loan(LoanRefusal::MissingLoanBinding));
-            };
-            ledger.validate_view_binding(binding.clone(), caller)?;
-            if !ResourceContext::new()
-                .unchecked_with_fact(binding.viewed.clone())
-                .satisfies_fact(&requirement.fact, assumptions)
+                .filter_map(|occurrence| parent_view_bindings.get(occurrence).cloned())
+                .collect::<BTreeSet<_>>();
+            if binding.len() > 1
+                || (!binding.is_empty()
+                    && view_occurrences
+                        .iter()
+                        .any(|occurrence| parent_view_bindings.get(occurrence).is_none()))
             {
-                return Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence));
+                return Err(StableViewPlanError::Loan(LoanRefusal::MissingLoanBinding));
             }
-            rebound
-                .entry(binding)
-                .or_default()
-                .push((index, requirement.clone()));
-            continue;
+            if let Some(binding) = binding.into_iter().next() {
+                ledger.validate_view_binding(binding.clone(), caller)?;
+                if !ResourceContext::new()
+                    .unchecked_with_fact(binding.viewed.clone())
+                    .satisfies_fact(&requirement.fact, assumptions)
+                {
+                    return Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence));
+                }
+                rebound
+                    .entry(binding)
+                    .or_default()
+                    .push((index, requirement.clone()));
+                continue;
+            }
         }
         let Some((support, owned)) =
             caller_resources.directly_supporting_owned_entry(&requirement.fact, assumptions)
@@ -1512,7 +1624,9 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                 continue;
             };
             if range.start().as_const().is_none() || range.end().as_const().is_none() {
-                return Err(StableViewPlanError::UnsupportedPartition);
+                clusters.push(vec![item]);
+                cluster_unions.push(Some(range));
+                continue;
             }
             memory_items.push((item, range));
         }
@@ -1901,6 +2015,8 @@ impl LoanLedger {
                     active_memory_index: PersistentMap::default(),
                     active_memory_subtree: PersistentMap::default(),
                     active_memory_loans: 0,
+                    unindexed_memory_roots: 0,
+                    unindexed_memory: PersistentMap::default(),
                 },
             }),
         }
@@ -1987,6 +2103,68 @@ impl LoanLedger {
                 loan,
                 support,
                 viewed: CResourceFact::View(escrow.resource().clone()),
+            },
+            transition: self.issue(evidence)?,
+        })
+    }
+
+    /// Establish the shared authority supplied by a modular function
+    /// contract. Unlike [`Self::lend`], this transition consumes no ownership
+    /// and creates no recovery or close right: the unknown caller retains
+    /// both outside the proof. The exact resource occurrence is the only
+    /// supported anchor, so an equal-looking fact cannot reuse this root.
+    pub(crate) fn borrowed_contract_input(
+        &self,
+        holder: LoanParticipantId,
+        support: ResourceOccurrenceId,
+        viewed: CResourceFact,
+        backing: Option<BorrowedContractInputBacking>,
+    ) -> Result<LoanOpening, LoanRefusal> {
+        self.require_participant(holder)?;
+        if support == ResourceOccurrenceId::default() {
+            return Err(LoanRefusal::MissingBacking);
+        }
+        if !viewed.is_view() {
+            return Err(LoanRefusal::InvalidEvidence);
+        }
+        let backing = match (viewed.resource(), backing) {
+            (CResource::Memory(_) | CResource::Token { .. }, None) => Vec::new(),
+            (CResource::Composite { .. }, Some(backing))
+                if backing.support == support && backing.head == viewed =>
+            {
+                backing.pieces
+            }
+            _ => return Err(LoanRefusal::UnsupportedResource),
+        };
+        let scope = LoanScopeId {
+            arena: self.storage.data.arena,
+            ordinal: self.storage.data.next_scope,
+        };
+        let loan = LoanId {
+            arena: self.storage.data.arena,
+            ordinal: self.storage.data.next_loan,
+        };
+        let root = LoanShareId {
+            arena: self.storage.data.arena,
+            ordinal: self.storage.data.next_share,
+        };
+        let evidence = LoanTransitionEvidence::BorrowedContractInput {
+            holder,
+            support,
+            viewed: viewed.clone(),
+            backing,
+            scope,
+            loan,
+            root,
+        };
+        Ok(LoanOpening {
+            scope,
+            loan,
+            root_share: root,
+            description: StableViewDescription {
+                loan,
+                support,
+                viewed,
             },
             transition: self.issue(evidence)?,
         })
@@ -2242,21 +2420,17 @@ impl LoanLedger {
     ) -> Result<(CheckedLoanTransition, CResourceFact, ResourceOccurrenceId), LoanRefusal> {
         self.require_arena(loan.arena)?;
         self.require_participant(holder)?;
-        let escrow = self
+        let record = self
             .storage
             .data
             .loans
             .get(&loan)
-            .ok_or(LoanRefusal::MissingLoan)?
-            .escrow
-            .clone();
-        let support = self
-            .storage
-            .data
-            .loans
-            .get(&loan)
-            .ok_or(LoanRefusal::MissingLoan)?
-            .support;
+            .ok_or(LoanRefusal::MissingLoan)?;
+        if !matches!(record.origin, LoanOrigin::Escrowed(right) if right == holder) {
+            return Err(LoanRefusal::InvalidEvidence);
+        }
+        let escrow = record.escrow.clone().ok_or(LoanRefusal::MissingBacking)?;
+        let support = record.support;
         Ok((
             self.issue(LoanTransitionEvidence::Recover { loan, holder })?,
             escrow,
@@ -2292,6 +2466,31 @@ impl LoanLedger {
                     .unchecked_with_fact(permitted.clone())
                     .satisfies_fact(&description.viewed, assumptions)
             })
+    }
+
+    pub(crate) fn authorizes_bindings(
+        &self,
+        holder: LoanParticipantId,
+        bindings: &LoanViewBindings,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        bindings.iter().all(|(_, binding)| {
+            self.storage
+                .data
+                .loans
+                .get(&binding.loan)
+                .is_some_and(|loan| loan.scope == binding.scope)
+                && self.permits_view(
+                    holder,
+                    &StableViewDescription {
+                        loan: binding.loan,
+                        support: binding.support,
+                        viewed: binding.viewed.clone(),
+                    },
+                    binding.share,
+                    assumptions,
+                )
+        })
     }
 
     pub(crate) fn describe_view(
@@ -2368,8 +2567,18 @@ impl LoanLedger {
         {
             return Ok(Vec::new());
         }
+        if self.storage.data.unindexed_memory_roots != 0 {
+            return Err(LoanRefusal::UnsupportedPartition);
+        }
+        self.active_indexed_memory_overlaps(range)
+    }
+
+    fn active_indexed_memory_overlaps(
+        &self,
+        range: &CMemoryRange,
+    ) -> Result<Vec<LoanId>, LoanRefusal> {
         let Some(query_nodes) = memory_interval_nodes(range) else {
-            return if self.storage.data.active_memory_loans == 0 {
+            return if self.storage.data.active_memory_index.iter().next().is_none() {
                 Ok(Vec::new())
             } else {
                 Err(LoanRefusal::UnsupportedPartition)
@@ -2395,6 +2604,42 @@ impl LoanLedger {
             }
         }
         Ok(loans.iter().copied().collect())
+    }
+
+    pub(crate) fn permits_memory_access_with_assumptions(
+        &self,
+        range: &CMemoryRange,
+        assumptions: &PureFactContext,
+    ) -> Result<(), LoanRefusal> {
+        let overlaps = self.active_indexed_memory_overlaps(range)?;
+        if !overlaps.is_empty() {
+            return Err(LoanRefusal::ActiveDependency);
+        }
+        let ranges_are_proven_disjoint = |protected: &CMemoryRange| {
+            range.base().blocks_proven_distinct(protected.base())
+                || assumptions
+                    .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+                        range,
+                        protected,
+                    )
+                || concrete_ranges_are_disjoint(range, protected)
+                || ResourceContext::new()
+                    .unchecked_with_facts([
+                        CResourceFact::own_memory(range.clone()),
+                        CResourceFact::own_memory(protected.clone()),
+                    ])
+                    .validity_error(assumptions)
+                    .is_none()
+        };
+        for (_, protected_ranges) in self.storage.data.unindexed_memory.iter() {
+            for protected in protected_ranges {
+                if ranges_are_proven_disjoint(protected) {
+                    continue;
+                }
+                return Err(LoanRefusal::UnsupportedPartition);
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn permits_memory_access(&self, range: &CMemoryRange) -> Result<(), LoanRefusal> {
@@ -2489,6 +2734,9 @@ impl LoanLedger {
                         return Err(LoanRefusal::UnsupportedResource);
                     }
                 };
+                let has_unindexed_memory = memory_backing
+                    .iter()
+                    .any(|range| memory_interval_nodes(range).is_none());
                 data.next_scope = data
                     .next_scope
                     .checked_add(1)
@@ -2506,7 +2754,7 @@ impl LoanLedger {
                     LoanScopeRecord {
                         loan: *loan,
                         root: *root,
-                        close_right: *lender,
+                        close_right: Some(*lender),
                         active: true,
                         parent: None,
                         parent_share: None,
@@ -2518,11 +2766,10 @@ impl LoanLedger {
                     LoanRecord {
                         scope: *scope,
                         support: *support,
-                        escrow: escrow.clone(),
+                        escrow: Some(escrow.clone()),
                         permitted: vec![CResourceFact::View(escrow.resource().clone())],
-                        recovery_right: *lender,
+                        origin: LoanOrigin::Escrowed(*lender),
                         recovered: false,
-                        recoverable: true,
                         memory_backing: memory_backing.clone(),
                     },
                 );
@@ -2537,20 +2784,40 @@ impl LoanLedger {
                     },
                 );
                 for range in &memory_backing {
-                    data.active_memory_index =
-                        update_active_memory_index(&data.active_memory_index, range, *loan, true)?;
-                    data.active_memory_subtree = update_active_memory_subtree(
-                        &data.active_memory_subtree,
-                        range,
-                        *loan,
-                        true,
-                    )?;
+                    if memory_interval_nodes(range).is_some() {
+                        data.active_memory_index = update_active_memory_index(
+                            &data.active_memory_index,
+                            range,
+                            *loan,
+                            true,
+                        )?;
+                        data.active_memory_subtree = update_active_memory_subtree(
+                            &data.active_memory_subtree,
+                            range,
+                            *loan,
+                            true,
+                        )?;
+                    }
                 }
                 if !memory_backing.is_empty() {
                     data.active_memory_loans = data
                         .active_memory_loans
                         .checked_add(1)
                         .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                }
+                if has_unindexed_memory {
+                    data.unindexed_memory_roots = data
+                        .unindexed_memory_roots
+                        .checked_add(1)
+                        .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                    data.unindexed_memory = data.unindexed_memory.with_inserted(
+                        *loan,
+                        memory_backing
+                            .iter()
+                            .filter(|range| memory_interval_nodes(range).is_none())
+                            .cloned()
+                            .collect(),
+                    );
                 }
             }
             LoanTransitionEvidence::LendComposite {
@@ -2598,6 +2865,9 @@ impl LoanLedger {
                     .filter_map(CResourceFact::memory_own_range)
                     .cloned()
                     .collect::<Vec<_>>();
+                let has_unindexed_memory = memory_backing
+                    .iter()
+                    .any(|range| memory_interval_nodes(range).is_none());
                 data.next_scope = data
                     .next_scope
                     .checked_add(1)
@@ -2615,7 +2885,7 @@ impl LoanLedger {
                     LoanScopeRecord {
                         loan: *loan,
                         root: *root,
-                        close_right: *lender,
+                        close_right: Some(*lender),
                         active: true,
                         parent: None,
                         parent_share: None,
@@ -2627,7 +2897,7 @@ impl LoanLedger {
                     LoanRecord {
                         scope: *scope,
                         support: *support,
-                        escrow: escrow.clone(),
+                        escrow: Some(escrow.clone()),
                         permitted: std::iter::once(CResourceFact::View(escrow.resource().clone()))
                             .chain(
                                 backing
@@ -2635,9 +2905,8 @@ impl LoanLedger {
                                     .map(|fact| CResourceFact::View(fact.resource().clone())),
                             )
                             .collect(),
-                        recovery_right: *lender,
+                        origin: LoanOrigin::Escrowed(*lender),
                         recovered: false,
-                        recoverable: true,
                         memory_backing: memory_backing.clone(),
                     },
                 );
@@ -2652,20 +2921,172 @@ impl LoanLedger {
                     },
                 );
                 for range in &memory_backing {
-                    data.active_memory_index =
-                        update_active_memory_index(&data.active_memory_index, range, *loan, true)?;
-                    data.active_memory_subtree = update_active_memory_subtree(
-                        &data.active_memory_subtree,
-                        range,
-                        *loan,
-                        true,
-                    )?;
+                    if memory_interval_nodes(range).is_some() {
+                        data.active_memory_index = update_active_memory_index(
+                            &data.active_memory_index,
+                            range,
+                            *loan,
+                            true,
+                        )?;
+                        data.active_memory_subtree = update_active_memory_subtree(
+                            &data.active_memory_subtree,
+                            range,
+                            *loan,
+                            true,
+                        )?;
+                    }
                 }
                 if !memory_backing.is_empty() {
                     data.active_memory_loans = data
                         .active_memory_loans
                         .checked_add(1)
                         .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                }
+                if has_unindexed_memory {
+                    data.unindexed_memory_roots = data
+                        .unindexed_memory_roots
+                        .checked_add(1)
+                        .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                    data.unindexed_memory = data.unindexed_memory.with_inserted(
+                        *loan,
+                        memory_backing
+                            .iter()
+                            .filter(|range| memory_interval_nodes(range).is_none())
+                            .cloned()
+                            .collect(),
+                    );
+                }
+            }
+            LoanTransitionEvidence::BorrowedContractInput {
+                holder,
+                support,
+                viewed,
+                backing,
+                scope,
+                loan,
+                root,
+            } => {
+                self.require_participant(*holder)?;
+                if *support == ResourceOccurrenceId::default() {
+                    return Err(LoanRefusal::MissingBacking);
+                }
+                let valid_backing = match viewed.resource() {
+                    CResource::Memory(_) | CResource::Token { .. } => backing.is_empty(),
+                    CResource::Composite { .. } => {
+                        backing.iter().all(|piece| {
+                                piece.is_view()
+                                    && matches!(
+                                        piece.resource(),
+                                        CResource::Memory(_)
+                                            | CResource::Token { .. }
+                                    )
+                            })
+                    }
+                    _ => false,
+                };
+                if !viewed.is_view() || !valid_backing {
+                    return Err(LoanRefusal::UnsupportedResource);
+                }
+                if scope.arena != data.arena
+                    || loan.arena != data.arena
+                    || root.arena != data.arena
+                    || scope.ordinal != data.next_scope
+                    || loan.ordinal != data.next_loan
+                    || root.ordinal != data.next_share
+                {
+                    return Err(LoanRefusal::InvalidEvidence);
+                }
+                let mut permitted = vec![viewed.clone()];
+                permitted.extend(backing.iter().cloned());
+                let memory_backing = permitted
+                    .iter()
+                    .filter_map(CResourceFact::memory_range)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let has_unindexed_memory = memory_backing
+                    .iter()
+                    .any(|range| memory_interval_nodes(range).is_none());
+                data.next_scope = data
+                    .next_scope
+                    .checked_add(1)
+                    .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                data.next_loan = data
+                    .next_loan
+                    .checked_add(1)
+                    .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                data.next_share = data
+                    .next_share
+                    .checked_add(1)
+                    .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                data.scopes = data.scopes.with_inserted(
+                    *scope,
+                    LoanScopeRecord {
+                        loan: *loan,
+                        root: *root,
+                        close_right: None,
+                        active: true,
+                        parent: None,
+                        parent_share: None,
+                        dependencies: crate::persistent::PersistentSet::default(),
+                    },
+                );
+                data.loans = data.loans.with_inserted(
+                    *loan,
+                    LoanRecord {
+                        scope: *scope,
+                        support: *support,
+                        escrow: None,
+                        permitted,
+                        origin: LoanOrigin::BorrowedContractInput,
+                        recovered: false,
+                        memory_backing: memory_backing.clone(),
+                    },
+                );
+                data.shares = data.shares.with_inserted(
+                    *root,
+                    LoanShareRecord {
+                        scope: *scope,
+                        parent: None,
+                        children: None,
+                        holder: Some(*holder),
+                        pinned_by: None,
+                    },
+                );
+                for range in &memory_backing {
+                    if memory_interval_nodes(range).is_some() {
+                        data.active_memory_index = update_active_memory_index(
+                            &data.active_memory_index,
+                            range,
+                            *loan,
+                            true,
+                        )?;
+                        data.active_memory_subtree = update_active_memory_subtree(
+                            &data.active_memory_subtree,
+                            range,
+                            *loan,
+                            true,
+                        )?;
+                    }
+                }
+                if !memory_backing.is_empty() {
+                    data.active_memory_loans = data
+                        .active_memory_loans
+                        .checked_add(1)
+                        .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                }
+                if has_unindexed_memory {
+                    data.unindexed_memory_roots = data
+                        .unindexed_memory_roots
+                        .checked_add(1)
+                        .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                    data.unindexed_memory = data.unindexed_memory.with_inserted(
+                        *loan,
+                        memory_backing
+                            .iter()
+                            .filter(|range| memory_interval_nodes(range).is_none())
+                            .cloned()
+                            .collect(),
+                    );
                 }
             }
             LoanTransitionEvidence::Reborrow {
@@ -2747,7 +3168,7 @@ impl LoanLedger {
                     LoanScopeRecord {
                         loan: *loan,
                         root: *root,
-                        close_right: *lender,
+                        close_right: Some(*lender),
                         active: true,
                         parent: Some(parent.scope),
                         parent_share: Some(parent.share),
@@ -2759,11 +3180,10 @@ impl LoanLedger {
                     LoanRecord {
                         scope: *scope,
                         support: parent.support,
-                        escrow: parent_loan.escrow,
+                        escrow: None,
                         permitted: parent_loan.permitted.clone(),
-                        recovery_right: *lender,
+                        origin: LoanOrigin::Reborrowed,
                         recovered: false,
-                        recoverable: false,
                         memory_backing: parent_loan.memory_backing.clone(),
                     },
                 );
@@ -2778,14 +3198,20 @@ impl LoanLedger {
                     },
                 );
                 for range in &parent_loan.memory_backing {
-                    data.active_memory_index =
-                        update_active_memory_index(&data.active_memory_index, range, *loan, true)?;
-                    data.active_memory_subtree = update_active_memory_subtree(
-                        &data.active_memory_subtree,
-                        range,
-                        *loan,
-                        true,
-                    )?;
+                    if memory_interval_nodes(range).is_some() {
+                        data.active_memory_index = update_active_memory_index(
+                            &data.active_memory_index,
+                            range,
+                            *loan,
+                            true,
+                        )?;
+                        data.active_memory_subtree = update_active_memory_subtree(
+                            &data.active_memory_subtree,
+                            range,
+                            *loan,
+                            true,
+                        )?;
+                    }
                 }
                 if !parent_loan.memory_backing.is_empty() {
                     data.active_memory_loans = data
@@ -2930,7 +3356,7 @@ impl LoanLedger {
                 if !scope_record.active {
                     return Err(LoanRefusal::ScopeEnded);
                 }
-                if scope_record.close_right != *holder {
+                if scope_record.close_right != Some(*holder) {
                     return Err(LoanRefusal::WrongHolder);
                 }
                 if !scope_record.dependencies.is_empty() {
@@ -2960,22 +3386,32 @@ impl LoanLedger {
                 );
                 if let Some(record) = data.loans.get(&scope_record.loan).cloned() {
                     for range in &record.memory_backing {
-                        data.active_memory_index = update_active_memory_index(
-                            &data.active_memory_index,
-                            range,
-                            scope_record.loan,
-                            false,
-                        )?;
-                        data.active_memory_subtree = update_active_memory_subtree(
-                            &data.active_memory_subtree,
-                            range,
-                            scope_record.loan,
-                            false,
-                        )?;
+                        if memory_interval_nodes(range).is_some() {
+                            data.active_memory_index = update_active_memory_index(
+                                &data.active_memory_index,
+                                range,
+                                scope_record.loan,
+                                false,
+                            )?;
+                            data.active_memory_subtree = update_active_memory_subtree(
+                                &data.active_memory_subtree,
+                                range,
+                                scope_record.loan,
+                                false,
+                            )?;
+                        }
                     }
                     if !record.memory_backing.is_empty() {
                         data.active_memory_loans = data
                             .active_memory_loans
+                            .checked_sub(1)
+                            .ok_or(LoanRefusal::InvalidEvidence)?;
+                    }
+                    if data.unindexed_memory.get(&scope_record.loan).is_some() {
+                        data.unindexed_memory =
+                            data.unindexed_memory.without_key(&scope_record.loan);
+                        data.unindexed_memory_roots = data
+                            .unindexed_memory_roots
                             .checked_sub(1)
                             .ok_or(LoanRefusal::InvalidEvidence)?;
                     }
@@ -3005,7 +3441,11 @@ impl LoanLedger {
                         data.shares = data.shares.with_inserted(
                             parent_share,
                             LoanShareRecord {
-                                holder: Some(scope_record.close_right),
+                                holder: Some(
+                                    scope_record
+                                        .close_right
+                                        .ok_or(LoanRefusal::InvalidEvidence)?,
+                                ),
                                 pinned_by: None,
                                 ..pinned
                             },
@@ -3019,14 +3459,14 @@ impl LoanLedger {
                     .get(loan)
                     .cloned()
                     .ok_or(LoanRefusal::MissingLoan)?;
-                if record.recovery_right != *holder {
+                let LoanOrigin::Escrowed(recovery_right) = record.origin else {
+                    return Err(LoanRefusal::InvalidEvidence);
+                };
+                if recovery_right != *holder {
                     return Err(LoanRefusal::WrongHolder);
                 }
                 if record.recovered {
                     return Err(LoanRefusal::AlreadyRecovered);
-                }
-                if !record.recoverable {
-                    return Err(LoanRefusal::InvalidEvidence);
                 }
                 if data
                     .scopes
@@ -3064,7 +3504,7 @@ impl LoanLedger {
                 if !parent_record.active || !child_record.active {
                     return Err(LoanRefusal::ScopeEnded);
                 }
-                if parent_record.close_right != *holder || child_record.parent.is_some() {
+                if parent_record.close_right != Some(*holder) || child_record.parent.is_some() {
                     return Err(LoanRefusal::WrongHolder);
                 }
                 let parent_share = data
@@ -3096,14 +3536,61 @@ impl LoanLedger {
     #[cfg(test)]
     fn invariant_holds(&self) -> bool {
         let data = &self.storage.data;
+        let unindexed_memory_roots = data
+            .loans
+            .iter()
+            .filter(|(_, loan)| {
+                !matches!(loan.origin, LoanOrigin::Reborrowed)
+                    && data
+                        .scopes
+                        .get(&loan.scope)
+                        .is_some_and(|scope| scope.active)
+                    && loan
+                        .memory_backing
+                        .iter()
+                        .any(|range| memory_interval_nodes(range).is_none())
+            })
+            .count();
+        if unindexed_memory_roots != data.unindexed_memory_roots {
+            return false;
+        }
+        if data.unindexed_memory.iter().count()
+            != data.unindexed_memory_roots
+        {
+            return false;
+        }
         for (loan_id, loan) in data.loans.iter() {
-            if loan_id.arena != data.arena || !loan.escrow.is_own() {
+            if loan_id.arena != data.arena {
                 return false;
             }
             let Some(scope) = data.scopes.get(&loan.scope) else {
                 return false;
             };
             if loan.recovered && scope.active {
+                return false;
+            }
+            let origin_is_valid = match &loan.origin {
+                LoanOrigin::Escrowed(recovery_right) => {
+                    loan.escrow.as_ref().is_some_and(CResourceFact::is_own)
+                        && scope.close_right == Some(*recovery_right)
+                        && scope.parent.is_none()
+                }
+                LoanOrigin::Reborrowed => {
+                    loan.escrow.is_none()
+                        && scope.close_right.is_some()
+                        && scope.parent.is_some()
+                        && !loan.recovered
+                }
+                LoanOrigin::BorrowedContractInput => {
+                    loan.escrow.is_none()
+                        && scope.close_right.is_none()
+                        && scope.parent.is_none()
+                        && !loan.recovered
+                        && loan.support != ResourceOccurrenceId::default()
+                        && loan.permitted.iter().all(CResourceFact::is_view)
+                }
+            };
+            if !origin_is_valid {
                 return false;
             }
         }
@@ -3192,6 +3679,89 @@ mod tests {
         let owner = ledger.fresh_participant().unwrap();
         let reader = ledger.fresh_participant().unwrap();
         (ledger, owner, reader)
+    }
+
+    #[test]
+    fn borrowed_contract_input_is_read_only_and_cannot_be_closed_or_recovered() {
+        let (ledger, holder, _) = participants();
+        let assumptions = PureFactContext::new();
+        let viewed = memory(0, 4, false);
+        let resources = ResourceContext::new().unchecked_with_fact(viewed.clone());
+        let support = resources.occurrences_for_fact(&viewed)[0];
+        let opening = ledger
+            .borrowed_contract_input(holder, support, viewed.clone(), None)
+            .expect("checked contract input");
+        let ledger = ledger.apply(&opening.transition).expect("apply input root");
+
+        assert!(ledger.invariant_holds());
+        assert!(ledger.permits_view(
+            holder,
+            &opening.description,
+            opening.root_share,
+            &assumptions,
+        ));
+        assert_eq!(
+            ledger.permits_memory_access(viewed.memory_range().unwrap()),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        assert_eq!(
+            ledger.end(opening.scope, holder),
+            Err(LoanRefusal::WrongHolder)
+        );
+        assert_eq!(
+            ledger.recover(opening.loan, holder),
+            Err(LoanRefusal::InvalidEvidence)
+        );
+    }
+
+    #[test]
+    fn nested_reborrow_restores_a_borrowed_contract_input_root() {
+        let (ledger, holder, reader) = participants();
+        let assumptions = PureFactContext::new();
+        let viewed = memory(0, 4, false);
+        let resources = ResourceContext::new().unchecked_with_fact(viewed.clone());
+        let support = resources.occurrences_for_fact(&viewed)[0];
+        let opening = ledger
+            .borrowed_contract_input(holder, support, viewed.clone(), None)
+            .expect("checked contract input");
+        let ledger = ledger.apply(&opening.transition).expect("apply input root");
+        let parent = LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed,
+        };
+        let child = ledger
+            .reborrow(parent, holder, reader)
+            .expect("checked child reborrow");
+        let ledger = ledger.apply(&child.transition).expect("apply child");
+        assert!(!ledger.permits_view(
+            holder,
+            &opening.description,
+            opening.root_share,
+            &assumptions,
+        ));
+        let transfer = ledger
+            .transfer(child.root_share, reader, holder)
+            .expect("return child share");
+        let ledger = ledger.apply(&transfer).expect("apply return");
+        let end = ledger
+            .end(child.scope, holder)
+            .expect("close child scope only");
+        let ledger = ledger.apply(&end).expect("apply child close");
+
+        assert!(ledger.invariant_holds());
+        assert!(ledger.permits_view(
+            holder,
+            &opening.description,
+            opening.root_share,
+            &assumptions,
+        ));
+        assert_eq!(
+            ledger.recover(child.loan, holder),
+            Err(LoanRefusal::InvalidEvidence)
+        );
     }
 
     #[test]

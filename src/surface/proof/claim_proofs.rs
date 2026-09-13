@@ -327,6 +327,15 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         &pure_facts,
         claim_label,
     )?;
+    let state = install_borrowed_contract_inputs(
+        state,
+        &function,
+        &arguments,
+        &pure_facts,
+        parsed_function.parameters(),
+        function_environment,
+        claim_label,
+    )?;
     let function_entry_state =
         c_function_entry_state(&state, &function, &arguments).ok_or_else(|| {
             ClickError::new(format!("`{claim_label}` could not bind function arguments"))
@@ -526,6 +535,15 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         &function,
         &arguments,
         &pure_facts,
+        &proof_label,
+    )?;
+    let state = install_borrowed_contract_inputs(
+        state,
+        &function,
+        &arguments,
+        &pure_facts,
+        parsed_function.parameters(),
+        function_environment,
         &proof_label,
     )?;
     let function_entry_state =

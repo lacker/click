@@ -460,6 +460,31 @@ fn candidate_memory_ranges_relation(
     {
         return CandidateMemoryRangeRelation::Disjoint;
     }
+    if left.base() == right.base() {
+        let (Some(left_start), Some(left_end), Some(right_start), Some(right_end)) = (
+            left.start().as_const(),
+            left.end().as_const(),
+            right.start().as_const(),
+            right.end().as_const(),
+        ) else {
+            return CandidateMemoryRangeRelation::SeparationUnproved;
+        };
+        let left_width = i64::from(left.element_width());
+        let right_width = i64::from(right.element_width());
+        let (Some(left_start), Some(left_end), Some(right_start), Some(right_end)) = (
+            i64::from(left_start).checked_mul(left_width),
+            i64::from(left_end).checked_mul(left_width),
+            i64::from(right_start).checked_mul(right_width),
+            i64::from(right_end).checked_mul(right_width),
+        ) else {
+            return CandidateMemoryRangeRelation::SeparationUnproved;
+        };
+        return if left_end <= right_start || right_end <= left_start {
+            CandidateMemoryRangeRelation::Disjoint
+        } else {
+            CandidateMemoryRangeRelation::Overlap
+        };
+    }
     let (left_base, left_bytes) = left.byte_footprint();
     let (right_base, right_bytes) = right.byte_footprint();
     let Some(left_start) = left_base.offset.as_const() else {
@@ -645,17 +670,6 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
     // caller resources.
     let prepare_contract_resources =
         prepare_contract_resources || environment.candidate_stable_view_semantics;
-    if environment.candidate_stable_view_semantics && function.has_inline_body() {
-        return Ok(vec![CFunctionPath {
-            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
-                "inline calls are unsupported with candidate stable-view semantics".to_string(),
-            )),
-            facts: Vec::new(),
-            obligations: Vec::new(),
-
-            loan_evidence: empty_checked_loan_evidence_sequence(),
-        }]);
-    }
     budget.consume_function_call()?;
     if arguments.len() != function.parameters().len() {
         return Ok(vec![CFunctionPath {
@@ -1257,19 +1271,6 @@ pub(super) fn execute_c_function_call_paths(
             &argument_obligations,
         );
         if function.has_inline_body() {
-            if environment.candidate_stable_view_semantics {
-                paths.push(CFunctionPath {
-                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
-                        "inline calls are unsupported with candidate stable-view semantics"
-                            .to_string(),
-                    )),
-                    facts: arguments_path.facts,
-                    obligations: argument_obligations,
-
-                    loan_evidence: empty_checked_loan_evidence_sequence(),
-                });
-                continue;
-            }
             // An inline body is call-site code: it runs on the caller's own
             // resources and leaves the caller whatever it did not consume.
             // There is no contract boundary to transfer across.
@@ -9946,6 +9947,30 @@ fn prepare_contract_resource_transfer_with_candidate(
             "resource requirement has an inconsistent transfer role".to_string(),
         )));
     }
+    let intrinsic_read_views = checked_required_resources
+        .iter()
+        .filter(|requirement| {
+            matches!(
+                requirement.fact.resource(),
+                CResource::Memory(range)
+                    if requirement.fact.is_view()
+                        && ((range.base().block.starts_with("local:")
+                                && callee_state.memory().has_block(&range.base().block))
+                            || callee_state.memory().is_read_only_block(&range.base().block))
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let stable_requirements = checked_required_resources
+        .iter()
+        .filter(|requirement| !intrinsic_read_views.contains(requirement))
+        .cloned()
+        .collect::<Vec<_>>();
+    let candidate_stable_view_semantics = candidate_stable_view_semantics
+        && (caller_state.loan_ledger().is_some()
+            || stable_requirements
+                .iter()
+                .any(|requirement| requirement.fact.is_view()));
     let stable_view_plan = if candidate_stable_view_semantics {
         let (ledger, caller) = match (
             caller_state.loan_ledger().cloned(),
@@ -9967,12 +9992,12 @@ fn prepare_contract_resource_transfer_with_candidate(
                 "could not allocate stable-view callee participant".to_string(),
             )));
         };
-        let composite_backings = if checked_required_resources.iter().any(|requirement| {
+        let composite_backings = if stable_requirements.iter().any(|requirement| {
             requirement.fact.is_view()
                 && matches!(requirement.fact.resource(), CResource::Composite { .. })
         }) {
             let mut backings = BTreeMap::new();
-            for requirement in checked_required_resources.iter().filter(|requirement| {
+            for requirement in stable_requirements.iter().filter(|requirement| {
                 requirement.fact.is_view()
                     && matches!(requirement.fact.resource(), CResource::Composite { .. })
             }) {
@@ -10039,7 +10064,7 @@ fn prepare_contract_resource_transfer_with_candidate(
         };
         match plan_stable_view_transfer_with_bindings_and_composites(
             caller_state.resources(),
-            &checked_required_resources,
+            &stable_requirements,
             assumptions,
             &ledger,
             caller,
@@ -10121,6 +10146,22 @@ fn prepare_contract_resource_transfer_with_candidate(
     } else {
         canonical_resources
     };
+    for intrinsic_view in &intrinsic_read_views {
+        let in_bounds = matches!(
+            intrinsic_view.fact.resource(),
+            CResource::Memory(range)
+                if !range.base().block.starts_with("local:")
+                    || local_view_range_within_block(range, callee_state.memory())
+        );
+        if in_bounds && !callee_resources.satisfies_fact(&intrinsic_view.fact, assumptions) {
+            callee_resources = match callee_resources
+                .try_compose_with_fact(intrinsic_view.fact.clone(), assumptions)
+            {
+                Ok(resources) => resources,
+                Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+            };
+        }
+    }
     for body_resource in population_body_resources.facts() {
         // The population owns its body even while that body is absent from
         // the caller's explicit proof context. Contract execution opens the
@@ -12598,7 +12639,19 @@ pub(super) fn expand_composite_resource_fact_with_children(
         if children
             .iter()
             .filter(|child| child.is_view())
-            .any(|child| !transferred_views.contains(child))
+            .any(|child| {
+                if transferred_views.contains(child) {
+                    return false;
+                }
+                let expected = crate::kernel::loans::LoanViewBinding {
+                    viewed: child.clone(),
+                    ..binding.clone()
+                };
+                !expanded
+                    .view_occurrences_for_fact(child, assumptions)
+                    .iter()
+                    .any(|occurrence| expanded.loan_dependency(*occurrence) == Some(&expected))
+            })
         {
             // Reusing an equal ambient child would lose the source occurrence
             // relation.  The checked expansion has no destination ID to bind.
@@ -16529,12 +16582,21 @@ pub(super) fn contract_exit_outcome(
     // way so the completed outcome is the canonical one certification compares.
     let outcome = match outcome {
         CStatementOutcome::Return { value, mut state } => {
-            state.resources = match ResourceContext::new()
-                .try_compose_with_facts(state.resources.facts().iter().cloned(), assumptions)
+            if state.loan_view_bindings().iter().next().is_none() {
+                let resources = match ResourceContext::new()
+                    .try_compose_with_facts(state.resources.facts().iter().cloned(), assumptions)
+                {
+                    Ok(resources) => resources,
+                    Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+                };
+                state = state.with_resource_context(resources);
+            } else if state.resources.validity_error(assumptions).is_some()
+                || !state.loan_bindings_are_consistent()
             {
-                Ok(resources) => resources,
-                Err(error) => return Ok(Err(resource_context_runtime_error(error))),
-            };
+                return Ok(Err(CRuntimeError::FunctionContract(
+                    "stable-view return resources are not a valid bound context".to_string(),
+                )));
+            }
             CStatementOutcome::Return { value, state }
         }
         other => other,
@@ -16724,7 +16786,8 @@ pub(super) fn function_outcome_from_body(
             if return_resources.is_none() {
                 caller_state.instance_field_scope = state.instance_field_scope;
             }
-            caller_state.resources = return_resources.cloned().unwrap_or(state.resources);
+            caller_state = caller_state
+                .with_resource_context(return_resources.cloned().unwrap_or(state.resources));
             caller_state.counted_populations = state.counted_populations;
             caller_state.next_local_frame = state.next_local_frame;
             caller_state.next_local_lifetime = state.next_local_lifetime;
@@ -17484,7 +17547,7 @@ mod candidate_stable_view_call_tests {
     }
 
     #[test]
-    fn candidate_inline_reader_fails_closed() {
+    fn candidate_inline_reader_uses_the_callers_checked_resources() {
         let pointer = pointer();
         let function = reader("candidate_inline_reader", false).with_inline_body();
         let paths = execute_c_function_call_paths(
@@ -17496,13 +17559,13 @@ mod candidate_stable_view_call_tests {
             CExecutionSemantics::EXECUTE_BODIES,
             &mut ExecutionBudget::new(),
         )
-        .expect("candidate inline call should return a diagnostic path");
+        .expect("candidate inline call should execute");
         assert!(matches!(
             paths.as_slice(),
             [CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
+                outcome: CFunctionOutcome::Return { .. },
                 ..
-            }] if message.contains("inline calls are unsupported")
+            }]
         ));
     }
 

@@ -2,7 +2,79 @@
 // `src/surface/planning/proposition_search.rs`. The kernel itself never
 // calls it, so the tests import the planner explicitly.
 use super::*;
+use crate::kernel::LoanRefusalCategory;
 use crate::surface::planning::proposition_search::PropositionSearch;
+
+fn borrowed_input_view_function(name: &str) -> CFunction {
+    c_function(CType::Void, name, vec![], c_return(c_void_value())).with_resource_summary(
+        vec![CResourceSpec::token(
+            CResourceAccessMode::View,
+            "borrowed_input".into(),
+            vec![],
+            vec![],
+        )],
+        vec![],
+    )
+}
+
+#[test]
+fn borrowed_contract_input_roots_only_the_exact_principal_view() {
+    let viewed = CResourceFact::view_token("borrowed_input".into(), vec![]);
+    let resources = ResourceContext::new().unchecked_with_fact(viewed.clone());
+    let occurrence = resources.occurrences_for_fact(&viewed)[0];
+    let state = CState::new().with_resource_context(resources);
+    let rooted = c_state_with_borrowed_contract_inputs(
+        state,
+        &borrowed_input_view_function("read_borrowed_input"),
+        &[],
+        &PureFactContext::new(),
+    )
+    .expect("a checked principal input view receives external shared authority");
+
+    assert!(rooted.loan_ledger().is_some());
+    assert!(rooted.loan_participant().is_some());
+    assert_eq!(
+        rooted
+            .loan_view_bindings()
+            .get(&occurrence)
+            .map(|binding| &binding.viewed),
+        Some(&viewed)
+    );
+    assert!(rooted.loan_bindings_are_consistent());
+}
+
+#[test]
+fn borrowed_contract_input_rejects_derived_or_ambiguous_views() {
+    let viewed = CResourceFact::view_token("borrowed_input".into(), vec![]);
+    let owner = CResourceFact::own_token("owner".into(), vec![]);
+    let resources = ResourceContext::new().unchecked_with_fact(owner.clone());
+    let owner_occurrence = resources.owned_occurrences_for_fact(&owner)[0];
+    let derived = resources.unchecked_with_supported_facts_from_occurrence_with_memory(
+        owner_occurrence,
+        &owner,
+        [viewed.clone()],
+        &CMemory::new(),
+    );
+    let function = borrowed_input_view_function("reject_derived_input");
+    let refusal = c_state_with_borrowed_contract_inputs(
+        CState::new().with_resource_context(derived),
+        &function,
+        &[],
+        &PureFactContext::new(),
+    )
+    .expect_err("a projection derived from owned authority is not an external root");
+    assert_eq!(refusal.category(), LoanRefusalCategory::Missing);
+
+    let duplicate = ResourceContext::new().unchecked_with_facts([viewed.clone(), viewed]);
+    let refusal = c_state_with_borrowed_contract_inputs(
+        CState::new().with_resource_context(duplicate),
+        &function,
+        &[],
+        &PureFactContext::new(),
+    )
+    .expect_err("equal principal occurrences are ambiguous authority anchors");
+    assert_eq!(refusal.category(), LoanRefusalCategory::Missing);
+}
 
 #[test]
 fn certified_program_entry_claims_do_not_authorize_ordinary_calls() {
