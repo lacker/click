@@ -57,6 +57,10 @@ complete: 2 at a `break`". Remaining: the two recolour `continue`s, the two
 rotation `break`s, the body's end, the post-loop `simp()`, and
 `rb_insert_color`. `click verify` takes 5.8s wall; about 0.9s is the
 copied library, the rest is the body written once per frame combination.
+The fifth resumption's uncommitted draft (the red-uncle `Top` frame,
+reading `gparent->__rb_parent_color` after `gparent == cgp`) stopped on
+gap 72, a kernel read-permission bug; with it fixed the draft reaches
+statement 42, `augment_rotate(gparent, parent)`, in case 2.
 
 **How the last five resumptions went.** Each stopped on one to three
 verifier bugs rather than on proof difficulty, every one now closed (gaps
@@ -355,25 +359,25 @@ commit that closed it. Reproductions live in the named fixtures.
 | 69 | Consumed instance's arm equation cited by a spelling that no longer lowered | 44acfb0c |
 | 70 | `static inline` locals had no layouts (map keyed by the `#inline:` name) | ca8b75f8 |
 | 71 | `contradiction` in a `preserve` arm only as its sole tactic | ccf9a340 |
+| 72 | A read through a symbolic identity proved equal to a C pointer was refused: the read lookup resolved to the alias and looked only there | a3b96c12 |
 
 ## Open findings, not scheduled
 
 Small items found along the way and recorded in the fixtures named. None
 blocks C3; each is a candidate package when it starts to.
 
-- **Diagnostics** (package T9): an empty proof `match` arm inside
-  `preserve` falls through to phase automation and reports `missing
-  resource fact views ...` rather than a frontier; a lowering that filters
-  every path as a runtime error reports "the kernel lowering produced 0
-  paths, not one" without the error (gap 67 and 70 were both a 4-byte
-  read of an 8-byte cell hidden behind that message and behind
-  `rewrite`'s "equality does not occur in the current goal");
-  `resource_clause_position` names clause 1 when clause 2 failed; `ensures
-  sub.model != Empty` on a produced instance reports "could not apply
-  checked contract resource effect" instead of an unproved claim; "fold
-  requires the instance body facts for the proposed fields" does not name
-  the failing clause; `have (x & 1) != 0` derivable by smart reasoning
-  reports "no explicit simple certificate for 64-bit equality is false".
+- **Diagnostics** (package T9, landed 14d6e92c): a lowering whose every
+  path ends in a runtime error now names the error (a typed load that does
+  not fit its cell names its width, pointer, and the value found); a
+  refused `rewrite` prints the lowered equality and goal; a refused fold
+  names which fact of which arm; a failed contract resource transition is
+  described rather than dumped; an empty `preserve` arm is named in the
+  frontier report. Not reproduced, no change: the clause-position note
+  naming the wrong clause; "could not apply checked contract resource
+  effect" for an unproved produced-model claim (the shapes tried report an
+  unclosed goal). Still open: `have (x & 1) != 0` derivable by smart
+  reasoning reports "no explicit simple certificate for 64-bit equality is
+  false", a missing simple certificate rather than a diagnostic.
 - **Pure-proof limits:** `normalize()` and `normalize() using` do not
   close pointer-equality transitivity or symmetry inside a pure theorem
   (`simp()` does; `rewrite(a == b); normalize();` substitutes a pointer
@@ -426,10 +430,6 @@ the importing sidecar alone selects `verifying` sources. Then convert the
 insert fixture into `examples/rbtree-insert` importing
 `examples/rbtree-model`, keeping `mdtests/rb_insert_color.md` only as a
 pointer or deleting it. Depends on nothing; C3a through C3c depend on it.
-
-**T9. Diagnostics that point the wrong way.** The first list under "Open
-findings". Each item gets a minimal negative fixture pinning the new
-message. Depends on nothing.
 
 **E1. Per-frame duplication and verify time.** Restate the fixup body's
 per-frame proofs as one theorem per case (D10 shape) so each path is
