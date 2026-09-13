@@ -849,6 +849,14 @@ pub(super) fn execute_c_function_verification_paths(
     variables: &mut KernelVariableGenerator,
     prepare_contract_resources: bool,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
+    // Candidate stable-view semantics are a boundary property, not an
+    // optional detail of the independent verifier. The public verification
+    // APIs historically pass `false` here because ordinary certification does
+    // not need resource canonicalization; once the candidate is enabled,
+    // bypassing the transfer would execute the body with caller authority and
+    // emit a theorem with no checked recovery.
+    let prepare_contract_resources =
+        prepare_contract_resources || environment.candidate_stable_view_semantics;
     budget.consume_function_call()?;
     if arguments.len() != function.parameters().len() {
         return Ok(vec![CFunctionPath {
@@ -3693,16 +3701,44 @@ fn function_refines_named_contract_in_case(
         set_contract_result(&mut contract_post, contract_interface, result.clone());
         set_contract_result(&mut function_post, function_interface, result);
     }
-    if !compatible_resource_and_effect_interfaces(
+    let access_adapter = checked_access_mode_refinement_adapter(
         contract_interface,
         function_interface,
         &contract_entry,
         &function_entry,
-        &contract_post,
         &function_post,
         &preconditions,
         budget,
-    )? {
+    )?;
+    if access_adapter == Some(false) {
+        return Ok(false);
+    }
+    let resource_and_effects_compatible = if access_adapter == Some(true) {
+        // The checked adapter has already established the resource transition
+        // and recovery.  Keep the ordinary effect containment check, but do
+        // not re-run the algebraic resource comparison that cannot represent
+        // the temporary owner-to-view loan scope.
+        mutable_footprint_is_compatible_for_interfaces(
+            contract_interface,
+            function_interface,
+            &contract_entry,
+            &function_entry,
+            &preconditions,
+            budget,
+        )?
+    } else {
+        compatible_resource_and_effect_interfaces(
+            contract_interface,
+            function_interface,
+            &contract_entry,
+            &function_entry,
+            &contract_post,
+            &function_post,
+            &preconditions,
+            budget,
+        )?
+    };
+    if !resource_and_effects_compatible {
         return Ok(false);
     }
     let mut postconditions = preconditions;
@@ -4321,6 +4357,121 @@ fn compatible_resource_and_effect_interfaces(
         assumptions,
         budget,
     )
+}
+
+/// Check an access-mode variance at a refinement boundary with the same
+/// checked transfer used by calls.  The algebraic framed-refinement check is
+/// intentionally not sufficient here: it can establish that a view's value
+/// is contained in an owned value without recording the loan scope that makes
+/// the implementation's observation valid.
+///
+/// `Some(true)` means an owned target requirement was adapted to a viewed
+/// implementation requirement and its entry/recovery evidence was checked.
+/// `Some(false)` is an explicit view-to-own refusal.  `None` means the two
+/// interfaces have no access-mode variance that this adapter handles.
+#[allow(clippy::too_many_arguments)]
+fn checked_access_mode_refinement_adapter(
+    contract: &CFunctionContractInterface,
+    function: &CFunctionContractInterface,
+    contract_entry: &CState,
+    function_entry: &CState,
+    function_post: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<bool>> {
+    if contract.resource_requires().is_empty() || function.resource_requires().is_empty() {
+        return Ok(None);
+    }
+    let Ok((contract_resources, _)) = evaluate_function_resource_context_with_metadata(
+        contract_entry,
+        contract.resource_requires(),
+        contract.composite_resource_definitions(),
+        assumptions,
+        budget,
+    )?
+    else {
+        return Ok(Some(false));
+    };
+    let Ok((function_resources, _)) = evaluate_function_resource_context_with_metadata(
+        function_entry,
+        function.resource_requires(),
+        function.composite_resource_definitions(),
+        assumptions,
+        budget,
+    )?
+    else {
+        return Ok(Some(false));
+    };
+    let mut own_to_view = false;
+    for target in contract_resources.facts() {
+        for implementation in function_resources.facts() {
+            if target.resource() != implementation.resource() {
+                continue;
+            }
+            if target.is_view() && implementation.is_own() {
+                // An implementation requiring exclusive authority cannot be
+                // called through an interface that grants only observation.
+                return Ok(Some(false));
+            }
+            own_to_view |= target.is_own() && implementation.is_view();
+        }
+    }
+    if !own_to_view {
+        return Ok(None);
+    }
+
+    // Evaluate both sides into checked contexts before planning.  Supplying
+    // these contexts is what makes the planner consume the exact target owner
+    // rather than treating `satisfies_fact` as a capability conversion.
+    let caller = contract_entry
+        .clone()
+        .with_resource_context(contract_resources);
+    let callee = function_entry
+        .clone()
+        .with_resource_context(function_resources.clone());
+    let mut transfer = match prepare_contract_resource_transfer_with_candidate(
+        &caller,
+        &callee,
+        "refinement",
+        function,
+        assumptions,
+        budget,
+        false,
+        true,
+    )? {
+        Ok(transfer) => transfer,
+        Err(_) => return Ok(Some(false)),
+    };
+    let callee = callee_state_with_resource_transfer(callee, &transfer);
+    let post = function_post
+        .clone()
+        .with_resource_context(function_resources);
+    let (returned, returned_views) = match evaluate_contract_return_resources(
+        &transfer.caller_resources_after_requirements,
+        &caller,
+        &post,
+        "refinement",
+        function,
+        assumptions,
+        budget,
+    )? {
+        Ok(result) => result,
+        Err(_) => return Ok(Some(false)),
+    };
+    transfer.candidate_output_views = returned_views;
+    if recover_candidate_stable_view_resources(
+        &caller,
+        &callee,
+        &transfer,
+        returned,
+        assumptions,
+        &[],
+    )
+    .is_err()
+    {
+        return Ok(Some(false));
+    }
+    Ok(Some(true))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -16750,6 +16901,34 @@ mod candidate_stable_view_call_tests {
             .with_verified_function_rule(CVerifiedFunctionRule {
                 function: function.clone(),
             })
+    }
+
+    #[test]
+    fn candidate_independent_verification_uses_the_call_transfer_boundary() {
+        let pointer = pointer();
+        let function = reader_for_input("candidate_verified_reader", 1);
+        let state = caller(&pointer);
+        let mut budget = ExecutionBudget::new();
+        let mut variables = KernelVariableGenerator::fresh_for(0, BTreeSet::new());
+        let paths = execute_c_function_verification_paths(
+            &state,
+            &function,
+            &[c_pointer_value(pointer)],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut budget,
+            &mut variables,
+            false,
+        )
+        .expect("candidate verification should execute through the transfer boundary");
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::Return { .. },
+                ..
+            }]
+        ));
     }
 
     #[test]
