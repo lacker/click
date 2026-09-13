@@ -1450,6 +1450,211 @@ fn collect_bitvector_memory_load_keys(
     }
 }
 
+/// Return the concrete memory cells read by one lowered condition, retaining
+/// the source snapshot and value width needed by dynamic resource checks.
+/// This is deliberately limited to the exact condition tree already lowered
+/// by the kernel; opaque predicates are expanded by the proof layer before a
+/// resource fact reaches this helper.
+pub(crate) fn current_memory_loads_in_condition(
+    condition: &ConditionTerm,
+    current_memory: &CMemory,
+) -> Vec<(Pointer, u32)> {
+    let mut loads = Vec::new();
+    collect_condition_memory_loads(condition, current_memory, &mut loads);
+    loads
+}
+
+fn collect_condition_memory_loads(
+    condition: &ConditionTerm,
+    current_memory: &CMemory,
+    loads: &mut Vec<(Pointer, u32)>,
+) {
+    let mut collect_binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        collect_bitvector_memory_loads(left, current_memory, loads);
+        collect_bitvector_memory_loads(right, current_memory, loads);
+    };
+    match condition {
+        ConditionTerm::AlgebraicEqual(left, right) => {
+            left.for_each_bitvector_term(|term| {
+                collect_bitvector_memory_loads(term, current_memory, loads)
+            });
+            right.for_each_bitvector_term(|term| {
+                collect_bitvector_memory_loads(term, current_memory, loads)
+            });
+        }
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right)
+        | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
+            collect_binary(left, right)
+        }
+        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            float_condition.for_each_bitvector_term(|term| {
+                collect_bitvector_memory_loads(term, current_memory, loads)
+            });
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            collect_pointer_offset_memory_loads(left, current_memory, loads);
+            collect_pointer_offset_memory_loads(right, current_memory, loads);
+        }
+        ConditionTerm::PointerEqual(left, right) => {
+            collect_pointer_offset_memory_loads(&left.offset, current_memory, loads);
+            collect_pointer_offset_memory_loads(&right.offset, current_memory, loads);
+        }
+        ConditionTerm::IntegerLessThan(_, _)
+        | ConditionTerm::IntegerLessEqual(_, _)
+        | ConditionTerm::IntegerGreaterThan(_, _)
+        | ConditionTerm::IntegerGreaterEqual(_, _)
+        | ConditionTerm::IntegerEqual(_, _)
+        | ConditionTerm::IntegerNotEqual(_, _)
+        | ConditionTerm::Constant(_)
+        | ConditionTerm::Variable(_) => {}
+    }
+}
+
+fn collect_pointer_offset_memory_loads(
+    offset: &PointerOffsetTerm,
+    current_memory: &CMemory,
+    loads: &mut Vec<(Pointer, u32)>,
+) {
+    match offset {
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
+        PointerOffsetTerm::Add(left, right) => {
+            collect_pointer_offset_memory_loads(left, current_memory, loads);
+            collect_pointer_offset_memory_loads(right, current_memory, loads);
+        }
+        PointerOffsetTerm::Int32Scaled { value, .. }
+        | PointerOffsetTerm::Int64Scaled { value, .. } => {
+            collect_bitvector_memory_loads(value, current_memory, loads)
+        }
+    }
+}
+
+fn collect_bitvector_memory_loads(
+    term: &Bitvector32Term,
+    current_memory: &CMemory,
+    loads: &mut Vec<(Pointer, u32)>,
+) {
+    match term {
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Variable(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_)
+        | Bitvector32Term::IntegerToMachine { .. } => {}
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            if CMemorySnapshotIdentity::of(memory.memory())
+                == CMemorySnapshotIdentity::of(current_memory)
+                && let CExpressionOutcome::Value(value) = memory.memory().load(pointer)
+            {
+                loads.push((pointer.as_ref().clone(), value.byte_width()));
+            }
+            collect_pointer_offset_memory_loads(&pointer.offset, current_memory, loads);
+        }
+        Bitvector32Term::PointerAddress(pointer) => {
+            collect_pointer_offset_memory_loads(&pointer.offset, current_memory, loads);
+        }
+        Bitvector32Term::Add(left, right)
+        | Bitvector32Term::Subtract(left, right)
+        | Bitvector32Term::Multiply(left, right)
+        | Bitvector32Term::Divide(left, right)
+        | Bitvector32Term::UnsignedDivide(left, right)
+        | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::UnsignedRemainder(left, right)
+        | Bitvector32Term::ShiftLeft(left, right)
+        | Bitvector32Term::ArithmeticShiftRight(left, right)
+        | Bitvector32Term::LogicalShiftRight(left, right)
+        | Bitvector32Term::BitwiseAnd(left, right)
+        | Bitvector32Term::BitwiseOr(left, right)
+        | Bitvector32Term::BitwiseXor(left, right)
+        | Bitvector32Term::Int64Add(left, right)
+        | Bitvector32Term::Int64Subtract(left, right)
+        | Bitvector32Term::Int64Multiply(left, right)
+        | Bitvector32Term::Int64Divide(left, right)
+        | Bitvector32Term::Int64Remainder(left, right)
+        | Bitvector32Term::Int64ShiftLeft(left, right)
+        | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        | Bitvector32Term::Int64BitwiseAnd(left, right)
+        | Bitvector32Term::Int64BitwiseOr(left, right)
+        | Bitvector32Term::Int64BitwiseXor(left, right)
+        | Bitvector32Term::UInt64Add(left, right)
+        | Bitvector32Term::UInt64Subtract(left, right)
+        | Bitvector32Term::UInt64Multiply(left, right)
+        | Bitvector32Term::UInt64Divide(left, right)
+        | Bitvector32Term::UInt64Remainder(left, right)
+        | Bitvector32Term::UInt64ShiftLeft(left, right)
+        | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+        | Bitvector32Term::UInt64BitwiseAnd(left, right)
+        | Bitvector32Term::UInt64BitwiseOr(left, right)
+        | Bitvector32Term::UInt64BitwiseXor(left, right)
+        | Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
+            collect_bitvector_memory_loads(left, current_memory, loads);
+            collect_bitvector_memory_loads(right, current_memory, loads);
+        }
+        Bitvector32Term::Int64From32(value)
+        | Bitvector32Term::Int64FromUInt32(value)
+        | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::UInt32From64(value)
+        | Bitvector32Term::UInt64FromInt32(value)
+        | Bitvector32Term::UInt64FromInt64(value)
+        | Bitvector32Term::Int64BitwiseNot(value)
+        | Bitvector32Term::UInt64BitwiseNot(value)
+        | Bitvector32Term::BitwiseNot(value)
+        | Bitvector32Term::Float32Negate(value)
+        | Bitvector32Term::Float64Negate(value) => {
+            collect_bitvector_memory_loads(value, current_memory, loads)
+        }
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => {
+            collect_condition_memory_loads(condition, current_memory, loads);
+            collect_bitvector_memory_loads(then_term, current_memory, loads);
+            collect_bitvector_memory_loads(else_term, current_memory, loads);
+        }
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            collect_bitvector_memory_loads(start, current_memory, loads);
+            collect_bitvector_memory_loads(end, current_memory, loads);
+            collect_bitvector_memory_loads(initial, current_memory, loads);
+            collect_bitvector_memory_loads(body, current_memory, loads);
+        }
+        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                collect_bitvector_memory_loads(argument, current_memory, loads);
+            }
+        }
+        Bitvector32Term::ClickFunctionApplication { .. }
+        | Bitvector32Term::AlgebraicMatch { .. } => {}
+    }
+}
+
 #[cfg(test)]
 impl Proposition {
     pub(super) fn peel_implications(&self) -> &Self {

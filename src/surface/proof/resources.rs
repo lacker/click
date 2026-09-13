@@ -196,6 +196,239 @@ fn same_loan_authority(
         && left.support == right.support
 }
 
+/// Find the live stable-view authority needed by the current memory loads in
+/// one lowered body fact.  Loads from an older memory snapshot are historical
+/// scalar facts and deliberately do not participate in this check.  The
+/// caller supplies views which are about to be inserted by an observation so
+/// that dependency capture does not search equal ambient occurrences.
+fn dynamic_body_fact_dependency(
+    required: &Proposition,
+    state: &CState,
+    assumptions: &PureFactContext,
+    temporary_views: &[(CResourceFact, crate::kernel::LoanViewBinding)],
+    temporary_unbound_views: &[CResourceFact],
+) -> Result<Option<crate::kernel::LoanViewBinding>, String> {
+    fn walk_term(
+        term: &Term,
+        state: &CState,
+        assumptions: &PureFactContext,
+        temporary_views: &[(CResourceFact, crate::kernel::LoanViewBinding)],
+        temporary_unbound_views: &[CResourceFact],
+        selected: &mut Option<crate::kernel::LoanViewBinding>,
+    ) -> Result<(), String> {
+        match term {
+            Term::Condition(condition) => walk_condition(
+                condition,
+                state,
+                assumptions,
+                temporary_views,
+                temporary_unbound_views,
+                selected,
+            ),
+            Term::Bitvector32(term) => {
+                let condition = ConditionTerm::Bitvector32Equal(
+                    Box::new(term.clone()),
+                    Box::new(Bitvector32Term::Constant(0)),
+                );
+                walk_condition(
+                    &condition,
+                    state,
+                    assumptions,
+                    temporary_views,
+                    temporary_unbound_views,
+                    selected,
+                )
+            }
+            Term::PointerOffset(offset) => {
+                let condition = ConditionTerm::PointerOffsetEqual(
+                    Box::new(offset.clone()),
+                    Box::new(offset.clone()),
+                );
+                walk_condition(
+                    &condition,
+                    state,
+                    assumptions,
+                    temporary_views,
+                    temporary_unbound_views,
+                    selected,
+                )
+            }
+            _ => Ok(()),
+        }
+    }
+    fn walk_condition(
+        condition: &ConditionTerm,
+        state: &CState,
+        assumptions: &PureFactContext,
+        temporary_views: &[(CResourceFact, crate::kernel::LoanViewBinding)],
+        temporary_unbound_views: &[CResourceFact],
+        selected: &mut Option<crate::kernel::LoanViewBinding>,
+    ) -> Result<(), String> {
+        for (pointer, width) in
+            crate::kernel::current_memory_loads_in_condition(condition, state.memory())
+        {
+            let required_view = CResourceFact::view_memory(CMemoryRange::new_with_element_width(
+                pointer,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+                width,
+            ));
+            if temporary_unbound_views.iter().any(|view| {
+                ResourceContext::new()
+                    .unchecked_with_fact(view.clone())
+                    .satisfies_fact(&required_view, assumptions)
+            }) {
+                return Err("current body fact is covered by an unbound view".into());
+            }
+            let mut candidates = Vec::new();
+            for occurrence in state
+                .resources()
+                .view_occurrences_for_fact(&required_view, assumptions)
+            {
+                let Some(candidate) = state.resources().loan_dependency(occurrence) else {
+                    return Err(
+                        "current body fact is covered by an unbound viewed memory occurrence"
+                            .into(),
+                    );
+                };
+                candidates.push(candidate.clone());
+            }
+            for (view, candidate) in temporary_views {
+                if ResourceContext::new()
+                    .unchecked_with_fact(view.clone())
+                    .satisfies_fact(&required_view, assumptions)
+                {
+                    candidates.push(candidate.clone());
+                }
+            }
+            if candidates.is_empty() {
+                if state
+                    .resources()
+                    .directly_supporting_owned_entry(&required_view, assumptions)
+                    .is_some()
+                {
+                    continue;
+                }
+                return Err(
+                    "current body fact reads memory outside every live viewed-memory dependency"
+                        .into(),
+                );
+            }
+            let ledger = state.loan_ledger().ok_or_else(|| {
+                "current viewed-memory dependency has no active loan ledger".to_string()
+            })?;
+            let holder = state
+                .loan_participant()
+                .ok_or_else(|| "current viewed-memory dependency has no loan holder".to_string())?;
+            for candidate in candidates {
+                let checked = crate::kernel::LoanViewBinding {
+                    viewed: required_view.clone(),
+                    ..candidate
+                };
+                ledger
+                    .validate_view_binding(checked.clone(), holder)
+                    .map_err(|error| {
+                        format!("current viewed-memory dependency is not live: {error:?}")
+                    })?;
+                if selected
+                    .as_ref()
+                    .is_some_and(|existing| !same_loan_authority(existing, &checked))
+                {
+                    return Err("one body fact depends on different stable-view authorities".into());
+                }
+                *selected = Some(checked);
+            }
+        }
+        Ok(())
+    }
+    fn walk_proposition(
+        proposition: &Proposition,
+        state: &CState,
+        assumptions: &PureFactContext,
+        temporary_views: &[(CResourceFact, crate::kernel::LoanViewBinding)],
+        temporary_unbound_views: &[CResourceFact],
+        selected: &mut Option<crate::kernel::LoanViewBinding>,
+    ) -> Result<(), String> {
+        match proposition {
+            Proposition::ConditionIs(condition, _) => walk_condition(
+                condition,
+                state,
+                assumptions,
+                temporary_views,
+                temporary_unbound_views,
+                selected,
+            ),
+            Proposition::Equal(left, right) => {
+                walk_term(
+                    left,
+                    state,
+                    assumptions,
+                    temporary_views,
+                    temporary_unbound_views,
+                    selected,
+                )?;
+                walk_term(
+                    right,
+                    state,
+                    assumptions,
+                    temporary_views,
+                    temporary_unbound_views,
+                    selected,
+                )
+            }
+            Proposition::And(left, right)
+            | Proposition::Or(left, right)
+            | Proposition::Implies(left, right) => {
+                walk_proposition(
+                    left,
+                    state,
+                    assumptions,
+                    temporary_views,
+                    temporary_unbound_views,
+                    selected,
+                )?;
+                walk_proposition(
+                    right,
+                    state,
+                    assumptions,
+                    temporary_views,
+                    temporary_unbound_views,
+                    selected,
+                )
+            }
+            Proposition::Not(body) => walk_proposition(
+                body,
+                state,
+                assumptions,
+                temporary_views,
+                temporary_unbound_views,
+                selected,
+            ),
+            Proposition::ForAll { body, .. } | Proposition::Exists { body, .. } => {
+                walk_proposition(
+                    body,
+                    state,
+                    assumptions,
+                    temporary_views,
+                    temporary_unbound_views,
+                    selected,
+                )
+            }
+            _ => Ok(()),
+        }
+    }
+    let mut selected = None;
+    walk_proposition(
+        required,
+        state,
+        assumptions,
+        temporary_views,
+        temporary_unbound_views,
+        &mut selected,
+    )?;
+    Ok(selected)
+}
+
 pub(super) fn materialize_counted_population_bodies(
     resource_environment: &ResourceEnvironment,
     _parameters: &[syntax::C0Parameter],
@@ -1309,6 +1542,86 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             describe_resource_clause(resource)
         ))
     })?;
+    let temporary_views = borrowed_parent_binding
+        .as_ref()
+        .map(|binding| {
+            contained_resources
+                .facts()
+                .iter()
+                .filter(|fact| fact.is_view())
+                .map(|fact| (fact.clone(), binding.clone()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut dynamic_dependency = None;
+    if let Some(composite_body) = definition.composite_body() {
+        for body_fact in composite_body.facts() {
+            let body_fact = substitute_click_proposition(body_fact, &surface_substitutions)
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: could not instantiate observed body fact: {message}"
+                    ))
+                })?;
+            let lowered = lower_outcome_proposition_with_assumptions(
+                parameters,
+                arguments,
+                &observation_pre_state,
+                &fact_state,
+                &CValue::Int32(Bitvector32Term::Constant(0)),
+                available_pure_facts.assumptions(),
+                &body_fact,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: could not lower observed body fact: {message}"
+                ))
+            })?;
+            let lowered = unfold_predicates_in_proposition(
+                predicate_environment,
+                click_function_environment,
+                &[],
+                &lowered,
+                available_pure_facts.assumptions(),
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: could not unfold observed body fact: {message}"
+                ))
+            })?;
+            if let Some(binding) = dynamic_body_fact_dependency(
+                &lowered,
+                &fact_state,
+                available_pure_facts.assumptions(),
+                &temporary_views,
+                &[],
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `observe` rejected dynamic body dependency: {message}"
+                ))
+            })? {
+                if borrowed_parent_binding
+                    .as_ref()
+                    .is_none_or(|parent| !same_loan_authority(parent, &binding))
+                {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `observe` cannot package a current viewed-memory fact without its parent loan"
+                    )));
+                }
+                if dynamic_dependency
+                    .as_ref()
+                    .is_some_and(|existing| !same_loan_authority(existing, &binding))
+                {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: observed body facts depend on different stable-view authorities"
+                    )));
+                }
+                dynamic_dependency = Some(binding);
+            }
+        }
+    }
     let all_viewed_contained_resources = contained_resources
         .facts()
         .iter()
@@ -2756,6 +3069,60 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 )
             ))
         })?;
+        let lowered_fact = unfold_predicates_in_proposition(
+            predicate_environment,
+            click_function_environment,
+            &[],
+            &lowered_fact,
+            available_pure_facts.assumptions(),
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: could not unfold `unfold({})` pure fact: {message}",
+                describe_resource_clause(resource)
+            ))
+        })?;
+        let temporary_views = borrowed_parent_binding
+            .as_ref()
+            .map(|binding| {
+                unfolded_facts
+                    .iter()
+                    .filter(|child| child.is_view())
+                    .map(|child| (child.clone(), binding.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let temporary_unbound_views = if borrowed_parent_binding.is_none() {
+            unfolded_facts
+                .iter()
+                .filter(|child| child.is_view())
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        if let Some(binding) = dynamic_body_fact_dependency(
+            &lowered_fact,
+            &state,
+            available_pure_facts.assumptions(),
+            &temporary_views,
+            &temporary_unbound_views,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `unfold({})` rejected dynamic body dependency: {message}",
+                describe_resource_clause(resource)
+            ))
+        })?
+            && borrowed_parent_binding
+                .as_ref()
+                .is_none_or(|parent| !same_loan_authority(parent, &binding))
+        {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `unfold({})` cannot publish a current viewed-memory fact without its parent loan",
+                describe_resource_clause(resource)
+            )));
+        }
         surface_propositions.record_lowering(&fact, &lowered_fact)?;
         available_pure_facts.insert(lowered_fact);
     }
@@ -2973,7 +3340,7 @@ fn fold_composite_resources_on_outcome_with_facts(
         let mut substitutions =
             resource_argument_substitutions(definition, resource, claim_label, path_index)?;
         let (guard_result, guard_state) = match &outcome {
-            CFunctionOutcome::Return { value, state } => (value, state),
+            CFunctionOutcome::Return { value, state } => (value.clone(), state.clone()),
             _ => {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` path {path_index}: `fold({})` requires a return outcome, got {}",
@@ -2988,8 +3355,8 @@ fn fold_composite_resources_on_outcome_with_facts(
             resource,
             parameters,
             arguments,
-            guard_state,
-            Some(guard_result),
+            &guard_state,
+            Some(&guard_result),
             pure_facts.assumptions(),
             resource_environment,
             predicate_environment,
@@ -3001,8 +3368,8 @@ fn fold_composite_resources_on_outcome_with_facts(
             parameters,
             arguments,
             pre_state,
-            guard_state,
-            guard_result,
+            &guard_state,
+            &guard_result,
             pure_facts.assumptions(),
             predicate_environment,
             click_function_environment,
@@ -3143,6 +3510,34 @@ fn fold_composite_resources_on_outcome_with_facts(
         for fact in execution_pure_facts {
             body_assumptions = body_assumptions.assume_proposition(fact.proposition().clone());
         }
+        let mut body_loan_dependency = None;
+        let mut temporary_unbound_views = Vec::new();
+        for contained in contained_clauses {
+            let contained = instantiate_resource_clause(contained, &substitutions).map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` path {path_index}: could not instantiate `fold({})` body view: {message}",
+                    describe_resource_clause(resource)
+                ))
+            })?;
+            let lowered = lower_resource_clause_at_state_with_result(
+                &contained,
+                parameters,
+                arguments,
+                &guard_state,
+                &guard_result,
+            )?;
+            if lowered.is_view()
+                && unique_borrowed_resource_dependency(&guard_state, &lowered)
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` path {path_index}: `fold` refused ambiguous body loan dependency: {message}"
+                        ))
+                    })?
+                    .is_none()
+            {
+                temporary_unbound_views.push(lowered);
+            }
+        }
         for fact in body_facts {
             let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                     ClickError::new(format!(
@@ -3189,6 +3584,33 @@ fn fold_composite_resources_on_outcome_with_facts(
                     ))
                 })?
             };
+            if let Some(binding) = dynamic_body_fact_dependency(
+                &required,
+                match &outcome {
+                    CFunctionOutcome::Return { state, .. } => state,
+                    _ => pre_state,
+                },
+                &body_assumptions,
+                &[],
+                &temporary_unbound_views,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` path {path_index}: `fold({})` rejected its dynamic body dependency: {message}",
+                    describe_resource_clause(resource)
+                ))
+            })? {
+                if body_loan_dependency
+                    .as_ref()
+                    .is_some_and(|existing| !same_loan_authority(existing, &binding))
+                {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` path {path_index}: `fold({})` body facts depend on different stable-view authorities",
+                        describe_resource_clause(resource)
+                    )));
+                }
+                body_loan_dependency = Some(binding);
+            }
             // Available facts may write this body fact through loads recorded
             // at an earlier snapshot. Decide those forms with the bounded
             // check matchers first: exact structural membership, the
@@ -3257,7 +3679,6 @@ fn fold_composite_resources_on_outcome_with_facts(
         }
         let _assumptions_id_scope = crate::kernel::PureFactContextIdScope::enter(&assumptions);
         let mut lowered_contained = Vec::new();
-        let mut body_loan_dependency = None;
         let mut body_has_unbound_view = false;
         let preserve_exposed_body = matches!(
             closure,
@@ -4055,5 +4476,123 @@ mod v11_resource_dependency_tests {
         let state = state
             .with_resource_context_and_loan_dependencies(resources, [(occurrences[1], different)]);
         assert!(unique_borrowed_resource_dependency(&state, &child).is_err());
+    }
+
+    #[test]
+    fn dynamic_current_fact_requires_live_view_binding_and_keeps_owner_scalar_distinct() {
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory =
+            CMemory::new().store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(0)));
+        let snapshot = crate::kernel::intern_c_memory_ref(&memory);
+        let condition = ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::MemoryLoad(
+                snapshot,
+                Box::new(pointer.clone()),
+            )),
+            Box::new(Bitvector32Term::Constant(0)),
+        );
+        let proposition = Proposition::ConditionIs(condition, true);
+        let range = CMemoryRange::new(
+            pointer,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        let own = CResourceFact::own_memory(range.clone());
+        let view = CResourceFact::view_memory(range.clone());
+        let support_resources = ResourceContext::new().unchecked_with_fact(own.clone());
+        let support = support_resources.owned_occurrences_for_fact(&own)[0];
+        let ledger = crate::kernel::LoanLedger::new();
+        let lender = ledger.fresh_participant().unwrap();
+        let reader = ledger.fresh_participant().unwrap();
+        let opening = ledger.lend(lender, lender, support, own.clone()).unwrap();
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        let binding = crate::kernel::LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed: view.clone(),
+        };
+        // The borrower receives only the view; the lender's owned support
+        // remains in the caller state that supplied the exact occurrence.
+        let bound_resources = ResourceContext::new().unchecked_with_fact(view.clone());
+        let view_occurrence = bound_resources.occurrences_for_fact(&view)[0];
+        let bound_state = CState::new()
+            .with_memory(memory.clone())
+            .with_resource_context_and_loan_dependencies(
+                bound_resources,
+                [(view_occurrence, binding)],
+            )
+            .with_loan_ledger(Some(ledger.clone()))
+            .with_loan_participant(Some(lender));
+        let dependency = dynamic_body_fact_dependency(
+            &proposition,
+            &bound_state,
+            &PureFactContext::new(),
+            &[],
+            &[],
+        )
+        .unwrap();
+        assert!(
+            dependency.is_some(),
+            "current viewed memory must retain its loan"
+        );
+        assert!(
+            dynamic_body_fact_dependency(
+                &proposition,
+                &bound_state.clone().with_loan_participant(Some(reader)),
+                &PureFactContext::new(),
+                &[],
+                &[],
+            )
+            .is_err(),
+            "the wrong holder cannot validate the binding"
+        );
+        let ended = ledger
+            .apply(&ledger.end(opening.scope, lender).unwrap())
+            .unwrap();
+        assert!(
+            dynamic_body_fact_dependency(
+                &proposition,
+                &bound_state.with_loan_ledger(Some(ended)),
+                &PureFactContext::new(),
+                &[],
+                &[],
+            )
+            .is_err(),
+            "an ended scope cannot validate the binding"
+        );
+
+        let unbound_state = CState::new().with_memory(memory).with_resource_context(
+            ResourceContext::new().unchecked_with_facts([own.clone(), view]),
+        );
+        assert!(
+            dynamic_body_fact_dependency(
+                &proposition,
+                &unbound_state,
+                &PureFactContext::new(),
+                &[],
+                &[],
+            )
+            .is_err()
+        );
+
+        let owner_state = CState::new()
+            .with_memory(unbound_state.memory().clone())
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(own));
+        assert!(
+            dynamic_body_fact_dependency(
+                &proposition,
+                &owner_state,
+                &PureFactContext::new(),
+                &[],
+                &[],
+            )
+            .unwrap()
+            .is_none()
+        );
     }
 }
