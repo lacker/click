@@ -2112,6 +2112,7 @@ impl LoanLedger {
         borrower: LoanParticipantId,
     ) -> Result<LoanOpening, LoanRefusal> {
         self.validate_view_binding(parent.clone(), lender)?;
+        self.require_participant(borrower)?;
         let scope = LoanScopeId {
             arena: self.storage.data.arena,
             ordinal: self.storage.data.next_scope,
@@ -2675,6 +2676,8 @@ impl LoanLedger {
                 loan,
                 root,
             } => {
+                self.require_participant(*lender)?;
+                self.require_participant(*borrower)?;
                 let parent_loan = data
                     .loans
                     .get(&parent.loan)
@@ -3601,6 +3604,28 @@ mod tests {
         let first = first.apply(&opening.transition).unwrap();
         assert_eq!(
             first.transfer(opening.root_share, second_owner, first_owner),
+            Err(LoanRefusal::WrongArena)
+        );
+    }
+
+    #[test]
+    fn reborrow_rejects_a_borrower_from_another_ledger_arena() {
+        let (ledger, owner, _) = participants();
+        let (_foreign_ledger, _, foreign_reader) = participants();
+        let escrow = memory(0, 4, true);
+        let opening = ledger
+            .lend(owner, owner, backing(&escrow), escrow)
+            .unwrap();
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        let parent = LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support: opening.description.support(),
+            viewed: memory(0, 4, false),
+        };
+        assert_eq!(
+            ledger.reborrow(parent, owner, foreign_reader),
             Err(LoanRefusal::WrongArena)
         );
     }
