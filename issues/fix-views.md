@@ -264,6 +264,24 @@ candidate-semantics corpus and the remaining top-level reader fixtures cannot
 be judged until contract-entry views receive the checked nonrecoverable root
 authority described in the V13 handoff.
 
+### 2026-09-12 partial V18 adversarial-review checkpoint
+
+Independent Luna reviews of the implemented loan and proof paths found two
+authority defects that do not depend on the blocked contract-entry root.
+Reborrow now validates both participants against the ledger arena when the
+transition is issued and when its evidence is applied, so a foreign borrower
+cannot receive a child share. Proof-entry and execution-evidence rebases now
+require identical ledger, participant, and occurrence-binding authority, and
+resource-empty nested function and named-contract bindings preserve an active
+outer loan instead of resetting it.
+
+The loan fix is integrated as `8f67a3ca`; all 41 loan-kernel tests pass. The
+proof fix is integrated as `1b50a361`; its task worktree passed the complete
+gate with 2,950 tests, and the coordinator's 26 candidate-call tests plus the
+new changed-holder regression pass. V18 remains open until the entry-root
+boundary is implemented, the complete candidate corpus passes, and that final
+path receives its own adversarial review.
+
 ## Decision and violated invariant
 
 Requested on 2026-09-11. Investigation base:
