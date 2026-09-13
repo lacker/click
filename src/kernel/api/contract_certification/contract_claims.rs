@@ -2453,6 +2453,8 @@ int32 array_fold_append_at_zero(int32 a[]) {
                 &[fact],
                 &[],
             )),
+
+            loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
         };
         let (_, _, _, entry_assumptions) =
             super::super::certified_function_path_parts(&function, &path)

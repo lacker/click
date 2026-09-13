@@ -2325,6 +2325,7 @@ pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
                 effect_facts,
                 obligations: path.obligations,
                 theorem,
+                loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
             }
         })
         .collect();
@@ -2594,6 +2595,7 @@ fn symbolic_c_statement_execution_with_loop_rule(
                 effect_facts,
                 obligations: path.obligations,
                 theorem,
+                loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
             }
         })
         .collect();
@@ -2814,6 +2816,7 @@ fn prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
                 effect_facts,
                 obligations: path.obligations,
                 theorem,
+                loan_evidence: path.loan_evidence,
             }
         })
         .collect();
@@ -3622,9 +3625,93 @@ fn checked_execution_at_definitionally_equal_entry_state(
                 &path.facts,
                 &path.obligations,
             )),
+            loan_evidence: path.loan_evidence.clone(),
         });
     }
     Some(SymbolicCExecution { paths, limit: None })
+}
+
+fn checked_loan_evidence_is_valid(
+    checked: &CCheckedFunctionExecution,
+    function: &CFunction,
+) -> bool {
+    if !function
+        .resource_requires()
+        .iter()
+        .any(CResourceSpec::is_view)
+    {
+        return true;
+    }
+    let (caller_ledger, caller_participant, pristine_start) = match (
+        checked.state.loan_ledger(),
+        checked.state.loan_participant(),
+    ) {
+        (Some(ledger), Some(participant)) => (Some(ledger), Some(participant), false),
+        (None, None) => (None, None, true),
+        _ => return false,
+    };
+    checked.execution.paths.iter().all(|path| {
+        let Some(outcome) = path_function_outcome(path) else {
+            return false;
+        };
+        let publishes_return_state = matches!(outcome, CFunctionOutcome::Return { .. });
+        if path.loan_evidence.is_empty() {
+            return !publishes_return_state;
+        }
+        let mut outer_recovered_ledger = None;
+        let mut outer_recovered_participant = None;
+        for evidence in path.loan_evidence.to_vec() {
+            let evidence_caller_ledger = evidence.entry.caller_ledger();
+            if evidence
+                .recheck(
+                    evidence_caller_ledger,
+                    Some(evidence.entry.caller_participant()),
+                    &evidence.entry.ledger,
+                    Some(evidence.entry.callee_participant()),
+                )
+                .is_err()
+            {
+                return false;
+            }
+            let is_outer = match caller_ledger {
+                Some(caller_ledger) => {
+                    evidence_caller_ledger == caller_ledger
+                        && Some(evidence.entry.caller_participant()) == caller_participant
+                }
+                None => {
+                    pristine_start
+                        && evidence_caller_ledger.is_pristine()
+                        && evidence_caller_ledger
+                            .contains_participant(evidence.entry.caller_participant())
+                }
+            };
+            if is_outer {
+                outer_recovered_ledger = Some(evidence.recovered_ledger.clone());
+                outer_recovered_participant = Some(evidence.entry.caller_participant());
+            }
+        }
+        let CFunctionOutcome::Return {
+            state: return_state,
+            ..
+        } = outcome
+        else {
+            return true;
+        };
+        return_state.loan_ledger() == outer_recovered_ledger.as_ref()
+            && return_state.loan_participant() == outer_recovered_participant
+    })
+}
+
+fn path_function_outcome(path: &SymbolicCExecutionPath) -> Option<&CFunctionOutcome> {
+    let mut proposition = path.theorem.proposition();
+    while let Proposition::Implies(_, body) = proposition {
+        proposition = body;
+    }
+    match proposition {
+        Proposition::CFunctionExecutes { outcome, .. }
+        | Proposition::CFunctionVerifies { outcome, .. } => Some(outcome),
+        _ => None,
+    }
 }
 
 pub(crate) fn counted_populations_definitionally_equal(
@@ -4030,6 +4117,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                 && checked.assumptions.has_same_reasoning_policy(&assumptions)
                 && checked.execution.limit().is_none()
                 && !checked.execution.paths().is_empty()
+                && checked_loan_evidence_is_valid(checked, &function)
         };
         // Contract requirements are lowered to their bodies, while a claim
         // proof may assume the registered predicate identity itself. Each

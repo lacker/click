@@ -1797,6 +1797,7 @@ pub(super) fn prove_symbolic_c_function_verification_paths_with_environment_and_
                         effect_facts,
                         obligations: path.obligations,
                         theorem,
+                        loan_evidence: path.loan_evidence,
                     }
                 })
                 .collect()
@@ -1826,6 +1827,7 @@ pub fn c_function_execution_candidates_from_outcomes(
                 facts,
                 effect_facts,
                 obligations,
+                loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
             }
         })
         .collect();

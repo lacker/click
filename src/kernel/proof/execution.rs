@@ -5400,28 +5400,40 @@ impl ExecutionProofCore {
             // same resource transfer or population transition an independent
             // execution applies at return. A contract the body violates at
             // exit ends the path in that runtime error.
-            let (outcome, obligations) = match crate::kernel::functions::contract_exit_outcome(
-                if has_checked_entry {
-                    self.function_entry
-                        .as_ref()
-                        .expect("checked entry exists")
-                        .caller_state()
-                } else {
-                    candidates.state()
-                },
-                function,
-                candidates.arguments(),
-                completed,
-                obligations,
-                &statement_assumptions,
-                &mut ExecutionBudget::default(),
-            ) {
-                Ok(Ok(exit)) => exit,
-                Ok(Err(error)) => (
-                    crate::kernel::CFunctionOutcome::RuntimeError(error),
-                    candidate.obligations().to_vec(),
+            let (outcome, obligations, loan_evidence) =
+                match crate::kernel::functions::contract_exit_outcome(
+                    if has_checked_entry {
+                        self.function_entry
+                            .as_ref()
+                            .expect("checked entry exists")
+                            .caller_state()
+                    } else {
+                        candidates.state()
+                    },
+                    function,
+                    candidates.arguments(),
+                    completed,
+                    obligations,
+                    &statement_assumptions,
+                    &mut ExecutionBudget::default(),
+                ) {
+                    Ok(Ok(exit)) => exit,
+                    Ok(Err(error)) => (
+                        crate::kernel::CFunctionOutcome::RuntimeError(error),
+                        candidate.obligations().to_vec(),
+                        None,
+                    ),
+                    Err(_) => return Err("the contract's exit rule hit an execution limit"),
+                };
+            let loan_evidence = match loan_evidence {
+                Some(evidence) => crate::kernel::loans::concat_checked_loan_evidence(
+                    candidate.loan_evidence(),
+                    &crate::kernel::loans::append_checked_loan_evidence(
+                        &crate::kernel::loans::empty_checked_loan_evidence_sequence(),
+                        Some(evidence),
+                    ),
                 ),
-                Err(_) => return Err("the contract's exit rule hit an execution limit"),
+                None => candidate.loan_evidence().clone(),
             };
             let proposition = Proposition::CFunctionVerifies {
                 state: candidates.state().clone(),
@@ -5459,6 +5471,7 @@ impl ExecutionProofCore {
                 effect_facts: candidate.effect_facts().to_vec(),
                 obligations,
                 theorem,
+                loan_evidence,
             });
         }
         Ok((paths, has_checked_entry))

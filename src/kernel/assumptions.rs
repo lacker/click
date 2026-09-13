@@ -4631,6 +4631,10 @@ impl CFunctionExecutionCandidate {
     pub fn obligations(&self) -> &[ProofObligation] {
         &self.obligations
     }
+
+    pub(crate) fn loan_evidence(&self) -> &crate::kernel::loans::CheckedLoanCallEvidenceSequence {
+        &self.loan_evidence
+    }
 }
 
 impl SymbolicCConditionEvaluation {

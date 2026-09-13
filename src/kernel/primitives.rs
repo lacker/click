@@ -5899,6 +5899,9 @@ impl CCheckedFunctionExecution {
             if left.obligations != right.obligations {
                 return Err(format!("path {index}: the obligations differ"));
             }
+            if left.loan_evidence != right.loan_evidence {
+                return Err(format!("path {index}: the loan evidence differs"));
+            }
             same_proposition(left.theorem.proposition(), right.theorem.proposition())
                 .map_err(|difference| format!("path {index}: {difference}"))?;
         }
@@ -5917,6 +5920,7 @@ pub struct SymbolicCExecutionPath {
     pub(super) effect_facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
     pub(super) theorem: Theorem,
+    pub(super) loan_evidence: super::loans::CheckedLoanCallEvidenceSequence,
 }
 
 /// An untrusted collection of checked function outcomes.
@@ -5938,6 +5942,7 @@ pub struct CFunctionExecutionCandidate {
     pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) effect_facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
+    pub(super) loan_evidence: super::loans::CheckedLoanCallEvidenceSequence,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -5972,6 +5977,7 @@ pub(super) struct CStatementExecutionPath {
     pub(super) outcome: CStatementOutcome,
     pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
+    pub(super) loan_evidence: super::loans::CheckedLoanCallEvidenceSequence,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -5979,6 +5985,7 @@ pub(super) struct CFunctionPath {
     pub(super) outcome: CFunctionOutcome,
     pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
+    pub(super) loan_evidence: super::loans::CheckedLoanCallEvidenceSequence,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -442,9 +442,231 @@ pub(crate) struct StableViewTransferPlan {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StableViewRecovery {
     pub(crate) ledger: LoanLedger,
+    pub(crate) terminal_ledger: LoanLedger,
     pub(crate) resources: ResourceContext,
     pub(crate) view_bindings: LoanViewBindings,
     pub(crate) transitions: Vec<CheckedLoanTransition>,
+}
+
+/// Checked evidence for one complete stable-view call transition.
+///
+/// The entry and recovery lists are bounded by the scopes and shares created
+/// by this call.  They are retained separately from the resulting ledger
+/// roots so artifact reuse cannot treat an equal final state as proof that a
+/// different predecessor or transition history was valid.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedLoanCallEvidence {
+    pub(crate) entry: StableViewTransferPlan,
+    pub(crate) recovered_ledger: LoanLedger,
+    pub(crate) recovery_terminal_ledger: LoanLedger,
+    pub(crate) recovery_transitions: Vec<CheckedLoanTransition>,
+}
+
+#[derive(Clone)]
+enum CheckedLoanCallEvidenceSequenceNode {
+    Empty,
+    Append {
+        prefix: Arc<CheckedLoanCallEvidenceSequenceNode>,
+        evidence: Arc<CheckedLoanCallEvidence>,
+    },
+}
+
+#[derive(Clone)]
+pub(crate) struct CheckedLoanCallEvidenceSequence {
+    node: Arc<CheckedLoanCallEvidenceSequenceNode>,
+    len: usize,
+}
+
+pub(crate) fn empty_checked_loan_evidence_sequence() -> CheckedLoanCallEvidenceSequence {
+    CheckedLoanCallEvidenceSequence {
+        node: Arc::new(CheckedLoanCallEvidenceSequenceNode::Empty),
+        len: 0,
+    }
+}
+
+pub(crate) fn append_checked_loan_evidence(
+    sequence: &CheckedLoanCallEvidenceSequence,
+    evidence: Option<Arc<CheckedLoanCallEvidence>>,
+) -> CheckedLoanCallEvidenceSequence {
+    let Some(evidence) = evidence else {
+        return sequence.clone();
+    };
+    CheckedLoanCallEvidenceSequence {
+        node: Arc::new(CheckedLoanCallEvidenceSequenceNode::Append {
+            prefix: sequence.node.clone(),
+            evidence,
+        }),
+        len: sequence.len + 1,
+    }
+}
+
+pub(crate) fn concat_checked_loan_evidence(
+    prefix: &CheckedLoanCallEvidenceSequence,
+    suffix: &CheckedLoanCallEvidenceSequence,
+) -> CheckedLoanCallEvidenceSequence {
+    if prefix.is_empty() {
+        return suffix.clone();
+    }
+    if suffix.is_empty() {
+        return prefix.clone();
+    }
+    suffix
+        .to_vec()
+        .into_iter()
+        .fold(prefix.clone(), |sequence, evidence| {
+            append_checked_loan_evidence(&sequence, Some(evidence))
+        })
+}
+
+impl CheckedLoanCallEvidenceSequence {
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Materialize only at an artifact boundary or diagnostic/test boundary.
+    /// Hot-path path forks clone the immutable node root instead.
+    pub(crate) fn to_vec(&self) -> Vec<Arc<CheckedLoanCallEvidence>> {
+        let mut result = Vec::with_capacity(self.len);
+        let mut node = &*self.node;
+        while let CheckedLoanCallEvidenceSequenceNode::Append { prefix, evidence } = node {
+            result.push(evidence.clone());
+            node = prefix;
+        }
+        result.reverse();
+        result
+    }
+}
+
+impl PartialEq for CheckedLoanCallEvidenceSequence {
+    fn eq(&self, other: &Self) -> bool {
+        if self.len != other.len {
+            return false;
+        }
+        let mut left = &*self.node;
+        let mut right = &*other.node;
+        loop {
+            match (left, right) {
+                (
+                    CheckedLoanCallEvidenceSequenceNode::Empty,
+                    CheckedLoanCallEvidenceSequenceNode::Empty,
+                ) => return true,
+                (
+                    CheckedLoanCallEvidenceSequenceNode::Append {
+                        prefix: left_prefix,
+                        evidence: left_evidence,
+                    },
+                    CheckedLoanCallEvidenceSequenceNode::Append {
+                        prefix: right_prefix,
+                        evidence: right_evidence,
+                    },
+                ) => {
+                    if left_evidence != right_evidence {
+                        return false;
+                    }
+                    left = left_prefix;
+                    right = right_prefix;
+                }
+                _ => return false,
+            }
+        }
+    }
+}
+
+impl Eq for CheckedLoanCallEvidenceSequence {}
+
+impl std::fmt::Debug for CheckedLoanCallEvidenceSequence {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut recent = Vec::new();
+        let mut node = &*self.node;
+        while recent.len() < 3 {
+            let CheckedLoanCallEvidenceSequenceNode::Append { prefix, evidence } = node else {
+                break;
+            };
+            recent.push((evidence.entry.caller, evidence.entry.callee));
+            node = prefix;
+        }
+        formatter
+            .debug_struct("CheckedLoanCallEvidenceSequence")
+            .field("len", &self.len)
+            .field("recent_call_participants", &recent)
+            .finish()
+    }
+}
+
+impl Drop for CheckedLoanCallEvidenceSequence {
+    fn drop(&mut self) {
+        let mut node = std::mem::replace(
+            &mut self.node,
+            Arc::new(CheckedLoanCallEvidenceSequenceNode::Empty),
+        );
+        loop {
+            if Arc::strong_count(&node) != 1 {
+                break;
+            }
+            let Ok(unwrapped) = Arc::try_unwrap(node) else {
+                break;
+            };
+            match unwrapped {
+                CheckedLoanCallEvidenceSequenceNode::Empty => break,
+                CheckedLoanCallEvidenceSequenceNode::Append { prefix, evidence } => {
+                    drop(evidence);
+                    node = prefix;
+                }
+            }
+        }
+    }
+}
+
+impl CheckedLoanCallEvidence {
+    pub(crate) fn new(
+        entry: StableViewTransferPlan,
+        recovered_ledger: LoanLedger,
+        recovery_terminal_ledger: LoanLedger,
+        recovery_transitions: Vec<CheckedLoanTransition>,
+    ) -> Self {
+        Self {
+            entry,
+            recovered_ledger,
+            recovery_terminal_ledger,
+            recovery_transitions,
+        }
+    }
+
+    /// Rechecks both halves of the call boundary against the exact roots and
+    /// participants that the states publish.  Ledger equality is only the
+    /// final identity check; every retained transition is applied first.
+    pub(crate) fn recheck(
+        &self,
+        caller_ledger: &LoanLedger,
+        caller_participant: Option<LoanParticipantId>,
+        callee_ledger: &LoanLedger,
+        callee_participant: Option<LoanParticipantId>,
+    ) -> Result<(), LoanRefusal> {
+        if caller_participant != Some(self.entry.caller)
+            || callee_participant != Some(self.entry.callee)
+        {
+            return Err(LoanRefusal::WrongHolder);
+        }
+        let entry_successor = self.entry.recheck_entry(caller_ledger)?;
+        if entry_successor != *callee_ledger {
+            return Err(LoanRefusal::InvalidEvidence);
+        }
+        let mut recovery_successor = callee_ledger.clone();
+        for transition in &self.recovery_transitions {
+            recovery_successor = recovery_successor.apply(transition)?;
+        }
+        if recovery_successor != self.recovery_terminal_ledger {
+            return Err(LoanRefusal::InvalidEvidence);
+        }
+        if self.recovered_ledger != *caller_ledger {
+            return Err(LoanRefusal::InvalidEvidence);
+        }
+        Ok(())
+    }
 }
 
 impl StableViewRecovery {
@@ -840,6 +1062,10 @@ pub(crate) fn plan_stable_view_transfer_with_bindings(
 }
 
 impl StableViewTransferPlan {
+    pub(crate) fn caller_ledger(&self) -> &LoanLedger {
+        &self.parent_ledger
+    }
+
     pub(crate) fn caller_participant(&self) -> LoanParticipantId {
         self.caller
     }
@@ -902,9 +1128,11 @@ impl StableViewTransferPlan {
         // registered child would have refused before this checkpoint. The
         // plan can therefore roll back directly to the exact predecessor
         // root without a whole-ledger quiescence scan.
+        let terminal_ledger = ledger;
         ledger = parent_ledger;
         Ok(StableViewRecovery {
             ledger,
+            terminal_ledger,
             resources,
             view_bindings: self.parent_view_bindings,
             transitions,
@@ -988,6 +1216,20 @@ impl LoanLedger {
             ordinal: NEXT_PARTICIPANT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         };
         Ok(participant)
+    }
+
+    pub(crate) fn is_pristine(&self) -> bool {
+        let data = &self.storage.data;
+        data.next_scope == 0
+            && data.next_loan == 0
+            && data.next_share == 0
+            && data.scopes.is_empty()
+            && data.loans.is_empty()
+            && data.shares.is_empty()
+    }
+
+    pub(crate) fn contains_participant(&self, participant: LoanParticipantId) -> bool {
+        self.storage.data.arena == participant.arena
     }
 
     pub(crate) fn lend(
@@ -2097,6 +2339,94 @@ mod tests {
             ledger.apply(&opening.transition),
             Err(LoanRefusal::InvalidEvidence)
         );
+    }
+
+    #[test]
+    fn checked_call_evidence_rejects_stale_or_swapped_recovery() {
+        let assumptions = PureFactContext::new();
+        let owner = memory(0, 4, true);
+        let caller_resources = ResourceContext::new().unchecked_with_fact(owner);
+        let (ledger, caller, callee) = participants();
+        let plan = plan_stable_view_transfer(
+            &caller_resources,
+            &[checked(memory(0, 2, false))],
+            &assumptions,
+            &ledger,
+            caller,
+            callee,
+        )
+        .unwrap();
+        let planned_ledger = plan.ledger.clone();
+        let recovery = plan.clone().recover_stable_views(&assumptions).unwrap();
+        let evidence = CheckedLoanCallEvidence::new(
+            plan,
+            recovery.ledger.clone(),
+            recovery.terminal_ledger.clone(),
+            recovery.transitions.clone(),
+        );
+        assert!(
+            evidence
+                .recheck(&ledger, Some(caller), &planned_ledger, Some(callee))
+                .is_ok()
+        );
+
+        let mut stale = evidence.clone();
+        stale.recovery_transitions.reverse();
+        assert!(
+            stale
+                .recheck(&ledger, Some(caller), &planned_ledger, Some(callee))
+                .is_err()
+        );
+
+        let mut truncated = evidence.clone();
+        truncated.recovery_transitions.pop();
+        assert!(
+            truncated
+                .recheck(&ledger, Some(caller), &planned_ledger, Some(callee))
+                .is_err()
+        );
+
+        let unrelated = LoanLedger::new();
+        assert_eq!(
+            evidence.recheck(&unrelated, Some(caller), &planned_ledger, Some(callee)),
+            Err(LoanRefusal::StalePredecessor)
+        );
+    }
+
+    #[test]
+    fn checked_evidence_sequence_scales_with_shared_immutable_history() {
+        let assumptions = PureFactContext::new();
+        let owner = memory(0, 4, true);
+        let caller_resources = ResourceContext::new().unchecked_with_fact(owner);
+        let (ledger, caller, callee) = participants();
+        let plan = plan_stable_view_transfer(
+            &caller_resources,
+            &[checked(memory(0, 2, false))],
+            &assumptions,
+            &ledger,
+            caller,
+            callee,
+        )
+        .unwrap();
+        let recovery = plan.clone().recover_stable_views(&assumptions).unwrap();
+        let evidence = Arc::new(CheckedLoanCallEvidence::new(
+            plan,
+            recovery.ledger,
+            recovery.terminal_ledger,
+            recovery.transitions,
+        ));
+        let mut sequence = empty_checked_loan_evidence_sequence();
+        for _ in 0..2048 {
+            let previous = sequence.clone();
+            sequence = append_checked_loan_evidence(&sequence, Some(evidence.clone()));
+            let CheckedLoanCallEvidenceSequenceNode::Append { prefix, .. } = &*sequence.node else {
+                panic!("append must create a persistent node");
+            };
+            assert!(Arc::ptr_eq(prefix, &previous.node));
+        }
+        assert_eq!(sequence.len(), 2048);
+        assert_eq!(sequence, sequence.clone());
+        assert_eq!(sequence.to_vec().len(), 2048);
     }
 
     #[test]

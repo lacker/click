@@ -1646,6 +1646,59 @@ fn contract_certification_reuses_a_matching_kernel_checked_execution() {
 }
 
 #[test]
+fn checked_view_certificate_initializes_a_pristine_loan_authority() {
+    let base = Pointer {
+        block: PointerBlock::Concrete("checked:initial-view".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let function = c_function(
+        CType::Int32,
+        "checked_initial_view",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_return(c_load(c_variable("p"))),
+    )
+    .with_resource_summary(
+        vec![CResourceSpec::viewed_memory(CMemorySegment::new(
+            c_variable("p"),
+            c_int32_literal(0),
+            c_int32_literal(1),
+        ))],
+        Vec::new(),
+    )
+    .with_contract(Vec::new(), Vec::new(), Vec::new(), Vec::new(), true);
+    let state = CState::new()
+        .with_memory(
+            CMemory::new()
+                .with_block(base.block.clone(), 4)
+                .store(base.clone(), int32(7)),
+        )
+        .with_resource_context(own_memory_context(base.clone(), 0, 1));
+    let environment = CExecutionEnvironment::new().with_candidate_stable_view_semantics();
+    let arguments = vec![c_pointer_value(base)];
+    let checked = prove_checked_c_function_execution_with_environment(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        PureFactContext::new(),
+        environment.clone(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+    assert_eq!(checked.paths().len(), 1);
+    let execution = prove_c_function_contract_execution_paths_with_checked_artifacts(
+        state,
+        function,
+        arguments,
+        Vec::new(),
+        environment,
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+        &[checked],
+    );
+    assert_eq!(execution.path_count(), 1);
+}
+
+#[test]
 fn contract_certification_reuses_complementary_checked_entry_partitions() {
     let input = Bitvector32Term::Variable(Variable(919_100));
     let branch = ConditionTerm::signed_less_than(input.clone(), Bitvector32Term::Constant(0));
@@ -1936,6 +1989,8 @@ fn body_safety_claim_rejects_an_unproved_execution_condition() {
             &[],
             &[obligation],
         )),
+
+        loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
     };
     let execution = CFunctionContractExecution {
         cases: vec![vec![CContractPathSet {
@@ -2003,6 +2058,8 @@ fn contract_claims_are_judged_over_each_path_set_of_a_case() {
             &[],
             &[unproved],
         )),
+
+        loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
     };
     let clean = SymbolicCExecutionPath {
         assumptions: PureFactContext::new(),
@@ -2015,6 +2072,8 @@ fn contract_claims_are_judged_over_each_path_set_of_a_case() {
             &[],
             &[],
         )),
+
+        loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
     };
     let set = |path: &SymbolicCExecutionPath| CContractPathSet {
         paths: vec![path.clone()],
@@ -2093,6 +2152,8 @@ fn body_safety_claim_uses_path_facts_for_verification_conditions() {
             &[fact],
             &[obligation],
         )),
+
+        loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
     };
     let execution = CFunctionContractExecution {
         cases: vec![vec![CContractPathSet {
@@ -2747,7 +2808,7 @@ fn contract_exit_rule_is_the_plain_outcome_without_resources() {
         Vec::new(),
         &PureFactContext::new(),
     );
-    let (exit_outcome, _) = crate::kernel::functions::contract_exit_outcome(
+    let (exit_outcome, _, _) = crate::kernel::functions::contract_exit_outcome(
         &caller_state,
         &function,
         &[],

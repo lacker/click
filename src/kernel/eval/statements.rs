@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::loans::empty_checked_loan_evidence_sequence;
 
 pub(in crate::kernel) fn execute_c_statement(
     state: &CState,
@@ -44,6 +45,8 @@ pub(in crate::kernel) fn execute_c_lvalue_assignment_paths(
                     outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                     facts: target_facts,
                     obligations: target_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -52,6 +55,8 @@ pub(in crate::kernel) fn execute_c_lvalue_assignment_paths(
                     outcome: CStatementOutcome::RuntimeError(error),
                     facts: target_facts,
                     obligations: target_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -85,12 +90,16 @@ pub(in crate::kernel) fn execute_c_lvalue_assignment_paths(
                         outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                         facts,
                         obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     })
                 }
                 CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
                     outcome: CStatementOutcome::RuntimeError(error),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 }),
             }
         }
@@ -130,6 +139,8 @@ fn execute_c_lvalue_update_paths(
                 outcome,
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -155,6 +166,8 @@ fn execute_c_lvalue_update_paths(
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         }
@@ -187,6 +200,8 @@ fn execute_c_lvalue_update_paths(
                     outcome,
                     facts: current_facts,
                     obligations: current_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             };
@@ -224,6 +239,8 @@ fn execute_c_lvalue_update_paths(
                         outcome,
                         facts,
                         obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     });
                     continue;
                 };
@@ -270,6 +287,8 @@ fn execute_c_lvalue_update_paths(
                                 outcome: CStatementOutcome::UndefinedBehavior(error),
                                 facts,
                                 obligations,
+
+                                loan_evidence: empty_checked_loan_evidence_sequence(),
                             })
                         }
                         CExpressionOutcome::RuntimeError(error) => {
@@ -277,6 +296,8 @@ fn execute_c_lvalue_update_paths(
                                 outcome: CStatementOutcome::RuntimeError(error),
                                 facts,
                                 obligations,
+
+                                loan_evidence: empty_checked_loan_evidence_sequence(),
                             })
                         }
                     }
@@ -351,6 +372,8 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             outcome: CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
             facts,
             obligations,
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }];
     }
     let mut obligations = obligations;
@@ -402,6 +425,8 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts,
             obligations,
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }];
     };
 
@@ -441,6 +466,8 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 outcome: CStatementOutcome::Normal(state),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }]
         }
         CLValueStorage::Memory { pointer } => {
@@ -458,6 +485,8 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     ),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 }];
             }
             if state.memory.is_ended_local_address(&pointer) {
@@ -467,6 +496,8 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     ),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 }];
             }
             if state.memory.is_deallocated_heap_address(&pointer) {
@@ -476,6 +507,8 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     ),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 }];
             }
             if state.memory.is_read_only_block(&pointer.block) {
@@ -485,6 +518,8 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     ),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 }];
             }
             if let Some(outcome) =
@@ -519,6 +554,8 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     }),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 }];
             }
             let obligations = if has_external_write_resource {
@@ -593,6 +630,8 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 outcome: CStatementOutcome::Normal(state),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }]
         }
     }
@@ -654,6 +693,8 @@ fn execute_c_aggregate_copy_paths(
                     }),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -682,6 +723,8 @@ fn execute_c_aggregate_copy_paths(
                         outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                         facts,
                         obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     });
                     continue;
                 }
@@ -691,6 +734,8 @@ fn execute_c_aggregate_copy_paths(
                 outcome: CStatementOutcome::Normal(state),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
         }
     }
@@ -770,6 +815,8 @@ pub(super) fn execute_c_heap_allocate_paths(
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }]);
     };
     let element_width = target_type
@@ -802,6 +849,8 @@ pub(super) fn execute_c_heap_allocate_paths(
                 outcome,
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -812,6 +861,8 @@ pub(super) fn execute_c_heap_allocate_paths(
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -838,6 +889,8 @@ pub(super) fn execute_c_heap_allocate_paths(
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         }
@@ -881,6 +934,8 @@ pub(super) fn execute_c_heap_allocate_paths(
                 outcome: assigned_path.outcome,
                 facts: merged_facts,
                 obligations: merged_obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
         }
     }
@@ -1082,6 +1137,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
             }),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }]);
     };
     let Some(
@@ -1105,6 +1162,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }]);
     };
     let element_width = target_type
@@ -1132,6 +1191,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 outcome,
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -1146,6 +1207,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -1178,6 +1241,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     outcome: allocation_path.outcome,
                     facts: merged_facts,
                     obligations: merged_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
             }
             continue;
@@ -1195,6 +1260,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(error)),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -1251,6 +1318,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     outcome,
                     facts: merged_facts,
                     obligations: merged_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             };
@@ -1264,6 +1333,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     facts: size_facts,
                     obligations: size_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             };
@@ -1276,6 +1347,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
                         outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                         facts: size_facts,
                         obligations: size_obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     });
                     continue;
                 }
@@ -1305,6 +1378,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     facts: all_facts,
                     obligations: all_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -1328,6 +1403,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                             facts: all_facts,
                             obligations: all_obligations,
+
+                            loan_evidence: empty_checked_loan_evidence_sequence(),
                         });
                         continue;
                     };
@@ -1347,6 +1424,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     }),
                     facts: all_facts,
                     obligations: all_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             };
@@ -1364,6 +1443,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     }),
                     facts: all_facts,
                     obligations: all_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             };
@@ -1391,6 +1472,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     ),
                     facts: all_facts,
                     obligations: all_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -1456,6 +1539,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     facts: all_facts,
                     obligations: all_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -1512,6 +1597,8 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     outcome: assigned_path.outcome,
                     facts: merged_facts,
                     obligations: merged_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
             }
         }
@@ -1556,6 +1643,8 @@ fn execute_c_heap_free_paths(
                 outcome,
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -1570,6 +1659,8 @@ fn execute_c_heap_free_paths(
                 outcome: CStatementOutcome::Normal(state.clone()),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         }
@@ -1587,6 +1678,8 @@ fn execute_c_heap_free_paths(
                 ),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         }
@@ -1613,6 +1706,8 @@ fn execute_c_heap_free_paths(
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(error)),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         } else if working_memory.is_live_heap_address(pointer.pointer()) {
@@ -1621,6 +1716,8 @@ fn execute_c_heap_free_paths(
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(error)),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         } else if let Some(bytes) = declared_allocation {
@@ -1633,6 +1730,8 @@ fn execute_c_heap_free_paths(
                     )),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             };
@@ -1645,6 +1744,8 @@ fn execute_c_heap_free_paths(
                 )),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -1674,6 +1775,8 @@ fn execute_c_heap_free_paths(
                 }),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -1692,6 +1795,8 @@ fn execute_c_heap_free_paths(
                 }),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -1717,6 +1822,8 @@ fn execute_c_heap_free_paths(
                 }),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         }
@@ -1740,6 +1847,8 @@ fn execute_c_heap_free_paths(
             ),
             facts,
             obligations,
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         });
     }
     budget.check_path_width(paths.len())?;
@@ -1915,6 +2024,8 @@ fn execute_c_return_expression_paths(
                         outcome,
                         facts: truthiness_path.facts,
                         obligations: truthiness_path.obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     });
                 }
             }
@@ -1931,6 +2042,8 @@ fn execute_c_return_expression_paths(
                     outcome,
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
             }
             CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
@@ -1938,12 +2051,16 @@ fn execute_c_return_expression_paths(
                     outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
             }
             CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
                 outcome: CStatementOutcome::RuntimeError(error),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }),
         }
     }
@@ -2022,16 +2139,22 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             outcome: CStatementOutcome::Normal(state.clone()),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }],
         CStatement::Break => vec![CStatementExecutionPath {
             outcome: CStatementOutcome::Break(state.clone()),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }],
         CStatement::Continue => vec![CStatementExecutionPath {
             outcome: CStatementOutcome::Continue(state.clone()),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }],
         CStatement::ContinueWithStep { step } => {
             let mut paths = Vec::new();
@@ -2054,6 +2177,8 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                     outcome,
                     facts: step_path.facts,
                     obligations: step_path.obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
             }
             paths
@@ -2090,6 +2215,8 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                 outcome,
                 facts: Vec::new(),
                 obligations: Vec::new(),
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }]
         }
         CStatement::DeclareAggregate { name, layout } => {
@@ -2103,6 +2230,8 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                 outcome,
                 facts: Vec::new(),
                 obligations: Vec::new(),
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }]
         }
         CStatement::CopyAggregate {
@@ -2174,6 +2303,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                             execution_semantics,
                             &first_path.facts,
                             &first_path.obligations,
+                            &first_path.loan_evidence,
                             budget,
                         )?);
                     }
@@ -2186,6 +2316,8 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                         outcome,
                         facts: first_path.facts,
                         obligations: first_path.obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     }),
                 }
             }
@@ -2204,6 +2336,8 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                 outcome,
                 facts: Vec::new(),
                 obligations: Vec::new(),
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }]
         }
         CStatement::Return(expression) => {
@@ -2277,6 +2411,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                                 execution_semantics,
                                 &truthiness_path.facts,
                                 &truthiness_path.obligations,
+                                &empty_checked_loan_evidence_sequence(),
                                 budget,
                             )?);
                         }
@@ -2286,6 +2421,8 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                             outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                             facts,
                             obligations,
+
+                            loan_evidence: empty_checked_loan_evidence_sequence(),
                         })
                     }
                     CExpressionOutcome::RuntimeError(error) => {
@@ -2293,6 +2430,8 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                             outcome: CStatementOutcome::RuntimeError(error),
                             facts,
                             obligations,
+
+                            loan_evidence: empty_checked_loan_evidence_sequence(),
                         })
                     }
                 }
@@ -2361,6 +2500,8 @@ fn execute_c_switch_paths(
                         outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                         facts,
                         obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     });
                     continue;
                 };
@@ -2381,11 +2522,15 @@ fn execute_c_switch_paths(
                 outcome: CStatementOutcome::UndefinedBehavior(error),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }),
             CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
                 outcome: CStatementOutcome::RuntimeError(error),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }),
         }
     }
@@ -2422,6 +2567,8 @@ fn execute_c_switch_dispatch_paths(
                 outcome: CStatementOutcome::Normal(state.clone()),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }]),
         };
     }
@@ -2498,6 +2645,8 @@ fn execute_c_switch_suffix_paths(
             outcome: CStatementOutcome::Normal(state.clone()),
             facts,
             obligations,
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }]);
     }
     let case_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
@@ -2535,6 +2684,8 @@ fn execute_c_switch_suffix_paths(
                 outcome: CStatementOutcome::Normal(next_state),
                 facts: case_facts,
                 obligations: case_obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }),
             outcome @ (CStatementOutcome::Continue(_)
             | CStatementOutcome::Return { .. }
@@ -2544,6 +2695,8 @@ fn execute_c_switch_suffix_paths(
                 outcome,
                 facts: case_facts,
                 obligations: case_obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }),
         }
     }
@@ -2576,6 +2729,8 @@ pub(in crate::kernel) fn execute_c_assert_paths(
                         outcome: CStatementOutcome::Normal(state.clone()),
                         facts: truthiness_path.facts,
                         obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     });
                 }
             }
@@ -2584,12 +2739,16 @@ pub(in crate::kernel) fn execute_c_assert_paths(
                     outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 })
             }
             CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
                 outcome: CStatementOutcome::RuntimeError(error),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }),
         }
     }
@@ -2717,6 +2876,8 @@ pub(in crate::kernel) fn execute_c_while_paths(
                                 outcome: CStatementOutcome::Normal(current_state.clone()),
                                 facts,
                                 obligations,
+
+                                loan_evidence: empty_checked_loan_evidence_sequence(),
                             });
                             continue;
                         }
@@ -2771,6 +2932,8 @@ pub(in crate::kernel) fn execute_c_while_paths(
                                         outcome: CStatementOutcome::Normal(next_state),
                                         facts,
                                         obligations,
+
+                                        loan_evidence: empty_checked_loan_evidence_sequence(),
                                     });
                                 }
                                 outcome @ (CStatementOutcome::Return { .. }
@@ -2781,6 +2944,8 @@ pub(in crate::kernel) fn execute_c_while_paths(
                                         outcome,
                                         facts,
                                         obligations,
+
+                                        loan_evidence: empty_checked_loan_evidence_sequence(),
                                     });
                                 }
                             }
@@ -2801,6 +2966,8 @@ pub(in crate::kernel) fn execute_c_while_paths(
                         outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                         facts,
                         obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     });
                 }
                 CExpressionOutcome::RuntimeError(error) => {
@@ -2817,6 +2984,8 @@ pub(in crate::kernel) fn execute_c_while_paths(
                         outcome: CStatementOutcome::RuntimeError(error),
                         facts,
                         obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     });
                 }
             }

@@ -1,3 +1,7 @@
+use super::loans::{
+    CheckedLoanCallEvidenceSequence, concat_checked_loan_evidence,
+    empty_checked_loan_evidence_sequence,
+};
 use super::prelude::*;
 
 #[cfg(test)]
@@ -394,6 +398,8 @@ pub(super) fn execute_c_call_assign_paths(
                 )),
                 facts: Vec::new(),
                 obligations: Vec::new(),
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }]);
         }
         return execute_c_realloc_assign_paths(state, target, arguments, assumptions, budget);
@@ -420,6 +426,8 @@ pub(super) fn execute_c_call_assign_paths(
             )),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }]);
     };
 
@@ -441,6 +449,8 @@ pub(super) fn execute_c_call_assign_paths(
                         outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                         facts: path.facts,
                         obligations: path.obligations,
+
+                        loan_evidence: path.loan_evidence.clone(),
                     };
                 }
                 if let Some(layout) = function.return_aggregate_layout() {
@@ -452,6 +462,8 @@ pub(super) fn execute_c_call_assign_paths(
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                             facts: path.facts,
                             obligations: path.obligations,
+
+                            loan_evidence: path.loan_evidence.clone(),
                         };
                     }
                     let Some(target_layout) = state.locals.aggregate_layout(target) else {
@@ -459,6 +471,8 @@ pub(super) fn execute_c_call_assign_paths(
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                             facts: path.facts,
                             obligations: path.obligations,
+
+                            loan_evidence: path.loan_evidence.clone(),
                         };
                     };
                     if target_layout != layout {
@@ -466,6 +480,8 @@ pub(super) fn execute_c_call_assign_paths(
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                             facts: path.facts,
                             obligations: path.obligations,
+
+                            loan_evidence: path.loan_evidence.clone(),
                         };
                     }
                     let CValue::Pointer(pointer) = &value else {
@@ -473,6 +489,8 @@ pub(super) fn execute_c_call_assign_paths(
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                             facts: path.facts,
                             obligations: path.obligations,
+
+                            loan_evidence: path.loan_evidence.clone(),
                         };
                     };
                     if pointer.is_null() {
@@ -480,6 +498,8 @@ pub(super) fn execute_c_call_assign_paths(
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                             facts: path.facts,
                             obligations: path.obligations,
+
+                            loan_evidence: path.loan_evidence.clone(),
                         };
                     }
                     let Some(slot) = state.locals.slot(target).cloned() else {
@@ -487,6 +507,8 @@ pub(super) fn execute_c_call_assign_paths(
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                             facts: path.facts,
                             obligations: path.obligations,
+
+                            loan_evidence: path.loan_evidence.clone(),
                         };
                     };
                     let next_memory = match copy_aggregate_fields_checked(
@@ -501,6 +523,8 @@ pub(super) fn execute_c_call_assign_paths(
                                 outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                                 facts: path.facts,
                                 obligations: path.obligations,
+
+                                loan_evidence: path.loan_evidence.clone(),
                             };
                         }
                     };
@@ -509,6 +533,8 @@ pub(super) fn execute_c_call_assign_paths(
                         outcome: CStatementOutcome::Normal(state),
                         facts: path.facts,
                         obligations: path.obligations,
+
+                        loan_evidence: path.loan_evidence.clone(),
                     };
                 }
                 if state.locals.is_array_object(target) {
@@ -516,6 +542,8 @@ pub(super) fn execute_c_call_assign_paths(
                         outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                         facts: path.facts,
                         obligations: path.obligations,
+
+                        loan_evidence: path.loan_evidence.clone(),
                     };
                 }
                 if assign_call_result(
@@ -543,6 +571,8 @@ pub(super) fn execute_c_call_assign_paths(
             outcome,
             facts: path.facts,
             obligations: path.obligations,
+
+            loan_evidence: path.loan_evidence.clone(),
         }
     })
     .collect::<Vec<_>>();
@@ -582,6 +612,7 @@ pub(super) fn execute_c_call_paths(
             },
             facts: path.facts,
             obligations: path.obligations,
+            loan_evidence: path.loan_evidence,
         })
         .collect::<Vec<_>>();
         budget.check_path_width(paths.len())?;
@@ -595,6 +626,8 @@ pub(super) fn execute_c_call_paths(
             )),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }]);
     };
 
@@ -619,6 +652,7 @@ pub(super) fn execute_c_call_paths(
         },
         facts: path.facts,
         obligations: path.obligations,
+        loan_evidence: path.loan_evidence,
     })
     .collect::<Vec<_>>();
     budget.check_path_width(paths.len())?;
@@ -677,6 +711,8 @@ fn execute_c_indirect_call_assign_paths(
                 outcome,
                 facts: path.facts,
                 obligations: path.obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }
         })
         .collect())
@@ -699,6 +735,8 @@ fn execute_c_indirect_call_paths(
             )),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }]);
     }
     let mut paths = Vec::new();
@@ -740,7 +778,8 @@ fn execute_c_indirect_call_paths(
                                 outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
                                     format!("contract `{selected}` is not established for this callback with its call signature"))),
                                 facts, obligations,
-                            });
+
+                                loan_evidence: empty_checked_loan_evidence_sequence(),});
                             continue;
                         }
                         if contracts.is_empty() {
@@ -752,6 +791,8 @@ fn execute_c_indirect_call_paths(
                                 ),
                                 facts,
                                 obligations,
+
+                                loan_evidence: empty_checked_loan_evidence_sequence(),
                             });
                             continue;
                         }
@@ -782,6 +823,8 @@ fn execute_c_indirect_call_paths(
                     outcome: CFunctionOutcome::UndefinedBehavior(error),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -790,6 +833,8 @@ fn execute_c_indirect_call_paths(
                     outcome: CFunctionOutcome::RuntimeError(error),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -801,6 +846,8 @@ fn execute_c_indirect_call_paths(
                     outcome: CFunctionOutcome::RuntimeError(target_name.unwrap_err()),
                     facts: facts.clone(),
                     obligations: obligations.clone(),
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             };
@@ -811,6 +858,8 @@ fn execute_c_indirect_call_paths(
                     )),
                     facts: facts.clone(),
                     obligations: obligations.clone(),
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             };
@@ -824,6 +873,8 @@ fn execute_c_indirect_call_paths(
                     )),
                     facts: facts.clone(),
                     obligations: obligations.clone(),
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -848,6 +899,7 @@ fn execute_c_indirect_call_paths(
                     outcome: call_path.outcome,
                     facts: call_path.facts,
                     obligations: call_path.obligations,
+                    loan_evidence: call_path.loan_evidence,
                 });
             }
         }
@@ -864,6 +916,7 @@ pub(super) fn execute_c_statement_paths_with_prefix(
     execution_semantics: CExecutionSemantics,
     prefix_facts: &[ExecutionPureFact],
     prefix_obligations: &[ProofObligation],
+    prefix_loan_evidence: &CheckedLoanCallEvidenceSequence,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let effective_assumptions =
@@ -889,6 +942,7 @@ pub(super) fn execute_c_statement_paths_with_prefix(
             outcome: path.outcome,
             facts,
             obligations,
+            loan_evidence: concat_checked_loan_evidence(prefix_loan_evidence, &path.loan_evidence),
         })
     })
     .collect::<Vec<_>>();
@@ -974,6 +1028,8 @@ pub(super) fn execute_c_statement_verification_paths(
                         outcome,
                         facts: first_path.facts,
                         obligations: first_path.obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     }),
                 }
             }
@@ -1028,6 +1084,8 @@ pub(super) fn execute_c_statement_verification_paths(
                             outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                             facts,
                             obligations,
+
+                            loan_evidence: empty_checked_loan_evidence_sequence(),
                         })
                     }
                     CExpressionOutcome::RuntimeError(error) => {
@@ -1035,6 +1093,8 @@ pub(super) fn execute_c_statement_verification_paths(
                             outcome: CStatementOutcome::RuntimeError(error),
                             facts,
                             obligations,
+
+                            loan_evidence: empty_checked_loan_evidence_sequence(),
                         })
                     }
                 }
@@ -1163,6 +1223,8 @@ pub(super) fn execute_c_statement_verification_paths_with_prefix(
             outcome: path.outcome,
             facts,
             obligations,
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         })
     })
     .collect::<Vec<_>>();
@@ -1633,6 +1695,8 @@ fn join_loop_exits(
         outcome: CStatementOutcome::Normal(exit_state),
         facts,
         obligations,
+
+        loan_evidence: empty_checked_loan_evidence_sequence(),
     })
 }
 
@@ -2437,6 +2501,8 @@ fn execute_c_while_exit_paths(
                         outcome: outcome.clone(),
                         facts,
                         obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     });
                     continue;
                 }
@@ -2542,6 +2608,8 @@ fn execute_c_while_exit_paths(
                         outcome,
                         facts,
                         obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     });
                     continue;
                 }
@@ -2602,6 +2670,8 @@ fn execute_c_while_exit_paths(
             outcome: CStatementOutcome::VerificationDiverges,
             facts: whole_loop_effect_facts,
             obligations,
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         });
     }
     budget.check_path_width(paths.len())?;
@@ -3131,6 +3201,8 @@ pub(super) fn collect_loop_preservation_summary(
                                     ),
                                     facts: final_path_facts,
                                     obligations: final_obligations,
+
+                                    loan_evidence: empty_checked_loan_evidence_sequence(),
                                 });
                             }
                         }

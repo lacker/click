@@ -1,7 +1,10 @@
 use super::loans::{
-    LoanLedger, LoanViewBindings, StableViewTransferPlan, plan_stable_view_transfer_with_bindings,
+    CheckedLoanCallEvidence, LoanLedger, LoanViewBindings, StableViewTransferPlan,
+    append_checked_loan_evidence, empty_checked_loan_evidence_sequence,
+    plan_stable_view_transfer_with_bindings,
 };
 use super::prelude::*;
+use std::sync::Arc;
 
 #[cfg(test)]
 mod callback_contract_tests;
@@ -263,6 +266,7 @@ fn recover_candidate_stable_view_resources(
         Option<LoanLedger>,
         Option<super::loans::LoanParticipantId>,
         LoanViewBindings,
+        Option<Arc<CheckedLoanCallEvidence>>,
     ),
     CRuntimeError,
 > {
@@ -272,6 +276,7 @@ fn recover_candidate_stable_view_resources(
             caller_state.loan_ledger().cloned(),
             caller_state.loan_participant(),
             caller_state.loan_view_bindings().clone(),
+            None,
         ));
     };
     let Some(actual_ledger) = callee_state.loan_ledger() else {
@@ -295,6 +300,7 @@ fn recover_candidate_stable_view_resources(
             caller_state.loan_ledger().cloned(),
             caller_state.loan_participant(),
             caller_state.loan_view_bindings().clone(),
+            None,
         ));
     }
     // Do not use the path assumptions to decide this: they intentionally
@@ -313,6 +319,12 @@ fn recover_candidate_stable_view_resources(
         .map_err(|error| {
             CRuntimeError::FunctionContract(format!("stable-view call recovery refused: {error:?}"))
         })?;
+    let loan_evidence = Arc::new(CheckedLoanCallEvidence::new(
+        plan.clone(),
+        recovery.ledger.clone(),
+        recovery.terminal_ledger.clone(),
+        recovery.transitions.clone(),
+    ));
     // Recheck the kernel-issued discharge evidence from the exact callee root
     // before installing the canonical predecessor root in the caller state.
     recovery
@@ -392,6 +404,7 @@ fn recover_candidate_stable_view_resources(
         Some(recovered_ledger),
         Some(plan.caller_participant()),
         recovery.view_bindings,
+        Some(loan_evidence),
     ))
 }
 
@@ -620,6 +633,8 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             )),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }]);
     }
     budget.consume_function_call()?;
@@ -631,6 +646,8 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             }),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }]);
     }
 
@@ -643,6 +660,8 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                 outcome,
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         }
@@ -664,6 +683,8 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                 )),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -675,6 +696,8 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                 )),
                 facts: arguments_path.facts,
                 obligations: argument_obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -700,6 +723,8 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                         outcome: CFunctionOutcome::RuntimeError(error),
                         facts: arguments_path.facts,
                         obligations: argument_obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     });
                     continue;
                 }
@@ -741,12 +766,15 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                     )),
                     facts,
                     obligations,
-                });
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),});
                 continue;
             }
             let return_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
-            let (outcome, obligations) = if let Some(resource_transfer) = &resource_transfer {
+            let (outcome, obligations, loan_evidence) = if let Some(resource_transfer) =
+                &resource_transfer
+            {
                 if resource_transfer.stable_view_plan.is_some()
                     || function_needs_outcome_resource_transfer(function)
                 {
@@ -762,7 +790,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                         budget,
                     )?
                 } else if function_changes_declared_resource_quantities(function) {
-                    function_outcome_from_body_with_population_transition(
+                    without_loan_evidence(function_outcome_from_body_with_population_transition(
                         state,
                         function,
                         complete_void_fallthrough(function, body_path.outcome),
@@ -770,26 +798,26 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                         &return_assumptions,
                         &argument_values,
                         budget,
-                    )?
+                    )?)
                 } else {
-                    function_outcome_from_body(
+                    without_loan_evidence(function_outcome_from_body(
                         state,
                         function,
                         complete_void_fallthrough(function, body_path.outcome),
                         obligations,
                         &return_assumptions,
                         None,
-                    )
+                    ))
                 }
             } else {
-                function_outcome_from_body(
+                without_loan_evidence(function_outcome_from_body(
                     state,
                     function,
                     complete_void_fallthrough(function, body_path.outcome),
                     obligations,
                     &return_assumptions,
                     None,
-                )
+                ))
             };
 
             append_string_literal_loadable_facts(function, &outcome, &mut facts);
@@ -798,6 +826,10 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                 outcome,
                 facts,
                 obligations,
+                loan_evidence: append_checked_loan_evidence(
+                    &body_path.loan_evidence,
+                    loan_evidence,
+                ),
             });
         }
     }
@@ -826,6 +858,8 @@ pub(super) fn execute_c_function_verification_paths(
             }),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }]);
     }
 
@@ -841,6 +875,8 @@ pub(super) fn execute_c_function_verification_paths(
                 outcome,
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         }
@@ -862,6 +898,8 @@ pub(super) fn execute_c_function_verification_paths(
                 )),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -873,6 +911,8 @@ pub(super) fn execute_c_function_verification_paths(
                 )),
                 facts: arguments_path.facts,
                 obligations: argument_obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -898,6 +938,8 @@ pub(super) fn execute_c_function_verification_paths(
                         outcome: CFunctionOutcome::RuntimeError(error),
                         facts: arguments_path.facts,
                         obligations: argument_obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     });
                     continue;
                 }
@@ -955,12 +997,15 @@ pub(super) fn execute_c_function_verification_paths(
                     )),
                     facts,
                     obligations,
-                });
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),});
                 continue;
             }
             let return_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
-            let (outcome, obligations) = if let Some(resource_transfer) = &resource_transfer {
+            let (outcome, obligations, loan_evidence) = if let Some(resource_transfer) =
+                &resource_transfer
+            {
                 if resource_transfer.stable_view_plan.is_some()
                     || function_needs_outcome_resource_transfer(function)
                 {
@@ -976,7 +1021,7 @@ pub(super) fn execute_c_function_verification_paths(
                         budget,
                     )?
                 } else if function_changes_declared_resource_quantities(function) {
-                    function_outcome_from_body_with_population_transition(
+                    without_loan_evidence(function_outcome_from_body_with_population_transition(
                         state,
                         function,
                         complete_void_fallthrough(function, body_path.outcome),
@@ -984,26 +1029,26 @@ pub(super) fn execute_c_function_verification_paths(
                         &return_assumptions,
                         &argument_values,
                         budget,
-                    )?
+                    )?)
                 } else {
-                    function_outcome_from_body(
+                    without_loan_evidence(function_outcome_from_body(
                         state,
                         function,
                         complete_void_fallthrough(function, body_path.outcome),
                         obligations,
                         &return_assumptions,
                         None,
-                    )
+                    ))
                 }
             } else {
-                function_outcome_from_body(
+                without_loan_evidence(function_outcome_from_body(
                     state,
                     function,
                     complete_void_fallthrough(function, body_path.outcome),
                     obligations,
                     &return_assumptions,
                     None,
-                )
+                ))
             };
 
             append_string_literal_loadable_facts(function, &outcome, &mut facts);
@@ -1012,6 +1057,10 @@ pub(super) fn execute_c_function_verification_paths(
                 outcome,
                 facts,
                 obligations,
+                loan_evidence: append_checked_loan_evidence(
+                    &body_path.loan_evidence,
+                    loan_evidence,
+                ),
             });
         }
     }
@@ -1036,6 +1085,8 @@ pub(super) fn execute_c_function_call_paths(
             )),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }]);
     }
     if let Some(rule) = environment.get_external_function_rule(function.name()) {
@@ -1088,6 +1139,8 @@ pub(super) fn execute_c_function_call_paths(
                         outcome: CFunctionOutcome::RuntimeError(error),
                         facts: Vec::new(),
                         obligations: Vec::new(),
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     }]);
                 };
                 return execute_verified_function_rule(
@@ -1110,6 +1163,8 @@ pub(super) fn execute_c_function_call_paths(
             }),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }]);
     }
 
@@ -1126,6 +1181,8 @@ pub(super) fn execute_c_function_call_paths(
                 outcome,
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         }
@@ -1147,6 +1204,8 @@ pub(super) fn execute_c_function_call_paths(
                 )),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -1159,6 +1218,8 @@ pub(super) fn execute_c_function_call_paths(
                 )),
                 facts: arguments_path.facts,
                 obligations: argument_obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         };
@@ -1177,6 +1238,8 @@ pub(super) fn execute_c_function_call_paths(
                     )),
                     facts: arguments_path.facts,
                     obligations: argument_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -1215,6 +1278,8 @@ pub(super) fn execute_c_function_call_paths(
                     outcome,
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
             }
             continue;
@@ -1234,6 +1299,8 @@ pub(super) fn execute_c_function_call_paths(
                     outcome: CFunctionOutcome::RuntimeError(error),
                     facts: arguments_path.facts,
                     obligations: argument_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -1258,22 +1325,27 @@ pub(super) fn execute_c_function_call_paths(
             };
             let return_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
-            let (outcome, obligations) = function_outcome_from_body_with_resource_transfer(
-                caller_state,
-                function,
-                body_path.outcome,
-                obligations,
-                &return_assumptions,
-                &resource_transfer,
-                &argument_values,
-                true,
-                budget,
-            )?;
+            let (outcome, obligations, loan_evidence) =
+                function_outcome_from_body_with_resource_transfer(
+                    caller_state,
+                    function,
+                    body_path.outcome,
+                    obligations,
+                    &return_assumptions,
+                    &resource_transfer,
+                    &argument_values,
+                    true,
+                    budget,
+                )?;
 
             paths.push(CFunctionPath {
                 outcome,
                 facts,
                 obligations,
+                loan_evidence: append_checked_loan_evidence(
+                    &body_path.loan_evidence,
+                    loan_evidence,
+                ),
             });
         }
     }
@@ -1376,6 +1448,8 @@ fn execute_verified_function_applications(
             )),
             facts: Vec::new(),
             obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }]);
     }
     let application = applications[0];
@@ -1408,6 +1482,8 @@ fn execute_verified_function_applications(
             ))),
             facts: vec![],
             obligations: vec![],
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }]);
     }
     budget.consume_function_call()?;
@@ -1449,6 +1525,8 @@ fn execute_verified_function_applications(
                 outcome,
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         }
@@ -1512,6 +1590,8 @@ fn execute_verified_function_applications(
                 )),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         }
@@ -1612,6 +1692,8 @@ fn execute_verified_function_applications(
                         outcome: CFunctionOutcome::RuntimeError(error),
                         facts,
                         obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     }]);
                 }
             };
@@ -1676,6 +1758,8 @@ fn execute_verified_function_applications(
                     outcome: CFunctionOutcome::RuntimeError(error),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -1706,6 +1790,8 @@ fn execute_verified_function_applications(
                         outcome: CFunctionOutcome::RuntimeError(error),
                         facts,
                         obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     });
                     continue;
                 }
@@ -1773,6 +1859,8 @@ fn execute_verified_function_applications(
                         )),
                         facts,
                         obligations,
+
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
                     }]);
                 }
             };
@@ -1802,6 +1890,8 @@ fn execute_verified_function_applications(
                     outcome: CFunctionOutcome::RuntimeError(error),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -1865,6 +1955,8 @@ fn execute_verified_function_applications(
                     outcome: CFunctionOutcome::RuntimeError(error),
                     facts,
                     obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -1930,25 +2022,31 @@ fn execute_verified_function_applications(
             facts.extend(additional_facts.into_iter().skip(entry_fact_count));
         }
 
-        let (return_resources, return_ledger, return_participant, return_view_bindings) =
-            match recover_candidate_stable_view_resources(
-                caller_state,
-                &post_state,
-                &transfer,
-                return_resources,
-                &effective_assumptions,
-                &obligations,
-            ) {
-                Ok(recovered) => recovered,
-                Err(error) => {
-                    paths.push(CFunctionPath {
-                        outcome: CFunctionOutcome::RuntimeError(error),
-                        facts,
-                        obligations,
-                    });
-                    continue;
-                }
-            };
+        let (
+            return_resources,
+            return_ledger,
+            return_participant,
+            return_view_bindings,
+            loan_evidence,
+        ) = match recover_candidate_stable_view_resources(
+            caller_state,
+            &post_state,
+            &transfer,
+            return_resources,
+            &effective_assumptions,
+            &obligations,
+        ) {
+            Ok(recovered) => recovered,
+            Err(error) => {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
+                });
+                continue;
+            }
+        };
 
         let mut return_state = caller_state.clone();
         return_state.set_memory(post_state.memory.clone());
@@ -1970,6 +2068,14 @@ fn execute_verified_function_applications(
             outcome,
             facts,
             obligations,
+            loan_evidence: loan_evidence
+                .map(|evidence| {
+                    append_checked_loan_evidence(
+                        &empty_checked_loan_evidence_sequence(),
+                        Some(evidence),
+                    )
+                })
+                .unwrap_or_else(empty_checked_loan_evidence_sequence),
         });
     }
     budget.check_path_width(paths.len())?;
@@ -2146,6 +2252,8 @@ fn prepare_verified_function_call<'a>(
             )),
             facts: arguments_path.facts,
             obligations: arguments_path.obligations,
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }));
     }
     let mut call_requirement_site = None;
@@ -2171,6 +2279,8 @@ fn prepare_verified_function_call<'a>(
             )),
             facts: arguments_path.facts,
             obligations: arguments_path.obligations,
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }));
     };
     let Some(mut entry_state) = application
@@ -2190,6 +2300,8 @@ fn prepare_verified_function_call<'a>(
             )),
             facts: arguments_path.facts,
             obligations: argument_obligations,
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }));
     };
     let path_assumptions =
@@ -2204,6 +2316,8 @@ fn prepare_verified_function_call<'a>(
                     outcome: CFunctionOutcome::RuntimeError(error),
                     facts: arguments_path.facts,
                     obligations: argument_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 }));
             }
         }
@@ -2231,6 +2345,8 @@ fn prepare_verified_function_call<'a>(
                 outcome: CFunctionOutcome::RuntimeError(error),
                 facts: arguments_path.facts,
                 obligations: argument_obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }));
         }
     };
@@ -2447,6 +2563,8 @@ fn prepare_verified_function_call<'a>(
             )),
             facts,
             obligations,
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }));
     }
 
@@ -2467,6 +2585,8 @@ fn prepare_verified_function_call<'a>(
             outcome: CFunctionOutcome::UndefinedBehavior(undefined_behavior),
             facts,
             obligations,
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }));
     }
 
@@ -2497,6 +2617,8 @@ fn prepare_verified_function_call<'a>(
                 ))),
                 facts,
                 obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             }));
         }
     };
@@ -2555,6 +2677,8 @@ fn prepare_verified_function_call<'a>(
             ))),
             facts,
             obligations,
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
         }));
     }
 
@@ -2675,6 +2799,8 @@ fn resource_call_failure(message: &str) -> CFunctionPath {
         outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message.into())),
         facts: vec![],
         obligations: vec![],
+
+        loan_evidence: empty_checked_loan_evidence_sequence(),
     }
 }
 
@@ -15824,16 +15950,21 @@ fn function_outcome_from_body_with_resource_transfer(
     argument_values: &[CValue],
     reestablish_population_invariants: bool,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<(CFunctionOutcome, Vec<ProofObligation>)> {
+) -> ExecutionResult<(
+    CFunctionOutcome,
+    Vec<ProofObligation>,
+    Option<Arc<CheckedLoanCallEvidence>>,
+)> {
     let CStatementOutcome::Return { value, mut state } = outcome else {
-        return Ok(function_outcome_from_body(
+        let (outcome, obligations) = function_outcome_from_body(
             caller_state,
             function,
             outcome,
             obligations,
             assumptions,
             None,
-        ));
+        );
+        return Ok((outcome, obligations, None));
     };
     let Some(value) = coerce_function_return_value(value, function, &mut obligations, assumptions)
     else {
@@ -15843,6 +15974,7 @@ fn function_outcome_from_body_with_resource_transfer(
                 function.name()
             ))),
             obligations,
+            None,
         ));
     };
 
@@ -15867,7 +15999,7 @@ fn function_outcome_from_body_with_resource_transfer(
         },
     )? {
         Ok(transition) => transition,
-        Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
+        Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations, None)),
     };
     obligations.extend(
         population_transition
@@ -15888,7 +16020,7 @@ fn function_outcome_from_body_with_resource_transfer(
         },
     ) {
         Ok(resources) => resources,
-        Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
+        Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations, None)),
     };
     let output_resource_state = with_contract_argument_views(&state, function, argument_values);
     let entry_resource_state =
@@ -15917,9 +16049,10 @@ fn function_outcome_from_body_with_resource_transfer(
                     function.name()
                 ))),
                 obligations,
+                None,
             ));
         }
-        Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
+        Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations, None)),
     };
     transfer.candidate_output_views = returned_views;
     match crate::instrumentation::measure_operation(
@@ -15932,13 +16065,14 @@ fn function_outcome_from_body_with_resource_transfer(
             return Ok((
                 CFunctionOutcome::RuntimeError(CRuntimeError::LiveAllocationLeak { allocation }),
                 obligations,
+                None,
             ));
         }
-        Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
+        Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations, None)),
         Ok(None) => {}
     }
 
-    let (return_resources, return_ledger, return_participant, return_view_bindings) =
+    let (return_resources, return_ledger, return_participant, return_view_bindings, loan_evidence) =
         match recover_candidate_stable_view_resources(
             caller_state,
             &state,
@@ -15948,7 +16082,7 @@ fn function_outcome_from_body_with_resource_transfer(
             &obligations,
         ) {
             Ok(recovered) => recovered,
-            Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
+            Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations, None)),
         };
 
     let mut return_state = caller_state.clone();
@@ -15966,7 +16100,18 @@ fn function_outcome_from_body_with_resource_transfer(
             state: return_state,
         },
         obligations,
+        loan_evidence,
     ))
+}
+
+fn without_loan_evidence(
+    (outcome, obligations): (CFunctionOutcome, Vec<ProofObligation>),
+) -> (
+    CFunctionOutcome,
+    Vec<ProofObligation>,
+    Option<Arc<CheckedLoanCallEvidence>>,
+) {
+    (outcome, obligations, None)
 }
 
 /// The function-exit rule the verification execution applies to a body
@@ -15983,7 +16128,16 @@ pub(super) fn contract_exit_outcome(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Result<(CFunctionOutcome, Vec<ProofObligation>), CRuntimeError>> {
+) -> ExecutionResult<
+    Result<
+        (
+            CFunctionOutcome,
+            Vec<ProofObligation>,
+            Option<Arc<CheckedLoanCallEvidence>>,
+        ),
+        CRuntimeError,
+    >,
+> {
     let Some(argument_values) = arguments
         .iter()
         .map(|argument| match argument {
@@ -16024,7 +16178,10 @@ pub(super) fn contract_exit_outcome(
         assumptions,
         budget,
         true,
-        false,
+        function
+            .resource_requires()
+            .iter()
+            .any(CResourceSpec::is_view),
     )? {
         Ok(transfer) => transfer,
         Err(error) => return Ok(Err(error)),
@@ -16052,16 +16209,16 @@ pub(super) fn contract_exit_outcome(
             &argument_values,
             budget,
         )
-        .map(Ok)
+        .map(|outcome| Ok(without_loan_evidence(outcome)))
     } else {
-        Ok(Ok(function_outcome_from_body(
+        Ok(Ok(without_loan_evidence(function_outcome_from_body(
             caller_state,
             function,
             outcome,
             obligations,
             assumptions,
             None,
-        )))
+        ))))
     }
 }
 
@@ -16111,7 +16268,7 @@ pub(super) fn apply_verified_contract_resource_transition(
         }
         CFunctionOutcome::RuntimeError(error) => return Ok(Err(error)),
     };
-    let (outcome, obligations) = crate::instrumentation::measure_operation(
+    let (outcome, obligations, _loan_evidence) = crate::instrumentation::measure_operation(
         function.name(),
         "contract resource transition",
         "contract resource outcome reconstruction",
@@ -16647,8 +16804,13 @@ mod candidate_stable_view_call_tests {
     fn candidate_reader_recovers_owner_for_following_write() {
         let pointer = pointer();
         let function = reader("candidate_reader_return", false);
+        let ledger = LoanLedger::new();
+        let participant = ledger.fresh_participant().expect("caller participant");
+        let caller_state = caller(&pointer)
+            .with_loan_ledger(Some(ledger))
+            .with_loan_participant(Some(participant));
         let paths = execute_c_function_call_paths(
-            &caller(&pointer),
+            &caller_state,
             &function,
             &[CExpression::Value(CValue::pointer(pointer.clone()))],
             &PureFactContext::new(),
@@ -16660,6 +16822,22 @@ mod candidate_stable_view_call_tests {
         let CFunctionOutcome::Return { state, .. } = &paths[0].outcome else {
             panic!("candidate reader should return: {:?}", paths[0].outcome);
         };
+        assert_eq!(paths[0].loan_evidence.len(), 1);
+        let evidence_items = paths[0].loan_evidence.to_vec();
+        let evidence = &evidence_items[0];
+        let caller_ledger = caller_state
+            .loan_ledger()
+            .cloned()
+            .expect("candidate execution publishes its caller ledger");
+        evidence
+            .recheck(
+                &caller_ledger,
+                caller_state.loan_participant(),
+                &evidence.entry.ledger,
+                Some(evidence.entry.callee_participant()),
+            )
+            .expect("retained candidate evidence rechecks");
+        assert_eq!(state.loan_ledger(), Some(&evidence.recovered_ledger));
         assert!(state.resources().satisfies_fact(
             &CResourceFact::own_memory(CMemoryRange::new(
                 pointer,
@@ -16698,6 +16876,98 @@ mod candidate_stable_view_call_tests {
             )),
             &PureFactContext::new(),
         ));
+    }
+
+    #[test]
+    fn candidate_evidence_rejects_definitionally_equal_resources_with_new_identity() {
+        let pointer = pointer();
+        let function = reader("candidate_identity_guard", false);
+        let caller_ledger = LoanLedger::new();
+        let caller_participant = caller_ledger
+            .fresh_participant()
+            .expect("caller participant");
+        let caller_state = caller(&pointer)
+            .with_loan_ledger(Some(caller_ledger.clone()))
+            .with_loan_participant(Some(caller_participant));
+        let paths = execute_c_function_call_paths(
+            &caller_state,
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate call should execute");
+        let evidence_items = paths[0].loan_evidence.to_vec();
+        let evidence = &evidence_items[0];
+        let different_participant = caller_ledger
+            .fresh_participant()
+            .expect("fresh participant identity");
+        assert!(
+            evidence
+                .recheck(
+                    &caller_ledger,
+                    Some(different_participant),
+                    &evidence.entry.ledger,
+                    Some(evidence.entry.callee_participant()),
+                )
+                .is_err()
+        );
+        assert!(
+            evidence
+                .recheck(
+                    &LoanLedger::new(),
+                    Some(caller_participant),
+                    &evidence.entry.ledger,
+                    Some(evidence.entry.callee_participant()),
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn candidate_nested_body_call_retains_inner_and_outer_evidence() {
+        let pointer = pointer();
+        let inner = reader("candidate_nested_inner", false);
+        let segment = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        let outer = c_function(
+            CType::Int32,
+            "candidate_nested_outer",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            CStatement::Seq(
+                Arc::new(c_declare("result", CType::Int32)),
+                Arc::new(CStatement::Seq(
+                    Arc::new(c_call_assign("result", inner.name(), vec![c_variable("p")])),
+                    Arc::new(c_return(c_variable("result"))),
+                )),
+            ),
+        )
+        .with_resource_summary(vec![CResourceSpec::viewed_memory(segment)], Vec::new());
+        let environment = environment(&outer).with_function(inner);
+        let ledger = LoanLedger::new();
+        let participant = ledger.fresh_participant().expect("caller participant");
+        let caller_state = caller(&pointer)
+            .with_loan_ledger(Some(ledger))
+            .with_loan_participant(Some(participant));
+        let paths = execute_c_function_call_paths(
+            &caller_state,
+            &outer,
+            &[CExpression::Value(CValue::pointer(pointer))],
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("nested candidate call should execute");
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].loan_evidence.len(), 2);
+        let evidence = paths[0].loan_evidence.to_vec();
+        assert_eq!(
+            evidence[0].entry.caller_ledger(),
+            &evidence[1].entry.ledger,
+            "inner evidence starts at the outer callee ledger"
+        );
     }
 
     #[test]
@@ -16747,7 +17017,7 @@ mod candidate_stable_view_call_tests {
             ConditionTerm::Constant(false),
             true,
         ));
-        let (outcome, _) = function_outcome_from_body_with_resource_transfer(
+        let (outcome, _, _) = function_outcome_from_body_with_resource_transfer(
             &caller,
             &function,
             CStatementOutcome::Return {
@@ -16944,15 +17214,16 @@ mod candidate_stable_view_call_tests {
             "nested reader gets a child loan"
         );
         let inner_callee = callee_state_with_resource_transfer(inner_template, &inner_transfer);
-        let (resources, ledger, participant, bindings) = recover_candidate_stable_view_resources(
-            &outer_callee,
-            &inner_callee,
-            &inner_transfer,
-            inner_transfer.caller_resources_after_requirements.clone(),
-            &PureFactContext::new(),
-            &[],
-        )
-        .expect("nested reader recovery should run");
+        let (resources, ledger, participant, bindings, _) =
+            recover_candidate_stable_view_resources(
+                &outer_callee,
+                &inner_callee,
+                &inner_transfer,
+                inner_transfer.caller_resources_after_requirements.clone(),
+                &PureFactContext::new(),
+                &[],
+            )
+            .expect("nested reader recovery should run");
         assert_eq!(ledger, outer_callee.loan_ledger().cloned());
         assert_eq!(participant, outer_callee.loan_participant());
         assert_eq!(bindings, outer_callee.loan_view_bindings().clone());
