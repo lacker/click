@@ -96,5 +96,5 @@ void set_parent_black(struct rb_node* node, struct rb_node* old_parent, struct r
 ```
 
 ```expect
-fail: fold requires the instance body facts for the proposed fields
+fail: fold requires the instance body facts for the proposed fields: fact 5 of 6 of arm `Node` is not established
 ```

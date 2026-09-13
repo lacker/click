@@ -75,5 +75,5 @@ void recolor(struct rb_node* child, uint64 color, struct rb_node* parent,
 ```
 
 ```expect
-fail: fold requires the instance body facts for the proposed fields
+fail: fold requires the instance body facts for the proposed fields: fact 3 of 3 of arm `Left` is not established
 ```

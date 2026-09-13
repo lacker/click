@@ -209,7 +209,11 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             }];
         }
         return vec![CExpressionPath {
-            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::LoadTypeMismatch {
+                pointer: pointer.clone(),
+                value_type,
+                stored: None,
+            }),
             facts,
             obligations,
         }];
@@ -231,7 +235,11 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             source,
         ) else {
             return vec![CExpressionPath {
-                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::LoadTypeMismatch {
+                    pointer: pointer.clone(),
+                    value_type,
+                    stored: None,
+                }),
                 facts,
                 obligations,
             }];
@@ -294,7 +302,11 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         }
         if !pointer_cell_defers_to_symbolic(&value) {
             return vec![CExpressionPath {
-                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::LoadTypeMismatch {
+                    pointer: pointer.clone(),
+                    value_type,
+                    stored: None,
+                }),
                 facts,
                 obligations,
             }];
@@ -342,7 +354,11 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         }
         if !pointer_cell_defers_to_symbolic(&value) {
             return vec![CExpressionPath {
-                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::LoadTypeMismatch {
+                    pointer: pointer.clone(),
+                    value_type,
+                    stored: None,
+                }),
                 facts,
                 obligations,
             }];
@@ -382,7 +398,11 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             source,
         ) else {
             return vec![CExpressionPath {
-                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::LoadTypeMismatch {
+                    pointer: pointer.clone(),
+                    value_type,
+                    stored: None,
+                }),
                 facts,
                 obligations,
             }];
@@ -431,7 +451,11 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             source,
         ) else {
             return vec![CExpressionPath {
-                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::LoadTypeMismatch {
+                    pointer: pointer.clone(),
+                    value_type,
+                    stored: None,
+                }),
                 facts,
                 obligations,
             }];
@@ -488,7 +512,11 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             } else if value_type.accepts(&stored_value) {
                 CExpressionOutcome::Value(stored_value)
             } else {
-                CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                CExpressionOutcome::RuntimeError(CRuntimeError::LoadTypeMismatch {
+                    pointer: pointer.clone(),
+                    value_type,
+                    stored: None,
+                })
             };
             paths.push(CExpressionPath {
                 outcome: equal_outcome,
@@ -539,7 +567,11 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             _ if value_type.is_pointer() => CValue::typed_pointer(Pointer::null(), value_type),
             _ => {
                 return vec![CExpressionPath {
-                    outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    outcome: CExpressionOutcome::RuntimeError(CRuntimeError::LoadTypeMismatch {
+                        pointer: pointer.clone(),
+                        value_type,
+                        stored: None,
+                    }),
                     facts,
                     obligations,
                 }];
@@ -564,7 +596,11 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             source,
         ) else {
             return vec![CExpressionPath {
-                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::LoadTypeMismatch {
+                    pointer: pointer.clone(),
+                    value_type,
+                    stored: None,
+                }),
                 facts,
                 obligations,
             }];
@@ -628,7 +664,11 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         source,
     ) else {
         return vec![CExpressionPath {
-            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::LoadTypeMismatch {
+                pointer: pointer.clone(),
+                value_type,
+                stored: None,
+            }),
             facts,
             obligations,
         }];

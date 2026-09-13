@@ -161,7 +161,7 @@ impl<'a> Proof<'a> {
             unfold,
             selected_children.as_deref(),
         )
-        .map_err(|message| self.step_error(message))?;
+        .map_err(|refusal| self.step_error(refusal.describe()))?;
         let mut facts = self.facts().clone();
         for fact in &added {
             facts = facts.with_kernel_checked_fact(fact.clone());

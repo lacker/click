@@ -760,7 +760,9 @@ fn recursive_child_kernel_rejects_implicit_parent_handles() {
     let (instance, definition, state) = recursive_child_fixture();
     let assumptions = PureFactContext::new();
     assert_eq!(
-        rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).unwrap_err(),
+        rewrite_resource_instance(&state, &instance, &definition, &assumptions, true)
+            .unwrap_err()
+            .describe(),
         "recursive children require explicit independent child selections"
     );
     let children = [

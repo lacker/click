@@ -1538,6 +1538,20 @@ pub fn c_lower_spec_proposition_at_state_with_provenance(
     ))
 }
 
+/// Why a specification evaluation did not produce exactly one path. No path
+/// at all is almost always every path ending in a runtime error, and the
+/// first such error is the message; the count alone hid a 4-byte load of an
+/// 8-byte cell behind "0 paths" for three proof attempts.
+fn no_single_path_message<T>(what: &str, paths: &[T], budget: &ExecutionBudget) -> String {
+    match (paths.len(), budget.dropped_runtime_error()) {
+        (0, Some(error)) => format!(
+            "the kernel {what} produced no path: every evaluation path ended in a runtime error: {}",
+            error.kernel_summary()
+        ),
+        (count, _) => format!("the kernel {what} produced {count} paths, not one"),
+    }
+}
+
 /// Proof-side lowering keeps mandatory verification conditions distinct from
 /// assumable evaluation obligations until the caller checks their evidence.
 pub(crate) fn c_lower_spec_proposition_with_checked_obligations(
@@ -1574,10 +1588,7 @@ pub(crate) fn c_lower_spec_proposition_with_checked_obligations(
         limit => format!("the kernel lowering hit {limit:?}"),
     })?;
     let [path] = paths.as_slice() else {
-        return Err(format!(
-            "the kernel lowering produced {} paths, not one",
-            paths.len()
-        ));
+        return Err(no_single_path_message("lowering", &paths, &budget));
     };
     Ok((
         path.proposition.clone(),
@@ -1637,10 +1648,7 @@ pub(crate) fn c_evaluate_spec_expression_with_checked_obligations(
     )
     .map_err(|limit| format!("the kernel evaluation hit {limit:?}"))?;
     let [path] = paths.as_slice() else {
-        return Err(format!(
-            "the kernel evaluation produced {} paths, not one",
-            paths.len()
-        ));
+        return Err(no_single_path_message("evaluation", &paths, &budget));
     };
     Ok((path.value.clone(), path.obligations.clone()))
 }
@@ -1739,7 +1747,10 @@ pub fn apply_c_function_contract_resource_transition(
         &mut ExecutionBudget::default(),
     ) {
         Ok(Ok(result)) => Ok(result),
-        Ok(Err(error)) => Err(format!("contract resource transition failed: {error:?}")),
+        Ok(Err(error)) => Err(format!(
+            "contract resource transition failed: {}",
+            super::api::contract_certification::describe_certification_runtime_error(&error)
+        )),
         Err(limit) => Err(format!(
             "contract resource transition hit execution limit {limit:?}"
         )),
@@ -1792,7 +1803,10 @@ pub fn construct_c_function_resource(
         assumptions,
     ) {
         Ok(Ok(state)) => Ok(state),
-        Ok(Err(error)) => Err(format!("resource construction failed: {error:?}")),
+        Ok(Err(error)) => Err(format!(
+            "resource construction failed: {}",
+            super::api::contract_certification::describe_certification_runtime_error(&error)
+        )),
         Err(limit) => Err(format!(
             "resource construction hit execution limit {limit:?}"
         )),

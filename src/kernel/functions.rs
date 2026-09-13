@@ -10647,6 +10647,59 @@ fn witness_origin_word<'a>(fact: &'a SpecProposition, witness: &str) -> Option<&
     }
 }
 
+/// Why a fold or unfold was refused. Most refusals are one fixed sentence;
+/// the body-fact refusal names which fact of which arm the fold could not
+/// establish, since "the body facts" of a five-fact arm sends the author to
+/// read all five. The static sentence is still available to callers whose
+/// own error is a static string.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceRewriteRefusal {
+    Message(&'static str),
+    /// `fold` could not establish body fact `index` (zero-based, in
+    /// declaration order) of the `count` facts in `arm`, or of the
+    /// definition's own facts when `arm` is `None`.
+    BodyFactNotEstablished {
+        arm: Option<String>,
+        index: usize,
+        count: usize,
+    },
+}
+
+impl ResourceRewriteRefusal {
+    pub fn describe(&self) -> String {
+        match self {
+            ResourceRewriteRefusal::Message(message) => (*message).to_string(),
+            ResourceRewriteRefusal::BodyFactNotEstablished { arm, index, count } => {
+                let place = match arm {
+                    Some(arm) => format!("of arm `{arm}`"),
+                    None => "of the resource body".to_string(),
+                };
+                format!(
+                    "fold requires the instance body facts for the proposed fields: fact {} of {count} {place} is not established",
+                    index + 1
+                )
+            }
+        }
+    }
+}
+
+impl From<&'static str> for ResourceRewriteRefusal {
+    fn from(message: &'static str) -> Self {
+        ResourceRewriteRefusal::Message(message)
+    }
+}
+
+impl From<ResourceRewriteRefusal> for &'static str {
+    fn from(refusal: ResourceRewriteRefusal) -> Self {
+        match refusal {
+            ResourceRewriteRefusal::Message(message) => message,
+            ResourceRewriteRefusal::BodyFactNotEstablished { .. } => {
+                "fold requires the instance body facts for the proposed fields"
+            }
+        }
+    }
+}
+
 /// Exchange one exclusive instance for its immediate memory body, or back.
 /// Memory-only bodies need no open token, including guarded/matched bodies.
 /// Recursive children require explicit independent child selections.
@@ -10657,7 +10710,7 @@ pub(crate) fn rewrite_resource_instance(
     definition: &CCompositeResourceDefinition,
     assumptions: &PureFactContext,
     unfold: bool,
-) -> Result<(CState, Vec<Proposition>), &'static str> {
+) -> Result<(CState, Vec<Proposition>), ResourceRewriteRefusal> {
     rewrite_resource_instance_selecting_children(
         state,
         instance,
@@ -10764,7 +10817,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     assumptions: &PureFactContext,
     unfold: bool,
     selected_children: Option<&[(String, Variable)]>,
-) -> Result<(CState, Vec<Proposition>), &'static str> {
+) -> Result<(CState, Vec<Proposition>), ResourceRewriteRefusal> {
     if definition.name() != instance.name()
         || definition.instance_schema.as_ref() != Some(instance.schema())
         || definition.recursive
@@ -10785,16 +10838,18 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             .iter()
             .any(|body| body.family() != ResourceFamily::Memory || body.is_view())
     {
-        return Err("instance fold/unfold requires a nonrecursive, witness-free memory body");
+        return Err(
+            "instance fold/unfold requires a nonrecursive, witness-free memory body".into(),
+        );
     }
     let folded_instance = instance.clone();
     let folded = CResourceFact::own(CResource::Instance(folded_instance.clone()));
     if unfold {
         if state.resources.owned_instance(instance.identity) != Some(instance) {
-            return Err("instance is not exclusively owned in folded form");
+            return Err("instance is not exclusively owned in folded form".into());
         }
     } else if state.resources.owned_instance(instance.identity).is_some() {
-        return Err("fold result identity is already in use");
+        return Err("fold result identity is already in use".into());
     }
     let mut evaluation = instance_body_evaluation(state, instance, definition)?;
     let mut budget = ExecutionBudget::default();
@@ -10848,13 +10903,13 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                 }
                 (AlgebraicValueType::Integer, Some(variable), AlgebraicValue::Integer(value)) => {
                     if integer_bindings.insert(*variable, value.clone()).is_some() {
-                        return Err("resource match Integer bindings reuse an identity");
+                        return Err("resource match Integer bindings reuse an identity".into());
                     }
                 }
                 (AlgebraicValueType::Algebraic { .. }, None, AlgebraicValue::Algebraic(value)) => {
                     algebraic_bindings.insert(name.clone(), value.clone());
                 }
-                _ => return Err("resource match constructor binding type mismatch"),
+                _ => return Err("resource match constructor binding type mismatch".into()),
             }
         }
         Some(arm)
@@ -10875,7 +10930,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             .collect::<BTreeMap<_, _>>()
     });
     if explicit_children.is_none() && selected.is_some_and(|arm| !arm.children.is_empty()) {
-        return Err("recursive children require explicit independent child selections");
+        return Err("recursive children require explicit independent child selections".into());
     }
     if let Some(children) = &explicit_children {
         let supplied = selected_children.unwrap();
@@ -10892,7 +10947,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                 .iter()
                 .any(|child| !children.contains_key(child.name.as_str()))
         {
-            return Err("child selection must name every selected arm child exactly once");
+            return Err("child selection must name every selected arm child exactly once".into());
         }
     }
     let mut body = evaluate_function_resource_context_with_normalization(
@@ -10999,7 +11054,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         let identity =
             explicit_children.as_ref().expect("checked child selection")[child.name.as_str()];
         if unfold && state.resources.owned_instance(identity).is_some() {
-            return Err("unfold child result identity is already in use");
+            return Err("unfold child result identity is already in use".into());
         }
         let mut child_instance = ResourceInstance::new(
             identity,
@@ -11020,7 +11075,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                         .is_none_or(|value| value.c_type() != parameter.c_type())
                 })
         {
-            return Err("recursive child arguments have invalid types");
+            return Err("recursive child arguments have invalid types".into());
         }
         if !unfold {
             let actual = state
@@ -11038,7 +11093,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                     .chain(actual.fields.iter().zip(child_instance.fields.iter()))
                     .all(|(a, b)| crate::kernel::resource_arguments_proven_equal(a, b, assumptions))
             {
-                return Err("selected child does not satisfy the proposed parent model");
+                return Err("selected child does not satisfy the proposed parent model".into());
             }
             child_instance = actual.clone();
         }
@@ -11129,7 +11184,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     fact_rewrite
         .reserve_spec_proposition_sources(facts_to_rewrite.iter())
         .map_err(|_| "resource match Integer binding substitution exceeded its checked scope")?;
-    for fact in facts_to_rewrite.iter().filter(|_| active) {
+    for (fact_index, fact) in facts_to_rewrite.iter().enumerate().filter(|_| active) {
         let fact = fact_rewrite.spec_proposition(fact).map_err(
             |_| "resource match Integer binding substitution exceeded its checked scope",
         )?;
@@ -11143,7 +11198,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         )
         .map_err(|_| "could not evaluate instance body fact")?;
         if paths.len() != 1 {
-            return Err("instance body fact needs an unsupported conditional proof");
+            return Err("instance body fact needs an unsupported conditional proof".into());
         }
         let path = paths
             .into_iter()
@@ -11154,14 +11209,18 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         }) || path.obligations.iter().any(|goal| {
             !required_obligation_is_exactly_discharged(&body_assumptions, goal.proposition())
         }) {
-            return Err("instance body fact needs an unsupported conditional proof");
+            return Err("instance body fact needs an unsupported conditional proof".into());
         }
         let proposition = path.proposition;
         // The fold prerequisite is a rewrite precondition with no obligation
         // vector of its own; the exact routes decide it or the fold is
         // refused with this diagnostic.
         if !unfold && !required_obligation_is_exactly_discharged(assumptions, &proposition) {
-            return Err("fold requires the instance body facts for the proposed fields");
+            return Err(ResourceRewriteRefusal::BodyFactNotEstablished {
+                arm: selected.map(|arm| arm.variant.clone()),
+                index: fact_index,
+                count: facts_to_rewrite.len(),
+            });
         }
         facts.push(proposition);
     }

@@ -1902,6 +1902,14 @@ fn advance_preservation_match_group<'a>(
     };
     let index = *index;
     let proof = proof.enter_execution_match_arm(plan, index)?;
+    // An arm with no tactics reaches the region's end at once. Say so in a
+    // frontier report, rather than "after tactic N `match`", which reads as
+    // if the `match` itself were the last thing that ran.
+    let last_tactic = if matches!(arms[index], InternalProofNode::Done) {
+        last_tactic.map(|(tactic_index, _)| (tactic_index, "match, inside an arm with no tactics"))
+    } else {
+        last_tactic
+    };
     advance_preservation_region(
         proof,
         &arms[index],

@@ -795,7 +795,11 @@ an unfinished script is refused with the frontier it reached instead:
 
 - the statement the path stands before, and its statement index — leading block
   ends are stepped over, so this is the next statement the C would run;
-- the tactic that left it there, by index and name;
+- the tactic that left it there, by index and name. A proof `match` arm
+  written with no tactics reaches the region's end at once, and is named as
+  such ("after tactic 0 `match, inside an arm with no tactics`") rather than
+  as if the `match` were the last thing that ran
+  (`mdtests/preserve_empty_arm_reports_frontier.md`);
 - the ends still ahead of it on *this* path: the body's end, and each `break`
   and `continue` the rest of the body still holds. Only this loop's own exits
   are counted, since a nested loop or `switch` owns the ones written inside it;

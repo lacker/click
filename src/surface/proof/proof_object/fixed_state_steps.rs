@@ -1310,7 +1310,7 @@ impl<'a> Proof<'a> {
         );
         let equality =
             Box::new(self.lower_surface_proposition(surface_equality, "`rewrite` equality")?);
-        self.finish_rewrite(goal, equality, surface_equality)
+        self.finish_rewrite(goal, equality, surface_equality, (&[], &[]))
     }
 
     // Keep fixed-state lowering and unfold temporaries out of the common rewrite
@@ -1382,7 +1382,12 @@ impl<'a> Proof<'a> {
                 self.step_error(format!("could not unfold `rewrite` equality: {message}"))
             })?,
         );
-        self.finish_rewrite(goal, equality, surface_equality)
+        self.finish_rewrite(
+            goal,
+            equality,
+            surface_equality,
+            (view.parameters, view.arguments),
+        )
     }
 
     // Keep the by-value goal/equality pair in the rewrite worker rather than
@@ -1393,6 +1398,9 @@ impl<'a> Proof<'a> {
         goal: Box<Proposition>,
         equality: Box<Proposition>,
         surface_equality: &ClickProposition,
+        // The C names a diagnostic spells lowered terms with; empty in a
+        // pure theorem, which has no C parameters.
+        names: (&[syntax::C0Parameter], &[CExpression]),
     ) -> Result<CheckedFocusedTransition, ClickError> {
         let admitted = self.facts().materialization_available(&equality)
             || reverse_kernel_equality(equality.as_ref().clone())
@@ -1403,8 +1411,22 @@ impl<'a> Proof<'a> {
         } else {
             &[]
         };
+        // Name both sides: a rewrite that finds nothing to replace is
+        // almost always an equality whose left side lowered to a different
+        // term than the goal's (a load of another width, a value where the
+        // goal has a load), which only the two lowered forms show.
         let mut rewritten = rewrite_proposition_by_exact_equality(&goal, &equality, available)
-            .map_err(|message| self.step_error(message))?;
+            .map_err(|message| {
+                self.step_error(format!(
+                    "{message}\n  equality: {}\n  goal: {}",
+                    crate::surface::diagnostics::describe_pure_fact_spelled(
+                        &equality, names.0, names.1
+                    ),
+                    crate::surface::diagnostics::describe_pure_fact_spelled(
+                        &goal, names.0, names.1
+                    ),
+                ))
+            })?;
         let mut facts = self.facts().clone();
         let surface_goal = self.surface_goal().and_then(|surface_goal| {
             let candidate =

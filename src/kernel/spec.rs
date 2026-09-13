@@ -4879,12 +4879,10 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
             }
             paths
         }
-        SpecExpression::CExpression(expression) => {
-            evaluate_c_expression_paths(state, expression, assumptions, budget)?
-                .into_iter()
-                .filter_map(c_expression_path_value)
-                .collect()
-        }
+        SpecExpression::CExpression(expression) => spec_value_paths(
+            evaluate_c_expression_paths(state, expression, assumptions, budget)?,
+            budget,
+        ),
         SpecExpression::CountedResourceCount { name, arguments } => {
             let mut argument_paths =
                 vec![(Vec::<Option<AlgebraicValue>>::new(), Vec::new(), Vec::new())];
@@ -5297,7 +5295,7 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                     SpecMemory::Fixed(memory) => memory,
                 };
                 if assumptions.should_keep_spec_loads_symbolic() {
-                    paths.extend(
+                    paths.extend(spec_value_paths(
                         evaluate_spec_memory_load_paths(
                             memory,
                             pointer,
@@ -5306,10 +5304,9 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                             pointer_path.obligations,
                             assumptions,
                             &mut budget.next_kernel_variable,
-                        )
-                        .into_iter()
-                        .filter_map(c_expression_path_value),
-                    );
+                        ),
+                        budget,
+                    ));
                     continue;
                 }
 
@@ -5697,15 +5694,38 @@ pub(super) fn evaluate_spec_pointer_offset_paths(
     Ok(paths)
 }
 
-pub(super) fn c_expression_path_value(path: CExpressionPath) -> Option<SpecExpressionPath> {
-    let CExpressionOutcome::Value(value) = path.outcome else {
-        return None;
-    };
-    Some(SpecExpressionPath {
-        value,
-        facts: path.facts,
-        obligations: path.obligations,
-    })
+/// The value paths of a C-level evaluation, for a specification that reads
+/// them. A path that ended in a runtime error carries no value and is
+/// dropped. When every path did, the first error is recorded on the budget:
+/// a proposition with no evaluation path is reported by count, and the count
+/// says nothing about why (a load of the wrong width, a read no resource
+/// permits). Zero paths stays an ordinary answer here, since a requirement
+/// that lowers to no path is retained as an obligation downstream.
+pub(super) fn spec_value_paths(
+    paths: Vec<CExpressionPath>,
+    budget: &mut ExecutionBudget,
+) -> Vec<SpecExpressionPath> {
+    let mut first_error = None;
+    let mut values = Vec::new();
+    for path in paths {
+        match path.outcome {
+            CExpressionOutcome::Value(value) => values.push(SpecExpressionPath {
+                value,
+                facts: path.facts,
+                obligations: path.obligations,
+            }),
+            CExpressionOutcome::RuntimeError(error) => {
+                first_error.get_or_insert(error);
+            }
+            CExpressionOutcome::UndefinedBehavior(_) => {}
+        }
+    }
+    if values.is_empty()
+        && let Some(error) = first_error
+    {
+        budget.dropped_runtime_error.get_or_insert(error);
+    }
+    values
 }
 
 pub(super) fn evaluate_spec_add_paths(
@@ -5747,7 +5767,7 @@ pub(super) fn evaluate_spec_add_paths(
             ) else {
                 continue;
             };
-            paths.extend(
+            paths.extend(spec_value_paths(
                 apply_c_add(
                     state,
                     left_path.value.clone(),
@@ -5757,10 +5777,9 @@ pub(super) fn evaluate_spec_add_paths(
                     facts,
                     obligations,
                     assumptions,
-                )
-                .into_iter()
-                .filter_map(c_expression_path_value),
-            );
+                ),
+                budget,
+            ));
         }
     }
     Ok(paths)
@@ -5817,16 +5836,15 @@ pub(super) fn evaluate_spec_scalar_binary_paths(
             ) else {
                 continue;
             };
-            paths.extend(
+            paths.extend(spec_value_paths(
                 apply(
                     left_path.value.clone(),
                     right_path.value,
                     facts,
                     obligations,
-                )
-                .into_iter()
-                .filter_map(c_expression_path_value),
-            );
+                ),
+                budget,
+            ));
         }
     }
     Ok(paths)
@@ -5850,11 +5868,10 @@ pub(super) fn evaluate_spec_scalar_unary_paths(
         algebraic_bindings,
         budget,
     )? {
-        paths.extend(
-            apply(path.value, path.facts, path.obligations)
-                .into_iter()
-                .filter_map(c_expression_path_value),
-        );
+        paths.extend(spec_value_paths(
+            apply(path.value, path.facts, path.obligations),
+            budget,
+        ));
     }
     Ok(paths)
 }
@@ -7724,5 +7741,71 @@ mod lowering_provenance_tests {
             recorded.is_empty(),
             "unexpected existential head chain: {recorded:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod no_value_path_tests {
+    use super::*;
+
+    fn error_path(error: CRuntimeError) -> CExpressionPath {
+        CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(error),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }
+    }
+
+    fn value_path() -> CExpressionPath {
+        CExpressionPath {
+            outcome: CExpressionOutcome::Value(CValue::Int32(Bitvector32Term::Constant(1))),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }
+    }
+
+    fn width_mismatch() -> CRuntimeError {
+        CRuntimeError::LoadTypeMismatch {
+            pointer: Pointer::null(),
+            value_type: CType::Int32,
+            stored: Some(Box::new(CValue::UInt64(Bitvector32Term::UInt64Constant(6)))),
+        }
+    }
+
+    #[test]
+    fn an_all_error_evaluation_records_its_first_error_on_the_budget() {
+        let mut budget = ExecutionBudget::default();
+        let paths = spec_value_paths(
+            vec![
+                error_path(width_mismatch()),
+                error_path(CRuntimeError::TypeMismatch),
+            ],
+            &mut budget,
+        );
+        assert!(paths.is_empty());
+        assert_eq!(budget.dropped_runtime_error(), Some(&width_mismatch()));
+        // A later all-error evaluation does not displace the first record.
+        spec_value_paths(vec![error_path(CRuntimeError::TypeMismatch)], &mut budget);
+        assert_eq!(budget.dropped_runtime_error(), Some(&width_mismatch()));
+    }
+
+    #[test]
+    fn a_value_path_beside_an_error_path_records_nothing() {
+        let mut budget = ExecutionBudget::default();
+        let paths = spec_value_paths(
+            vec![error_path(width_mismatch()), value_path()],
+            &mut budget,
+        );
+        assert_eq!(paths.len(), 1);
+        assert_eq!(budget.dropped_runtime_error(), None);
+        assert!(spec_value_paths(Vec::new(), &mut budget).is_empty());
+        assert_eq!(budget.dropped_runtime_error(), None);
+    }
+
+    #[test]
+    fn a_load_width_mismatch_names_the_load_and_the_cell() {
+        let summary = width_mismatch().kernel_summary();
+        assert!(summary.starts_with("a 4-byte Int32 load at "), "{summary}");
+        assert!(summary.contains("found "), "{summary}");
     }
 }

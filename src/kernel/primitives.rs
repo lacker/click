@@ -2676,6 +2676,14 @@ pub enum CRuntimeError {
     UnboundVariable(String),
     UnknownFunction(String),
     TypeMismatch,
+    /// A typed memory load whose type does not fit the value the cell
+    /// holds: a 4-byte load of an 8-byte cell, or a pointer cell read as an
+    /// integer. `stored` is the cell's value when the snapshot knows it.
+    LoadTypeMismatch {
+        pointer: Pointer,
+        value_type: CType,
+        stored: Option<Box<CValue>>,
+    },
     /// A pointer/integer cast outside the modeled LP64 conversions: the
     /// message names the rejected direction and what evidence it needed.
     PointerConversion(String),
@@ -2720,6 +2728,31 @@ pub enum ExecutionLimit {
     UnsupportedIntegerExistentialBody,
 }
 
+impl CRuntimeError {
+    /// A kernel-side one-line rendering, for messages built where no C
+    /// parameter names are at hand. The surface describers spell pointers
+    /// through their parameters; this spells them as the kernel does.
+    pub fn kernel_summary(&self) -> String {
+        match self {
+            CRuntimeError::LoadTypeMismatch {
+                pointer,
+                value_type,
+                stored,
+            } => {
+                let found = match stored {
+                    Some(stored) => format!("found {stored:?}"),
+                    None => "did not fit the cell's value".to_string(),
+                };
+                format!(
+                    "a {}-byte {value_type:?} load at {pointer:?} {found}",
+                    value_type.byte_width()
+                )
+            }
+            other => format!("{other:?}"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutionBudget {
     pub(super) expression_steps: usize,
@@ -2729,6 +2762,12 @@ pub struct ExecutionBudget {
     pub(super) paths: usize,
     pub(super) next_opaque_call: u64,
     pub(super) next_kernel_variable: u64,
+    /// The first runtime error a specification evaluation dropped while
+    /// every path of some sub-evaluation ended in one. An evaluation with no
+    /// value path is reported by its count; the count says nothing about
+    /// why, and this is the why (a load of the wrong width, a read no
+    /// resource permits). Diagnostic only: no evaluation reads it back.
+    pub(super) dropped_runtime_error: Option<CRuntimeError>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

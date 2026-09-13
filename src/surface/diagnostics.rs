@@ -667,6 +667,23 @@ pub(super) fn describe_runtime_error(
             format!("unknown function `{name}`")
         }
         crate::kernel::CRuntimeError::TypeMismatch => "type mismatch".to_string(),
+        crate::kernel::CRuntimeError::LoadTypeMismatch {
+            pointer,
+            value_type,
+            stored,
+        } => {
+            let found = match stored {
+                Some(stored) => {
+                    format!("found {}", describe_c_value(stored, parameters, arguments))
+                }
+                None => "did not fit the cell's value".to_string(),
+            };
+            format!(
+                "a {}-byte load at `{}` {found}",
+                value_type.byte_width(),
+                describe_pointer(pointer, parameters, arguments)
+            )
+        }
         crate::kernel::CRuntimeError::PointerConversion(message) => message.clone(),
         crate::kernel::CRuntimeError::IndeterminatePointeeType => {
             "pointer operation has no known pointee type".to_string()
@@ -2355,6 +2372,63 @@ pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
                 describe_pointer(right, &[], &[])
             )
         }
+    }
+}
+
+/// A fact spelled with its operands through the C parameter names, where the
+/// kind-level `describe_pure_fact` says only "int32 equality is true". For a
+/// message that must show two lowered terms side by side, such as a rewrite
+/// whose equality was not found in its goal.
+pub(super) fn describe_pure_fact_spelled(
+    fact: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    match fact {
+        Proposition::ConditionIs(condition, value) => format!(
+            "{} is {value}",
+            describe_condition_with_context(condition, parameters, arguments)
+        ),
+        other => describe_pure_fact(other, parameters, arguments),
+    }
+}
+
+/// [`describe_condition`] with machine operands spelled through the C
+/// parameter names; shapes with no parameter-named operands fall back to
+/// the context-free rendering.
+pub(super) fn describe_condition_with_context(
+    condition: &ConditionTerm,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let binary = |left: &Bitvector32Term, operator: &str, right: &Bitvector32Term| {
+        format!(
+            "{} {operator} {}",
+            describe_bitvector_with_context(left, parameters, arguments),
+            describe_bitvector_with_context(right, parameters, arguments)
+        )
+    };
+    match condition {
+        ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right) => binary(left, "==", right),
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessThan(left, right) => binary(left, "<", right),
+        ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right) => binary(left, "<=", right),
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right) => binary(left, ">", right),
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right) => binary(left, ">=", right),
+        ConditionTerm::PointerEqual(left, right) => format!(
+            "{} == {}",
+            describe_pointer(left, parameters, arguments),
+            describe_pointer(right, parameters, arguments)
+        ),
+        other => describe_condition(other),
     }
 }
 

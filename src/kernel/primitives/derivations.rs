@@ -1105,11 +1105,19 @@ impl Default for ExecutionBudget {
             paths: 10_000,
             next_opaque_call: 0,
             next_kernel_variable: 1_000_000,
+            dropped_runtime_error: None,
         }
     }
 }
 
 impl ExecutionBudget {
+    /// The first runtime error an evaluation under this budget dropped
+    /// because every path of a sub-evaluation ended in one, for the message
+    /// a caller writes when the evaluation produced no value path at all.
+    pub fn dropped_runtime_error(&self) -> Option<&CRuntimeError> {
+        self.dropped_runtime_error.as_ref()
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
