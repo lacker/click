@@ -1817,9 +1817,38 @@ pub fn c_function_execution_candidates_from_outcomes(
         Vec<ProofObligation>,
     )>,
 ) -> CFunctionExecutionCandidates {
+    c_function_execution_candidates_from_outcomes_with_loan_evidence(
+        state,
+        function,
+        arguments,
+        paths
+            .into_iter()
+            .map(|(outcome, facts, obligations)| {
+                (
+                    outcome,
+                    facts,
+                    obligations,
+                    crate::kernel::loans::empty_checked_loan_evidence_sequence(),
+                )
+            })
+            .collect(),
+    )
+}
+
+pub(crate) fn c_function_execution_candidates_from_outcomes_with_loan_evidence(
+    state: CState,
+    function: CFunction,
+    arguments: Vec<CExpression>,
+    paths: Vec<(
+        CFunctionOutcome,
+        Vec<ExecutionPureFact>,
+        Vec<ProofObligation>,
+        crate::kernel::loans::CheckedLoanCallEvidenceSequence,
+    )>,
+) -> CFunctionExecutionCandidates {
     let paths = paths
         .into_iter()
-        .map(|(outcome, facts, obligations)| {
+        .map(|(outcome, facts, obligations, loan_evidence)| {
             let effect_facts = memory_effect_execution_facts(&facts);
             let facts = public_execution_pure_facts(&facts);
             CFunctionExecutionCandidate {
@@ -1827,7 +1856,7 @@ pub fn c_function_execution_candidates_from_outcomes(
                 facts,
                 effect_facts,
                 obligations,
-                loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
+                loan_evidence,
             }
         })
         .collect();

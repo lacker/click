@@ -1806,10 +1806,25 @@ impl CMemory {
     }
 
     pub(in crate::kernel) fn with_loop_memory_havoc(
+        self,
+        variable: Variable,
+        preserved_blocks: &BTreeSet<PointerBlock>,
+        mutable_ranges: Option<&[CMemoryRange]>,
+    ) -> Self {
+        self.with_loop_memory_havoc_preserving_loans(
+            variable,
+            preserved_blocks,
+            mutable_ranges,
+            None,
+        )
+    }
+
+    pub(in crate::kernel) fn with_loop_memory_havoc_preserving_loans(
         mut self,
         variable: Variable,
         preserved_blocks: &BTreeSet<PointerBlock>,
         mutable_ranges: Option<&[CMemoryRange]>,
+        ledger: Option<&crate::kernel::loans::LoanLedger>,
     ) -> Self {
         // A loop body that may write memory can clobber, through some
         // pointer, any cell it can reach. Drop concrete cells outside the
@@ -1818,8 +1833,32 @@ impl CMemory {
         // retained on the derivation edge for disjoint-load transport; the
         // marker block still distinguishes this havoc from ordinary memory.
         let base = Some(intern_c_memory_ref(&self));
-        std::sync::Arc::make_mut(&mut self.cells)
-            .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
+        let mut union_widths = BTreeMap::<Pointer, u32>::new();
+        for (pointer, c_type) in self.union_cells.keys() {
+            union_widths
+                .entry(pointer.clone())
+                .and_modify(|width| *width = (*width).max(c_type.byte_width()))
+                .or_insert_with(|| c_type.byte_width());
+        }
+        std::sync::Arc::make_mut(&mut self.cells).retain(|pointer, value| {
+            let byte_width = value
+                .byte_width()
+                .max(union_widths.get(pointer).copied().unwrap_or(0));
+            preserved_blocks.contains(&pointer.block)
+                || ledger.is_some_and(|ledger| {
+                    if byte_width == 0 {
+                        return true;
+                    }
+                    ledger
+                        .permits_memory_access(&CMemoryRange::new_with_element_width(
+                            pointer.clone(),
+                            Bitvector32Term::Constant(0),
+                            Bitvector32Term::Constant(byte_width),
+                            1,
+                        ))
+                        .is_err()
+                })
+        });
         std::sync::Arc::make_mut(&mut self.blocks).insert(
             format!("havoc:{}", variable.0).into(),
             CBlock::new(mutable_ranges.map_or(0, memory_havoc_write_set_fingerprint)),
@@ -1850,11 +1889,27 @@ impl CMemory {
     /// a loop havoc would record a false memory-DAG derivation. The resulting
     /// snapshot is a provenance barrier instead: no load from before the
     /// branch may be transported across it without explicit interface facts.
+    #[allow(dead_code)]
     pub(in crate::kernel) fn with_interface_memory_havoc(
+        self,
+        variable: Variable,
+        preserved_blocks: &BTreeSet<PointerBlock>,
+        sibling_memories: &[&CMemory],
+    ) -> Result<Self, String> {
+        self.with_interface_memory_havoc_preserving_loans(
+            variable,
+            preserved_blocks,
+            sibling_memories,
+            None,
+        )
+    }
+
+    pub(in crate::kernel) fn with_interface_memory_havoc_preserving_loans(
         mut self,
         variable: Variable,
         preserved_blocks: &BTreeSet<PointerBlock>,
         sibling_memories: &[&CMemory],
+        ledger: Option<&crate::kernel::loans::LoanLedger>,
     ) -> Result<Self, String> {
         let Some(first) = sibling_memories.first() else {
             return Err("an interface memory join has no sibling states".to_string());
@@ -1968,8 +2023,32 @@ impl CMemory {
             return Err("interface arms disagree on zeroed pending heap allocations".to_string());
         }
 
-        std::sync::Arc::make_mut(&mut self.cells)
-            .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
+        let mut union_widths = BTreeMap::<Pointer, u32>::new();
+        for (pointer, c_type) in self.union_cells.keys() {
+            union_widths
+                .entry(pointer.clone())
+                .and_modify(|width| *width = (*width).max(c_type.byte_width()))
+                .or_insert_with(|| c_type.byte_width());
+        }
+        std::sync::Arc::make_mut(&mut self.cells).retain(|pointer, value| {
+            let byte_width = value
+                .byte_width()
+                .max(union_widths.get(pointer).copied().unwrap_or(0));
+            preserved_blocks.contains(&pointer.block)
+                || ledger.is_some_and(|ledger| {
+                    if byte_width == 0 {
+                        return true;
+                    }
+                    ledger
+                        .permits_memory_access(&CMemoryRange::new_with_element_width(
+                            pointer.clone(),
+                            Bitvector32Term::Constant(0),
+                            Bitvector32Term::Constant(byte_width),
+                            1,
+                        ))
+                        .is_err()
+                })
+        });
         blocks.insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
         self.blocks = std::sync::Arc::new(blocks);
         self.ended_local_blocks = std::sync::Arc::new(ended_local_blocks);

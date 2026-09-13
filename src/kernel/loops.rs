@@ -950,6 +950,39 @@ pub(super) fn execute_c_statement_paths_with_prefix(
     Ok(paths)
 }
 
+fn execute_statement_suffix_with_loan_evidence(
+    state: &CState,
+    statement: &CStatement,
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    prefix_facts: &[ExecutionPureFact],
+    prefix_obligations: &[ProofObligation],
+    prefix_loan_evidence: &CheckedLoanCallEvidenceSequence,
+    budget: &mut ExecutionBudget,
+    variables: &mut KernelVariableGenerator,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let suffix_paths = execute_c_statement_verification_paths_with_prefix(
+        state,
+        statement,
+        assumptions,
+        environment,
+        execution_semantics,
+        prefix_facts,
+        prefix_obligations,
+        budget,
+        variables,
+    )?;
+    Ok(suffix_paths
+        .into_iter()
+        .map(|mut path| {
+            path.loan_evidence =
+                concat_checked_loan_evidence(prefix_loan_evidence, &path.loan_evidence);
+            path
+        })
+        .collect())
+}
+
 pub(super) fn execute_c_statement_verification_paths(
     state: &CState,
     statement: &CStatement,
@@ -1005,19 +1038,40 @@ pub(super) fn execute_c_statement_verification_paths(
                 budget,
                 variables,
             )? {
-                match first_path.outcome {
+                let CStatementExecutionPath {
+                    outcome,
+                    facts,
+                    obligations,
+                    loan_evidence,
+                } = first_path;
+                match outcome {
                     CStatementOutcome::Normal(state) => {
-                        paths.extend(execute_c_statement_verification_paths_with_prefix(
-                            &state,
-                            second,
-                            assumptions,
-                            environment,
-                            execution_semantics,
-                            &first_path.facts,
-                            &first_path.obligations,
-                            budget,
-                            variables,
-                        )?);
+                        if loan_evidence.is_empty() {
+                            paths.extend(execute_c_statement_verification_paths_with_prefix(
+                                &state,
+                                second,
+                                assumptions,
+                                environment,
+                                execution_semantics,
+                                &facts,
+                                &obligations,
+                                budget,
+                                variables,
+                            )?);
+                        } else {
+                            paths.extend(execute_statement_suffix_with_loan_evidence(
+                                &state,
+                                second,
+                                assumptions,
+                                environment,
+                                execution_semantics,
+                                &facts,
+                                &obligations,
+                                &loan_evidence,
+                                budget,
+                                variables,
+                            )?);
+                        }
                     }
                     outcome @ (CStatementOutcome::Break(_)
                     | CStatementOutcome::Continue(_)
@@ -1026,10 +1080,9 @@ pub(super) fn execute_c_statement_verification_paths(
                     | CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
                         outcome,
-                        facts: first_path.facts,
-                        obligations: first_path.obligations,
-
-                        loan_evidence: empty_checked_loan_evidence_sequence(),
+                        facts,
+                        obligations,
+                        loan_evidence,
                     }),
                 }
             }
@@ -1223,8 +1276,7 @@ pub(super) fn execute_c_statement_verification_paths_with_prefix(
             outcome: path.outcome,
             facts,
             obligations,
-
-            loan_evidence: empty_checked_loan_evidence_sequence(),
+            loan_evidence: path.loan_evidence,
         })
     })
     .collect::<Vec<_>>();
@@ -1521,12 +1573,21 @@ fn condition_fact_refutes(fact: &Proposition, other: &Proposition) -> bool {
 /// appended after it.
 fn join_loop_exit_paths(
     mut exits: Vec<LoopExitFacts>,
-) -> Option<(Vec<ExecutionPureFact>, Vec<ProofObligation>)> {
+) -> Option<(
+    Vec<ExecutionPureFact>,
+    Vec<ProofObligation>,
+    CheckedLoanCallEvidenceSequence,
+)> {
     if exits.len() <= 1 {
         let exit = exits.pop()?;
-        return Some((exit.stated, exit.obligations));
+        return Some((exit.stated, exit.obligations, exit.loan_evidence));
     }
     let (first_facts, first_obligations) = (exits[0].stated.clone(), exits[0].obligations.clone());
+    let loan_evidence = exits[1..]
+        .iter()
+        .fold(exits[0].loan_evidence.clone(), |sequence, exit| {
+            concat_checked_loan_evidence(&sequence, &exit.loan_evidence)
+        });
     let shared = first_facts
         .iter()
         .filter(|fact| {
@@ -1596,14 +1657,14 @@ fn join_loop_exit_paths(
         facts.push(ExecutionPureFact::new(disjunction));
     }
     let mut obligations = first_obligations;
-    for exit in exits.drain(1..) {
-        for obligation in exit.obligations {
-            if !obligations.contains(&obligation) {
-                obligations.push(obligation);
+    for exit in exits.iter().skip(1) {
+        for obligation in &exit.obligations {
+            if !obligations.contains(obligation) {
+                obligations.push(obligation.clone());
             }
         }
     }
-    Some((facts, obligations))
+    Some((facts, obligations, loan_evidence))
 }
 
 /// One exit's contribution to a loop's join.
@@ -1619,12 +1680,17 @@ struct LoopExitFacts {
     stated: Vec<ExecutionPureFact>,
     disjunct: Vec<Proposition>,
     obligations: Vec<ProofObligation>,
+    loan_evidence: CheckedLoanCallEvidenceSequence,
 }
 
 impl LoopExitFacts {
     /// An exit whose state the join did not have to abstract: it describes the
     /// successor in the names it already used.
-    fn unabstracted(facts: Vec<ExecutionPureFact>, obligations: Vec<ProofObligation>) -> Self {
+    fn unabstracted(
+        facts: Vec<ExecutionPureFact>,
+        obligations: Vec<ProofObligation>,
+        loan_evidence: CheckedLoanCallEvidenceSequence,
+    ) -> Self {
         Self {
             disjunct: facts
                 .iter()
@@ -1632,6 +1698,7 @@ impl LoopExitFacts {
                 .collect(),
             stated: facts,
             obligations,
+            loan_evidence,
         }
     }
 }
@@ -1660,12 +1727,20 @@ impl LoopExitFacts {
 fn join_loop_exits(
     head: &CLoopHead,
     binders: &[CLoopBinder],
-    exits: Vec<(CState, Vec<ExecutionPureFact>, Vec<ProofObligation>)>,
+    exits: Vec<(
+        CState,
+        Vec<ExecutionPureFact>,
+        Vec<ProofObligation>,
+        CheckedLoanCallEvidenceSequence,
+    )>,
     assumptions: &PureFactContext,
     variables: &mut KernelVariableGenerator,
 ) -> Option<CStatementExecutionPath> {
     let exit_state = exits.first()?.0.clone();
-    let states = exits.iter().map(|(state, _, _)| state).collect::<Vec<_>>();
+    let states = exits
+        .iter()
+        .map(|(state, _, _, _)| state)
+        .collect::<Vec<_>>();
     let unchanged = || vec![LoopExitRestatement::default(); exits.len()];
     let (exit_state, restatements, mismatch) =
         if states[1..].iter().all(|other| **other == exit_state) {
@@ -1676,11 +1751,13 @@ fn join_loop_exits(
                 Err(mismatch) => (exit_state, unchanged(), Some(mismatch)),
             }
         };
-    let (facts, mut obligations) = join_loop_exit_paths(
+    let (facts, mut obligations, loan_evidence) = join_loop_exit_paths(
         exits
             .into_iter()
             .zip(restatements)
-            .map(|((_, facts, obligations), restatement)| restatement.restate(facts, obligations))
+            .map(|((_, facts, obligations, loan_evidence), restatement)| {
+                restatement.restate(facts, obligations, loan_evidence)
+            })
             .collect(),
     )?;
     if let Some(mismatch) = mismatch {
@@ -1696,7 +1773,7 @@ fn join_loop_exits(
         facts,
         obligations,
 
-        loan_evidence: empty_checked_loan_evidence_sequence(),
+        loan_evidence,
     })
 }
 
@@ -1855,9 +1932,10 @@ impl LoopExitRestatement {
         self,
         facts: Vec<ExecutionPureFact>,
         obligations: Vec<ProofObligation>,
+        loan_evidence: CheckedLoanCallEvidenceSequence,
     ) -> LoopExitFacts {
         if self.renamings.is_empty() && self.equations.is_empty() {
-            return LoopExitFacts::unabstracted(facts, obligations);
+            return LoopExitFacts::unabstracted(facts, obligations, loan_evidence);
         }
         let rename = |proposition: &Proposition| {
             self.renamings
@@ -1884,6 +1962,7 @@ impl LoopExitRestatement {
             stated: facts,
             disjunct,
             obligations,
+            loan_evidence,
         }
     }
 }
@@ -2506,9 +2585,13 @@ fn execute_c_while_exit_paths(
                     });
                     continue;
                 }
-                exits.push(LoopExitFacts::unabstracted(facts, obligations));
+                exits.push(LoopExitFacts::unabstracted(
+                    facts,
+                    obligations,
+                    candidate.loan_evidence().clone(),
+                ));
             }
-            if let Some((facts, obligations)) = join_loop_exit_paths(exits) {
+            if let Some((facts, obligations, loan_evidence)) = join_loop_exit_paths(exits) {
                 // A candidate is one more way out, not a second successor:
                 // it joins the guard-false and `break` exits below on the
                 // same terms. Exporting it as its own path would give the
@@ -2521,6 +2604,7 @@ fn execute_c_while_exit_paths(
                     head.restored_exit_state(candidate.state()),
                     facts,
                     obligations,
+                    loan_evidence,
                 ));
             }
         }
@@ -2570,6 +2654,7 @@ fn execute_c_while_exit_paths(
                     .map(ExecutionPureFact::certified)
                     .collect::<Vec<_>>(),
                 loop_check_obligations.clone(),
+                exit.loan_evidence().clone(),
             )
         })
         .chain(candidate_exit_entries)
@@ -2634,7 +2719,7 @@ fn execute_c_while_exit_paths(
                 {
                     facts.push(ExecutionPureFact::new(fact));
                 }
-                exits.push((facts, obligations));
+                exits.push((facts, obligations, empty_checked_loan_evidence_sequence()));
             }
             // A short-circuit guard leaves the loop by one path per conjunct,
             // all at the same exit state. Every one of them is certified, and
@@ -2643,7 +2728,9 @@ fn execute_c_while_exit_paths(
             // here too, on the same terms.
             let exits = exits
                 .into_iter()
-                .map(|(facts, obligations)| (top_state.clone(), facts, obligations))
+                .map(|(facts, obligations, loan_evidence)| {
+                    (top_state.clone(), facts, obligations, loan_evidence)
+                })
                 .chain(break_exit_entries.iter().cloned())
                 .collect::<Vec<_>>();
             if let Some(path) = join_loop_exits(&head, &binders, exits, assumptions, variables) {
@@ -3201,8 +3288,7 @@ pub(super) fn collect_loop_preservation_summary(
                                     ),
                                     facts: final_path_facts,
                                     obligations: final_obligations,
-
-                                    loan_evidence: empty_checked_loan_evidence_sequence(),
+                                    loan_evidence: body_path.loan_evidence.clone(),
                                 });
                             }
                         }
@@ -3225,6 +3311,7 @@ pub(super) fn collect_loop_preservation_summary(
                         )?;
                         let exit_facts = body_path.facts;
                         let exit_obligations = body_path.obligations;
+                        let loan_evidence = body_path.loan_evidence;
                         append_required_proof_obligations(
                             &mut obligations,
                             assumptions,
@@ -3237,13 +3324,16 @@ pub(super) fn collect_loop_preservation_summary(
                             &exit_facts,
                             &exit_obligations,
                         );
-                        break_exits.push(CLoopBreakExit::new(
-                            next_state,
-                            exit_facts
-                                .iter()
-                                .map(|fact| fact.proposition().clone())
-                                .collect(),
-                        ));
+                        break_exits.push(
+                            CLoopBreakExit::new(
+                                next_state,
+                                exit_facts
+                                    .iter()
+                                    .map(|fact| fact.proposition().clone())
+                                    .collect(),
+                            )
+                            .with_loan_evidence(loan_evidence),
+                        );
                     }
                     CStatementOutcome::Return { .. }
                     | CStatementOutcome::VerificationDiverges
@@ -3445,6 +3535,13 @@ pub(super) fn prepare_loop_top_state(
     // immutable/no-write summary, distinct from no footprint at all.
     let loop_havoc_ranges = (all_ranges_evaluable && !effect_ranges.is_empty())
         .then(|| effect_ranges.iter().flatten().cloned().collect::<Vec<_>>());
+    let mut resource_failures = Vec::new();
+    if let Some(ledger) = entry_state.loan_ledger()
+        && statement_may_write_memory(entry_state, body)
+        && let Err(error) = validate_loop_havoc_stable_loans(ledger, loop_havoc_ranges.as_deref())
+    {
+        resource_failures.push(error);
+    }
     let mut top_state =
         havoc_loop_modified_locals(entry_state, body, variables, loop_havoc_ranges.as_deref());
     let mut summaries =
@@ -3501,7 +3598,7 @@ pub(super) fn prepare_loop_top_state(
     // it fresh fields: the head is an arbitrary visit, so only the invariants
     // say what model the binder carries there. The enclosing frame continues
     // from that same head, which is why the loop's exit sees the final model.
-    let (entry_state, head_state, top_state, mut resource_failures) =
+    let (entry_state, head_state, top_state, mut rebound_failures) =
         match rebind_loop_binder_instances(entry_state, resource_specs, assumptions, budget)? {
             Ok(rebound) => {
                 // The head is an arbitrary visit, so the binder's arguments
@@ -3532,6 +3629,7 @@ pub(super) fn prepare_loop_top_state(
     // models are the fresh ones an arbitrary visit carries.
     let (body_state, body_failures) =
         loop_body_resource_context(&head_state, &top_state, resource_specs, assumptions, budget)?;
+    resource_failures.append(&mut rebound_failures);
     resource_failures.extend(body_failures);
     // D7 at a loop head: the invariants play the part of a contract's
     // requirements, so a folded matched instance publishes the cells of the
@@ -3685,8 +3783,33 @@ fn loop_body_resource_context(
             }
         }
     }
+    // Rebuilding a loop body context can allocate fresh resource occurrences.
+    // If one denotes an inherited stable view, carry its exact checked
+    // binding to the new occurrence instead of rediscovering it from the
+    // ambient ledger at a later call boundary.
+    let mut body_bindings = top_state.loan_view_bindings().clone();
+    for fact in body_resources.facts().iter().filter(|fact| fact.is_view()) {
+        let Some(binding) = entry_state
+            .resources()
+            .view_occurrences_for_fact(fact, assumptions)
+            .into_iter()
+            .find_map(|occurrence| entry_state.loan_view_bindings().get(&occurrence).cloned())
+        else {
+            continue;
+        };
+        if let Some(occurrence) = body_resources
+            .view_occurrences_for_fact(fact, assumptions)
+            .into_iter()
+            .find(|occurrence| body_bindings.get(occurrence).is_none())
+        {
+            body_bindings = body_bindings.with_inserted(occurrence, binding);
+        }
+    }
     Ok((
-        top_state.clone().with_resource_context(body_resources),
+        top_state
+            .clone()
+            .with_resource_context(body_resources)
+            .with_loan_view_bindings(body_bindings),
         Vec::new(),
     ))
 }
@@ -5112,6 +5235,33 @@ pub(super) fn havoc_loop_modified_locals(
     state
 }
 
+/// Check the write set that the loop-head abstraction is about to erase
+/// against the active stable-view footprint.  An unknown write set is a
+/// barrier: silently turning it into a fresh snapshot would discard the only
+/// evidence that a loan protects its bytes.
+fn validate_loop_havoc_stable_loans(
+    ledger: &super::loans::LoanLedger,
+    mutable_ranges: Option<&[CMemoryRange]>,
+) -> Result<(), String> {
+    let Some(ranges) = mutable_ranges else {
+        if ledger.has_active_memory_loans() {
+            return Err(
+                "loop memory havoc has no checked write set while a stable-view loan is active"
+                    .to_string(),
+            );
+        }
+        return Ok(());
+    };
+    for range in ranges {
+        if let Err(error) = ledger.permits_memory_access(range) {
+            return Err(format!(
+                "loop memory havoc overlaps an active stable-view loan: {error:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn statement_may_write_memory(state: &CState, statement: &CStatement) -> bool {
     match statement {
         CStatement::Skip
@@ -5146,6 +5296,40 @@ pub(super) fn statement_may_write_memory(state: &CState, statement: &CStatement)
         CStatement::Switch { cases, .. } => cases
             .iter()
             .any(|case| statement_may_write_memory(state, &case.body)),
+    }
+}
+
+#[cfg(test)]
+mod v10_tests {
+    use super::*;
+
+    fn memory_range(base: u32, end: u32) -> CMemoryRange {
+        CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(base),
+            Bitvector32Term::Constant(end),
+        )
+    }
+
+    #[test]
+    fn loop_havoc_requires_a_checked_set_disjoint_from_active_loans() {
+        let escrow = CResourceFact::own_memory(memory_range(0, 1));
+        let support = ResourceContext::new()
+            .unchecked_with_fact(escrow.clone())
+            .unique_owned_occurrence_for_fact(&escrow)
+            .expect("the test escrow has one backing occurrence")
+            .0;
+        let ledger = super::super::loans::LoanLedger::new();
+        let owner = ledger.fresh_participant().unwrap();
+        let opening = ledger.lend(owner, owner, support, escrow).unwrap();
+        let ledger = ledger.apply(&opening.transition).unwrap();
+
+        assert!(validate_loop_havoc_stable_loans(&ledger, None).is_err());
+        assert!(validate_loop_havoc_stable_loans(&ledger, Some(&[memory_range(0, 1)])).is_err());
+        assert!(validate_loop_havoc_stable_loans(&ledger, Some(&[memory_range(2, 3)])).is_ok());
     }
 }
 

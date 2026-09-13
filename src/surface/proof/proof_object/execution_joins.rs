@@ -1,6 +1,37 @@
 //! Execution branch preparation, sibling arms, and join merging.
 
 use super::*;
+
+fn join_arm_loan_evidence(
+    parent: &ExecutionProofState,
+    arms: [&ExecutionProofState; 2],
+    label: &str,
+) -> Result<crate::kernel::CheckedLoanCallEvidenceSequence, ClickError> {
+    let parent_evidence = parent.core.loan_evidence();
+    let then_suffix = arms[0]
+        .core
+        .loan_evidence()
+        .suffix_since(parent_evidence)
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "{label} then arm loan evidence does not descend from the branch root"
+            ))
+        })?;
+    let else_suffix = arms[1]
+        .core
+        .loan_evidence()
+        .suffix_since(parent_evidence)
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "{label} else arm loan evidence does not descend from the branch root"
+            ))
+        })?;
+    let joined = crate::kernel::concat_checked_loan_evidence(parent_evidence, &then_suffix);
+    Ok(crate::kernel::concat_checked_loan_evidence(
+        &joined,
+        &else_suffix,
+    ))
+}
 use crate::kernel::proof::PropositionIdentityKey;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -706,6 +737,11 @@ impl<'a> Proof<'a> {
                     "`branch ensuring` arms do not descend from the root recorded snapshots",
                 )
             })?;
+        let joined_loan_evidence = join_arm_loan_evidence(
+            parent_execution,
+            [arms[0].execution, arms[1].execution],
+            "interface execution join",
+        )?;
 
         let mut stable_join_locals = arms[0]
             .execution
@@ -806,6 +842,7 @@ impl<'a> Proof<'a> {
             [&then_abstract, &else_abstract],
         )?;
         execution.core.state = abstract_state.clone().into();
+        execution.core.loan_evidence = joined_loan_evidence;
         execution.presentation.recorded_snapshots = common_snapshots;
         execution
             .presentation
@@ -1221,7 +1258,10 @@ impl<'a> Proof<'a> {
         // doing so avoids duplicating the complete ambient proof context per
         // outcome.
         let mut paths = Vec::new();
-        let mut retained_path_keys: BTreeMap<_, usize> = BTreeMap::new();
+        let mut retained_path_keys: BTreeMap<
+            _,
+            Vec<(crate::kernel::CheckedLoanCallEvidenceSequence, usize)>,
+        > = BTreeMap::new();
         let mut execution_evidence = Vec::new();
         let mut outcome_provenance: Vec<OutcomeProvenance> = Vec::new();
         for (arm_index, arm) in arms.iter().enumerate() {
@@ -1251,7 +1291,14 @@ impl<'a> Proof<'a> {
                     path_facts.clone(),
                     obligations.clone(),
                 );
-                if let Some(retained_index) = retained_path_keys.get(&path_key).copied() {
+                let path_loan_evidence = arm.execution.core.loan_evidence().clone();
+                let retained_index = retained_path_keys.get(&path_key).and_then(|entries| {
+                    entries
+                        .iter()
+                        .find(|(evidence, _)| evidence == &path_loan_evidence)
+                        .map(|(_, index)| *index)
+                });
+                if let Some(retained_index) = retained_index {
                     let incoming = arm.execution.provenance_for_outcome(arm_path_index);
                     if !outcome_provenance[retained_index].merge_generated_load_source_events_since(
                         &incoming,
@@ -1262,8 +1309,16 @@ impl<'a> Proof<'a> {
                         ));
                     }
                 } else {
-                    retained_path_keys.insert(path_key, paths.len());
-                    paths.push((path.outcome().clone(), path_facts, obligations));
+                    retained_path_keys
+                        .entry(path_key)
+                        .or_default()
+                        .push((path_loan_evidence.clone(), paths.len()));
+                    paths.push((
+                        path.outcome().clone(),
+                        path_facts,
+                        obligations,
+                        path_loan_evidence,
+                    ));
                     execution_evidence
                         .push(arm.execution.core.execution_evidence[arm_path_index].clone());
                     let mut provenance = arm.execution.provenance_for_outcome(arm_path_index);
@@ -1278,12 +1333,13 @@ impl<'a> Proof<'a> {
             }
         }
 
-        let outcomes = c_function_execution_candidates_from_outcomes(
-            execution_start_state.clone(),
-            context.function.clone(),
-            context.arguments.to_vec(),
-            paths,
-        );
+        let outcomes =
+            crate::kernel::c_function_execution_candidates_from_outcomes_with_loan_evidence(
+                execution_start_state.clone(),
+                context.function.clone(),
+                context.arguments.to_vec(),
+                paths,
+            );
         let mut execution = parent_execution.clone();
         execution.core.has_empty_execution_branch_leaf |= arms
             .iter()
@@ -1301,6 +1357,7 @@ impl<'a> Proof<'a> {
             execution: outcomes,
         };
         execution.core.execution_evidence = execution_evidence.into();
+        execution.core.loan_evidence = crate::kernel::empty_checked_loan_evidence_sequence();
         execution.core.evidence_completed = true;
         execution.core.evidence_state = None;
         execution.core.evidence_source = None;
@@ -1521,6 +1578,11 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("execution `branch` arms reached different C states"));
         }
         let mut execution = parent_execution.clone();
+        let joined_loan_evidence = join_arm_loan_evidence(
+            parent_execution,
+            [arms[0].execution, arms[1].execution],
+            "checked execution join",
+        )?;
         let [Some(then_theorem), Some(else_theorem)] =
             [arms[0].condition_theorem, arms[1].condition_theorem]
         else {
@@ -1554,6 +1616,7 @@ impl<'a> Proof<'a> {
             [arms[0].execution, arms[1].execution],
         )?;
         execution.core.state = (**then_state).clone().into();
+        execution.core.loan_evidence = joined_loan_evidence;
         execution.presentation.recorded_snapshots.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),

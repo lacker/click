@@ -2912,6 +2912,10 @@ pub(crate) struct ExecutionProofCore {
     /// operation with several return outcomes can complete several traces at
     /// once. Forked proofs share every unchanged trace prefix.
     pub(crate) execution_evidence: SharedVec<PersistentSequence<CheckedExecutionEvent>>,
+    /// Stable-view call evidence retained along the focused execution path.
+    /// This is kept beside the checked event trace so loop planning can pass
+    /// the exact path evidence into its exit candidates.
+    pub(crate) loan_evidence: crate::kernel::loans::CheckedLoanCallEvidenceSequence,
     /// Post-return exchanges indexed by the selected outcome. Forking a
     /// focused outcome must not copy or modify its sibling traces.
     return_resource_rewrites:
@@ -3921,6 +3925,7 @@ impl ExecutionProofCore {
             frontier,
             effect_facts: Default::default(),
             execution_evidence: vec![PersistentSequence::default()].into(),
+            loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
             return_resource_rewrites: Default::default(),
             checked_call_events: CheckedCallEvents::new(),
             function_entry: None,
@@ -3968,6 +3973,7 @@ impl ExecutionProofCore {
     /// Records one statement theorem and the fact context it was proved
     /// under on the single open trace, once the theorem is checked to
     /// advance this frontier (`check_statement_evidence`).
+    #[allow(dead_code)]
     pub(crate) fn record_statement_transition(
         &mut self,
         function: &CFunction,
@@ -3976,6 +3982,29 @@ impl ExecutionProofCore {
         context: PureFactContext,
         execution_facts: &[ExecutionPureFact],
         obligations: &[crate::kernel::ProofObligation],
+    ) -> Result<(), EvidenceRefusal> {
+        self.record_statement_transition_with_loan_evidence(
+            function,
+            arguments,
+            theorem,
+            context,
+            execution_facts,
+            obligations,
+            &crate::kernel::loans::empty_checked_loan_evidence_sequence(),
+        )
+    }
+
+    /// Records a statement theorem and appends the exact stable-view evidence
+    /// emitted by the checked evaluator for that transition.
+    pub(crate) fn record_statement_transition_with_loan_evidence(
+        &mut self,
+        function: &CFunction,
+        arguments: &[CExpression],
+        theorem: Theorem,
+        context: PureFactContext,
+        execution_facts: &[ExecutionPureFact],
+        obligations: &[crate::kernel::ProofObligation],
+        loan_evidence: &crate::kernel::loans::CheckedLoanCallEvidenceSequence,
     ) -> Result<(), EvidenceRefusal> {
         debug_assert_eq!(self.execution_evidence.len(), 1);
         let (outcome, source_after) = self.check_statement_evidence(
@@ -3986,6 +4015,8 @@ impl ExecutionProofCore {
             execution_facts,
             obligations,
         )?;
+        self.loan_evidence =
+            crate::kernel::loans::concat_checked_loan_evidence(&self.loan_evidence, loan_evidence);
         let call_events = statement_call_havoc_views(&theorem)
             .into_iter()
             .map(|view| self.checked_call_events.new_event(view))
@@ -4227,6 +4258,10 @@ impl ExecutionProofCore {
     /// before any evidence is recorded.
     pub(crate) fn reached_state(&self) -> &CState {
         self.evidence_state.as_ref().unwrap_or(&self.state)
+    }
+
+    pub(crate) fn loan_evidence(&self) -> &crate::kernel::loans::CheckedLoanCallEvidenceSequence {
+        &self.loan_evidence
     }
 
     /// The state the frontier's next theorem must start from: the state the

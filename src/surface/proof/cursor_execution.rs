@@ -2075,13 +2075,14 @@ fn execute_step_from_frontier_position_selecting_path(
     }
     execution
         .core
-        .record_statement_transition(
+        .record_statement_transition_with_loan_evidence(
             function,
             arguments,
             transition.theorem.clone(),
             transition.context.clone(),
             &transition.execution_facts,
             &transition.obligations,
+            &transition.loan_evidence,
         )
         .map_err(|refusal| {
             ClickError::new(format!(

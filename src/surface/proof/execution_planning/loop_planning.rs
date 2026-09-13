@@ -1476,7 +1476,8 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             let exit = CLoopBreakExit::new(
                 (*checked_execution.core.state).clone(),
                 checked.facts().to_vec(),
-            );
+            )
+            .with_loan_evidence(checked_execution.core.loan_evidence().clone());
             if !break_exits.contains(&exit) {
                 break_exits.push(exit);
             }
@@ -1523,7 +1524,8 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 let candidate = CLoopFinalExitCandidate::new(
                     (*checked_execution.core.state).clone(),
                     checked.facts().to_vec(),
-                );
+                )
+                .with_loan_evidence(checked_execution.core.loan_evidence().clone());
                 if !final_exit_candidates.contains(&candidate) {
                     final_exit_candidates.push(candidate);
                 }

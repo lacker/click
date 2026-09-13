@@ -527,6 +527,45 @@ impl CheckedLoanCallEvidenceSequence {
         self.len == 0
     }
 
+    /// Returns the persistent suffix after `prefix`, when this sequence was
+    /// derived from that exact prefix. Walking only the appended evidence
+    /// keeps branch-join work proportional to the path delta.
+    pub(crate) fn suffix_since(
+        &self,
+        prefix: &CheckedLoanCallEvidenceSequence,
+    ) -> Option<CheckedLoanCallEvidenceSequence> {
+        if self.len < prefix.len {
+            return None;
+        }
+        if self.len == prefix.len {
+            return (self.len == 0 || Arc::ptr_eq(&self.node, &prefix.node))
+                .then(empty_checked_loan_evidence_sequence);
+        }
+        let mut node = self.node.clone();
+        let mut remaining = self.len;
+        let mut suffix = Vec::with_capacity(self.len - prefix.len);
+        while remaining > prefix.len {
+            let CheckedLoanCallEvidenceSequenceNode::Append {
+                prefix: predecessor,
+                evidence,
+            } = &*node
+            else {
+                return None;
+            };
+            suffix.push(evidence.clone());
+            node = predecessor.clone();
+            remaining -= 1;
+        }
+        if !Arc::ptr_eq(&node, &prefix.node) {
+            return None;
+        }
+        suffix.reverse();
+        Some(suffix.into_iter().fold(
+            empty_checked_loan_evidence_sequence(),
+            |sequence, evidence| append_checked_loan_evidence(&sequence, Some(evidence)),
+        ))
+    }
+
     /// Materialize only at an artifact boundary or diagnostic/test boundary.
     /// Hot-path path forks clone the immutable node root instead.
     pub(crate) fn to_vec(&self) -> Vec<Arc<CheckedLoanCallEvidence>> {
@@ -1618,6 +1657,15 @@ impl LoanLedger {
             .ok_or(LoanRefusal::ActiveDependency)
     }
 
+    /// Whether any active memory loan contributes a footprint to this ledger.
+    ///
+    /// Loop and branch havoc need a fail-closed answer when no checked write
+    /// set is available.  Reading the maintained count keeps that barrier
+    /// constant time and avoids turning the check into an ambient ledger scan.
+    pub(crate) fn has_active_memory_loans(&self) -> bool {
+        self.storage.data.active_memory_loans != 0
+    }
+
     fn issue(
         &self,
         evidence: LoanTransitionEvidence,
@@ -2416,14 +2464,34 @@ mod tests {
             recovery.transitions,
         ));
         let mut sequence = empty_checked_loan_evidence_sequence();
-        for _ in 0..2048 {
+        let mut midpoint = None;
+        for index in 0..2048 {
             let previous = sequence.clone();
             sequence = append_checked_loan_evidence(&sequence, Some(evidence.clone()));
             let CheckedLoanCallEvidenceSequenceNode::Append { prefix, .. } = &*sequence.node else {
                 panic!("append must create a persistent node");
             };
             assert!(Arc::ptr_eq(prefix, &previous.node));
+            if index == 1023 {
+                midpoint = Some(sequence.clone());
+            }
         }
+        let midpoint = midpoint.unwrap();
+        let suffix = sequence.suffix_since(&midpoint).unwrap();
+        assert_eq!(suffix.len(), 1024);
+        assert_eq!(concat_checked_loan_evidence(&midpoint, &suffix), sequence);
+        let separately_built_equal_prefix = midpoint
+            .to_vec()
+            .into_iter()
+            .fold(empty_checked_loan_evidence_sequence(), |rebuilt, item| {
+                append_checked_loan_evidence(&rebuilt, Some(item))
+            });
+        assert_eq!(separately_built_equal_prefix, midpoint);
+        assert!(
+            sequence
+                .suffix_since(&separately_built_equal_prefix)
+                .is_none()
+        );
         assert_eq!(sequence.len(), 2048);
         assert_eq!(sequence, sequence.clone());
         assert_eq!(sequence.to_vec().len(), 2048);

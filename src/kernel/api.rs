@@ -167,11 +167,24 @@ pub struct CLoopPreservationContext {
 pub(crate) struct CLoopFinalExitCandidate {
     state: CState,
     pure_facts: Vec<Proposition>,
+    loan_evidence: crate::kernel::loans::CheckedLoanCallEvidenceSequence,
 }
 
 impl CLoopFinalExitCandidate {
     pub(crate) fn new(state: CState, pure_facts: Vec<Proposition>) -> Self {
-        Self { state, pure_facts }
+        Self {
+            state,
+            pure_facts,
+            loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
+        }
+    }
+
+    pub(crate) fn with_loan_evidence(
+        mut self,
+        loan_evidence: crate::kernel::loans::CheckedLoanCallEvidenceSequence,
+    ) -> Self {
+        self.loan_evidence = loan_evidence;
+        self
     }
 
     pub(crate) fn state(&self) -> &CState {
@@ -180,6 +193,10 @@ impl CLoopFinalExitCandidate {
 
     pub(crate) fn pure_facts(&self) -> &[Proposition] {
         &self.pure_facts
+    }
+
+    pub(crate) fn loan_evidence(&self) -> &crate::kernel::loans::CheckedLoanCallEvidenceSequence {
+        &self.loan_evidence
     }
 }
 
@@ -194,11 +211,24 @@ impl CLoopFinalExitCandidate {
 pub(crate) struct CLoopBreakExit {
     state: CState,
     pure_facts: Vec<Proposition>,
+    loan_evidence: crate::kernel::loans::CheckedLoanCallEvidenceSequence,
 }
 
 impl CLoopBreakExit {
     pub(crate) fn new(state: CState, pure_facts: Vec<Proposition>) -> Self {
-        Self { state, pure_facts }
+        Self {
+            state,
+            pure_facts,
+            loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
+        }
+    }
+
+    pub(crate) fn with_loan_evidence(
+        mut self,
+        loan_evidence: crate::kernel::loans::CheckedLoanCallEvidenceSequence,
+    ) -> Self {
+        self.loan_evidence = loan_evidence;
+        self
     }
 
     pub(crate) fn state(&self) -> &CState {
@@ -207,6 +237,10 @@ impl CLoopBreakExit {
 
     pub(crate) fn pure_facts(&self) -> &[Proposition] {
         &self.pure_facts
+    }
+
+    pub(crate) fn loan_evidence(&self) -> &crate::kernel::loans::CheckedLoanCallEvidenceSequence {
+        &self.loan_evidence
     }
 }
 
@@ -810,23 +844,40 @@ fn abstract_c_state_for_join_across_with_policy(
             .all(|sibling| comparable_memory(sibling) == expected)
     };
     if !common_memory {
+        if let Some(ledger) = abstract_state.loan_ledger() {
+            for sibling in sibling_states {
+                validate_branch_memory_delta_against_loans(
+                    &abstract_state.memory,
+                    &sibling.memory,
+                    ledger,
+                )?;
+            }
+        }
         if preserve_exact_common_memory {
             let sibling_memories = sibling_states
                 .iter()
                 .map(|sibling| &sibling.memory)
                 .collect::<Vec<_>>();
-            let memory = abstract_state.memory.clone().with_interface_memory_havoc(
-                variables.next(),
-                &preserved_blocks,
-                &sibling_memories,
-            )?;
+            let memory = abstract_state
+                .memory
+                .clone()
+                .with_interface_memory_havoc_preserving_loans(
+                    variables.next(),
+                    &preserved_blocks,
+                    &sibling_memories,
+                    abstract_state.loan_ledger(),
+                )?;
             abstract_state.set_memory(memory);
         } else {
-            let memory = abstract_state.memory.clone().with_loop_memory_havoc(
-                variables.next(),
-                &preserved_blocks,
-                None,
-            );
+            let memory = abstract_state
+                .memory
+                .clone()
+                .with_loop_memory_havoc_preserving_loans(
+                    variables.next(),
+                    &preserved_blocks,
+                    None,
+                    abstract_state.loan_ledger(),
+                );
             abstract_state.set_memory(memory);
         }
     }
@@ -836,6 +887,63 @@ fn abstract_c_state_for_join_across_with_policy(
     }
     abstract_state.resources = ResourceContext::new();
     Ok(abstract_state)
+}
+
+fn validate_branch_memory_delta_against_loans(
+    base: &CMemory,
+    sibling: &CMemory,
+    ledger: &crate::kernel::loans::LoanLedger,
+) -> Result<(), String> {
+    if !ledger.has_active_memory_loans() {
+        return Ok(());
+    }
+    if base.blocks != sibling.blocks
+        || base.heap != sibling.heap
+        || base.ended_local_blocks != sibling.ended_local_blocks
+    {
+        return Err("branch memory join has an unsupported allocation or block delta while a stable-view loan is active".to_string());
+    }
+    for pointer in base.differing_cell_pointers(sibling) {
+        let mut byte_width = base
+            .cells
+            .get(&pointer)
+            .map(CValue::byte_width)
+            .unwrap_or(0)
+            .max(
+                sibling
+                    .cells
+                    .get(&pointer)
+                    .map(CValue::byte_width)
+                    .unwrap_or(0),
+            );
+        for (union_pointer, c_type) in base.union_cells.keys() {
+            if union_pointer == &pointer {
+                byte_width = byte_width.max(c_type.byte_width());
+            }
+        }
+        for (union_pointer, c_type) in sibling.union_cells.keys() {
+            if union_pointer == &pointer {
+                byte_width = byte_width.max(c_type.byte_width());
+            }
+        }
+        if byte_width == 0 {
+            return Err(
+                "branch memory join has an unknown changed cell width while a stable-view loan is active".to_string(),
+            );
+        }
+        let range = CMemoryRange::new_with_element_width(
+            pointer,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(byte_width),
+            1,
+        );
+        if let Err(error) = ledger.permits_memory_access(&range) {
+            return Err(format!(
+                "branch memory join changes an active stable-view footprint: {error:?}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub fn c_variable(name: impl Into<String>) -> CExpression {
@@ -3218,6 +3326,45 @@ mod proof_case_evidence_tests {
             CheckedProofCasePartition::check(root, then_fact.clone(), else_fact.clone())
                 .expect("complementary facts should create a checked partition");
         (partition, then_fact, else_fact)
+    }
+
+    #[test]
+    fn branch_memory_delta_uses_the_full_changed_cell_width() {
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let escrow = CResourceFact::own_memory(CMemoryRange::new(
+            pointer.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ));
+        let support = ResourceContext::new()
+            .unchecked_with_fact(escrow.clone())
+            .unique_owned_occurrence_for_fact(&escrow)
+            .expect("the test escrow has one backing occurrence")
+            .0;
+        let ledger = crate::kernel::loans::LoanLedger::new();
+        let owner = ledger.fresh_participant().unwrap();
+        let opening = ledger.lend(owner, owner, support, escrow).unwrap();
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        let base = CMemory::new()
+            .with_block("arg", 8)
+            .store(pointer.clone(), int32(0));
+        let later_byte = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(1),
+        };
+        let changed = base.clone().store(later_byte, int32(1));
+        assert!(validate_branch_memory_delta_against_loans(&base, &changed, &ledger).is_err());
+        let disjoint = base.clone().store(
+            Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Constant(4),
+            },
+            int32(1),
+        );
+        assert!(validate_branch_memory_delta_against_loans(&base, &disjoint, &ledger).is_ok());
     }
 
     #[test]

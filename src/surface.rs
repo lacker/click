@@ -2525,6 +2525,10 @@ pub struct CertifiedStatementTransition {
     pub(crate) generated_load_bindings: Vec<crate::kernel::GeneratedLoadBinding>,
     /// Exact source identities emitted by producer facts in this transition.
     pub(crate) generated_load_source_events: Vec<crate::kernel::GeneratedLoadSourceEvent>,
+    /// Checked stable-view call evidence produced by this exact transition.
+    /// The loop planner forwards it to the kernel exit candidate instead of
+    /// reconstructing it from the post-state.
+    pub(crate) loan_evidence: crate::kernel::CheckedLoanCallEvidenceSequence,
 }
 
 #[doc(hidden)]

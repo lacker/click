@@ -1089,6 +1089,42 @@ fn loop_havoc_carries_a_verified_write_set_for_disjoint_loads() {
     ));
 }
 
+#[test]
+fn loan_preserving_havoc_uses_the_full_cell_footprint() {
+    let pointer = arc_pointer(0);
+    let base = CMemory::new()
+        .with_block("arg-memory", 16)
+        .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(5)));
+    let fact = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+        pointer.clone(),
+        Bitvector32Term::Constant(2),
+        Bitvector32Term::Constant(3),
+        1,
+    ));
+    let support = ResourceContext::new()
+        .unchecked_with_fact(fact.clone())
+        .unique_owned_occurrence_for_fact(&fact)
+        .expect("memory backing")
+        .0;
+    let ledger = crate::kernel::loans::LoanLedger::new();
+    let owner = ledger.fresh_participant().expect("owner identity");
+    let reader = ledger.fresh_participant().expect("reader identity");
+    let opening = ledger
+        .lend(owner, reader, support, fact)
+        .expect("memory loan");
+    let ledger = ledger
+        .apply(&opening.transition)
+        .expect("memory loan transition");
+
+    let retained = base.with_loop_memory_havoc_preserving_loans(
+        Variable(10),
+        &BTreeSet::new(),
+        None,
+        Some(&ledger),
+    );
+    assert!(retained.cells.contains_key(&pointer));
+}
+
 /// Stage 4: the DAG-guided cell lookup answers load equality for snapshots
 /// that are *siblings*, which the stage-2 walk cannot do because it only ever
 /// asks whether one snapshot is reachable from the other.

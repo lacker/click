@@ -4582,6 +4582,10 @@ impl SymbolicCExecutionPath {
         &self.obligations
     }
 
+    pub(crate) fn loan_evidence(&self) -> &crate::kernel::loans::CheckedLoanCallEvidenceSequence {
+        &self.loan_evidence
+    }
+
     pub fn theorem(&self) -> &Theorem {
         &self.theorem
     }
