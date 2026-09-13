@@ -227,6 +227,9 @@ struct CFunctionResourceTransfer {
     /// projection used by modular call havoc and its effect fact.
     memory_effects: Vec<CMemoryRange>,
     post_outputs: Option<ResourceContext>,
+    /// Evaluated ensured views are retained even when ordinary return
+    /// resource composition deduplicates them against caller ownership.
+    candidate_output_views: Vec<CResourceFact>,
     /// Candidate stable-view transition, when this call was prepared through
     /// the opt-in planner. The plan owns the checked successor ledger and is
     /// consumed only after postconditions have been evaluated.
@@ -322,6 +325,50 @@ fn recover_candidate_stable_view_resources(
     let recovered_ledger = recovery.ledger;
     let mut recovered_resources = recovery.resources;
     let mut residual = return_resources;
+    // A return view can only survive the call scope when it is one of the
+    // checked child views that entered the call, or when the caller already
+    // held a checked outer view that entails it.  In particular, an owned
+    // input must not let a callee mint an unrelated view whose binding would
+    // otherwise be composed into the recovered caller frame after the child
+    // scope closes.
+    let mut checked_return_views = std::collections::BTreeSet::new();
+    for fact in residual
+        .facts()
+        .iter()
+        .chain(transfer.candidate_output_views.iter())
+    {
+        if !fact.is_view() || !checked_return_views.insert((*fact).clone()) {
+            continue;
+        }
+        let returned_input = plan
+            .stable_views()
+            .iter()
+            .any(|stable_view| stable_view.requirement.fact == *fact);
+        let preserved_outer = caller_state
+            .loan_ledger()
+            .zip(caller_state.loan_participant())
+            .is_some_and(|(ledger, participant)| {
+                caller_state
+                    .resources()
+                    .view_occurrences_for_fact(fact, assumptions)
+                    .into_iter()
+                    .filter_map(|occurrence| caller_state.loan_view_bindings().get(&occurrence))
+                    .any(|binding| {
+                        ledger
+                            .validate_view_binding(binding.clone(), participant)
+                            .is_ok()
+                            && ResourceContext::new()
+                                .unchecked_with_fact(binding.viewed.clone())
+                                .satisfies_fact(fact, assumptions)
+                    })
+            });
+        if !returned_input && !preserved_outer {
+            return Err(CRuntimeError::FunctionContract(
+                "stable-view call returned a view without a checked input child or preserved outer binding"
+                    .to_string(),
+            ));
+        }
+    }
     for stable_view in plan.stable_views() {
         if residual.contains_exact_representation(&stable_view.requirement.fact) {
             residual = residual
@@ -370,6 +417,44 @@ impl CFunctionMemoryEffectProjection {
     pub(crate) fn ranges(&self) -> &[CMemoryRange] {
         &self.ranges
     }
+}
+
+/// Candidate calls must account for explicit mutable effects separately from
+/// the resource transition.  A mutable range is safe beside a lent view only
+/// when the kernel has concrete interval evidence or an existing separation
+/// fact; an unknown alias is rejected conservatively.
+fn candidate_memory_ranges_proven_disjoint(
+    left: &CMemoryRange,
+    right: &CMemoryRange,
+    assumptions: &PureFactContext,
+) -> bool {
+    if left.base().blocks_proven_distinct(right.base())
+        || assumptions
+            .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(left, right)
+    {
+        return true;
+    }
+    let (left_base, left_bytes) = left.byte_footprint();
+    let (right_base, right_bytes) = right.byte_footprint();
+    let Some(left_start) = left_base.offset.as_const() else {
+        return false;
+    };
+    let Some(right_start) = right_base.offset.as_const() else {
+        return false;
+    };
+    let Some(left_length) = left_bytes.as_const() else {
+        return false;
+    };
+    let Some(right_length) = right_bytes.as_const() else {
+        return false;
+    };
+    let Some(left_end) = left_start.checked_add(i64::from(left_length)) else {
+        return false;
+    };
+    let Some(right_end) = right_start.checked_add(i64::from(right_length)) else {
+        return false;
+    };
+    left_base.block == right_base.block && (left_end <= right_start || right_end <= left_start)
 }
 
 #[derive(Clone, Debug)]
@@ -1702,7 +1787,7 @@ fn execute_verified_function_applications(
             "verified function rule application",
             "verified call return resource evaluation",
         );
-        let return_resources = match evaluate_contract_return_resources(
+        let (return_resources, returned_views) = match evaluate_contract_return_resources(
             &caller_resources_after_requirements,
             &entry_resource_state,
             &output_resource_state,
@@ -1721,6 +1806,7 @@ fn execute_verified_function_applications(
                 continue;
             }
         };
+        transfer.candidate_output_views = returned_views;
         drop(return_resource_timing);
         let return_resources =
             activate_population_body_resources(return_resources, &population_transition);
@@ -2419,6 +2505,29 @@ fn prepare_verified_function_call<'a>(
     // rejecting all mutation would also reject the supported viewed-field /
     // owned-field partition.
     let mutable_ranges = projection.ranges;
+    if let Some(plan) = transfer.stable_view_plan.as_ref() {
+        for viewed_range in plan
+            .stable_views()
+            .iter()
+            .filter_map(|stable_view| stable_view.requirement.fact.memory_range())
+        {
+            if mutable_ranges.iter().any(|mutable_range| {
+                !candidate_memory_ranges_proven_disjoint(
+                    mutable_range,
+                    viewed_range,
+                    &effective_assumptions,
+                )
+            }) {
+                return Ok(Err(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                        "candidate mutable footprint may overlap a stable-view range".to_string(),
+                    )),
+                    facts,
+                    obligations,
+                }));
+            }
+        }
+    }
     for fact in projection.evidence_facts {
         if !facts.contains(&fact) {
             facts.push(fact);
@@ -9442,6 +9551,7 @@ fn prepare_contract_resource_transfer_with_candidate(
             caller_resources_after_requirements: caller_state.resources().clone(),
             memory_effects: Vec::new(),
             post_outputs: None,
+            candidate_output_views: Vec::new(),
             stable_view_plan: None,
         }));
     }
@@ -9507,7 +9617,14 @@ fn prepare_contract_resource_transfer_with_candidate(
             callee,
             caller_state.loan_view_bindings(),
         ) {
-            Ok(plan) => Some(plan),
+            Ok(plan) => {
+                if let Err(error) = plan.recheck_entry(&ledger) {
+                    return Ok(Err(CRuntimeError::FunctionContract(format!(
+                        "stable-view call entry evidence refused: {error:?}"
+                    ))));
+                }
+                Some(plan)
+            }
             Err(error) => {
                 return Ok(Err(CRuntimeError::FunctionContract(format!(
                     "stable-view call transition refused: {error:?}"
@@ -9706,6 +9823,7 @@ fn prepare_contract_resource_transfer_with_candidate(
         caller_resources_after_requirements: return_resources,
         memory_effects: Vec::new(),
         post_outputs: None,
+        candidate_output_views: Vec::new(),
         stable_view_plan,
     }))
 }
@@ -9793,7 +9911,7 @@ fn evaluate_function_return_resources(
     function: &CFunction,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
+) -> ExecutionResult<Result<(ResourceContext, Vec<CResourceFact>), CRuntimeError>> {
     evaluate_contract_return_resources(
         caller_resources_after_requirements,
         entry_state,
@@ -9813,7 +9931,7 @@ fn evaluate_contract_return_resources(
     interface: &CFunctionContractInterface,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
+) -> ExecutionResult<Result<(ResourceContext, Vec<CResourceFact>), CRuntimeError>> {
     let ensured_resources = match crate::instrumentation::measure_operation(
         interface_name,
         "contract resource transition",
@@ -9832,6 +9950,12 @@ fn evaluate_contract_return_resources(
         Ok(resources) => resources,
         Err(error) => return Ok(Err(error)),
     };
+    let ensured_views = ensured_resources
+        .facts()
+        .iter()
+        .filter(|fact| fact.is_view())
+        .cloned()
+        .collect::<Vec<_>>();
     // A view returned to a caller that already owns the same resource does
     // not create another persistent capability. Keeping both forms would
     // make a later valid mutation or free look as though a stale borrow were
@@ -9972,7 +10096,7 @@ fn evaluate_contract_return_resources(
                 expansion,
             );
     }
-    Ok(Ok(return_resources))
+    Ok(Ok((return_resources, ensured_views)))
 }
 
 fn counted_population_quantities(
@@ -15769,7 +15893,8 @@ fn function_outcome_from_body_with_resource_transfer(
     let output_resource_state = with_contract_argument_views(&state, function, argument_values);
     let entry_resource_state =
         with_contract_argument_views(caller_state, function, argument_values);
-    let return_resources = match crate::instrumentation::measure_operation(
+    let mut transfer = transfer.clone();
+    let (return_resources, returned_views) = match crate::instrumentation::measure_operation(
         function.name(),
         "contract resource transition",
         "return resource evaluation",
@@ -15796,6 +15921,7 @@ fn function_outcome_from_body_with_resource_transfer(
         }
         Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
     };
+    transfer.candidate_output_views = returned_views;
     match crate::instrumentation::measure_operation(
         function.name(),
         "contract resource transition",
@@ -15816,7 +15942,7 @@ fn function_outcome_from_body_with_resource_transfer(
         match recover_candidate_stable_view_resources(
             caller_state,
             &state,
-            transfer,
+            &transfer,
             return_resources,
             assumptions,
             &obligations,
@@ -16355,21 +16481,81 @@ mod candidate_stable_view_call_tests {
     }
 
     fn caller(pointer: &Pointer) -> CState {
+        caller_with_owned_end(pointer, 1, 4)
+    }
+
+    fn caller_with_owned_end(pointer: &Pointer, owned_end: u32, bytes: u32) -> CState {
         let range = CMemoryRange::new(
             pointer.clone(),
             Bitvector32Term::Constant(0),
-            Bitvector32Term::Constant(1),
+            Bitvector32Term::Constant(owned_end),
         );
         CState::new()
             .with_memory(
                 CMemory::new()
-                    .with_block(pointer.block.clone(), 4)
+                    .with_block(pointer.block.clone(), bytes)
                     .store(pointer.clone(), int32(7)),
             )
             .with_resource_context(
                 ResourceContext::new()
                     .unchecked_with_fact(CResourceFact::own(CResource::Memory(range))),
             )
+    }
+
+    fn reader_with_output(name: &str, output_start: u32, output_end: u32) -> CFunction {
+        let input = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        let output = CMemorySegment::new(
+            c_variable("p"),
+            c_int32_literal(output_start),
+            c_int32_literal(output_end),
+        );
+        c_function(
+            CType::Int32,
+            name,
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(c_load(c_variable("p"))),
+        )
+        .with_resource_summary(
+            vec![CResourceSpec::viewed_memory(input)],
+            vec![CResourceSpec::viewed_memory(output)],
+        )
+    }
+
+    fn reader_for_input(name: &str, input_end: u32) -> CFunction {
+        let input = CMemorySegment::new(
+            c_variable("p"),
+            c_int32_literal(0),
+            c_int32_literal(input_end),
+        );
+        c_function(
+            CType::Int32,
+            name,
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(c_load(c_variable("p"))),
+        )
+        .with_resource_summary(vec![CResourceSpec::viewed_memory(input)], Vec::new())
+    }
+
+    fn reader_with_mutable_range(name: &str, mutable_start: u32, mutable_end: u32) -> CFunction {
+        let input = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        c_function(
+            CType::Int32,
+            name,
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(c_load(c_variable("p"))),
+        )
+        .with_resource_summary(vec![CResourceSpec::viewed_memory(input)], Vec::new())
+        .with_contract(
+            Vec::new(),
+            Vec::new(),
+            vec![CMemorySegment::new(
+                c_variable("p"),
+                c_int32_literal(mutable_start),
+                c_int32_literal(mutable_end),
+            )],
+            Vec::new(),
+            true,
+        )
     }
 
     fn reader(name: &str, duplicate_view: bool) -> CFunction {
@@ -16824,6 +17010,174 @@ mod candidate_stable_view_call_tests {
                 Bitvector32Term::Constant(1),
             )),
             &PureFactContext::new(),
+        ));
+    }
+
+    #[test]
+    fn candidate_nested_call_preserves_outer_view_for_wider_output() {
+        let pointer = pointer();
+        let outer_function = reader_for_input("candidate_outer_view", 2);
+        let caller = caller_with_owned_end(&pointer, 2, 8);
+        let outer_template = bind_c_function_arguments(
+            &caller,
+            &outer_function,
+            &[CValue::pointer(pointer.clone())],
+        )
+        .expect("outer arguments should bind");
+        let outer_transfer = prepare_function_resource_transfer(
+            &caller,
+            &outer_template,
+            &outer_function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("outer transfer should run")
+        .expect("outer transfer should be accepted");
+        let outer_callee = callee_state_with_resource_transfer(outer_template, &outer_transfer);
+
+        let inner_function = reader_with_output("candidate_outer_output", 0, 2);
+        let inner_template = bind_c_function_arguments(
+            &outer_callee,
+            &inner_function,
+            &[CValue::pointer(pointer.clone())],
+        )
+        .expect("inner arguments should bind");
+        let inner_transfer = prepare_function_resource_transfer(
+            &outer_callee,
+            &inner_template,
+            &inner_function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("inner transfer should run")
+        .expect("inner transfer should be accepted");
+        let output = CResourceFact::view_memory(CMemoryRange::new(
+            pointer,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(2),
+        ));
+        let (resources, ledger, participant, bindings) = recover_candidate_stable_view_resources(
+            &outer_callee,
+            &callee_state_with_resource_transfer(inner_template, &inner_transfer),
+            &inner_transfer,
+            ResourceContext::new().unchecked_with_fact(output.clone()),
+            &PureFactContext::new(),
+            &[],
+        )
+        .expect("outer view should authorize the wider returned view");
+        assert!(resources.satisfies_fact(&output, &PureFactContext::new()));
+        assert_eq!(ledger, outer_callee.loan_ledger().cloned());
+        assert_eq!(participant, outer_callee.loan_participant());
+        assert_eq!(bindings, outer_callee.loan_view_bindings().clone());
+    }
+
+    fn assert_unbacked_output_rejected(output_start: u32, output_end: u32, name: &str) {
+        let pointer = pointer();
+        let function = reader_with_output(name, output_start, output_end);
+        let paths = execute_c_function_call_paths(
+            &caller_with_owned_end(&pointer, 3, 12),
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate output call should execute to a diagnostic path");
+        assert!(
+            matches!(
+                paths.as_slice(),
+                [CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
+                    ..
+                }] if message.contains("without a checked input child")
+            ),
+            "unexpected output result: {paths:?}"
+        );
+    }
+
+    #[test]
+    fn candidate_rejects_new_output_view() {
+        assert_unbacked_output_rejected(2, 3, "candidate_new_output");
+    }
+
+    #[test]
+    fn candidate_rejects_different_output_view() {
+        assert_unbacked_output_rejected(1, 2, "candidate_different_output");
+    }
+
+    #[test]
+    fn candidate_rejects_wider_output_without_outer_binding() {
+        assert_unbacked_output_rejected(0, 2, "candidate_wider_output");
+    }
+
+    #[test]
+    fn candidate_direct_call_rejects_new_output_view() {
+        let pointer = pointer();
+        let function = reader_with_output("candidate_direct_new_output", 2, 3);
+        let paths = execute_c_function_paths(
+            &caller_with_owned_end(&pointer, 3, 12),
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate direct output call should execute to a diagnostic path");
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
+                ..
+            }] if message.contains("without a checked input child")
+        ));
+    }
+
+    fn assert_mutable_view_effect_result(
+        mutable_start: u32,
+        mutable_end: u32,
+        name: &str,
+    ) -> Vec<CFunctionPath> {
+        let pointer = pointer();
+        let function = reader_with_mutable_range(name, mutable_start, mutable_end);
+        execute_c_function_call_paths(
+            &caller_with_owned_end(&pointer, 2, 8),
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate mutable call should execute")
+    }
+
+    #[test]
+    fn candidate_rejects_mutable_effect_overlapping_view() {
+        let paths = assert_mutable_view_effect_result(0, 1, "candidate_overlap_effect");
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
+                ..
+            }] if message.contains("mutable footprint may overlap")
+        ));
+    }
+
+    #[test]
+    fn candidate_allows_provably_disjoint_mutable_effect() {
+        let paths = assert_mutable_view_effect_result(1, 2, "candidate_disjoint_effect");
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::Return { .. },
+                ..
+            }]
         ));
     }
 
