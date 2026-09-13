@@ -100,11 +100,34 @@ kernel-scale-preprocessing). Uniform scoping: bb142e1c (theorem arguments,
 `instantiate`, `extract`), ad5c2307 (loop clauses), 2d96d5d7 (phase
 bodies), 99a07d5c (`using` premises in a `have` body).
 
+**Where to pick this up.** Paused 2026-09-13 with master at 08c78194.
+The fifth resumption's unfinished proof draft of the red-uncle path is
+committed, not green, on branch `claude/rsm-c3-insert-fixup-7`
+(388cb043); with gap 72 fixed it reaches statement 42, `augment_rotate` in
+case 2, so the next C3 resumption starts from that branch rather than from
+the fixture on master. The order of work is the priorities above: I1
+(imports) first, then E1 (per-frame duplication and verify time), then
+C3a through C3c. Each resumption so far was one Opus agent per package
+with the orchestrator integrating; doing the packages directly works the
+same way, the packages below are written to be self-contained either way.
+
 **Machine notes.** One full gate at a time; under heavy load a few unit
 tests hit nextest's 60s kill with zero assertion failures and pass alone.
-`scripts/check.sh` prints no marker of its own; judge it by exit status. A
-fresh worktree's cold build is about 90s and 3 GB; build caches grow with
-incremental work, so remove worktrees when their task lands.
+`scripts/check.sh` prints no marker of its own; judge it by exit status,
+and check for a running gate with `pgrep -x -f "bash scripts/check.sh"`
+(a plain `pgrep -f` matches its own wrapper shell and deadlocks a queue).
+A fresh worktree's cold build is about 90s and 3 GB; build caches grow
+with incremental work, so remove worktrees when their task lands. The
+other agents' worktrees under `/private/tmp/click-*` held 150 GB of build
+caches on 2026-09-13; deleting `target/` of any not touched that day is
+safe and was what kept builds possible. sccache was measured and removed:
+this crate has 26 registry dependencies worth seconds, and neither the
+`click` library (cache key includes the working directory) nor the
+binaries and test binaries (they link) are shareable across worktrees.
+Two tooling ideas not done: `click audit` on only the `expect pass`
+fixtures a commit touches, run at integration rather than in the gate
+(three of the last ten bugs were verify passing while audit failed, each
+found only by hand); and splitting the unit tests that take over 15s idle.
 
 ## Violated invariant
 
