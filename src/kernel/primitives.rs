@@ -5898,6 +5898,14 @@ impl CCheckedFunctionExecution {
         self.execution.paths()
     }
 
+    /// The exact caller state used to enter this checked execution, when the
+    /// proof recorded a checked function-entry boundary.  Surface
+    /// certification reuses this identity instead of reconstructing a second
+    /// resource occurrence/loan root.
+    pub(crate) fn caller_state(&self) -> Option<&CState> {
+        self.entry_representation_origin.as_ref()
+    }
+
     /// Whether two checked executions are the same, naming the first
     /// difference otherwise. Path theorems are compared premise by premise
     /// rather than through the derived equality, whose recursion over a long

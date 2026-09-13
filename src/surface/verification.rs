@@ -1287,9 +1287,6 @@ fn verify_c0_sources_with_context(
     let _session = initial_function_environment
         .is_none()
         .then(crate::kernel::VerificationSession::enter);
-    let _candidate_stable_view_guard = crate::surface::proof::candidate_stable_view_guard(
-        c_sources.view_semantics() == ViewSemanticsMode::StableLoans,
-    );
     let (file, parsed_sources, selected_functions, resource_struct_layouts) = {
         let _timing = VerificationTimingPhase::new("frontend");
         let (
@@ -1713,7 +1710,7 @@ fn verify_c0_sources_with_context(
                 function_block.with_bound_frontier_loop_clauses(&verified.frontier_loop_clauses)
             },
         );
-        let (certification_state, certification_arguments, mut certification_facts, _) =
+        let (mut certification_state, certification_arguments, mut certification_facts, _) =
             initial_claim_context(
                 &certification_function_block,
                 parsed_function,
@@ -1722,6 +1719,18 @@ fn verify_c0_sources_with_context(
                 &click_function_environment,
                 &format!("{}.contract certification", function_block.signature.name()),
             )?;
+        // Stable-view proof artifacts carry the exact caller state that the
+        // checked function-entry boundary accepted. Reuse that state for
+        // certification so resource occurrence IDs and loan ledger roots are
+        // shared by proof and certification; rebuilding it independently
+        // would create an equivalent-looking but unauthorized authority.
+        if c_sources.view_semantics() == ViewSemanticsMode::StableLoans
+            && let Some(entry) = function_verified
+                .iter()
+                .find_map(|verified| verified.checked_execution.caller_state())
+        {
+            certification_state = entry.clone();
+        }
         let mut certification_theorems = BTreeSet::new();
         // The checked C transition certificate does not retain pure
         // theorem-application bookkeeping. Select those authorities from the
@@ -5574,5 +5583,32 @@ int32 answer() {
         let stable_identity = context.artifact_identity(CLICK);
         let absent_legacy_identity: Option<CProofArtifactIdentity> = None;
         assert_ne!(absent_legacy_identity, Some(stable_identity));
+    }
+
+    #[test]
+    fn stable_mode_routes_a_surface_proof_through_candidate_kernel_semantics() {
+        let click = r#"
+verifying "reader.c";
+
+int32 reader(int32 p[]) {
+    owns p[0..1];
+    ensures result == p[0];
+} by {
+    execute();
+    simp();
+}
+"#;
+        let source = "int reader(int *p) { return p[0]; }";
+        let sources = CSourceContext::bundle_with_mode(
+            &[("reader.c", source)],
+            ViewSemanticsMode::StableLoans,
+        );
+        let verified = verify_c0_sources_with_context(click, &sources, None, None, None)
+            .expect("stable surface route should use candidate kernel semantics");
+        assert!(!verified.0.is_empty());
+        assert_eq!(
+            verified.0[0].artifact_identity.unwrap().view_semantics,
+            ViewSemanticsMode::StableLoans
+        );
     }
 }
