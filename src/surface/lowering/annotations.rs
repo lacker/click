@@ -4067,6 +4067,26 @@ impl AnnotationLowerer<'_> {
                     .iter()
                     .zip(&schema.fields)
                     .map(|(argument, field_type)| match field_type {
+                        // A pointer-typed payload takes the C null pointer
+                        // constant, exactly as a resource argument and a pure
+                        // call's argument do: `RbTree::Node(node, 0, ...)` is
+                        // how a model says this node is the root. Without the
+                        // field's declared type the literal lowers as an
+                        // `int32` zero and the constructor denotes no value.
+                        AlgebraicValueType::C(c_type)
+                            if c_type.is_pointer()
+                                && matches!(
+                                    argument,
+                                    ContractExpression::IntegerLiteral(text) if text == "0"
+                                ) =>
+                        {
+                            Ok(SpecAlgebraicValue::C(SpecExpression::Value(
+                                crate::kernel::CValue::typed_pointer(
+                                    crate::kernel::Pointer::null(),
+                                    *c_type,
+                                ),
+                            )))
+                        }
                         AlgebraicValueType::C(_) => self
                             .lower_contract_expression_to_spec(argument, environment)
                             .map(SpecAlgebraicValue::C),
