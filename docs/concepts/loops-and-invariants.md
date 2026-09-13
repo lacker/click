@@ -168,6 +168,32 @@ executes one complete body iteration, and proves all invariants again. Either
 proof may be omitted; bounded automation owned by the `loop` keyword supplies
 an omitted phase. Expanding that keyword writes all omitted phases explicitly.
 
+## How an `initialize` script divides up
+
+Each invariant gets its own entry goal, so an `initialize by { ... }` script is
+read as three parts, in this order:
+
+- a leading run of `unfold(predicate)` and `have` steps that name something
+  other than an invariant. These are *helpers*: each is proved once, where it
+  is written, and its fact is available to everything below it.
+- one `have` per declared invariant, in declaration order, naming the
+  invariant exactly as the `loop` head spells it. Such a `have` is that
+  invariant's own proof, and no other invariant reads it.
+- an optional trailing `assumption()` or `simp()`.
+
+A script that does not name the invariants individually — `initialize by
+simp;`, or a helper prefix followed by `simp()` — is one shared proof: every
+invariant's entry goal is proved by the same remaining steps, with the helper
+facts already available.
+
+That division is what expansion prints. A smart tactic inside an invariant's
+own `have` expands to the same `have` with a checked body, left where it was
+written; a trailing `simp()` that stands for the rest of the phase expands to
+one `have` per invariant, and the helpers above it are not copied into them. A
+`simp()` written after the invariants are already named contributes nothing,
+so expanding it removes it. `preserve by simp;` is the same whole-phase shape
+one phase over, and expands to the planned preservation proof.
+
 ## What invariants do
 
 An invariant is the bridge from the loop body to the postcondition. If the

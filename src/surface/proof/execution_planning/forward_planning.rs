@@ -283,36 +283,34 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                     certificates.borrow_mut().initialize = Some(initialization_certificate.clone());
                 }
                 if environment.frontier_loop_source.is_some() {
+                    // A smart tactic that stands for the rest of the phase
+                    // expands to the invariant steps the planner built. A
+                    // smart `have` inside the script is recorded by the
+                    // entry planner itself, at its own source index.
                     if let Some(phase_start) = selected_source_index
                         && let Some(selected) =
                             selected_tactic_index_for_site(expansion_capture.as_deref(), &site)
-                        && let Some(local_index) = selected.checked_sub(phase_start)
-                        // The parser keeps a single smart tactic as `Tactic`
-                        // rather than wrapping it in a one-item `Script`.
-                        && initialization_proof.is_some_and(|(_, proof)| match proof {
-                            SourceProof::Tactic(SmartTactic::Simp) => local_index == 0,
-                            SourceProof::Script(source_tactics) => {
-                                selected == phase_start
-                                    || matches!(
-                                        source_tactics.get(local_index),
-                                        Some(ProofTactic::Simp)
-                                    )
-                            }
-                            _ => false,
-                        })
+                        && let Some((clause, proof)) = initialization_proof
+                        && let Some(expansion) = initialize_phase_closer_expansion(
+                            proof,
+                            clause,
+                            phase_start,
+                            selected,
+                            &initialization_certificate,
+                        )
                     {
                         record_proof_site_tactic_expansion(
                             expansion_capture.as_deref_mut(),
                             &site,
                             selected,
-                            &initialization_certificate.to_proof_tactics(),
+                            &expansion,
                         );
                     }
                 } else {
                     if let Some(source_index) =
                         selected_tactic_index_for_site(expansion_capture.as_deref(), &site)
-                        && let Some((_, SourceProof::Script(source_tactics))) = initialization_proof
-                        && matches!(source_tactics.get(source_index), Some(ProofTactic::Simp))
+                        && let Some((clause, proof @ SourceProof::Script(source_tactics))) =
+                            initialization_proof
                         && !source_tactics.iter().any(|tactic| {
                             matches!(
                                 tactic,
@@ -320,12 +318,19 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                                     | ProofTactic::ApplyTheoremUsing { .. }
                             )
                         })
+                        && let Some(expansion) = initialize_phase_closer_expansion(
+                            proof,
+                            clause,
+                            0,
+                            source_index,
+                            &initialization_certificate,
+                        )
                     {
                         record_proof_site_tactic_expansion(
                             expansion_capture.as_deref_mut(),
                             &site,
                             source_index,
-                            &initialization_certificate.to_proof_tactics(),
+                            &expansion,
                         );
                     }
                     finish_proof_site_expansion_capture(
@@ -363,6 +368,27 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                             phase: "preserve",
                         },
                         &preservation_certificate,
+                    );
+                // `preserve by simp;` is one smart tactic standing for the
+                // whole phase, exactly as `initialize by simp;` is: the
+                // planned preservation certificate is its expansion. The
+                // driver's own tactics are all generated here, so no
+                // source-indexed step claims the occurrence.
+                } else if let Some(source) = environment.frontier_loop_source
+                    && let Some(preserve_source_index) = source.preserve_source_index
+                    && matches!(
+                        loop_clause.and_then(StructuralClause::preserve_proof),
+                        Some(SourceProof::Tactic(SmartTactic::Simp))
+                    )
+                    && let Some(site) = source.proof_site.as_ref()
+                    && selected_tactic_index_for_site(expansion_capture.as_deref(), site)
+                        == Some(preserve_source_index)
+                {
+                    record_proof_site_tactic_expansion(
+                        expansion_capture,
+                        site,
+                        preserve_source_index,
+                        &preservation_certificate.to_proof_tactics(),
                     );
                 }
             }

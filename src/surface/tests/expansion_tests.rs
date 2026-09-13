@@ -14434,3 +14434,159 @@ fn omitted_preservation_over_two_body_breaks_expands_and_reverifies() {
         panic!("the expanded break-exit preservation should reverify: {error:?}\n{expanded}")
     });
 }
+
+const LOOP_INITIALIZE_PHASE_C: &str = r#"int spin(int n) {
+    int i;
+    i = 0;
+    while (i < n) {
+        i = i + 1;
+    }
+    return i;
+}
+"#;
+
+const LOOP_INITIALIZE_SMART_HAVE_CLICK: &str = r#"
+verifying "spin.c";
+
+int spin(int n) {
+    requires n >= 0;
+    ensures n >= 0;
+} by {
+    step();
+    step();
+    loop {
+        invariant i >= 0;
+        invariant i <= n;
+
+        initialize by {
+            have i >= 0 by simp;
+            have i <= n by simp;
+            assumption();
+        }
+        preserve by simp;
+    }
+    step();
+    simp();
+}
+"#;
+
+const LOOP_INITIALIZE_HELPER_HAVE_CLICK: &str = r#"
+verifying "spin.c";
+
+int spin(int n) {
+    requires n >= 0;
+    ensures n >= 0;
+} by {
+    step();
+    step();
+    loop {
+        invariant i >= 0;
+        invariant i <= n;
+
+        initialize by {
+            have n + 0 == n by { normalize(); }
+            simp();
+        }
+        preserve by {
+            step();
+            close_invariants();
+        }
+    }
+    step();
+    simp();
+}
+"#;
+
+#[test]
+fn each_smart_have_in_a_loop_initialize_script_expands_on_its_own() {
+    // Reduced from the insert fixup loop in `examples/rbtree-model`. The
+    // per-invariant entry planner was handed the whole phase script as every
+    // invariant's proof, so the second `have` had no expansion at all and
+    // audit reported `Grouped proof has no source tactic 4` for a sidecar
+    // `click verify` accepted.
+    let sources = [("spin.c", LOOP_INITIALIZE_PHASE_C)];
+    verify_c0_sources(LOOP_INITIALIZE_SMART_HAVE_CLICK, &sources)
+        .expect("the initialize script should verify");
+
+    for have in ["have i >= 0 by simp;", "have i <= n by simp;"] {
+        let offset = LOOP_INITIALIZE_SMART_HAVE_CLICK
+            .find(have)
+            .unwrap_or_else(|| panic!("the proof should contain `{have}`"));
+        let position = expansion::position_at_offset(LOOP_INITIALIZE_SMART_HAVE_CLICK, offset);
+        let expanded = expand_c0_tactic_source_at(
+            LOOP_INITIALIZE_SMART_HAVE_CLICK,
+            &sources,
+            position.line,
+            position.column,
+        )
+        .unwrap_or_else(|error| panic!("`{have}` should expand: {error:?}"));
+        assert!(
+            !expanded.contains(have),
+            "`{have}` should be replaced by its checked body: {expanded}"
+        );
+        verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+            panic!("the expanded initialize script should reverify: {error:?}\n{expanded}")
+        });
+    }
+}
+
+#[test]
+fn a_smart_loop_preserve_phase_tactic_expands_and_reverifies() {
+    // `preserve by simp;` is one smart tactic standing for the whole phase,
+    // like `initialize by simp;`. Every driver step under it is generated, so
+    // none claimed the source occurrence and audit reported
+    // `Grouped proof has no source tactic 4`.
+    let sources = [("spin.c", LOOP_INITIALIZE_PHASE_C)];
+    let offset = LOOP_INITIALIZE_SMART_HAVE_CLICK
+        .find("preserve by simp;")
+        .expect("the proof should contain the smart preserve phase");
+    let position = expansion::position_at_offset(LOOP_INITIALIZE_SMART_HAVE_CLICK, offset + 12);
+    let expanded = expand_c0_tactic_source_at(
+        LOOP_INITIALIZE_SMART_HAVE_CLICK,
+        &sources,
+        position.line,
+        position.column,
+    )
+    .expect("a smart `preserve` phase should expand");
+    assert!(
+        !expanded.contains("preserve by simp;"),
+        "the smart preserve phase should be replaced by its certificate: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        panic!("the expanded preserve phase should reverify: {error:?}\n{expanded}")
+    });
+}
+
+#[test]
+fn a_helper_have_in_a_loop_initialize_script_is_expanded_once() {
+    // The entry planner nested every sibling step inside every invariant's
+    // proof, so expanding the closing `simp()` printed the helper once per
+    // invariant and the rewrite failed round-trip validation.
+    let sources = [("spin.c", LOOP_INITIALIZE_PHASE_C)];
+    verify_c0_sources(LOOP_INITIALIZE_HELPER_HAVE_CLICK, &sources)
+        .expect("the helper initialize script should verify");
+
+    let offset = LOOP_INITIALIZE_HELPER_HAVE_CLICK
+        .find("            simp();")
+        .expect("the proof should contain the phase closer");
+    let position = expansion::position_at_offset(LOOP_INITIALIZE_HELPER_HAVE_CLICK, offset + 12);
+    let expanded = expand_c0_tactic_source_at(
+        LOOP_INITIALIZE_HELPER_HAVE_CLICK,
+        &sources,
+        position.line,
+        position.column,
+    )
+    .expect("the initialize closer should expand");
+    assert_eq!(
+        expanded.matches("have n + 0 == n").count(),
+        1,
+        "the helper `have` should be kept once, where it was written: {expanded}"
+    );
+    assert!(
+        expanded.contains("have i >= 0 by") && expanded.contains("have i <= n by"),
+        "the closer should expand to one `have` per invariant: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        panic!("the expanded initialize closer should reverify: {error:?}\n{expanded}")
+    });
+}
