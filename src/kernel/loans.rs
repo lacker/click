@@ -1114,7 +1114,7 @@ impl CheckedLoanCallEvidenceSequence {
 impl PartialEq for CheckedLoanCallEvidenceSequence {
     fn eq(&self, other: &Self) -> bool {
         // Cloned proof paths retain the exact persistent node identity.  This
-        // is the common artifact-comparison case and must not replay the
+        // is the common artifact-comparison case and must not revisit the
         // completed call history.  Separately-built histories still take the
         // exact evidence-by-evidence fallback below.
         if Arc::ptr_eq(&self.node, &other.node) {
