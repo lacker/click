@@ -3,6 +3,32 @@
 //! This is deliberately independent of the production loan ledger. It fixes
 //! the conservation laws and cross-context counterexamples before the kernel
 //! representation is used by C contract transfer.
+//!
+//! V14 design handoff: the extension model treats a context as an abstract
+//! sequential actor and explores interleavings only at explicit transition
+//! boundaries. Memory is a bounded array of initialized byte cells; ranges
+//! are nonempty, concrete, and at most eight cells wide in the witnesses.
+//! The original loan search remains depth five with a 50,000-state cap, and
+//! extension identities are eight-bit counters with checked exhaustion. This
+//! is not a release/acquire, allocator, or C data-race proof: atomics,
+//! scheduling fairness, cache visibility, C lifetime races, Rust trait/unsafe
+//! alias rules, and production thread APIs are intentionally omitted.
+//!
+//! Shared model steps correspond to the checked kernel `lend`, `split`,
+//! `transfer`, `join`, `end`, `recover`, planner partition, and shared
+//! `reborrow` operations exercised below. Exclusive reborrow, returned-value
+//! transport, mutex invariant/guard transitions, and thread-local mutable
+//! cells are model-only extension operations; they have no production API.
+//! Their preservation arguments are local: partition replaces one owned range
+//! by disjoint residuals; lending removes that range from usable ownership;
+//! splitting creates both conserved children and joining consumes both exact
+//! siblings; transfer changes only a holder; ending requires the reconstructed
+//! root; recovery restores the escrow once; shared reborrow pins its parent
+//! until child closure; exclusive reborrow suspends all parent access and
+//! returns the child value before restoring the parent field; mutex release
+//! restores its invariant; and a local cell accepts access only at its home
+//! context. Model invariants are checked independently and never delegated to
+//! production validity helpers.
 
 use std::collections::{BTreeMap, BTreeSet};
 
