@@ -14590,3 +14590,43 @@ fn a_helper_have_in_a_loop_initialize_script_is_expanded_once() {
         panic!("the expanded initialize closer should reverify: {error:?}\n{expanded}")
     });
 }
+
+#[test]
+fn a_consumed_arm_instance_equation_is_cited_at_entry_after_its_unfold() {
+    // A proof `match` arm's constructor equation is recorded under its
+    // written spelling, `t.model == Tree::Node(..)`. Once the arm has
+    // unfolded the consumed `t` and folded the produced instance under
+    // another name, that spelling lowers to nothing, and a certificate that
+    // cited it failed its recheck with `the kernel lowering hit Paths`. The
+    // entry-anchored `old(t.model) == Tree::Node(..)` is what the expansion
+    // must print.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/consumed_arm_equation_expands_at_entry.md");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("the fixture has a click block");
+    let sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let offset = click_source
+        .rfind("simp();")
+        .expect("the arm closes with a smart simp");
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("the closing simp should expand");
+    assert!(
+        expanded.contains("rewrite(old(t.model) == Tree::Node(id, color, left_model));"),
+        "the arm equation should be cited at entry: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        panic!("the expanded closing simp should reverify: {error:?}\n{expanded}")
+    });
+}

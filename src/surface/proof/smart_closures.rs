@@ -2736,12 +2736,17 @@ impl<'a> Proof<'a> {
                         lowered == kernel || condition_polarity_equivalent(lowered, kernel)
                     })
             {
-                let Some(lowered) = constructor_equation.then(|| lower(candidate)).flatten() else {
-                    // Either the pair is authoritative for this shape, or the
-                    // spelling has no lowering here at all and the pair is all
-                    // there is to go on.
+                if !constructor_equation {
+                    // The recorded pair is authoritative for this shape.
                     return Some(());
-                };
+                }
+                // A constructor equation's written spelling can have stopped
+                // lowering at all: the arm's instance was consumed and
+                // unfolded and never refolded under its name, so `t.model`
+                // names nothing here and the rechecked certificate would
+                // fail on it. Only the entry-anchored form below still
+                // denotes the fact.
+                let lowered = lower(candidate)?;
                 // The spelling lowers to some other fact, so it has stopped
                 // denoting this one: citing it would hand the rechecked proof
                 // the fact it now names instead.
