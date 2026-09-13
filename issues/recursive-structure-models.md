@@ -1012,6 +1012,15 @@ appears to need one reports the need instead of adding it.
   (b) gap 63, an unfinished `preserve` is refused at plan time with "must
   execute exactly one complete loop-body iteration", which hides the real
   frontier, so a body path gives no signal until finished end to end.
+  CLOSED by 6e81426b: a path that stops inside the body now reports its
+  frontier statement, the last tactic, the ends still ahead (body end,
+  `break`s, `continue`s), and the exits already closed; a failing tactic's
+  own message is never displaced; the refusal stays for a `return` out of
+  the loop (`loop_preserve_frontier_report*.md`,
+  `loop_preserve_tactic_failure_reported.md`). Tooling note: three unit
+  tests hit nextest's 60s kill on a gate under load ~50 from concurrent
+  builds and pass in isolation; the gate's per-test budget is not robust to
+  a busy machine.
   (c) gap 64, `old(t.model)` in a loop invariant after a pre-loop unfold and
   refold of `t` hits `Paths` in kernel lowering
   (`loop_invariant_old_field_after_a_refold.md`, pinned negative). CLOSED
