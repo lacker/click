@@ -1014,7 +1014,14 @@ appears to need one reports the need instead of adding it.
   frontier, so a body path gives no signal until finished end to end.
   (c) gap 64, `old(t.model)` in a loop invariant after a pre-loop unfold and
   refold of `t` hits `Paths` in kernel lowering
-  (`loop_invariant_old_field_after_a_refold.md`, pinned negative).
+  (`loop_invariant_old_field_after_a_refold.md`, pinned negative). CLOSED
+  by 3893e6b5: the frontier-loop driver built its planning environment from
+  the execution start state rather than the contract's entry state, so an
+  unfold before the first `step()` found no instance (`Paths`) and a fold
+  before it silently meant the refolded model. Fixture now positive, plus
+  `loop_invariant_old_model_when_the_unfold_precedes_execution.md`.
+  Tooling note from that gate: `explicit_swap_loop_transports_both_entry_bounds_and_expands`
+  takes ~18s idle and hits nextest's 60s kill when two agents build at once.
   (d) pointer equality symmetry is unavailable to simple tactics inside a
   pure theorem, and `normalize() using` does not substitute a pointer
   equality into a constructor argument; `rewrite` then `normalize` does.
