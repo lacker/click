@@ -6,11 +6,14 @@
 //! future language frontends must all use the same transitions.
 
 use super::functions::CCheckedResourceFact;
+use super::primitives::{
+    ResourceMemoryIntervalNode, memory_interval_ancestors, memory_interval_nodes,
+};
 use super::{
     CMemoryRange, CResource, CResourceFact, CResourceSnapshot, CResourceTransferRole,
     PureFactContext, ResourceContext, ResourceOccurrenceId,
 };
-use crate::persistent::PersistentMap;
+use crate::persistent::{PersistentMap, PersistentSet};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -133,6 +136,56 @@ impl LoanViewBindings {
     }
 }
 
+fn update_active_memory_index(
+    index: &PersistentMap<ResourceMemoryIntervalNode, PersistentSet<LoanId>>,
+    range: &CMemoryRange,
+    loan: LoanId,
+    insert: bool,
+) -> Result<PersistentMap<ResourceMemoryIntervalNode, PersistentSet<LoanId>>, LoanRefusal> {
+    let nodes = memory_interval_nodes(range).ok_or(LoanRefusal::UnsupportedPartition)?;
+    let mut index = index.clone();
+    for node in nodes {
+        let key_set = index.get(&node).cloned().unwrap_or_default();
+        let key_set = if insert {
+            key_set.with_value(loan)
+        } else {
+            key_set.without_value(&loan)
+        };
+        index = if key_set.is_empty() {
+            index.without_key(&node)
+        } else {
+            index.with_inserted(node, key_set)
+        };
+    }
+    Ok(index)
+}
+
+fn update_active_memory_subtree(
+    subtree: &PersistentMap<ResourceMemoryIntervalNode, PersistentSet<LoanId>>,
+    range: &CMemoryRange,
+    loan: LoanId,
+    insert: bool,
+) -> Result<PersistentMap<ResourceMemoryIntervalNode, PersistentSet<LoanId>>, LoanRefusal> {
+    let nodes = memory_interval_nodes(range).ok_or(LoanRefusal::UnsupportedPartition)?;
+    let mut subtree = subtree.clone();
+    for node in nodes {
+        for ancestor in memory_interval_ancestors(&node) {
+            let key_set = subtree.get(&ancestor).cloned().unwrap_or_default();
+            let key_set = if insert {
+                key_set.with_value(loan)
+            } else {
+                key_set.without_value(&loan)
+            };
+            subtree = if key_set.is_empty() {
+                subtree.without_key(&ancestor)
+            } else {
+                subtree.with_inserted(ancestor, key_set)
+            };
+        }
+    }
+    Ok(subtree)
+}
+
 /// A read derived from ownership in the current context. This is useful for
 /// checking the owner's own computation, but it is not transferable loan
 /// authority and contains no loan identity.
@@ -161,6 +214,7 @@ impl OwnedResourceObservation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LoanScopeRecord {
+    loan: LoanId,
     root: LoanShareId,
     close_right: LoanParticipantId,
     active: bool,
@@ -198,6 +252,9 @@ struct LoanLedgerData {
     scopes: PersistentMap<LoanScopeId, LoanScopeRecord>,
     loans: PersistentMap<LoanId, LoanRecord>,
     shares: PersistentMap<LoanShareId, LoanShareRecord>,
+    active_memory_index: PersistentMap<ResourceMemoryIntervalNode, PersistentSet<LoanId>>,
+    active_memory_subtree: PersistentMap<ResourceMemoryIntervalNode, PersistentSet<LoanId>>,
+    active_memory_loans: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -915,6 +972,9 @@ impl LoanLedger {
                     scopes: PersistentMap::default(),
                     loans: PersistentMap::default(),
                     shares: PersistentMap::default(),
+                    active_memory_index: PersistentMap::default(),
+                    active_memory_subtree: PersistentMap::default(),
+                    active_memory_loans: 0,
                 },
             }),
         }
@@ -1272,6 +1332,50 @@ impl LoanLedger {
         Arc::ptr_eq(&self.storage, &other.storage)
     }
 
+    /// Return active memory loans whose concrete byte footprints overlap the
+    /// query. The dyadic index visits logarithmically many buckets plus the
+    /// returned loan IDs; it never scans the ledger.
+    pub(crate) fn active_memory_overlaps(
+        &self,
+        range: &CMemoryRange,
+    ) -> Result<Vec<LoanId>, LoanRefusal> {
+        if let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const())
+            && start >= end
+        {
+            return Ok(Vec::new());
+        }
+        let Some(query_nodes) = memory_interval_nodes(range) else {
+            return if self.storage.data.active_memory_loans == 0 {
+                Ok(Vec::new())
+            } else {
+                Err(LoanRefusal::UnsupportedPartition)
+            };
+        };
+        let mut loans = PersistentSet::default();
+        for query in query_nodes {
+            for ancestor in memory_interval_ancestors(&query) {
+                if let Some(bucket) = self.storage.data.active_memory_index.get(&ancestor) {
+                    for loan in bucket.iter() {
+                        loans = loans.with_value(*loan);
+                    }
+                }
+            }
+            if let Some(bucket) = self.storage.data.active_memory_subtree.get(&query) {
+                for loan in bucket.iter() {
+                    loans = loans.with_value(*loan);
+                }
+            }
+        }
+        Ok(loans.iter().copied().collect())
+    }
+
+    pub(crate) fn permits_memory_access(&self, range: &CMemoryRange) -> Result<(), LoanRefusal> {
+        self.active_memory_overlaps(range)?
+            .is_empty()
+            .then_some(())
+            .ok_or(LoanRefusal::ActiveDependency)
+    }
+
     fn issue(
         &self,
         evidence: LoanTransitionEvidence,
@@ -1355,6 +1459,7 @@ impl LoanLedger {
                 data.scopes = data.scopes.with_inserted(
                     *scope,
                     LoanScopeRecord {
+                        loan: *loan,
                         root: *root,
                         close_right: *lender,
                         active: true,
@@ -1385,6 +1490,20 @@ impl LoanLedger {
                         pinned_by: None,
                     },
                 );
+                if let CResource::Memory(range) = escrow.resource() {
+                    data.active_memory_index =
+                        update_active_memory_index(&data.active_memory_index, range, *loan, true)?;
+                    data.active_memory_subtree = update_active_memory_subtree(
+                        &data.active_memory_subtree,
+                        range,
+                        *loan,
+                        true,
+                    )?;
+                    data.active_memory_loans = data
+                        .active_memory_loans
+                        .checked_add(1)
+                        .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                }
             }
             LoanTransitionEvidence::Reborrow {
                 parent,
@@ -1455,6 +1574,7 @@ impl LoanLedger {
                 data.scopes = data.scopes.with_inserted(
                     *scope,
                     LoanScopeRecord {
+                        loan: *loan,
                         root: *root,
                         close_right: *lender,
                         active: true,
@@ -1485,6 +1605,20 @@ impl LoanLedger {
                         pinned_by: None,
                     },
                 );
+                if let CResourceFact::View(CResource::Memory(range)) = &parent.viewed {
+                    data.active_memory_index =
+                        update_active_memory_index(&data.active_memory_index, range, *loan, true)?;
+                    data.active_memory_subtree = update_active_memory_subtree(
+                        &data.active_memory_subtree,
+                        range,
+                        *loan,
+                        true,
+                    )?;
+                    data.active_memory_loans = data
+                        .active_memory_loans
+                        .checked_add(1)
+                        .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                }
             }
             LoanTransitionEvidence::Split {
                 share,
@@ -1650,6 +1784,26 @@ impl LoanLedger {
                         ..scope_record
                     },
                 );
+                if let Some(record) = data.loans.get(&scope_record.loan).cloned()
+                    && let CResourceFact::View(CResource::Memory(range)) = &record.permitted
+                {
+                    data.active_memory_index = update_active_memory_index(
+                        &data.active_memory_index,
+                        range,
+                        scope_record.loan,
+                        false,
+                    )?;
+                    data.active_memory_subtree = update_active_memory_subtree(
+                        &data.active_memory_subtree,
+                        range,
+                        scope_record.loan,
+                        false,
+                    )?;
+                    data.active_memory_loans = data
+                        .active_memory_loans
+                        .checked_sub(1)
+                        .ok_or(LoanRefusal::InvalidEvidence)?;
+                }
                 if let Some(parent) = data.scopes.get(scope).and_then(|record| record.parent) {
                     let parent_record = data
                         .scopes
@@ -2473,6 +2627,104 @@ mod tests {
                 &bindings,
             ),
             Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence))
+        );
+    }
+
+    #[test]
+    fn active_memory_index_returns_only_overlapping_live_loans() {
+        let owned_range = memory(0, 8, true);
+        let (ledger, owner, reader) = participants();
+        let opening = ledger
+            .lend(owner, reader, backing(&owned_range), owned_range)
+            .unwrap();
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        assert_eq!(
+            ledger
+                .active_memory_overlaps(&memory(2, 4, false).memory_range().unwrap())
+                .unwrap(),
+            vec![opening.loan]
+        );
+        assert!(
+            ledger
+                .active_memory_overlaps(&memory(8, 10, false).memory_range().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            ledger
+                .permits_memory_access(memory(8, 10, false).memory_range().unwrap())
+                .is_ok()
+        );
+        assert!(
+            ledger
+                .permits_memory_access(memory(8, 8, false).memory_range().unwrap())
+                .is_ok()
+        );
+        assert_eq!(
+            ledger.permits_memory_access(memory(2, 4, false).memory_range().unwrap()),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        let returned = ledger.transfer(opening.root_share, reader, owner).unwrap();
+        let ledger = ledger.apply(&returned).unwrap();
+        let ended = ledger.end(opening.scope, owner).unwrap();
+        let ledger = ledger.apply(&ended).unwrap();
+        assert!(
+            ledger
+                .active_memory_overlaps(&memory(2, 4, false).memory_range().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            ledger
+                .permits_memory_access(memory(2, 4, false).memory_range().unwrap())
+                .is_ok()
+        );
+        let _ = ledger.recover(opening.loan, owner).unwrap();
+    }
+
+    #[test]
+    fn ending_nested_memory_loan_keeps_parent_footprint_indexed() {
+        let owned_range = memory(0, 8, true);
+        let (ledger, owner, reader) = participants();
+        let parent = ledger
+            .lend(owner, owner, backing(&owned_range), owned_range.clone())
+            .unwrap();
+        let ledger = ledger.apply(&parent.transition).unwrap();
+        let parent_binding = LoanViewBinding {
+            loan: parent.loan,
+            scope: parent.scope,
+            share: parent.root_share,
+            support: parent.description.support(),
+            viewed: memory(0, 8, false),
+        };
+        let child = ledger.reborrow(parent_binding, owner, reader).unwrap();
+        let ledger = ledger.apply(&child.transition).unwrap();
+        let overlapping_fact = memory(1, 2, false);
+        let overlapping = overlapping_fact.memory_range().unwrap();
+        let active = ledger.active_memory_overlaps(overlapping).unwrap();
+        assert!(active.contains(&parent.loan));
+        assert!(active.contains(&child.loan));
+
+        let child_return = ledger.transfer(child.root_share, reader, owner).unwrap();
+        let ledger = ledger.apply(&child_return).unwrap();
+        let child_end = ledger.end(child.scope, owner).unwrap();
+        let ledger = ledger.apply(&child_end).unwrap();
+        assert_eq!(
+            ledger.active_memory_overlaps(overlapping).unwrap(),
+            vec![parent.loan]
+        );
+        assert_eq!(
+            ledger.permits_memory_access(overlapping),
+            Err(LoanRefusal::ActiveDependency)
+        );
+
+        let parent_end = ledger.end(parent.scope, owner).unwrap();
+        let ledger = ledger.apply(&parent_end).unwrap();
+        assert!(
+            ledger
+                .active_memory_overlaps(overlapping)
+                .unwrap()
+                .is_empty()
         );
     }
 }

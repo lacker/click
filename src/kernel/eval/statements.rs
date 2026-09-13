@@ -309,6 +309,34 @@ fn c_update_expression(
     }
 }
 
+fn stable_loan_memory_write_outcome(
+    state: &CState,
+    pointer: &Pointer,
+    bytes: u32,
+) -> Option<CStatementOutcome> {
+    let range = CMemoryRange::new_with_element_width(
+        pointer.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+        bytes,
+    );
+    stable_loan_memory_range_outcome(state, &range)
+}
+
+fn stable_loan_memory_range_outcome(
+    state: &CState,
+    range: &CMemoryRange,
+) -> Option<CStatementOutcome> {
+    state
+        .permits_stable_loan_memory_access(range)
+        .err()
+        .map(|error| {
+            CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                "memory write conflicts with an active stable loan: {error:?}"
+            )))
+        })
+}
+
 pub(in crate::kernel) fn write_c_lvalue_paths(
     state: &CState,
     lvalue: CLValue,
@@ -379,6 +407,16 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
 
     match lvalue.storage {
         CLValueStorage::Local { name } => {
+            if let Some(pointer) = state.locals.slot(&name).cloned()
+                && let Some(outcome) =
+                    stable_loan_memory_write_outcome(state, &pointer, value.byte_width())
+            {
+                return vec![CStatementExecutionPath {
+                    outcome,
+                    facts,
+                    obligations,
+                }];
+            }
             let mut state = state.clone();
             sync_stack_local(&mut state, &name, &value);
             if let Some(pointer) = volatile_pointer {
@@ -445,6 +483,15 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     outcome: CStatementOutcome::UndefinedBehavior(
                         CUndefinedBehavior::InvalidMemory,
                     ),
+                    facts,
+                    obligations,
+                }];
+            }
+            if let Some(outcome) =
+                stable_loan_memory_write_outcome(state, &pointer, value.byte_width())
+            {
+                return vec![CStatementExecutionPath {
+                    outcome,
                     facts,
                     obligations,
                 }];
@@ -605,6 +652,18 @@ fn execute_c_aggregate_copy_paths(
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
                         resource,
                     }),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
+            if let Some(outcome) = stable_loan_memory_write_outcome(
+                state,
+                target_pointer.pointer(),
+                layout.size_bytes(),
+            ) {
+                paths.push(CStatementExecutionPath {
+                    outcome,
                     facts,
                     obligations,
                 });
@@ -1140,6 +1199,20 @@ pub(crate) fn execute_c_realloc_assign_paths(
             continue;
         };
         let (old_count, old_range_width) = heap_range_element_count(&old_bytes, element_width);
+        let old_allocation_range = CMemoryRange::new_with_element_width(
+            old_pointer.clone(),
+            Bitvector32Term::Constant(0),
+            old_bytes.clone(),
+            1,
+        );
+        if let Some(outcome) = stable_loan_memory_range_outcome(state, &old_allocation_range) {
+            paths.push(CStatementExecutionPath {
+                outcome,
+                facts,
+                obligations,
+            });
+            continue;
+        }
         for new_size_path in evaluate_c_expression_paths(
             state,
             element_count_expression.unwrap_or(size_expression),
@@ -1575,6 +1648,20 @@ fn execute_c_heap_free_paths(
             });
             continue;
         };
+        let full_allocation_range = CMemoryRange::new_with_element_width(
+            pointer.pointer().clone(),
+            Bitvector32Term::Constant(0),
+            bytes.clone(),
+            1,
+        );
+        if let Some(outcome) = stable_loan_memory_range_outcome(state, &full_allocation_range) {
+            paths.push(CStatementExecutionPath {
+                outcome,
+                facts,
+                obligations,
+            });
+            continue;
+        }
         let allocation = CResourceFact::own_allocation(pointer.pointer().clone(), bytes.clone());
         let Some(resources) = state
             .resources
@@ -1982,7 +2069,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             let outcome = if *c_type == CType::Void {
                 CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
             } else {
-                CStatementOutcome::Normal(declare_local(
+                match declare_local(
                     state,
                     name,
                     *c_type,
@@ -1990,7 +2077,14 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                     *pointee_volatile,
                     *constant,
                     *pointee_constant,
-                ))
+                ) {
+                    Ok(state) => CStatementOutcome::Normal(state),
+                    Err(error) => {
+                        CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                            "local lifetime end conflicts with an active stable loan: {error:?}"
+                        )))
+                    }
+                }
             };
             vec![CStatementExecutionPath {
                 outcome,
@@ -1999,7 +2093,12 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             }]
         }
         CStatement::DeclareAggregate { name, layout } => {
-            let outcome = CStatementOutcome::Normal(declare_aggregate_local(state, name, layout));
+            let outcome = match declare_aggregate_local(state, name, layout) {
+                Ok(state) => CStatementOutcome::Normal(state),
+                Err(error) => CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                    format!("local lifetime end conflicts with an active stable loan: {error:?}"),
+                )),
+            };
             vec![CStatementExecutionPath {
                 outcome,
                 facts: Vec::new(),
@@ -2729,19 +2828,34 @@ pub(in crate::kernel) fn execute_c_while_paths(
     Ok(paths)
 }
 
-fn local_declaration_pointer(state: &mut CState, name: &str) -> Pointer {
+fn local_declaration_pointer(
+    state: &mut CState,
+    name: &str,
+) -> Result<Pointer, crate::kernel::loans::LoanRefusal> {
     let previous = state.locals.slot(name).cloned();
     if let Some(previous) = previous
         && previous.block.starts_with("local:")
     {
+        let end = state
+            .memory
+            .block_size(&previous.block)
+            .cloned()
+            .unwrap_or(Bitvector32Term::Variable(Variable(u64::MAX)));
+        let old_range = CMemoryRange::new_with_element_width(
+            previous.clone(),
+            Bitvector32Term::Constant(0),
+            end,
+            1,
+        );
+        state.permits_stable_loan_memory_access(&old_range)?;
         state.set_memory(state.memory.without_local_block(&previous.block));
         let lifetime = state.next_local_lifetime();
         *state = state
             .clone()
             .with_next_local_lifetime(lifetime.saturating_add(1));
-        return CMemory::local_lifetime_pointer(lifetime, name);
+        return Ok(CMemory::local_lifetime_pointer(lifetime, name));
     }
-    CMemory::local_pointer(name)
+    Ok(CMemory::local_pointer(name))
 }
 
 pub(in crate::kernel) fn declare_local(
@@ -2752,9 +2866,9 @@ pub(in crate::kernel) fn declare_local(
     pointee_volatile: bool,
     constant: bool,
     pointee_constant: bool,
-) -> CState {
+) -> Result<CState, crate::kernel::loans::LoanRefusal> {
     let mut state = state.clone();
-    let pointer = local_declaration_pointer(&mut state, name);
+    let pointer = local_declaration_pointer(&mut state, name)?;
     // A declared local's block is placed at its type's alignment; record it
     // with the block so the alignment decision is intrinsic, as for heap
     // and file-scope blocks, rather than a path fact at each address-of.
@@ -2801,7 +2915,7 @@ pub(in crate::kernel) fn declare_local(
                 pointer,
                 constant,
             );
-            return state;
+            return Ok(state);
         }
         CType::UInt8Array(length) => {
             state.set_memory(
@@ -2817,7 +2931,7 @@ pub(in crate::kernel) fn declare_local(
                 pointer,
                 constant,
             );
-            return state;
+            return Ok(state);
         }
         CType::Int16Array(length) => {
             state.set_memory(
@@ -2833,7 +2947,7 @@ pub(in crate::kernel) fn declare_local(
                 pointer,
                 constant,
             );
-            return state;
+            return Ok(state);
         }
         CType::UInt16Array(length) => {
             state.set_memory(
@@ -2849,7 +2963,7 @@ pub(in crate::kernel) fn declare_local(
                 pointer,
                 constant,
             );
-            return state;
+            return Ok(state);
         }
         CType::UInt32Array(length) => {
             state.set_memory(
@@ -2865,7 +2979,7 @@ pub(in crate::kernel) fn declare_local(
                 pointer,
                 constant,
             );
-            return state;
+            return Ok(state);
         }
         CType::Int64Array(length) => {
             state.set_memory(
@@ -2881,7 +2995,7 @@ pub(in crate::kernel) fn declare_local(
                 pointer,
                 constant,
             );
-            return state;
+            return Ok(state);
         }
         CType::UInt64Array(length) => {
             state.set_memory(
@@ -2897,7 +3011,7 @@ pub(in crate::kernel) fn declare_local(
                 pointer,
                 constant,
             );
-            return state;
+            return Ok(state);
         }
         CType::Float32Array(length) => {
             state.set_memory(
@@ -2913,7 +3027,7 @@ pub(in crate::kernel) fn declare_local(
                 pointer,
                 constant,
             );
-            return state;
+            return Ok(state);
         }
         CType::Float64Array(length) => {
             state.set_memory(
@@ -2929,7 +3043,7 @@ pub(in crate::kernel) fn declare_local(
                 pointer,
                 constant,
             );
-            return state;
+            return Ok(state);
         }
     };
     state.set_memory(
@@ -2959,16 +3073,16 @@ pub(in crate::kernel) fn declare_local(
             pointee_constant,
         );
     }
-    state
+    Ok(state)
 }
 
 pub(in crate::kernel) fn declare_aggregate_local(
     state: &CState,
     name: &str,
     layout: &CAggregateLayout,
-) -> CState {
+) -> Result<CState, crate::kernel::loans::LoanRefusal> {
     let mut state = state.clone();
-    let pointer = local_declaration_pointer(&mut state, name);
+    let pointer = local_declaration_pointer(&mut state, name)?;
     register_block_alignment(&pointer.block, layout.alignment_bytes());
     state.set_memory(
         state
@@ -2979,7 +3093,7 @@ pub(in crate::kernel) fn declare_aggregate_local(
     state
         .locals
         .set_aggregate_object_at(name.to_string(), layout.clone(), pointer);
-    state
+    Ok(state)
 }
 
 pub(in crate::kernel) fn sync_stack_local(state: &mut CState, name: &str, value: &CValue) {

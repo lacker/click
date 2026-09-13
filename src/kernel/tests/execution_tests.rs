@@ -1,4 +1,161 @@
 use super::*;
+use crate::kernel::loans::LoanLedger;
+
+fn active_memory_loan(range: CMemoryRange) -> LoanLedger {
+    let fact = CResourceFact::own_memory(range);
+    let support = ResourceContext::new()
+        .unchecked_with_fact(fact.clone())
+        .unique_owned_occurrence_for_fact(&fact)
+        .expect("memory backing")
+        .0;
+    let ledger = LoanLedger::new();
+    let owner = ledger.fresh_participant().expect("owner identity");
+    let reader = ledger.fresh_participant().expect("reader identity");
+    let opening = ledger
+        .lend(owner, reader, support, fact)
+        .expect("memory loan");
+    ledger
+        .apply(&opening.transition)
+        .expect("memory loan apply")
+}
+
+fn normal_state(paths: &[CStatementExecutionPath]) -> CState {
+    let [
+        CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(state),
+            ..
+        },
+    ] = paths
+    else {
+        panic!("expected one normal execution path: {paths:?}");
+    };
+    state.clone()
+}
+
+fn assert_loan_write_rejected(outcome: &CStatementOutcome) {
+    assert!(matches!(
+        outcome,
+        CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(message))
+            if message.contains("active stable loan")
+    ));
+}
+
+#[test]
+fn active_stable_loan_rejects_direct_local_assignment_and_alias_store() {
+    let declared = execute_c_statement_paths(
+        &CState::new(),
+        &CStatement::Declare {
+            name: "x".to_string(),
+            c_type: CType::Int32,
+            volatile: false,
+            pointee_volatile: false,
+            constant: false,
+            pointee_constant: false,
+        },
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("local declaration should execute");
+    let state = normal_state(&declared);
+    let pointer = state.locals().slot("x").cloned().expect("local pointer");
+    let loan = active_memory_loan(CMemoryRange::new(
+        pointer.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    ));
+    let state = state.with_loan_ledger(Some(loan));
+
+    let direct = execute_c_statement_paths(
+        &state,
+        &CStatement::Assign {
+            name: "x".to_string(),
+            expression: c_int32_literal(1),
+        },
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("direct assignment should return a checked refusal");
+    assert_loan_write_rejected(&direct[0].outcome);
+
+    let reused = execute_c_statement_paths(
+        &state,
+        &CStatement::Declare {
+            name: "x".to_string(),
+            c_type: CType::Int32,
+            volatile: false,
+            pointee_volatile: false,
+            constant: false,
+            pointee_constant: false,
+        },
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("name reuse should return a checked refusal");
+    assert_loan_write_rejected(&reused[0].outcome);
+
+    let alias_state = state.with_local("p", CValue::typed_pointer(pointer, CType::Int32Pointer));
+    let indirect = execute_c_statement_paths(
+        &alias_state,
+        &c_store(c_variable("p"), c_int32_literal(2)),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("alias store should return a checked refusal");
+    assert_loan_write_rejected(&indirect[0].outcome);
+}
+
+#[test]
+fn active_stable_loan_allows_a_disjoint_local_store() {
+    let declared = execute_c_statement_paths(
+        &CState::new(),
+        &CStatement::Declare {
+            name: "a".to_string(),
+            c_type: CType::Int32Array(2),
+            volatile: false,
+            pointee_volatile: false,
+            constant: false,
+            pointee_constant: false,
+        },
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("array declaration should execute");
+    let state = normal_state(&declared);
+    let base = state.locals().slot("a").cloned().expect("array pointer");
+    let loan = active_memory_loan(CMemoryRange::new(
+        base.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    ));
+    let state = state.with_loan_ledger(Some(loan)).with_local(
+        "p",
+        CValue::typed_pointer(base.offset_by_bytes(4), CType::Int32Pointer),
+    );
+    let paths = execute_c_statement_paths(
+        &state,
+        &c_store(c_variable("p"), c_int32_literal(3)),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("disjoint store should execute");
+    assert!(
+        matches!(&paths[0].outcome, CStatementOutcome::Normal(_)),
+        "disjoint store outcome: {:?}",
+        paths[0].outcome
+    );
+}
 
 #[test]
 fn volatile_parameter_accesses_emit_ordered_facts() {

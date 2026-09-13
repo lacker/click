@@ -1,4 +1,31 @@
 use super::*;
+use crate::kernel::loans::LoanLedger;
+
+fn active_heap_memory_loan(range: CMemoryRange) -> LoanLedger {
+    let fact = CResourceFact::own_memory(range);
+    let support = ResourceContext::new()
+        .unchecked_with_fact(fact.clone())
+        .unique_owned_occurrence_for_fact(&fact)
+        .expect("memory backing")
+        .0;
+    let ledger = LoanLedger::new();
+    let owner = ledger.fresh_participant().expect("owner identity");
+    let reader = ledger.fresh_participant().expect("reader identity");
+    let opening = ledger
+        .lend(owner, reader, support, fact)
+        .expect("memory loan");
+    ledger
+        .apply(&opening.transition)
+        .expect("memory loan apply")
+}
+
+fn assert_heap_loan_write_rejected(outcome: &CStatementOutcome) {
+    assert!(matches!(
+        outcome,
+        CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(message))
+            if message.contains("active stable loan")
+    ));
+}
 
 fn heap_allocation_paths() -> Vec<CStatementExecutionPath> {
     let state = CState::new().with_local("p", CValue::pointer(Pointer::null()));
@@ -912,6 +939,43 @@ fn heap_storage_becomes_readable_only_after_a_store() {
             ..
         }] if value == &int32(37)
     ));
+}
+
+#[test]
+fn active_stable_loan_rejects_overlapping_heap_free_and_realloc() {
+    let state = successful_heap_allocation_state();
+    let Some(CValue::Pointer(pointer)) = state.locals().get("p") else {
+        panic!("allocation should assign a pointer");
+    };
+    // The second int32 cell is a strict subrange of the 16-byte allocation.
+    let loan = active_heap_memory_loan(CMemoryRange::new(
+        pointer.pointer().clone(),
+        Bitvector32Term::Constant(1),
+        Bitvector32Term::Constant(2),
+    ));
+    let state = state.with_loan_ledger(Some(loan));
+    let freed = execute_c_statement_paths(
+        &state,
+        &c_heap_free(c_variable("p")),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("free should return a checked refusal");
+    assert_heap_loan_write_rejected(&freed[0].outcome);
+
+    let state = state.with_local("q", CValue::pointer(Pointer::null()));
+    let realloc = execute_c_statement_paths(
+        &state,
+        &c_call_assign("q", "realloc", vec![c_variable("p"), c_int32_literal(8)]),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("realloc should return a checked refusal");
+    assert_heap_loan_write_rejected(&realloc[0].outcome);
 }
 
 #[test]

@@ -123,7 +123,9 @@ fn remove_occurrence_index_entry<K: Ord + Clone>(
     }
 }
 
-fn memory_interval_nodes(range: &CMemoryRange) -> Option<Vec<ResourceMemoryIntervalNode>> {
+pub(crate) fn memory_interval_nodes(
+    range: &CMemoryRange,
+) -> Option<Vec<ResourceMemoryIntervalNode>> {
     let (start, end) = concrete_memory_range_bounds(range)?;
     let start = start.checked_sub(i64::from(i32::MIN))?;
     let end = end.checked_sub(i64::from(i32::MIN))?;
@@ -160,7 +162,9 @@ fn memory_block_may_alias(block: &PointerBlock) -> bool {
     )
 }
 
-fn memory_interval_ancestors(node: &ResourceMemoryIntervalNode) -> Vec<ResourceMemoryIntervalNode> {
+pub(crate) fn memory_interval_ancestors(
+    node: &ResourceMemoryIntervalNode,
+) -> Vec<ResourceMemoryIntervalNode> {
     (node.level..=32)
         .map(|level| ResourceMemoryIntervalNode {
             block: node.block.clone(),
