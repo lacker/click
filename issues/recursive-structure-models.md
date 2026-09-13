@@ -1052,6 +1052,17 @@ appears to need one reports the need instead of adding it.
   goal is materialized against the lexical bindings but the body's
   premises are lowered without them. A missed uniform-scoping site; the
   other `using` positions inside a `have` body need the same check.
+  CLOSED by 99a07d5c: the smart planner takes the enclosing bindings and
+  resolves the goal and every `simp() using` / `normalize() using` premise
+  through them at lowering time; fixture now positive, six sites audit
+  clean. Found there, pre-existing, verify passes while audit fails:
+  (i) gap 69, in a proof `match` arm, `consumes t; produces u; ensures
+  u.model == old(t.model)` with `unfold(t)`, a step, `let u = fold(..)`
+  and a closing `simp()` verifies, but the expansion of that `simp()`
+  fails with "have body tactic 1: could not lower `rewrite` equality: the
+  kernel lowering hit Paths"; the same file with `owns t` and `let t =
+  fold(..)` audits clean. Reproduction: the gap 68 fixture's `peek` in
+  the consumes/produces form. Blocks feature work until fixed.
   Beyond the gaps, C3 needs a contract restatement the plan did not
   record: C2c's frame-level case theorems are stated over `ctx_rb(ctx,
   bh, focus_color)` / `ctx_almost_rb_insert(ctx, bh)`, while the loop
