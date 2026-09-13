@@ -151,8 +151,14 @@ this loop carries `almost_rb_insert(plug(c.model, t.model)) == 1` and
 frame-level form the pure library consumes, with the black height as a
 loop-carried `Nat`, before the recolour `continue`s can close and before the
 post-loop `simp()` can reach `is_rb_root(plug(ctx.model, sub.model)) == 1`.
-The `Color::Red` arm of each frame is where that work starts: it proves the
-parent is red and stops there, which is what the frontier report names.
+The `Color::Red` arm of each frame is where that work starts. It takes the
+same two steps in the other direction — the frame's colour bit is `0`, so the
+parent's packed word is exactly `address(cgp)` — which is what makes the
+inlined `rb_red_parent(parent)` cast sound and gives `gparent == cgp` without
+an untagging mask. The frontier is then at `tmp = gparent->rb_right`, whose
+cells belong to the frame above, `cu`: reading them needs `Context::Top`
+refuted for `cu`, which follows from `ctx_root_black(c.model) == 1` and a red
+parent but has no pure theorem here yet.
 
 The contract itself is D3 and D4 on the node-keyed model. `__rb_insert` returns
 `void` and reassigns `node`, so the cursor at the exit has no C name and the
@@ -1144,6 +1150,24 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                                     unfold(color_bit(Color::Red));
                                                     simp();
                                                 }
+                                                have (parent->__rb_parent_color & 1) == 0 by {
+                                                    rewrite((parent->__rb_parent_color & 1)
+                                                        == color_bit(ccolor));
+                                                    rewrite(ccolor == Color::Red);
+                                                    unfold(color_bit(Color::Red));
+                                                    simp();
+                                                }
+                                                have parent->__rb_parent_color
+                                                    == address(cgp) + 0 by {
+                                                    rewrite(parent->__rb_parent_color
+                                                        == address(cgp)
+                                                            + (parent->__rb_parent_color & 1));
+                                                    rewrite((parent->__rb_parent_color & 1) == 0);
+                                                    normalize();
+                                                }
+                                                step();
+                                                step();
+                                                step();
                                             },
                                         }
                                     },
@@ -1195,6 +1219,24 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                                     unfold(color_bit(Color::Red));
                                                     simp();
                                                 }
+                                                have (parent->__rb_parent_color & 1) == 0 by {
+                                                    rewrite((parent->__rb_parent_color & 1)
+                                                        == color_bit(ccolor));
+                                                    rewrite(ccolor == Color::Red);
+                                                    unfold(color_bit(Color::Red));
+                                                    simp();
+                                                }
+                                                have parent->__rb_parent_color
+                                                    == address(cgp) + 0 by {
+                                                    rewrite(parent->__rb_parent_color
+                                                        == address(cgp)
+                                                            + (parent->__rb_parent_color & 1));
+                                                    rewrite((parent->__rb_parent_color & 1) == 0);
+                                                    normalize();
+                                                }
+                                                step();
+                                                step();
+                                                step();
                                             },
                                         }
                                     },
@@ -1231,5 +1273,5 @@ void rb_insert_color(struct rb_node* node, struct rb_root* root) {
 ```
 
 ```expect
-fail: still ahead on this path: the body's end, 3 `break`s, and 2 `continue`s. Already complete: 2 at a `break`
+fail: still ahead on this path: the body's end, 2 `break`s, and 2 `continue`s. Already complete: 2 at a `break`
 ```
