@@ -3866,6 +3866,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
         ),
         resources: substitute_bitvector_variable_in_resource_context(&state.resources, from, to),
         loan_ledger: state.loan_ledger.clone(),
+        loan_participant: state.loan_participant,
         next_local_frame: state.next_local_frame,
         next_local_lifetime: state.next_local_lifetime,
         counted_populations: std::sync::Arc::new(
@@ -6195,6 +6196,7 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
         ),
         resources: substitute_pointer_variable_in_resource_context(&state.resources, from, to),
         loan_ledger: state.loan_ledger.clone(),
+        loan_participant: state.loan_participant,
         next_local_frame: state.next_local_frame,
         next_local_lifetime: state.next_local_lifetime,
         counted_populations: std::sync::Arc::new(

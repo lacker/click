@@ -1,3 +1,4 @@
+use super::loans::{LoanLedger, StableViewTransferPlan, plan_stable_view_transfer};
 use super::prelude::*;
 
 #[cfg(test)]
@@ -224,6 +225,93 @@ struct CFunctionResourceTransfer {
     /// projection used by modular call havoc and its effect fact.
     memory_effects: Vec<CMemoryRange>,
     post_outputs: Option<ResourceContext>,
+    /// Candidate stable-view transition, when this call was prepared through
+    /// the opt-in planner. The plan owns the checked successor ledger and is
+    /// consumed only after postconditions have been evaluated.
+    stable_view_plan: Option<StableViewTransferPlan>,
+}
+
+fn callee_state_with_resource_transfer(
+    callee_state: CState,
+    transfer: &CFunctionResourceTransfer,
+) -> CState {
+    let callee_state = callee_state.with_resource_context(transfer.callee_resources.clone());
+    let Some(plan) = &transfer.stable_view_plan else {
+        return callee_state;
+    };
+    callee_state
+        .with_loan_ledger(Some(plan.ledger.clone()))
+        .with_loan_participant(Some(plan.callee_participant()))
+}
+
+fn recover_candidate_stable_view_resources(
+    caller_state: &CState,
+    callee_state: &CState,
+    transfer: &CFunctionResourceTransfer,
+    return_resources: ResourceContext,
+    assumptions: &PureFactContext,
+) -> Result<
+    (
+        ResourceContext,
+        Option<LoanLedger>,
+        Option<super::loans::LoanParticipantId>,
+    ),
+    CRuntimeError,
+> {
+    let Some(plan) = &transfer.stable_view_plan else {
+        return Ok((
+            return_resources,
+            caller_state.loan_ledger().cloned(),
+            caller_state.loan_participant(),
+        ));
+    };
+    let Some(actual_ledger) = callee_state.loan_ledger() else {
+        return Err(CRuntimeError::FunctionContract(
+            "stable-view callee returned without its authoritative ledger".to_string(),
+        ));
+    };
+    if actual_ledger != &plan.ledger {
+        return Err(CRuntimeError::FunctionContract(
+            "stable-view callee changed its authoritative ledger".to_string(),
+        ));
+    }
+    if !plan.has_stable_views() {
+        return Ok((
+            return_resources,
+            caller_state.loan_ledger().cloned(),
+            caller_state.loan_participant(),
+        ));
+    }
+    let (recovered_ledger, mut recovered_resources) = plan
+        .clone()
+        .recover_stable_views(assumptions)
+        .map_err(|error| {
+            CRuntimeError::FunctionContract(format!("stable-view call recovery refused: {error:?}"))
+        })?;
+    let mut residual = return_resources;
+    for stable_view in plan.stable_views() {
+        if residual.contains_exact_representation(&stable_view.requirement.fact) {
+            residual = residual
+                .without_fact(&stable_view.requirement.fact, assumptions)
+                .ok_or_else(|| {
+                    CRuntimeError::FunctionContract(
+                        "stable-view return retained an unrecoverable view".to_string(),
+                    )
+                })?;
+        }
+    }
+    for fact in residual.facts() {
+        if !recovered_resources.satisfies_fact(fact, assumptions) {
+            recovered_resources = recovered_resources
+                .try_compose_with_fact(fact.clone(), assumptions)
+                .map_err(resource_context_runtime_error)?;
+        }
+    }
+    Ok((
+        recovered_resources,
+        Some(recovered_ledger),
+        Some(plan.caller_participant()),
+    ))
 }
 
 /// One normalized resource clause after its address/argument loads have been
@@ -469,6 +557,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                 &body_assumptions,
                 budget,
                 true,
+                environment.candidate_stable_view_semantics,
             )? {
                 Ok(resource_transfer) => resource_transfer,
                 Err(error) => {
@@ -481,7 +570,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                 }
             };
             (
-                callee_state.with_resource_context(resource_transfer.callee_resources.clone()),
+                callee_state_with_resource_transfer(callee_state, &resource_transfer),
                 Some(resource_transfer),
             )
         } else {
@@ -664,6 +753,7 @@ pub(super) fn execute_c_function_verification_paths(
                 &body_assumptions,
                 budget,
                 true,
+                environment.candidate_stable_view_semantics,
             )? {
                 Ok(resource_transfer) => resource_transfer,
                 Err(error) => {
@@ -676,7 +766,7 @@ pub(super) fn execute_c_function_verification_paths(
                 }
             };
             (
-                callee_state.with_resource_context(resource_transfer.callee_resources.clone()),
+                callee_state_with_resource_transfer(callee_state, &resource_transfer),
                 Some(resource_transfer),
             )
         } else {
@@ -986,6 +1076,7 @@ pub(super) fn execute_c_function_call_paths(
             &body_assumptions,
             budget,
             false,
+            environment.candidate_stable_view_semantics,
         )? {
             Ok(resource_transfer) => resource_transfer,
             Err(error) => {
@@ -997,8 +1088,7 @@ pub(super) fn execute_c_function_call_paths(
                 continue;
             }
         };
-        let callee_state =
-            callee_state.with_resource_context(resource_transfer.callee_resources.clone());
+        let callee_state = callee_state_with_resource_transfer(callee_state, &resource_transfer);
         for body_path in execute_c_statement_paths(
             &callee_state,
             function.body(),
@@ -1689,9 +1779,30 @@ fn execute_verified_function_applications(
             facts.extend(additional_facts.into_iter().skip(entry_fact_count));
         }
 
+        let (return_resources, return_ledger, return_participant) =
+            match recover_candidate_stable_view_resources(
+                caller_state,
+                &post_state,
+                &transfer,
+                return_resources,
+                &effective_assumptions,
+            ) {
+                Ok(recovered) => recovered,
+                Err(error) => {
+                    paths.push(CFunctionPath {
+                        outcome: CFunctionOutcome::RuntimeError(error),
+                        facts,
+                        obligations,
+                    });
+                    continue;
+                }
+            };
+
         let mut return_state = caller_state.clone();
         return_state.set_memory(post_state.memory.clone());
         return_state.resources = return_resources;
+        return_state.loan_ledger = return_ledger;
+        return_state.loan_participant = return_participant;
         return_state.counted_populations = post_state.counted_populations;
         return_state.next_local_frame = post_state.next_local_frame;
         return_state.next_local_lifetime = post_state.next_local_lifetime;
@@ -1949,7 +2060,7 @@ fn prepare_verified_function_call<'a>(
         "verified function rule application",
         "verified call resource transfer preparation",
         || {
-            prepare_contract_resource_transfer(
+            prepare_contract_resource_transfer_with_candidate(
                 caller_state,
                 &entry_state,
                 application.name,
@@ -1957,6 +2068,7 @@ fn prepare_verified_function_call<'a>(
                 &path_assumptions,
                 budget,
                 false,
+                environment.candidate_stable_view_semantics,
             )
         },
     )? {
@@ -1969,7 +2081,7 @@ fn prepare_verified_function_call<'a>(
             }));
         }
     };
-    entry_state.resources = transfer.callee_resources.clone();
+    entry_state = callee_state_with_resource_transfer(entry_state, &transfer);
     let entry_contract_state =
         with_contract_interface_argument_views(&entry_state, contract_interface, &argument_values);
 
@@ -2236,6 +2348,20 @@ fn prepare_verified_function_call<'a>(
         }
     };
     let mutable_ranges = projection.ranges;
+    if transfer
+        .stable_view_plan
+        .as_ref()
+        .is_some_and(StableViewTransferPlan::has_stable_views)
+        && !mutable_ranges.is_empty()
+    {
+        return Ok(Err(CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                "stable-view call mutable footprint overlaps transferred authority".to_string(),
+            )),
+            facts,
+            obligations,
+        }));
+    }
     for fact in projection.evidence_facts {
         if !facts.contains(&fact) {
             facts.push(fact);
@@ -9197,8 +9323,9 @@ fn prepare_function_resource_transfer(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     preserve_explicit_representation: bool,
+    candidate_stable_view_semantics: bool,
 ) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
-    prepare_contract_resource_transfer(
+    prepare_contract_resource_transfer_with_candidate(
         caller_state,
         callee_state,
         function.name(),
@@ -9206,10 +9333,32 @@ fn prepare_function_resource_transfer(
         assumptions,
         budget,
         preserve_explicit_representation,
+        candidate_stable_view_semantics,
     )
 }
 
 fn prepare_contract_resource_transfer(
+    caller_state: &CState,
+    callee_state: &CState,
+    interface_name: &str,
+    interface: &CFunctionContractInterface,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    preserve_explicit_representation: bool,
+) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
+    prepare_contract_resource_transfer_with_candidate(
+        caller_state,
+        callee_state,
+        interface_name,
+        interface,
+        assumptions,
+        budget,
+        preserve_explicit_representation,
+        false,
+    )
+}
+
+fn prepare_contract_resource_transfer_with_candidate(
     caller_state: &CState,
     callee_state: &CState,
     _interface_name: &str,
@@ -9217,6 +9366,7 @@ fn prepare_contract_resource_transfer(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     preserve_explicit_representation: bool,
+    candidate_stable_view_semantics: bool,
 ) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
     // In particular, preparing several pure callback interfaces must not
     // repeatedly enumerate the caller's unrelated resource frame.
@@ -9228,6 +9378,7 @@ fn prepare_contract_resource_transfer(
             caller_resources_after_requirements: caller_state.resources().clone(),
             memory_effects: Vec::new(),
             post_outputs: None,
+            stable_view_plan: None,
         }));
     }
     let preserve_explicit_representation = preserve_explicit_representation
@@ -9262,6 +9413,45 @@ fn prepare_contract_resource_transfer(
             "resource requirement has an inconsistent transfer role".to_string(),
         )));
     }
+    let stable_view_plan = if candidate_stable_view_semantics {
+        let (ledger, caller) = match (
+            caller_state.loan_ledger().cloned(),
+            caller_state.loan_participant(),
+        ) {
+            (Some(ledger), Some(caller)) => (ledger, caller),
+            _ => {
+                let ledger = LoanLedger::new();
+                let Ok((ledger, caller)) = ledger.fresh_participant() else {
+                    return Ok(Err(CRuntimeError::FunctionContract(
+                        "could not allocate stable-view caller participant".to_string(),
+                    )));
+                };
+                (ledger, caller)
+            }
+        };
+        let Ok((ledger, callee)) = ledger.fresh_participant() else {
+            return Ok(Err(CRuntimeError::FunctionContract(
+                "could not allocate stable-view callee participant".to_string(),
+            )));
+        };
+        match plan_stable_view_transfer(
+            caller_state.resources(),
+            &checked_required_resources,
+            assumptions,
+            &ledger,
+            caller,
+            callee,
+        ) {
+            Ok(plan) => Some(plan),
+            Err(error) => {
+                return Ok(Err(CRuntimeError::FunctionContract(format!(
+                    "stable-view call transition refused: {error:?}"
+                ))));
+            }
+        }
+    } else {
+        None
+    };
     let Some(canonical_resources) = expand_all_composite_resource_facts(
         &required_resources,
         interface.composite_resource_definitions(),
@@ -9303,7 +9493,9 @@ fn prepare_contract_resource_transfer(
     let has_explicit_representation = caller_state.resources().facts().len()
         != required_resources.facts().len()
         || caller_composite_heads != required_composite_heads;
-    let mut callee_resources = if preserve_explicit_representation && has_explicit_representation {
+    let mut callee_resources = if let Some(plan) = &stable_view_plan {
+        plan.callee_resources.clone()
+    } else if preserve_explicit_representation && has_explicit_representation {
         // Proof execution may have opened exactly the recursive branches needed
         // by the body with `observe` or `unfold`. Independent certification
         // must execute from that same definitionally equivalent form.
@@ -9357,8 +9549,14 @@ fn prepare_contract_resource_transfer(
     let mut required_resource_list = required_resources.facts().to_vec();
     required_resource_list.sort_by_key(resource_fact_transfer_priority);
 
-    let mut return_resources = caller_state.resources().clone();
-    for resource in &required_resource_list {
+    let mut return_resources = stable_view_plan
+        .as_ref()
+        .map(|plan| plan.caller_resources_after_requirements.clone())
+        .unwrap_or_else(|| caller_state.resources().clone());
+    for resource in required_resource_list
+        .iter()
+        .filter(|_| stable_view_plan.is_none())
+    {
         // A borrowed view of the caller's own stack object needs no resource
         // from the caller, but it still has to name storage that object has.
         // A range running past the block would otherwise let the callee read
@@ -9443,6 +9641,7 @@ fn prepare_contract_resource_transfer(
         caller_resources_after_requirements: return_resources,
         memory_effects: Vec::new(),
         post_outputs: None,
+        stable_view_plan,
     }))
 }
 
@@ -10451,9 +10650,10 @@ pub(super) fn prepare_function_contract_entry_state_with_values(
         Ok(transfer) => transfer,
         Err(error) => return Ok(Err(error)),
     };
-    Ok(Ok(
-        callee_state.with_resource_context(transfer.callee_resources)
-    ))
+    Ok(Ok(callee_state_with_resource_transfer(
+        callee_state,
+        &transfer,
+    )))
 }
 
 /// Binds a composite definition's existential witnesses as locals of the
@@ -15547,9 +15747,23 @@ fn function_outcome_from_body_with_resource_transfer(
         Ok(None) => {}
     }
 
+    let (return_resources, return_ledger, return_participant) =
+        match recover_candidate_stable_view_resources(
+            caller_state,
+            &state,
+            transfer,
+            return_resources,
+            assumptions,
+        ) {
+            Ok(recovered) => recovered,
+            Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
+        };
+
     let mut return_state = caller_state.clone();
     return_state.set_memory(state.memory.clone());
     return_state.resources = return_resources;
+    return_state.loan_ledger = return_ledger;
+    return_state.loan_participant = return_participant;
     return_state.counted_populations = state.counted_populations;
     return_state.next_local_frame = state.next_local_frame;
     return_state.next_local_lifetime = state.next_local_lifetime;
@@ -15617,6 +15831,7 @@ pub(super) fn contract_exit_outcome(
         assumptions,
         budget,
         true,
+        false,
     )? {
         Ok(transfer) => transfer,
         Err(error) => return Ok(Err(error)),
@@ -15688,6 +15903,7 @@ pub(super) fn apply_verified_contract_resource_transition(
         assumptions,
         budget,
         true,
+        false,
     )? {
         Ok(transfer) => transfer,
         Err(error) => return Ok(Err(error)),
@@ -16056,6 +16272,227 @@ mod integer_parameter_read_tests {
         assert!(!spec_proposition_reads_current_parameter(
             &comparison,
             "other"
+        ));
+    }
+}
+
+#[cfg(test)]
+mod candidate_stable_view_call_tests {
+    use super::*;
+
+    fn pointer() -> Pointer {
+        Pointer {
+            block: PointerBlock::Concrete("local:candidate_view:data".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    fn caller(pointer: &Pointer) -> CState {
+        let range = CMemoryRange::new(
+            pointer.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        CState::new()
+            .with_memory(CMemory::new().with_block(pointer.block.clone(), 4))
+            .with_resource_context(
+                ResourceContext::new()
+                    .unchecked_with_fact(CResourceFact::own(CResource::Memory(range))),
+            )
+    }
+
+    fn reader(name: &str, duplicate_view: bool) -> CFunction {
+        let segment = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        let mut requires = vec![CResourceSpec::viewed_memory(segment.clone())];
+        if duplicate_view {
+            requires.push(CResourceSpec::viewed_memory(segment));
+        }
+        c_function(
+            CType::Void,
+            name,
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(c_void_value()),
+        )
+        .with_resource_summary(requires, Vec::new())
+    }
+
+    fn early_reader(name: &str) -> CFunction {
+        let segment = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        c_function(
+            CType::Void,
+            name,
+            vec![c_parameter("p", CType::Int32Pointer)],
+            CStatement::If {
+                condition: c_int32_literal(1),
+                then_branch: Box::new(c_return(c_void_value())),
+                else_branch: Box::new(CStatement::Skip),
+            },
+        )
+        .with_resource_summary(vec![CResourceSpec::viewed_memory(segment)], Vec::new())
+    }
+
+    fn environment(function: &CFunction) -> CExecutionEnvironment {
+        CExecutionEnvironment::new()
+            .with_candidate_stable_view_semantics()
+            .with_verified_function_rule(CVerifiedFunctionRule {
+                function: function.clone(),
+            })
+    }
+
+    #[test]
+    fn candidate_reader_escrows_owner_until_return() {
+        let pointer = pointer();
+        let function = reader("candidate_reader", false);
+        let caller = caller(&pointer);
+        let argument_values = vec![CValue::pointer(pointer.clone())];
+        let callee = bind_c_function_arguments(&caller, &function, &argument_values)
+            .expect("reader argument should bind");
+        let transfer = prepare_function_resource_transfer(
+            &caller,
+            &callee,
+            &function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("candidate transfer should run")
+        .expect("candidate transfer should be accepted");
+        let plan = transfer
+            .stable_view_plan
+            .as_ref()
+            .expect("candidate transfer records a loan plan");
+        assert_eq!(plan.stable_views().len(), 1);
+        assert!(
+            !transfer.caller_resources_after_requirements.satisfies_fact(
+                &CResourceFact::own_memory(CMemoryRange::new(
+                    pointer,
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(1),
+                )),
+                &PureFactContext::new()
+            )
+        );
+        assert!(transfer.callee_resources.satisfies_fact(
+            &CResourceFact::view_memory(CMemoryRange::new(
+                Pointer {
+                    block: PointerBlock::Concrete("local:candidate_view:data".to_string()),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+            &PureFactContext::new(),
+        ));
+    }
+
+    #[test]
+    fn candidate_reader_recovers_owner_for_following_write() {
+        let pointer = pointer();
+        let function = reader("candidate_reader_return", false);
+        let paths = execute_c_function_call_paths(
+            &caller(&pointer),
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer.clone()))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate call should execute");
+        let CFunctionOutcome::Return { state, .. } = &paths[0].outcome else {
+            panic!("candidate reader should return: {:?}", paths[0].outcome);
+        };
+        assert!(state.resources().satisfies_fact(
+            &CResourceFact::own_memory(CMemoryRange::new(
+                pointer,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+            &PureFactContext::new(),
+        ));
+    }
+
+    #[test]
+    fn candidate_joint_planner_reuses_one_escrow_for_two_aliases() {
+        let pointer = pointer();
+        let function = reader("candidate_aliases", true);
+        let caller = caller(&pointer);
+        let callee =
+            bind_c_function_arguments(&caller, &function, &[CValue::pointer(pointer.clone())])
+                .expect("reader argument should bind");
+        let transfer = prepare_function_resource_transfer(
+            &caller,
+            &callee,
+            &function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("candidate transfer should run")
+        .expect("candidate transfer should be accepted");
+        let plan = transfer
+            .stable_view_plan
+            .as_ref()
+            .expect("candidate transfer records a loan plan");
+        assert_eq!(plan.stable_views().len(), 2);
+        assert_eq!(
+            plan.stable_views()[0].loan,
+            plan.stable_views()[1].loan,
+            "aliases share one escrow"
+        );
+    }
+
+    #[test]
+    fn candidate_early_return_closes_call_scope() {
+        let pointer = pointer();
+        let function = early_reader("candidate_early_reader");
+        let paths = execute_c_function_call_paths(
+            &caller(&pointer),
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer.clone()))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate early return should execute");
+        let CFunctionOutcome::Return { state, .. } = &paths[0].outcome else {
+            panic!(
+                "candidate early reader should return: {:?}",
+                paths[0].outcome
+            );
+        };
+        assert!(state.resources().satisfies_fact(
+            &CResourceFact::own_memory(CMemoryRange::new(
+                pointer,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+            &PureFactContext::new(),
+        ));
+    }
+
+    #[test]
+    fn candidate_wrong_scope_close_is_refused() {
+        let ledger = LoanLedger::new();
+        let (ledger, owner) = ledger.fresh_participant().expect("owner participant");
+        let (ledger, reader) = ledger.fresh_participant().expect("reader participant");
+        let opening = ledger
+            .lend(
+                owner,
+                reader,
+                CResourceFact::own(CResource::Token {
+                    name: "candidate_scope".to_string(),
+                    arguments: Vec::new().into(),
+                }),
+            )
+            .expect("loan opening");
+        let ledger = ledger.apply(&opening.transition).expect("loan apply");
+        assert!(matches!(
+            ledger.end(opening.scope, reader),
+            Err(super::super::loans::LoanRefusal::WrongHolder)
         ));
     }
 }

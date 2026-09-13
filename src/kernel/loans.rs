@@ -559,6 +559,22 @@ pub(crate) fn plan_stable_view_transfer(
 }
 
 impl StableViewTransferPlan {
+    pub(crate) fn caller_participant(&self) -> LoanParticipantId {
+        self.caller
+    }
+
+    pub(crate) fn callee_participant(&self) -> LoanParticipantId {
+        self.callee
+    }
+
+    pub(crate) fn has_stable_views(&self) -> bool {
+        !self.stable_views.is_empty()
+    }
+
+    pub(crate) fn stable_views(&self) -> &[PlannedStableView] {
+        &self.stable_views
+    }
+
     /// Closes every unmodified root share and returns the exact escrowed
     /// ownership to the residual caller context.
     pub(crate) fn recover_stable_views(

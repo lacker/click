@@ -1830,6 +1830,14 @@ impl CFunctionContract {
 }
 
 impl CExecutionEnvironment {
+    /// Enables the internal candidate stable-view transition for focused
+    /// kernel tests. The default environment leaves this disabled.
+    #[allow(dead_code)]
+    pub(crate) fn with_candidate_stable_view_semantics(mut self) -> Self {
+        self.candidate_stable_view_semantics = true;
+        self
+    }
+
     /// Selects a call rule for one proof-local statement transition. All
     /// project tables and their variable index remain shared.
     pub(crate) fn with_selected_call_contract(mut self, name: &str) -> Self {

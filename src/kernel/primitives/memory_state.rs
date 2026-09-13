@@ -2588,6 +2588,7 @@ impl CState {
                 (Some(left), Some(right)) => left.shares_storage_with(right),
                 _ => false,
             }
+            && self.loan_participant == other.loan_participant
             && std::sync::Arc::ptr_eq(&self.counted_populations, &other.counted_populations)
     }
 
@@ -2633,6 +2634,18 @@ impl CState {
         ledger: Option<crate::kernel::loans::LoanLedger>,
     ) -> Self {
         self.loan_ledger = ledger;
+        self
+    }
+
+    pub(crate) fn loan_participant(&self) -> Option<crate::kernel::loans::LoanParticipantId> {
+        self.loan_participant
+    }
+
+    pub(crate) fn with_loan_participant(
+        mut self,
+        participant: Option<crate::kernel::loans::LoanParticipantId>,
+    ) -> Self {
+        self.loan_participant = participant;
         self
     }
 
