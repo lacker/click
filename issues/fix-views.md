@@ -76,9 +76,8 @@ baseline under remaining work.
 
 - The codex V18 experiment, which the borrowed-input root (step 1) was
   re-derived from, is parked as one unverified commit on branch
-  `claude/fix-views-v18-wip`. What remains unlanded from it is the inline
-  helper call path, the intrinsic local and read-only views, the returned-view
-  provenance lookup, and the loop and branch changes. Take ideas and tests
+  `claude/fix-views-v18-wip`. What remains unlanded from it is the
+  returned-view provenance lookup and the loop and branch changes. Take ideas and tests
   from it; do not integrate it as is.
 
 **Borrowed-input root (step 1, landed 2026-09-13).** Under `StableLoans`, a
@@ -103,8 +102,8 @@ query is refused outright while any concrete loan is indexed.
 
 ## Remaining work
 
-Seven steps, numbered stably; step 1 landed on 2026-09-13 and steps 2-7
-remain. Steps 1-5 recover and finish the V18 implementation from the parked
+Seven steps, numbered stably; steps 1 and 2 landed on 2026-09-13 and steps
+3-7 remain. Steps 1-5 recover and finish the V18 implementation from the parked
 experiment; step 6 is the V18 adversarial review; step 7 is the V19 cutover. Each step follows the working agreements
 below: an isolated worktree from master, focused positive and negative tests,
 the unfiltered gate, and a handoff. No C source edits, and no change to
@@ -139,6 +138,14 @@ a composite or instance input view whose one-level frontier the root refuses
 separate"; 4 mdtests and 3 examples at "composite body facts are unsupported"
 (step 5); 8 negatives now fail with a different message and the same 2
 negatives pass (step 3).
+
+After step 2 (2026-09-13): 45 of 1,509 mdtests and 15 of 26 examples fail.
+The inline-call class and the local-array and read-only table views are
+gone. What is left is composite and instance input views at entry (6
+mdtests, 7 examples), composite body facts (4 mdtests, 3 examples),
+unproved range separation (4 mdtests, 1 example), returned-view provenance
+and stale evidence on named-contract and callback paths (about 6), expected
+negative diagnostics, and a few certification mismatches.
 
 Reclassify from a fresh run before each step rather than from these counts.
 
@@ -232,16 +239,19 @@ certification, and return paths, and the `stable_mode_root_view_*`,
 `symbolic_*`, and `borrowed_contract_input_*` regressions. The five
 `stable_view_*` fixtures pass under `StableLoans`.
 
-### 2. Land inline helper calls and intrinsic views
+### 2. Land inline helper calls and intrinsic views (done 2026-09-13)
 
-Two separate commits, each with its own tests. Inline helper calls, refused
-outright today under `StableLoans`, must use their caller's checked resources
-rather than a second entry environment. Bounded views of the activation's own
-local arrays use the existing activation-local bounds rule, and exact
-const/static memory views are intrinsic read-only authority; neither is a
-caller-supplied borrow, and the root installer already skips them, so the
-call planner must stop demanding loan backing for them. Revert rather than
-carry anything whose invariant cannot be stated.
+Landed as "Run inline helpers and intrinsic views under stable semantics".
+An inline helper body is call-site code: it runs on the caller's resources
+and ledger, its stores are checked against the caller's active loans, its
+own view clauses lend nothing, and the calls it makes plan from and recover
+to the caller's ledger, whose evidence the path keeps. A view of the
+activation's own local array, when the caller holds neither an owner nor a
+view fact for it, and a view of read-only storage are intrinsic: the call
+composes the in-bounds view for the callee without touching the ledger.
+Regressions: `candidate_inline_reader_uses_the_callers_checked_resources`,
+`candidate_local_array_view_*`, and the `stable_mode_inline_helper_*`
+surface tests.
 
 ### 3. Fix provenance, loop/branch authority, certification, and diagnostics
 

@@ -670,17 +670,6 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
     // caller resources.
     let prepare_contract_resources =
         prepare_contract_resources || environment.candidate_stable_view_semantics;
-    if environment.candidate_stable_view_semantics && function.has_inline_body() {
-        return Ok(vec![CFunctionPath {
-            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
-                "inline calls are unsupported with candidate stable-view semantics".to_string(),
-            )),
-            facts: Vec::new(),
-            obligations: Vec::new(),
-
-            loan_evidence: empty_checked_loan_evidence_sequence(),
-        }]);
-    }
     budget.consume_function_call()?;
     if arguments.len() != function.parameters().len() {
         return Ok(vec![CFunctionPath {
@@ -1282,22 +1271,13 @@ pub(super) fn execute_c_function_call_paths(
             &argument_obligations,
         );
         if function.has_inline_body() {
-            if environment.candidate_stable_view_semantics {
-                paths.push(CFunctionPath {
-                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
-                        "inline calls are unsupported with candidate stable-view semantics"
-                            .to_string(),
-                    )),
-                    facts: arguments_path.facts,
-                    obligations: argument_obligations,
-
-                    loan_evidence: empty_checked_loan_evidence_sequence(),
-                });
-                continue;
-            }
             // An inline body is call-site code: it runs on the caller's own
             // resources and leaves the caller whatever it did not consume.
-            // There is no contract boundary to transfer across.
+            // There is no contract boundary to transfer across. Under stable
+            // views that includes the caller's loan ledger: the body's stores
+            // are checked against the caller's active loans, its own view
+            // clauses lend nothing, and any call it makes plans from and
+            // recovers to the caller's ledger, whose evidence the path keeps.
             let callee_state = callee_state.with_resource_context(caller_state.resources().clone());
             for body_path in execute_c_statement_paths(
                 &callee_state,
@@ -1331,7 +1311,7 @@ pub(super) fn execute_c_function_call_paths(
                     facts,
                     obligations,
 
-                    loan_evidence: empty_checked_loan_evidence_sequence(),
+                    loan_evidence: body_path.loan_evidence,
                 });
             }
             continue;
@@ -9971,6 +9951,48 @@ fn prepare_contract_resource_transfer_with_candidate(
             "resource requirement has an inconsistent transfer role".to_string(),
         )));
     }
+    // A view of storage this activation declared, or of read-only storage,
+    // is not a caller-supplied borrow. A local array has implicit authority
+    // rather than an owned resource fact, so there is nothing to escrow: it
+    // keeps the activation-local bounds rule below. A local range the caller
+    // holds as a resource fact, whether an explicit owner or a view it was
+    // itself lent, is ordinary loan-backed memory and goes through the
+    // planner, which also refuses a view whose binding has gone stale.
+    let intrinsic_read_views = checked_required_resources
+        .iter()
+        .filter(|requirement| {
+            let unsupplied_local = |range: &CMemoryRange| {
+                range.base().block.starts_with("local:")
+                    && callee_state.memory().has_block(&range.base().block)
+                    && caller_state
+                        .resources()
+                        .directly_supporting_owned_entry(&requirement.fact, assumptions)
+                        .is_none()
+                    && caller_state
+                        .resources()
+                        .view_occurrences_for_fact(&requirement.fact, assumptions)
+                        .is_empty()
+            };
+            matches!(
+                requirement.fact.resource(),
+                CResource::Memory(range)
+                    if requirement.fact.is_view()
+                        && (unsupplied_local(range)
+                            || callee_state.memory().is_read_only_block(&range.base().block))
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let stable_requirements = checked_required_resources
+        .iter()
+        .filter(|requirement| !intrinsic_read_views.contains(requirement))
+        .cloned()
+        .collect::<Vec<_>>();
+    let candidate_stable_view_semantics = candidate_stable_view_semantics
+        && (caller_state.loan_ledger().is_some()
+            || stable_requirements
+                .iter()
+                .any(|requirement| requirement.fact.is_view()));
     let stable_view_plan = if candidate_stable_view_semantics {
         let (ledger, caller) = match (
             caller_state.loan_ledger().cloned(),
@@ -9992,12 +10014,12 @@ fn prepare_contract_resource_transfer_with_candidate(
                 "could not allocate stable-view callee participant".to_string(),
             )));
         };
-        let composite_backings = if checked_required_resources.iter().any(|requirement| {
+        let composite_backings = if stable_requirements.iter().any(|requirement| {
             requirement.fact.is_view()
                 && matches!(requirement.fact.resource(), CResource::Composite { .. })
         }) {
             let mut backings = BTreeMap::new();
-            for requirement in checked_required_resources.iter().filter(|requirement| {
+            for requirement in stable_requirements.iter().filter(|requirement| {
                 requirement.fact.is_view()
                     && matches!(requirement.fact.resource(), CResource::Composite { .. })
             }) {
@@ -10064,7 +10086,7 @@ fn prepare_contract_resource_transfer_with_candidate(
         };
         match plan_stable_view_transfer_with_bindings_and_composites(
             caller_state.resources(),
-            &checked_required_resources,
+            &stable_requirements,
             assumptions,
             &ledger,
             caller,
@@ -10146,6 +10168,22 @@ fn prepare_contract_resource_transfer_with_candidate(
     } else {
         canonical_resources
     };
+    for intrinsic_view in &intrinsic_read_views {
+        let in_bounds = matches!(
+            intrinsic_view.fact.resource(),
+            CResource::Memory(range)
+                if !range.base().block.starts_with("local:")
+                    || local_view_range_within_block(range, callee_state.memory())
+        );
+        if in_bounds && !callee_resources.satisfies_fact(&intrinsic_view.fact, assumptions) {
+            callee_resources = match callee_resources
+                .try_compose_with_fact(intrinsic_view.fact.clone(), assumptions)
+            {
+                Ok(resources) => resources,
+                Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+            };
+        }
+    }
     for body_resource in population_body_resources.facts() {
         // The population owns its body even while that body is absent from
         // the caller's explicit proof context. Contract execution opens the
@@ -16766,6 +16804,11 @@ pub(super) fn function_outcome_from_body(
                 // before the caller resumes evaluating its next statement.
                 let memory = caller_state.memory.clone();
                 caller_state.sync_scalar_locals_from_memory(&memory);
+                // The body ran on the caller's ledger; keep whatever its own
+                // calls left there rather than the pre-call snapshot.
+                caller_state = caller_state
+                    .with_loan_ledger(state.loan_ledger().cloned())
+                    .with_loan_participant(state.loan_participant());
             }
             if return_resources.is_none() {
                 caller_state.instance_field_scope = state.instance_field_scope;
@@ -17530,8 +17573,69 @@ mod candidate_stable_view_call_tests {
         );
     }
 
+    /// A view of the activation's own local array is implicit authority, not
+    /// a caller-supplied borrow: the call composes the in-bounds view for the
+    /// callee without touching the loan ledger.
     #[test]
-    fn candidate_inline_reader_fails_closed() {
+    fn candidate_local_array_view_is_intrinsic_and_lends_nothing() {
+        let pointer = pointer();
+        let function = reader("candidate_local_reader", false);
+        let caller = CState::new().with_memory(
+            CMemory::new()
+                .with_block(pointer.block.clone(), 4)
+                .store(pointer.clone(), int32(7)),
+        );
+        let paths = execute_c_function_call_paths(
+            &caller,
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate local view call should execute");
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::Return { state, .. },
+                ..
+            }] if state.loan_ledger().is_none_or(|ledger| !ledger.has_active_memory_loans())
+        ));
+    }
+
+    /// The bounds rule still applies: a local view past the end of its
+    /// block is not composed, so the callee cannot read through it.
+    #[test]
+    fn candidate_local_array_view_out_of_bounds_is_refused() {
+        let pointer = pointer();
+        let function = reader_for_input("candidate_local_wide_reader", 4);
+        let caller = CState::new().with_memory(
+            CMemory::new()
+                .with_block(pointer.block.clone(), 4)
+                .store(pointer.clone(), int32(7)),
+        );
+        let paths = execute_c_function_call_paths(
+            &caller,
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate out-of-bounds local view should execute to a diagnostic");
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(_),
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn candidate_inline_reader_uses_the_callers_checked_resources() {
         let pointer = pointer();
         let function = reader("candidate_inline_reader", false).with_inline_body();
         let paths = execute_c_function_call_paths(
@@ -17543,13 +17647,13 @@ mod candidate_stable_view_call_tests {
             CExecutionSemantics::EXECUTE_BODIES,
             &mut ExecutionBudget::new(),
         )
-        .expect("candidate inline call should return a diagnostic path");
+        .expect("candidate inline call should execute");
         assert!(matches!(
             paths.as_slice(),
             [CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
+                outcome: CFunctionOutcome::Return { .. },
                 ..
-            }] if message.contains("inline calls are unsupported")
+            }]
         ));
     }
 

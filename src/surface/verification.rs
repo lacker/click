@@ -5682,6 +5682,70 @@ int32 reader(int32 p[], int32 q[]) {
         );
     }
 
+    fn verify_in_stable_mode_with_header(
+        click: &str,
+        header: &str,
+        source: &str,
+    ) -> Result<(), ClickError> {
+        let sources = CSourceContext::bundle_with_mode(
+            &[("include/h.h", header), ("t.c", source)],
+            ViewSemanticsMode::StableLoans,
+        );
+        verify_c0_sources_with_context(click, &sources, None, None, None).map(|_| ())
+    }
+
+    const INLINE_HELPERS: &str = "#ifndef H_H\n#define H_H\n\
+static inline int get0(int *p) { return p[0]; }\n\
+static inline int set0(int *p) { p[0] = 9; return 0; }\n\
+#endif\n";
+
+    /// An inline helper is call-site code: it reads through the caller's
+    /// contract input view without lending, and the view stays bound.
+    #[test]
+    fn stable_mode_inline_helper_reads_through_the_callers_rooted_view() {
+        let click = r#"
+verifying "t.c";
+
+int32 run(int32 p[]) {
+    views p[0..1];
+    ensures result == p[0];
+} by {
+    execute();
+    simp();
+}
+"#;
+        let source = "#include \"include/h.h\"\nint run(int *p) { return get0(p); }";
+        verify_in_stable_mode_with_header(click, INLINE_HELPERS, source)
+            .expect("an inline reader beside a rooted view");
+    }
+
+    /// The same helper writing through the caller's rooted view is checked
+    /// against the caller's ledger, so the store is refused inside the body.
+    #[test]
+    fn stable_mode_inline_helper_cannot_write_through_the_callers_rooted_view() {
+        let click = r#"
+verifying "t.c";
+
+int32 run(int32 p[]) {
+    views p[0..1];
+    ensures result == 0;
+} by {
+    execute();
+    simp();
+}
+"#;
+        let source = "#include \"include/h.h\"\nint run(int *p) { return set0(p); }";
+        let error = verify_in_stable_mode_with_header(click, INLINE_HELPERS, source)
+            .expect_err("an inline store through a rooted view must be refused");
+        assert!(
+            error
+                .message()
+                .contains("memory write conflicts with an active stable loan"),
+            "{}",
+            error.message()
+        );
+    }
+
     #[test]
     fn stable_mode_routes_a_surface_proof_through_candidate_kernel_semantics() {
         let click = r#"
