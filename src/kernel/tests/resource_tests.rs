@@ -324,6 +324,41 @@ fn owned_range_access_survives_learning_a_symbolic_pointer_alias() {
     );
 }
 
+#[test]
+fn owned_range_read_survives_learning_a_symbolic_pointer_alias() {
+    // A frame's identity payload (symbolic) and the C value loaded for it
+    // (external plus an offset) name the same cell once their equality is
+    // proved. The owning fact sits under the symbolic spelling; a read
+    // through either spelling must find it. The read lookup used to resolve
+    // the symbolic pointer to its non-symbolic alias and look only there,
+    // refusing a read of a cell the state plainly owned (the insert fixup's
+    // `gparent->__rb_parent_color` after `gparent == cgp`).
+    let cell = Pointer::symbolic(Variable(100));
+    let slot = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(101)), 4),
+    };
+    let unrelated = Pointer::symbolic(Variable(102));
+    let range = CMemoryRange::new(
+        cell.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    );
+    let resources = ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(range));
+    let assumptions = PureFactContext::new().assume_condition(
+        ConditionTerm::pointer_equal(slot.clone(), cell.clone()),
+        true,
+    );
+    for pointer in [&cell, &slot] {
+        assert!(
+            resources.permits_memory_read(pointer, 4, &assumptions),
+            "read through {pointer:?} should be permitted"
+        );
+    }
+    assert!(!resources.permits_memory_read(&unrelated, 4, &assumptions));
+    assert!(!resources.permits_memory_read(&cell, 16, &assumptions));
+}
+
 fn instance_memory_fixture() -> (ResourceInstance, CCompositeResourceDefinition, CState) {
     let schema =
         ResourceFieldSchema::new(vec![("value".into(), ResourceFieldType::C(CType::Int32))])

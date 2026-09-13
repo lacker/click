@@ -3170,16 +3170,51 @@ impl ResourceContext {
         // indexes, just as the write lookup below does. The indexed
         // structural check then answers from the exact supporting resource
         // instead of comparing every historical range through call havoc.
-        let resolved = crate::kernel::reasoning::resolve_minted_load_pointer(pointer, assumptions);
-        let resolved =
-            crate::kernel::reasoning::resolve_symbolic_pointer_alias(&resolved, assumptions);
-        let pointer = &resolved;
-        if self.permits_memory_read_structurally(pointer, byte_width, assumptions) {
+        //
+        // A proved pointer equality names the same cell two ways: a frame's
+        // identity payload (symbolic) and the C value loaded for it
+        // (external plus an offset). The facts sit under whichever spelling
+        // the unfold that published them used, so the lookup consults both;
+        // resolving to one spelling and looking only there refused a read
+        // of a cell the state plainly owned.
+        let spellings = self.pointer_spellings(pointer, assumptions);
+        if spellings.iter().any(|pointer| {
+            self.permits_memory_read_structurally(pointer, byte_width, assumptions)
+                || self.memory_block_facts(&pointer.block).any(|resource| {
+                    memory_resource_fact_permits_read(resource, pointer, byte_width, assumptions)
+                })
+        }) {
             return true;
         }
-        self.memory_block_facts(&pointer.block).any(|resource| {
-            memory_resource_fact_permits_read(resource, pointer, byte_width, assumptions)
+        // The indexed lookups answer every read whose pointer names the
+        // owning fact's block. A pointer proved equal to one in another
+        // block is decided by the range check under the assumptions, as
+        // the write lookup below already does; this is reached only when
+        // the indexed answer was no, so a permitted read pays for it only
+        // through an alias.
+        spellings.iter().any(|pointer| {
+            self.iter().any(|resource| {
+                memory_resource_fact_permits_read(resource, pointer, byte_width, assumptions)
+            })
         })
+    }
+
+    /// The spellings of one address a resource lookup consults: the pointer
+    /// itself, its retained load origin when it is a kernel-minted name,
+    /// and the non-symbolic side of a proved pointer equality when it is a
+    /// symbolic block. At most three, deduplicated, in that order.
+    fn pointer_spellings(&self, pointer: &Pointer, assumptions: &PureFactContext) -> Vec<Pointer> {
+        let mut spellings = vec![pointer.clone()];
+        let minted = crate::kernel::reasoning::resolve_minted_load_pointer(pointer, assumptions);
+        if !spellings.contains(&minted) {
+            spellings.push(minted.clone());
+        }
+        let aliased =
+            crate::kernel::reasoning::resolve_symbolic_pointer_alias(&minted, assumptions);
+        if !spellings.contains(&aliased) {
+            spellings.push(aliased);
+        }
+        spellings
     }
 
     pub(in crate::kernel) fn permits_memory_read_structurally(
@@ -3208,23 +3243,32 @@ impl ResourceContext {
         assumptions: &PureFactContext,
     ) -> Option<&CMemoryRange> {
         // A kernel-minted address resolves to its load term first, so it
-        // matches owned ranges still written through loads.
-        let resolved = crate::kernel::reasoning::resolve_minted_load_pointer(pointer, assumptions);
-        let pointer = &resolved;
-        for resource in self.memory_block_facts(&pointer.block) {
-            let CResourceFact::Own(CResource::Memory(range), _) = resource else {
-                continue;
-            };
-            if pointer_has_structural_range_base(pointer, range.base())
-                && memory_resource_fact_permits_write(resource, pointer, byte_width, assumptions)
-            {
-                return Some(range);
+        // matches owned ranges still written through loads; a proved
+        // pointer equality's other spelling is consulted as for reads.
+        let spellings = self.pointer_spellings(pointer, assumptions);
+        for pointer in &spellings {
+            for resource in self.memory_block_facts(&pointer.block) {
+                let CResourceFact::Own(CResource::Memory(range), _) = resource else {
+                    continue;
+                };
+                if pointer_has_structural_range_base(pointer, range.base())
+                    && memory_resource_fact_permits_write(
+                        resource,
+                        pointer,
+                        byte_width,
+                        assumptions,
+                    )
+                {
+                    return Some(range);
+                }
             }
         }
-        self.iter().find_map(|resource| {
-            memory_resource_fact_permits_write(resource, pointer, byte_width, assumptions)
-                .then(|| resource.memory_own_range())
-                .flatten()
+        spellings.iter().find_map(|pointer| {
+            self.iter().find_map(|resource| {
+                memory_resource_fact_permits_write(resource, pointer, byte_width, assumptions)
+                    .then(|| resource.memory_own_range())
+                    .flatten()
+            })
         })
     }
 
