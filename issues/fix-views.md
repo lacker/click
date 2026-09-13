@@ -1,7 +1,9 @@
 # P1: Give views stable borrowing semantics
 
-**Status: V0-V12, V14, and V15 are implemented behind the
-candidate-semantics boundary. V13 contract migration is next. Ordinary C
+**Status: V0-V12 and V14-V16 are implemented behind the candidate-semantics
+boundary. The safe V13 migrations and route wiring are integrated; its
+top-level borrowed-input root remains blocked pending explicit approval of
+that authority boundary. V17 corpus migration is in progress. Ordinary C
 contracts still use the existing weak-view behavior until the V19 cutover.**
 The checkpoint began on 2026-09-12 from
 `44339e408c65d67e5251787d680fbf4b542d5287`. Scope-bearing candidate states
@@ -223,6 +225,23 @@ fixture gates; the diagnostics checkpoint passed its 25 candidate, 32 loan,
 and bounded-rendering tests. Its full gate found only this issue's retired
 terminology, corrected in this checkpoint. The integrated commits are
 `52d293b1` and `fe4f05cb`.
+
+The adversarial V12 review then found incomplete traversal through integer,
+algebraic, sequence, conversion, and opaque term carriers, missed
+unmaterialized current loads, and stale bindings on fact-free operations.
+`b3b10c54` closes those paths, preserves actual byte widths, indexes temporary
+views once per rewrite, and fails closed on opaque carriers. Its full gate
+passed 2,939 tests and all four fixture gates.
+
+V16 replaces whole-history loan-evidence checking with incrementally checked
+persistent summaries, orders concrete interval clustering, and indexes
+resource subtraction by memory start. Four-size deterministic curves cover
+fixed live state versus completed calls, active intervals, split/read/join
+depth, persistent edits, support/dependency changes, certificate deltas,
+unrelated resources and definitions, and overlap chains. A follow-up review
+added persistent-tree work accounting and constant-time identity for shared
+evidence histories. The integrated commits are `975ee4c6`, `457530dd`, and
+`74a01c31`.
 
 ## Decision and violated invariant
 
