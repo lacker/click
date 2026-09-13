@@ -41,43 +41,12 @@ mod surface_synthesis;
 mod theorem_application;
 mod timing;
 use crate::kernel::fresh_int32_variable_for_propositions;
-use std::cell::Cell;
 use crate::kernel::proof::{
     ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition, LoopControlExit,
     PersistentOrderedSet, PersistentSequence, PersistentSequenceIter, ProofExecutionContinuation,
     ProofFacts, SharedVec, old_reference_state, quantified_equivalence_index_key,
 };
 
-thread_local! {
-    /// Candidate stable-view verification is scoped to one complete surface
-    /// verification.  Both proof construction and final certification consult
-    /// this bit through the same entry-state constructor, so an external input
-    /// capability is initialized exactly once per constructed entry state.
-    static CANDIDATE_STABLE_VIEW_SEMANTICS: Cell<bool> = const { Cell::new(false) };
-}
-
-pub(super) struct CandidateStableViewGuard {
-    previous: bool,
-}
-
-pub(super) fn candidate_stable_view_guard(enabled: bool) -> CandidateStableViewGuard {
-    let previous = CANDIDATE_STABLE_VIEW_SEMANTICS.with(|cell| {
-        let previous = cell.get();
-        cell.set(enabled);
-        previous
-    });
-    CandidateStableViewGuard { previous }
-}
-
-fn candidate_stable_view_semantics_enabled() -> bool {
-    CANDIDATE_STABLE_VIEW_SEMANTICS.with(Cell::get)
-}
-
-impl Drop for CandidateStableViewGuard {
-    fn drop(&mut self) {
-        CANDIDATE_STABLE_VIEW_SEMANTICS.with(|cell| cell.set(self.previous));
-    }
-}
 pub(in crate::surface) use crate::kernel::proof::{
     SnapshotBlindPropositionKey, snapshot_blind_proposition_key,
 };
