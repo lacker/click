@@ -552,6 +552,7 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
         &predicate_environment,
         &click_function_environment,
         &resource_environment,
+        sources.view_semantics() == ViewSemanticsMode::StableLoans,
     )?;
     let refinement_targets = file
         .theorem_definitions()
@@ -1286,6 +1287,9 @@ fn verify_c0_sources_with_context(
     let _session = initial_function_environment
         .is_none()
         .then(crate::kernel::VerificationSession::enter);
+    let _candidate_stable_view_guard = crate::surface::proof::candidate_stable_view_guard(
+        c_sources.view_semantics() == ViewSemanticsMode::StableLoans,
+    );
     let (file, parsed_sources, selected_functions, resource_struct_layouts) = {
         let _timing = VerificationTimingPhase::new("frontend");
         let (
@@ -1436,6 +1440,7 @@ fn verify_c0_sources_with_context(
             &predicate_environment,
             &click_function_environment,
             &resource_environment,
+            c_sources.view_semantics() == ViewSemanticsMode::StableLoans,
         )?;
         let mut function_environment =
             initial_function_environment.unwrap_or(built_function_environment);
@@ -4360,8 +4365,12 @@ pub(in crate::surface) fn build_function_environment(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
+    candidate_stable_view_semantics: bool,
 ) -> Result<CExecutionEnvironment, ClickError> {
     let mut environment = CExecutionEnvironment::new();
+    if candidate_stable_view_semantics {
+        environment = environment.with_candidate_stable_view_semantics();
+    }
     for definition in contract_definitions {
         let function_block = definition.function_block();
         let parsed_function = external_c0_function(function_block);
