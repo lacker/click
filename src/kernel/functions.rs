@@ -288,10 +288,10 @@ fn recover_candidate_stable_view_resources(
         .map_err(|error| {
             CRuntimeError::FunctionContract(format!("stable-view call recovery refused: {error:?}"))
         })?;
-    // Replay the kernel-issued discharge evidence from the exact callee root
+    // Recheck the kernel-issued discharge evidence from the exact callee root
     // before installing the canonical predecessor root in the caller state.
     recovery
-        .replay_transitions(actual_ledger)
+        .recheck_transitions(actual_ledger)
         .map_err(|error| {
             CRuntimeError::FunctionContract(format!(
                 "stable-view call recovery evidence refused: {error:?}"

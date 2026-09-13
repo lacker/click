@@ -303,11 +303,11 @@ pub(crate) struct StableViewRecovery {
 }
 
 impl StableViewRecovery {
-    /// Replays the ordered recovery evidence from the exact entry ledger.
+    /// Rechecks the ordered recovery evidence from the exact entry ledger.
     /// Applying each item performs the kernel's predecessor and payload checks;
     /// callers can retain the returned historical successor separately from
     /// the canonical predecessor stored in `ledger`.
-    pub(crate) fn replay_transitions(
+    pub(crate) fn recheck_transitions(
         &self,
         predecessor: &LoanLedger,
     ) -> Result<LoanLedger, LoanRefusal> {
@@ -623,7 +623,7 @@ impl StableViewTransferPlan {
         })
     }
 
-    pub(crate) fn replay_entry(&self, predecessor: &LoanLedger) -> Result<LoanLedger, LoanRefusal> {
+    pub(crate) fn recheck_entry(&self, predecessor: &LoanLedger) -> Result<LoanLedger, LoanRefusal> {
         let mut current = predecessor.clone();
         for transition in &self.entry_transitions {
             current = current.apply(transition)?;
@@ -1690,13 +1690,13 @@ mod tests {
             ));
         }
         let planned_ledger = plan.ledger.clone();
-        let replayed = plan.replay_entry(&ledger).unwrap();
+        let rechecked = plan.recheck_entry(&ledger).unwrap();
         let recovery = plan.recover_stable_views(&assumptions).unwrap();
         assert!(recovery.resources.satisfies_fact(&owner, &assumptions));
         assert_eq!(recovery.transitions.len(), 3);
         assert_eq!(recovery.ledger, ledger);
-        assert_eq!(replayed, planned_ledger);
-        assert!(recovery.replay_transitions(&planned_ledger).is_ok());
+        assert_eq!(rechecked, planned_ledger);
+        assert!(recovery.recheck_transitions(&planned_ledger).is_ok());
     }
 
     #[test]
@@ -1739,7 +1739,7 @@ mod tests {
     }
 
     #[test]
-    fn joint_planner_replays_two_disjoint_entry_loans_by_exact_state_chain() {
+    fn joint_planner_rechecks_two_disjoint_entry_loans_by_exact_state_chain() {
         let assumptions = PureFactContext::new();
         let owner = memory(0, 8, true);
         let caller_resources = ResourceContext::new().unchecked_with_fact(owner);
@@ -1756,11 +1756,11 @@ mod tests {
         assert_eq!(plan.entry_transitions.len(), 2);
         assert_ne!(plan.stable_views[0].support, plan.stable_views[1].support);
         let planned_ledger = plan.ledger.clone();
-        assert_eq!(plan.replay_entry(&ledger).unwrap(), planned_ledger);
+        assert_eq!(plan.recheck_entry(&ledger).unwrap(), planned_ledger);
         let recovery = plan.recover_stable_views(&assumptions).unwrap();
         assert_eq!(recovery.ledger, ledger);
         assert_eq!(recovery.transitions.len(), 6);
-        assert!(recovery.replay_transitions(&planned_ledger).is_ok());
+        assert!(recovery.recheck_transitions(&planned_ledger).is_ok());
     }
 
     #[test]
