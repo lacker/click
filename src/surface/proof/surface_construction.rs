@@ -1178,6 +1178,7 @@ pub(super) fn append_proof_step_for_operation(
                         click_function_environment,
                         &[],
                         None,
+                        &crate::persistent::PersistentMap::default(),
                     ) else {
                         continue;
                     };
@@ -1256,6 +1257,7 @@ pub(super) fn append_proof_step_for_operation(
                         click_function_environment,
                         &[],
                         None,
+                        &crate::persistent::PersistentMap::default(),
                     );
                     let (fact, plan) = match planned {
                         Ok(planned) => planned,
@@ -1931,6 +1933,7 @@ pub(super) fn construct_smart_have_plan(
     tactic_index: usize,
     unfolded_predicates: &[String],
     checked_goal: &Proposition,
+    lexical_bindings: &crate::persistent::PersistentMap<String, ContractExpression>,
 ) -> Result<(Proposition, SourceProof), ClickError> {
     let planning_span =
         crate::instrumentation::OperationTiming::new("have", claim_label, "smart have planning");
@@ -1949,6 +1952,7 @@ pub(super) fn construct_smart_have_plan(
         click_function_environment,
         unfolded_predicates,
         Some(checked_goal),
+        lexical_bindings,
     )?;
     drop(planning_span);
     let _construction_span = crate::instrumentation::OperationTiming::new(

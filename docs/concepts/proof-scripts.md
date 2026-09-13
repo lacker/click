@@ -98,7 +98,9 @@ at unchanged function entry, after executed statements, and inside a loop's
 
 An arm's bindings are in scope in every term the arm writes: `have` goals,
 theorem arguments and `using` premises, `instantiate`, `extract`, `rewrite`,
-`normalize() using`, the clauses of a `loop` written inside the arm
+`normalize() using`, the premises of a `simp() using` or `normalize() using`
+inside a `have` body (`mdtests/have_body_simp_using_names_an_arm_binding.md`),
+the clauses of a `loop` written inside the arm
 (`mdtests/loop_clause_reads_arm_bindings.md`), and that loop's `initialize` and
 `preserve` bodies (`mdtests/loop_phase_body_reads_arm_bindings.md`). A name that a `have` goal can see is a theorem
 argument at the same point; `mdtests/theorem_argument_arm_binding.md` and

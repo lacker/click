@@ -1,45 +1,50 @@
-# A `simp() using` premise inside a `have` body cannot name an arm binding
+# A `simp() using` premise inside a `have` body names an arm binding
 
 The uniform-scoping slices resolve a proof `match` arm's bindings the way a
 `have` goal resolves them: in theorem arguments and `apply ... using` premises,
 in `instantiate`, in `extract`
-([`theorem_argument_arm_binding.md`](theorem_argument_arm_binding.md)), and in
-a `loop` written inside the arm
-([`loop_clause_reads_arm_bindings.md`](loop_clause_reads_arm_bindings.md)).
+([`theorem_argument_arm_binding.md`](theorem_argument_arm_binding.md)), in a
+`loop` written inside the arm
+([`loop_clause_reads_arm_bindings.md`](loop_clause_reads_arm_bindings.md)),
+and in the `initialize` and `preserve` bodies of that loop
+([`loop_phase_body_reads_arm_bindings.md`](loop_phase_body_reads_arm_bindings.md)).
 
-One site was missed: the premises of a `simp() using { ... }` written inside a
-`have` body. The goal of that `have` is materialized against the enclosing
-proof's lexical bindings before planning —
-`substitute_lexical_bindings_in_proposition` in
-`src/surface/proof/checked_drivers/tactic_laws.rs`, whose own comment says a
-binding "reach[es] it only here" — but the `have`'s *body* is handed to
-`plan_smart_have_in_current_state` unmaterialized, and that function lowers
-each named premise with `lower_fixed_state_proposition`, which is given no
-bindings at all. The arm's name is therefore read as an unbound C variable and
-the premise is refused with `` `color` is not an algebraic binding in this
-scope ``.
+One site was missed: the premises of a `simp() using { ... }` or a
+`normalize() using { ... }` written inside a `have` body that the smart planner
+discharges. The goal of that `have` was materialized against the enclosing
+proof's lexical bindings before planning, but the body's premises were lowered
+without them, so the arm's name was read as an unbound C variable and the
+premise was refused with `` `color` is not an algebraic binding in this
+scope ``. The planner now lowers the goal and each premise with the same
+bindings the goal is materialized with. The written spellings stay what the
+certificate records and expansion prints, and `click audit` agrees with
+`click verify` at every site here.
 
-The goal below names `color` and is accepted; the premise beside it names the
-same `color` and is not. A premise that is *already* a recorded available fact
-is matched by its spelling and never lowered, so the defect only shows on a
-premise the planner has to lower — reflexivity is the smallest one, and the
-insert fixup's real premise, the frame body fact written at the arm's own
-pointer spelling, is another. The fix belongs with the other scoping sites: thread
-the enclosing lexical bindings to the premise lowering and substitute there,
-leaving the written spelling as what certificates record and expansion prints,
-which is how the `loop`-clause site was fixed. The other `using` positions
-inside a `have` body should be checked at the same time.
+`peek` proves two `have`s in the arm, each citing the unfolded body fact that
+names the arm's colour: one closed by `simp() using`, one by `normalize()
+using`. `spin` puts the same `have` inside the `preserve` body of a loop
+written in the arm, where the phase planner lowers it from a fresh root
+carrying the arm's scope.
 
-This blocks package C3 of
-[`issues/recursive-structure-models.md`](../issues/recursive-structure-models.md):
-the insert fixup's black-parent exit needs `simp() using` to chain the frame's
-body fact `(identity->__rb_parent_color & 1) == color_bit(color)` against the
-arm's colour, and the premise cannot be written.
+A premise must still be an exactly available fact. Naming the binding does
+not make a premise true: `color_bit(color) == color_bit(color)` is refused as
+not available, and a premise that reads memory through the arm's pointer
+binding together with a pure call is a separate lowering gap
+([`have_goal_reads_through_an_arm_binding.md`](have_goal_reads_through_an_arm_binding.md)).
 
 ```c filename=simp_using_binding.c
 struct node { unsigned long word; struct node *left; };
 
 unsigned long peek(struct node *p) {
+    return p->word;
+}
+
+unsigned long spin(struct node *p, int n) {
+    int i;
+    i = 0;
+    while (i < n) {
+        i = i + 1;
+    }
     return p->word;
 }
 ```
@@ -78,21 +83,54 @@ resource tree_at(p: struct node*) {
 }
 
 unsigned long peek(struct node* p) {
-    consumes t: tree_at(p);
+    owns t: tree_at(p);
     requires t.model != Tree::Empty;
-    produces u: tree_at(p);
-    ensures u.model == old(t.model);
+    ensures t.model == old(t.model);
 } by {
     match t.model {
         Tree::Empty => { contradiction(t.model == Tree::Empty); },
         Tree::Node(id, color, left_model) => {
             unfold(t) as { left: l };
+            have color_bit(color) == (p->word & 1) by {
+                simp() using { (p->word & 1) == color_bit(color); }
+            }
             have (p->word & 1) == color_bit(color) by {
-                simp() using { color_bit(color) == color_bit(color); }
+                normalize() using { (p->word & 1) == color_bit(color); }
             }
             step();
-            let u = fold(tree_at(p), { model: Tree::Node(id, color, left_model) },
+            let t = fold(tree_at(p), { model: Tree::Node(id, color, left_model) },
                 { left: l });
+            simp();
+        },
+    }
+}
+
+unsigned long spin(struct node* p, int n) {
+    owns t: tree_at(p);
+    requires n >= 0;
+    requires t.model != Tree::Empty;
+    ensures t.model == old(t.model);
+} by {
+    match t.model {
+        Tree::Empty => { contradiction(t.model == Tree::Empty); },
+        Tree::Node(id, color, left_model) => {
+            step();
+            step();
+            loop {
+                owns t: tree_at(p);
+                invariant i >= 0;
+                invariant i <= n;
+                invariant t.model == Tree::Node(id, color, left_model);
+                initialize by simp;
+                preserve by {
+                    have color_bit(color) == color_bit(color) by {
+                        simp() using { t.model == Tree::Node(id, color, left_model); }
+                    }
+                    step();
+                    close_invariants();
+                }
+            }
+            step();
             simp();
         },
     }
@@ -100,5 +138,5 @@ unsigned long peek(struct node* p) {
 ```
 
 ```expect
-fail: `color` is not an algebraic binding in this scope
+pass
 ```

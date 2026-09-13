@@ -1,5 +1,6 @@
 use super::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
+use crate::surface::proof::surface_lowering::substitute_lexical_bindings_in_proposition;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn lower_fixed_state_proposition(
@@ -996,7 +997,23 @@ pub(in crate::surface::proof) fn plan_smart_have_in_current_state(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
     prelowered_goal: Option<&Proposition>,
+    // The proof locals in scope where this `have` was written: a proof
+    // `match` arm's bindings, `unfold ... as` names, call-result binders.
+    // The goal and each `simp() using` premise are lowered with them
+    // resolved, exactly as the enclosing script resolves a `have` goal; the
+    // written spellings stay what certificates record and expansion prints.
+    lexical_bindings: &crate::persistent::PersistentMap<String, ContractExpression>,
 ) -> Result<(Proposition, SimpEvidence), ClickError> {
+    let resolve = |proposition: &ClickProposition| {
+        substitute_lexical_bindings_in_proposition(proposition, lexical_bindings).map_err(
+            |message| {
+                ClickError::new(format!(
+                    "`{claim_label}` have proof {outer_tactic_index}: could not substitute match bindings: {message}"
+                ))
+            },
+        )
+    };
+    let goal_surface = resolve(&have.proposition)?;
     // Plan and check this proof once. Surface expansion must lower this exact
     // plan; it must not search for a different proof if lowering is incomplete.
     // Snapshot transport belongs to the statement transition that changed the
@@ -1034,7 +1051,7 @@ pub(in crate::surface::proof) fn plan_smart_have_in_current_state(
         prelowered_goal.clone()
     } else {
         match lower_fixed_state_proposition(
-            &have.proposition,
+            &goal_surface,
             &direct_lowering_facts,
             parameters,
             arguments,
@@ -1052,7 +1069,7 @@ pub(in crate::surface::proof) fn plan_smart_have_in_current_state(
                 )));
             }
             Err(message) => match lower_fixed_state_proposition(
-                &have.proposition,
+                &goal_surface,
                 &facts_for_simple_goal_lowering(available),
                 parameters,
                 arguments,
@@ -1127,7 +1144,7 @@ pub(in crate::surface::proof) fn plan_smart_have_in_current_state(
                 continue;
             }
             let lowered = lower_fixed_state_proposition(
-                surface,
+                &resolve(surface)?,
                 &lowering_facts,
                 parameters,
                 arguments,

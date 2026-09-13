@@ -671,6 +671,7 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
         click_function_environment,
         &unfolded_predicates,
         prelowered_goal,
+        surface_local_scope,
     )?;
     let mut planning_surface = surface_propositions.clone();
     planning_surface.record_lowering(proposition, &fact)?;

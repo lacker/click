@@ -124,6 +124,7 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
                 tactic_index,
                 unfolded_predicates,
                 &checked_goal,
+                lexical_bindings,
             )?)
         }
         (None, None) => None,
