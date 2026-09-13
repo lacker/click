@@ -1,29 +1,24 @@
-# a `contradiction` closes its arm after a prefix of other tactics
+# a `contradiction` on the fact the arm's own `unfold` exposed
 
-This is
-[`loop_head_refuted_arm_closes_the_match.md`](loop_head_refuted_arm_closes_the_match.md)
-with one `have` placed in front of its `contradiction`. The loop head still
-refutes the `CellList::Nil` arm, the `have` is still true, and the
-`contradiction` still names the refuted model equation — and the arm still
-closes.
+The refuting fact does not have to be standing at the loop head in the arm's
+own spelling. Here it is `list_at`'s own `CellList::Nil` arm that says
+`fact p == 0`, and the proof reaches it the direct way: inside the `Nil` arm,
+`unfold(l)` publishes that arm's body, `node == 0` lands on the path, and it is
+the loop's `invariant node != 0` that refutes it. The `contradiction` names
+`node != 0`, a C-level disequality, rather than a model equation.
 
-A `contradiction` refutes the path it stands on, wherever on that path it
-stands. `plan_execution_match` in `src/surface/proof/proof_object/match_cases.rs`
-still recognizes an arm written as exactly `[contradiction(..)]` and keeps that
-constructor out of the frontier split altogether, which costs nothing to run.
-An arm with a prefix is an ordinary live arm instead, and the preservation
-driver closes it where the `contradiction` is reached: the path is refuted, so
-it owes no invariant and no measure, and contributes neither a back edge nor a
-loop exit. Nothing after it on that path is executed or proved.
+That is the shape an insert fixup needs, where the refutation lives one layer
+down in the instance and only the `unfold` brings it up. It is exactly what an
+arm-planning pattern match over `[contradiction(..)]` could not express: the
+bridging tactic has to run before the refutation exists. The preservation
+driver closes the path at the `contradiction` instead, so the prefix runs
+first and the arm still owes nothing to the back edge.
+[`preserve_arm_contradiction_after_a_have.md`](preserve_arm_contradiction_after_a_have.md)
+is the same lifting with a `have` as the prefix, and
+[`preserve_arm_contradiction_needs_a_refuted_fact.md`](preserve_arm_contradiction_needs_a_refuted_fact.md)
+is what happens when the named proposition is not refuted at all.
 
-The restriction that this fixture used to pin bit whenever the fact that
-refutes an arm has to be bridged into the arm's own spelling first, which is
-the usual shape when the refuting premise is about an instance field and the
-arm substitutes a constructor for it.
-[`preserve_arm_contradiction_after_an_unfold.md`](preserve_arm_contradiction_after_an_unfold.md)
-is that shape with the bridging `unfold` written out.
-
-```c filename=preserve_arm_contradiction_after_a_have.c
+```c filename=preserve_arm_contradiction_after_an_unfold.c
 struct cell {
     int32 value;
     struct cell* next;
@@ -40,7 +35,7 @@ void bump_n(struct cell *node, int32 n) {
 ```
 
 ```click
-verifying "preserve_arm_contradiction_after_a_have.c";
+verifying "preserve_arm_contradiction_after_an_unfold.c";
 
 spec enum CellList {
     Nil,
@@ -82,8 +77,8 @@ void bump_n(struct cell* node, int32 n) {
         preserve by {
             match l.model {
                 CellList::Nil => {
-                    have n >= 0 by { simp(); }
-                    contradiction(l.model == CellList::Nil);
+                    unfold(l);
+                    contradiction(node != 0);
                 },
                 CellList::Cons(identity, value, tail_model) => {
                     unfold(l) as { tail: t };

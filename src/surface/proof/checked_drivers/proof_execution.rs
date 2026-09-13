@@ -1472,6 +1472,21 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
         } => {
             let mut last_tactic = last_tactic;
             for indexed in tactics {
+                // A `contradiction` refutes the path it stands on, wherever it
+                // stands. The planner's `[Contradiction]` fast path keeps a
+                // sole-tactic arm out of the frontier split entirely; an arm
+                // that first bridges the refuting fact into its own spelling
+                // is an ordinary live path, and closes here instead. A refuted
+                // path owes no invariant and no measure, contributes no back
+                // edge and no exit, so it neither runs its continuation nor
+                // becomes a leaf.
+                if let ProofTactic::Contradiction(surface) = &indexed.tactic {
+                    let proof = proof.start_source_tactic(indexed.source_index)?;
+                    return proof.apply_step_at(
+                        ProofStep::Contradiction(surface.clone()),
+                        indexed.source_index,
+                    );
+                }
                 let handled_by_linear_driver = !matches!(
                     indexed.tactic,
                     ProofTactic::Loop(_) | ProofTactic::Simp | ProofTactic::Step

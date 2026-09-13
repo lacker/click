@@ -154,6 +154,12 @@ that constructor. See [resources](resources.md) for the rule and
 `mdtests/loop_body_refutes_an_unfolded_child.md` for a body that decides an
 unfolded child this way.
 
+The `contradiction` need not be the arm's only tactic. It closes the path it
+stands on wherever it is reached, so an arm may run a `have`, an `unfold`, or
+any other checked operation first to bring the refuting fact into its own
+spelling, and then close. Nothing written after it on that path is executed or
+proved (`mdtests/preserve_arm_contradiction_after_an_unfold.md`).
+
 ## Naming a call result
 
 C often uses a call's result without ever storing it: `if (f(x))` and

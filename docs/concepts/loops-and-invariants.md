@@ -567,6 +567,19 @@ exclude closes by `contradiction`; every remaining arm runs, and a `match`
 that omits a constructor is refused exactly as at function entry
 (`mdtests/loop_body_proof_match_missing_arm.md`).
 
+`contradiction` does not have to be an arm's only tactic. It refutes the path
+it stands on wherever on that path it stands, so an arm may first bridge the
+refuting fact into its own spelling — a `have`
+(`mdtests/preserve_arm_contradiction_after_a_have.md`), or the `unfold` that
+exposes the fact at all
+(`mdtests/preserve_arm_contradiction_after_an_unfold.md`) — and close
+afterwards. A refuted path owes no invariant and no measure, contributes
+neither a back edge nor a loop exit, and nothing written after the
+`contradiction` on it is executed or proved. The refutation is still decided
+from the facts standing there: naming a proposition the path does not deny
+leaves the arm open and is refused by the proposition as written
+(`mdtests/preserve_arm_contradiction_needs_a_refuted_fact.md`).
+
 `mdtests/loop_body_proof_match_two_live_arms.md` is the shape where both
 constructors survive: the region splits, each arm certifies its own path, and
 the preservation certificate is reassembled as the `match` that produced them.

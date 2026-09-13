@@ -1758,7 +1758,8 @@ impl<'a> Proof<'a> {
             .apply_contradiction(&fact)
             .map_err(|error| match error {
                 PropositionCloseError::ContradictionUnavailable(fact) => self.step_error(format!(
-                    "`contradiction` requires an exact fact and its exact negation or opposite condition polarity: {fact:?}"
+                    "`contradiction({})` requires an exact fact and its exact negation or opposite condition polarity: {fact:?}",
+                    crate::surface::diagnostics::describe_click_proposition(surface)
                 )),
                 PropositionCloseError::Unavailable => {
                     self.step_error("`contradiction` requires an open proof branch")
