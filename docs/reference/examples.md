@@ -445,11 +445,12 @@ sequence:
 - `mdtests/composite_resource_rejects_missing_symbolic_bound.md`: symbolic
   coverage fails when a required bound is missing.
 - `mdtests/composite_resource_rejects_unowned_fact_read.md`: facts
-  cannot read memory without contained write permission.
-- `mdtests/composite_resource_rejects_read_backed_fact.md`: contained
-  read permission is not enough to stabilize a memory fact.
+  cannot read memory without contained current read authority.
+- `mdtests/composite_resource_accepts_read_backed_fact.md`: contained
+  current view permission provides read authority for a memory fact.
 - `mdtests/composite_resource_rejects_predicate_hidden_fact_read.md`:
-  predicate-hidden memory reads are checked against contained write permission.
+  predicate-hidden memory reads are checked against contained current read
+  authority.
 
 ## Predicates and pure Click functions
 

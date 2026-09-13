@@ -903,7 +903,7 @@ fn validate_resource_definition<'a>(
             click_function_types,
             &format!("resource `{}` fact", definition.name()),
         )?;
-        validate_resource_fact_memory_ownership(
+        validate_resource_fact_memory_read_authority(
             definition,
             composite_body,
             fact,
@@ -932,12 +932,12 @@ struct ResourceFactScalarAssumption {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ResourceFactReadOwnershipAnalysis {
+struct ResourceFactReadAuthorityAnalysis {
     covered: bool,
     notes: Vec<String>,
 }
 
-fn validate_resource_fact_memory_ownership(
+fn validate_resource_fact_memory_read_authority(
     definition: &ResourceDefinition,
     composite_body: &CompositeResourceBody,
     fact: &ClickProposition,
@@ -1064,7 +1064,7 @@ fn validate_resource_fact_memory_ownership(
         .collect::<Vec<_>>();
     let assumptions = assumptions_from_propositions(&assumption_propositions);
     for read in reads {
-        let analysis = analyze_resource_fact_read_ownership(
+        let analysis = analyze_resource_fact_read_authority(
             &read,
             composite_body.contains(),
             &assumptions,
@@ -1075,7 +1075,7 @@ fn validate_resource_fact_memory_ownership(
             click_function_environment,
         );
         if !analysis.covered {
-            return Err(ClickError::new(resource_fact_read_ownership_error(
+            return Err(ClickError::new(resource_fact_read_authority_error(
                 definition.name(),
                 &read,
                 &analysis,
@@ -1688,13 +1688,13 @@ fn collect_resource_fact_reads_from_contract_expression(
             )?;
             let Some(base) = contract_expression_as_c_fragment(base) else {
                 return Err(ClickError::new(format!(
-                    "resource `{resource_name}` fact reads `{}` in a form that cannot be matched to a contained owned memory resource",
+                    "resource `{resource_name}` fact reads `{}` in a form that cannot be matched to a contained memory resource with current read authority",
                     describe_contract_expression(expression)
                 )));
             };
             let Some(index) = contract_expression_as_c_fragment(index) else {
                 return Err(ClickError::new(format!(
-                    "resource `{resource_name}` fact reads `{}` in a form that cannot be matched to a contained owned memory resource",
+                    "resource `{resource_name}` fact reads `{}` in a form that cannot be matched to a contained memory resource with current read authority",
                     describe_contract_expression(expression)
                 )));
             };
@@ -1941,7 +1941,7 @@ fn collect_resource_fact_reads_from_c_expression(
     }
 }
 
-fn analyze_resource_fact_read_ownership(
+fn analyze_resource_fact_read_authority(
     read: &ResourceFactRead,
     contained: &[ResourceClause],
     assumptions: &PureFactContext,
@@ -1950,27 +1950,31 @@ fn analyze_resource_fact_read_ownership(
     memory: &CMemory,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-) -> ResourceFactReadOwnershipAnalysis {
+) -> ResourceFactReadAuthorityAnalysis {
     let mut notes = Vec::new();
     for resource in contained {
-        let ResourceClause::OwnMemory(segment) = resource else {
-            notes.push(format!(
-                "`{}` is not an owned memory resource",
-                describe_resource_clause(resource)
-            ));
-            continue;
+        let (segment, access) = match resource {
+            ResourceClause::OwnMemory(segment) => (segment, "owned"),
+            ResourceClause::ViewMemory(segment) => (segment, "viewed"),
+            _ => {
+                notes.push(format!(
+                    "`{}` is not a memory resource with read authority",
+                    describe_resource_clause(resource)
+                ));
+                continue;
+            }
         };
         let resource_description = describe_resource_clause(resource);
         if segment.state != ContractSegmentState::Current {
             notes.push(format!(
-                "`{resource_description}` is not a current-state owned memory resource"
+                "`{resource_description}` is not a current-state {access} memory resource"
             ));
             continue;
         }
         if segment.base == read.base
             && constant_segment_covers_index(&segment.start, &segment.end, &read.index)
         {
-            return ResourceFactReadOwnershipAnalysis {
+            return ResourceFactReadAuthorityAnalysis {
                 covered: true,
                 notes,
             };
@@ -1987,7 +1991,7 @@ fn analyze_resource_fact_read_ownership(
                 predicate_environment,
                 click_function_environment,
             ) {
-                return ResourceFactReadOwnershipAnalysis {
+                return ResourceFactReadAuthorityAnalysis {
                     covered: true,
                     notes,
                 };
@@ -2008,7 +2012,7 @@ fn analyze_resource_fact_read_ownership(
             array_refs,
             memory,
         ) {
-            return ResourceFactReadOwnershipAnalysis {
+            return ResourceFactReadAuthorityAnalysis {
                 covered: true,
                 notes,
             };
@@ -2018,20 +2022,20 @@ fn analyze_resource_fact_read_ownership(
             read.expression
         ));
     }
-    ResourceFactReadOwnershipAnalysis {
+    ResourceFactReadAuthorityAnalysis {
         covered: false,
         notes,
     }
 }
 
-fn resource_fact_read_ownership_error(
+fn resource_fact_read_authority_error(
     resource_name: &str,
     read: &ResourceFactRead,
-    analysis: &ResourceFactReadOwnershipAnalysis,
+    analysis: &ResourceFactReadAuthorityAnalysis,
     scalar_assumptions: &[ResourceFactScalarAssumption],
 ) -> String {
     let mut lines = vec![format!(
-        "resource `{resource_name}` fact reads `{}` without a covering contained owned memory resource",
+        "resource `{resource_name}` fact reads `{}` without a covering contained memory resource with current read authority",
         read.expression
     )];
     if analysis.notes.is_empty() {
@@ -2286,4 +2290,177 @@ fn reject_composite_resource_cycles_from(
     visiting.pop();
     permanent.insert(name.to_string());
     Ok(())
+}
+
+#[cfg(test)]
+mod read_authority_tests {
+    use super::*;
+    use crate::surface::parser;
+
+    fn segment(
+        state: ContractSegmentState,
+        base: CExpression,
+        start: CExpression,
+        end: CExpression,
+    ) -> ContractSegment {
+        ContractSegment {
+            state,
+            surface: ContractSegmentSurface::Range {
+                base: ContractExpression::CFragment(base.clone()),
+                start: ContractExpression::CFragment(start.clone()),
+                end: ContractExpression::CFragment(end.clone()),
+            },
+            base,
+            start,
+            end,
+        }
+    }
+
+    fn read(base: CExpression, index: CExpression) -> ResourceFactRead {
+        ResourceFactRead {
+            base,
+            index,
+            expression: "cell[index]".to_string(),
+        }
+    }
+
+    fn analysis(
+        read: &ResourceFactRead,
+        contained: &[ResourceClause],
+        assumptions: &PureFactContext,
+        values: &BTreeMap<String, CValue>,
+    ) -> ResourceFactReadAuthorityAnalysis {
+        analyze_resource_fact_read_authority(
+            read,
+            contained,
+            assumptions,
+            values,
+            &BTreeMap::new(),
+            &CMemory::new(),
+            &PredicateEnvironment::new(&[]),
+            &ClickFunctionEnvironment::new(&[]),
+        )
+    }
+
+    #[test]
+    fn current_view_covers_a_zero_valued_cell() {
+        let base = CExpression::Variable("cell".to_string());
+        let clause = ResourceClause::ViewMemory(segment(
+            ContractSegmentState::Current,
+            base.clone(),
+            CExpression::Value(int32(0)),
+            CExpression::Value(int32(1)),
+        ));
+        let result = analysis(
+            &read(base, CExpression::Value(int32(0))),
+            &[clause],
+            &PureFactContext::new(),
+            &BTreeMap::new(),
+        );
+        assert!(
+            result.covered,
+            "a view covers reads regardless of the cell value"
+        );
+    }
+
+    #[test]
+    fn current_view_accepts_a_symbolic_in_bounds_read() {
+        let base = CExpression::Variable("cell".to_string());
+        let index = CExpression::Variable("index".to_string());
+        let bound = CExpression::Variable("bound".to_string());
+        let clause = ResourceClause::ViewMemory(segment(
+            ContractSegmentState::Current,
+            base.clone(),
+            CExpression::Value(int32(0)),
+            bound.clone(),
+        ));
+        let index_value = Bitvector32Term::Variable(Variable(12_001));
+        let bound_value = Bitvector32Term::Variable(Variable(12_002));
+        let assumptions = PureFactContext::new()
+            .assume_proposition(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(
+                    Box::new(Bitvector32Term::Constant(0)),
+                    Box::new(index_value.clone()),
+                ),
+                true,
+            ))
+            .assume_proposition(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(
+                    Box::new(index_value.clone()),
+                    Box::new(bound_value.clone()),
+                ),
+                true,
+            ));
+        let values = BTreeMap::from([
+            ("index".to_string(), CValue::Int32(index_value)),
+            ("bound".to_string(), CValue::Int32(bound_value)),
+        ]);
+        let result = analysis(&read(base, index), &[clause], &assumptions, &values);
+        assert!(
+            result.covered,
+            "scalar bounds should establish view coverage"
+        );
+    }
+
+    #[test]
+    fn current_view_does_not_cover_its_neighbor() {
+        let base = CExpression::Variable("cell".to_string());
+        let clause = ResourceClause::ViewMemory(segment(
+            ContractSegmentState::Current,
+            base.clone(),
+            CExpression::Value(int32(0)),
+            CExpression::Value(int32(1)),
+        ));
+        let result = analysis(
+            &read(base, CExpression::Value(int32(1))),
+            &[clause],
+            &PureFactContext::new(),
+            &BTreeMap::new(),
+        );
+        assert!(!result.covered, "a neighboring cell is outside the view");
+    }
+
+    #[test]
+    fn old_view_does_not_cover_a_current_resource_fact() {
+        let base = CExpression::Variable("cell".to_string());
+        let clause = ResourceClause::ViewMemory(segment(
+            ContractSegmentState::Old,
+            base.clone(),
+            CExpression::Value(int32(0)),
+            CExpression::Value(int32(1)),
+        ));
+        let result = analysis(
+            &read(base, CExpression::Value(int32(0))),
+            &[clause],
+            &PureFactContext::new(),
+            &BTreeMap::new(),
+        );
+        assert!(
+            !result.covered,
+            "old memory cannot supply current read authority"
+        );
+        assert!(
+            result
+                .notes
+                .iter()
+                .any(|note| note.contains("not a current-state viewed memory resource"))
+        );
+    }
+
+    #[test]
+    fn public_definition_validation_accepts_a_viewed_fact_read() {
+        let file =
+            parser::parse("resource viewed_cell(p: int32*) { views p[0..1]; fact p[0] == 0; }")
+                .expect("the viewed resource definition should parse");
+        validate_click_definitions(&file)
+            .expect("current viewed memory should provide static read authority");
+    }
+
+    #[test]
+    fn public_definition_validation_rejects_an_uncovered_viewed_fact_read() {
+        let error =
+            parser::parse("resource viewed_neighbor(p: int32*) { views p[0..1]; fact p[1] == 0; }")
+                .expect_err("an uncovered viewed fact read must reach public validation");
+        assert!(error.message().contains("current read authority"));
+    }
 }

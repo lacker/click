@@ -1,7 +1,7 @@
 # composite resource rejects resource fact read
 
 This checks that memory reads hidden behind a predicate still need to be backed
-by contained write permission.
+by contained current read authority.
 
 ```click
 predicate flag_is_zero(flag: int32*) {
@@ -14,5 +14,5 @@ resource bogus(flag: int32*) {
 ```
 
 ```expect
-fail: resource `bogus` fact reads `flag[0]` without a covering contained owned memory resource
+fail: resource `bogus` fact reads `flag[0]` without a covering contained memory resource with current read authority
 ```
