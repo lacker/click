@@ -1008,7 +1008,23 @@ appears to need one reports the need instead of adding it.
   completed proof object"), and after a `simp`-proved `have` any later
   unfold-proved `have` fails the same way; stating the fact as a theorem
   and `apply`ing it works. Every refold in the fixup body hits it. Not yet
-  reduced standalone; same class as gap 30.
+  reduced standalone; same class as gap 30. CLOSED by 2d96d5d7: the trigger
+  was any term inside `initialize` or `preserve` naming a proof `match`
+  arm's binding when the loop is written in that arm, ranked or not; the
+  phase sub-proofs were built from fresh roots without the arm's locals.
+  The same `proof_locals` map the clauses resolve through is now the phase
+  roots' scope (`loop_phase_body_reads_arm_bindings.md`), and a declined
+  `have` body names its goal and the step that declined
+  (`have_body_declines_names_the_goal.md`). Found there, pre-existing,
+  verify passes while audit fails, so they block feature work:
+  (e) gap 65, a smart `have P by simp;` inside `initialize by { ... }` is
+  inventoried as a smart site but cannot be expanded ("Grouped proof has
+  no source tactic N"); reproduces with no `match` arm at all.
+  (f) gap 66, a helper `have` before the closing `simp()` in
+  `initialize by { ... }` does not expand: the per-invariant entry planner
+  is handed the whole phase script, so expansion nests every sibling
+  `have` inside every invariant's proof and round-trip validation fails.
+  Only one `have` per invariant plus a trailing `assumption()` expands.
   (b) gap 63, an unfinished `preserve` is refused at plan time with "must
   execute exactly one complete loop-body iteration", which hides the real
   frontier, so a body path gives no signal until finished end to end.
