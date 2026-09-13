@@ -1,288 +1,258 @@
 # P1: Give views stable borrowing semantics
 
-**Status: V0-V12 and V14-V16 are implemented behind the candidate-semantics
-boundary. The safe V13 migrations and route wiring are integrated; its
-top-level borrowed-input root remains blocked pending explicit approval of
-that authority boundary. The independently reviewable V17 contract migrations
-are integrated; the complete candidate-semantics corpus remains blocked on
-that same root. Ordinary C
-contracts still use the existing weak-view behavior until the V19 cutover.**
-The checkpoint began on 2026-09-12 from
-`44339e408c65d67e5251787d680fbf4b542d5287`. Scope-bearing candidate states
-now carry checked loan authority through direct, verified, named, callback,
-certification, refinement, branch, and loop paths. Local, alias, aggregate,
-heap-lifetime, free, realloc, branch abstraction, and loop havoc consult the
-active-loan footprint. The remaining cards cover composite resources, proof
-tools, migration, scaling, review, and cutover.
+**Status (2026-09-13): the V0-V17 implementation is integrated on master
+behind an internal candidate selector. Ordinary contracts still use the
+legacy weak-view behavior. What remains is the V18 recovery of the top-level
+borrowed-input root, a green candidate corpus, the V18 adversarial review,
+and the V19 cutover. Nothing in this issue is authorization to start agents;
+the remaining cards are future assignments.**
 
-### 2026-09-12 V10 integration checkpoint
+This file is the design and the implementation brief. It is organized as:
 
-V10 retains persistent loan evidence through sequential statements, proof
-transitions, terminal outcomes, loop-preservation candidates, `break` exits,
-and compatible branch joins. A branch may complete a reader call on only one
-arm; the join retains each arm's checked evidence while exact state identity
-still refuses an unrecovered or otherwise incompatible surviving loan.
+- [Current state](#current-state): what is on master, how the candidate
+  path is selected, and what is parked.
+- [Remaining work](#remaining-work): the V18 recovery items, the V18 review
+  card, and the V19 cutover card.
+- [Design](#decision-and-violated-invariant): the decision, the laws, the
+  kernel/surface design D1-D14, and the regression catalogue R01-R32.
+- [Implementation record](#implementation-record): what each landed card
+  established, by commit subject.
+- [Working agreements](#working-agreements): assignment, handoff, staging,
+  and gate rules for the remaining cards.
+- [Concurrency and Rust design checks](#concurrency-and-rust-design-checks),
+  [acceptance criteria](#intended-regressions-and-acceptance-criteria), and
+  [coordination](#coordination) with neighboring issues.
 
-Loop effect summaries now check active loan footprints before havoc. An
-unknown write set fails closed; a concrete disjoint write remains legal; and
-same-value writes still conflict. Branch abstraction checks the full width of
-changed scalar and union cells and preserves loan-covered cells over memory
-havoc. Rebuilt loop-view occurrences retain the exact checked binding selected
-from the inherited loop resource.
+The dated per-card checkpoint narratives that this file carried while the
+cards were in flight are in the git history of this file before commit
+"Reorganize the fix-views issue around its remaining work"; the durable
+content from them is folded into the implementation record below.
 
-The V10 task worktree passed the authoritative `scripts/check.sh` gate at
-`3455effb`: all 2,895 library/binary/documentation tests and all four serial
-fixture gates passed. The integrated coordinator commit is `8c9dec88`; its
-authoritative gate also passed, with all 2,898 tests and all four serial
-fixture gates green before accepting V11.
+## Current state
 
-### 2026-09-12 V7-V9 integration checkpoint
+**On master.** The candidate stable-view engine exists end to end:
 
-V7 installs the loan ledger, participant, and occurrence bindings in `CState`;
-routes direct body and verified calls through the joint planner; checks nested
-reborrows and exact output-view ancestry; recovers the canonical parent state
-only after return obligations; and retains a persistent, bounded sequence of
-kernel-checked entry/recovery evidence for certification. Legacy surface
-verification remains outside this opt-in path, while candidate certificates
-select it through their retained evidence.
+- `src/kernel/loans.rs` is the loan ledger: fresh arena/scope/loan/
+  participant/share identities, persistent AVL snapshots, a binary access
+  share tree, close and recovery rights, escrow for memory and token pieces,
+  checked composite decomposition into primitive loans with an atomic
+  restoration group, shared child reborrows, concrete interval indexes for
+  active memory loans, and opaque transition evidence bound to the exact
+  predecessor state. `src/kernel/tests/loan_model_tests.rs` is the
+  independent executable model (two contexts, partition/transfer, shared and
+  model-only exclusive reborrows, returned-field transport, mutex guard,
+  thread-local confinement).
+- `CState` carries the ledger, participant, and occurrence bindings. Direct,
+  verified, named, callback, refinement, certification, and proof paths
+  route through the joint call-resource planner in `src/kernel/functions.rs`
+  and recover only the scopes a call created. Stores, free, realloc, loop
+  havoc, and branch abstraction consult the active-loan footprint; unknown
+  symbolic overlap fails closed.
+- Definition validation and proof-time fold/unfold/observe let a stable view
+  cover a resource fact and capture the exact loan dependency. Refusals carry
+  a structured category, operation, bounded subject, and origin. Proof and
+  cache artifacts are bound to a resource-semantics identity, so a legacy
+  result cannot certify a candidate claim. Four-size scaling curves live in
+  `src/surface/tests/scaling_tests.rs`.
+- The V13 fixtures `stable_view_ordinary_reader`, `stable_view_nested_reader`,
+  `stable_view_partial_borrow`, `stable_view_fact_workflow`, and
+  `stable_view_returned_pointer` exercise the candidate route through surface
+  verification. The reviewed V17 contract migrations and the corpus
+  inventory are in
+  [`docs/internals/view-output-inventory.md`](../docs/internals/view-output-inventory.md)
+  (198 files, 336 explicit `views` declarations). No C source changed.
 
-V8 routes candidate independent verification through the same boundary and
-uses the planner for owned-interface to viewed-implementation refinement,
-including proper subranges. The reverse direction is refused, and exact
-same-mode resources in mixed disjoint interfaces do not spuriously invoke the
-adapter. Existing named and indirect callback application already converges
-on the common verified-call preparation path; focused callback and rbtree
-effect fixtures continue to pass.
+**Selector.** `ViewSemanticsMode` in `src/surface/verification.rs` has the
+variants `Legacy` (default) and `StableLoans`. Candidate fixtures opt in
+through `with_candidate_stable_view_semantics`; the mode is part of every
+artifact identity. There is no committed switch that runs the whole mdtest
+or example corpus under `StableLoans`. The codex candidate-corpus runs were
+made with a local, uncommitted change, so their counts are not reproducible
+from master; the recovery must add a test-harness switch first.
 
-V9 adds persistent interval indexes for active concrete memory loans and
-checks every supported write and lifetime-ending path. Unsupported symbolic
-overlap fails closed when a live memory loan exists. Ending a nested child
-restores the parent's protection, and disjoint concrete writes remain legal.
+**Not on master.**
 
-At commit `0f8e5d6e`, before the final V8 refinement integration, the
-authoritative `scripts/check.sh` gate passed 2,892 library/binary tests, all
-example projects, and the complete mdtest suite. After V8, the 23 candidate
-stable-view tests, 33 callback/refinement tests, pristine candidate
-certificate test, `cargo check`, and clippy with warnings denied pass. The
-next full gate is required after V10 integration.
+- A top-level `views` precondition does not yet receive a checked,
+  nonrecoverable borrowed-input root at contract-proof entry. Until it does,
+  ordinary reader functions cannot be judged under `StableLoans`, and V17
+  cannot be closed for the top-level reader fixtures.
+- The codex V18 experiment that implements that root, plus several later
+  compatibility fixes and two incomplete soundness investigations, is parked
+  as one unverified commit on branch `claude/fix-views-v18-wip` (17 files,
+  about 1,250 insertions). It has not been gated. Its last candidate corpus
+  run, before its final edits, failed 33 of 1,485 mdtests. Take ideas and
+  tests from it; do not integrate it as is.
 
-### 2026-09-12 V0-V6 central checkpoint
+## Remaining work
 
-The baseline search found 201 files with executable `views` declarations and
-444 `views` mentions across `mdtests/`, `examples/`, and `design/`. The sampled
-classification covers pure readers, local arrays, heap and global storage,
-callbacks, loops, folded and counted resources, partial ranges and fields,
-pointer aliases, and overlapping owner/view contracts. The current creation
-and consumption paths remain the ones listed under "Evidence from the current
-implementation"; the memory/resource unification work has already supplied
-opaque resource-occurrence identities, support indexes, and persistent
-contexts, so this checkpoint builds on those rather than replacing them.
+### V18 recovery: finish the borrowed-input root and make the corpus green
 
-The unfiltered starting gate reached 2,639 tests before failing the
-documentation terminology check because `issues/memory-vs-resources.md` used
-one retired word. This checkpoint corrects that stale sentence. Both existing
-migration probes, `alias-owned.click` and `field-split.click`, passed ordinary
-bounded verification at the implementation base.
+**Read:** D7-D9, D11, the parked WIP commit, and the failure classes below.
+**Depends on:** nothing further; start from master.
 
-The executable reference model is
-`src/kernel/tests/loan_model_tests.rs`. It models two independently held
-contexts, owner escrow, copied descriptions, a binary share tree, close and
-recovery rights, stale generations, and compatible frames. Its bounded search
-explores lend, split, transfer, join, end, recover, read, and write behavior to
-depth five with a 50,000-state cap. Each transition preserves the following
-inductive facts: lending replaces usable ownership with exactly one escrow and
-one root share; split replaces one active parent by two children; transfer
-changes only a leaf holder; join consumes exact sibling leaves; end consumes
-the unique root; and recovery replaces one ended unrecovered escrow with
-ownership. Copying or dropping a description changes none of those facts.
-Cloning model or ledger state represents alternative proof branches; giving
-authority to another simultaneous context requires an explicit share split.
+**Boundary:** the candidate call/entry/return paths in `functions.rs`,
+`loans.rs`, `api.rs`, `loops.rs`, the surface proof entry adapters, and the
+candidate fixtures. No C source edits. No change to `Legacy` behavior.
 
-`src/kernel/loans.rs` contains the production candidate API. Its fresh arena,
-scope, loan, participant, and share identities cannot cross ledgers. Immutable
-ledger snapshots use persistent AVL maps. Every authority operation produces
-opaque evidence bound to the exact predecessor state identity, and applying
-it repeats the bounded local check. The evidence seal is a second structural
-copy of the operation payload, avoiding probabilistic hashes and whole-ledger
-comparison. Hostile payload changes, stale predecessors, wrong holders,
-non-sibling joins, early end, duplicate recovery, and cross-arena identities
-are refused. Updates allocate logarithmically in a four-size regression.
+The parked experiment contains these coherent ideas, each of which needs to
+be re-derived as a reviewable commit with focused positive and negative
+tests rather than restored wholesale:
 
-The same module separates `OwnedResourceObservation` from
-`StableViewDescription`. An observation records the exact owned occurrence
-that supports a read inside its holder; only a checked lend creates a
-transferable loan description. The body-independent joint planner consumes
-all exclusive requirements first, splits disjoint memory ranges through the
-existing resource algebra, then creates loans for view requirements. It reuses
-one backing loan for identical or overlapping views, derives mutable effects
-only from transferred ownership, rejects owner/view conflicts independent of
-clause order, leaves rejected candidates transactional, and records the exact
-recovery recipe. The first supported escrow families are memory and token;
-composite and instance loans remain explicit refusals for V11.
+- A `BorrowedContractInput` loan origin models a top-level `views`
+  precondition as authority borrowed from an unknown caller. Its root has no
+  close or recovery right, is tied to the exact checked principal resource
+  occurrence, supports only reads and nested reborrows, and cannot become
+  ownership. It is internal kernel state and adds no syntax. Contract-proof
+  entry installs those roots after argument/resource lowering; composite
+  input views record a definition-checked one-level child frontier; bindings
+  follow exact child occurrences rather than fact equality.
+- Direct, named, callback, certification, proof, and loop paths preserve the
+  ledger, participant, and occurrence-binding sidecar instead of replacing
+  the resource context directly (`with_resource_context` rebases).
+- Symbolic borrowed ranges are retained outside the concrete dyadic index and
+  checked against current separation assumptions. Bounded local views use
+  the existing activation-local bounds rule; exact const/static memory views
+  are intrinsic read-only authority.
 
-This is a central semantic checkpoint, not completion of every V0-V6 card.
-Before V7, review the candidate API and decide how the ledger enters `CState`
-and checked proof events. V7 must route `prepare_contract_resource_transfer`
-and return recovery through it. Later cards still own local/allocation lifetime
-integration, composite and population dependencies, loop/branch joins,
-callback routing, diagnostics, full-corpus migration, and the semantic
-cutover. Until those paths are wired, the existing owner-to-view entailment
-and public `views` behavior remain unchanged.
+Two automatic approval reviews are binding constraints:
 
-This file is the implementation brief. Read the semantic design before taking
-a chunk; the chunk cards name prerequisites, code boundaries, regressions,
-and completion conditions. A dependency is a tested integrated commit, not
-another agent's unfinished branch. The cards are future assignments, not
-authorization to start agents or implement the feature now.
+- A prototype that rooted every view already present in the state was
+  rejected: authority may be created only for exact checked contract-input
+  occurrences. Principal-occurrence selection is the safe repair; do not
+  restore ambient enumeration.
+- Admitting nested composite child pieces as ordinary composite backing was
+  rejected because the full recursive footprint was not protected. A
+  recursive composite view needs a distinct checked representation and an
+  enforcing write/lifetime rule, or must stay an explicit refusal. Do not
+  flatten a recursive resource or remove the rejection.
 
-Navigation:
+The experiment's `LoanLedgerData` gained `unindexed_memory`, an
+`indexed_memory` fallback map, and counters so a symbolic write query could
+be checked against concrete active roots. That fallback never passed a
+focused test or scaling review and its invariant is not stated. Preserve the
+fail-closed `active_memory_overlaps`; only the assumption-aware access path
+may use a bounded explicit fallback, charged to the explicit symbolic query
+or indexed by block, never an ambient whole-ledger scan.
 
-- [Decision and violated invariant](#decision-and-violated-invariant)
-- [Current implementation evidence](#evidence-from-the-current-implementation)
-- [Stability and scope protocol](#what-stability-means)
-- [Detailed kernel and surface design](#detailed-kernel-and-surface-design)
-- [Regression catalogue](#regression-catalogue)
-- [Implementation chunks and dependency order](#implementation-chunks-and-dependency-order)
-- [Concurrency and Rust design checks](#concurrency-and-rust-design-checks)
-- [Final acceptance and coordination](#intended-regressions-and-acceptance-criteria)
+Failure classes from the last candidate corpus run, to be reclassified from
+a fresh run rather than trusted:
 
-### 2026-09-12 V11a and V14 integration checkpoint
+1. **Returned-view provenance and selected mutable footprints.** Return
+   recovery sees two output-view sources: the preserved outer borrowed view
+   (handled by a parent-binding lookup) and a view deduplicated against a
+   checked returned owner, which still needs an explicit checked provenance
+   record. Do not accept a returned view merely because some owner happens
+   to satisfy it. Fixtures: `c_step_contract_selected_footprint`,
+   `c_named_function_contract_pipeline`,
+   `modular_call_requirement_indexes_footprint`, callback footprint cases.
+2. **Recursive composite views.** `augment_rotate_callback*` need a view of a
+   recursive `shape`; the finite composite loan intentionally refuses nested
+   or undecidable frontiers. This is required for the rbtree launch path, so
+   an unsupported result does not complete V18. Design it explicitly and put
+   it through adversarial review before implementing.
+3. **Composite body facts.** `composite_resource_view_then_mutate`,
+   `composite_unfold_many_snapshots`, `frame_many_irrelevant_snapshots`, and
+   `opaque_calls_preserve_public_store_fact` hit the deliberate refusal of
+   fact-bearing composite backing. Supporting them means recording the exact
+   checked facts and the stable dependencies that justify reusing them;
+   removing the guard alone is unsound.
+4. **Loops and branches.** Loop havoc must use the checked owned entry
+   footprint as its validated ranges, and unknown write sets keep failing
+   closed; validate a loop's declared ownership before stable-loan havoc so
+   the ownership diagnostic is not masked. `proof_branch_pointer_local`
+   needs an authority-aware join comparison, with positive same-root and
+   negative changed/dropped-root regressions.
+5. **Certification.** `struct_conditional_value` passes entry-root selection
+   but reports that no checked execution matches its execution mode;
+   `pure_click_functions` fails only the stdlib `count` claim. Audit the
+   entry-state rebases and the distinction between local aggregate views,
+   stdlib lowering, and real external roots.
+6. **Expected negative diagnostics.** Several negative fixtures now fail at
+   the stable-loan barrier before their historical missing-ownership
+   message. Preserve the earlier, more specific validation order where
+   possible; change an expected substring only when the new diagnostic names
+   the true violated invariant and the positive behavior is already sound.
 
-V11 was split after review showed that treating a folded composite as an
-opaque token loan would fail to protect memory hidden in its body and would
-not authorize checked child projections. The first green checkpoint gives
-resource occurrences one canonical persistent loan-dependency root, shared
-with `CState` in constant time. Exact removal prunes only affected bindings.
-Fold, unfold, observe, expansion, and checked resource rewrites preserve exact
-dependencies or refuse ambiguous equal occurrences, mixed bound/unbound
-children, dependency laundering into owned heads, and reuse of unrelated
-equal children. Owner-supported unbound observations remain distinct and keep
-their existing normalized resource path. General composite lending and
-exclusive instances remain refused pending V11b decomposition and restoration.
+**Order:**
 
-V14 extends the independent executable model with explicit context/range
-partition and transfer, two-context shared readers, shared and model-only
-exclusive reborrows, returned-field value transport, a mutex invariant/guard,
-and thread-local confinement. Representative shared operations are compared
-with the production ledger; concurrency scheduling, atomics, Rust language
-rules, exclusive production reborrows, mutexes, and thread APIs remain
-explicitly model-only.
+1. Add a reproducible harness switch that runs the mdtest and example
+   corpora under `StableLoans`, and record a fresh baseline from master.
+2. Land the borrowed-input root as its own reviewed commit: exact principal
+   occurrence, no close/recovery right, focused positive and negative tests.
+3. Land the sidecar-preserving rebases, then symbolic range/access
+   enforcement, then local and read-only intrinsic views, each with its own
+   tests. Revert rather than carry anything whose invariant cannot be stated.
+4. Finish returned-view provenance, loop/branch authority, and certification
+   before attempting recursive or fact-bearing composites.
+5. Design recursive and fact-bearing composite capabilities explicitly and
+   have them adversarially reviewed.
+6. Only when the candidate corpus is green, assign the V18 review below.
 
-The V11a worktree passed `scripts/check.sh` with 2,904 tests and all four
-fixture gates. After integrating V11a as `6670f3c8` and V14 as `26698f0c` plus
-`ae28a308`, the coordinator gate passed all 2,913 tests and all four fixture
-gates. V11b starts from `ae28a308` and must decompose memory-backed composite
-views into primitive loans with an explicit checked restoration group; it
-must not re-enable opaque composite escrow.
+Optimize for small, understandable, green checkpoints. Do not drive the
+failure count down by weakening a guard, changing C, accepting a view by
+fact equality, or updating many expected messages at once.
 
-### 2026-09-12 V11b integration checkpoint
+### V18 — Review the complete change adversarially
 
-V11b implements the conservative composite-loan boundary as an atomic checked
-restoration group. A view of a folded composite is tied to its exact source
-occurrence, the head is removed from usable caller authority, and its complete
-decidable body is reduced to owned primitive memory and token pieces. Every
-memory piece enters both active-loan indexes, every primitive viewed projection
-is validated against the same loan, and recovery restores exactly the escrowed
-head only after the complete share tree closes. Equal duplicate heads are
-refused rather than selected by term equality, and counted token quantities not
-selected for lending remain in the caller.
+**Read:** this entire issue and all implementation handoffs.
+**Depends on:** V14, V17.
 
-Ordinary `LoanLedger::lend` still refuses `Composite` and `Instance` resources.
-The checked composite route also refuses instance children, unresolved nested
-frontiers, viewed children, and fact-bearing bodies. Those refusals prevent an
-incomplete frontier from hiding mutable or lifetime dependencies; V12 may
-admit fact-bearing bodies only by recording the exact stable-view dependency.
-Evidence validation rechecks permitted-view coverage for reborrows, and ending any scope
-removes every indexed backing range before recovery.
+**Boundary:** review and minimal missing regressions/fixes; no new features.
+Assign after implementation, preferably to an agent that did not author the
+core loan rules. This card does not start such an agent now.
 
-The V11b worktree commit `823fc8e9` passed `scripts/check.sh` with all 2,919
-tests and all four fixture gates, plus 30 focused loan tests and 24 candidate
-call-boundary tests. It is integrated in the coordinator as `355df884`.
+**Work:**
 
-### 2026-09-12 V12 and V15 integration checkpoint
+- Check every D2 law against all V0 entry-point consumers. Search for old
+  core projection, non-consuming view satisfaction, owner/view absorption,
+  return deduplication, local bypass, loop viewed form, and unchecked resource
+  rewrite paths. Classify each remaining occurrence explicitly.
+- Try to duplicate authority through facts, normalization, substitution,
+  branch joins, hidden resource bodies, counted units, and stale snapshots.
+  Recheck R01-R32 coverage at its required layer.
+- Verify that the full candidate engine has no legacy fallback and that
+  extension-model claims match implemented versus model-only operations.
+- Review scaling evidence and the planned V19 removal list. Run the full
+  candidate gate on the exact reviewed commit.
 
-V12 extends definition validation so a current `views` clause can cover body
-loads only when its existing range, bounds, guard, and predicate analysis
-proves coverage. At proof time, observe, unfold/open, and fold collect every
-current-memory load and require the exact live view binding that covers it.
-The resulting resource occurrence retains those loan dependencies. Unbound,
-stale, ended, wrong-holder, uncovered, and conflicting bindings fail closed.
-Owner-supported observations and persistent scalar or historical snapshot
-facts remain distinct because they do not claim stability from a current
-shared loan. The static and dynamic commits passed the full gate separately
-with 2,919 and 2,926 tests respectively; they are integrated as `684eece7`
-and `96ab2b41`.
+**Done when:** all required semantics have an enforcing path and meaningful
+regressions, every observed defect is fixed/rechecked, and the coordinator
+has an explicit cutover-ready verdict. Unresolved soundness or tooling
+concerns block V19; an optimistic checklist does not replace evidence.
 
-V15 binds verified artifacts to the selected source inputs, target/profile,
-resource-semantics version, and view-semantics mode. Legacy internal artifacts
-have explicitly absent identity and cannot masquerade as candidate results.
-Loan refusals now carry a structured category and operation, bounded subject
-resource or range, relevant opaque identifiers, and optional origin. Actual
-candidate execution distinguishes a proven overlap from a failure to prove
-separation, and the structured error survives planning, recovery,
-certification, and proof diagnostics without dumping ledger state. Expansion,
-audit, profile, verification, and certificate tests exercise the shared
-identity boundary. The identity checkpoint passed all 2,919 tests and all
-fixture gates; the diagnostics checkpoint passed its 25 candidate, 32 loan,
-and bounded-rendering tests. Its full gate found only this issue's retired
-terminology, corrected in this checkpoint. The integrated commits are
-`52d293b1` and `fe4f05cb`.
+### V19 — Cut over, document, and close
 
-The adversarial V12 review then found incomplete traversal through integer,
-algebraic, sequence, conversion, and opaque term carriers, missed
-unmaterialized current loads, and stale bindings on fact-free operations.
-`b3b10c54` closes those paths, preserves actual byte widths, indexes temporary
-views once per rewrite, and fails closed on opaque carriers. Its full gate
-passed 2,939 tests and all four fixture gates.
+**Read:** V18 verdict/removal list and final acceptance below.
+**Depends on:** V18.
 
-V16 replaces whole-history loan-evidence checking with incrementally checked
-persistent summaries, orders concrete interval clustering, and indexes
-resource subtraction by memory start. Four-size deterministic curves cover
-fixed live state versus completed calls, active intervals, split/read/join
-depth, persistent edits, support/dependency changes, certificate deltas,
-unrelated resources and definitions, and overlap chains. A follow-up review
-added persistent-tree work accounting and constant-time identity for shared
-evidence histories. The integrated commits are `975ee4c6`, `457530dd`, and
-`74a01c31`.
+**Boundary:** default entry interpretation, removal of temporary rollout
+scaffolding, public docs and affected expectations; no new semantic design.
 
-### 2026-09-12 V13 and V17 migration checkpoint
+**Work:**
 
-V13 routes stable-view mode through surface verification, preserves the
-checked entry state for certification, adds ordinary and nested reader,
-partial-borrow, and view-supported-fact fixtures, and records the complete
-view-output inventory in `docs/internals/view-output-inventory.md`. Its full
-gate passed 2,946 tests and all four fixture gates after the unvalidated
-external-root prototype was removed.
+- Make stable views the sole ordinary-memory interpretation. Remove
+  legacy independent view creation/fallbacks and temporary mode selectors.
+  Retain only justified owner observations, scoped views, and explicit
+  family-specific persistent facts.
+- Update `docs/concepts/resources.md`, affected examples, proof/tool docs,
+  and the stable-versus-historical descriptions in the shared language
+  design. Explain temporary stability, owner reads, partial borrowing,
+  scoped recovery, and supported escaping-output limits.
+- Preserve the final rules, representation rationale, model assumptions,
+  and test map in durable resource/internal documentation before deleting
+  this issue. Future agents must not lose the design when the issue closes.
+- Run focused changed tests and the unfiltered `scripts/check.sh` on the
+  final default configuration. Check the clean primary base and integrate
+  only the tested coherent commit.
+- Delete this issue and its README entry only when all final acceptance
+  criteria hold. Update links that pointed to it.
 
-The first reviewed V17 batches narrow the named rbtree callback contract to
-the exact shared cell range it reads and remove redundant or misleading
-view requirements from composite, population, and loop contracts. Each batch
-passed the complete mdtest suite before integration as `9e3052bc` and
-`2df1c154`. No C source changed. The reviewed migrations leave 198 corpus
-files and 337 explicit view declarations in the inventory. The complete
-candidate-semantics corpus and the remaining top-level reader fixtures cannot
-be judged until contract-entry views receive the checked nonrecoverable root
-authority described in the V13 handoff.
+**Done when:** stable memory views are actually enforced everywhere in the
+supported C verifier, the rollout path is gone, the docs describe shipped
+behavior, the full gate passes, and the rbtree launch remains the roadmap.
+If V19 requires a new semantic fix, return it to the relevant card and rerun
+the affected review; do not improvise it inside the final documentation step.
 
-### 2026-09-12 partial V18 adversarial-review checkpoint
-
-Independent Luna reviews of the implemented loan and proof paths found two
-authority defects that do not depend on the blocked contract-entry root.
-Reborrow now validates both participants against the ledger arena when the
-transition is issued and when its evidence is applied, so a foreign borrower
-cannot receive a child share. Proof-entry and execution-evidence rebases now
-require identical ledger, participant, and occurrence-binding authority, and
-resource-empty nested function and named-contract bindings preserve an active
-outer loan instead of resetting it.
-
-The loan fix is integrated as `8f67a3ca`; all 41 loan-kernel tests pass. The
-proof fix is integrated as `1b50a361`; its task worktree passed the complete
-gate with 2,950 tests, and the coordinator's 26 candidate-call tests plus the
-new changed-holder regression pass. After both fixes and the corpus-inventory
-refresh were integrated, the coordinator's authoritative gate passed all
-2,951 tests and all four fixture gates. V18 remains open until the entry-root
-boundary is implemented, the complete candidate corpus passes, and that final
-path receives its own adversarial review.
 
 ## Decision and violated invariant
 
@@ -1209,87 +1179,41 @@ documented near-linear bound. Compare counted work against those bounds,
 not a large fixed threshold chosen after looking at timings. Include a
 validity check so an early failure cannot masquerade as good scaling.
 
-## Implementation overview
 
-The three themes below summarize the change; the V0-V19 cards afterward are
-the assignable units. Start with the model and reviewed rules, then implement
-the shared authority/certificate boundary, then connect execution paths and
-migrate contracts. A model result alone does not complete this issue; the
-stable semantics must land in Click.
+## Implementation record
 
-### 1. Separate supported observations from outstanding borrows
+Cards V0-V17 landed on the codex coordinator branch during 2026-09-12 and
+2026-09-13 and were rebased onto master on 2026-09-13. Commit subjects are
+the stable identifiers; the dated checkpoint prose is in this file's git
+history. Doc-only "Record ..." commits are omitted.
 
-Keep `CResourceSpec`'s access, role, and snapshot fields. Add semantic identities
-for loans and their scopes, with loan mode, selected resource/footprint,
-support generation, parent dependencies, and a recovery obligation. Avoid
-equating scope identity with a lexical block or baking in a single lexical
-stack as the only possible lifetime relationship. Lifetime access
-shares must participate in resource transfer, branch joins, and certificate
-checking. These can be kernel resources or indexed state with checked deltas;
-they cannot be advisory surface metadata.
+| Card | Landed as | Established |
+| --- | --- | --- |
+| V0-V6 | Build stable view loan semantics spine | Baseline inventory (201 files with executable `views`); executable model in `loan_model_tests.rs` with bounded search to depth five under a 50,000-state cap and per-transition inductive facts; `loans.rs` ledger with fresh identities, persistent AVL snapshots, structural evidence seals, `OwnedResourceObservation` distinct from `StableViewDescription`, and the body-independent joint planner (exclusive requirements first, disjoint range splits, one backing per identical or overlapping view, transactional rejection, exact recovery recipe). |
+| V7 | Add loan ledger state identity; Preserve loan identity in CState plumbing; Bound stable view loans to backing and checked state; Opt in direct calls to stable view planner; Reconcile checked loan call recovery; Preserve loan participant identity in CState; Complete candidate stable-view call recovery; Add checked nested stable-view reborrows; Preserve nested view binding identity; Exercise nested stable view body calls; Complete candidate stable-view call outputs; Retain checked loan call evidence across V7 paths; Reconcile loan evidence with output and write checks; Keep stable view certificates opt in | Ledger, participant, and occurrence bindings in `CState`; direct body and verified calls through the planner; nested reborrows with exact output-view ancestry; canonical parent recovered only after return obligations; bounded persistent entry/recovery evidence for certification. Legacy verification stays outside the opt-in path. |
+| V8 | Route candidate verification and refinement through checked views; Check stable view refinement subranges; Stage loan-aware refinement behind candidate mode | Owned-interface to viewed-implementation refinement, including proper subranges; the reverse is refused; named and indirect callbacks converge on the common verified-call preparation. |
+| V9 | Enforce active stable loan memory footprints; Clean up active loan index checks | Persistent interval indexes for active concrete memory loans; every supported write and lifetime-ending path checks them; unsupported symbolic overlap fails closed; ending a child restores parent protection. |
+| V10 | Preserve stable view loans through control flow | Loan evidence through sequential statements, proof transitions, terminal outcomes, loop preservation candidates, `break`, and compatible branch joins; loop effect summaries check loan footprints before havoc; branch abstraction preserves loan-covered cells. |
+| V11a | Preserve loan dependencies through resource rewrites | One canonical persistent loan-dependency root per resource occurrence, shared with `CState` in constant time; fold, unfold, observe, expansion, and checked rewrites preserve exact dependencies or refuse ambiguous equal occurrences, mixed bound/unbound children, and laundering into owned heads. |
+| V11b | Decompose composite stable view loans | A view of a folded composite is an atomic restoration group: head removed from usable authority, decidable body reduced to owned primitive memory and token pieces, recovery restores the head only after the whole share tree closes. Refuses instance children, unresolved nested frontiers, viewed children, and fact-bearing bodies; `LoanLedger::lend` still refuses `Composite` and `Instance`. |
+| V12 | Allow current views to cover resource facts; Capture dynamic stable-view fact dependencies; Close stable view fact dependency gaps | Static coverage by properly scoped views; proof-time observe/unfold/fold collect every current-memory load and require the exact live binding; traversal through integer, algebraic, sequence, conversion, and opaque carriers, failing closed on opaque ones; byte widths preserved. |
+| V13 | Route stable view mode through surface verification; Reuse stable proof entry state for certification; Remove unvalidated external root prototype; Update V13 documentation and migrated diagnostic; Refresh stable view corpus inventory | `ViewSemanticsMode`; the five `stable_view_*` fixtures; the durable output inventory in `docs/internals/view-output-inventory.md`. The unvalidated external-root prototype was removed before integration. |
+| V14 | test: extend V14 loan models; docs: record V14 model handoff assumptions | Model-only two-context partition/transfer, shared readers across contexts, shared and exclusive reborrows, returned-field transport, mutex invariant/guard, thread-local confinement; representative operations compared with the production ledger. Scheduling, atomics, Rust rules, production reborrows, and thread APIs stay model-only. |
+| V15 | Add semantic identity at verification boundary; Add structured stable-view loan diagnostics | Artifacts bound to source inputs, target/profile, resource-semantics version, and view mode; legacy artifacts have absent identity. Refusals carry category, operation, bounded subject, identifiers, and origin; proven overlap is distinguished from unproved separation. |
+| V16 | Enforce local scaling for loan evidence and views; Strengthen V16 scaling evidence | Incrementally checked persistent evidence summaries; ordered interval clustering; resource subtraction indexed by memory start; four-size curves for live state versus completed calls, active intervals, split/read/join depth, persistent edits, dependency changes, certificate deltas, unrelated resources, and overlap chains; persistent-tree work accounting. |
+| V17 (partial) | Narrow stable callback view footprint; Migrate composite and loop view contracts | The rbtree callback contract narrowed to the exact shared cell range it reads; redundant view requirements removed from composite, population, and loop contracts; inventory 200/345 to 198/337; the last batch (Migrate remaining stable-view contract overlaps: `bounded_pool.click`, `modular_call_requirement_indexes_footprint`, `opaque_calls_preserve_separated_field`) was recovered from a codex side branch on 2026-09-13 and passes its focused mdtests and example. Open: top-level reader fixtures wait on the borrowed-input root. |
+| V18 (partial) | Reject cross-arena reborrow borrowers; Preserve stable-view authority across proof rebases | Reborrow validates both participants against the ledger arena when issued and when applied; proof-entry and execution-evidence rebases require identical ledger, participant, and binding authority; resource-empty nested function and named-contract bindings preserve an active outer loan. |
 
-Stop using an owner-derived `CResourceFact::View` as if it were an independently
-held borrow. Owners can answer read-authority queries directly. Supported
-observations should name the owner/loan they depend on and retain current
-snapshot invalidation rules. `observe` of an owned composite must not create a
-new outstanding borrow merely to read its facts. Observation of a genuine
-borrowed composite must retain that borrow's scope on all projections.
+Gate evidence: the codex coordinator's authoritative `scripts/check.sh` run
+at its final integrated commit passed 2,951 tests and all four fixture
+gates. After the rebase onto master (upstream had moved by 38 commits,
+including "Permit a read through either spelling of an aliased pointer"),
+the same script passed on the rebased tip on 2026-09-13 with 2,959
+library/binary/documentation tests and all four fixture gates.
 
-Audit `core`, entailment, consumption, normalization, supported expansion,
-fold/unfold/open/close, and return-view deduplication together. For mutable
-memory, do not retain `core(Own(R)) = independently usable View(R)`. A family
-may still have a persistent core for facts that really survive its updates;
-not every resource family must use the same core law.
+## Working agreements
 
-### 2. Make contracts perform real scoped lending
-
-Change the shared call-transfer engine, covering direct calls, named contracts,
-callbacks, and contract refinement. Satisfying a view from ownership suspends
-the selected ownership in loan storage; satisfying it from an existing view
-uses that loan or a checked shorter reborrow. Nested readers may alias.
-
-Evaluate all required resources jointly. A contract with an owned part and a
-viewed part requires a valid partition; unknown aliasing is not evidence of
-disjointness. Preserve range splitting and the untouched owned remainder.
-Recover only the input loans that actually end at return. Default input views
-last for the entire call, not merely until the callee's last load. Reentrant
-callbacks and hidden state must respect the outstanding loans too.
-
-Check stores and abstract call/loop effects against usable ownership. Route
-stack/heap/global storage through the same loan restrictions while preserving
-their existing lifetime and allocation distinctions. A body-independent call
-cannot havoc frozen memory just because an old owned footprint includes it.
-
-Keep the initial public contract language scoped to borrows it can represent.
-A returned C pointer is not automatically a Rust reference or a returned
-loan. Before supporting escaping resource borrows, add explicit scope binding
-in contracts and check that the lender cannot recover at ordinary call return.
-Early returns must discharge the same obligations; never recover solely because
-a local variable disappeared or a destructor is expected to run.
-
-### 3. Migrate C contracts and stable resource facts
-
-- Keep existing C unchanged. Aliased read/write code can use ownership of the
-  shared location, as `alias-owned.click` demonstrates. General possibly
-  overlapping source/destination ranges may need a permission partition or
-  conditional contract; do not impose false disjointness on valid C inputs.
-- Replace `views whole; owns field` with appropriate views of the unchanged
-  portion, or ownership of the whole plus a precise postcondition. Do not
-  automatically upgrade every view to ownership: that loses legitimate
-  overlapping-reader callers and may weaken framing precision.
-- Keep ordinary read-helper calls, recursive readers, viewed loop ranges,
-  folded resources, and subsequent owner mutation/free concise. Include real
-  callback footprints from the rbtree work in the migration audit.
-- Permit a composite fact such as `fact p[0] == 0` to depend on an active
-  stable view once its lifetime/support is tracked through the composite.
-  Update the current owned-memory-only coverage rule in
-  `src/surface/validation/definition_validation.rs` together with kernel
-  observation/framing checks. Folding must not hide an expiring borrow or
-  turn a scoped fact into a timeless current-memory assertion.
-
-## Implementation chunks and dependency order
-
-### Assignment and integration contract
+### Assignment and integration
 
 Assign one card at a time to a Luna agent. Each task prompt should contain:
 the integrated starting commit, this file and its D/R sections, the selected
@@ -1421,592 +1345,6 @@ adapter changes in a coordinated integration worktree and integrate one
 coherent tested cutover commit. Do not make a Luna agent invent a migration
 architecture mid-card or merge a half-enforced semantic change to stay green.
 
-### V0 — Baseline and classify existing usage
-
-**Read:** decision, D1-D2, catalogue; resource docs, the current
-`memory-vs-resources.md` handoffs, and the named positive fixtures.
-
-**Boundary:** investigation and existing-test execution only. No semantic
-changes or new user-facing issues. Record results in a dated handoff section
-of this file when this future card is actually assigned.
-
-**Work:**
-
-- Record the base and unfiltered gate verdict. Re-run the two migration
-  probes through ordinary verification. Classify weak-view fixtures without
-  claiming they already exercise loans.
-- Inventory `views` declarations in mdtests, examples, stdlib/contracts,
-  and proof-body resource definitions. Classify: pure readers; owner-only
-  observations; overlapping owner/view; partial field/range; explicit output
-  view; nested/folded/count/instance; local/heap/global; callback/loop.
-- Name each path that creates, normalizes, returns, or uses a view. Include
-  `access_mode_core`, consumption, return deduplication, initial projection,
-  loop viewed forms, stack shortcuts, and proof resource rewrites.
-- Record which existing memory/resource unification changes are already
-  integrated. Map their transition/support API to D3; do not redo W1 or
-  revive removed variants. Identify fixture expectations that change and
-  the exact positive replacement for each.
-
-**Done when:** the coordinator has a concrete migration inventory, current
-symbol map, baseline verdict, and a list of entry-point consumers to check
-off in V18. R07/R08/R09/R10 existing witnesses are classified with actual
-outcomes. A search count alone is not the inventory.
-
-### V1 — Model the laws and freeze the common API
-
-**Read:** D1-D6 and D12; R01-R05, R27-R30. **Depends on:** V0.
-
-**Boundary:** a small test/model module and design handoff. A proposed home
-is `src/kernel/tests/loan_model_tests.rs`; choose module wiring consistent
-with the current tree. This module is not a production threading engine.
-
-**Work:**
-
-- Define the small state machine: byte cells with allocation generation,
-  owners, loan escrow, view descriptions, binary shares, close/recovery
-  rights, and two independently held context fragments.
-- Implement the transition rules and invariant predicate. Include a naive
-  owner-plus-independent-view transition as an explicitly invalid comparison
-  whose counterexample the test detects, not an expected-success verifier.
-- Handwrite the two-reader trace and adversarial R01-R05 cases. Enumerate
-  bounded reachable small states with a fixed deterministic bound, recording
-  the bound and explored operations. Check compatible-frame preservation and
-  distinguish branch cloning from context splitting.
-- Write the inductive preservation argument for each operation, including
-  registration, discarded shares, open bodies, and recovery. The invariant
-  should explain why another context cannot regain a writer between reads.
-- Set the common API signature sketch, error categories, identity ownership,
-  staging seam, and exact projection semantics for later cards. Reserve the
-  parent-dependency seam used by V14 without promising unsafe Rust support.
-
-**Done when:** model tests and hand arguments agree; no closure is based
-solely on descriptor counts; the coordinator reviews D2-D6 against the
-counterexamples. Record decisions in this file before V2 starts. If the
-model contradicts this proposal, resolve the design first rather than
-asking later agents to choose competing rules.
-
-### V2 — Implement scope and access capability storage
-
-**Read:** D3-D5, D13; V1 API handoff. **Depends on:** V1.
-
-**Boundary:** resource/state types and a narrow loan-state module, plus unit
-tests. Likely integration points are `src/kernel/primitives.rs`,
-`src/kernel/primitives/resource_algebra.rs`, and
-`src/kernel/primitives/memory_state.rs`. Splitting out a module is encouraged
-if it keeps the public checked boundary narrow; do not rename unrelated APIs.
-
-**Work:**
-
-- Add fresh semantic IDs, persistent ledger roots, split-node records,
-  active-leaf ownership, close rights, and indexed direct dependencies.
-- Implement begin/split/join/end mechanics with private validated creation.
-  Keep end unavailable when obligations exist; no memory-lending API yet.
-- Include the state in identity, substitution/transport where applicable,
-  and branch ancestry without cloning complete maps or building deep keys.
-- Distinguish host-language data sharing from logical capability ownership.
-  Expose no public unchecked constructor that can mint a root or leaf.
-
-**Tests:** R02-R04, duplicate/forked token composition, fresh IDs in sibling
-branches; a four-size split-depth and unrelated-scope lookup test.
-
-**Done when:** capabilities are conserved by every available operation,
-constant-size tree nodes avoid repeated-halving arithmetic growth, and old
-source behavior remains unchanged. V3 receives checked IDs/handles rather
-than raw maps it can edit.
-
-### V3 — Implement lending, escrow, and recovery
-
-**Read:** D2-D6, D12; V2 handoff. **Depends on:** V2.
-
-**Boundary:** checked loan/resource operations and family algebra tests;
-no Surface Click or C-call wiring.
-
-**Work:**
-
-- Add atomic lending from owned memory, checked subrange selection and
-  residuals, description projection, active read authorization, and recovery.
-  Prevent escrow from satisfying ordinary write/read-owner queries.
-- Support several descriptions of one backing and compatible overlapping
-  readers. Freeze byte ranges and allocation identity at entry.
-- Add shared child reborrowing backed by pinned parent access. Check
-  coverage once, retain immediate dependency indexes, release parent access
-  on child closure, and reject cycles or ending a parent prematurely.
-- Handle selected token-unit suspension and recovery while preserving
-  remaining quantity; retain rejection of unsupported instance views.
-- Define normalization that preserves loan/support identity and obligations.
-  Eliminate no loan by owner/view absorption in the new interpretation.
-- Record and check restoration recipes for the simple pieces this card
-  supports. Complex composite reassembly belongs to V11.
-
-**Tests:** R01-R09 at kernel-operation level, R11/R17/R31, differing byte
-widths, unknown separation, failed-operation rollback, and recovery after
-disjoint writes. Include four-size single-loan lookup with unrelated owners.
-
-**Done when:** a kernel client can execute the basic two-reader trace and
-cannot recover through normalization, an old fact, or a still-live share.
-Unsupported symbolic partitions return explicit obligations/refusals.
-
-### V4 — Make every loan operation a checked proof transition
-
-**Read:** D2, D5, D13. **Depends on:** V3.
-
-**Boundary:** `src/kernel/proof/execution.rs`, proof object integration, and
-kernel proof tests; narrow supporting APIs only.
-
-**Work:**
-
-- Add evidence types and checked proof-object operations for the V2/V3
-  transition family. Bind their inputs to the current execution state.
-- Carry capability/support deltas through resource rewrites and outcome
-  checks. A supplied post-state alone must not certify the operation.
-- Make capabilities unavailable to pure theorem duplication/rewrite rules.
-  Check that retaining a historical composition is harmless.
-- Add hostile-certificate tests by deliberately changing each semantic input
-  while preserving superficially equal resource terms.
-
-**Tests:** R05/R12/R26, forged predecessor, duplicate recovery, swapped range,
-stale allocation generation, wrong-scope leaf, and unsupported after-state.
-
-**Done when:** independent kernel checking rejects each mutation and normal
-evidence advances the existing proof object. V5-V12 can only propose a
-transition, never manufacture accepted loan authority in surface code.
-
-### V5 — Separate owner observations from independent views
-
-**Read:** D3, D7, D13. **Depends on:** V4.
-
-**Boundary:** core/support operations in `resource_algebra.rs`, observation
-validation in `kernel/proof/execution.rs`, and the minimum matching paths in
-`src/surface/proof/resources.rs`.
-
-**Work:**
-
-- Let ownership satisfy direct read-authority queries without creating loans.
-  Represent owner-supported projections with occurrence/generation support.
-- Preserve support through observation, cached body expansions, and compact
-  composition facts. Distinguish an explicit scoped view from a projection.
-- Route transfer requests using such a projection back to its owner/loan;
-  an observation cannot itself be passed as a newly minted shared capability.
-- Audit support invalidation on consume/recreate and permitted writes.
-  Scope-bearing observations must carry loan access requirements.
-
-**Tests:** R12-R14/R25, repeated owner observation followed by legal mutation,
-consume/refold at equal arguments, and a changed pointer-field dependency.
-Preserve unrelated supported observations through the reverse index.
-
-**Done when:** the current projection machinery has one explicit
-interpretation at each consumer. Observing an owner neither freezes it
-forever nor gives a borrower an untracked independent capability.
-
-### V6 — Build the joint call-resource plan
-
-**Read:** D6, D8-D9; current unification transition APIs. **Depends on:** V5.
-
-**Boundary:** `prepare_contract_resource_transfer`,
-`CFunctionResourceTransfer`, and their shared requirement/effect helpers in
-`src/kernel/functions.rs`; call-plan tests. Leave actual return orchestration
-to V7.
-
-**Work:**
-
-- Separate evaluation/obligations, proposed partition, and checked commit.
-  Reuse validated `CResourceSpec` metadata and dependency-aware lowering.
-- Plan all clauses jointly, with identical/overlapping views sharing backing
-  and owned/viewed overlap requiring an actual legal partition.
-- Record entry-selected dependent pointers, caller residuals, escrow,
-  callee access, scope binding, owned transfers, and restoration obligations.
-- Derive the mutable effect projection from the committed transfer.
-  Candidate rejection is transactional and preserves provenance.
-
-**Tests:** R06-R08/R11, two identical views, partially overlapping views,
-one unknown-alias read pair with common covering owner, views with disjoint
-writable residual, clause-order variants, and a later clause failing after
-an earlier candidate would have lent memory.
-
-**Done when:** the same plan representation can serve ordinary and named
-contracts. A view output is backed by checked access, and no separation fact
-is assumed just because two clauses appeared in the input.
-
-### V7 — Bind direct calls and recover on returns
-
-**Read:** D8-D9 and staging contract. **Depends on:** V6.
-
-**Boundary:** direct function entry/call/return paths in
-`src/kernel/functions.rs`, generic function contract certification inputs,
-and the minimum surface entry-lowering adapter.
-
-**Work:**
-
-- Instantiate generic view inputs as the single shared access environment
-  from D8, with one call scope and possibly several parent dependencies.
-  Check actual-call substitution against the V6 plan.
-- Pass owner-backed views by lending; pass existing views by checked share
-  transfer/reborrow. Recover only scopes this call created.
-- Replace ensured-view deduplication as a recovery mechanism with checked
-  return obligations. Preserve normal borrowed ownership semantics.
-- Handle early/ordinary returns and nested/recursive read helpers; reject
-  unexpressible escaping access rather than silently ending it.
-
-**Tests:** R01/R06/R09/R18/R24, reader-then-write/free, caller retaining an
-outer view, two aliases, and a callee unable to close its caller's scope.
-Check postcondition evaluation before access discharge.
-
-**Done when:** the simplest actual C reader calls exercise the new rules
-through the shared engine and certificates. No new public lifetime syntax
-or proof-only local C changes are needed.
-
-### V8 — Route callbacks and contract refinement through the same rules
-
-**Read:** D8-D9; V7 APIs and callback support map. **Depends on:** V7.
-
-**Boundary:** named/indirect call application, refinement, explicit execution
-theorem adapters, and their contract/proof tests. Avoid changing unrelated
-callback matching/search heuristics.
-
-**Work:**
-
-- Route every body-independent contract application through V6/V7.
-  Preserve exact pointer contract evidence and current support provenance.
-- Implement checked own-to-view adaptation for interface refinement;
-  reject the reverse when only a stable view is supplied.
-- Prevent reentrant callback access to suspended caller authority.
-  Verify effect summaries cannot havoc the loan's protected footprint.
-- Confirm automatic formation and independently certified execution
-  theorems use the same authority transformations.
-
-**Tests:** R18-R21 on direct, named, indirect, theorem, and refinement paths;
-real callback-table retained-cell witnesses plus permitted-mutation negatives.
-
-**Done when:** the path inventory has no alternate contract engine using
-legacy view consumption for a scope-bearing state. Failure identifies the
-conflicting contract clause/loan, not a guessed callback target.
-
-### V9 — Protect local storage and allocation lifetime
-
-**Read:** D6, D10; V7 entry/return APIs. **Depends on:** V7.
-
-**Boundary:** `src/kernel/eval/statements.rs`,
-`src/kernel/eval/memory_loads.rs`, relevant helpers in
-`src/kernel/primitives/memory_state.rs`, and the caller-local lending
-shortcut in `functions.rs`. Coordinate the last file with V8 if needed.
-
-**Work:**
-
-- Replace implicit local permission bypasses with internally tracked
-  local authority/suspension, preserving ordinary local syntax.
-- Apply read/write checks to supported scalar/aggregate/byte paths and
-  materialized aliases. Keep bounds/initialization independent.
-- Reject free/realloc/lifetime end with live loan dependencies, including
-  hidden descriptions and subrange loans. Preserve allocation tokens.
-- Protect against reused local names or heap addresses reviving descriptors.
-  Audit static/global/literal special cases and record their justification.
-
-**Tests:** R09-R11/R31 with concrete live storage; direct local assignment
-and indirect alias store while lent; a legal write after return; heap
-subrange loan, realloc, and stale generation.
-
-**Done when:** no `local:` or external-memory classification can bypass
-the loan law. Missing-allocation rejection is not counted as the live-loan
-free regression.
-
-### V10 — Preserve loans through loops and branches
-
-**Read:** D9-D11. **Depends on:** V8, V9.
-
-**Boundary:** `src/kernel/loops.rs`, relevant checked execution branch/join
-paths, and focused C/Proof regressions.
-
-**Work:**
-
-- Audit `loop_body_resource_context`, automatic viewed forms, invariant
-  entry/backedge comparison, and loop memory-effect summaries.
-- Retain outer view dependencies, close iteration-local scopes, and reject
-  implicit invention/forgetting of access at the backedge.
-- Include loan deltas in branch joins. Reconcile branch-local scopes only
-  after checked discharge; keep incompatible surviving states separate.
-- Ensure early returns and non-returning paths have the D9 behavior.
-
-**Tests:** R22-R24; zero and multiple iterations, nested reader call inside
-an owning loop, view-only loop, disjoint mutation, same-value loop havoc,
-and one branch retaining a share. Re-run existing loop resource fixtures.
-
-**Done when:** neither invariant reconstruction nor proof branching is a
-way to duplicate access or recover early. Joins use changed-state evidence
-rather than complete-history comparisons.
-
-### V11 — Preserve dependencies through composite resource operations
-
-**Read:** D6-D7, D11-D12. **Depends on:** V5, V7, V10.
-
-**Boundary:** `src/surface/proof/resources.rs`,
-`src/surface/proof/proof_object/resource_steps.rs`, their kernel rewrite
-checks, and population/body helpers.
-
-**Work:**
-
-- Carry loan/support bundles through fold, unfold, observe, scoped open,
-  close, symbolic resource pieces, and counted population bodies.
-- Make viewed body projections read-only. Suspend a folded parent's
-  alternate authority while its pieces are lent or exclusively exposed.
-- Pin access while a borrowed body is open, and check closure restoration
-  before returning it. Prevent hidden obligations from escaping via a head.
-- Reassemble caller packaging only after resource facts in the resulting
-  state are checked; preserve legitimate changed model arguments.
-- Keep exclusive-instance views unsupported and token quantities conserved.
-
-**Tests:** R13-R17/R25, nested folded view, open-with-live-body at scope
-end, partial-field loan from a folded owner, and counted remaining units.
-
-**Done when:** every current resource operation either preserves required
-dependencies or explicitly refuses the unsupported case. Resource
-abstraction cannot conceal an active reader from recovery.
-
-### V12 — Allow stable viewed memory to support resource facts
-
-**Read:** D7 and the existing definition-validation coverage rules.
-**Depends on:** V11.
-
-**Boundary:** `src/surface/validation/definition_validation.rs`, dynamic
-fold/observation checks, and paired resource-definition/proof fixtures.
-
-**Work:**
-
-- Extend static coverage to properly scoped views while retaining owned
-  coverage and current guard/bounds/predicate-load analysis.
-- Dynamically capture the actual loan dependencies when proving/folding
-  a fact about viewed memory.
-- Keep persistent scalar facts and snapshot facts distinct from current
-  memory facts requiring active support.
-- Reject attempts to store the fact in an output resource whose interface
-  cannot retain the required scope.
-
-**Tests:** R12/R15/R16 with a zero-valued cell, symbolic in-bounds element,
-nested support, uncovered neighboring element, false value, ended scope,
-and a predicate-hidden read. Re-run all previous coverage rejections.
-
-**Done when:** the intended stable-view resource example verifies and
-each dependency-erasure attempt fails in the kernel as well as validation.
-
-### V13 — Migrate the minimal C examples and classify view outputs
-
-**Read:** D1, D6-D9 and V0 inventory. **Depends on:** V8, V9, V12.
-
-**Boundary:** the smallest sidecar/mdtest contract migrations, paired
-rejection fixtures, and any narrow output-lowering diagnostic needed for
-the already chosen supported boundary. No C implementation edits.
-
-**Work:**
-
-- Migrate aliased sequential read/write examples to truthful ownership
-  contracts; preserve valid aliasing rather than adding false separation.
-- Migrate whole-resource-view plus owned-field cases to selected field
-  views or whole ownership with precise guarantees.
-- Audit every explicit view-producing/output form in the V0 inventory.
-  Classify existing outer dependency, returned input access, immutable
-  support, or currently unsupported escape; implement no implicit new
-  escaping lifetime language.
-- Add concise ordinary reader, nested-reader, partial-borrow, and
-  view-supported-fact examples using the normal proof workflow.
-
-**Tests:** R06-R09/R15/R24; small synthetic returned-pointer C example must
-remain legal when the caller independently retains authority.
-
-**Done when:** minimal C usability is demonstrated under the candidate
-semantics and positive C sources are byte-for-byte unchanged. No blanket
-replacement of `views` by `owns` has removed shared-reader coverage.
-
-### V13 handoff: durable output audit
-
-The complete extraction and source-path classification for this chunk is in
-[`docs/internals/view-output-inventory.md`](../docs/internals/view-output-inventory.md).
-The 2026-09-12 snapshot contains 198 files and 337 explicit `views`
-declarations: 178 mdtests, 19 examples, and one design probe. Every
-declaration is assigned to existing outer dependency, returned input access,
-immutable support, or unsupported escape, with the exact extraction method and
-the responsible lowering/kernel paths recorded there. The raw returned-pointer
-case is legal only when the caller retains independent ownership; it is not an
-escaping stable loan. The stable fact fixture is intentionally a static V12
-validation witness until dynamic loan capture binds its source occurrence. The
-focused kernel candidate-call tests cover the transition itself, but a surface
-candidate-route fixture exposed the remaining top-level input gap: the shared
-proof/certification state constructor needs one checked nonrecoverable root
-authority for each exact input-view occurrence. The V13 migration does not
-weaken the candidate evidence check or claim this route is complete before that
-V12 dependency lands.
-
-### V14 — Recheck extension models against implemented rules
-
-**Read:** D2-D5, D12, concurrency section and shared language design.
-**Depends on:** V4, V11.
-
-**Boundary:** the small model, kernel/model correspondence tests, and a
-design handoff. No threading API, Rust frontend, mutex library, or atomics.
-
-**Work:**
-
-- Map every implemented shared-loan model step to its checked kernel
-  operation and compare outcomes on representative traces. Do not replace
-  the independent model invariant with calls to the implementation's
-  own validity helper.
-- Add shared/exclusive reborrow and returned-field-loan dependencies.
-  Exercise updated-value recovery and forbidden parent access.
-- Model two-context partition/transfer/join, disjoint writers, a mutex
-  invariant/guard, and a thread-local mutable-cell protocol.
-- Record abstract memory/scheduling assumptions, bounds, omitted language
-  rules, and extension-only operations. Give preservation arguments for
-  the added transitions and explain the shared-kernel correspondence.
-
-**Tests:** R27-R30 plus the original two-reader trace with each reader
-placed in a different context.
-
-**Done when:** the model can express these cases without weakening the
-implemented stable-view rules or equating lifetime with lexical scope.
-A contradiction triggers a bounded design correction before V18; a passing
-sequential interleaving model is not a release/acquire proof.
-
-### V15 — Complete proof tools, semantic identity, and diagnostics
-
-**Read:** D13 and the path inventory. **Depends on:** V8, V10, V12.
-
-**Boundary:** surface proof-object adapters, expansion/audit/profile plumbing,
-diagnostic formatting, and cache/certification identity at the existing
-shared engine boundary.
-
-**Work:**
-
-- Ensure generated simple proofs/call certificates check loan transitions.
-  Preserve original source attribution and selected resource names.
-- Add the D13 refusal categories with bounded context and useful origin
-  links. Missing separation and proven overlap remain distinguishable.
-- Bind prepared proof/cache artifacts to the resource-semantics identity
-  while staging; a stale legacy result cannot certify the new claim.
-- Exercise actual verify, expansion/reverification, profile, and audit using
-  shared APIs. Do not construct recursive CLI subprocess workflows.
-
-**Tests:** R26 across direct, callback, local, loop, and composite fixtures;
-tampered/cross-interpretation evidence and diagnostic-size bounds.
-
-**Done when:** all tools agree on both positive and negative witnesses,
-and a failed loan rule has a local actionable explanation.
-
-### V16 — Enforce deterministic scaling
-
-**Read:** D4-D6, D13, R32 and the efficiency contract.
-**Depends on:** V10, V11, V15.
-
-**Boundary:** focused instrumentation/scaling tests and local fixes to the
-new paths they expose. Follow `src/instrumentation.rs`,
-`src/kernel/tests/resource_tests.rs`, and
-`src/surface/tests/scaling_tests.rs` patterns.
-
-**Work:**
-
-- Add independent four-size curves from R32, including current live count
-  versus accumulated completed-call count and deep split-tree reads.
-- Count actual index candidates, persistent edits, support/dependency
-  changes, certificate deltas, and tree joins.
-- Exercise explicit simple proofs so search improvements cannot mask
-  checker complexity. Separate unavoidable selected-body traversal.
-- Repair only demonstrated hot-path violations; preserve semantic tests.
-  If the fix needs a representation change outside this card, return a
-  concrete blocker and revised boundary rather than raising the budget.
-
-**Done when:** deterministic curves meet the stated local/total bounds,
-all results still verify, and the full gate passes. Wall-clock gains alone
-do not close this card.
-
-### V17 — Migrate the corpus and preserve rbtree readiness
-
-**Read:** V0 inventory, V13 patterns, and current rbtree/callback milestones.
-**Depends on:** V13, V15, V16.
-
-**Boundary:** existing sidecars, resource contracts, test expectations, and
-example documentation affected by the semantic change. No C source edits.
-
-**Work:**
-
-- Process the inventory by class, with reviewed explicit diffs.
-  Preserve both aliased-reader clients and legitimate sequential writes.
-- Cover real current rbtree helper/callback footprints; do not replace them
-  with synthetic simplified C or require unrelated rbtree milestones.
-- Reclassify weak-view-positive fixtures: add their truthful stable
-  contract counterpart and retain a concrete rejecting old-contract caller
-  where it tests a meaningful invariant.
-- Run the complete candidate-semantics corpus through normal engine paths,
-  including stdlib, mdtests, examples, and compiler-import fixtures.
-  Explain any previously supported view-output form that needs a contract
-  change or is now explicitly outside the supported lifetime interface.
-
-**Done when:** the inventory has an outcome for every class/file, all
-candidate gates pass without skip lists, and every C-source difference is
-absent or independently justified under repository policy. Record remaining
-unrelated rbtree blockers without claiming this issue finishes the demo.
-
-If the inventory is large, the coordinator may subdivide this card into
-nonoverlapping fixture directories/classes using the same R IDs and handoff
-format. These are subtasks of this issue, not new issues; each subdivision
-must preserve green checkpoints and must not change shared kernel semantics.
-
-### V18 — Review the complete change adversarially
-
-**Read:** this entire issue and all implementation handoffs.
-**Depends on:** V14, V17.
-
-**Boundary:** review and minimal missing regressions/fixes; no new features.
-Assign after implementation, preferably to an agent that did not author the
-core loan rules. This card does not start such an agent now.
-
-**Work:**
-
-- Check every D2 law against all V0 entry-point consumers. Search for old
-  core projection, non-consuming view satisfaction, owner/view absorption,
-  return deduplication, local bypass, loop viewed form, and unchecked resource
-  rewrite paths. Classify each remaining occurrence explicitly.
-- Try to duplicate authority through facts, normalization, substitution,
-  branch joins, hidden resource bodies, counted units, and stale snapshots.
-  Recheck R01-R32 coverage at its required layer.
-- Verify that the full candidate engine has no legacy fallback and that
-  extension-model claims match implemented versus model-only operations.
-- Review scaling evidence and the planned V19 removal list. Run the full
-  candidate gate on the exact reviewed commit.
-
-**Done when:** all required semantics have an enforcing path and meaningful
-regressions, every observed defect is fixed/rechecked, and the coordinator
-has an explicit cutover-ready verdict. Unresolved soundness or tooling
-concerns block V19; an optimistic checklist does not replace evidence.
-
-### V19 — Cut over, document, and close
-
-**Read:** V18 verdict/removal list and final acceptance below.
-**Depends on:** V18.
-
-**Boundary:** default entry interpretation, removal of temporary rollout
-scaffolding, public docs and affected expectations; no new semantic design.
-
-**Work:**
-
-- Make stable views the sole ordinary-memory interpretation. Remove
-  legacy independent view creation/fallbacks and temporary mode selectors.
-  Retain only justified owner observations, scoped views, and explicit
-  family-specific persistent facts.
-- Update `docs/concepts/resources.md`, affected examples, proof/tool docs,
-  and the stable-versus-historical descriptions in the shared language
-  design. Explain temporary stability, owner reads, partial borrowing,
-  scoped recovery, and supported escaping-output limits.
-- Preserve the final rules, representation rationale, model assumptions,
-  and test map in durable resource/internal documentation before deleting
-  this issue. Future agents must not lose the design when the issue closes.
-- Run focused changed tests and the unfiltered `scripts/check.sh` on the
-  final default configuration. Check the clean primary base and integrate
-  only the tested coherent commit.
-- Delete this issue and its README entry only when all final acceptance
-  criteria hold. Update links that pointed to it.
-
-**Done when:** stable memory views are actually enforced everywhere in the
-supported C verifier, the rollout path is gone, the docs describe shipped
-behavior, the full gate passes, and the rbtree launch remains the roadmap.
-If V19 requires a new semantic fix, return it to the relevant card and rerun
-the affected review; do not improvise it inside the final documentation step.
 
 ## Concurrency and Rust design checks
 
