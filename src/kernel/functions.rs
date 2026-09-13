@@ -1,7 +1,7 @@
 use super::loans::{
-    CheckedLoanCallEvidence, LoanLedger, LoanViewBindings, StableViewTransferPlan,
-    append_checked_loan_evidence, empty_checked_loan_evidence_sequence,
-    plan_stable_view_transfer_with_bindings,
+    CheckedLoanCallEvidence, CompositeLoanBacking, LoanLedger, LoanViewBindings,
+    StableViewTransferPlan, append_checked_loan_evidence, empty_checked_loan_evidence_sequence,
+    plan_stable_view_transfer_with_bindings_and_composites,
 };
 use super::prelude::*;
 use std::sync::Arc;
@@ -9923,7 +9923,77 @@ fn prepare_contract_resource_transfer_with_candidate(
                 "could not allocate stable-view callee participant".to_string(),
             )));
         };
-        match plan_stable_view_transfer_with_bindings(
+        let composite_backings = if checked_required_resources.iter().any(|requirement| {
+            requirement.fact.is_view()
+                && matches!(requirement.fact.resource(), CResource::Composite { .. })
+        }) {
+            let mut backings = BTreeMap::new();
+            for requirement in checked_required_resources.iter().filter(|requirement| {
+                requirement.fact.is_view()
+                    && matches!(requirement.fact.resource(), CResource::Composite { .. })
+            }) {
+                let Some((support, owned)) = caller_state
+                    .resources()
+                    .directly_supporting_owned_entry(&requirement.fact, assumptions)
+                else {
+                    continue;
+                };
+                let singleton = ResourceContext::new().unchecked_with_fact(owned.clone());
+                let Some(expanded) = expand_all_composite_resource_facts(
+                    &singleton,
+                    interface.composite_resource_definitions(),
+                    caller_state.memory(),
+                    assumptions,
+                ) else {
+                    return Ok(Err(CRuntimeError::FunctionContract(
+                        "could not check the primitive frontier of a composite view".to_string(),
+                    )));
+                };
+                if expanded.facts().iter().any(|fact| {
+                    matches!(
+                        fact.resource(),
+                        CResource::Composite { .. } | CResource::Instance(_)
+                    ) || !fact.is_own()
+                }) {
+                    return Ok(Err(CRuntimeError::FunctionContract(
+                        "nested or undecidable composite loan backing is unsupported".to_string(),
+                    )));
+                }
+                let Some(definition) =
+                    interface
+                        .composite_resource_definitions()
+                        .iter()
+                        .find(|definition| {
+                            matches!(
+                                owned.resource(),
+                                CResource::Composite { name, .. } if definition.name() == name
+                            )
+                        })
+                else {
+                    return Ok(Err(CRuntimeError::FunctionContract(
+                        "composite loan definition is missing".to_string(),
+                    )));
+                };
+                if !definition.facts().is_empty() {
+                    return Ok(Err(CRuntimeError::FunctionContract(
+                        "composite body facts are unsupported in stable loan backing".to_string(),
+                    )));
+                }
+                let pieces = expanded.facts().to_vec();
+                let Some(backing) =
+                    CompositeLoanBacking::from_checked_expansion(support, owned.clone(), pieces)
+                else {
+                    return Ok(Err(CRuntimeError::FunctionContract(
+                        "composite loan frontier is not primitive".to_string(),
+                    )));
+                };
+                backings.insert(support, backing);
+            }
+            backings
+        } else {
+            BTreeMap::new()
+        };
+        match plan_stable_view_transfer_with_bindings_and_composites(
             caller_state.resources(),
             &checked_required_resources,
             assumptions,
@@ -9931,6 +10001,7 @@ fn prepare_contract_resource_transfer_with_candidate(
             caller,
             callee,
             caller_state.loan_view_bindings(),
+            &composite_backings,
         ) {
             Ok(plan) => {
                 if let Err(error) = plan.recheck_entry(&ledger) {
@@ -16880,6 +16951,7 @@ mod integer_parameter_read_tests {
 #[cfg(test)]
 mod candidate_stable_view_call_tests {
     use super::*;
+    use crate::kernel::loans::LoanRefusal;
 
     fn pointer() -> Pointer {
         Pointer {
@@ -16981,6 +17053,36 @@ mod candidate_stable_view_call_tests {
         .with_resource_summary(requires, Vec::new())
     }
 
+    fn composite_reader(name: &str) -> CFunction {
+        let segment = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        let required = CResourceSpec::declared(
+            ResourceFamily::Composite,
+            CResourceAccessMode::View,
+            "cell".into(),
+            vec![c_variable("p")],
+            vec![CType::Int32Pointer],
+            CResourceTransferRole::Borrow,
+            CResourceSnapshot::Entry,
+        )
+        .unwrap();
+        let definition = CCompositeResourceDefinition::new(
+            "cell",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            None,
+            false,
+            vec![CResourceSpec::owned_memory(segment)],
+            Vec::new(),
+        );
+        c_function(
+            CType::Int32,
+            name,
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(c_load(c_variable("p"))),
+        )
+        .with_resource_summary(vec![required], Vec::new())
+        .with_composite_resource_definitions(vec![definition])
+    }
+
     fn early_reader(name: &str) -> CFunction {
         let segment = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
         c_function(
@@ -17077,6 +17179,66 @@ mod candidate_stable_view_call_tests {
             )),
             &PureFactContext::new(),
         ));
+    }
+
+    #[test]
+    fn candidate_composite_call_lends_primitive_body_and_recovers_head() {
+        let pointer = pointer();
+        let head =
+            CResourceFact::own_composite("cell".into(), vec![CValue::pointer(pointer.clone())]);
+        let caller = CState::new()
+            .with_memory(
+                CMemory::new()
+                    .with_block(pointer.block.clone(), 4)
+                    .store(pointer.clone(), int32(7)),
+            )
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(head.clone()));
+        let function = composite_reader("candidate_composite_reader");
+        let callee =
+            bind_c_function_arguments(&caller, &function, &[CValue::pointer(pointer.clone())])
+                .expect("composite reader arguments should bind");
+        let transfer = prepare_function_resource_transfer(
+            &caller,
+            &callee,
+            &function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("composite transfer should run")
+        .expect("composite transfer should be accepted");
+        let plan = transfer
+            .stable_view_plan
+            .as_ref()
+            .expect("composite transfer records a loan plan");
+        assert_eq!(plan.stable_views().len(), 1);
+        assert!(plan.ledger.has_active_memory_loans());
+        let body_range = CMemoryRange::new(
+            pointer.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        assert_eq!(
+            plan.ledger.permits_memory_access(&body_range),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        assert!(transfer.callee_resources.satisfies_fact(
+            &CResourceFact::view_composite("cell".into(), vec![CValue::pointer(pointer.clone())],),
+            &PureFactContext::new(),
+        ));
+        let callee_state = callee_state_with_resource_transfer(callee, &transfer);
+        let (resources, _, _, _, evidence) = recover_candidate_stable_view_resources(
+            &caller,
+            &callee_state,
+            &transfer,
+            ResourceContext::new(),
+            &PureFactContext::new(),
+            &[],
+        )
+        .expect("composite return should recover");
+        assert!(resources.satisfies_fact(&head, &PureFactContext::new()));
+        assert!(evidence.is_some());
     }
 
     #[test]
