@@ -35,7 +35,7 @@ recreate a previously consumed context layer must fail.
 
 - A loop may declare a guarded directly recursive composite resource as a
   structural decreases measure. Spelling decided 2026-09-11 in
-  [recursive-structure-models.md](recursive-structure-models.md) (D6): a
+  [rbtree-example.md](rbtree-example.md) (D6): a
   loop or contract binder named without a keyword, `decreases sub;`, and
   the function-level `decreases resource list(node)` becomes
   `decreases list(node)`. Implementation is that issue's package A4.
@@ -49,4 +49,4 @@ recreate a previously consumed context layer must fail.
   pass with `scripts/check.sh`.
 
 Related: [recursion.md](recursion.md) and
-[recursive-structure-models.md](recursive-structure-models.md).
+[rbtree-example.md](rbtree-example.md).

@@ -1,4 +1,29 @@
-# Add abstract summaries for recursive memory structures
+# Verify the Linux rbtree example on the recursive structure models
+
+Renamed from `recursive-structure-models.md` on 2026-09-13. The models, the
+two syntax extensions, and the verifier packages below are landed; what
+remains is finishing the specific example: the verbatim `__rb_insert`
+(C3), erase (C5), the augmented callbacks (C6), and attaching the sidecars
+to the pinned source (D1).
+
+## Priorities, 2026-09-13
+
+Fix what slows the work before completing the example:
+
+1. **Imports first.** The insert fixture is 6100 lines because a fixture
+   cannot import, so the whole pure library is copied in, re-verified on
+   every run, and outside audit's coverage. This issue now depends on
+   [specification-imports.md](specification-imports.md), whose "not an MVR
+   dependency" note is withdrawn. C3 resumes only after the example can be
+   written as an `examples/` project that imports
+   `examples/rbtree-model`.
+2. **Efficiency next, if it stays on pace to be a problem.** `click verify`
+   of the insert fixture went from 0.6s to 5.8s with a third of the loop
+   body written, largely because the body is spelled out once per frame
+   combination. Remove the duplication (a theorem per case, D10 shape),
+   then measure; a verifier scaling defect is a blocker under the
+   efficiency contract.
+3. **Then the remaining exits of C3**, as separate packages by exit path.
 
 P1: required for MVR. A directly recursive composite resource can own an
 arbitrary finite binary tree, but ownership alone does not state the tree's

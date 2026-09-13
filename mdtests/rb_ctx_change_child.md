@@ -5,7 +5,7 @@ focused child alone, owns the ancestors' cells through the frame's own payloads,
 and bottoms out at `Top`, which owns `root->rb_node`. `plug` rebuilds the whole
 model from a frame and the focused subtree, so a frame plus a subtree is a whole
 tree. This is the node-keyed spelling decided for gap 35 in
-[`issues/recursive-structure-models.md`](../issues/recursive-structure-models.md):
+[`issues/rbtree-example.md`](../issues/rbtree-example.md):
 `rb_at(p)` carries the parent in the model, and a `Left`/`Right` frame carries
 the node it owns and *that* node's parent as its first two payloads, so `plug`
 can rebuild each ancestor and the arm can still state its packed parent word.

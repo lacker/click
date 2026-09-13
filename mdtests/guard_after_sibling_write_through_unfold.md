@@ -27,7 +27,7 @@ undecided condition:
 ```
 
 This is gap 43 in
-[`issues/recursive-structure-models.md`](../issues/recursive-structure-models.md),
+[`issues/rbtree-example.md`](../issues/rbtree-example.md),
 and it is what the non-root frames of
 [`rb_replace_node.md`](rb_replace_node.md) were waiting for: the verbatim
 `rb_replace_node` copies `*new = *victim` and only then reaches

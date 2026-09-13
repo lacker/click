@@ -3,7 +3,7 @@
 The unchanged Linux `rb_first` and `rb_last` descend from the root to the
 leftmost or rightmost node. They are the reason the rbtree model is keyed by
 node with the parent in the payload (gap 35 in
-[`issues/recursive-structure-models.md`](../issues/recursive-structure-models.md)):
+[`issues/rbtree-example.md`](../issues/rbtree-example.md)):
 `n` is the only node name in scope, so a `rb_at(p, parent)` binder or a
 `produces ctx: ctx_at(result, parent, root)` clause would have nothing to put
 in the parent position. With `rb_at(p)` and `ctx_at(child, root)` every clause

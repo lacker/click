@@ -9,7 +9,7 @@ becomes `RbTree::Node(new, parent, color, l, r)`, with the parent payload, both
 subtrees and the frame unchanged. That is `rb_substitute`.
 
 The model is keyed by node with the parent in the payload (gap 35 in
-[`issues/recursive-structure-models.md`](../issues/recursive-structure-models.md)):
+[`issues/rbtree-example.md`](../issues/rbtree-example.md)):
 `rb_at(p)` and `ctx_at(child, root)`. The wrapper pins the victim's model with
 the C parameter `parent` in the payload slot, which is how `rb_parent(victim)`
 and the frame are related here: with the parent inside the model rather than a
@@ -383,7 +383,7 @@ bindings* as well as the resource's own parameters, so a clause written over
 evaluate, the cell stayed unnamed, the copy re-minted its load identity, and
 `execute()` refused with `step() requires exactly one statement successor …,
 got 2`. That was gap 43 in
-[`issues/recursive-structure-models.md`](../issues/recursive-structure-models.md);
+[`issues/rbtree-example.md`](../issues/rbtree-example.md);
 its reduction is `mdtests/guard_after_sibling_write_through_unfold.md`.
 
 The `Right` frame additionally needs `parent->rb_left == old` to be *false*. It

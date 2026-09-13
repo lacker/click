@@ -2,7 +2,7 @@
 
 A resource arm may state a fact by applying a pure function to a pointer — the
 resource's own parameter, or a pointer payload of the matched constructor. This
-is how [D2](../issues/recursive-structure-models.md) states parent/child
+is how [D2](../issues/rbtree-example.md) states parent/child
 consistency inside `rb_at`'s `Node` arm (`rb_parent_is(left_model, p) == 1`)
 rather than repeating it in every contract.
 

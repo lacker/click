@@ -6,7 +6,7 @@ The parent is a model *payload*, not a resource parameter: the top-level Linux
 traversals (`rb_first`, `rb_next`) keep no C local naming the focused node's
 parent, so a parameter spelling has nothing to put in a loop binder or a
 `produces` clause. This is gap 35 and its decision in
-[`issues/recursive-structure-models.md`](../issues/recursive-structure-models.md).
+[`issues/rbtree-example.md`](../issues/rbtree-example.md).
 
 With the parent inside the model, the node's own arm still owns
 `p->__rb_parent_color` and still states what that word holds — the payload

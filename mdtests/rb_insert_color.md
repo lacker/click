@@ -1,7 +1,7 @@
 # `rb_insert_color` and `__rb_insert`: the fixup loop's exits
 
 This is package C3 of
-[`issues/recursive-structure-models.md`](../issues/recursive-structure-models.md):
+[`issues/rbtree-example.md`](../issues/rbtree-example.md):
 the unchanged Linux insert fixup, contracted over the node-keyed
 `ctx_at(child, root)` frame and `rb_at(p)` subtree that
 [`rb_ascending_walk_to_root.md`](rb_ascending_walk_to_root.md) and

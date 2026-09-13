@@ -78,7 +78,13 @@ Errors identify both the importing site and the relevant defining file.
 - Positive, negative, duplicate-import, transitive-invalidation, and
   multi-size dependency-scaling regressions pass with `scripts/check.sh`.
 
-This is not an MVR dependency: the minimum rbtree result can use one sidecar
-and the embedded prelude. It becomes important when its models and reusable
-proof libraries are shared across verification targets.
+This is an MVR dependency, as of 2026-09-13. The insert proof in
+[rbtree-example.md](rbtree-example.md) copies the whole 5000-line
+`examples/rbtree-model` library into its fixture because a sidecar cannot
+import; the copy is re-verified on every run, sits outside `click audit`'s
+coverage, and buries the proof. A minimal first slice unblocks it: one-level
+`import "path.click";` of pure declarations (algebraic types, pure functions,
+predicates, theorems, resources) from a local file, loaded once, with the
+importing sidecar alone selecting `verifying` sources. Transitive imports,
+the standard-library split, and incremental selection can follow.
 

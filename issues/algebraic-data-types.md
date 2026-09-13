@@ -3,7 +3,7 @@
 P2: general completeness, not a blanket MVR dependency. The core ADT feature
 set already supports ownership-backed tree models and a verified left rotation.
 MVR algorithm proofs and the specific integration gaps they expose belong in
-[recursive-structure-models.md](recursive-structure-models.md). Promote only
+[rbtree-example.md](rbtree-example.md). Promote only
 the required slice when a concrete MVR proof needs it. Soundness defects
 remain P1 regardless of which program exercises them.
 
@@ -92,5 +92,5 @@ relation to concrete memory and owned children.
 Integer specification coverage is landed and documented in
 [the mathematical-integer internals](../docs/internals/mathematical-integers.md);
 the remaining ADT generalizations do not depend on the retired Integer P1
-issue. Related: [recursive-structure-models.md](recursive-structure-models.md)
+issue. Related: [rbtree-example.md](rbtree-example.md)
 and [resource-algebra-extensions.md](resource-algebra-extensions.md).

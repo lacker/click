@@ -357,4 +357,4 @@ continues on verbatim Linux bodies in the `rb_*` mdtests, with
 [`mdtests/rb_ascending_walk_to_root.md`](../../mdtests/rb_ascending_walk_to_root.md)
 as the current front, and its pure library is
 [`examples/rbtree-model`](../rbtree-model/README.md). The plan for the rest is
-[`issues/recursive-structure-models.md`](../../issues/recursive-structure-models.md).
+[`issues/rbtree-example.md`](../../issues/rbtree-example.md).

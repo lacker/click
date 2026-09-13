@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (14)
+## P1: before launch (15)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -74,10 +74,11 @@ Specification and proof:
 
 - [Unify memory and other resources across contracts and callbacks](memory-vs-resources.md)
 - [Give views stable borrowing semantics for concurrency and future Rust support](fix-views.md)
-- [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
+- [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
+- [Add modules and imports for Click specifications](specification-imports.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-## P2: after launch (24)
+## P2: after launch (23)
 
 - [Make `step` simple across a call precondition](simplify-step.md)
 
@@ -116,4 +117,3 @@ Proof language and tooling:
 - [Reduce repeated work in deeply nested `Integer` quantifiers](deep-quantifier-scaling.md)
 - [Complete general-purpose algebraic data type support](algebraic-data-types.md)
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
-- [Add modules and imports for Click specifications](specification-imports.md)

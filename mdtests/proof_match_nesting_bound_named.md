@@ -11,7 +11,7 @@ regions continues the region it is in, and the frontier split that picks one
 constructor arm out of many is charged separately. Charging both to the
 nesting counter made the effective limit five, which is what declined C4's
 four-scrutinee `rb_replace_node` proof in
-[`issues/recursive-structure-models.md`](../issues/recursive-structure-models.md).
+[`issues/rbtree-example.md`](../issues/rbtree-example.md).
 Twelve nested regions is one past the bound; eleven verify.
 
 Repeating the same scrutinee is the cheapest way to write a deep nest. Each

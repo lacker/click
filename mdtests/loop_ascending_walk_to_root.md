@@ -14,7 +14,7 @@ Three things make the two ends of the walk work.
 
 The frame takes the focused child's parent as a resource argument, per the D3
 amendment in
-[`issues/recursive-structure-models.md`](../issues/recursive-structure-models.md),
+[`issues/rbtree-example.md`](../issues/rbtree-example.md),
 so the arm owns `parent`'s cells and the loop names `parent` as the C local it
 already maintains. The frame's own node is then not a resource argument of the
 frame above it, so `Left` and `Right` carry it as the payload `identity`

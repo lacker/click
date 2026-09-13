@@ -1,7 +1,7 @@
 # Red-Black Tree Model
 
 This project is the pure Click library for the Linux rbtree proofs planned in
-[`recursive-structure-models.md`](../../issues/recursive-structure-models.md)
+[`rbtree-example.md`](../../issues/rbtree-example.md)
 (decisions D1, D3, and D10). It contains no C and no resource:
 `rbtree_model.click` has no `verifying` line, and `click verify` accepts a
 sidecar that declares only specification values. The later packages attach
