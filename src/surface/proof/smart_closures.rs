@@ -652,6 +652,20 @@ fn surface_split_disequality(proposition: &ClickProposition) -> Option<ClickProp
     }
 }
 
+/// Why a written linear proof script did not close its goal.
+///
+/// A declined script is not an error by itself; the caller decides whether to
+/// try another route. When it does report one, the author needs the step to
+/// look at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::surface::proof) enum LinearScriptDecline {
+    /// The script's shape is outside what this driver checks, so no written
+    /// step ran.
+    Shape,
+    /// The written tactic at this position declined.
+    Step(usize),
+}
+
 impl<'a> Proof<'a> {
     fn signed_surface_term(
         &self,
@@ -4838,6 +4852,17 @@ impl<'a> Proof<'a> {
         self.try_linear_script_inner(tactics, true, false)
     }
 
+    /// [`Self::try_authoritative_linear_script`], also reporting why the body
+    /// declined. A caller that turns the decline into a user-facing error
+    /// needs the written step to name, not only that some route said no.
+    pub(in crate::surface::proof) fn try_authoritative_linear_script_reporting(
+        &self,
+        tactics: &[ProofTactic],
+        declined: &mut Option<LinearScriptDecline>,
+    ) -> Result<Option<Self>, ClickError> {
+        self.try_linear_script_inner_reporting(tactics, true, false, declined)
+    }
+
     /// Applies one planner-selected or expansion-generated Surface script to
     /// this Proof. Generated theorem plans may retain a final `assumption()`
     /// for outcome contexts where the theorem sometimes adds only an anchored
@@ -4857,13 +4882,28 @@ impl<'a> Proof<'a> {
         authoritative: bool,
         generated: bool,
     ) -> Result<Option<Self>, ClickError> {
+        self.try_linear_script_inner_reporting(tactics, authoritative, generated, &mut None)
+    }
+
+    /// The one linear-script walk. `declined` records why the script did not
+    /// close its goal, so a caller can name it; it stays `None` when the
+    /// script ran to its end with the goal still open.
+    fn try_linear_script_inner_reporting(
+        &self,
+        tactics: &[ProofTactic],
+        authoritative: bool,
+        generated: bool,
+        declined: &mut Option<LinearScriptDecline>,
+    ) -> Result<Option<Self>, ClickError> {
         if tactics.is_empty() {
+            *declined = Some(LinearScriptDecline::Shape);
             return Ok(None);
         }
 
         // Recognize the complete path before doing any search. `simp` closes
         // the remaining goal and is therefore meaningful only at the end.
         if !linear_script_is_supported(tactics) {
+            *declined = Some(LinearScriptDecline::Shape);
             return Ok(None);
         }
 
@@ -4888,6 +4928,7 @@ impl<'a> Proof<'a> {
                 if matches!(tactic, ProofTactic::Simp) {
                     continue;
                 }
+                *declined = Some(LinearScriptDecline::Step(index));
                 return Ok(None);
             }
             // The theorem can close the goal before a written rewrite suffix.
@@ -4905,6 +4946,7 @@ impl<'a> Proof<'a> {
                         continue;
                     }
                     let Some(applied) = proof.try_theorem_application(application)? else {
+                        *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
                     proof = applied;
@@ -4920,6 +4962,7 @@ impl<'a> Proof<'a> {
                                 "checked `simp` after witness/choose could not close the remaining witness obligations; split conjunctions and discharge each definedness condition explicitly",
                             ));
                         }
+                        *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
                     proof = closed;
@@ -4935,6 +4978,7 @@ impl<'a> Proof<'a> {
                                 "checked `simp` after witness/choose could not close the remaining witness obligations; split conjunctions and discharge each definedness condition explicitly",
                             ));
                         }
+                        *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
                     proof = closed;
@@ -4957,6 +5001,7 @@ impl<'a> Proof<'a> {
                         }
                     };
                     let Some(selected) = selected else {
+                        *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
                     proof = selected.join()?;
@@ -4969,6 +5014,7 @@ impl<'a> Proof<'a> {
                         .focus_branch(ids[0])?
                         .try_focused_script_arm(&proof_if.then_tactics, authoritative, generated)?
                     else {
+                        *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
                     let Some(both_done) = then_done.focus_branch(ids[1])?.try_focused_script_arm(
@@ -4977,6 +5023,7 @@ impl<'a> Proof<'a> {
                         generated,
                     )?
                     else {
+                        *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
                     proof = both_done.join_focused_if(
@@ -4993,6 +5040,7 @@ impl<'a> Proof<'a> {
                         .focus_branch(ids[0])?
                         .try_focused_script_arm(&both.left_tactics, authoritative, generated)?
                     else {
+                        *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
                     let Some(both_done) = left_done.focus_branch(ids[1])?.try_focused_script_arm(
@@ -5001,6 +5049,7 @@ impl<'a> Proof<'a> {
                         generated,
                     )?
                     else {
+                        *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
                     proof = both_done.join_focused_both(&marker, split, ids)?;
@@ -5016,6 +5065,7 @@ impl<'a> Proof<'a> {
                             generated,
                         )?
                     else {
+                        *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
                     let Some(both_done) = left_done.focus_branch(ids[1])?.try_focused_script_arm(
@@ -5024,6 +5074,7 @@ impl<'a> Proof<'a> {
                         generated,
                     )?
                     else {
+                        *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
                     proof = both_done.join_focused_cases(
@@ -5043,6 +5094,7 @@ impl<'a> Proof<'a> {
                 && proof.focused_discharged()
             {
                 let Some(proposition) = before.surface_goal().cloned() else {
+                    *declined = Some(LinearScriptDecline::Step(index));
                     return Ok(None);
                 };
                 let body = proof.certificate_since(&before.checkpoint())?;

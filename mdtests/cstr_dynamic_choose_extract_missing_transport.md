@@ -51,5 +51,5 @@ int32 read_terminator(uint8 bytes[]) {
 ```
 
 ```expect
-fail: body did not construct a completed proof object
+fail: was not proved: step 3 of its body, `both`, declined
 ```

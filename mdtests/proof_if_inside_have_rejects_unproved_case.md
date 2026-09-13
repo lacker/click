@@ -27,5 +27,5 @@ int32 unproved_have_case(int32 x) {
 ```
 
 ```expect
-fail: `have` failed
+fail: `have x <= 0` was not proved: step 1 of its body, `if`, declined
 ```

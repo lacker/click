@@ -2,6 +2,25 @@ use super::*;
 use crate::kernel::LoweringIntroduction;
 use std::sync::Arc;
 
+/// The proof scope a loop's phase proofs are written in.
+///
+/// `initialize` and `preserve` bodies are written where the `loop` tactic
+/// was written: inside whatever proof `match` arm, `unfold ... as` binding,
+/// or call-result binder reached that frontier. Their sub-proofs are built
+/// from fresh roots, so the scope has to be attached explicitly or a `have`
+/// goal inside a phase body would fail to resolve a name the loop's own
+/// clauses resolve. `ExecutionProofEnvironment::proof_locals` is the same
+/// map the clause re-annotation uses.
+fn phase_proof_scope(
+    environment: &ExecutionProofEnvironment<'_>,
+) -> PersistentMap<String, ContractExpression> {
+    environment
+        .proof_locals
+        .iter()
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect()
+}
+
 /// The goal one loop-entry invariant certificate must discharge.
 ///
 /// The entry obligation lowering hands back may be wrapped in leading
@@ -391,6 +410,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                         checked_goal.as_ref(),
                         checked_goal_introductions.as_ref(),
                         environment.theorem_environment,
+                        &phase_proof_scope(environment),
                     )
                 };
                 // Nested frontier-loop phase tactics use absolute source
@@ -568,7 +588,8 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                     &[],
                     &[],
                 )
-                .with_recorded_goal_introductions(goal_introductions);
+                .with_recorded_goal_introductions(goal_introductions)
+                .with_surface_local_scope(&phase_proof_scope(environment));
                 let SourceProof::Script(tactics) = &have.proof else {
                     return Err(ClickError::new(
                         "invariant initialization requires an explicit proof body",
@@ -684,7 +705,8 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
         environment.predicate_environment,
         environment.click_function_environment,
         environment.theorem_environment,
-    );
+    )
+    .with_surface_local_scope(&phase_proof_scope(environment));
     let mut pending = vec![root];
     let mut completed = Vec::new();
     let mut steps = 0;
@@ -960,7 +982,8 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         environment.predicate_environment,
         environment.click_function_environment,
         environment.theorem_environment,
-    );
+    )
+    .with_surface_local_scope(&phase_proof_scope(environment));
     let mut leaves = Vec::new();
     advance_preservation_region(
         root,

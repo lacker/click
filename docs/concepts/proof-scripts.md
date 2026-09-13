@@ -98,8 +98,9 @@ at unchanged function entry, after executed statements, and inside a loop's
 
 An arm's bindings are in scope in every term the arm writes: `have` goals,
 theorem arguments and `using` premises, `instantiate`, `extract`, `rewrite`,
-`normalize() using`, and the clauses of a `loop` written inside the arm
-(`mdtests/loop_clause_reads_arm_bindings.md`). A name that a `have` goal can see is a theorem
+`normalize() using`, the clauses of a `loop` written inside the arm
+(`mdtests/loop_clause_reads_arm_bindings.md`), and that loop's `initialize` and
+`preserve` bodies (`mdtests/loop_phase_body_reads_arm_bindings.md`). A name that a `have` goal can see is a theorem
 argument at the same point; `mdtests/theorem_argument_arm_binding.md` and
 `mdtests/theorem_argument_arm_binding_algebraic.md` pin the pointer, integer,
 and model cases.
@@ -176,6 +177,13 @@ simple leaves. `click audit` checks that smart tactics across a project expand
 into source that verifies normally. Use this workflow only after the
 selected proof is correct: expansion is a checked optimization, not a way to
 extract a partial result from a proof whose later tactics fail.
+
+A `have` whose body neither closes the goal nor reports a failure of its own is
+a declined body, and the message names the goal and what declined: the written
+step, or "its body ran to the end with the goal still open", or that the body's
+shape is not one the checked driver runs. The last case is usually a `simp()`
+with something written after it; `simp()` closes a goal and is checked only as a
+body's last step (`mdtests/have_body_declines_names_the_goal.md`).
 
 The [proof tactics reference](../reference/tactics/index.md) is the exhaustive inventory
 and compatibility guide.

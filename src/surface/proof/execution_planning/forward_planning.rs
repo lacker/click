@@ -502,6 +502,10 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
     exact_proof_goal: Option<&Proposition>,
     goal_introductions: Option<&crate::kernel::LoweringIntroductions>,
     theorem_environment: &TheoremEnvironment,
+    // The proof locals in scope where this goal's `by` body was written.
+    // Its nested `have`s resolve the same names their enclosing script
+    // does; a fresh root carries no scope of its own.
+    surface_local_scope: &PersistentMap<String, ContractExpression>,
 ) -> Result<PlannedPointPureGoal, ClickError> {
     // A pre-lowered goal arrives with the record its own lowering made; a
     // goal lowered here records its chain in the same call that builds it.
@@ -558,7 +562,8 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
         // The root goal is the exact proposition the record above
         // describes, so an introduction on it reads the chain instead of
         // refining the written form by shape.
-        .with_recorded_goal_introductions(introductions.clone());
+        .with_recorded_goal_introductions(introductions.clone())
+        .with_surface_local_scope(surface_local_scope);
         let checked = match proof {
             SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
                 root.try_simp_closure()?

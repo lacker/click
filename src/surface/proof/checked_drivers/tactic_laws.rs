@@ -1,5 +1,6 @@
 use super::*;
 use crate::surface::proof::proof_object::ExecutionProofState;
+use crate::surface::proof::smart_closures::LinearScriptDecline;
 use crate::surface::proof::surface_lowering::substitute_lexical_bindings_in_proposition;
 
 /// The one mid-execution `have` law: checked fixed-state proof first, generated
@@ -48,6 +49,7 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
     // Surface spellings are not proof authority: a lowering may have been
     // recorded while considering a goal or an unselected conditional fact.
     // Only retained proof facts and checked effect facts may justify `have`.
+    let mut declined = None;
     let checked_proof_result = checked_have_with_proof(
         have,
         &goal_surface,
@@ -76,6 +78,7 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
         function_block.requirement_label_indices(),
         None,
         unfolded_predicates,
+        &mut declined,
     )?;
     let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
     // Search may materialize a Surface-expressible operation
@@ -156,6 +159,7 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
                         function_block.requirement_label_indices(),
                         Some((&fact, &proof)),
                         unfolded_predicates,
+                        &mut None,
                     )?
                     .ok_or_else(|| {
                         ClickError::new(format!(
@@ -165,8 +169,33 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
             (checked.0, checked.1)
         }
         (None, None) => {
+            // Name the goal and the written step that declined. A bare
+            // "did not construct a completed proof object" leaves the author
+            // with nothing to act on.
+            let goal = crate::surface::diagnostics::describe_click_proposition(&have.proposition);
+            let step = match (&have.proof, declined) {
+                (SourceProof::Script(tactics), Some(LinearScriptDecline::Step(index))) => {
+                    match tactics.get(index) {
+                        Some(tactic) => format!(
+                            "step {} of its body, `{}`, declined",
+                            index + 1,
+                            crate::surface::validation::tactic_name(tactic)
+                        ),
+                        None => format!("step {} of its body declined", index + 1),
+                    }
+                }
+                (SourceProof::Script(_), Some(LinearScriptDecline::Shape)) => {
+                    "its body is not a shape the checked driver runs; `simp()` closes a goal and is checked only as the last step".to_string()
+                }
+                (SourceProof::Script(_), None) => {
+                    "its body ran to the end with the goal still open".to_string()
+                }
+                (SourceProof::Default | SourceProof::Tactic(_), _) => {
+                    "no smart route closed the goal".to_string()
+                }
+            };
             return Err(ClickError::new(format!(
-                "`{claim_label}` have proof {tactic_index}: `have` failed: body did not construct a completed proof object"
+                "`{claim_label}` have proof {tactic_index}: `have {goal}` was not proved: {step}"
             )));
         }
     };
@@ -548,6 +577,9 @@ pub(in crate::surface::proof) fn checked_have_with_proof(
     requirement_label_indices: &BTreeMap<String, usize>,
     generated_plan: Option<(&Proposition, &SourceProof)>,
     unfolded_predicates: &[String],
+    // Why an explicit body declined, for the caller's diagnostic. `None`
+    // after a decline means the body ran to its end with the goal open.
+    declined: &mut Option<LinearScriptDecline>,
 ) -> Result<Option<(Proposition, Option<ProofCertificate>)>, ClickError> {
     enum Plan<'a> {
         DirectSmart,
@@ -617,7 +649,9 @@ pub(in crate::surface::proof) fn checked_have_with_proof(
     let proof = proof.with_surface_local_scope(lexical_bindings);
     let proof = match plan {
         Plan::Script(tactics) => {
-            let Some(checked) = proof.try_authoritative_linear_script(tactics)? else {
+            let Some(checked) =
+                proof.try_authoritative_linear_script_reporting(tactics, declined)?
+            else {
                 return Ok(None);
             };
             checked
