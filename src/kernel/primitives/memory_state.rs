@@ -2589,6 +2589,7 @@ impl CState {
                 _ => false,
             }
             && self.loan_participant == other.loan_participant
+            && self.loan_view_bindings == other.loan_view_bindings
             && std::sync::Arc::ptr_eq(&self.counted_populations, &other.counted_populations)
     }
 
@@ -2646,6 +2647,18 @@ impl CState {
         participant: Option<crate::kernel::loans::LoanParticipantId>,
     ) -> Self {
         self.loan_participant = participant;
+        self
+    }
+
+    pub(crate) fn loan_view_bindings(&self) -> &crate::kernel::loans::LoanViewBindings {
+        &self.loan_view_bindings
+    }
+
+    pub(crate) fn with_loan_view_bindings(
+        mut self,
+        bindings: crate::kernel::loans::LoanViewBindings,
+    ) -> Self {
+        self.loan_view_bindings = bindings;
         self
     }
 

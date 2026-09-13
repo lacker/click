@@ -61,6 +61,78 @@ impl StableViewDescription {
     }
 }
 
+/// Exact binding from a resource occurrence to the live loan/share that
+/// authorizes reading it. This is carried by checked state, never inferred by
+/// searching the ambient ledger or resource frame.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) struct LoanViewBinding {
+    pub(crate) loan: LoanId,
+    pub(crate) scope: LoanScopeId,
+    pub(crate) share: LoanShareId,
+    pub(crate) support: ResourceOccurrenceId,
+    pub(crate) viewed: CResourceFact,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct LoanViewBindings {
+    state: Arc<LoanViewBindingsState>,
+}
+
+#[derive(Debug, Default)]
+struct LoanViewBindingsState {
+    identity: u64,
+    map: PersistentMap<ResourceOccurrenceId, LoanViewBinding>,
+}
+
+impl PartialEq for LoanViewBindings {
+    fn eq(&self, other: &Self) -> bool {
+        self.state.identity == other.state.identity
+    }
+}
+
+impl Eq for LoanViewBindings {}
+
+impl Hash for LoanViewBindings {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.state.identity.hash(state);
+    }
+}
+
+impl Ord for LoanViewBindings {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.state.identity.cmp(&other.state.identity)
+    }
+}
+
+impl PartialOrd for LoanViewBindings {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl LoanViewBindings {
+    pub(crate) fn get(&self, occurrence: &ResourceOccurrenceId) -> Option<&LoanViewBinding> {
+        self.state.map.get(occurrence)
+    }
+
+    pub(crate) fn with_inserted(
+        &self,
+        occurrence: ResourceOccurrenceId,
+        binding: LoanViewBinding,
+    ) -> Self {
+        if self.state.map.get(&occurrence) == Some(&binding) {
+            return self.clone();
+        }
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self {
+            state: Arc::new(LoanViewBindingsState {
+                identity: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                map: self.state.map.with_inserted(occurrence, binding),
+            }),
+        }
+    }
+}
+
 /// A read derived from ownership in the current context. This is useful for
 /// checking the owner's own computation, but it is not transferable loan
 /// authority and contains no loan identity.
@@ -93,6 +165,7 @@ struct LoanScopeRecord {
     close_right: LoanParticipantId,
     active: bool,
     parent: Option<LoanScopeId>,
+    parent_share: Option<LoanShareId>,
     dependencies: crate::persistent::PersistentSet<LoanScopeId>,
 }
 
@@ -101,8 +174,10 @@ struct LoanRecord {
     scope: LoanScopeId,
     support: ResourceOccurrenceId,
     escrow: CResourceFact,
+    permitted: CResourceFact,
     recovery_right: LoanParticipantId,
     recovered: bool,
+    recoverable: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -111,6 +186,7 @@ struct LoanShareRecord {
     parent: Option<LoanShareId>,
     children: Option<(LoanShareId, LoanShareId)>,
     holder: Option<LoanParticipantId>,
+    pinned_by: Option<LoanScopeId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -201,6 +277,7 @@ pub(crate) enum LoanRefusal {
     UnsupportedPartition,
     ActiveDependency,
     MissingBacking,
+    MissingLoanBinding,
     IdentitySpaceExhausted,
 }
 
@@ -211,6 +288,14 @@ enum LoanTransitionEvidence {
         borrower: LoanParticipantId,
         support: ResourceOccurrenceId,
         escrow: CResourceFact,
+        scope: LoanScopeId,
+        loan: LoanId,
+        root: LoanShareId,
+    },
+    Reborrow {
+        parent: LoanViewBinding,
+        lender: LoanParticipantId,
+        borrower: LoanParticipantId,
         scope: LoanScopeId,
         loan: LoanId,
         root: LoanShareId,
@@ -289,16 +374,19 @@ pub(crate) struct StableViewTransferPlan {
     pub(crate) memory_effects: Vec<CMemoryRange>,
     pub(crate) ledger: LoanLedger,
     pub(crate) entry_transitions: Vec<CheckedLoanTransition>,
+    callee_view_bindings: LoanViewBindings,
+    parent_view_bindings: LoanViewBindings,
     parent_ledger: LoanLedger,
     caller: LoanParticipantId,
     callee: LoanParticipantId,
-    loan_roots: Vec<(LoanScopeId, LoanId, LoanShareId, ResourceOccurrenceId)>,
+    loan_roots: Vec<(LoanScopeId, LoanId, LoanShareId, ResourceOccurrenceId, bool)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StableViewRecovery {
     pub(crate) ledger: LoanLedger,
     pub(crate) resources: ResourceContext,
+    pub(crate) view_bindings: LoanViewBindings,
     pub(crate) transitions: Vec<CheckedLoanTransition>,
 }
 
@@ -349,6 +437,26 @@ pub(crate) fn plan_stable_view_transfer(
     caller: LoanParticipantId,
     callee: LoanParticipantId,
 ) -> Result<StableViewTransferPlan, StableViewPlanError> {
+    plan_stable_view_transfer_with_bindings(
+        caller_resources,
+        requirements,
+        assumptions,
+        ledger,
+        caller,
+        callee,
+        &LoanViewBindings::default(),
+    )
+}
+
+pub(crate) fn plan_stable_view_transfer_with_bindings(
+    caller_resources: &ResourceContext,
+    requirements: &[CCheckedResourceFact],
+    assumptions: &PureFactContext,
+    ledger: &LoanLedger,
+    caller: LoanParticipantId,
+    callee: LoanParticipantId,
+    parent_view_bindings: &LoanViewBindings,
+) -> Result<StableViewTransferPlan, StableViewPlanError> {
     if requirements.iter().any(|requirement| {
         requirement.snapshot == CResourceSnapshot::Post
             || requirement.role == CResourceTransferRole::Produce
@@ -361,6 +469,7 @@ pub(crate) fn plan_stable_view_transfer(
     let mut callee_resources = ResourceContext::new();
     let mut transferred_ownership = Vec::new();
     let mut stable_views = Vec::new();
+    let mut callee_view_bindings = LoanViewBindings::default();
     let mut memory_effects = Vec::new();
     // Reserve exclusive requirements first. This makes the partition stable
     // under source reordering and prevents a view from hiding a later write.
@@ -392,6 +501,7 @@ pub(crate) fn plan_stable_view_transfer(
     let mut planned_ledger = ledger.clone();
     let mut entry_transitions = Vec::new();
     let mut grouped = BTreeMap::<ResourceOccurrenceId, Vec<(usize, CCheckedResourceFact)>>::new();
+    let mut rebound = BTreeMap::<LoanViewBinding, Vec<(usize, CCheckedResourceFact)>>::new();
     for (index, requirement) in requirements.iter().enumerate() {
         if !requirement.fact.is_view() {
             continue;
@@ -400,6 +510,28 @@ pub(crate) fn plan_stable_view_transfer(
             && (range.start().as_const().is_none() || range.end().as_const().is_none())
         {
             return Err(StableViewPlanError::UnsupportedPartition);
+        }
+        let view_occurrences =
+            caller_resources.view_occurrences_for_fact(&requirement.fact, assumptions);
+        if !view_occurrences.is_empty() {
+            let Some(binding) = view_occurrences
+                .iter()
+                .find_map(|occurrence| parent_view_bindings.get(occurrence).cloned())
+            else {
+                return Err(StableViewPlanError::Loan(LoanRefusal::MissingLoanBinding));
+            };
+            ledger.validate_view_binding(binding.clone(), caller)?;
+            if !ResourceContext::new()
+                .unchecked_with_fact(binding.viewed.clone())
+                .satisfies_fact(&requirement.fact, assumptions)
+            {
+                return Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence));
+            }
+            rebound
+                .entry(binding)
+                .or_default()
+                .push((index, requirement.clone()));
+            continue;
         }
         let Some((support, owned)) =
             caller_resources.directly_supporting_owned_entry(&requirement.fact, assumptions)
@@ -515,16 +647,44 @@ pub(crate) fn plan_stable_view_transfer(
                 .without_fact_incrementally(&selected, assumptions)
                 .ok_or_else(|| StableViewPlanError::MissingResource(owned.clone()))?;
             let root_index = loan_roots.len();
-            loan_roots.push((opening.scope, opening.loan, opening.root_share, support));
+            loan_roots.push((
+                opening.scope,
+                opening.loan,
+                opening.root_share,
+                support,
+                true,
+            ));
+            let mut owner_occurrences = BTreeMap::<LoanViewBinding, ResourceOccurrenceId>::new();
             for (index, requirement) in cluster {
                 let description = planned_ledger
                     .describe_view(opening.loan, requirement.fact.clone(), assumptions)
                     .map_err(|_| {
                         StableViewPlanError::ConflictingRequirement(requirement.fact.clone())
                     })?;
-                callee_resources = callee_resources
-                    .try_compose_with_fact(requirement.fact.clone(), assumptions)
+                let binding = LoanViewBinding {
+                    loan: opening.loan,
+                    scope: opening.scope,
+                    share: opening.root_share,
+                    support,
+                    viewed: requirement.fact.clone(),
+                };
+                let (next_resources, occurrence) = callee_resources
+                    .try_compose_with_fact_with_occurrence(requirement.fact.clone(), assumptions)
                     .map_err(|_| StableViewPlanError::InvalidResidual)?;
+                let occurrence = occurrence
+                    .or_else(|| owner_occurrences.get(&binding).copied())
+                    .or_else(|| {
+                        next_resources
+                            .view_occurrences_for_fact(&requirement.fact, assumptions)
+                            .into_iter()
+                            .find(|occurrence| {
+                                callee_view_bindings.get(occurrence) == Some(&binding)
+                            })
+                    })
+                    .ok_or(StableViewPlanError::InvalidResidual)?;
+                callee_resources = next_resources;
+                owner_occurrences.insert(binding.clone(), occurrence);
+                callee_view_bindings = callee_view_bindings.with_inserted(occurrence, binding);
                 planned_views.push((
                     index,
                     PlannedStableView {
@@ -540,6 +700,68 @@ pub(crate) fn plan_stable_view_transfer(
             let _ = root_index;
         }
     }
+    for (binding, group) in rebound {
+        let opening = planned_ledger.reborrow(binding.clone(), caller, callee)?;
+        entry_transitions.push(opening.transition.clone());
+        planned_ledger = planned_ledger.apply(&opening.transition)?;
+        let child_binding = LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support: binding.support,
+            viewed: binding.viewed.clone(),
+        };
+        loan_roots.push((
+            opening.scope,
+            opening.loan,
+            opening.root_share,
+            binding.support,
+            false,
+        ));
+        let mut child_occurrence = None;
+        for (index, requirement) in group {
+            if !ResourceContext::new()
+                .unchecked_with_fact(binding.viewed.clone())
+                .satisfies_fact(&requirement.fact, assumptions)
+            {
+                return Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence));
+            }
+            let (next_resources, occurrence) = callee_resources
+                .try_compose_with_fact_with_occurrence(requirement.fact.clone(), assumptions)
+                .map_err(|_| StableViewPlanError::InvalidResidual)?;
+            let occurrence = occurrence
+                .or(child_occurrence)
+                .or_else(|| {
+                    next_resources
+                        .view_occurrences_for_fact(&requirement.fact, assumptions)
+                        .into_iter()
+                        .find(|occurrence| {
+                            callee_view_bindings.get(occurrence) == Some(&child_binding)
+                        })
+                })
+                .ok_or(StableViewPlanError::InvalidResidual)?;
+            callee_resources = next_resources;
+            child_occurrence = Some(occurrence);
+            callee_view_bindings =
+                callee_view_bindings.with_inserted(occurrence, child_binding.clone());
+            let description = planned_ledger
+                .describe_view(opening.loan, requirement.fact.clone(), assumptions)
+                .map_err(|_| {
+                    StableViewPlanError::ConflictingRequirement(requirement.fact.clone())
+                })?;
+            planned_views.push((
+                index,
+                PlannedStableView {
+                    requirement,
+                    support: binding.support,
+                    loan: opening.loan,
+                    scope: opening.scope,
+                    share: opening.root_share,
+                    description,
+                },
+            ));
+        }
+    }
     planned_views.sort_by_key(|(index, _)| *index);
     stable_views.extend(planned_views.into_iter().map(|(_, view)| view));
 
@@ -551,6 +773,8 @@ pub(crate) fn plan_stable_view_transfer(
         memory_effects,
         ledger: planned_ledger,
         entry_transitions,
+        callee_view_bindings,
+        parent_view_bindings: parent_view_bindings.clone(),
         parent_ledger: ledger.clone(),
         caller,
         callee,
@@ -575,6 +799,10 @@ impl StableViewTransferPlan {
         &self.stable_views
     }
 
+    pub(crate) fn callee_view_bindings(&self) -> &LoanViewBindings {
+        &self.callee_view_bindings
+    }
+
     /// Closes every unmodified root share and returns the exact escrowed
     /// ownership to the residual caller context.
     pub(crate) fn recover_stable_views(
@@ -587,28 +815,30 @@ impl StableViewTransferPlan {
         let mut ledger = self.ledger;
         let mut resources = self.caller_resources_after_requirements;
         let mut transitions = Vec::new();
-        for (scope, loan, root, _) in loan_roots.into_iter().rev() {
+        for (scope, loan, root, _, recoverable) in loan_roots.into_iter().rev() {
             let transfer = ledger.transfer(root, self.callee, self.caller)?;
             ledger = ledger.apply(&transfer)?;
             transitions.push(transfer);
             let end = ledger.end(scope, self.caller)?;
             ledger = ledger.apply(&end)?;
             transitions.push(end);
-            let (recover, escrow, support) = ledger.recover(loan, self.caller)?;
-            ledger = ledger.apply(&recover)?;
-            transitions.push(recover);
-            if support
-                != stable_views
-                    .iter()
-                    .find(|view| view.loan == loan)
-                    .map(|view| view.support)
-                    .unwrap_or(support)
-            {
-                return Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence));
+            if recoverable {
+                let (recover, escrow, support) = ledger.recover(loan, self.caller)?;
+                ledger = ledger.apply(&recover)?;
+                transitions.push(recover);
+                if support
+                    != stable_views
+                        .iter()
+                        .find(|view| view.loan == loan)
+                        .map(|view| view.support)
+                        .unwrap_or(support)
+                {
+                    return Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence));
+                }
+                resources = resources
+                    .try_compose_with_fact(escrow, assumptions)
+                    .map_err(|_| StableViewPlanError::InvalidResidual)?;
             }
-            resources = resources
-                .try_compose_with_fact(escrow, assumptions)
-                .map_err(|_| StableViewPlanError::InvalidResidual)?;
         }
         // Every scope in loan_roots was created by this plan and has just
         // passed End and Recover. End checks its indexed dependency set, so a
@@ -619,6 +849,7 @@ impl StableViewTransferPlan {
         Ok(StableViewRecovery {
             ledger,
             resources,
+            view_bindings: self.parent_view_bindings,
             transitions,
         })
     }
@@ -749,6 +980,87 @@ impl LoanLedger {
                 loan,
                 support,
                 viewed: CResourceFact::View(escrow.resource().clone()),
+            },
+            transition: self.issue(evidence)?,
+        })
+    }
+
+    pub(crate) fn validate_view_binding(
+        &self,
+        binding: LoanViewBinding,
+        holder: LoanParticipantId,
+    ) -> Result<(), LoanRefusal> {
+        self.require_participant(holder)?;
+        let loan = self
+            .storage
+            .data
+            .loans
+            .get(&binding.loan)
+            .ok_or(LoanRefusal::MissingLoan)?;
+        let scope = self
+            .storage
+            .data
+            .scopes
+            .get(&binding.scope)
+            .ok_or(LoanRefusal::MissingScope)?;
+        let share = self
+            .storage
+            .data
+            .shares
+            .get(&binding.share)
+            .ok_or(LoanRefusal::MissingShare)?;
+        if loan.scope != binding.scope
+            || loan.support != binding.support
+            || !scope.active
+            || loan.recovered
+            || share.scope != binding.scope
+            || share.holder != Some(holder)
+            || share.pinned_by.is_some()
+            || !binding.viewed.is_view()
+            || !ResourceContext::new()
+                .unchecked_with_fact(loan.permitted.clone())
+                .satisfies_fact(&binding.viewed, &PureFactContext::default())
+        {
+            return Err(LoanRefusal::MissingLoanBinding);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn reborrow(
+        &self,
+        parent: LoanViewBinding,
+        lender: LoanParticipantId,
+        borrower: LoanParticipantId,
+    ) -> Result<LoanOpening, LoanRefusal> {
+        self.validate_view_binding(parent.clone(), lender)?;
+        let scope = LoanScopeId {
+            arena: self.storage.data.arena,
+            ordinal: self.storage.data.next_scope,
+        };
+        let loan = LoanId {
+            arena: self.storage.data.arena,
+            ordinal: self.storage.data.next_loan,
+        };
+        let root = LoanShareId {
+            arena: self.storage.data.arena,
+            ordinal: self.storage.data.next_share,
+        };
+        let evidence = LoanTransitionEvidence::Reborrow {
+            parent: parent.clone(),
+            lender,
+            borrower,
+            scope,
+            loan,
+            root,
+        };
+        Ok(LoanOpening {
+            scope,
+            loan,
+            root_share: root,
+            description: StableViewDescription {
+                loan,
+                support: parent.support,
+                viewed: parent.viewed,
             },
             transition: self.issue(evidence)?,
         })
@@ -890,11 +1202,13 @@ impl LoanLedger {
         };
         scope.active
             && !loan.recovered
+            && description.support == loan.support
             && share.scope == loan.scope
             && share.holder == Some(holder)
+            && share.pinned_by.is_none()
             && description.viewed.is_view()
             && ResourceContext::new()
-                .unchecked_with_fact(loan.escrow.clone())
+                .unchecked_with_fact(loan.permitted.clone())
                 .satisfies_fact(&description.viewed, assumptions)
     }
 
@@ -923,7 +1237,7 @@ impl LoanLedger {
         }
         if !viewed.is_view()
             || !ResourceContext::new()
-                .unchecked_with_fact(record.escrow.clone())
+                .unchecked_with_fact(record.permitted.clone())
                 .satisfies_fact(&viewed, assumptions)
         {
             return Err(LoanRefusal::InvalidEvidence);
@@ -1045,6 +1359,7 @@ impl LoanLedger {
                         close_right: *lender,
                         active: true,
                         parent: None,
+                        parent_share: None,
                         dependencies: crate::persistent::PersistentSet::default(),
                     },
                 );
@@ -1054,8 +1369,10 @@ impl LoanLedger {
                         scope: *scope,
                         support: *support,
                         escrow: escrow.clone(),
+                        permitted: CResourceFact::View(escrow.resource().clone()),
                         recovery_right: *lender,
                         recovered: false,
+                        recoverable: true,
                     },
                 );
                 data.shares = data.shares.with_inserted(
@@ -1065,6 +1382,107 @@ impl LoanLedger {
                         parent: None,
                         children: None,
                         holder: Some(*borrower),
+                        pinned_by: None,
+                    },
+                );
+            }
+            LoanTransitionEvidence::Reborrow {
+                parent,
+                lender,
+                borrower,
+                scope,
+                loan,
+                root,
+            } => {
+                let parent_loan = data
+                    .loans
+                    .get(&parent.loan)
+                    .cloned()
+                    .ok_or(LoanRefusal::MissingLoan)?;
+                let parent_scope = data
+                    .scopes
+                    .get(&parent.scope)
+                    .cloned()
+                    .ok_or(LoanRefusal::MissingScope)?;
+                let parent_share = data
+                    .shares
+                    .get(&parent.share)
+                    .cloned()
+                    .ok_or(LoanRefusal::MissingShare)?;
+                if parent_loan.scope != parent.scope
+                    || parent_loan.support != parent.support
+                    || !parent_scope.active
+                    || parent_loan.recovered
+                    || parent_share.scope != parent.scope
+                    || parent_share.holder != Some(*lender)
+                    || parent_share.pinned_by.is_some()
+                    || scope.arena != data.arena
+                    || loan.arena != data.arena
+                    || root.arena != data.arena
+                    || scope.ordinal != data.next_scope
+                    || loan.ordinal != data.next_loan
+                    || root.ordinal != data.next_share
+                {
+                    return Err(LoanRefusal::MissingLoanBinding);
+                }
+                data.next_scope = data
+                    .next_scope
+                    .checked_add(1)
+                    .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                data.next_loan = data
+                    .next_loan
+                    .checked_add(1)
+                    .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                data.next_share = data
+                    .next_share
+                    .checked_add(1)
+                    .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                data.scopes = data.scopes.with_inserted(
+                    parent.scope,
+                    LoanScopeRecord {
+                        dependencies: parent_scope.dependencies.with_value(*scope),
+                        ..parent_scope
+                    },
+                );
+                data.shares = data.shares.with_inserted(
+                    parent.share,
+                    LoanShareRecord {
+                        holder: None,
+                        pinned_by: Some(*scope),
+                        ..parent_share
+                    },
+                );
+                data.scopes = data.scopes.with_inserted(
+                    *scope,
+                    LoanScopeRecord {
+                        root: *root,
+                        close_right: *lender,
+                        active: true,
+                        parent: Some(parent.scope),
+                        parent_share: Some(parent.share),
+                        dependencies: crate::persistent::PersistentSet::default(),
+                    },
+                );
+                data.loans = data.loans.with_inserted(
+                    *loan,
+                    LoanRecord {
+                        scope: *scope,
+                        support: parent.support,
+                        escrow: parent_loan.escrow,
+                        permitted: parent.viewed.clone(),
+                        recovery_right: *lender,
+                        recovered: false,
+                        recoverable: false,
+                    },
+                );
+                data.shares = data.shares.with_inserted(
+                    *root,
+                    LoanShareRecord {
+                        scope: *scope,
+                        parent: None,
+                        children: None,
+                        holder: Some(*borrower),
+                        pinned_by: None,
                     },
                 );
             }
@@ -1122,6 +1540,7 @@ impl LoanLedger {
                             parent: Some(*share),
                             children: None,
                             holder: Some(child_holder),
+                            pinned_by: None,
                         },
                     );
                 }
@@ -1244,6 +1663,24 @@ impl LoanLedger {
                             ..parent_record
                         },
                     );
+                    if let Some(parent_share) = scope_record.parent_share {
+                        let pinned = data
+                            .shares
+                            .get(&parent_share)
+                            .cloned()
+                            .ok_or(LoanRefusal::MissingShare)?;
+                        if pinned.pinned_by != Some(*scope) || pinned.holder.is_some() {
+                            return Err(LoanRefusal::InvalidEvidence);
+                        }
+                        data.shares = data.shares.with_inserted(
+                            parent_share,
+                            LoanShareRecord {
+                                holder: Some(scope_record.close_right),
+                                pinned_by: None,
+                                ..pinned
+                            },
+                        );
+                    }
                 }
             }
             LoanTransitionEvidence::Recover { loan, holder } => {
@@ -1257,6 +1694,9 @@ impl LoanLedger {
                 }
                 if record.recovered {
                     return Err(LoanRefusal::AlreadyRecovered);
+                }
+                if !record.recoverable {
+                    return Err(LoanRefusal::InvalidEvidence);
                 }
                 if data
                     .scopes
@@ -1940,7 +2380,99 @@ mod tests {
                 caller,
                 callee,
             ),
-            Err(StableViewPlanError::MissingResource(view))
+            Err(StableViewPlanError::Loan(LoanRefusal::MissingLoanBinding))
+        );
+    }
+
+    #[test]
+    fn nested_view_reborrow_pins_parent_and_restores_exact_binding() {
+        let assumptions = PureFactContext::new();
+        let owned_range = memory(0, 8, true);
+        let support = backing(&owned_range);
+        let parent_view = memory(0, 8, false);
+        let child_view = memory(2, 4, false);
+        let (ledger, owner, reader) = participants();
+        let opening = ledger
+            .lend(owner, owner, support, owned_range.clone())
+            .unwrap();
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        let parent_binding = LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed: parent_view.clone(),
+        };
+        let parent_resources = ResourceContext::new().unchecked_with_fact(parent_view.clone());
+        let (occurrence, _) = parent_resources
+            .view_occurrences_for_fact(&parent_view, &assumptions)
+            .into_iter()
+            .map(|occurrence| (occurrence, ()))
+            .next()
+            .expect("parent view occurrence");
+        let parent_bindings = LoanViewBindings::default().with_inserted(occurrence, parent_binding);
+        let plan = plan_stable_view_transfer_with_bindings(
+            &parent_resources,
+            &[checked(child_view.clone())],
+            &assumptions,
+            &ledger,
+            owner,
+            reader,
+            &parent_bindings,
+        )
+        .unwrap();
+        assert_eq!(plan.stable_views.len(), 1);
+        assert_ne!(plan.stable_views[0].loan, opening.loan);
+        assert!(!plan.ledger.permits_view(
+            owner,
+            &opening.description,
+            opening.root_share,
+            &assumptions
+        ));
+        let recovery = plan.recover_stable_views(&assumptions).unwrap();
+        assert_eq!(recovery.ledger, ledger);
+        assert_eq!(recovery.view_bindings, parent_bindings);
+        assert!(
+            recovery
+                .resources
+                .satisfies_fact(&parent_view, &assumptions)
+        );
+    }
+
+    #[test]
+    fn nested_view_reborrow_rejects_wider_child_than_bound_parent() {
+        let assumptions = PureFactContext::new();
+        let owned_range = memory(0, 8, true);
+        let parent_view = memory(2, 4, false);
+        let wider_view = memory(0, 8, false);
+        let (ledger, owner, reader) = participants();
+        let opening = lend_test(&ledger, owner, owner, owned_range);
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        let parent_resources = ResourceContext::new().unchecked_with_fact(wider_view.clone());
+        let occurrence = parent_resources
+            .view_occurrences_for_fact(&wider_view, &assumptions)
+            .into_iter()
+            .next()
+            .expect("wider view occurrence");
+        let binding = LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support: opening.description.support(),
+            viewed: parent_view,
+        };
+        let bindings = LoanViewBindings::default().with_inserted(occurrence, binding);
+        assert_eq!(
+            plan_stable_view_transfer_with_bindings(
+                &parent_resources,
+                &[checked(wider_view)],
+                &assumptions,
+                &ledger,
+                owner,
+                reader,
+                &bindings,
+            ),
+            Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence))
         );
     }
 }

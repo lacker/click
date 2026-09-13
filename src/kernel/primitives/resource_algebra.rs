@@ -1795,6 +1795,25 @@ impl ResourceContext {
             .next()
     }
 
+    /// Return indexed view occurrences that entail `required`. The caller
+    /// resolves each occurrence through an explicit checked-state binding;
+    /// this method never searches the loan ledger or unrelated frame entries.
+    pub(crate) fn view_occurrences_for_fact(
+        &self,
+        required: &CResourceFact,
+        assumptions: &PureFactContext,
+    ) -> Vec<ResourceOccurrenceId> {
+        self.direct_match_candidate_positions(required)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .filter_map(|entry| {
+                let fact = self.fact(*entry);
+                (fact.is_view() && resource_fact_entails(fact, required, assumptions))
+                    .then_some(self.occurrence(*entry))
+            })
+            .collect()
+    }
+
     /// Whether an exact projected representation is attached to the supplied
     /// owned support. This is kept indexed by the projected fact so proof
     /// evidence can validate the support relation without scanning the frame.
@@ -2789,8 +2808,13 @@ impl ResourceContext {
             )?;
         let occurrence = inserted.pop().map(|(_, occurrence)| occurrence);
         let context = context.normalized(assumptions);
-        let occurrence =
-            occurrence.filter(|occurrence| context.owned_occurrence_matches(*occurrence, &fact));
+        let occurrence = occurrence.filter(|occurrence| {
+            context
+                .storage
+                .entry_by_occurrence
+                .get(occurrence)
+                .is_some_and(|entry| context.storage.facts.get(entry) == Some(&fact))
+        });
         Ok((context, occurrence))
     }
 

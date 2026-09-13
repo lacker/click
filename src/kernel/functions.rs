@@ -1,4 +1,6 @@
-use super::loans::{LoanLedger, StableViewTransferPlan, plan_stable_view_transfer};
+use super::loans::{
+    LoanLedger, LoanViewBindings, StableViewTransferPlan, plan_stable_view_transfer_with_bindings,
+};
 use super::prelude::*;
 
 #[cfg(test)]
@@ -242,6 +244,7 @@ fn callee_state_with_resource_transfer(
     callee_state
         .with_loan_ledger(Some(plan.ledger.clone()))
         .with_loan_participant(Some(plan.callee_participant()))
+        .with_loan_view_bindings(plan.callee_view_bindings().clone())
 }
 
 fn recover_candidate_stable_view_resources(
@@ -256,6 +259,7 @@ fn recover_candidate_stable_view_resources(
         ResourceContext,
         Option<LoanLedger>,
         Option<super::loans::LoanParticipantId>,
+        LoanViewBindings,
     ),
     CRuntimeError,
 > {
@@ -264,6 +268,7 @@ fn recover_candidate_stable_view_resources(
             return_resources,
             caller_state.loan_ledger().cloned(),
             caller_state.loan_participant(),
+            caller_state.loan_view_bindings().clone(),
         ));
     };
     let Some(actual_ledger) = callee_state.loan_ledger() else {
@@ -286,6 +291,7 @@ fn recover_candidate_stable_view_resources(
             return_resources,
             caller_state.loan_ledger().cloned(),
             caller_state.loan_participant(),
+            caller_state.loan_view_bindings().clone(),
         ));
     }
     // Do not use the path assumptions to decide this: they intentionally
@@ -338,6 +344,7 @@ fn recover_candidate_stable_view_resources(
         recovered_resources,
         Some(recovered_ledger),
         Some(plan.caller_participant()),
+        recovery.view_bindings,
     ))
 }
 
@@ -1837,7 +1844,7 @@ fn execute_verified_function_applications(
             facts.extend(additional_facts.into_iter().skip(entry_fact_count));
         }
 
-        let (return_resources, return_ledger, return_participant) =
+        let (return_resources, return_ledger, return_participant, return_view_bindings) =
             match recover_candidate_stable_view_resources(
                 caller_state,
                 &post_state,
@@ -1862,6 +1869,7 @@ fn execute_verified_function_applications(
         return_state.resources = return_resources;
         return_state.loan_ledger = return_ledger;
         return_state.loan_participant = return_participant;
+        return_state.loan_view_bindings = return_view_bindings;
         return_state.counted_populations = post_state.counted_populations;
         return_state.next_local_frame = post_state.next_local_frame;
         return_state.next_local_lifetime = post_state.next_local_lifetime;
@@ -9490,13 +9498,14 @@ fn prepare_contract_resource_transfer_with_candidate(
                 "could not allocate stable-view callee participant".to_string(),
             )));
         };
-        match plan_stable_view_transfer(
+        match plan_stable_view_transfer_with_bindings(
             caller_state.resources(),
             &checked_required_resources,
             assumptions,
             &ledger,
             caller,
             callee,
+            caller_state.loan_view_bindings(),
         ) {
             Ok(plan) => Some(plan),
             Err(error) => {
@@ -15803,7 +15812,7 @@ fn function_outcome_from_body_with_resource_transfer(
         Ok(None) => {}
     }
 
-    let (return_resources, return_ledger, return_participant) =
+    let (return_resources, return_ledger, return_participant, return_view_bindings) =
         match recover_candidate_stable_view_resources(
             caller_state,
             &state,
@@ -15821,6 +15830,7 @@ fn function_outcome_from_body_with_resource_transfer(
     return_state.resources = return_resources;
     return_state.loan_ledger = return_ledger;
     return_state.loan_participant = return_participant;
+    return_state.loan_view_bindings = return_view_bindings;
     return_state.counted_populations = state.counted_populations;
     return_state.next_local_frame = state.next_local_frame;
     return_state.next_local_lifetime = state.next_local_lifetime;
@@ -16695,6 +16705,119 @@ mod candidate_stable_view_call_tests {
             plan.stable_views()[1].loan,
             "aliases share one escrow"
         );
+    }
+
+    #[test]
+    fn candidate_nested_reader_reborrows_and_restores_outer_view_binding() {
+        let pointer = pointer();
+        let function = reader("candidate_nested_reader", false);
+        let caller = caller(&pointer);
+        let outer_template =
+            bind_c_function_arguments(&caller, &function, &[CValue::pointer(pointer.clone())])
+                .expect("outer reader arguments should bind");
+        let outer_transfer = prepare_function_resource_transfer(
+            &caller,
+            &outer_template,
+            &function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("outer transfer should run")
+        .expect("outer transfer should be accepted");
+        let outer_callee = callee_state_with_resource_transfer(outer_template, &outer_transfer);
+        let inner_template = bind_c_function_arguments(
+            &outer_callee,
+            &function,
+            &[CValue::pointer(pointer.clone())],
+        )
+        .expect("inner reader arguments should bind");
+        let inner_transfer = prepare_function_resource_transfer(
+            &outer_callee,
+            &inner_template,
+            &function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("inner transfer should run")
+        .expect("inner transfer should be accepted");
+        let inner_plan = inner_transfer
+            .stable_view_plan
+            .as_ref()
+            .expect("nested transfer should use the loan plan");
+        let outer_plan = outer_transfer
+            .stable_view_plan
+            .as_ref()
+            .expect("outer transfer should use the loan plan");
+        assert_ne!(
+            inner_plan.stable_views()[0].loan,
+            outer_plan.stable_views()[0].loan,
+            "nested reader gets a child loan"
+        );
+        let inner_callee = callee_state_with_resource_transfer(inner_template, &inner_transfer);
+        let (resources, ledger, participant, bindings) = recover_candidate_stable_view_resources(
+            &outer_callee,
+            &inner_callee,
+            &inner_transfer,
+            inner_transfer.caller_resources_after_requirements.clone(),
+            &PureFactContext::new(),
+        )
+        .expect("nested reader recovery should run");
+        assert_eq!(ledger, outer_callee.loan_ledger().cloned());
+        assert_eq!(participant, outer_callee.loan_participant());
+        assert_eq!(bindings, outer_callee.loan_view_bindings().clone());
+        assert!(resources.satisfies_fact(
+            &CResourceFact::view_memory(CMemoryRange::new(
+                pointer,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+            &PureFactContext::new(),
+        ));
+    }
+
+    #[test]
+    fn candidate_nested_reader_rejects_stale_outer_binding() {
+        let pointer = pointer();
+        let function = reader("candidate_stale_nested_reader", false);
+        let caller = caller(&pointer);
+        let outer_template =
+            bind_c_function_arguments(&caller, &function, &[CValue::pointer(pointer.clone())])
+                .expect("outer reader arguments should bind");
+        let outer_transfer = prepare_function_resource_transfer(
+            &caller,
+            &outer_template,
+            &function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("outer transfer should run")
+        .expect("outer transfer should be accepted");
+        let outer_callee = callee_state_with_resource_transfer(outer_template, &outer_transfer)
+            .with_loan_view_bindings(LoanViewBindings::default());
+        let inner_template =
+            bind_c_function_arguments(&outer_callee, &function, &[CValue::pointer(pointer)])
+                .expect("inner reader arguments should bind");
+        let result = prepare_function_resource_transfer(
+            &outer_callee,
+            &inner_template,
+            &function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("stale binding check should run");
+        assert!(matches!(
+            result,
+            Err(CRuntimeError::FunctionContract(message))
+                if message.contains("MissingLoanBinding")
+        ));
     }
 
     #[test]
