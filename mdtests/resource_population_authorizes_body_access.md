@@ -62,8 +62,7 @@ void unwrap_object(struct object* obj) {
 }
 
 void write_through_wrapper(struct object* obj) {
-    views object(obj);
-    owns obj->field;
+    owns object(obj);
 } by {
     step();
     open(wrapper(obj)) {

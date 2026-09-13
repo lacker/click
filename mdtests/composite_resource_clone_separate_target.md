@@ -25,7 +25,6 @@ resource owned_cursor(owner: struct cursor*) {
     owns owner->pos;
     owns owner->len;
     owns owner->data;
-    views owner->data[0..owner->len];
     fact 0 <= owner->pos;
     fact owner->pos <= owner->len;
     fact separate(

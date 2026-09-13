@@ -60,7 +60,6 @@ int32 uprec_owned(int32 a, int32* p) {
     ensures result <= 10;
 } by {
     loop {
-        views p[0..1];
         invariant a >= 0;
         invariant a <= 10;
     }
@@ -78,7 +77,6 @@ int32 ufor_owned(int32 a, int32* p) {
     step();
     step();
     loop {
-        views p[0..1];
         invariant i >= 0;
         invariant i <= 10;
     }

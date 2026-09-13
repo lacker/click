@@ -26,7 +26,6 @@ void produce_population_pipeline(struct owner* owner, int32 amount) {
 
 ```click
 resource slot(owner: struct owner*) {
-    views object(owner);
 }
 
 predicate valid_capacity(owner: struct owner*) {
@@ -38,7 +37,6 @@ verifying "produce_population_pipeline.c";
 
 void produce_population(struct owner* owner, int32 amount) {
     requires 0 <= amount;
-    views object(owner);
     produces amount of slot(owner);
     owns owner->capacity;
 

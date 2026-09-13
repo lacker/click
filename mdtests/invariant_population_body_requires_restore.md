@@ -45,8 +45,7 @@ void wrap_object(struct object* obj) {
 
 void break_wrapper_invariant(struct object* obj) {
     requires obj->field == 7;
-    views object(obj);
-    owns obj->field;
+    owns object(obj);
 } by {
     step();
     open(wrapper(obj)) {

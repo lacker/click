@@ -30,7 +30,6 @@ int32 uprec_join(int32 a, int32* p) {
     ensures result == 0;
 } by {
     loop {
-        views p[0..1];
         invariant a >= 0;
         invariant a <= 10;
     }
