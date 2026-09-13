@@ -16764,6 +16764,7 @@ mod candidate_stable_view_call_tests {
             &inner_transfer,
             inner_transfer.caller_resources_after_requirements.clone(),
             &PureFactContext::new(),
+            &[],
         )
         .expect("nested reader recovery should run");
         assert_eq!(ledger, outer_callee.loan_ledger().cloned());

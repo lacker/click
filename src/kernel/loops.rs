@@ -1371,6 +1371,9 @@ fn c_loop_state_components_match_at_back_edge_inner(
     if top_state.loan_participant != next_state.loan_participant {
         changed.push("stable-view loan participant");
     }
+    if top_state.loan_view_bindings != next_state.loan_view_bindings {
+        changed.push("stable-view occurrence bindings");
+    }
     if changed.is_empty() {
         Ok(())
     } else {
@@ -2254,6 +2257,9 @@ fn loop_exit_state_difference(left: &CState, right: &CState) -> Option<String> {
     }
     if left.loan_participant != right.loan_participant {
         differences.push("stable-view loan participant".to_string());
+    }
+    if left.loan_view_bindings != right.loan_view_bindings {
+        differences.push("stable-view occurrence bindings".to_string());
     }
     if differences.is_empty() {
         differences.push("the symbolic state".to_string());
