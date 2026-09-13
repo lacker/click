@@ -27,7 +27,6 @@ verifying "dependent_pair.c";
 void probe(struct node* node) {
     requires node != 0;
     requires node->left != 0;
-    views node[0..1];
     owns pair(node);
     owns pair(node->left->left);
     owns pair(node->left->left->left);
@@ -36,7 +35,6 @@ void probe(struct node* node) {
 contract void DependentPair(struct node* node) {
     requires node != 0;
     requires node->left != 0;
-    views node[0..1];
     owns pair(node);
     owns pair(node->left->left);
     owns pair(node->left->left->left);

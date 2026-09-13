@@ -23,7 +23,7 @@ verifying "larger_callback_footprint.c";
 
 contract void Progress(int32* cells) {
     requires cells[0] < 100;
-    views cells[0..2];
+    views cells[1..2];
     owns cells[0..1];
     ensures old(cells[0]) < cells[0];
 }
@@ -40,7 +40,7 @@ void broadly_mutable(int32* state) {
 void apply_step(void (*step)(int32*), int32* cells) {
     requires Progress(step);
     requires cells[0] < 100;
-    views cells[0..2];
+    views cells[1..2];
     owns cells[0..1];
     ensures old(cells[0]) < cells[0];
 } by {
@@ -50,7 +50,7 @@ void apply_step(void (*step)(int32*), int32* cells) {
 
 void larger_footprint_caller(int32* cells) {
     requires cells[0] < 100;
-    views cells[0..2];
+    views cells[1..2];
     owns cells[0..1];
     ensures old(cells[0]) < cells[0];
 } by {

@@ -1,8 +1,8 @@
 # A callback may own less memory than its named contract permits
 
-The named contract owns both cells, while the concrete callback views the pair
-and owns only the first. Resource transfer remains exact: both interfaces
-return the entire two-cell state.
+The named contract owns both cells, while the concrete callback views the
+second cell and owns only the first. Resource transfer remains exact: both
+interfaces return the entire two-cell state.
 
 Behavioral refinement of a named contract is an explicit theorem: the kernel
 checks that the two interfaces have compatible shape, and the clause-level
@@ -33,7 +33,7 @@ contract void Progress(int32* cells) {
 
 void increment_first(int32* state) {
     requires state[0] < 100;
-    views state[0..2];
+    views state[1..2];
     owns state[0..1];
     ensures state[0] == old(state[0]) + 1;
 } by {

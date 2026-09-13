@@ -1,7 +1,7 @@
 # The selected contract supplies the owned footprint
 
-Raw owns both cells; Buffered views the pair and owns only the first. Selecting
-Buffered preserves the second cell through ownership alone.
+Raw owns both cells; Buffered views the second cell and owns only the first.
+Selecting Buffered preserves the second cell through read authority.
 
 ```c filename=joint.c
 void invoke(void (*callback)(int32*), int32* cells) { callback(cells); }
@@ -13,14 +13,14 @@ contract void Raw(int32* cells) {
     owns cells[0..2];
 }
 contract void Buffered(int32* cells) {
-    views Pair(cells);
+    views cells[1..2];
     owns cells[0..1];
 }
 verifying "joint.c";
 void invoke(void (*callback)(int32*), int32* cells) {
     requires Raw(callback);
     requires Buffered(callback);
-    views Pair(cells);
+    views cells[1..2];
     owns cells[0..1];
     ensures cells[1] == old(cells[1]);
 } by { step(Buffered); execute(); simp(); }

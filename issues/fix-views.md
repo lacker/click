@@ -1755,6 +1755,25 @@ remain legal when the caller independently retains authority.
 semantics and positive C sources are byte-for-byte unchanged. No blanket
 replacement of `views` by `owns` has removed shared-reader coverage.
 
+### V13 handoff: durable output audit
+
+The complete extraction and source-path classification for this chunk is in
+[`docs/internals/view-output-inventory.md`](../docs/internals/view-output-inventory.md).
+The 2026-09-12 snapshot contains 200 files and 345 explicit `views`
+declarations: 180 mdtests, 19 examples, and one design probe. Every
+declaration is assigned to existing outer dependency, returned input access,
+immutable support, or unsupported escape, with the exact extraction method and
+the responsible lowering/kernel paths recorded there. The raw returned-pointer
+case is legal only when the caller retains independent ownership; it is not an
+escaping stable loan. The stable fact fixture is intentionally a static V12
+validation witness until dynamic loan capture binds its source occurrence. The
+focused kernel candidate-call tests cover the transition itself, but a surface
+candidate-route fixture exposed the remaining top-level input gap: the shared
+proof/certification state constructor needs one checked nonrecoverable root
+authority for each exact input-view occurrence. The V13 migration does not
+weaken the candidate evidence check or claim this route is complete before that
+V12 dependency lands.
+
 ### V14 — Recheck extension models against implemented rules
 
 **Read:** D2-D5, D12, concurrency section and shared language design.

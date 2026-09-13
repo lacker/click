@@ -77,8 +77,7 @@ void unwrap_object(struct object* obj) {
 }
 
 void restore_wrapper_invariant(struct object* obj) {
-    views wrapper(obj);
-    owns obj->field;
+    owns wrapper(obj);
 } by {
     open(wrapper(obj)) {
         execute();
@@ -88,8 +87,7 @@ void restore_wrapper_invariant(struct object* obj) {
 
 void write_through_wrapper(struct object* obj) {
     requires obj->field == 7;
-    views object(obj);
-    owns obj->field;
+    owns object(obj);
 } by {
     step();
     step();

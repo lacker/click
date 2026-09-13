@@ -3,13 +3,13 @@
 ```click
 contract void Source(int32* cells) {
     requires [cells[0], cells[1]] == [0, 1];
-    views cells[0..3];
+    views cells[2..3];
     owns cells[0..2];
     ensures [cells[0], cells[1]] == old([cells[1], cells[0]]);
 }
 contract void Target(int32* cells) {
     requires [cells[0], cells[1]] == [0, 1] and cells[0] == 0;
-    views cells[0..3];
+    views cells[2..3];
     owns cells[0..2];
     ensures [cells[0], cells[1]] == old([cells[1], cells[0]]);
 }

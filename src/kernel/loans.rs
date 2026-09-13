@@ -1981,6 +1981,49 @@ impl LoanLedger {
         })
     }
 
+    /// Establishes the non-recoverable root authority for an input view at a
+    /// verification boundary.  The input is an assumed shared capability, so
+    /// there is no owned escrow in the caller resource frame to consume or
+    /// recover.  We nevertheless record the same checked memory protection
+    /// and permitted-view set as an ordinary loan; subsequent calls can then
+    /// reborrow the exact occurrence without treating an equal view as its
+    /// authority.
+    pub(crate) fn assume_external_view(
+        &self,
+        holder: LoanParticipantId,
+        support: ResourceOccurrenceId,
+        viewed: CResourceFact,
+    ) -> Result<(Self, LoanViewBinding), LoanRefusal> {
+        if !viewed.is_view() {
+            return Err(LoanRefusal::MissingLoanBinding);
+        }
+        let escrow = CResourceFact::own(viewed.resource().clone());
+        let opening = self.lend(holder, holder, support, escrow)?;
+        let mut ledger = self.apply(&opening.transition)?;
+        let mut data = ledger.storage.data.clone();
+        let mut record = data
+            .loans
+            .get(&opening.loan)
+            .cloned()
+            .ok_or(LoanRefusal::MissingLoan)?;
+        record.recoverable = false;
+        data.loans = data.loans.with_inserted(opening.loan, record);
+        ledger.storage = Arc::new(LoanLedgerStorage {
+            state: LoanLedgerStateId::fresh(),
+            data,
+        });
+        Ok((
+            ledger,
+            LoanViewBinding {
+                loan: opening.loan,
+                scope: opening.scope,
+                share: opening.root_share,
+                support,
+                viewed,
+            },
+        ))
+    }
+
     /// Lend a folded composite only when its primitive body frontier has
     /// already been checked by the caller.  The composite head is the exact
     /// restoration recipe; the primitive backing facts are what populate the

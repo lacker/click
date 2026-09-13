@@ -80,7 +80,6 @@ contract int32 Store(
     struct accumulator* accumulator,
     int32 value
 ) {
-    views accumulator_cell(accumulator);
     owns accumulator->value;
     ensures result == 0;
     ensures accumulator->value == value;
@@ -131,7 +130,6 @@ int32 store_accumulator(
     int32 value
 ) {
     views callback_suite(table);
-    views accumulator_cell(accumulator);
     owns accumulator->value;
     requires separate(memory(object(table)), memory(object(accumulator)));
     ensures result == 0;
@@ -150,7 +148,6 @@ int32 run_pipeline(
     int32 right
 ) {
     views callback_suite(table);
-    views accumulator_cell(accumulator);
     owns accumulator->value;
     requires separate(memory(object(table)), memory(object(accumulator)));
     requires defined(left + right);

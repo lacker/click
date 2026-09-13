@@ -290,6 +290,14 @@ sequence:
 
 - `mdtests/permission_call_borrow_read.md`: a helper borrows read permission
   from a caller that keeps write permission.
+- `mdtests/stable_view_ordinary_reader.md`: an ordinary reader borrows one
+  cell and returns the caller's ownership unchanged.
+- `mdtests/stable_view_nested_reader.md`: nested readers share a scoped view
+  while the outer caller retains ownership.
+- `mdtests/stable_view_partial_borrow.md`: a read-only prefix and owned
+  writable suffix form a disjoint partial borrow.
+- `mdtests/stable_view_returned_pointer.md`: returning a raw C pointer does
+  not export a stable loan beyond the caller's independent ownership.
 - `mdtests/permission_call_consumes_write_without_return.md`: a helper consumes
   write permission when it does not return it.
 - `mdtests/permission_call_returns_write.md`: a helper returns write permission
@@ -448,6 +456,8 @@ sequence:
   cannot read memory without contained current read authority.
 - `mdtests/composite_resource_accepts_read_backed_fact.md`: contained
   current view permission provides read authority for a memory fact.
+- `mdtests/stable_view_fact_workflow.md`: a current view supports a
+  resource fact through an ordinary `open` proof workflow.
 - `mdtests/composite_resource_rejects_predicate_hidden_fact_read.md`:
   predicate-hidden memory reads are checked against contained current read
   authority.

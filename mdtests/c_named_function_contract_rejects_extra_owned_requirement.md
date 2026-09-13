@@ -29,7 +29,7 @@ contract void Progress(int32* cells) {
 
 void needs_two_cells(int32* state) {
     requires state[0] < 100;
-    views state[0..2];
+    views state[1..2];
     owns state[0..1];
     ensures state[0] == old(state[0]) + 1;
 } by {

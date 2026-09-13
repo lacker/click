@@ -12,8 +12,8 @@ reproduction requires their compilation to fail.
 
 | Probe | Observed result |
 | --- | --- |
-| `alias.c` + `alias.click` | Click verifies the aliased read returns the newly stored 7. |
-| `alias.c` + `alias-owned.click` | The same C and result verify with ownership alone, without an overlapping view. |
+| `alias.c` + `alias.click` | Click verifies the aliased read returns the newly stored 7 with ownership of the shared location; the sidecar does not claim a stable overlapping view. |
+| `alias.c` + `alias-owned.click` | The same C and result verify with the equivalent ownership-only contract. |
 | `field-split.c` + `field-split.click` | A setter owns the changed field and views the other field; its caller preserves the viewed field and recovers the folded resource. |
 | `borrows.rs` | Rust compilation and all runtime assertions pass. |
 | `shared_write_rejected.rs` | Rust rejects assignment with E0506. |

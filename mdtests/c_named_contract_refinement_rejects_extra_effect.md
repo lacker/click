@@ -1,8 +1,8 @@
 # Contract-to-contract refinement rejects wider ownership
 
-The source contract owns both cells, while the target views both and owns only
-the first. A theorem cannot narrow that ownership merely because both callbacks
-carry the same C signature.
+The source contract owns both cells, while the target views the second and owns
+only the first. A theorem cannot narrow that ownership merely because both
+callbacks carry the same C signature.
 
 ```click
 contract void WideEffect(int32* cells) {
@@ -10,7 +10,7 @@ contract void WideEffect(int32* cells) {
 }
 
 contract void FirstCellEffect(int32* cells) {
-    views cells[0..2];
+    views cells[1..2];
     owns cells[0..1];
 }
 
