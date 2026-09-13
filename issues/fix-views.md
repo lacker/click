@@ -3,7 +3,9 @@
 **Status: V0-V12 and V14-V16 are implemented behind the candidate-semantics
 boundary. The safe V13 migrations and route wiring are integrated; its
 top-level borrowed-input root remains blocked pending explicit approval of
-that authority boundary. V17 corpus migration is in progress. Ordinary C
+that authority boundary. The independently reviewable V17 contract migrations
+are integrated; the complete candidate-semantics corpus remains blocked on
+that same root. Ordinary C
 contracts still use the existing weak-view behavior until the V19 cutover.**
 The checkpoint began on 2026-09-12 from
 `44339e408c65d67e5251787d680fbf4b542d5287`. Scope-bearing candidate states
@@ -242,6 +244,24 @@ unrelated resources and definitions, and overlap chains. A follow-up review
 added persistent-tree work accounting and constant-time identity for shared
 evidence histories. The integrated commits are `975ee4c6`, `457530dd`, and
 `74a01c31`.
+
+### 2026-09-12 V13 and V17 migration checkpoint
+
+V13 routes stable-view mode through surface verification, preserves the
+checked entry state for certification, adds ordinary and nested reader,
+partial-borrow, and view-supported-fact fixtures, and records the complete
+view-output inventory in `docs/internals/view-output-inventory.md`. Its full
+gate passed 2,946 tests and all four fixture gates after the unvalidated
+external-root prototype was removed.
+
+The first reviewed V17 batches narrow the named rbtree callback contract to
+the exact shared cell range it reads and remove redundant or misleading
+view requirements from composite, population, and loop contracts. Each batch
+passed the complete mdtest suite before integration as `9e3052bc` and
+`2df1c154`. No C source changed. The complete candidate-semantics corpus and
+the remaining top-level reader fixtures cannot be judged until contract-entry
+views receive the checked nonrecoverable root authority described in the V13
+handoff.
 
 ## Decision and violated invariant
 
