@@ -9,9 +9,19 @@ fn ledger_with_participants() -> (
     crate::kernel::loans::LoanParticipantId,
 ) {
     let ledger = LoanLedger::new();
-    let (ledger, owner) = ledger.fresh_participant().expect("owner identity");
-    let (ledger, reader) = ledger.fresh_participant().expect("reader identity");
+    let owner = ledger.fresh_participant().expect("owner identity");
+    let reader = ledger.fresh_participant().expect("reader identity");
     (ledger, owner, reader)
+}
+
+fn token_with_support(name: &str) -> (CResourceFact, ResourceOccurrenceId) {
+    let fact = CResourceFact::own_token(name.to_string(), Vec::new());
+    let support = ResourceContext::new()
+        .unchecked_with_fact(fact.clone())
+        .unique_owned_occurrence_for_fact(&fact)
+        .expect("token backing")
+        .0;
+    (fact, support)
 }
 
 #[test]
@@ -37,19 +47,13 @@ fn cloned_state_shares_the_loan_ledger_root() {
 #[test]
 fn divergent_ledger_successors_make_state_identities_differ() {
     let (ledger, owner, reader) = ledger_with_participants();
+    let (first_fact, first_support) = token_with_support("first");
+    let (second_fact, second_support) = token_with_support("second");
     let first = ledger
-        .lend(
-            owner,
-            reader,
-            CResourceFact::own_token("first".to_string(), Vec::new()),
-        )
+        .lend(owner, reader, first_support, first_fact)
         .expect("first loan");
     let second = ledger
-        .lend(
-            owner,
-            reader,
-            CResourceFact::own_token("second".to_string(), Vec::new()),
-        )
+        .lend(owner, reader, second_support, second_fact)
         .expect("second loan");
     let first = ledger.apply(&first.transition).expect("first successor");
     let second = ledger.apply(&second.transition).expect("second successor");
@@ -67,19 +71,13 @@ fn divergent_ledger_successors_make_state_identities_differ() {
 #[test]
 fn abstract_join_rejects_divergent_loan_roots_without_scanning_ledgers() {
     let (ledger, owner, reader) = ledger_with_participants();
+    let (first_fact, first_support) = token_with_support("first");
+    let (second_fact, second_support) = token_with_support("second");
     let first = ledger
-        .lend(
-            owner,
-            reader,
-            CResourceFact::own_token("first".to_string(), Vec::new()),
-        )
+        .lend(owner, reader, first_support, first_fact)
         .expect("first loan");
     let second = ledger
-        .lend(
-            owner,
-            reader,
-            CResourceFact::own_token("second".to_string(), Vec::new()),
-        )
+        .lend(owner, reader, second_support, second_fact)
         .expect("second loan");
     let first_state = CState::new().with_loan_ledger(Some(
         ledger.apply(&first.transition).expect("first successor"),

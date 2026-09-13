@@ -282,12 +282,23 @@ fn recover_candidate_stable_view_resources(
             caller_state.loan_participant(),
         ));
     }
-    let (recovered_ledger, mut recovered_resources) = plan
+    let recovery = plan
         .clone()
         .recover_stable_views(assumptions)
         .map_err(|error| {
             CRuntimeError::FunctionContract(format!("stable-view call recovery refused: {error:?}"))
         })?;
+    // Replay the kernel-issued discharge evidence from the exact callee root
+    // before installing the canonical predecessor root in the caller state.
+    recovery
+        .replay_transitions(actual_ledger)
+        .map_err(|error| {
+            CRuntimeError::FunctionContract(format!(
+                "stable-view call recovery evidence refused: {error:?}"
+            ))
+        })?;
+    let recovered_ledger = recovery.ledger;
+    let mut recovered_resources = recovery.resources;
     let mut residual = return_resources;
     for stable_view in plan.stable_views() {
         if residual.contains_exact_representation(&stable_view.requirement.fact) {
@@ -2347,21 +2358,11 @@ fn prepare_verified_function_call<'a>(
             }));
         }
     };
+    // The joint transfer planner has already proved that every mutable input
+    // is disjoint from each lent range. Preserve that precise footprint here;
+    // rejecting all mutation would also reject the supported viewed-field /
+    // owned-field partition.
     let mutable_ranges = projection.ranges;
-    if transfer
-        .stable_view_plan
-        .as_ref()
-        .is_some_and(StableViewTransferPlan::has_stable_views)
-        && !mutable_ranges.is_empty()
-    {
-        return Ok(Err(CFunctionPath {
-            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
-                "stable-view call mutable footprint overlaps transferred authority".to_string(),
-            )),
-            facts,
-            obligations,
-        }));
-    }
     for fact in projection.evidence_facts {
         if !facts.contains(&fact) {
             facts.push(fact);
@@ -9421,7 +9422,7 @@ fn prepare_contract_resource_transfer_with_candidate(
             (Some(ledger), Some(caller)) => (ledger, caller),
             _ => {
                 let ledger = LoanLedger::new();
-                let Ok((ledger, caller)) = ledger.fresh_participant() else {
+                let Ok(caller) = ledger.fresh_participant() else {
                     return Ok(Err(CRuntimeError::FunctionContract(
                         "could not allocate stable-view caller participant".to_string(),
                     )));
@@ -9429,7 +9430,7 @@ fn prepare_contract_resource_transfer_with_candidate(
                 (ledger, caller)
             }
         };
-        let Ok((ledger, callee)) = ledger.fresh_participant() else {
+        let Ok(callee) = ledger.fresh_participant() else {
             return Ok(Err(CRuntimeError::FunctionContract(
                 "could not allocate stable-view callee participant".to_string(),
             )));
@@ -16294,7 +16295,11 @@ mod candidate_stable_view_call_tests {
             Bitvector32Term::Constant(1),
         );
         CState::new()
-            .with_memory(CMemory::new().with_block(pointer.block.clone(), 4))
+            .with_memory(
+                CMemory::new()
+                    .with_block(pointer.block.clone(), 4)
+                    .store(pointer.clone(), int32(7)),
+            )
             .with_resource_context(
                 ResourceContext::new()
                     .unchecked_with_fact(CResourceFact::own(CResource::Memory(range))),
@@ -16308,10 +16313,10 @@ mod candidate_stable_view_call_tests {
             requires.push(CResourceSpec::viewed_memory(segment));
         }
         c_function(
-            CType::Void,
+            CType::Int32,
             name,
             vec![c_parameter("p", CType::Int32Pointer)],
-            c_return(c_void_value()),
+            c_return(c_load(c_variable("p"))),
         )
         .with_resource_summary(requires, Vec::new())
     }
@@ -16477,17 +16482,19 @@ mod candidate_stable_view_call_tests {
     #[test]
     fn candidate_wrong_scope_close_is_refused() {
         let ledger = LoanLedger::new();
-        let (ledger, owner) = ledger.fresh_participant().expect("owner participant");
-        let (ledger, reader) = ledger.fresh_participant().expect("reader participant");
+        let owner = ledger.fresh_participant().expect("owner participant");
+        let reader = ledger.fresh_participant().expect("reader participant");
+        let escrow = CResourceFact::own(CResource::Token {
+            name: "candidate_scope".to_string(),
+            arguments: Vec::new().into(),
+        });
+        let support = ResourceContext::new()
+            .unchecked_with_fact(escrow.clone())
+            .unique_owned_occurrence_for_fact(&escrow)
+            .expect("token backing")
+            .0;
         let opening = ledger
-            .lend(
-                owner,
-                reader,
-                CResourceFact::own(CResource::Token {
-                    name: "candidate_scope".to_string(),
-                    arguments: Vec::new().into(),
-                }),
-            )
+            .lend(owner, reader, support, escrow)
             .expect("loan opening");
         let ledger = ledger.apply(&opening.transition).expect("loan apply");
         assert!(matches!(
