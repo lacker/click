@@ -1025,6 +1025,15 @@ appears to need one reports the need instead of adding it.
   is handed the whole phase script, so expansion nests every sibling
   `have` inside every invariant's proof and round-trip validation fails.
   Only one `have` per invariant plus a trailing `assumption()` expands.
+  Gaps 65 and 66 CLOSED by 54d0f136, one bug: the whole `initialize`
+  script was every invariant's proof, so no per-`have` expansion was
+  recorded and helpers were printed once per invariant. The script is now
+  read as hoisted `unfold`/`have` helpers, one `have` per invariant in
+  declaration order, and an optional closer; each step records its
+  expansion at its own source index, and `preserve by simp;` expands too
+  (`loop_initialize_smart_have_per_invariant.md`,
+  `loop_initialize_helper_have_before_the_closer.md`, three expansion unit
+  tests). C3 resumes on the fixup body.
   (b) gap 63, an unfinished `preserve` is refused at plan time with "must
   execute exactly one complete loop-body iteration", which hides the real
   frontier, so a body path gives no signal until finished end to end.
