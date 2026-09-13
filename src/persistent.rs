@@ -6,7 +6,16 @@ use std::sync::Arc;
 #[cfg(test)]
 thread_local! {
     static NODE_ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PERSISTENT_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
+
+#[cfg(test)]
+fn record_persistent_work(units: usize) {
+    PERSISTENT_WORK.with(|work| work.set(work.get().saturating_add(units)));
+}
+
+#[cfg(not(test))]
+fn record_persistent_work(_units: usize) {}
 
 /// A persistent AVL map. Clones share the complete root; updating one key
 /// copies only the search path and any rotation nodes.
@@ -45,6 +54,7 @@ impl<K: Ord, V> PersistentMap<K, V> {
     {
         let mut node = self.root.as_ref();
         while let Some(current) = node {
+            record_persistent_work(1);
             match key.cmp(current.key.as_ref().borrow()) {
                 Ordering::Less => node = current.left.as_ref(),
                 Ordering::Equal => return Some(current.value.as_ref()),
@@ -63,6 +73,7 @@ impl<K: Ord, V> PersistentMap<K, V> {
         let mut node = self.root.as_deref();
         let mut candidate = None;
         while let Some(current) = node {
+            record_persistent_work(1);
             match key.cmp(current.key.as_ref()) {
                 Ordering::Less | Ordering::Equal => node = current.left.as_deref(),
                 Ordering::Greater => {
@@ -79,6 +90,7 @@ impl<K: Ord, V> PersistentMap<K, V> {
         let mut node = self.root.as_deref();
         let mut candidate = None;
         while let Some(current) = node {
+            record_persistent_work(1);
             match key.cmp(current.key.as_ref()) {
                 Ordering::Less => {
                     candidate = Some((current.key.as_ref(), current.value.as_ref()));
@@ -327,6 +339,7 @@ fn make_node<K, V>(
     left: Option<Arc<Node<K, V>>>,
     right: Option<Arc<Node<K, V>>>,
 ) -> Arc<Node<K, V>> {
+    record_persistent_work(1);
     #[cfg(test)]
     NODE_ALLOCATIONS.with(|allocations| allocations.set(allocations.get() + 1));
     Arc::new(Node {
@@ -412,6 +425,7 @@ fn insert_node<K: Ord, V>(
     key: Arc<K>,
     value: Arc<V>,
 ) -> (Arc<Node<K, V>>, bool) {
+    record_persistent_work(1);
     let Some(node) = node else {
         return (make_node(key, value, None, None), true);
     };
@@ -448,6 +462,7 @@ fn insert_node<K: Ord, V>(
 }
 
 fn remove_leftmost<K: Ord, V>(node: &Arc<Node<K, V>>) -> (Option<Arc<Node<K, V>>>, Arc<K>, Arc<V>) {
+    record_persistent_work(1);
     let Some(left) = node.left.as_ref() else {
         return (node.right.clone(), node.key.clone(), node.value.clone());
     };
@@ -468,6 +483,7 @@ fn remove_node<K: Ord, V>(
     node: Option<&Arc<Node<K, V>>>,
     key: &K,
 ) -> (Option<Arc<Node<K, V>>>, bool) {
+    record_persistent_work(1);
     let Some(node) = node else {
         return (None, false);
     };
@@ -524,6 +540,14 @@ fn remove_node<K: Ord, V>(
 #[cfg(test)]
 pub(crate) fn persistent_node_allocations() -> usize {
     NODE_ALLOCATIONS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn measure_persistent_work<R>(operation: impl FnOnce() -> R) -> (R, usize) {
+    let before = PERSISTENT_WORK.with(std::cell::Cell::get);
+    let result = operation();
+    let after = PERSISTENT_WORK.with(std::cell::Cell::get);
+    (result, after.saturating_sub(before))
 }
 
 #[cfg(test)]

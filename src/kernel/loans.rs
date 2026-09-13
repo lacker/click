@@ -1113,6 +1113,13 @@ impl CheckedLoanCallEvidenceSequence {
 
 impl PartialEq for CheckedLoanCallEvidenceSequence {
     fn eq(&self, other: &Self) -> bool {
+        // Cloned proof paths retain the exact persistent node identity.  This
+        // is the common artifact-comparison case and must not replay the
+        // completed call history.  Separately-built histories still take the
+        // exact evidence-by-evidence fallback below.
+        if Arc::ptr_eq(&self.node, &other.node) {
+            return true;
+        }
         if self.len != other.len {
             return false;
         }
@@ -1415,6 +1422,10 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
         if let Some(range) = requirement.fact.memory_range()
             && (range.start().as_const().is_none() || range.end().as_const().is_none())
         {
+            // The ordered sweep below is intentionally concrete-only.  A
+            // symbolic family needs an explicit separation/overlap proof;
+            // treating its ordering as an index decision would manufacture
+            // a loan union without checked byte bounds.
             return Err(StableViewPlanError::UnsupportedPartition);
         }
         let view_occurrences =
@@ -3416,6 +3427,80 @@ mod tests {
         assert_eq!(sequence.len(), 2048);
         assert_eq!(sequence, sequence.clone());
         assert_eq!(sequence.to_vec().len(), 2048);
+
+        let alternate_plan = plan_stable_view_transfer(
+            &caller_resources,
+            &[checked(memory(1, 3, false))],
+            &assumptions,
+            &ledger,
+            caller,
+            callee,
+        )
+        .unwrap();
+        let alternate_recovery = alternate_plan
+            .clone()
+            .recover_stable_views(&assumptions)
+            .unwrap();
+        let alternate_evidence = Arc::new(CheckedLoanCallEvidence::new(
+            alternate_plan,
+            alternate_recovery.ledger,
+            alternate_recovery.terminal_ledger,
+            alternate_recovery.transitions,
+        ));
+        let mut separately_built_different = empty_checked_loan_evidence_sequence();
+        for _ in 0..2048 {
+            separately_built_different = append_checked_loan_evidence(
+                &separately_built_different,
+                Some(alternate_evidence.clone()),
+            );
+        }
+        assert_ne!(separately_built_different, sequence);
+    }
+
+    #[test]
+    fn completed_call_history_does_not_slow_outer_ledger_lookup() {
+        let assumptions = PureFactContext::new();
+        let owner = memory(0, 4, true);
+        let caller_resources = ResourceContext::new().unchecked_with_fact(owner);
+        let (ledger, caller, callee) = participants();
+        let plan = plan_stable_view_transfer(
+            &caller_resources,
+            &[checked(memory(0, 2, false))],
+            &assumptions,
+            &ledger,
+            caller,
+            callee,
+        )
+        .unwrap();
+        let recovery = plan.clone().recover_stable_views(&assumptions).unwrap();
+        let evidence = Arc::new(CheckedLoanCallEvidence::new(
+            plan,
+            recovery.ledger,
+            recovery.terminal_ledger,
+            recovery.transitions,
+        ));
+        let mut samples = Vec::new();
+        for size in [16_usize, 32, 64, 128] {
+            let mut sequence = empty_checked_loan_evidence_sequence();
+            for _ in 0..size {
+                sequence = append_checked_loan_evidence(&sequence, Some(evidence.clone()));
+            }
+            let ((valid, recovered), work) = crate::persistent::measure_persistent_work(|| {
+                (
+                    sequence.is_valid(),
+                    sequence.recovered_ledger_for(&ledger, caller, false),
+                )
+            });
+            assert!(valid);
+            assert_eq!(recovered, Some(ledger.clone()));
+            samples.push((size, work));
+        }
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1].1 <= pair[0].1.saturating_mul(2).saturating_add(8),
+                "outer ledger lookup grew with completed history: {samples:?}"
+            );
+        }
     }
 
     #[test]
@@ -3567,36 +3652,40 @@ mod tests {
             let escrow = owned("deep-tree");
             let opening = base.lend(owner, owner, backing(&escrow), escrow).unwrap();
             let mut ledger = base.apply(&opening.transition).unwrap();
-            let ((), work) = crate::instrumentation::measure_deterministic_work(|| {
-                let mut current = opening.root_share;
-                let mut parents = Vec::with_capacity(depth);
-                let mut siblings = Vec::with_capacity(depth);
-                for _ in 0..depth {
-                    let (split, left, right) = ledger.split(current, owner, owner, owner).unwrap();
-                    ledger = ledger.apply(&split).unwrap();
-                    parents.push(current);
-                    siblings.push(right);
-                    current = left;
-                }
-                assert!(ledger.permits_view(
-                    owner,
-                    &opening.description,
-                    current,
-                    &PureFactContext::new()
-                ));
-                for (parent, sibling) in parents.into_iter().zip(siblings).rev() {
-                    let join = ledger.join(current, sibling, owner).unwrap();
-                    ledger = ledger.apply(&join).unwrap();
-                    current = parent;
-                }
-                assert_eq!(current, opening.root_share);
-                assert!(ledger.invariant_holds());
+            let (((), work), persistent_work) = crate::persistent::measure_persistent_work(|| {
+                crate::instrumentation::measure_deterministic_work(|| {
+                    let mut current = opening.root_share;
+                    let mut parents = Vec::with_capacity(depth);
+                    let mut siblings = Vec::with_capacity(depth);
+                    for _ in 0..depth {
+                        let (split, left, right) =
+                            ledger.split(current, owner, owner, owner).unwrap();
+                        ledger = ledger.apply(&split).unwrap();
+                        parents.push(current);
+                        siblings.push(right);
+                        current = left;
+                    }
+                    assert!(ledger.permits_view(
+                        owner,
+                        &opening.description,
+                        current,
+                        &PureFactContext::new()
+                    ));
+                    for (parent, sibling) in parents.into_iter().zip(siblings).rev() {
+                        let join = ledger.join(current, sibling, owner).unwrap();
+                        ledger = ledger.apply(&join).unwrap();
+                        current = parent;
+                    }
+                    assert_eq!(current, opening.root_share);
+                    assert!(ledger.invariant_holds());
+                })
             });
-            samples.push((depth, work));
+            samples.push((depth, work, persistent_work));
         }
         for pair in samples.windows(2) {
             assert!(
-                pair[1].1 <= pair[0].1.saturating_mul(3),
+                pair[1].1 <= pair[0].1.saturating_mul(3)
+                    && pair[1].2 <= pair[0].2.saturating_mul(3),
                 "deep split/read/join work exceeded the explicit tree delta: {samples:?}"
             );
         }
@@ -3621,19 +3710,22 @@ mod tests {
                 ledger = ledger.apply(&child.transition).unwrap();
                 children.push(child);
             }
-            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
-                for child in &children {
-                    let transition = ledger
-                        .register_dependency(parent.scope, child.scope, owner)
-                        .unwrap();
-                    ledger = ledger.apply(&transition).unwrap();
-                }
+            let (((), work), persistent_work) = crate::persistent::measure_persistent_work(|| {
+                crate::instrumentation::measure_deterministic_work(|| {
+                    for child in &children {
+                        let transition = ledger
+                            .register_dependency(parent.scope, child.scope, owner)
+                            .unwrap();
+                        ledger = ledger.apply(&transition).unwrap();
+                    }
+                })
             });
-            samples.push((size, work));
+            samples.push((size, work, persistent_work));
         }
         for pair in samples.windows(2) {
             assert!(
-                pair[1].1 <= pair[0].1.saturating_mul(3),
+                pair[1].1 <= pair[0].1.saturating_mul(3)
+                    && pair[1].2 <= pair[0].2.saturating_mul(3),
                 "dependency updates visited unrelated scope entries: {samples:?}"
             );
         }
@@ -3671,6 +3763,81 @@ mod tests {
                 pair[1].1 <= pair[0].1.saturating_mul(3),
                 "disjoint view clustering compared unrelated candidates: {samples:?}"
             );
+        }
+    }
+
+    #[test]
+    fn overlapping_memory_view_clustering_handles_chains_and_equal_starts() {
+        let assumptions = PureFactContext::new();
+        let mut chain_samples = Vec::new();
+        let mut equal_start_samples = Vec::new();
+        for size in [16_usize, 32, 64, 128] {
+            let ledger = LoanLedger::new();
+            let caller = ledger.fresh_participant().unwrap();
+            let callee = ledger.fresh_participant().unwrap();
+            let mut caller_resources = ResourceContext::new();
+            let mut chain_requirements = Vec::with_capacity(size * 3);
+            let mut equal_requirements = Vec::with_capacity(size * 3);
+            for index in 0..size {
+                let base = crate::kernel::Pointer {
+                    block: crate::kernel::PointerBlock::Concrete(format!("overlap-{index}")),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(0),
+                };
+                let owner = CResourceFact::own_memory(CMemoryRange::new(
+                    base.clone(),
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(6),
+                ));
+                caller_resources = caller_resources.unchecked_with_fact(owner);
+                let view = |start, end| {
+                    checked(CResourceFact::view_memory(CMemoryRange::new(
+                        base.clone(),
+                        Bitvector32Term::Constant(start),
+                        Bitvector32Term::Constant(end),
+                    )))
+                };
+                // Three clauses form a transitive overlap chain. Keeping the
+                // chain bounded avoids making resource validity itself the
+                // measured axis while the number of independent chains grows.
+                chain_requirements.extend([view(0, 3), view(2, 5), view(4, 6)]);
+                equal_requirements.extend([view(0, 2), view(0, 2), view(0, 2)]);
+            }
+            let (chain, chain_work) = crate::instrumentation::measure_deterministic_work(|| {
+                plan_stable_view_transfer(
+                    &caller_resources,
+                    &chain_requirements,
+                    &assumptions,
+                    &ledger,
+                    caller,
+                    callee,
+                )
+            });
+            let chain = chain.expect("overlapping chains should share backing loans");
+            assert_eq!(chain.stable_views().len(), size * 3);
+            chain_samples.push((size, chain_work));
+
+            let (equal_start, equal_start_work) =
+                crate::instrumentation::measure_deterministic_work(|| {
+                    plan_stable_view_transfer(
+                        &caller_resources,
+                        &equal_requirements,
+                        &assumptions,
+                        &ledger,
+                        caller,
+                        callee,
+                    )
+                });
+            let equal_start = equal_start.expect("equal-start views should share backing loans");
+            assert_eq!(equal_start.stable_views().len(), size * 3);
+            equal_start_samples.push((size, equal_start_work));
+        }
+        for samples in [&chain_samples, &equal_start_samples] {
+            for pair in samples.windows(2) {
+                assert!(
+                    pair[1].1 <= pair[0].1.saturating_mul(3),
+                    "overlap clustering work exceeded its explicit view delta: {samples:?}"
+                );
+            }
         }
     }
 
