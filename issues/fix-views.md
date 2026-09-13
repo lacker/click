@@ -28,7 +28,8 @@ from the inherited loop resource.
 The V10 task worktree passed the authoritative `scripts/check.sh` gate at
 `3455effb`: all 2,895 library/binary/documentation tests and all four serial
 fixture gates passed. The integrated coordinator commit is `8c9dec88`; its
-full gate is the next checkpoint before accepting V11.
+authoritative gate also passed, with all 2,898 tests and all four serial
+fixture gates green before accepting V11.
 
 ### 2026-09-12 V7-V9 integration checkpoint
 
