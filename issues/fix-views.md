@@ -1,7 +1,8 @@
 # P1: Give views stable borrowing semantics
 
-**Status: V0-V10 are implemented behind the candidate-semantics boundary; V11
-is next. Ordinary C contracts still use the existing weak-view behavior until
+**Status: V0-V10, the V11 dependency-preservation checkpoint, and V14 are
+implemented behind the candidate-semantics boundary. V11 composite
+decomposition/restoration is next. Ordinary C contracts still use the existing weak-view behavior until
 the V19 cutover.** The checkpoint began on 2026-09-12 from
 `44339e408c65d67e5251787d680fbf4b542d5287`. Scope-bearing candidate states
 now carry checked loan authority through direct, verified, named, callback,
@@ -140,6 +141,35 @@ Navigation:
 - [Implementation chunks and dependency order](#implementation-chunks-and-dependency-order)
 - [Concurrency and Rust design checks](#concurrency-and-rust-design-checks)
 - [Final acceptance and coordination](#intended-regressions-and-acceptance-criteria)
+
+### 2026-09-12 V11a and V14 integration checkpoint
+
+V11 was split after review showed that treating a folded composite as an
+opaque token loan would fail to protect memory hidden in its body and would
+not authorize checked child projections. The first green checkpoint gives
+resource occurrences one canonical persistent loan-dependency root, shared
+with `CState` in constant time. Exact removal prunes only affected bindings.
+Fold, unfold, observe, expansion, and checked resource rewrites preserve exact
+dependencies or refuse ambiguous equal occurrences, mixed bound/unbound
+children, dependency laundering into owned heads, and reuse of unrelated
+equal children. Owner-supported unbound observations remain distinct and keep
+their existing normalized resource path. General composite lending and
+exclusive instances remain refused pending V11b decomposition and restoration.
+
+V14 extends the independent executable model with explicit context/range
+partition and transfer, two-context shared readers, shared and model-only
+exclusive reborrows, returned-field value transport, a mutex invariant/guard,
+and thread-local confinement. Representative shared operations are compared
+with the production ledger; concurrency scheduling, atomics, Rust language
+rules, exclusive production reborrows, mutexes, and thread APIs remain
+explicitly model-only.
+
+The V11a worktree passed `scripts/check.sh` with 2,904 tests and all four
+fixture gates. After integrating V11a as `6670f3c8` and V14 as `26698f0c` plus
+`ae28a308`, the coordinator gate passed all 2,913 tests and all four fixture
+gates. V11b starts from `ae28a308` and must decompose memory-backed composite
+views into primitive loans with an explicit checked restoration group; it
+must not re-enable opaque composite escrow.
 
 ## Decision and violated invariant
 
