@@ -3613,9 +3613,7 @@ mod tests {
         let (ledger, owner, _) = participants();
         let (_foreign_ledger, _, foreign_reader) = participants();
         let escrow = memory(0, 4, true);
-        let opening = ledger
-            .lend(owner, owner, backing(&escrow), escrow)
-            .unwrap();
+        let opening = ledger.lend(owner, owner, backing(&escrow), escrow).unwrap();
         let ledger = ledger.apply(&opening.transition).unwrap();
         let parent = LoanViewBinding {
             loan: opening.loan,
