@@ -4402,18 +4402,32 @@ fn checked_access_mode_refinement_adapter(
     else {
         return Ok(Some(false));
     };
+    let satisfied_by_mode = |required: &CResourceFact, view: bool| {
+        contract_resources.facts().iter().any(|available| {
+            available.is_view() == view
+                && ResourceContext::new()
+                    .unchecked_with_fact(available.clone())
+                    .satisfies_fact(required, assumptions)
+        })
+    };
     let mut own_to_view = false;
-    for target in contract_resources.facts() {
-        for implementation in function_resources.facts() {
-            if target.resource() != implementation.resource() {
-                continue;
-            }
-            if target.is_view() && implementation.is_own() {
-                // An implementation requiring exclusive authority cannot be
-                // called through an interface that grants only observation.
-                return Ok(Some(false));
-            }
-            own_to_view |= target.is_own() && implementation.is_view();
+    for implementation in function_resources.facts() {
+        if implementation.is_view() {
+            // A same-mode view is already a shared capability.  Invoke the
+            // loan adapter only when this exact requirement is supplied by
+            // ownership, including proper subranges; comparing resource
+            // terms for equality would miss that common refinement.
+            own_to_view |= !satisfied_by_mode(implementation, true)
+                && satisfied_by_mode(implementation, false);
+            continue;
+        }
+        let Some(view_requirement) = implementation.core_with_assumptions(assumptions) else {
+            continue;
+        };
+        if !satisfied_by_mode(implementation, false) && satisfied_by_mode(&view_requirement, true) {
+            // An implementation requiring exclusive authority cannot be
+            // called through an interface that grants only observation.
+            return Ok(Some(false));
         }
     }
     if !own_to_view {

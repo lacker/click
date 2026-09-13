@@ -152,6 +152,125 @@ fn resource_transition_retains_borrow_role_for_owned_entry_fact() {
 }
 
 #[test]
+fn stable_view_refinement_uses_checked_variance_for_subranges() {
+    let base = Pointer {
+        block: PointerBlock::Concrete("refinement:stable-view".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("p", CValue::typed_pointer(base, CType::Int32Pointer))
+        .with_memory(CMemory::new().with_block("refinement:stable-view", 8));
+    let segment =
+        |end| CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(end));
+    let interface = |name: &str, requirement| {
+        c_function(
+            CType::Void,
+            name,
+            vec![c_parameter("p", CType::Int32Pointer)],
+            CStatement::Skip,
+        )
+        .with_resource_summary(vec![requirement], Vec::new())
+    };
+    let owned = interface("owned_target", CResourceSpec::owned_memory(segment(2)));
+    let reader = interface(
+        "view_implementation",
+        CResourceSpec::viewed_memory(segment(1)),
+    );
+    assert_eq!(
+        checked_access_mode_refinement_adapter(
+            owned.contract_interface(),
+            reader.contract_interface(),
+            &state,
+            &state,
+            &state,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("refinement planning should stay bounded"),
+        Some(true),
+        "a proper owned superrange must enter through the checked loan adapter"
+    );
+
+    let viewed = interface("view_target", CResourceSpec::viewed_memory(segment(2)));
+    let writer = interface(
+        "owned_implementation",
+        CResourceSpec::owned_memory(segment(1)),
+    );
+    assert_eq!(
+        checked_access_mode_refinement_adapter(
+            viewed.contract_interface(),
+            writer.contract_interface(),
+            &state,
+            &state,
+            &state,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("reverse refinement should be decided"),
+        Some(false),
+        "a view cannot refine an implementation's ownership requirement"
+    );
+}
+
+#[test]
+fn stable_view_refinement_does_not_confuse_disjoint_same_mode_inputs() {
+    let base = Pointer {
+        block: PointerBlock::Concrete("refinement:mixed".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local(
+            "p",
+            CValue::typed_pointer(base.clone(), CType::Int32Pointer),
+        )
+        .with_local(
+            "q",
+            CValue::typed_pointer(base.offset_by_bytes(4), CType::Int32Pointer),
+        )
+        .with_memory(CMemory::new().with_block("refinement:mixed", 8));
+    let segment =
+        |name: &str| CMemorySegment::new(c_variable(name), c_int32_literal(0), c_int32_literal(1));
+    let requirements = vec![
+        CResourceSpec::viewed_memory(segment("p")),
+        CResourceSpec::owned_memory(segment("q")),
+    ];
+    let target = c_function(
+        CType::Void,
+        "mixed_target",
+        vec![
+            c_parameter("p", CType::Int32Pointer),
+            c_parameter("q", CType::Int32Pointer),
+        ],
+        CStatement::Skip,
+    )
+    .with_resource_summary(requirements.clone(), Vec::new());
+    let implementation = c_function(
+        CType::Void,
+        "mixed_implementation",
+        vec![
+            c_parameter("p", CType::Int32Pointer),
+            c_parameter("q", CType::Int32Pointer),
+        ],
+        CStatement::Skip,
+    )
+    .with_resource_summary(requirements, Vec::new());
+    assert_eq!(
+        checked_access_mode_refinement_adapter(
+            target.contract_interface(),
+            implementation.contract_interface(),
+            &state,
+            &state,
+            &state,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("same-mode refinement should be decided"),
+        None,
+        "a view of one cell and ownership of another need no variance adapter"
+    );
+}
+
+#[test]
 fn named_contract_application_discards_template_body_and_storage() {
     let body_variable = Variable(987_654);
     let pointer_parameter = c_parameter("p", CType::UInt8Pointer);
