@@ -1,14 +1,34 @@
 # P1: Give views stable borrowing semantics
 
-**Status: V0-V9 are implemented behind the candidate-semantics boundary; V10
+**Status: V0-V10 are implemented behind the candidate-semantics boundary; V11
 is next. Ordinary C contracts still use the existing weak-view behavior until
 the V19 cutover.** The checkpoint began on 2026-09-12 from
 `44339e408c65d67e5251787d680fbf4b542d5287`. Scope-bearing candidate states
 now carry checked loan authority through direct, verified, named, callback,
-certification, and refinement paths. Local, alias, aggregate, heap-lifetime,
-free, and realloc writes consult the active-loan footprint. The remaining
-cards must preserve that authority through loops, composite resources, proof
+certification, refinement, branch, and loop paths. Local, alias, aggregate,
+heap-lifetime, free, realloc, branch abstraction, and loop havoc consult the
+active-loan footprint. The remaining cards cover composite resources, proof
 tools, migration, scaling, review, and cutover.
+
+### 2026-09-12 V10 integration checkpoint
+
+V10 retains persistent loan evidence through sequential statements, proof
+transitions, terminal outcomes, loop-preservation candidates, `break` exits,
+and compatible branch joins. A branch may complete a reader call on only one
+arm; the join retains each arm's checked evidence while exact state identity
+still refuses an unrecovered or otherwise incompatible surviving loan.
+
+Loop effect summaries now check active loan footprints before havoc. An
+unknown write set fails closed; a concrete disjoint write remains legal; and
+same-value writes still conflict. Branch abstraction checks the full width of
+changed scalar and union cells and preserves loan-covered cells over memory
+havoc. Rebuilt loop-view occurrences retain the exact checked binding selected
+from the inherited loop resource.
+
+The V10 task worktree passed the authoritative `scripts/check.sh` gate at
+`3455effb`: all 2,895 library/binary/documentation tests and all four serial
+fixture gates passed. The integrated coordinator commit is `8c9dec88`; its
+full gate is the next checkpoint before accepting V11.
 
 ### 2026-09-12 V7-V9 integration checkpoint
 
