@@ -656,6 +656,12 @@ fn abstract_c_state_for_join_across_with_policy(
     {
         return Err("stable-view loan state differs across branch join".to_string());
     }
+    if sibling_states
+        .iter()
+        .any(|sibling| sibling.loan_participant != state.loan_participant)
+    {
+        return Err("stable-view loan participant differs across branch join".to_string());
+    }
     let mut existing_variables = BTreeSet::new();
     for sibling in sibling_states {
         crate::instrumentation::record_deterministic_work(

@@ -42,9 +42,11 @@ mod resource_frame_substitution_tests {
     #[test]
     fn state_substitutions_preserve_the_exact_loan_ledger_root() {
         let ledger = crate::kernel::loans::LoanLedger::new();
+        let participant = ledger.fresh_participant().expect("participant identity");
         let state = CState::new()
             .with_local("x", int32(Bitvector32Term::Variable(Variable(71_100))))
-            .with_loan_ledger(Some(ledger));
+            .with_loan_ledger(Some(ledger))
+            .with_loan_participant(Some(participant));
         let bitvector_substituted = substitute_bitvector_variable_in_c_state(
             &state,
             Variable(71_100),
@@ -71,6 +73,8 @@ mod resource_frame_substitution_tests {
                     .expect("pointer substitution has ledger")
             )
         );
+        assert_eq!(bitvector_substituted.loan_participant(), Some(participant));
+        assert_eq!(pointer_substituted.loan_participant(), Some(participant));
     }
 
     fn inherited_check(range: CMemoryRange) -> CLoopEffectCheck {
