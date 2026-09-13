@@ -971,6 +971,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         owning_source_index,
         &claim_label,
         &mut leaves,
+        None,
     )?;
     let invariant_surfaces = loop_invariant_surfaces(environment, loop_index, &claim_label)?;
     let invariant_premise_surfaces = invariant_surfaces

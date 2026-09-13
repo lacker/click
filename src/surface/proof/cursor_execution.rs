@@ -3123,7 +3123,7 @@ pub(super) fn describe_evidence_refusal(
 /// A one-line C spelling of a statement's head, enough to recognize it in
 /// a diagnostic: the first statement of a sequence, a loop or branch by its
 /// condition, a body by its operation.
-fn describe_statement_head(statement: &CStatement) -> String {
+pub(super) fn describe_statement_head(statement: &CStatement) -> String {
     match statement {
         CStatement::Seq(first, _) => describe_statement_head(first),
         CStatement::Skip => "skip".to_string(),

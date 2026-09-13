@@ -1198,12 +1198,12 @@ fn frontier_loop_preservation_requires_one_complete_iteration() {
 
     let error = verify_c0_sources(click_source, &[("count_once.c", c_source)])
         .expect_err("preservation should traverse the complete loop body");
+    let message = error.message();
     assert!(
-        error
-            .message()
-            .contains("must execute exactly one complete loop-body iteration"),
-        "{}",
-        error.message()
+        message.contains("stopped inside the loop body")
+            && message.contains("the frontier is at statement")
+            && message.contains("still ahead on this path: the body's end"),
+        "{message}"
     );
 }
 

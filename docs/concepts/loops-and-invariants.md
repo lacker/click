@@ -217,7 +217,9 @@ under [structural loop measures](#structural-loop-measures).
 
 One certified iteration is a path that reaches the body's end, a `continue`, or
 a `break`. A path that stops anywhere else has not been proved and the loop is
-refused.
+refused — but a body that merely is not written yet is refused with a *report*
+of where it got to rather than with the bare rule; see
+[the frontier of an unfinished `preserve`](#the-frontier-of-an-unfinished-preserve).
 
 A `continue` is the back edge, reached early. Everything the body's end owes is
 owed there: the loop's binders are bound again on the state the `continue`
@@ -738,3 +740,37 @@ expansion. Omitted phase automation is attributed to the `loop` keyword.
 
 Most simple proofs avoid these details. Larger proofs need them whenever
 the loop summary is the central part of the proof.
+
+### The frontier of an unfinished `preserve`
+
+A long body is written a few tactics at a time, and until its last path reaches
+one of the body's ends the script is unfinished rather than wrong. Answering
+that with the bare one-iteration rule hides how far the body actually got, so
+an unfinished script is refused with the frontier it reached instead:
+
+- the statement the path stands before, and its statement index — leading block
+  ends are stepped over, so this is the next statement the C would run;
+- the tactic that left it there, by index and name;
+- the ends still ahead of it on *this* path: the body's end, and each `break`
+  and `continue` the rest of the body still holds. Only this loop's own exits
+  are counted, since a nested loop or `switch` owns the ones written inside it;
+- what the script's other paths have already closed, counted by the end each
+  reached.
+
+```text
+`walk.contract` stopped inside the loop body: the frontier is at statement 5,
+`i = (i - 1)`, after tactic 1 `step`; still ahead on this path: the body's end.
+Already complete: 1 at a `break`. Every path a `preserve` opens must end at the
+body's end, a `continue`, or a `break`
+```
+
+`mdtests/loop_preserve_frontier_report.md` is that case, and
+`mdtests/loop_preserve_frontier_report_multi_exit.md` is a body whose `break`
+arm is closed while a `continue` and the body's end are still ahead.
+
+The report is for a body that ran out of written tactics. A tactic that *fails*
+stops the body where it stands and its own diagnostic is what the author sees
+(`mdtests/loop_preserve_tactic_failure_reported.md`). The one-iteration rule is
+still what refuses a body that is complete and wrong — one that leaves the loop
+through a `return`, for instance — because such a path did not stop inside the
+body at all.

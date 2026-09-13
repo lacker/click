@@ -1398,6 +1398,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
     owning_source_index: usize,
     claim_label: &str,
     leaves: &mut Vec<Proof<'a>>,
+    last_tactic: Option<(usize, &'static str)>,
 ) -> Result<Proof<'a>, ClickError> {
     check_verification_deadline()?;
     match node {
@@ -1429,6 +1430,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 claim_label,
                 leaves,
                 0,
+                Some((*index, "match")),
             )
         }
         InternalProofNode::Done => {
@@ -1436,7 +1438,15 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 if !proof.is_at_region_boundary() {
                     // One certified iteration is a path that reaches the
                     // body's end, a `continue`, or a `break`. A path that
-                    // stops anywhere else has not been proved at all.
+                    // stops anywhere else has not been proved at all. A
+                    // script still being written stops inside the body, and
+                    // reports the frontier it reached instead; anything
+                    // else is a complete-but-wrong body.
+                    if let Some(frontier) =
+                        describe_unfinished_preservation(claim_label, &proof, leaves, last_tactic)
+                    {
+                        return Err(ClickError::new(frontier));
+                    }
                     return Err(ClickError::new(format!(
                         "`{claim_label}` must execute exactly one complete loop-body iteration, ending at the body's end, a `continue`, or a `break`"
                     )));
@@ -1453,12 +1463,14 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 owning_source_index,
                 claim_label,
                 leaves,
+                last_tactic,
             )
         }
         InternalProofNode::Linear {
             tactics,
             continuation,
         } => {
+            let mut last_tactic = last_tactic;
             for indexed in tactics {
                 let handled_by_linear_driver = !matches!(
                     indexed.tactic,
@@ -1504,6 +1516,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                         proof =
                             proof.record_invariant_closer(indexed.index, indexed.source_index)?;
                     }
+                    last_tactic = Some((indexed.index, tactic_name(&indexed.tactic)));
                     continue;
                 }
                 match &indexed.tactic {
@@ -1546,6 +1559,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                         )));
                     }
                 }
+                last_tactic = Some((indexed.index, tactic_name(&indexed.tactic)));
             }
             advance_preservation_region(
                 proof,
@@ -1556,6 +1570,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 owning_source_index,
                 claim_label,
                 leaves,
+                last_tactic,
             )
         }
         InternalProofNode::If {
@@ -1586,6 +1601,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                     owning_source_index,
                     claim_label,
                     leaves,
+                    Some((*index, "if")),
                 )?;
             }
             Ok(advanced)
@@ -1630,6 +1646,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 owning_source_index,
                 claim_label,
                 leaves,
+                Some((*index, "branch")),
             )
         }
         InternalProofNode::Open {
@@ -1663,8 +1680,153 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 owning_source_index,
                 claim_label,
                 leaves,
+                Some((*index, "open")),
             )
         }
+    }
+}
+
+/// The report an unfinished `preserve` gets in place of the one-iteration
+/// refusal: where in the loop body this path stopped, which tactic left it
+/// there, what the body still holds ahead of it, and what the script's other
+/// paths have already closed.
+///
+/// `None` means the path did not stop *inside* the body — it left through a
+/// `return`, or ran past the body altogether — and the caller's refusal of a
+/// complete-but-wrong iteration is the right diagnostic. A proof with no
+/// execution frontier at all reports nothing here for the same reason: this is
+/// a diagnostic, and it never replaces the caller's refusal with a complaint
+/// of its own.
+fn describe_unfinished_preservation(
+    claim_label: &str,
+    proof: &Proof<'_>,
+    leaves: &[Proof<'_>],
+    last_tactic: Option<(usize, &'static str)>,
+) -> Option<String> {
+    let view = proof.execution_view().ok()?;
+    let FrontierPosition::StatementEntry { remaining } = &view.frontier.position else {
+        return None;
+    };
+    let statement_index = view.frontier.next_statement_index;
+    let head = match frontier_head_statement(remaining) {
+        Some(statement) => format!("`{}`", describe_statement_head(statement)),
+        // Only block ends are left: a `Skip` is a block the path has not
+        // stepped out of, not a statement anyone wrote, and spelling it
+        // `skip` in a diagnostic reads as an internal detail.
+        None => "at the end of a block".to_string(),
+    };
+    let mut message = format!(
+        "`{claim_label}` stopped inside the loop body: the frontier is at statement {statement_index}, {head}"
+    );
+    if let Some((index, name)) = last_tactic {
+        message.push_str(&format!(", after tactic {index} `{name}`"));
+    } else {
+        message.push_str(", before any tactic ran");
+    }
+    let (breaks, continues) = remaining_body_exits(remaining);
+    let mut ahead = vec!["the body's end".to_string()];
+    if breaks > 0 {
+        ahead.push(plural_exits(breaks, "break"));
+    }
+    if continues > 0 {
+        ahead.push(plural_exits(continues, "continue"));
+    }
+    message.push_str(&format!(
+        "; still ahead on this path: {}",
+        join_list(&ahead)
+    ));
+    let mut closed = Vec::new();
+    for (count, label) in [
+        (
+            count_leaves(leaves, LoopControlExit::BodyEnd),
+            "the body's end",
+        ),
+        (count_leaves(leaves, LoopControlExit::Break), "a `break`"),
+        (
+            count_leaves(leaves, LoopControlExit::Continue),
+            "a `continue`",
+        ),
+    ] {
+        if count > 0 {
+            closed.push(format!("{count} at {label}"));
+        }
+    }
+    if closed.is_empty() {
+        message.push_str(". No path of this `preserve` is complete yet");
+    } else {
+        message.push_str(&format!(". Already complete: {}", join_list(&closed)));
+    }
+    message.push_str(
+        ". Every path a `preserve` opens must end at the body's end, a `continue`, or a `break`",
+    );
+    Some(message)
+}
+
+/// The next statement the path would actually execute: the leading `Skip`s a
+/// block end leaves in the remaining program are not statements the author
+/// wrote, so they are skipped. `None` when nothing but block ends remains.
+fn frontier_head_statement(statement: &CStatement) -> Option<&CStatement> {
+    match statement {
+        CStatement::Skip => None,
+        CStatement::Seq(first, rest) => {
+            frontier_head_statement(first).or_else(|| frontier_head_statement(rest))
+        }
+        other => Some(other),
+    }
+}
+
+/// How many of the collected leaves left the body the given way.
+fn count_leaves(leaves: &[Proof<'_>], control: LoopControlExit) -> usize {
+    leaves
+        .iter()
+        .filter(|leaf| {
+            leaf.execution_view()
+                .is_ok_and(|view| view.frontier.loop_control == control)
+        })
+        .count()
+}
+
+/// The `break`s and `continue`s the rest of the body still contains, counting
+/// only those that belong to this loop: a nested loop or `switch` owns its
+/// own, so this does not descend into one.
+fn remaining_body_exits(statement: &CStatement) -> (usize, usize) {
+    match statement {
+        CStatement::Break => (1, 0),
+        CStatement::Continue | CStatement::ContinueWithStep { .. } => (0, 1),
+        CStatement::Seq(first, rest) => {
+            let (first_breaks, first_continues) = remaining_body_exits(first);
+            let (rest_breaks, rest_continues) = remaining_body_exits(rest);
+            (first_breaks + rest_breaks, first_continues + rest_continues)
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            let (then_breaks, then_continues) = remaining_body_exits(then_branch);
+            let (else_breaks, else_continues) = remaining_body_exits(else_branch);
+            (then_breaks + else_breaks, then_continues + else_continues)
+        }
+        _ => (0, 0),
+    }
+}
+
+/// `1 `break`` or `2 `break`s`, for a diagnostic list.
+fn plural_exits(count: usize, keyword: &str) -> String {
+    if count == 1 {
+        format!("1 `{keyword}`")
+    } else {
+        format!("{count} `{keyword}`s")
+    }
+}
+
+/// `a`, `a and b`, `a, b, and c`.
+fn join_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [only] => only.clone(),
+        [first, second] => format!("{first} and {second}"),
+        [rest @ .., last] => format!("{}, and {last}", rest.join(", ")),
     }
 }
 
@@ -1689,6 +1851,7 @@ fn advance_preservation_match_group<'a>(
     claim_label: &str,
     leaves: &mut Vec<Proof<'a>>,
     split_depth: usize,
+    last_tactic: Option<(usize, &'static str)>,
 ) -> Result<Proof<'a>, ClickError> {
     if split_depth >= MAX_CHECKED_EXECUTION_SPLIT_DEPTH {
         return Err(ClickError::new(format!(
@@ -1717,6 +1880,7 @@ fn advance_preservation_match_group<'a>(
                 claim_label,
                 leaves,
                 split_depth + 1,
+                last_tactic,
             )?;
         }
         return Ok(proof);
@@ -1732,6 +1896,7 @@ fn advance_preservation_match_group<'a>(
         owning_source_index,
         claim_label,
         leaves,
+        last_tactic,
     )
 }
 
