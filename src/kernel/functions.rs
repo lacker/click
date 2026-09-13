@@ -1,7 +1,7 @@
 use super::loans::{
-    CheckedLoanCallEvidence, CompositeLoanBacking, LoanLedger, LoanViewBindings,
-    StableViewTransferPlan, append_checked_loan_evidence, empty_checked_loan_evidence_sequence,
-    plan_stable_view_transfer_with_bindings_and_composites,
+    CheckedLoanCallEvidence, CompositeLoanBacking, LoanLedger, LoanRefusal, LoanRefusalOperation,
+    LoanRefusalSubject, LoanViewBindings, StableViewTransferPlan, append_checked_loan_evidence,
+    empty_checked_loan_evidence_sequence, plan_stable_view_transfer_with_bindings_and_composites,
 };
 use super::prelude::*;
 use std::sync::Arc;
@@ -280,18 +280,18 @@ fn recover_candidate_stable_view_resources(
         ));
     };
     let Some(actual_ledger) = callee_state.loan_ledger() else {
-        return Err(CRuntimeError::FunctionContract(
-            "stable-view callee returned without its authoritative ledger".to_string(),
+        return Err(CRuntimeError::LoanRefusal(
+            LoanRefusal::MissingBacking.diagnostic(LoanRefusalOperation::Recovery),
         ));
     };
     if actual_ledger != &plan.ledger {
-        return Err(CRuntimeError::FunctionContract(
-            "stable-view callee changed its authoritative ledger".to_string(),
+        return Err(CRuntimeError::LoanRefusal(
+            LoanRefusal::StalePredecessor.diagnostic(LoanRefusalOperation::Recovery),
         ));
     }
     if callee_state.loan_participant() != Some(plan.callee_participant()) {
-        return Err(CRuntimeError::FunctionContract(
-            "stable-view callee returned with the wrong loan participant".to_string(),
+        return Err(CRuntimeError::LoanRefusal(
+            LoanRefusal::WrongHolder.diagnostic(LoanRefusalOperation::Recovery),
         ));
     }
     if !plan.has_stable_views() {
@@ -317,7 +317,12 @@ fn recover_candidate_stable_view_resources(
         .clone()
         .recover_stable_views(assumptions)
         .map_err(|error| {
-            CRuntimeError::FunctionContract(format!("stable-view call recovery refused: {error:?}"))
+            error
+                .loan_diagnostic(LoanRefusalOperation::Recovery)
+                .map(CRuntimeError::LoanRefusal)
+                .unwrap_or_else(|| {
+                    CRuntimeError::FunctionContract("stable-view call recovery refused".to_string())
+                })
         })?;
     let loan_evidence = Arc::new(CheckedLoanCallEvidence::new(
         plan.clone(),
@@ -330,8 +335,9 @@ fn recover_candidate_stable_view_resources(
     recovery
         .recheck_transitions(actual_ledger)
         .map_err(|error| {
-            CRuntimeError::FunctionContract(format!(
-                "stable-view call recovery evidence refused: {error:?}"
+            CRuntimeError::LoanRefusal(error.diagnostic_with_subject(
+                LoanRefusalOperation::Recovery,
+                recovery.diagnostic_subject(),
             ))
         })?;
     let recovered_ledger = recovery.ledger;
@@ -436,38 +442,51 @@ impl CFunctionMemoryEffectProjection {
 /// the resource transition.  A mutable range is safe beside a lent view only
 /// when the kernel has concrete interval evidence or an existing separation
 /// fact; an unknown alias is rejected conservatively.
-fn candidate_memory_ranges_proven_disjoint(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CandidateMemoryRangeRelation {
+    Disjoint,
+    Overlap,
+    SeparationUnproved,
+}
+
+fn candidate_memory_ranges_relation(
     left: &CMemoryRange,
     right: &CMemoryRange,
     assumptions: &PureFactContext,
-) -> bool {
+) -> CandidateMemoryRangeRelation {
     if left.base().blocks_proven_distinct(right.base())
         || assumptions
             .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(left, right)
     {
-        return true;
+        return CandidateMemoryRangeRelation::Disjoint;
     }
     let (left_base, left_bytes) = left.byte_footprint();
     let (right_base, right_bytes) = right.byte_footprint();
     let Some(left_start) = left_base.offset.as_const() else {
-        return false;
+        return CandidateMemoryRangeRelation::SeparationUnproved;
     };
     let Some(right_start) = right_base.offset.as_const() else {
-        return false;
+        return CandidateMemoryRangeRelation::SeparationUnproved;
     };
     let Some(left_length) = left_bytes.as_const() else {
-        return false;
+        return CandidateMemoryRangeRelation::SeparationUnproved;
     };
     let Some(right_length) = right_bytes.as_const() else {
-        return false;
+        return CandidateMemoryRangeRelation::SeparationUnproved;
     };
     let Some(left_end) = left_start.checked_add(i64::from(left_length)) else {
-        return false;
+        return CandidateMemoryRangeRelation::SeparationUnproved;
     };
     let Some(right_end) = right_start.checked_add(i64::from(right_length)) else {
-        return false;
+        return CandidateMemoryRangeRelation::SeparationUnproved;
     };
-    left_base.block == right_base.block && (left_end <= right_start || right_end <= left_start)
+    if left_base.block != right_base.block {
+        CandidateMemoryRangeRelation::SeparationUnproved
+    } else if left_end <= right_start || right_end <= left_start {
+        CandidateMemoryRangeRelation::Disjoint
+    } else {
+        CandidateMemoryRangeRelation::Overlap
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2641,17 +2660,32 @@ fn prepare_verified_function_call<'a>(
             .iter()
             .filter_map(|stable_view| stable_view.requirement.fact.memory_range())
         {
-            if mutable_ranges.iter().any(|mutable_range| {
-                !candidate_memory_ranges_proven_disjoint(
-                    mutable_range,
-                    viewed_range,
-                    &effective_assumptions,
-                )
-            }) {
+            if let Some((mutable_range, relation)) = mutable_ranges
+                .iter()
+                .map(|mutable_range| {
+                    (
+                        mutable_range,
+                        candidate_memory_ranges_relation(
+                            mutable_range,
+                            viewed_range,
+                            &effective_assumptions,
+                        ),
+                    )
+                })
+                .find(|(_, relation)| *relation != CandidateMemoryRangeRelation::Disjoint)
+            {
+                let subject = LoanRefusalSubject::with_range(mutable_range.clone());
+                let diagnostic = match relation {
+                    CandidateMemoryRangeRelation::Overlap => LoanRefusal::ActiveDependency
+                        .proven_overlap_diagnostic(LoanRefusalOperation::MemoryAccess, subject),
+                    CandidateMemoryRangeRelation::SeparationUnproved => {
+                        LoanRefusal::UnsupportedPartition
+                            .diagnostic_with_subject(LoanRefusalOperation::MemoryAccess, subject)
+                    }
+                    CandidateMemoryRangeRelation::Disjoint => unreachable!(),
+                };
                 return Ok(Err(CFunctionPath {
-                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
-                        "candidate mutable footprint may overlap a stable-view range".to_string(),
-                    )),
+                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)),
                     facts,
                     obligations,
                     loan_evidence: empty_checked_loan_evidence_sequence(),
@@ -9852,8 +9886,8 @@ fn prepare_contract_resource_transfer_with_candidate(
     if candidate_stable_view_semantics
         && caller_state.loan_ledger().is_some() != caller_state.loan_participant().is_some()
     {
-        return Ok(Err(CRuntimeError::FunctionContract(
-            "stable-view caller has an incomplete loan ledger/participant pair".to_string(),
+        return Ok(Err(CRuntimeError::LoanRefusal(
+            LoanRefusal::MissingBacking.diagnostic(LoanRefusalOperation::Plan),
         )));
     }
     // In particular, preparing several pure callback interfaces must not
@@ -10005,16 +10039,19 @@ fn prepare_contract_resource_transfer_with_candidate(
         ) {
             Ok(plan) => {
                 if let Err(error) = plan.recheck_entry(&ledger) {
-                    return Ok(Err(CRuntimeError::FunctionContract(format!(
-                        "stable-view call entry evidence refused: {error:?}"
-                    ))));
+                    return Ok(Err(CRuntimeError::LoanRefusal(
+                        error.diagnostic(LoanRefusalOperation::Entry),
+                    )));
                 }
                 Some(plan)
             }
             Err(error) => {
-                return Ok(Err(CRuntimeError::FunctionContract(format!(
-                    "stable-view call transition refused: {error:?}"
-                ))));
+                if let Some(diagnostic) = error.loan_diagnostic(LoanRefusalOperation::Plan) {
+                    return Ok(Err(CRuntimeError::LoanRefusal(diagnostic)));
+                }
+                return Ok(Err(CRuntimeError::FunctionContract(
+                    "stable-view call transition refused".to_string(),
+                )));
             }
         }
     } else {
@@ -17345,7 +17382,7 @@ mod candidate_stable_view_call_tests {
         let different_participant = caller_ledger
             .fresh_participant()
             .expect("fresh participant identity");
-        assert!(
+        assert_eq!(
             evidence
                 .recheck(
                     &caller_ledger,
@@ -17353,9 +17390,10 @@ mod candidate_stable_view_call_tests {
                     &evidence.entry.ledger,
                     Some(evidence.entry.callee_participant()),
                 )
-                .is_err()
+                .expect_err("a different caller participant must be refused"),
+            LoanRefusal::WrongHolder
         );
-        assert!(
+        assert_eq!(
             evidence
                 .recheck(
                     &LoanLedger::new(),
@@ -17363,7 +17401,8 @@ mod candidate_stable_view_call_tests {
                     &evidence.entry.ledger,
                     Some(evidence.entry.callee_participant()),
                 )
-                .is_err()
+                .expect_err("an unrelated predecessor ledger must be refused"),
+            LoanRefusal::StalePredecessor
         );
     }
 
@@ -17504,9 +17543,12 @@ mod candidate_stable_view_call_tests {
         )
         .expect("pair validation should not hit the execution budget")
         .expect_err("ledger-only caller must be refused");
-        assert!(
-            matches!(error, CRuntimeError::FunctionContract(message) if message.contains("incomplete loan ledger/participant pair"))
-        );
+        assert!(matches!(
+            error,
+            CRuntimeError::LoanRefusal(diagnostic)
+                if diagnostic.category() == crate::kernel::LoanRefusalCategory::Missing
+                    && diagnostic.operation() == crate::kernel::LoanRefusalOperation::Plan
+        ));
 
         let ledger = LoanLedger::new();
         let participant = ledger.fresh_participant().expect("participant");
@@ -17528,9 +17570,12 @@ mod candidate_stable_view_call_tests {
         )
         .expect("pair validation should not hit the execution budget")
         .expect_err("participant-only caller must be refused");
-        assert!(
-            matches!(error, CRuntimeError::FunctionContract(message) if message.contains("incomplete loan ledger/participant pair"))
-        );
+        assert!(matches!(
+            error,
+            CRuntimeError::LoanRefusal(diagnostic)
+                if diagnostic.category() == crate::kernel::LoanRefusalCategory::Missing
+                    && diagnostic.operation() == crate::kernel::LoanRefusalOperation::Plan
+        ));
     }
 
     #[test]
@@ -17559,6 +17604,22 @@ mod candidate_stable_view_call_tests {
         let wrong_participant = plan.caller_participant();
         let callee = callee_state_with_resource_transfer(callee, &transfer)
             .with_loan_participant(Some(wrong_participant));
+        let missing_ledger = callee.clone().with_loan_ledger(None);
+        let error = recover_candidate_stable_view_resources(
+            &caller,
+            &missing_ledger,
+            &transfer,
+            transfer.caller_resources_after_requirements.clone(),
+            &PureFactContext::new(),
+            &[],
+        )
+        .expect_err("recovery without a ledger must be refused");
+        assert!(matches!(
+            error,
+            CRuntimeError::LoanRefusal(diagnostic)
+                if diagnostic.category() == crate::kernel::LoanRefusalCategory::Missing
+                    && diagnostic.operation() == crate::kernel::LoanRefusalOperation::Recovery
+        ));
         let error = recover_candidate_stable_view_resources(
             &caller,
             &callee,
@@ -17568,9 +17629,12 @@ mod candidate_stable_view_call_tests {
             &[],
         )
         .expect_err("recovery must refuse the wrong callee participant");
-        assert!(
-            matches!(error, CRuntimeError::FunctionContract(message) if message.contains("wrong loan participant"))
-        );
+        assert!(matches!(
+            error,
+            CRuntimeError::LoanRefusal(diagnostic)
+                if diagnostic.category() == crate::kernel::LoanRefusalCategory::WrongHolder
+                    && diagnostic.operation() == crate::kernel::LoanRefusalOperation::Recovery
+        ));
     }
 
     #[test]
@@ -17876,9 +17940,38 @@ mod candidate_stable_view_call_tests {
         assert!(matches!(
             paths.as_slice(),
             [CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)),
                 ..
-            }] if message.contains("mutable footprint may overlap")
+            }] if diagnostic.category() == crate::kernel::LoanRefusalCategory::ProvenOverlap
+                && diagnostic.overlap() == crate::kernel::LoanOverlapStatus::ProvenOverlap
+                && diagnostic.subject().memory_range().is_some()
+        ));
+    }
+
+    #[test]
+    fn candidate_rejects_unproved_mutable_effect_separation() {
+        let pointer = Pointer {
+            block: PointerBlock::Concrete("local:candidate_view:data".to_string()),
+            offset: PointerOffsetTerm::Variable(Variable(700)),
+        };
+        let function = reader_with_mutable_range("candidate_unknown_effect", 0, 1);
+        let paths = execute_c_function_call_paths(
+            &caller_with_owned_end(&pointer, 2, 8),
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate unknown separation should execute to a diagnostic path");
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)),
+                ..
+            }] if diagnostic.category() == crate::kernel::LoanRefusalCategory::SeparationUnproved
+                && diagnostic.overlap() == crate::kernel::LoanOverlapStatus::SeparationUnproved
         ));
     }
 
@@ -17930,8 +18023,9 @@ mod candidate_stable_view_call_tests {
         .expect("stale binding check should run");
         assert!(matches!(
             result,
-            Err(CRuntimeError::FunctionContract(message))
-                if message.contains("MissingLoanBinding")
+            Err(CRuntimeError::LoanRefusal(diagnostic))
+                if diagnostic.category() == crate::kernel::LoanRefusalCategory::Missing
+                    && diagnostic.operation() == crate::kernel::LoanRefusalOperation::Plan
         ));
     }
 
@@ -17983,9 +18077,27 @@ mod candidate_stable_view_call_tests {
             .lend(owner, reader, support, escrow)
             .expect("loan opening");
         let ledger = ledger.apply(&opening.transition).expect("loan apply");
-        assert!(matches!(
-            ledger.end(opening.scope, reader),
-            Err(super::super::loans::LoanRefusal::WrongHolder)
-        ));
+        let refusal = ledger
+            .end(opening.scope, reader)
+            .expect_err("a non-owner cannot close the scope");
+        assert_eq!(
+            refusal
+                .diagnostic(crate::kernel::LoanRefusalOperation::Transition)
+                .category(),
+            crate::kernel::LoanRefusalCategory::WrongHolder
+        );
+        let wrong_scope = super::super::loans::LoanScopeId::for_test(
+            opening.scope.arena_for_test(),
+            opening.scope.ordinal_for_test().saturating_add(1),
+        );
+        let refusal = ledger
+            .end(wrong_scope, owner)
+            .expect_err("an unknown scope cannot be closed");
+        assert_eq!(
+            refusal
+                .diagnostic(crate::kernel::LoanRefusalOperation::Transition)
+                .category(),
+            crate::kernel::LoanRefusalCategory::WrongScope
+        );
     }
 }

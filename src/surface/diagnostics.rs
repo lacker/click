@@ -739,7 +739,106 @@ pub(super) fn describe_runtime_error(
             describe_memory_range(left, parameters, arguments),
             describe_memory_range(right, parameters, arguments)
         ),
+        crate::kernel::CRuntimeError::LoanRefusal(diagnostic) => {
+            describe_loan_refusal(diagnostic, parameters, arguments)
+        }
     }
+}
+
+fn describe_loan_refusal(
+    diagnostic: &crate::kernel::LoanRefusalDiagnostic,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let category = match diagnostic.category() {
+        crate::kernel::LoanRefusalCategory::ProvenOverlap => {
+            "a required resource overlaps a live borrowed footprint"
+        }
+        crate::kernel::LoanRefusalCategory::SeparationUnproved => {
+            "the verifier could not prove the requested ranges separate"
+        }
+        crate::kernel::LoanRefusalCategory::WrongHolder => {
+            "the loan evidence names the wrong participant"
+        }
+        crate::kernel::LoanRefusalCategory::WrongArena => {
+            "the loan evidence belongs to a different authority arena"
+        }
+        crate::kernel::LoanRefusalCategory::WrongScope => "the loan evidence names the wrong scope",
+        crate::kernel::LoanRefusalCategory::ActiveDependency => {
+            "an active loan dependency blocks this operation"
+        }
+        crate::kernel::LoanRefusalCategory::StalePredecessor => {
+            "the loan evidence uses a stale predecessor state"
+        }
+        crate::kernel::LoanRefusalCategory::Recovery => {
+            "loan recovery evidence is inconsistent or already consumed"
+        }
+        crate::kernel::LoanRefusalCategory::Lifetime => {
+            "the loan scope has an incompatible lifetime state"
+        }
+        crate::kernel::LoanRefusalCategory::Unsupported => {
+            "this resource shape is outside stable-view support"
+        }
+        crate::kernel::LoanRefusalCategory::Missing => {
+            "the required loan backing or binding is missing"
+        }
+        crate::kernel::LoanRefusalCategory::InvalidEvidence => "the loan evidence is invalid",
+    };
+    let subject = diagnostic.subject();
+    let subject = if let Some(resource) = subject.resource_fact() {
+        format!(
+            "; selected resource `{}`",
+            describe_resource_fact(resource, parameters, arguments)
+        )
+    } else if let Some(range) = subject.memory_range() {
+        format!(
+            "; selected range `{}`",
+            describe_memory_range(range, parameters, arguments)
+        )
+    } else {
+        String::new()
+    };
+    let ids = {
+        let subject = diagnostic.subject();
+        let mut ids = Vec::new();
+        if let Some((arena, ordinal)) = subject.loan_id() {
+            ids.push(format!("loan {arena}:{ordinal}"));
+        }
+        if let Some((arena, ordinal)) = subject.scope_id() {
+            ids.push(format!("scope {arena}:{ordinal}"));
+        }
+        if let Some((arena, ordinal)) = subject.share_id() {
+            ids.push(format!("share {arena}:{ordinal}"));
+        }
+        if let Some((arena, ordinal)) = subject.support_id() {
+            ids.push(format!("support {arena}:{ordinal}"));
+        }
+        if let Some(clause) = diagnostic.source_clause() {
+            ids.push(format!("clause {clause}"));
+        }
+        if let Some(step) = diagnostic.source_step() {
+            ids.push(format!("step {step}"));
+        }
+        if ids.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", ids.join(", "))
+        }
+    };
+    format!(
+        "stable-view {} refused during {}{}{}",
+        category,
+        match diagnostic.operation() {
+            crate::kernel::LoanRefusalOperation::Validate => "validation",
+            crate::kernel::LoanRefusalOperation::Plan => "planning",
+            crate::kernel::LoanRefusalOperation::Entry => "entry transition",
+            crate::kernel::LoanRefusalOperation::Recovery => "recovery",
+            crate::kernel::LoanRefusalOperation::Transition => "transition",
+            crate::kernel::LoanRefusalOperation::MemoryAccess => "memory access",
+        },
+        subject,
+        ids,
+    )
 }
 
 pub(super) fn describe_resource_facts(

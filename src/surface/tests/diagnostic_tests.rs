@@ -699,3 +699,62 @@ fn statement_head_names_the_guard_without_the_loop_node() {
     assert!(wide_head.len() <= 512, "{}", wide_head.len());
     assert!(wide_head.ends_with('…'), "{wide_head}");
 }
+
+#[test]
+fn loan_refusal_diagnostic_renders_only_its_selected_subject() {
+    use crate::kernel::{Bitvector32Term, CMemoryRange, Pointer, PointerBlock, PointerOffsetTerm};
+    use crate::kernel::{LoanRefusal, LoanRefusalOperation, LoanRefusalSubject};
+
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("selected_resource".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let selected = CResourceFact::own_memory(CMemoryRange::new(
+        pointer,
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(4),
+    ));
+    let diagnostic = LoanRefusal::ActiveDependency.diagnostic_with_subject(
+        LoanRefusalOperation::MemoryAccess,
+        LoanRefusalSubject::for_resource(selected),
+    );
+    let rendered = super::diagnostics::describe_runtime_error(
+        &crate::kernel::CRuntimeError::LoanRefusal(diagnostic),
+        &[],
+        &[],
+    );
+
+    assert!(rendered.contains("selected resource"), "{rendered}");
+    assert!(rendered.contains("selected_resource"), "{rendered}");
+    assert!(!rendered.contains("unrelated_resource"), "{rendered}");
+    assert!(rendered.len() < 1024, "{}", rendered.len());
+}
+
+#[test]
+fn loan_refusal_diagnostic_renders_a_range_subject_without_ledger_state() {
+    use crate::kernel::{Bitvector32Term, CMemoryRange, Pointer, PointerBlock, PointerOffsetTerm};
+    use crate::kernel::{LoanRefusal, LoanRefusalOperation, LoanRefusalSubject};
+
+    let range = CMemoryRange::new(
+        Pointer {
+            block: PointerBlock::Concrete("selected_range".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        Bitvector32Term::Constant(1),
+        Bitvector32Term::Constant(3),
+    );
+    let diagnostic = LoanRefusal::UnsupportedPartition.diagnostic_with_subject(
+        LoanRefusalOperation::Plan,
+        LoanRefusalSubject::for_range(range),
+    );
+    let rendered = super::diagnostics::describe_runtime_error(
+        &crate::kernel::CRuntimeError::LoanRefusal(diagnostic),
+        &[],
+        &[],
+    );
+
+    assert!(rendered.contains("selected range"), "{rendered}");
+    assert!(rendered.contains("selected_range"), "{rendered}");
+    assert!(!rendered.contains("CMemoryRange {"), "{rendered}");
+    assert!(rendered.len() < 1024, "{}", rendered.len());
+}

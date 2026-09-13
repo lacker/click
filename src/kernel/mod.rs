@@ -25,9 +25,15 @@ pub(crate) use functions::rewrite_resource_instance_selecting_children;
 mod loans;
 #[cfg(test)]
 pub(crate) use loans::LoanLedger;
+#[cfg(test)]
+pub(crate) use loans::LoanRefusal;
 pub(crate) use loans::{
     CheckedLoanCallEvidenceSequence, LoanViewBinding, concat_checked_loan_evidence,
     empty_checked_loan_evidence_sequence,
+};
+pub use loans::{
+    LoanOverlapStatus, LoanRefusalCategory, LoanRefusalDiagnostic, LoanRefusalOperation,
+    LoanRefusalSubject,
 };
 mod loops;
 mod memory_provenance;

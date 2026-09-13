@@ -1000,9 +1000,10 @@ fn advance_execution_proof_statement(
                 }
                 CStatementOutcome::RuntimeError(error) => {
                     return Err(ClickError::new(format!(
-                        "execution proof traversal for {} statement({statement_index}) produced runtime error: {error:?}\navailable resources: {:?}",
+                        "execution proof traversal for {} statement({statement_index}) produced runtime error: {}\nresource facts in context: {}",
                         environment.function_block.signature().name(),
-                        context.state.resources().facts()
+                        describe_runtime_error(&error, &[], &[]),
+                        context.state.resources().facts().len()
                     )));
                 }
             }

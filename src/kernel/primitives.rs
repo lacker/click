@@ -2724,6 +2724,7 @@ pub enum CRuntimeError {
         left: Box<CMemoryRange>,
         right: Box<CMemoryRange>,
     },
+    LoanRefusal(crate::kernel::LoanRefusalDiagnostic),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -3675,6 +3676,14 @@ pub(crate) struct ResourceOccurrenceId {
 }
 
 impl ResourceOccurrenceId {
+    pub(crate) fn arena(self) -> u64 {
+        self.arena
+    }
+
+    pub(crate) fn ordinal(self) -> u64 {
+        self.ordinal
+    }
+
     fn fresh() -> Self {
         static NEXT_ARENA: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         thread_local! {
