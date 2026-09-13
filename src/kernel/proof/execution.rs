@@ -529,7 +529,7 @@ impl CheckedResourceRewrite {
                 selected_children.as_deref(),
             )?;
             let mut unchanged = after_state.clone();
-            unchanged.resources = before_state.resources.clone();
+            unchanged = unchanged.with_resource_context(before_state.resources.clone());
             if unchanged != *before_state {
                 // An unfold names the cells it exposes, which materializes
                 // them in the snapshot so the body's facts and a later C read
@@ -599,7 +599,7 @@ impl CheckedResourceRewrite {
 
         let mut concrete_after = after_state.clone();
         concrete_after.set_memory(before_state.memory.clone());
-        concrete_after.resources = before_state.resources.clone();
+        concrete_after = concrete_after.with_resource_context(before_state.resources.clone());
         concrete_after.counted_populations = before_state.counted_populations.clone();
         if concrete_after != *before_state
             || !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
@@ -1127,7 +1127,7 @@ impl CheckedResourceObservation {
 
         let mut concrete_after = after_state.clone();
         concrete_after.set_memory(before_state.memory.clone());
-        concrete_after.resources = before_state.resources.clone();
+        concrete_after = concrete_after.with_resource_context(before_state.resources.clone());
         if concrete_after != *before_state
             || !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
                 before_state.memory(),

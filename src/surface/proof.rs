@@ -3063,6 +3063,32 @@ fn canonical_claim_caller_state(
     Ok(state.with_resource_context(entry.resources().clone()))
 }
 
+fn install_borrowed_contract_inputs(
+    state: CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    pure_facts: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    function_environment: &CExecutionEnvironment,
+    proof_label: &str,
+) -> Result<CState, ClickError> {
+    if !function_environment.candidate_stable_view_semantics {
+        return Ok(state);
+    }
+    crate::kernel::c_state_with_borrowed_contract_inputs(
+        state,
+        function,
+        arguments,
+        &assumptions_from_propositions(pure_facts),
+    )
+    .map_err(|diagnostic| {
+        ClickError::new(format!(
+            "`{proof_label}` could not establish stable authority for a contract input view: {}",
+            crate::surface::diagnostics::describe_loan_refusal(&diagnostic, parameters, arguments,)
+        ))
+    })
+}
+
 pub(super) fn prove_claim_by_auto(
     mut expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,

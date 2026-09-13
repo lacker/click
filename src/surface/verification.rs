@@ -5595,6 +5595,93 @@ int32 answer() {
         assert_ne!(absent_legacy_identity, Some(stable_identity));
     }
 
+    fn verify_in_stable_mode(click: &str, source: &str) -> Result<(), ClickError> {
+        let sources = CSourceContext::bundle_with_mode(
+            &[("reader.c", source)],
+            ViewSemanticsMode::StableLoans,
+        );
+        verify_c0_sources_with_context(click, &sources, None, None, None).map(|_| ())
+    }
+
+    /// A contract input view is caller-supplied shared authority: the body
+    /// may write memory it owns beside it, and reads through the view stay
+    /// stable across that write.
+    #[test]
+    fn stable_mode_root_view_permits_an_owned_write_beside_it() {
+        let click = r#"
+verifying "reader.c";
+
+int32 reader(int32 p[], int32 q[]) {
+    views p[0..1];
+    owns q[0..1];
+    ensures result == p[0];
+    ensures q[0] == 1;
+} by {
+    execute();
+    simp();
+}
+"#;
+        let source = "int reader(int *p, int *q) { q[0] = 1; return p[0]; }";
+        verify_in_stable_mode(click, source).expect("an owned write beside a rooted view");
+    }
+
+    /// The viewed pointer itself carries no write authority, and the ledger
+    /// refuses the store before any owner lookup could be attempted.
+    #[test]
+    fn stable_mode_root_view_refuses_a_write_through_the_viewed_pointer() {
+        let click = r#"
+verifying "reader.c";
+
+int32 reader(int32 p[]) {
+    views p[0..1];
+    ensures result == p[0];
+} by {
+    execute();
+    simp();
+}
+"#;
+        let source = "int reader(int *p) { p[0] = 1; return p[0]; }";
+        let error = verify_in_stable_mode(click, source)
+            .expect_err("a store through a contract input view must be refused");
+        assert!(
+            error
+                .message()
+                .contains("memory write conflicts with an active stable loan"),
+            "{}",
+            error.message()
+        );
+    }
+
+    /// An owned range assumed equal to the viewed range is not a partition
+    /// any caller can supply: the view would be a projection of the owner,
+    /// so no external root is installed and the proof stops at entry.
+    #[test]
+    fn stable_mode_root_view_refuses_an_owned_alias_of_the_viewed_range() {
+        let click = r#"
+verifying "reader.c";
+
+int32 reader(int32 p[], int32 q[]) {
+    requires q == p;
+    views p[0..1];
+    owns q[0..1];
+    ensures result == p[0];
+} by {
+    execute();
+    simp();
+}
+"#;
+        let source = "int reader(int *p, int *q) { q[0] = 1; return p[0]; }";
+        let error = verify_in_stable_mode(click, source)
+            .expect_err("an owned alias of a contract input view must be refused at entry");
+        assert!(
+            error
+                .message()
+                .contains("could not establish stable authority for a contract input view"),
+            "{}",
+            error.message()
+        );
+    }
+
     #[test]
     fn stable_mode_routes_a_surface_proof_through_candidate_kernel_semantics() {
         let click = r#"

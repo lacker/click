@@ -1,7 +1,12 @@
 use super::functions::{
     apply_verified_contract_resource_transition,
     construct_c_function_resource as construct_c_function_resource_checked,
+    evaluate_function_resource_context_with_metadata, expand_composite_resource_fact_with_children,
     function_return_resources_definitionally_established,
+};
+use super::loans::{
+    BorrowedContractInputBacking, LoanLedger, LoanRefusal, LoanRefusalDiagnostic,
+    LoanRefusalOperation, LoanRefusalSubject, LoanViewBinding, LoanViewBindings,
 };
 pub(super) use super::memory_provenance::*;
 use super::prelude::*;
@@ -1800,6 +1805,215 @@ pub fn c_function_entry_state(
     // entry representation. It is not the modular call ownership transfer.
     entry.instance_field_scope = caller_state.instance_field_scope.clone();
     Some(entry)
+}
+
+/// Install the caller-supplied shared borrows assumed by one modular contract
+/// proof. Only principal resource occurrences selected by checked input-view
+/// clauses may receive authority here. Ordinary and nested calls must use the
+/// checked lending/reborrow planner instead.
+pub(crate) fn c_state_with_borrowed_contract_inputs(
+    state: CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+) -> Result<CState, LoanRefusalDiagnostic> {
+    if !function
+        .resource_requires()
+        .iter()
+        .any(CResourceSpec::is_view)
+    {
+        return Ok(state);
+    }
+    if state.loan_ledger().is_some()
+        || state.loan_participant().is_some()
+        || state.loan_view_bindings().iter().next().is_some()
+        || !state.loan_bindings_are_consistent()
+    {
+        return Err(LoanRefusal::InvalidEvidence.diagnostic(LoanRefusalOperation::Entry));
+    }
+    let entry = c_function_entry_state(&state, function, arguments)
+        .ok_or_else(|| LoanRefusal::MissingBacking.diagnostic(LoanRefusalOperation::Entry))?;
+    let mut budget = ExecutionBudget::default();
+    let (_, checked_inputs) = evaluate_function_resource_context_with_metadata(
+        &entry,
+        function.resource_requires(),
+        function.composite_resource_definitions(),
+        assumptions,
+        &mut budget,
+    )
+    .map_err(|_| LoanRefusal::InvalidEvidence.diagnostic(LoanRefusalOperation::Entry))?
+    .map_err(|_| LoanRefusal::MissingBacking.diagnostic(LoanRefusalOperation::Entry))?;
+
+    let mut selected = BTreeMap::new();
+    for input in checked_inputs
+        .into_iter()
+        .filter(|input| input.fact.is_view())
+    {
+        if matches!(
+            input.fact.resource(),
+            CResource::Memory(range)
+                if range.base().block.starts_with("local:")
+                    || state.memory().is_read_only_block(&range.base().block)
+        ) {
+            continue;
+        }
+        let candidates = state
+            .resources()
+            .view_occurrences_for_fact(&input.fact, assumptions)
+            .into_iter()
+            .filter(|occurrence| state.resources().view_occurrence_is_principal(*occurrence))
+            .collect::<Vec<_>>();
+        let [occurrence] = candidates.as_slice() else {
+            return Err(LoanRefusal::MissingLoanBinding.diagnostic_with_subject(
+                LoanRefusalOperation::Entry,
+                LoanRefusalSubject::for_resource(input.fact),
+            ));
+        };
+        let viewed = state
+            .resources()
+            .view_fact_at_occurrence(*occurrence)
+            .cloned()
+            .ok_or_else(|| {
+                LoanRefusal::MissingLoanBinding.diagnostic_with_subject(
+                    LoanRefusalOperation::Entry,
+                    LoanRefusalSubject::with_support_id(*occurrence),
+                )
+            })?;
+        // Address-backed aggregate parameters and compiler-created local
+        // arrays are storage owned by this activation. Their bounded views
+        // use the existing local-storage check at each call; they are not
+        // caller-supplied shared borrows and therefore need no external root.
+        if matches!(
+            viewed.resource(),
+            CResource::Memory(range)
+                if range.base().block.starts_with("local:")
+                    || state.memory().is_read_only_block(&range.base().block)
+        ) {
+            continue;
+        }
+        if state
+            .resources()
+            .directly_supporting_owned_entry(&viewed, assumptions)
+            .is_some()
+        {
+            return Err(LoanRefusal::ActiveDependency.diagnostic_with_subject(
+                LoanRefusalOperation::Entry,
+                LoanRefusalSubject::with_support_id(*occurrence),
+            ));
+        }
+        selected.entry(*occurrence).or_insert(viewed);
+    }
+
+    if selected.is_empty() {
+        return Ok(state);
+    }
+
+    let mut ledger = LoanLedger::new();
+    let participant = ledger
+        .fresh_participant()
+        .map_err(|error| error.diagnostic(LoanRefusalOperation::Entry))?;
+    let mut bindings = LoanViewBindings::default();
+    for (occurrence, viewed) in selected {
+        let (backing, backing_pieces) = if matches!(viewed.resource(), CResource::Composite { .. })
+        {
+            let singleton = ResourceContext::new().unchecked_with_fact(viewed.clone());
+            let pieces = expand_composite_resource_fact_with_children(
+                &singleton,
+                &viewed,
+                function.composite_resource_definitions(),
+                state.memory(),
+                assumptions,
+            )
+            .map(|(_, mut children, raw_children)| {
+                for raw_child in raw_children {
+                    let candidates = state
+                        .resources()
+                        .view_occurrences_for_fact(&raw_child, assumptions);
+                    if let [occurrence] = candidates.as_slice()
+                        && let Some(actual) = state
+                            .resources()
+                            .view_fact_at_occurrence(*occurrence)
+                            .cloned()
+                        && !children.contains(&actual)
+                    {
+                        children.push(actual);
+                    }
+                }
+                children
+            })
+            .and_then(|pieces| {
+                BorrowedContractInputBacking::from_checked_expansion(
+                    occurrence,
+                    viewed.clone(),
+                    pieces.clone(),
+                )
+                .map(|backing| (backing, pieces))
+            })
+            .ok_or_else(|| {
+                LoanRefusal::UnsupportedResource.diagnostic_with_subject(
+                    LoanRefusalOperation::Entry,
+                    LoanRefusalSubject::with_support_id(occurrence),
+                )
+            })?;
+            (Some(pieces.0), pieces.1)
+        } else {
+            (None, Vec::new())
+        };
+        let opening = ledger
+            .borrowed_contract_input(participant, occurrence, viewed.clone(), backing)
+            .map_err(|error| {
+                error.diagnostic_with_subject(
+                    LoanRefusalOperation::Entry,
+                    LoanRefusalSubject::with_support_id(occurrence),
+                )
+            })?;
+        ledger = ledger.apply(&opening.transition).map_err(|error| {
+            error.diagnostic_with_subject(
+                LoanRefusalOperation::Entry,
+                LoanRefusalSubject::with_support_id(occurrence),
+            )
+        })?;
+        bindings = bindings.with_inserted(
+            occurrence,
+            LoanViewBinding {
+                loan: opening.loan,
+                scope: opening.scope,
+                share: opening.root_share,
+                support: occurrence,
+                viewed,
+            },
+        );
+        for piece in backing_pieces {
+            let occurrences = state
+                .resources()
+                .view_occurrences_for_fact(&piece, assumptions);
+            match occurrences.as_slice() {
+                [] => {}
+                [piece_occurrence] => {
+                    bindings = bindings.with_inserted(
+                        *piece_occurrence,
+                        LoanViewBinding {
+                            loan: opening.loan,
+                            scope: opening.scope,
+                            share: opening.root_share,
+                            support: occurrence,
+                            viewed: piece,
+                        },
+                    );
+                }
+                _ => {
+                    return Err(LoanRefusal::MissingLoanBinding.diagnostic_with_subject(
+                        LoanRefusalOperation::Entry,
+                        LoanRefusalSubject::for_resource(piece),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(state
+        .with_loan_ledger(Some(ledger))
+        .with_loan_participant(Some(participant))
+        .with_loan_view_bindings(bindings))
 }
 
 /// Produces the exact callee entry state used by contract verification.
@@ -3862,7 +4076,27 @@ fn checked_loan_evidence_is_valid(
         };
         let publishes_return_state = matches!(outcome, CFunctionOutcome::Return { .. });
         if path.loan_evidence.is_empty() {
-            return !publishes_return_state;
+            return match outcome {
+                CFunctionOutcome::Return {
+                    state: return_state,
+                    ..
+                } => {
+                    checked.state.loan_ledger() == return_state.loan_ledger()
+                        && checked.state.loan_participant() == return_state.loan_participant()
+                        && return_state.loan_bindings_are_consistent()
+                        && checked.state.loan_bindings_are_consistent()
+                        && return_state.loan_ledger().is_some_and(|ledger| {
+                            return_state.loan_participant().is_some_and(|participant| {
+                                ledger.authorizes_bindings(
+                                    participant,
+                                    return_state.loan_view_bindings(),
+                                    &checked.assumptions,
+                                )
+                            })
+                        })
+                }
+                _ => !publishes_return_state,
+            };
         }
         if !path.loan_evidence.is_valid() {
             return false;
@@ -3895,6 +4129,17 @@ fn checked_loan_evidence_is_valid(
         };
         return_state.loan_ledger() == outer_recovered_ledger.as_ref()
             && return_state.loan_participant() == outer_recovered_participant
+            && return_state.loan_bindings_are_consistent()
+            && checked.state.loan_bindings_are_consistent()
+            && return_state.loan_ledger().is_none_or(|ledger| {
+                return_state.loan_participant().is_some_and(|participant| {
+                    ledger.authorizes_bindings(
+                        participant,
+                        return_state.loan_view_bindings(),
+                        &checked.assumptions,
+                    )
+                })
+            })
     })
 }
 
@@ -4126,7 +4371,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                         .to_string(),
                 );
             };
-            entry_state.resources = entry_resources.clone();
+            entry_state = entry_state.with_resource_context(entry_resources.clone());
             assumptions = crate::instrumentation::measure_operation(
                 function.name(),
                 "contract certification",
@@ -4302,7 +4547,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                     assumptions = assumptions.assume_proposition(fact.clone());
                 }
             }
-            entry_state.resources = entry_resources;
+            entry_state = entry_state.with_resource_context(entry_resources);
         }
         let matches_execution_metadata_except_state = |checked: &CCheckedFunctionExecution| {
             checked.function == function

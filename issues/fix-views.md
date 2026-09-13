@@ -74,22 +74,38 @@ baseline under remaining work.
 
 **Not on master.**
 
-- A top-level `views` precondition does not yet receive a checked,
-  nonrecoverable borrowed-input root at contract-proof entry. Until it does,
-  ordinary reader functions cannot be judged under `StableLoans`, and V17
-  cannot be closed for the top-level reader fixtures.
-- The codex V18 experiment that implements that root, plus several later
-  compatibility fixes and two incomplete soundness investigations, is parked
-  as one unverified commit on branch `claude/fix-views-v18-wip` (17 files,
-  about 1,250 insertions). It has not been gated. Its last candidate corpus
-  run, before its final edits, failed 33 of 1,485 mdtests. Take ideas and
-  tests from it; do not integrate it as is.
+- The codex V18 experiment, which the borrowed-input root (step 1) was
+  re-derived from, is parked as one unverified commit on branch
+  `claude/fix-views-v18-wip`. What remains unlanded from it is the inline
+  helper call path, the intrinsic local and read-only views, the returned-view
+  provenance lookup, and the loop and branch changes. Take ideas and tests
+  from it; do not integrate it as is.
+
+**Borrowed-input root (step 1, landed 2026-09-13).** Under `StableLoans`, a
+top-level `views` clause installs a `BorrowedContractInput` loan for the
+exact principal resource occurrence the clause selects: no escrow, no close
+right, no recovery right, reads and nested reborrows only. Derived
+projections and ambiguous equal occurrences are refused at entry. Because a
+parameter pointer has a symbolic offset in the shared external block, the
+concrete dyadic index cannot hold such a view; the ledger keeps symbolic
+protected ranges in a per-block map, bounded by the active loans with
+symbolic footprints, and a write, free, or havoc query consults only its own
+block's entries. The polarity of that check is deliberate and matches the
+rest of the resource algebra: symbolic ranges are separate unless proven to
+overlap, compared bytewise. A write reaches the ledger only with owned
+authority for its range, and every caller must establish its owned and
+viewed inputs as a partition before a call, so an owner-authorized write in
+the body is separate from a contract input view by the same contract meaning
+that keeps two owners separate; the ledger refuses the writes no partition
+can license (through the viewed pointer, through a pointer proven equal to
+it, or into a concretely overlapping offset of the same object). A symbolic
+query is refused outright while any concrete loan is indexed.
 
 ## Remaining work
 
-Seven steps remain, in this order. Steps 1-5 recover and finish the V18
-implementation from the parked experiment; step 6 is the V18 adversarial
-review; step 7 is the V19 cutover. Each step follows the working agreements
+Seven steps, numbered stably; step 1 landed on 2026-09-13 and steps 2-7
+remain. Steps 1-5 recover and finish the V18 implementation from the parked
+experiment; step 6 is the V18 adversarial review; step 7 is the V19 cutover. Each step follows the working agreements
 below: an isolated worktree from master, focused positive and negative tests,
 the unfiltered gate, and a handoff. No C source edits, and no change to
 `Legacy` behavior before step 7.
@@ -112,6 +128,17 @@ mdtests and 19 of 26 example projects fail. By error:
   them in step 3, do not re-expect them.
 - The composite refusals (steps 4 and 5) do not appear yet because the
   affected fixtures fail earlier at the root.
+
+After step 1 (2026-09-13): 105 of 1,509 mdtests and 15 of 26 examples fail.
+The missing-root class is gone. By error: 22 mdtests at "inline calls are
+unsupported" (step 2); 12 mdtests and 1 example at "the required loan
+backing or binding is missing" (steps 2-3); 6 mdtests and 7 examples at
+"this resource shape is outside stable-view support" during entry, which is
+a composite or instance input view whose one-level frontier the root refuses
+(steps 4-5); 4 mdtests and 1 example at "could not prove the requested ranges
+separate"; 4 mdtests and 3 examples at "composite body facts are unsupported"
+(step 5); 8 negatives now fail with a different message and the same 2
+negatives pass (step 3).
 
 Reclassify from a fresh run before each step rather than from these counts.
 
@@ -194,27 +221,27 @@ a fresh run rather than trusted:
    possible; change an expected substring only when the new diagnostic names
    the true violated invariant and the positive behavior is already sound.
 
-### 1. Land the borrowed-input root
+### 1. Land the borrowed-input root (done 2026-09-13)
 
-Give a top-level `views` precondition a checked, nonrecoverable borrowed
-root at contract-proof entry: exact principal occurrence, no close or
-recovery right, reads and nested reborrows only, never ownership (D8). Add
-the focused positive tests (ordinary, nested, partial, symbolic readers) and
-the negatives (derived or ambiguous root selection, root used as owner,
-recovery through the root). This unblocks the `stable_view_*` fixtures and
-every top-level reader in the corpus.
+Landed as "Install borrowed-input roots for stable contract input views":
+`LoanOrigin`, `LoanLedger::borrowed_contract_input`, the per-block symbolic
+range map and `permits_memory_access_with_assumptions`,
+`c_state_with_borrowed_contract_inputs` installed by the surface proof entry
+paths, sidecar-preserving `with_resource_context` rebases on the entry,
+certification, and return paths, and the `stable_mode_root_view_*`,
+`symbolic_*`, and `borrowed_contract_input_*` regressions. The five
+`stable_view_*` fixtures pass under `StableLoans`.
 
-### 2. Land the sidecar rebases, symbolic ranges, and intrinsic views
+### 2. Land inline helper calls and intrinsic views
 
-Three separate commits, each with its own tests: the ledger/participant/
-binding-preserving `with_resource_context` rebases on the direct, named,
-callback, certification, proof, and loop paths; symbolic borrowed-range
-retention and assumption-aware access checks, without the unreviewed
-`indexed_memory` scan; bounded local views through the activation-local
-bounds rule and exact const/static views as intrinsic read-only authority.
-Inline helper calls, refused outright today, must use their caller's checked
-resources rather than a second entry environment. Revert rather than carry
-anything whose invariant cannot be stated.
+Two separate commits, each with its own tests. Inline helper calls, refused
+outright today under `StableLoans`, must use their caller's checked resources
+rather than a second entry environment. Bounded views of the activation's own
+local arrays use the existing activation-local bounds rule, and exact
+const/static memory views are intrinsic read-only authority; neither is a
+caller-supplied borrow, and the root installer already skips them, so the
+call planner must stop demanding loan backing for them. Revert rather than
+carry anything whose invariant cannot be stated.
 
 ### 3. Fix provenance, loop/branch authority, certification, and diagnostics
 
@@ -222,8 +249,11 @@ Failure classes 1, 4, 5, and 6 above: an explicit checked provenance record
 for a returned view deduplicated against a returned owner; validated-range
 loop havoc and the authority-aware branch join; the `struct_conditional_value`
 execution-mode mismatch and the stdlib `count` claim; and the validation
-order behind the expected negative diagnostics. Reclassify from a fresh
-corpus run first.
+order behind the expected negative diagnostics. Also give the ledger's write
+refusal the D13 shape: today a store into a rooted view reports "memory
+write conflicts with an active stable loan" with the refusal's debug form,
+not the loan origin and the attempted range. Reclassify from a fresh corpus
+run first.
 
 ### 4. Design and implement recursive composite views
 

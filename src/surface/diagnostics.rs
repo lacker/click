@@ -745,7 +745,7 @@ pub(super) fn describe_runtime_error(
     }
 }
 
-fn describe_loan_refusal(
+pub(in crate::surface) fn describe_loan_refusal(
     diagnostic: &crate::kernel::LoanRefusalDiagnostic,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],

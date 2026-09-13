@@ -460,6 +460,31 @@ fn candidate_memory_ranges_relation(
     {
         return CandidateMemoryRangeRelation::Disjoint;
     }
+    if left.base() == right.base() {
+        let (Some(left_start), Some(left_end), Some(right_start), Some(right_end)) = (
+            left.start().as_const(),
+            left.end().as_const(),
+            right.start().as_const(),
+            right.end().as_const(),
+        ) else {
+            return CandidateMemoryRangeRelation::SeparationUnproved;
+        };
+        let left_width = i64::from(left.element_width());
+        let right_width = i64::from(right.element_width());
+        let (Some(left_start), Some(left_end), Some(right_start), Some(right_end)) = (
+            i64::from(left_start).checked_mul(left_width),
+            i64::from(left_end).checked_mul(left_width),
+            i64::from(right_start).checked_mul(right_width),
+            i64::from(right_end).checked_mul(right_width),
+        ) else {
+            return CandidateMemoryRangeRelation::SeparationUnproved;
+        };
+        return if left_end <= right_start || right_end <= left_start {
+            CandidateMemoryRangeRelation::Disjoint
+        } else {
+            CandidateMemoryRangeRelation::Overlap
+        };
+    }
     let (left_base, left_bytes) = left.byte_footprint();
     let (right_base, right_bytes) = right.byte_footprint();
     let Some(left_start) = left_base.offset.as_const() else {
@@ -12598,7 +12623,19 @@ pub(super) fn expand_composite_resource_fact_with_children(
         if children
             .iter()
             .filter(|child| child.is_view())
-            .any(|child| !transferred_views.contains(child))
+            .any(|child| {
+                if transferred_views.contains(child) {
+                    return false;
+                }
+                let expected = crate::kernel::loans::LoanViewBinding {
+                    viewed: child.clone(),
+                    ..binding.clone()
+                };
+                !expanded
+                    .view_occurrences_for_fact(child, assumptions)
+                    .iter()
+                    .any(|occurrence| expanded.loan_dependency(*occurrence) == Some(&expected))
+            })
         {
             // Reusing an equal ambient child would lose the source occurrence
             // relation.  The checked expansion has no destination ID to bind.
@@ -16529,12 +16566,21 @@ pub(super) fn contract_exit_outcome(
     // way so the completed outcome is the canonical one certification compares.
     let outcome = match outcome {
         CStatementOutcome::Return { value, mut state } => {
-            state.resources = match ResourceContext::new()
-                .try_compose_with_facts(state.resources.facts().iter().cloned(), assumptions)
+            if state.loan_view_bindings().iter().next().is_none() {
+                let resources = match ResourceContext::new()
+                    .try_compose_with_facts(state.resources.facts().iter().cloned(), assumptions)
+                {
+                    Ok(resources) => resources,
+                    Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+                };
+                state = state.with_resource_context(resources);
+            } else if state.resources.validity_error(assumptions).is_some()
+                || !state.loan_bindings_are_consistent()
             {
-                Ok(resources) => resources,
-                Err(error) => return Ok(Err(resource_context_runtime_error(error))),
-            };
+                return Ok(Err(CRuntimeError::FunctionContract(
+                    "stable-view return resources are not a valid bound context".to_string(),
+                )));
+            }
             CStatementOutcome::Return { value, state }
         }
         other => other,
@@ -16724,7 +16770,8 @@ pub(super) fn function_outcome_from_body(
             if return_resources.is_none() {
                 caller_state.instance_field_scope = state.instance_field_scope;
             }
-            caller_state.resources = return_resources.cloned().unwrap_or(state.resources);
+            caller_state = caller_state
+                .with_resource_context(return_resources.cloned().unwrap_or(state.resources));
             caller_state.counted_populations = state.counted_populations;
             caller_state.next_local_frame = state.next_local_frame;
             caller_state.next_local_lifetime = state.next_local_lifetime;
@@ -17981,17 +18028,79 @@ mod candidate_stable_view_call_tests {
         ));
     }
 
+    /// A mutable effect on the same symbolic base as the lent view, at the
+    /// same constant offsets, is a proven overlap even though the base
+    /// offset is unknown: the symbolic view is retained outside the
+    /// concrete index and compared by offset arithmetic.
     #[test]
-    fn candidate_rejects_unproved_mutable_effect_separation() {
+    fn candidate_rejects_symbolic_same_base_overlapping_effect() {
         let pointer = Pointer {
             block: PointerBlock::Concrete("local:candidate_view:data".to_string()),
             offset: PointerOffsetTerm::Variable(Variable(700)),
         };
-        let function = reader_with_mutable_range("candidate_unknown_effect", 0, 1);
+        let function = reader_with_mutable_range("candidate_symbolic_overlap_effect", 0, 1);
         let paths = execute_c_function_call_paths(
             &caller_with_owned_end(&pointer, 2, 8),
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate symbolic overlap should execute to a diagnostic path");
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)),
+                ..
+            }] if diagnostic.category() == crate::kernel::LoanRefusalCategory::ProvenOverlap
+                && diagnostic.overlap() == crate::kernel::LoanOverlapStatus::ProvenOverlap
+        ));
+    }
+
+    /// A mutable effect through a second pointer whose relation to the lent
+    /// view is unknown is neither a proven overlap nor a proven separation;
+    /// the call is refused as unproved rather than assumed disjoint.
+    #[test]
+    fn candidate_rejects_unproved_mutable_effect_separation() {
+        let viewed = Pointer {
+            block: PointerBlock::Concrete("local:candidate_view:data".to_string()),
+            offset: PointerOffsetTerm::Variable(Variable(700)),
+        };
+        let mutated = Pointer {
+            block: PointerBlock::Concrete("local:candidate_view:data".to_string()),
+            offset: PointerOffsetTerm::Variable(Variable(701)),
+        };
+        let input = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        let function = c_function(
+            CType::Int32,
+            "candidate_unknown_effect",
+            vec![
+                c_parameter("p", CType::Int32Pointer),
+                c_parameter("q", CType::Int32Pointer),
+            ],
+            c_return(c_load(c_variable("p"))),
+        )
+        .with_resource_summary(vec![CResourceSpec::viewed_memory(input)], Vec::new())
+        .with_contract(
+            Vec::new(),
+            Vec::new(),
+            vec![CMemorySegment::new(
+                c_variable("q"),
+                c_int32_literal(0),
+                c_int32_literal(1),
+            )],
+            Vec::new(),
+            true,
+        );
+        let paths = execute_c_function_call_paths(
+            &caller_with_owned_end(&viewed, 2, 8),
+            &function,
+            &[
+                CExpression::Value(CValue::pointer(viewed)),
+                CExpression::Value(CValue::pointer(mutated)),
+            ],
             &PureFactContext::new(),
             &environment(&function),
             CExecutionSemantics::APPLY_VERIFIED_RULES,

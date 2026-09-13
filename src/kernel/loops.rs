@@ -3538,7 +3538,8 @@ pub(super) fn prepare_loop_top_state(
     let mut resource_failures = Vec::new();
     if let Some(ledger) = entry_state.loan_ledger()
         && statement_may_write_memory(entry_state, body)
-        && let Err(error) = validate_loop_havoc_stable_loans(ledger, loop_havoc_ranges.as_deref())
+        && let Err(error) =
+            validate_loop_havoc_stable_loans(ledger, loop_havoc_ranges.as_deref(), assumptions)
     {
         resource_failures.push(error);
     }
@@ -5242,6 +5243,7 @@ pub(super) fn havoc_loop_modified_locals(
 fn validate_loop_havoc_stable_loans(
     ledger: &super::loans::LoanLedger,
     mutable_ranges: Option<&[CMemoryRange]>,
+    assumptions: &PureFactContext,
 ) -> Result<(), String> {
     let Some(ranges) = mutable_ranges else {
         if ledger.has_active_memory_loans() {
@@ -5253,7 +5255,7 @@ fn validate_loop_havoc_stable_loans(
         return Ok(());
     };
     for range in ranges {
-        if let Err(error) = ledger.permits_memory_access(range) {
+        if let Err(error) = ledger.permits_memory_access_with_assumptions(range, assumptions) {
             return Err(format!(
                 "loop memory havoc overlaps an active stable-view loan: {error:?}"
             ));
@@ -5327,9 +5329,16 @@ mod v10_tests {
         let opening = ledger.lend(owner, owner, support, escrow).unwrap();
         let ledger = ledger.apply(&opening.transition).unwrap();
 
-        assert!(validate_loop_havoc_stable_loans(&ledger, None).is_err());
-        assert!(validate_loop_havoc_stable_loans(&ledger, Some(&[memory_range(0, 1)])).is_err());
-        assert!(validate_loop_havoc_stable_loans(&ledger, Some(&[memory_range(2, 3)])).is_ok());
+        let assumptions = PureFactContext::new();
+        assert!(validate_loop_havoc_stable_loans(&ledger, None, &assumptions).is_err());
+        assert!(
+            validate_loop_havoc_stable_loans(&ledger, Some(&[memory_range(0, 1)]), &assumptions)
+                .is_err()
+        );
+        assert!(
+            validate_loop_havoc_stable_loans(&ledger, Some(&[memory_range(2, 3)]), &assumptions)
+                .is_ok()
+        );
     }
 }
 

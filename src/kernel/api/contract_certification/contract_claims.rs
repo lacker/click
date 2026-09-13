@@ -890,7 +890,7 @@ fn prepare_function_claim_path(
     let Ok(resource_facts) = entry_resources.observable_facts(&assumptions) else {
         return Err("the entry resource context is not observable".to_string());
     };
-    entry_state.resources = entry_resources.clone();
+    entry_state = entry_state.with_resource_context(entry_resources.clone());
     let execution_facts = path.execution_facts();
     let assumptions = assumptions_with_propositions(&assumptions, &resource_facts);
     // A verification condition may be local to one symbolic path. Branch
@@ -954,7 +954,7 @@ fn prepare_function_claim_path(
     };
     let mut assumptions = assumptions_with_propositions(&assumptions, &post_resource_facts);
     let mut post_state = entry_state.clone().with_memory(exit_memory);
-    post_state.resources = post_resources.clone();
+    post_state = post_state.with_resource_context(post_resources.clone());
     post_state.counted_populations = return_state.counted_populations.clone();
     if function.return_type() != CType::Void {
         post_state
@@ -1647,12 +1647,13 @@ pub fn c_function_ensure_goals(
         return None;
     };
     let mut entry_state = c_function_entry_state(caller_state, function, arguments)?;
-    entry_state.resources = expand_all_composite_resource_facts(
+    let expanded_entry_resources = expand_all_composite_resource_facts(
         entry_state.resources(),
         function.composite_resource_definitions(),
         entry_state.memory(),
         assumptions,
     )?;
+    entry_state = entry_state.with_resource_context(expanded_entry_resources);
     let exit_memory =
         crate::kernel::functions::function_exit_memory(caller_state, return_state, value, function);
     let claim_return_state = return_state.clone().with_memory(exit_memory.clone());
@@ -1663,7 +1664,7 @@ pub fn c_function_ensure_goals(
         assumptions,
     )?;
     let mut post_state = entry_state.clone().with_memory(exit_memory);
-    post_state.resources = post_resources;
+    post_state = post_state.with_resource_context(post_resources);
     post_state.counted_populations = return_state.counted_populations.clone();
     if function.return_type() != CType::Void {
         post_state

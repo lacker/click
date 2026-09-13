@@ -1135,6 +1135,31 @@ impl ResourceContext {
             .is_some_and(|entry| self.storage.facts.get(entry) == Some(fact) && fact.is_own())
     }
 
+    /// Return the exact live view fact at an occurrence selected from a
+    /// checked input requirement. This never searches by fact equality.
+    pub(crate) fn view_fact_at_occurrence(
+        &self,
+        occurrence: ResourceOccurrenceId,
+    ) -> Option<&CResourceFact> {
+        let entry = self.storage.entry_by_occurrence.get(&occurrence)?;
+        let fact = self.storage.facts.get(entry)?;
+        fact.is_view().then_some(fact)
+    }
+
+    pub(crate) fn view_occurrence_is_principal(&self, occurrence: ResourceOccurrenceId) -> bool {
+        self.storage
+            .entry_by_occurrence
+            .get(&occurrence)
+            .is_some_and(|entry| {
+                self.fact(*entry).is_view()
+                    && !self.storage.supported_by.contains_key(entry)
+                    && !self
+                        .storage
+                        .support_occurrence_by_projection
+                        .contains_key(entry)
+            })
+    }
+
     fn support_cache_key(&self, entry: ResourceEntryId) -> (CResourceFact, usize) {
         let fact = self.fact(entry).clone();
         let rank = self
@@ -5011,7 +5036,7 @@ fn split_memory_range(
     Some(residues)
 }
 
-fn memory_ranges_proven_overlapping(
+pub(crate) fn memory_ranges_proven_overlapping(
     left: &CMemoryRange,
     right: &CMemoryRange,
     assumptions: &PureFactContext,

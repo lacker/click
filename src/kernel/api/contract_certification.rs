@@ -1713,7 +1713,7 @@ pub(super) fn c_function_contract_certification_assumptions(
     for proposition in observable_facts {
         assumptions = assumptions.assume_proposition(proposition);
     }
-    entry_state.resources = entry_resources.clone();
+    entry_state = entry_state.with_resource_context(entry_resources.clone());
     // The contract-entry publication, derived here rather than accepted from
     // the caller: the arms the requirements refute and the facts of the arm
     // they leave. Contract lowering publishes exactly this to the checked

@@ -334,6 +334,7 @@ fn stable_loan_memory_write_outcome(
     state: &CState,
     pointer: &Pointer,
     bytes: u32,
+    assumptions: &PureFactContext,
 ) -> Option<CStatementOutcome> {
     let range = CMemoryRange::new_with_element_width(
         pointer.clone(),
@@ -341,15 +342,16 @@ fn stable_loan_memory_write_outcome(
         Bitvector32Term::Constant(1),
         bytes,
     );
-    stable_loan_memory_range_outcome(state, &range)
+    stable_loan_memory_range_outcome(state, &range, assumptions)
 }
 
 fn stable_loan_memory_range_outcome(
     state: &CState,
     range: &CMemoryRange,
+    assumptions: &PureFactContext,
 ) -> Option<CStatementOutcome> {
     state
-        .permits_stable_loan_memory_access(range)
+        .permits_stable_loan_memory_access_with_assumptions(range, assumptions)
         .err()
         .map(|error| {
             CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
@@ -433,8 +435,12 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
     match lvalue.storage {
         CLValueStorage::Local { name } => {
             if let Some(pointer) = state.locals.slot(&name).cloned()
-                && let Some(outcome) =
-                    stable_loan_memory_write_outcome(state, &pointer, value.byte_width())
+                && let Some(outcome) = stable_loan_memory_write_outcome(
+                    state,
+                    &pointer,
+                    value.byte_width(),
+                    &effective_assumptions,
+                )
             {
                 return vec![CStatementExecutionPath {
                     outcome,
@@ -523,9 +529,12 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     loan_evidence: empty_checked_loan_evidence_sequence(),
                 }];
             }
-            if let Some(outcome) =
-                stable_loan_memory_write_outcome(state, &pointer, value.byte_width())
-            {
+            if let Some(outcome) = stable_loan_memory_write_outcome(
+                state,
+                &pointer,
+                value.byte_width(),
+                &effective_assumptions,
+            ) {
                 return vec![CStatementExecutionPath {
                     outcome,
                     facts,
@@ -704,6 +713,7 @@ fn execute_c_aggregate_copy_paths(
                 state,
                 target_pointer.pointer(),
                 layout.size_bytes(),
+                &assumptions_with_path_context(assumptions, &facts, &obligations),
             ) {
                 paths.push(CStatementExecutionPath {
                     outcome,
@@ -1275,7 +1285,9 @@ pub(crate) fn execute_c_realloc_assign_paths(
             old_bytes.clone(),
             1,
         );
-        if let Some(outcome) = stable_loan_memory_range_outcome(state, &old_allocation_range) {
+        if let Some(outcome) =
+            stable_loan_memory_range_outcome(state, &old_allocation_range, assumptions)
+        {
             paths.push(CStatementExecutionPath {
                 outcome,
                 facts,
@@ -1759,7 +1771,9 @@ fn execute_c_heap_free_paths(
             bytes.clone(),
             1,
         );
-        if let Some(outcome) = stable_loan_memory_range_outcome(state, &full_allocation_range) {
+        if let Some(outcome) =
+            stable_loan_memory_range_outcome(state, &full_allocation_range, assumptions)
+        {
             paths.push(CStatementExecutionPath {
                 outcome,
                 facts,

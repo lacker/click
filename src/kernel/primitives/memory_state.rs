@@ -2798,6 +2798,16 @@ impl CState {
             .map_or(Ok(()), |ledger| ledger.permits_memory_access(range))
     }
 
+    pub(crate) fn permits_stable_loan_memory_access_with_assumptions(
+        &self,
+        range: &CMemoryRange,
+        assumptions: &PureFactContext,
+    ) -> Result<(), crate::kernel::loans::LoanRefusal> {
+        self.loan_ledger.as_ref().map_or(Ok(()), |ledger| {
+            ledger.permits_memory_access_with_assumptions(range, assumptions)
+        })
+    }
+
     pub fn locals(&self) -> &CLocalEnvironment {
         &self.locals
     }
