@@ -255,6 +255,56 @@ surface tests.
 
 ### 3. Fix provenance, loop/branch authority, certification, and diagnostics
 
+Split on 2026-09-13 into four packages with disjoint file boundaries, each
+assigned to an Opus subagent from master `6ec2792b` and integrated by the
+coordinator one gated commit at a time:
+
+- **Return provenance** (`src/kernel/functions.rs` return/output recovery,
+  named-contract, refinement, and callback application):
+  `c_named_function_contract_pipeline`, `c_step_contract_selected_footprint`,
+  `c_named_function_contract_rejects_larger_mutable_footprint`,
+  `c_named_function_contract_accepts_symbolic_borrowed_subrange`,
+  `c_named_function_contract_borrows_guarded_composite`,
+  `const_callback_contract`, examples `bounded-pool`,
+  `owned-segmented-buffer`, `owned-split-buffer`.
+- **Planner partitions** (`plan_stable_view_transfer_with_bindings_and_composites`,
+  `prepare_contract_resource_transfer_with_candidate`,
+  `candidate_memory_ranges_relation`): symbolic view ranges lent from a
+  covering owner; `modular_call_requirement_indexes_footprint`,
+  `old_snapshot_loadable_after_free`, `requires_memory_read`,
+  `augment_rotate_callback_child_read`,
+  `composite_piece_caller_frames_viewed_field`, `execute_modular_swap_get`,
+  `step_modular_swap_get`, `execute_expands_certified_post_call_fact`,
+  `c_decreases_resource_rejects_inactive_child`,
+  `resource_population_split_body_survives_view`,
+  `struct_aggregate_helper_view`, example `owned-vector`.
+- **Loops, branches, certification** (`src/kernel/loops.rs`, the branch
+  join and certification matching in `src/kernel/api.rs`, the checked
+  `branch ensuring` interface): `loop_owns_clause_requires_function_ownership`,
+  `proof_branch_pointer_local`, `struct_conditional_value`,
+  `pure_click_functions`, `call_havoc_symbolic_write_set`.
+- **Diagnostics and check order** (`src/kernel/eval/statements.rs`,
+  `src/surface/diagnostics.rs`): run the ordinary owned-authority check
+  before the loan check so a write with no owner keeps its historical
+  "missing resource fact" message and the loan refusal fires only for an
+  owner-authorized write that hits a loan; give that refusal the D13 shape
+  (loan origin and attempted range); re-judge the negatives
+  `composite_piece_rejects_store_outside_owned_field`,
+  `global_byte_array_rejects_neighbor_ownership`,
+  `global_store_requires_owned_cell`, `resource_context_read_rejects_write`,
+  `resource_population_body_access_requires_authority`,
+  `return_population_rejects_missing_ownership`,
+  `struct_byte_array_resource_range_rejects_neighbor`; and migrate the
+  sidecar of `field_derived_precise_effect_after_metadata_write`, whose
+  `views owned_buffer(owner); owns owner[0..1]` is the overlapping
+  owner/view pattern V17 replaces (C unchanged).
+
+Left for steps 4 and 5: every "this resource shape is outside stable-view
+support" entry refusal (composite and instance input views, including the
+recursive `shape` and list fixtures and six examples), "composite body facts
+are unsupported", and "cannot package a loan-backed viewed body".
+
+
 Failure classes 1, 4, 5, and 6 above: an explicit checked provenance record
 for a returned view deduplicated against a returned owner; validated-range
 loop havoc and the authority-aware branch join; the `struct_conditional_value`
