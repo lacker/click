@@ -105,12 +105,50 @@ as it does on `c`, the context the preamble never unfolds. The arm's
 constructor is the spelling this fixture keeps, because the arm bindings are
 already what the case theorems are stated over.
 
-What the fixture pins now is the body. `preserve` is omitted, so the loop tactic
-tries to execute one iteration on its own and stops at the first guard it cannot
-read through. The four `break`s, the two `continue`s, the two rotations and the
+What the fixture pins now is the body, one exit at a time. `preserve` is
+written, and the frontier report says exactly how far it gets: **the
+root-blackening `break` is complete**, and both context frames reach the
+black-parent guard. That first exit is the whole shape in miniature — the
+enclosing `if (!parent)` is a proof `if`, the write through `rb_set_parent_color`
+needs `t` unfolded, and the `break` needs it folded again at the new model
+`RbTree::Node(nid, 0, Color::Black, nleft, nright)`, which is a null parent and
+a black colour bit. A `break` is an exit, so the invariants are not closed on
+it; only the binders have to be owned.
+
+The black-parent `break` is one statement reached on two frame paths, and both
+paths need the same bridge, which cannot be written today. `Context::Top` is
+refuted for the frame by `parent != 0` against invariant 4, so `c.model` is a
+`Left` or `Right` frame; `ctx_node_is_left_identity`
+and its mirror take invariant 4 to `parent == cid`, which is what lets
+`unfold(c)` hand the C spelling `parent->__rb_parent_color` the cells the frame
+owns at `cid` (package A22's alias index). The guard `rb_is_black(parent)` then
+has to be decided from the frame's own body fact
+`(cid->__rb_parent_color & 1) == color_bit(ccolor)` and the arm's colour. Every
+spelling of that bridge hits one of two verifier gaps:
+
+- a `have` goal that both reads through an arm binding and calls a pure
+  function is refused before its body runs, with `the kernel lowering produced
+  0 paths, not one`
+  ([`have_goal_reads_through_an_arm_binding.md`](have_goal_reads_through_an_arm_binding.md));
+- a `simp() using` premise inside a `have` body cannot name the arm's binding
+  at all
+  ([`have_body_simp_using_names_an_arm_binding.md`](have_body_simp_using_names_an_arm_binding.md)).
+
+Stating the colour fact purely, `have color_bit(ccolor) == 1`, is provable and
+is not enough: the step at the guard still reports two feasible condition
+paths, because nothing connects that pure value to the loaded word.
+
+So the remaining three `break`s, the two `continue`s, the two rotations and the
 frame-level case theorems `examples/rbtree-model` proves for them
 (`ctx_insert_case1_left`, `ctx_insert_case2_left`, `ctx_insert_case3_left` and
-their mirrors) are the rest of package C3.
+their mirrors) wait on those two gaps. They also wait on a contract change:
+those case theorems are stated over `ctx_rb(ctx, bh, focus_color)` and
+`ctx_almost_rb_insert(ctx, bh)`, while this loop carries
+`almost_rb_insert(plug(c.model, t.model)) == 1` and `ctx_root_black(c.model) == 1`.
+The invariants have to be restated in the frame-level form the pure library
+consumes, with the black height as a loop-carried `Nat`, before the recolour
+`continue`s can close and before the post-loop `simp()` can reach
+`is_rb_root(plug(ctx.model, sub.model)) == 1`.
 
 The contract itself is D3 and D4 on the node-keyed model. `__rb_insert` returns
 `void` and reassigns `node`, so the cursor at the exit has no C name and the
@@ -721,6 +759,50 @@ theorem ctx_node_is_from_parent(ctx: Context, sub: RbTree, p: struct rb_node*) {
     }
 }
 
+theorem ctx_node_is_left_identity(cid: struct rb_node*, grandparent: struct rb_node*,
+                                  ccolor: Color, sibling_model: RbTree, up_model: Context,
+                                  p: struct rb_node*) {
+    requires ctx_node_is(Context::Left(cid, grandparent, ccolor, sibling_model, up_model),
+        p) == 1;
+
+    ensures p == cid by {
+        if p == cid {
+            assumption();
+        } else {
+            have ctx_node_is(
+                Context::Left(cid, grandparent, ccolor, sibling_model, up_model), p) != 1 by {
+                unfold(ctx_node_is(
+                    Context::Left(cid, grandparent, ccolor, sibling_model, up_model), p));
+                normalize() using { not(p == cid); }
+            }
+            contradiction(ctx_node_is(
+                Context::Left(cid, grandparent, ccolor, sibling_model, up_model), p) == 1);
+        }
+    }
+}
+
+theorem ctx_node_is_right_identity(cid: struct rb_node*, grandparent: struct rb_node*,
+                                   ccolor: Color, sibling_model: RbTree, up_model: Context,
+                                   p: struct rb_node*) {
+    requires ctx_node_is(Context::Right(cid, grandparent, ccolor, sibling_model, up_model),
+        p) == 1;
+
+    ensures p == cid by {
+        if p == cid {
+            assumption();
+        } else {
+            have ctx_node_is(
+                Context::Right(cid, grandparent, ccolor, sibling_model, up_model), p) != 1 by {
+                unfold(ctx_node_is(
+                    Context::Right(cid, grandparent, ccolor, sibling_model, up_model), p));
+                normalize() using { not(p == cid); }
+            }
+            contradiction(ctx_node_is(
+                Context::Right(cid, grandparent, ccolor, sibling_model, up_model), p) == 1);
+        }
+    }
+}
+
 theorem ctx_reroot_top_fixed(p: struct rb_node*) {
     ensures Context::Top == ctx_reroot(Context::Top, p) by {
         unfold(ctx_reroot(Context::Top, p));
@@ -988,6 +1070,71 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                             left_model, right_model)));
                 invariant rb_tree_parent_consistent(plug(c.model, t.model)) == 1;
 
+                preserve by {
+                    match t.model {
+                        RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
+                        RbTree::Node(nid, nparent, ncolor, nleft, nright) => {
+                            if parent == 0 {
+                                unfold(t) as { left: l, right: r };
+                                step();
+                                step();
+                                have (node->__rb_parent_color & 1)
+                                    == color_bit(Color::Black) by {
+                                    unfold(color_bit(Color::Black));
+                                    simp();
+                                }
+                                let t = fold(rb_at(node),
+                                    { model: RbTree::Node(nid, 0, Color::Black, nleft, nright) },
+                                    { left: l, right: r });
+                                step();
+                            } else {
+                                match c.model {
+                                    Context::Top => {
+                                        contradiction(c.model == Context::Top);
+                                    },
+                                    Context::Left(cid, cgp, ccolor, csib, cup) => {
+                                        have ctx_node_is(Context::Left(cid, cgp, ccolor,
+                                            csib, cup), parent) == 1 by {
+                                            rewrite(Context::Left(cid, cgp, ccolor, csib, cup)
+                                                == c.model);
+                                            assumption();
+                                        }
+                                        have parent == cid by {
+                                            apply(ctx_node_is_left_identity(cid, cgp, ccolor,
+                                                csib, cup, parent)) using {
+                                                ctx_node_is(Context::Left(cid, cgp, ccolor,
+                                                    csib, cup), parent) == 1;
+                                            }
+                                            assumption();
+                                        }
+                                        unfold(c) as { sibling: cs, up: cu };
+                                        step();
+                                        step();
+                                    },
+                                    Context::Right(cid, cgp, ccolor, csib, cup) => {
+                                        have ctx_node_is(Context::Right(cid, cgp, ccolor,
+                                            csib, cup), parent) == 1 by {
+                                            rewrite(Context::Right(cid, cgp, ccolor, csib, cup)
+                                                == c.model);
+                                            assumption();
+                                        }
+                                        have parent == cid by {
+                                            apply(ctx_node_is_right_identity(cid, cgp, ccolor,
+                                                csib, cup, parent)) using {
+                                                ctx_node_is(Context::Right(cid, cgp, ccolor,
+                                                    csib, cup), parent) == 1;
+                                            }
+                                            assumption();
+                                        }
+                                        unfold(c) as { sibling: cs, up: cu };
+                                        step();
+                                        step();
+                                    },
+                                }
+                            }
+                        },
+                    }
+                }
             }
             simp();
         },
@@ -1016,5 +1163,5 @@ void rb_insert_color(struct rb_node* node, struct rb_root* root) {
 ```
 
 ```expect
-fail: `__rb_insert.contract`
+fail: still ahead on this path: the body's end, 3 `break`s, and 2 `continue`s. Already complete: 1 at a `break`
 ```
