@@ -1,12 +1,44 @@
 # P1: Give views stable borrowing semantics
 
-**Status: the central V0-V6 candidate spine is implemented, but ordinary C
-calls still use the existing weak-view behavior.** The checkpoint began on
-2026-09-12 from `44339e408c65d67e5251787d680fbf4b542d5287`. It is intentionally
-staged before V7: no source contract acquires stable semantics until the
-ledger is part of checked execution state and direct-call entry/return use the
-new plan. The remaining cards are still suitable for bounded assignments
-after this checkpoint is reviewed.
+**Status: V0-V9 are implemented behind the candidate-semantics boundary; V10
+is next. Ordinary C contracts still use the existing weak-view behavior until
+the V19 cutover.** The checkpoint began on 2026-09-12 from
+`44339e408c65d67e5251787d680fbf4b542d5287`. Scope-bearing candidate states
+now carry checked loan authority through direct, verified, named, callback,
+certification, and refinement paths. Local, alias, aggregate, heap-lifetime,
+free, and realloc writes consult the active-loan footprint. The remaining
+cards must preserve that authority through loops, composite resources, proof
+tools, migration, scaling, review, and cutover.
+
+### 2026-09-12 V7-V9 integration checkpoint
+
+V7 installs the loan ledger, participant, and occurrence bindings in `CState`;
+routes direct body and verified calls through the joint planner; checks nested
+reborrows and exact output-view ancestry; recovers the canonical parent state
+only after return obligations; and retains a persistent, bounded sequence of
+kernel-checked entry/recovery evidence for certification. Legacy surface
+verification remains outside this opt-in path, while candidate certificates
+select it through their retained evidence.
+
+V8 routes candidate independent verification through the same boundary and
+uses the planner for owned-interface to viewed-implementation refinement,
+including proper subranges. The reverse direction is refused, and exact
+same-mode resources in mixed disjoint interfaces do not spuriously invoke the
+adapter. Existing named and indirect callback application already converges
+on the common verified-call preparation path; focused callback and rbtree
+effect fixtures continue to pass.
+
+V9 adds persistent interval indexes for active concrete memory loans and
+checks every supported write and lifetime-ending path. Unsupported symbolic
+overlap fails closed when a live memory loan exists. Ending a nested child
+restores the parent's protection, and disjoint concrete writes remain legal.
+
+At commit `0f8e5d6e`, before the final V8 refinement integration, the
+authoritative `scripts/check.sh` gate passed 2,892 library/binary tests, all
+example projects, and the complete mdtest suite. After V8, the 23 candidate
+stable-view tests, 33 callback/refinement tests, pristine candidate
+certificate test, `cargo check`, and clippy with warnings denied pass. The
+next full gate is required after V10 integration.
 
 ### 2026-09-12 V0-V6 central checkpoint
 
