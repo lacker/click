@@ -258,10 +258,11 @@ The first reviewed V17 batches narrow the named rbtree callback contract to
 the exact shared cell range it reads and remove redundant or misleading
 view requirements from composite, population, and loop contracts. Each batch
 passed the complete mdtest suite before integration as `9e3052bc` and
-`2df1c154`. No C source changed. The complete candidate-semantics corpus and
-the remaining top-level reader fixtures cannot be judged until contract-entry
-views receive the checked nonrecoverable root authority described in the V13
-handoff.
+`2df1c154`. No C source changed. The reviewed migrations leave 198 corpus
+files and 337 explicit view declarations in the inventory. The complete
+candidate-semantics corpus and the remaining top-level reader fixtures cannot
+be judged until contract-entry views receive the checked nonrecoverable root
+authority described in the V13 handoff.
 
 ## Decision and violated invariant
 
@@ -1798,8 +1799,8 @@ replacement of `views` by `owns` has removed shared-reader coverage.
 
 The complete extraction and source-path classification for this chunk is in
 [`docs/internals/view-output-inventory.md`](../docs/internals/view-output-inventory.md).
-The 2026-09-12 snapshot contains 200 files and 345 explicit `views`
-declarations: 180 mdtests, 19 examples, and one design probe. Every
+The 2026-09-12 snapshot contains 198 files and 337 explicit `views`
+declarations: 178 mdtests, 19 examples, and one design probe. Every
 declaration is assigned to existing outer dependency, returned input access,
 immutable support, or unsupported escape, with the exact extraction method and
 the responsible lowering/kernel paths recorded there. The raw returned-pointer

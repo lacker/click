@@ -7,17 +7,17 @@ escaping-loan feature.
 
 ## Snapshot and extraction
 
-The snapshot below was generated on 2026-09-12 from commit `684eece7` plus the
-V13 sidecar and mdtest changes. The extraction deliberately reads only Click
-code blocks in `mdtests/*.md`, and whole `*.click` files in `examples/` and
-`design/borrow-probes/`. It counts non-comment lines whose first token is
-`views`, so prose mentions and C source embedded in a different block cannot
-silently enter the inventory.
+The snapshot below was generated on 2026-09-12 from the integrated V17
+contract migrations at commit `41437441`. The extraction deliberately reads
+only Click code blocks in `mdtests/*.md`, and whole `*.click` files in
+`examples/` and `design/borrow-probes/`. It counts non-comment lines whose
+first token is `views`, so prose mentions and C source embedded in a different
+block cannot silently enter the inventory.
 
 ```text
-files containing a view declaration: 200
-view declarations:                  345
-  mdtests:                          180 files
+files containing a view declaration: 198
+view declarations:                  337
+  mdtests:                          178 files
   examples:                          19 files
   design:                             1 file
 ```
@@ -61,7 +61,7 @@ classes below by the lowering/checking path that consumes it.
 
 | Inventory class | Extraction/count rule | Outcome under stable views |
 | --- | --- | --- |
-| Existing outer dependency | The 345 explicit `views` declarations above, when used to read memory already owned by the caller or an enclosing resource | Preserve the outer dependency. A view grants read access for the checked scope; it does not create an independent owner or lifetime. The V13 ordinary-reader, nested-reader, and partial-borrow examples exercise this class. |
+| Existing outer dependency | The 337 explicit `views` declarations above, when used to read memory already owned by the caller or an enclosing resource | Preserve the outer dependency. A view grants read access for the checked scope; it does not create an independent owner or lifetime. The V13 ordinary-reader, nested-reader, and partial-borrow examples exercise this class. |
 | Returned input access | Function/resource return planning that carries a view derived from an input occurrence. The relevant implementation paths are `function_resource_summary`, `evaluate_contract_return_resources`, `candidate_output_views`, `returned_views`, and `recover_candidate_stable_view_resources` in `src/kernel/functions.rs` | Preserve only the checked input dependency and its occurrence identity. A returned view cannot mint a fresh authority or extend the input lifetime. This is the class for returned input access, rather than an escaping loan. |
 | Immutable support | Resource-fact observation and composite expansion: `resource_clause_section_supply`, `selected_instance_arm_views`, `expand_composite_resource_fact`, and the selected-arm helpers in `src/kernel/loops.rs` | Use views as immutable support for the fact while its source occurrence remains live. The `stable_view_fact_workflow` mdtest covers the public validation/lowering path; dynamic loan capture remains the V12 follow-up dependency. |
 | Unsupported escape | Any output form that would retain a stable view after its checked dependency ends. There is no supported `produces views` surface form. The raw returned-pointer case in `stable_view_returned_pointer` is deliberately classified here for a stable loan: the C pointer remains legal only because the caller retains independent ownership and performs the later write through that ownership. | Reject an escaping stable loan. Do not add implicit lifetime extension or an output resource that hides the missing dependency. |
@@ -119,4 +119,7 @@ the concrete V12 dynamic dependency, rather than a reason to weaken
 When V12 dynamic capture is integrated, rerun the extraction and this table's
 fixtures. A changed count requires a classification entry or an explicit
 unsupported-escape rejection; a newly accepted output must name its retained
-input occurrence and prove that its lifetime is still live at every use.
+input occurrence and prove that its lifetime is still live at every use. The
+V17 contract migrations reduced the snapshot from 200 files/345 declarations
+to 198 files/337 declarations by removing redundant view requirements; they
+did not change the four semantic classes above.
