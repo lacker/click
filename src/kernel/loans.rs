@@ -623,7 +623,10 @@ impl StableViewTransferPlan {
         })
     }
 
-    pub(crate) fn recheck_entry(&self, predecessor: &LoanLedger) -> Result<LoanLedger, LoanRefusal> {
+    pub(crate) fn recheck_entry(
+        &self,
+        predecessor: &LoanLedger,
+    ) -> Result<LoanLedger, LoanRefusal> {
         let mut current = predecessor.clone();
         for transition in &self.entry_transitions {
             current = current.apply(transition)?;
