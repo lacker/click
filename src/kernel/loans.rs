@@ -2970,13 +2970,13 @@ mod tests {
         let ledger = ledger.apply(&opening.transition).unwrap();
         assert_eq!(
             ledger
-                .active_memory_overlaps(&memory(2, 4, false).memory_range().unwrap())
+                .active_memory_overlaps(memory(2, 4, false).memory_range().unwrap())
                 .unwrap(),
             vec![opening.loan]
         );
         assert!(
             ledger
-                .active_memory_overlaps(&memory(8, 10, false).memory_range().unwrap())
+                .active_memory_overlaps(memory(8, 10, false).memory_range().unwrap())
                 .unwrap()
                 .is_empty()
         );
@@ -3000,7 +3000,7 @@ mod tests {
         let ledger = ledger.apply(&ended).unwrap();
         assert!(
             ledger
-                .active_memory_overlaps(&memory(2, 4, false).memory_range().unwrap())
+                .active_memory_overlaps(memory(2, 4, false).memory_range().unwrap())
                 .unwrap()
                 .is_empty()
         );
