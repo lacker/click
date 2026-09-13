@@ -1450,37 +1450,98 @@ fn collect_bitvector_memory_load_keys(
     }
 }
 
-/// Return the concrete memory cells read by one lowered condition, retaining
-/// the source snapshot and value width needed by dynamic resource checks.
-/// This is deliberately limited to the exact condition tree already lowered
-/// by the kernel; opaque predicates are expanded by the proof layer before a
-/// resource fact reaches this helper.
-pub(crate) fn current_memory_loads_in_condition(
-    condition: &ConditionTerm,
+/// Collect every current-snapshot load nested in a lowered term.  This is the
+/// boundary used by dynamic resource checking, so an unrecognised carrier is
+/// an error rather than an invitation to silently forget a memory dependency.
+pub(crate) fn current_memory_loads_in_term(
+    term: &Term,
     current_memory: &CMemory,
-) -> Vec<(Pointer, u32)> {
+) -> Result<Vec<(Pointer, u32)>, String> {
     let mut loads = Vec::new();
-    collect_condition_memory_loads(condition, current_memory, &mut loads);
-    loads
+    collect_term_memory_loads(term, current_memory, &mut loads, &mut BTreeSet::new())?;
+    loads.sort();
+    loads.dedup();
+    Ok(loads)
+}
+
+fn collect_term_memory_loads(
+    term: &Term,
+    current_memory: &CMemory,
+    loads: &mut Vec<(Pointer, u32)>,
+    seen_integers: &mut BTreeSet<u64>,
+) -> Result<(), String> {
+    match term {
+        Term::Condition(condition) => {
+            collect_condition_memory_loads(condition, current_memory, loads, seen_integers)
+        }
+        Term::Bitvector32(term) => {
+            collect_bitvector_memory_loads(term, current_memory, loads, None, seen_integers)
+        }
+        Term::Integer(term) => {
+            collect_integer_memory_loads(term, current_memory, loads, seen_integers)
+        }
+        Term::PointerOffset(offset) => {
+            collect_pointer_offset_memory_loads(offset, current_memory, loads, seen_integers)
+        }
+        Term::CValue(value) => {
+            collect_cvalue_memory_loads(value, current_memory, loads, seen_integers)
+        }
+        Term::Sequence(sequence) => {
+            collect_sequence_memory_loads(sequence, current_memory, loads, seen_integers)
+        }
+        Term::Algebraic(term) => {
+            collect_algebraic_memory_loads(term, current_memory, loads, seen_integers)
+        }
+        Term::CExpressionOutcome(outcome) => match outcome {
+            CExpressionOutcome::Value(value) => {
+                collect_cvalue_memory_loads(value, current_memory, loads, seen_integers)
+            }
+            CExpressionOutcome::UndefinedBehavior(_) | CExpressionOutcome::RuntimeError(_) => {
+                Ok(())
+            }
+        },
+        Term::CStatementOutcome(outcome) => match outcome {
+            CStatementOutcome::Normal(state)
+            | CStatementOutcome::Break(state)
+            | CStatementOutcome::Continue(state) => {
+                let _ = state;
+                Ok(())
+            }
+            CStatementOutcome::Return { value, state } => {
+                let _ = state;
+                collect_cvalue_memory_loads(value, current_memory, loads, seen_integers)
+            }
+            CStatementOutcome::VerificationDiverges
+            | CStatementOutcome::UndefinedBehavior(_)
+            | CStatementOutcome::RuntimeError(_) => Ok(()),
+        },
+        Term::CFunctionOutcome(outcome) => match outcome {
+            CFunctionOutcome::Return { value, state } => {
+                let _ = state;
+                collect_cvalue_memory_loads(value, current_memory, loads, seen_integers)
+            }
+            CFunctionOutcome::VerificationDiverges
+            | CFunctionOutcome::UndefinedBehavior(_)
+            | CFunctionOutcome::RuntimeError(_) => Ok(()),
+        },
+        Term::CMemory(_) | Term::CState(_) => Ok(()),
+    }
 }
 
 fn collect_condition_memory_loads(
     condition: &ConditionTerm,
     current_memory: &CMemory,
     loads: &mut Vec<(Pointer, u32)>,
-) {
+    seen_integers: &mut BTreeSet<u64>,
+) -> Result<(), String> {
     let mut collect_binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
-        collect_bitvector_memory_loads(left, current_memory, loads);
-        collect_bitvector_memory_loads(right, current_memory, loads);
+        collect_bitvector_memory_loads(left, current_memory, loads, Some(4), seen_integers)?;
+        collect_bitvector_memory_loads(right, current_memory, loads, Some(4), seen_integers)
     };
     match condition {
         ConditionTerm::AlgebraicEqual(left, right) => {
-            left.for_each_bitvector_term(|term| {
-                collect_bitvector_memory_loads(term, current_memory, loads)
-            });
-            right.for_each_bitvector_term(|term| {
-                collect_bitvector_memory_loads(term, current_memory, loads)
-            });
+            collect_algebraic_memory_loads(left, current_memory, loads, seen_integers)?;
+            collect_algebraic_memory_loads(right, current_memory, loads, seen_integers)
         }
         ConditionTerm::Bitvector32SignedLessThan(left, right)
         | ConditionTerm::Bitvector32SignedLessEqual(left, right)
@@ -1491,8 +1552,10 @@ fn collect_condition_memory_loads(
         | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
         | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
-        | ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            collect_binary(left, right)
+        }
+        ConditionTerm::Bitvector64SignedLessThan(left, right)
         | ConditionTerm::Bitvector64SignedLessEqual(left, right)
         | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
         | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
@@ -1506,29 +1569,52 @@ fn collect_condition_memory_loads(
         | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
         | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
         | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
-            collect_binary(left, right)
+            collect_bitvector_memory_loads(left, current_memory, loads, Some(8), seen_integers)?;
+            collect_bitvector_memory_loads(right, current_memory, loads, Some(8), seen_integers)
         }
         ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+            let width = if matches!(condition, ConditionTerm::Float32(_)) {
+                4
+            } else {
+                8
+            };
+            let mut result = Ok(());
             float_condition.for_each_bitvector_term(|term| {
-                collect_bitvector_memory_loads(term, current_memory, loads)
+                if result.is_ok() {
+                    result = collect_bitvector_memory_loads(
+                        term,
+                        current_memory,
+                        loads,
+                        Some(width),
+                        seen_integers,
+                    );
+                }
             });
+            result
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
-            collect_pointer_offset_memory_loads(left, current_memory, loads);
-            collect_pointer_offset_memory_loads(right, current_memory, loads);
+            collect_pointer_offset_memory_loads(left, current_memory, loads, seen_integers)?;
+            collect_pointer_offset_memory_loads(right, current_memory, loads, seen_integers)
         }
         ConditionTerm::PointerEqual(left, right) => {
-            collect_pointer_offset_memory_loads(&left.offset, current_memory, loads);
-            collect_pointer_offset_memory_loads(&right.offset, current_memory, loads);
+            collect_pointer_offset_memory_loads(
+                &left.offset,
+                current_memory,
+                loads,
+                seen_integers,
+            )?;
+            collect_pointer_offset_memory_loads(&right.offset, current_memory, loads, seen_integers)
         }
-        ConditionTerm::IntegerLessThan(_, _)
-        | ConditionTerm::IntegerLessEqual(_, _)
-        | ConditionTerm::IntegerGreaterThan(_, _)
-        | ConditionTerm::IntegerGreaterEqual(_, _)
-        | ConditionTerm::IntegerEqual(_, _)
-        | ConditionTerm::IntegerNotEqual(_, _)
-        | ConditionTerm::Constant(_)
-        | ConditionTerm::Variable(_) => {}
+        ConditionTerm::IntegerLessThan(left, right)
+        | ConditionTerm::IntegerLessEqual(left, right)
+        | ConditionTerm::IntegerGreaterThan(left, right)
+        | ConditionTerm::IntegerGreaterEqual(left, right)
+        | ConditionTerm::IntegerEqual(left, right)
+        | ConditionTerm::IntegerNotEqual(left, right) => {
+            collect_integer_memory_loads(left, current_memory, loads, seen_integers)?;
+            collect_integer_memory_loads(right, current_memory, loads, seen_integers)
+        }
+        ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => Ok(()),
     }
 }
 
@@ -1536,16 +1622,19 @@ fn collect_pointer_offset_memory_loads(
     offset: &PointerOffsetTerm,
     current_memory: &CMemory,
     loads: &mut Vec<(Pointer, u32)>,
-) {
+    seen_integers: &mut BTreeSet<u64>,
+) -> Result<(), String> {
     match offset {
-        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => Ok(()),
         PointerOffsetTerm::Add(left, right) => {
-            collect_pointer_offset_memory_loads(left, current_memory, loads);
-            collect_pointer_offset_memory_loads(right, current_memory, loads);
+            collect_pointer_offset_memory_loads(left, current_memory, loads, seen_integers)?;
+            collect_pointer_offset_memory_loads(right, current_memory, loads, seen_integers)
         }
-        PointerOffsetTerm::Int32Scaled { value, .. }
-        | PointerOffsetTerm::Int64Scaled { value, .. } => {
-            collect_bitvector_memory_loads(value, current_memory, loads)
+        PointerOffsetTerm::Int32Scaled { value, .. } => {
+            collect_bitvector_memory_loads(value, current_memory, loads, Some(4), seen_integers)
+        }
+        PointerOffsetTerm::Int64Scaled { value, .. } => {
+            collect_bitvector_memory_loads(value, current_memory, loads, Some(8), seen_integers)
         }
     }
 }
@@ -1554,25 +1643,46 @@ fn collect_bitvector_memory_loads(
     term: &Bitvector32Term,
     current_memory: &CMemory,
     loads: &mut Vec<(Pointer, u32)>,
-) {
+    width: Option<u32>,
+    seen_integers: &mut BTreeSet<u64>,
+) -> Result<(), String> {
+    collect_bitvector_memory_loads_with_width(term, current_memory, loads, width, seen_integers)
+}
+
+fn collect_bitvector_memory_loads_with_width(
+    term: &Bitvector32Term,
+    current_memory: &CMemory,
+    loads: &mut Vec<(Pointer, u32)>,
+    width: Option<u32>,
+    seen_integers: &mut BTreeSet<u64>,
+) -> Result<(), String> {
     match term {
         Bitvector32Term::Constant(_)
         | Bitvector32Term::Variable(_)
         | Bitvector32Term::Int64Constant(_)
-        | Bitvector32Term::UInt64Constant(_)
-        | Bitvector32Term::IntegerToMachine { .. } => {}
+        | Bitvector32Term::UInt64Constant(_) => Ok(()),
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             if CMemorySnapshotIdentity::of(memory.memory())
                 == CMemorySnapshotIdentity::of(current_memory)
-                && let CExpressionOutcome::Value(value) = memory.memory().load(pointer)
             {
-                loads.push((pointer.as_ref().clone(), value.byte_width()));
+                let width = width.ok_or_else(|| {
+                    "current memory load has no statically known byte width".to_string()
+                })?;
+                loads.push((pointer.as_ref().clone(), width));
             }
-            collect_pointer_offset_memory_loads(&pointer.offset, current_memory, loads);
+            collect_pointer_offset_memory_loads(
+                &pointer.offset,
+                current_memory,
+                loads,
+                seen_integers,
+            )
         }
-        Bitvector32Term::PointerAddress(pointer) => {
-            collect_pointer_offset_memory_loads(&pointer.offset, current_memory, loads);
-        }
+        Bitvector32Term::PointerAddress(pointer) => collect_pointer_offset_memory_loads(
+            &pointer.offset,
+            current_memory,
+            loads,
+            seen_integers,
+        ),
         Bitvector32Term::Add(left, right)
         | Bitvector32Term::Subtract(left, right)
         | Bitvector32Term::Multiply(left, right)
@@ -1608,8 +1718,48 @@ fn collect_bitvector_memory_loads(
         | Bitvector32Term::UInt64BitwiseXor(left, right)
         | Bitvector32Term::Float32Binary { left, right, .. }
         | Bitvector32Term::Float64Binary { left, right, .. } => {
-            collect_bitvector_memory_loads(left, current_memory, loads);
-            collect_bitvector_memory_loads(right, current_memory, loads);
+            let child_width = if matches!(
+                term,
+                Bitvector32Term::Int64Add(..)
+                    | Bitvector32Term::Int64Subtract(..)
+                    | Bitvector32Term::Int64Multiply(..)
+                    | Bitvector32Term::Int64Divide(..)
+                    | Bitvector32Term::Int64Remainder(..)
+                    | Bitvector32Term::Int64ShiftLeft(..)
+                    | Bitvector32Term::Int64ArithmeticShiftRight(..)
+                    | Bitvector32Term::Int64BitwiseAnd(..)
+                    | Bitvector32Term::Int64BitwiseOr(..)
+                    | Bitvector32Term::Int64BitwiseXor(..)
+                    | Bitvector32Term::UInt64Add(..)
+                    | Bitvector32Term::UInt64Subtract(..)
+                    | Bitvector32Term::UInt64Multiply(..)
+                    | Bitvector32Term::UInt64Divide(..)
+                    | Bitvector32Term::UInt64Remainder(..)
+                    | Bitvector32Term::UInt64ShiftLeft(..)
+                    | Bitvector32Term::UInt64LogicalShiftRight(..)
+                    | Bitvector32Term::UInt64BitwiseAnd(..)
+                    | Bitvector32Term::UInt64BitwiseOr(..)
+                    | Bitvector32Term::UInt64BitwiseXor(..)
+                    | Bitvector32Term::Float64Binary { .. }
+            ) {
+                Some(8)
+            } else {
+                width
+            };
+            collect_bitvector_memory_loads_with_width(
+                left,
+                current_memory,
+                loads,
+                child_width,
+                seen_integers,
+            )?;
+            collect_bitvector_memory_loads_with_width(
+                right,
+                current_memory,
+                loads,
+                child_width,
+                seen_integers,
+            )
         }
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::Int64FromUInt32(value)
@@ -1622,16 +1772,54 @@ fn collect_bitvector_memory_loads(
         | Bitvector32Term::BitwiseNot(value)
         | Bitvector32Term::Float32Negate(value)
         | Bitvector32Term::Float64Negate(value) => {
-            collect_bitvector_memory_loads(value, current_memory, loads)
+            let child_width = if matches!(term, Bitvector32Term::Float64Negate(_)) {
+                Some(8)
+            } else {
+                width
+            };
+            collect_bitvector_memory_loads_with_width(
+                value,
+                current_memory,
+                loads,
+                child_width,
+                seen_integers,
+            )
+        }
+        Bitvector32Term::IntegerToMachine { value, destination } => {
+            let width = Some(match destination {
+                MachineIntegerType::Int16 | MachineIntegerType::UInt16 => 2,
+                MachineIntegerType::UInt8 => 1,
+                MachineIntegerType::Int32 | MachineIntegerType::UInt32 => 4,
+                MachineIntegerType::Int64 | MachineIntegerType::UInt64 => 8,
+            });
+            collect_integer_memory_loads_with_width(
+                value,
+                current_memory,
+                loads,
+                width,
+                seen_integers,
+            )
         }
         Bitvector32Term::If {
             condition,
             then_term,
             else_term,
         } => {
-            collect_condition_memory_loads(condition, current_memory, loads);
-            collect_bitvector_memory_loads(then_term, current_memory, loads);
-            collect_bitvector_memory_loads(else_term, current_memory, loads);
+            collect_condition_memory_loads(condition, current_memory, loads, seen_integers)?;
+            collect_bitvector_memory_loads_with_width(
+                then_term,
+                current_memory,
+                loads,
+                width,
+                seen_integers,
+            )?;
+            collect_bitvector_memory_loads_with_width(
+                else_term,
+                current_memory,
+                loads,
+                width,
+                seen_integers,
+            )
         }
         Bitvector32Term::RangeFold {
             start,
@@ -1640,18 +1828,338 @@ fn collect_bitvector_memory_loads(
             body,
             ..
         } => {
-            collect_bitvector_memory_loads(start, current_memory, loads);
-            collect_bitvector_memory_loads(end, current_memory, loads);
-            collect_bitvector_memory_loads(initial, current_memory, loads);
-            collect_bitvector_memory_loads(body, current_memory, loads);
+            collect_bitvector_memory_loads_with_width(
+                start,
+                current_memory,
+                loads,
+                width,
+                seen_integers,
+            )?;
+            collect_bitvector_memory_loads_with_width(
+                end,
+                current_memory,
+                loads,
+                width,
+                seen_integers,
+            )?;
+            collect_bitvector_memory_loads_with_width(
+                initial,
+                current_memory,
+                loads,
+                width,
+                seen_integers,
+            )?;
+            collect_bitvector_memory_loads_with_width(
+                body,
+                current_memory,
+                loads,
+                width,
+                seen_integers,
+            )
         }
         Bitvector32Term::PureFunctionApplication { arguments, .. } => {
-            for argument in arguments {
-                collect_bitvector_memory_loads(argument, current_memory, loads);
-            }
+            let _ = (arguments, width, seen_integers);
+            Err("opaque pure function may hide a current memory load".into())
         }
-        Bitvector32Term::ClickFunctionApplication { .. }
-        | Bitvector32Term::AlgebraicMatch { .. } => {}
+        Bitvector32Term::ClickFunctionApplication { .. } => {
+            Err("opaque Click function may hide a current memory load".into())
+        }
+        Bitvector32Term::AlgebraicMatch { scrutinee, arms } => {
+            collect_algebraic_memory_loads(scrutinee, current_memory, loads, seen_integers)?;
+            for arm in arms {
+                for binding in &arm.bindings {
+                    collect_algebraic_value_memory_loads(
+                        binding,
+                        current_memory,
+                        loads,
+                        seen_integers,
+                    )?;
+                }
+                collect_bitvector_memory_loads_with_width(
+                    &arm.body,
+                    current_memory,
+                    loads,
+                    width,
+                    seen_integers,
+                )?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn collect_cvalue_memory_loads(
+    value: &CValue,
+    current_memory: &CMemory,
+    loads: &mut Vec<(Pointer, u32)>,
+    seen_integers: &mut BTreeSet<u64>,
+) -> Result<(), String> {
+    match value {
+        CValue::Void => Ok(()),
+        CValue::Bool(term) | CValue::UInt8(term) => collect_bitvector_memory_loads_with_width(
+            term,
+            current_memory,
+            loads,
+            Some(1),
+            seen_integers,
+        ),
+        CValue::Int16(term) | CValue::UInt16(term) => collect_bitvector_memory_loads_with_width(
+            term,
+            current_memory,
+            loads,
+            Some(2),
+            seen_integers,
+        ),
+        CValue::Int32(term) | CValue::UInt32(term) | CValue::Float32(term) => {
+            collect_bitvector_memory_loads_with_width(
+                term,
+                current_memory,
+                loads,
+                Some(4),
+                seen_integers,
+            )
+        }
+        CValue::Int64(term) | CValue::UInt64(term) | CValue::Float64(term) => {
+            collect_bitvector_memory_loads_with_width(
+                term,
+                current_memory,
+                loads,
+                Some(8),
+                seen_integers,
+            )
+        }
+        CValue::Pointer(pointer) => collect_pointer_offset_memory_loads(
+            &pointer.pointer().offset,
+            current_memory,
+            loads,
+            seen_integers,
+        ),
+    }
+}
+
+fn collect_sequence_memory_loads(
+    sequence: &SequenceTerm,
+    current_memory: &CMemory,
+    loads: &mut Vec<(Pointer, u32)>,
+    seen_integers: &mut BTreeSet<u64>,
+) -> Result<(), String> {
+    match sequence.node.as_ref() {
+        SequenceTermNode::Literal(values) => {
+            for value in values.iter() {
+                collect_cvalue_memory_loads(value, current_memory, loads, seen_integers)?;
+            }
+            Ok(())
+        }
+        SequenceTermNode::Concat(left, right) => {
+            collect_sequence_memory_loads(left, current_memory, loads, seen_integers)?;
+            collect_sequence_memory_loads(right, current_memory, loads, seen_integers)
+        }
+    }
+}
+
+fn collect_algebraic_value_memory_loads(
+    value: &AlgebraicValue,
+    current_memory: &CMemory,
+    loads: &mut Vec<(Pointer, u32)>,
+    seen_integers: &mut BTreeSet<u64>,
+) -> Result<(), String> {
+    match value {
+        AlgebraicValue::C(value) => {
+            collect_cvalue_memory_loads(value, current_memory, loads, seen_integers)
+        }
+        AlgebraicValue::Integer(value) => {
+            collect_integer_memory_loads(value, current_memory, loads, seen_integers)
+        }
+        AlgebraicValue::Algebraic(value) => {
+            collect_algebraic_memory_loads(value, current_memory, loads, seen_integers)
+        }
+    }
+}
+
+fn collect_algebraic_memory_loads(
+    term: &AlgebraicTerm,
+    current_memory: &CMemory,
+    loads: &mut Vec<(Pointer, u32)>,
+    seen_integers: &mut BTreeSet<u64>,
+) -> Result<(), String> {
+    match &term.node {
+        AlgebraicTermNode::Variable(_) => Ok(()),
+        AlgebraicTermNode::Constructor { fields, .. } => {
+            for field in fields {
+                collect_algebraic_value_memory_loads(field, current_memory, loads, seen_integers)?;
+            }
+            Ok(())
+        }
+        AlgebraicTermNode::Match { scrutinee, arms } => {
+            collect_algebraic_memory_loads(scrutinee, current_memory, loads, seen_integers)?;
+            for arm in arms {
+                for binding in &arm.bindings {
+                    collect_algebraic_value_memory_loads(
+                        binding,
+                        current_memory,
+                        loads,
+                        seen_integers,
+                    )?;
+                }
+                collect_algebraic_memory_loads(&arm.body, current_memory, loads, seen_integers)?;
+            }
+            Ok(())
+        }
+        AlgebraicTermNode::PureFunctionApplication { arguments, .. } => {
+            let _ = (arguments, current_memory, loads, seen_integers);
+            Err("opaque algebraic function may hide a current memory load".into())
+        }
+    }
+}
+
+fn collect_integer_memory_loads(
+    term: &IntegerTerm,
+    current_memory: &CMemory,
+    loads: &mut Vec<(Pointer, u32)>,
+    seen_integers: &mut BTreeSet<u64>,
+) -> Result<(), String> {
+    collect_integer_node_memory_loads(term, current_memory, loads, None, seen_integers)
+}
+
+fn collect_integer_memory_loads_with_width(
+    term: &SharedIntegerTerm,
+    current_memory: &CMemory,
+    loads: &mut Vec<(Pointer, u32)>,
+    width: Option<u32>,
+    seen_integers: &mut BTreeSet<u64>,
+) -> Result<(), String> {
+    if !seen_integers.insert(term.id()) {
+        return Ok(());
+    }
+    collect_integer_node_memory_loads(term.as_ref(), current_memory, loads, width, seen_integers)
+}
+
+fn collect_integer_node_memory_loads(
+    term: &IntegerTerm,
+    current_memory: &CMemory,
+    loads: &mut Vec<(Pointer, u32)>,
+    width: Option<u32>,
+    seen_integers: &mut BTreeSet<u64>,
+) -> Result<(), String> {
+    match term {
+        IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => Ok(()),
+        IntegerTerm::Machine(value) => collect_bitvector_memory_loads_with_width(
+            value.value(),
+            current_memory,
+            loads,
+            Some(match value.ty() {
+                MachineIntegerType::UInt8 => 1,
+                MachineIntegerType::Int16 | MachineIntegerType::UInt16 => 2,
+                MachineIntegerType::Int32 | MachineIntegerType::UInt32 => 4,
+                MachineIntegerType::Int64 | MachineIntegerType::UInt64 => 8,
+            }),
+            seen_integers,
+        ),
+        IntegerTerm::Negate(value) => collect_integer_memory_loads_with_width(
+            value,
+            current_memory,
+            loads,
+            width,
+            seen_integers,
+        ),
+        IntegerTerm::Add(left, right)
+        | IntegerTerm::Subtract(left, right)
+        | IntegerTerm::Multiply(left, right) => {
+            collect_integer_memory_loads_with_width(
+                left,
+                current_memory,
+                loads,
+                width,
+                seen_integers,
+            )?;
+            collect_integer_memory_loads_with_width(
+                right,
+                current_memory,
+                loads,
+                width,
+                seen_integers,
+            )
+        }
+        IntegerTerm::PureFunctionApplication(application) => {
+            let _ = (application, current_memory, loads, seen_integers);
+            Err("opaque integer function may hide a current memory load".into())
+        }
+        IntegerTerm::AlgebraicMatch { scrutinee, arms } => {
+            collect_algebraic_memory_loads(scrutinee, current_memory, loads, seen_integers)?;
+            for arm in arms {
+                for binding in &arm.bindings {
+                    collect_algebraic_value_memory_loads(
+                        binding,
+                        current_memory,
+                        loads,
+                        seen_integers,
+                    )?;
+                }
+                collect_integer_memory_loads_with_width(
+                    &arm.body,
+                    current_memory,
+                    loads,
+                    width,
+                    seen_integers,
+                )?;
+            }
+            Ok(())
+        }
+        IntegerTerm::RangeFold {
+            index,
+            initial,
+            body,
+            ..
+        } => {
+            match index {
+                IntegerRangeFoldIndex::Int32 { start, end } => {
+                    collect_bitvector_memory_loads_with_width(
+                        start.value(),
+                        current_memory,
+                        loads,
+                        Some(4),
+                        seen_integers,
+                    )?;
+                    collect_bitvector_memory_loads_with_width(
+                        end.value(),
+                        current_memory,
+                        loads,
+                        Some(4),
+                        seen_integers,
+                    )?;
+                }
+                IntegerRangeFoldIndex::Integer { start, end } => {
+                    collect_integer_memory_loads_with_width(
+                        start,
+                        current_memory,
+                        loads,
+                        width,
+                        seen_integers,
+                    )?;
+                    collect_integer_memory_loads_with_width(
+                        end,
+                        current_memory,
+                        loads,
+                        width,
+                        seen_integers,
+                    )?;
+                }
+            }
+            collect_integer_memory_loads_with_width(
+                initial,
+                current_memory,
+                loads,
+                width,
+                seen_integers,
+            )?;
+            collect_integer_memory_loads_with_width(
+                body,
+                current_memory,
+                loads,
+                width,
+                seen_integers,
+            )
+        }
     }
 }
 
@@ -5015,5 +5523,52 @@ mod stated_requirement_tests {
             })
         });
         assert!(!weakened.states_required_goal(&renamed));
+    }
+}
+
+#[cfg(test)]
+mod dynamic_current_load_tests {
+    use super::*;
+
+    fn pointer() -> Pointer {
+        Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    #[test]
+    fn records_unmaterialized_loads_and_integer_machine_carriers() {
+        let pointer = pointer();
+        let memory = CMemory::new();
+        let snapshot = crate::kernel::intern_c_memory_ref(&memory);
+        let load = Bitvector32Term::MemoryLoad(snapshot, Box::new(pointer.clone()));
+        let value = Term::CValue(CValue::Int64(load.clone()));
+        assert_eq!(
+            current_memory_loads_in_term(&value, &memory).unwrap(),
+            vec![(pointer.clone(), 8)]
+        );
+
+        let integer = SharedIntegerTerm::intern(IntegerTerm::Machine(
+            SharedMachineIntegerTerm::intern(MachineIntegerType::Int64, load),
+        ));
+        let condition = Term::Condition(ConditionTerm::IntegerEqual(
+            integer,
+            SharedIntegerTerm::intern(IntegerTerm::constant_i64(0)),
+        ));
+        assert_eq!(
+            current_memory_loads_in_term(&condition, &memory).unwrap(),
+            vec![(pointer, 8)]
+        );
+    }
+
+    #[test]
+    fn opaque_click_function_carrier_is_rejected() {
+        let memory = CMemory::new();
+        let term = Term::Bitvector32(Bitvector32Term::ClickFunctionApplication {
+            name: "opaque".into(),
+            arguments: Vec::new(),
+        });
+        assert!(current_memory_loads_in_term(&term, &memory).is_err());
     }
 }

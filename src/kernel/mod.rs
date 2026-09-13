@@ -51,7 +51,7 @@ pub(crate) use spec::{capture_spec_algebraic_value, capture_spec_integer_value};
 mod termination;
 
 pub use api::*;
-pub(crate) use assumptions::current_memory_loads_in_condition;
+pub(crate) use assumptions::current_memory_loads_in_term;
 pub(crate) use assumptions::{
     PureFactContextIdScope, arm_frame_composite_definitions, capture_implicit_reasoning_provenance,
     collect_reasoning_provenance, finite_forall_goal_instances,

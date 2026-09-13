@@ -183,6 +183,17 @@ fn unique_borrowed_resource_dependency(
     if saw_bound && saw_unbound {
         return Err("equal viewed resource occurrences mix bound and unbound authorities".into());
     }
+    if let Some(binding) = &selected {
+        let ledger = state
+            .loan_ledger()
+            .ok_or_else(|| "selected viewed resource has no active loan ledger".to_string())?;
+        let holder = state
+            .loan_participant()
+            .ok_or_else(|| "selected viewed resource has no active loan holder".to_string())?;
+        ledger
+            .validate_view_binding(binding.clone(), holder)
+            .map_err(|error| format!("selected viewed resource loan is not live: {error:?}"))?;
+    }
     Ok(selected)
 }
 
@@ -196,6 +207,36 @@ fn same_loan_authority(
         && left.support == right.support
 }
 
+/// Temporary projections are indexed once per resource rewrite.  This keeps
+/// dynamic-load checking proportional to the loads and matching view ranges,
+/// rather than multiplying every body fact by every temporary view.
+struct DynamicViewDependencyIndex {
+    bound: ResourceContext,
+    bound_dependencies:
+        BTreeMap<crate::kernel::ResourceOccurrenceId, crate::kernel::LoanViewBinding>,
+    unbound: ResourceContext,
+}
+
+impl DynamicViewDependencyIndex {
+    fn new(
+        bound_views: &[(CResourceFact, crate::kernel::LoanViewBinding)],
+        unbound_views: &[CResourceFact],
+    ) -> Self {
+        let (bound, inserted) = ResourceContext::new()
+            .unchecked_with_facts_and_occurrences(bound_views.iter().map(|(view, _)| view.clone()));
+        let bound_dependencies = inserted
+            .into_iter()
+            .zip(bound_views.iter())
+            .map(|((_, occurrence), (_, binding))| (occurrence, binding.clone()))
+            .collect();
+        Self {
+            bound,
+            bound_dependencies,
+            unbound: ResourceContext::new().unchecked_with_facts(unbound_views.iter().cloned()),
+        }
+    }
+}
+
 /// Find the live stable-view authority needed by the current memory loads in
 /// one lowered body fact.  Loads from an older memory snapshot are historical
 /// scalar facts and deliberately do not participate in this check.  The
@@ -205,139 +246,105 @@ fn dynamic_body_fact_dependency(
     required: &Proposition,
     state: &CState,
     assumptions: &PureFactContext,
-    temporary_views: &[(CResourceFact, crate::kernel::LoanViewBinding)],
-    temporary_unbound_views: &[CResourceFact],
+    temporary_views: &DynamicViewDependencyIndex,
 ) -> Result<Option<crate::kernel::LoanViewBinding>, String> {
+    fn check_load(
+        pointer: Pointer,
+        width: u32,
+        state: &CState,
+        assumptions: &PureFactContext,
+        temporary_views: &DynamicViewDependencyIndex,
+        selected: &mut Option<crate::kernel::LoanViewBinding>,
+    ) -> Result<(), String> {
+        let required_view = CResourceFact::view_memory(CMemoryRange::new_with_element_width(
+            pointer,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+            width,
+        ));
+        if !temporary_views
+            .unbound
+            .view_occurrences_for_fact(&required_view, assumptions)
+            .is_empty()
+        {
+            return Err("current body fact is covered by an unbound view".into());
+        }
+        let mut candidates = Vec::new();
+        for occurrence in state
+            .resources()
+            .view_occurrences_for_fact(&required_view, assumptions)
+        {
+            let Some(candidate) = state.resources().loan_dependency(occurrence) else {
+                return Err(
+                    "current body fact is covered by an unbound viewed memory occurrence".into(),
+                );
+            };
+            candidates.push(candidate.clone());
+        }
+        for occurrence in temporary_views
+            .bound
+            .view_occurrences_for_fact(&required_view, assumptions)
+        {
+            let candidate = temporary_views
+                .bound_dependencies
+                .get(&occurrence)
+                .ok_or_else(|| "temporary view dependency index lost an occurrence".to_string())?;
+            candidates.push(candidate.clone());
+        }
+        if candidates.is_empty() {
+            if state
+                .resources()
+                .directly_supporting_owned_entry(&required_view, assumptions)
+                .is_some()
+            {
+                return Ok(());
+            }
+            return Err(
+                "current body fact reads memory outside every live viewed-memory dependency".into(),
+            );
+        }
+        let ledger = state.loan_ledger().ok_or_else(|| {
+            "current viewed-memory dependency has no active loan ledger".to_string()
+        })?;
+        let holder = state
+            .loan_participant()
+            .ok_or_else(|| "current viewed-memory dependency has no loan holder".to_string())?;
+        for candidate in candidates {
+            let checked = crate::kernel::LoanViewBinding {
+                viewed: required_view.clone(),
+                ..candidate
+            };
+            ledger
+                .validate_view_binding(checked.clone(), holder)
+                .map_err(|error| {
+                    format!("current viewed-memory dependency is not live: {error:?}")
+                })?;
+            if selected
+                .as_ref()
+                .is_some_and(|existing| !same_loan_authority(existing, &checked))
+            {
+                return Err("one body fact depends on different stable-view authorities".into());
+            }
+            *selected = Some(checked);
+        }
+        Ok(())
+    }
     fn walk_term(
         term: &Term,
         state: &CState,
         assumptions: &PureFactContext,
-        temporary_views: &[(CResourceFact, crate::kernel::LoanViewBinding)],
-        temporary_unbound_views: &[CResourceFact],
+        temporary_views: &DynamicViewDependencyIndex,
         selected: &mut Option<crate::kernel::LoanViewBinding>,
     ) -> Result<(), String> {
-        match term {
-            Term::Condition(condition) => walk_condition(
-                condition,
+        for (pointer, width) in crate::kernel::current_memory_loads_in_term(term, state.memory())? {
+            check_load(
+                pointer,
+                width,
                 state,
                 assumptions,
                 temporary_views,
-                temporary_unbound_views,
                 selected,
-            ),
-            Term::Bitvector32(term) => {
-                let condition = ConditionTerm::Bitvector32Equal(
-                    Box::new(term.clone()),
-                    Box::new(Bitvector32Term::Constant(0)),
-                );
-                walk_condition(
-                    &condition,
-                    state,
-                    assumptions,
-                    temporary_views,
-                    temporary_unbound_views,
-                    selected,
-                )
-            }
-            Term::PointerOffset(offset) => {
-                let condition = ConditionTerm::PointerOffsetEqual(
-                    Box::new(offset.clone()),
-                    Box::new(offset.clone()),
-                );
-                walk_condition(
-                    &condition,
-                    state,
-                    assumptions,
-                    temporary_views,
-                    temporary_unbound_views,
-                    selected,
-                )
-            }
-            _ => Ok(()),
-        }
-    }
-    fn walk_condition(
-        condition: &ConditionTerm,
-        state: &CState,
-        assumptions: &PureFactContext,
-        temporary_views: &[(CResourceFact, crate::kernel::LoanViewBinding)],
-        temporary_unbound_views: &[CResourceFact],
-        selected: &mut Option<crate::kernel::LoanViewBinding>,
-    ) -> Result<(), String> {
-        for (pointer, width) in
-            crate::kernel::current_memory_loads_in_condition(condition, state.memory())
-        {
-            let required_view = CResourceFact::view_memory(CMemoryRange::new_with_element_width(
-                pointer,
-                Bitvector32Term::Constant(0),
-                Bitvector32Term::Constant(1),
-                width,
-            ));
-            if temporary_unbound_views.iter().any(|view| {
-                ResourceContext::new()
-                    .unchecked_with_fact(view.clone())
-                    .satisfies_fact(&required_view, assumptions)
-            }) {
-                return Err("current body fact is covered by an unbound view".into());
-            }
-            let mut candidates = Vec::new();
-            for occurrence in state
-                .resources()
-                .view_occurrences_for_fact(&required_view, assumptions)
-            {
-                let Some(candidate) = state.resources().loan_dependency(occurrence) else {
-                    return Err(
-                        "current body fact is covered by an unbound viewed memory occurrence"
-                            .into(),
-                    );
-                };
-                candidates.push(candidate.clone());
-            }
-            for (view, candidate) in temporary_views {
-                if ResourceContext::new()
-                    .unchecked_with_fact(view.clone())
-                    .satisfies_fact(&required_view, assumptions)
-                {
-                    candidates.push(candidate.clone());
-                }
-            }
-            if candidates.is_empty() {
-                if state
-                    .resources()
-                    .directly_supporting_owned_entry(&required_view, assumptions)
-                    .is_some()
-                {
-                    continue;
-                }
-                return Err(
-                    "current body fact reads memory outside every live viewed-memory dependency"
-                        .into(),
-                );
-            }
-            let ledger = state.loan_ledger().ok_or_else(|| {
-                "current viewed-memory dependency has no active loan ledger".to_string()
-            })?;
-            let holder = state
-                .loan_participant()
-                .ok_or_else(|| "current viewed-memory dependency has no loan holder".to_string())?;
-            for candidate in candidates {
-                let checked = crate::kernel::LoanViewBinding {
-                    viewed: required_view.clone(),
-                    ..candidate
-                };
-                ledger
-                    .validate_view_binding(checked.clone(), holder)
-                    .map_err(|error| {
-                        format!("current viewed-memory dependency is not live: {error:?}")
-                    })?;
-                if selected
-                    .as_ref()
-                    .is_some_and(|existing| !same_loan_authority(existing, &checked))
-                {
-                    return Err("one body fact depends on different stable-view authorities".into());
-                }
-                *selected = Some(checked);
-            }
+            )?;
         }
         Ok(())
     }
@@ -345,87 +352,89 @@ fn dynamic_body_fact_dependency(
         proposition: &Proposition,
         state: &CState,
         assumptions: &PureFactContext,
-        temporary_views: &[(CResourceFact, crate::kernel::LoanViewBinding)],
-        temporary_unbound_views: &[CResourceFact],
+        temporary_views: &DynamicViewDependencyIndex,
         selected: &mut Option<crate::kernel::LoanViewBinding>,
     ) -> Result<(), String> {
         match proposition {
-            Proposition::ConditionIs(condition, _) => walk_condition(
-                condition,
+            Proposition::ConditionIs(condition, _) => walk_term(
+                &Term::Condition(condition.clone()),
                 state,
                 assumptions,
                 temporary_views,
-                temporary_unbound_views,
                 selected,
             ),
             Proposition::Equal(left, right) => {
-                walk_term(
-                    left,
-                    state,
-                    assumptions,
-                    temporary_views,
-                    temporary_unbound_views,
-                    selected,
-                )?;
-                walk_term(
-                    right,
-                    state,
-                    assumptions,
-                    temporary_views,
-                    temporary_unbound_views,
-                    selected,
-                )
+                walk_term(left, state, assumptions, temporary_views, selected)?;
+                walk_term(right, state, assumptions, temporary_views, selected)
             }
             Proposition::And(left, right)
             | Proposition::Or(left, right)
             | Proposition::Implies(left, right) => {
-                walk_proposition(
-                    left,
-                    state,
-                    assumptions,
-                    temporary_views,
-                    temporary_unbound_views,
-                    selected,
-                )?;
-                walk_proposition(
-                    right,
-                    state,
-                    assumptions,
-                    temporary_views,
-                    temporary_unbound_views,
-                    selected,
-                )
+                walk_proposition(left, state, assumptions, temporary_views, selected)?;
+                walk_proposition(right, state, assumptions, temporary_views, selected)
             }
-            Proposition::Not(body) => walk_proposition(
-                body,
+            Proposition::Not(body)
+            | Proposition::ForAll { body, .. }
+            | Proposition::Exists { body, .. } => {
+                walk_proposition(body, state, assumptions, temporary_views, selected)
+            }
+            Proposition::Predicate { arguments, .. } => {
+                for argument in arguments {
+                    walk_term(argument, state, assumptions, temporary_views, selected)?;
+                }
+                Ok(())
+            }
+            Proposition::CResourceSeparate { .. }
+            | Proposition::CResourceComposition(_)
+            | Proposition::CResourceContains { .. } => Ok(()),
+            Proposition::CMemoryLoads { outcome, .. } => match outcome {
+                CExpressionOutcome::Value(value) => walk_term(
+                    &Term::CValue(value.clone()),
+                    state,
+                    assumptions,
+                    temporary_views,
+                    selected,
+                ),
+                CExpressionOutcome::UndefinedBehavior(_) | CExpressionOutcome::RuntimeError(_) => {
+                    Ok(())
+                }
+            },
+            Proposition::CMemoryLoadable { bytes, .. }
+            | Proposition::CHeapAllocationFreed { bytes, .. } => walk_term(
+                &Term::Bitvector32(bytes.clone()),
                 state,
                 assumptions,
                 temporary_views,
-                temporary_unbound_views,
                 selected,
             ),
-            Proposition::ForAll { body, .. } | Proposition::Exists { body, .. } => {
-                walk_proposition(
-                    body,
-                    state,
-                    assumptions,
-                    temporary_views,
-                    temporary_unbound_views,
-                    selected,
-                )
+            Proposition::CMemoryDisjoint {
+                left_start,
+                left_end,
+                right_start,
+                right_end,
+                ..
+            } => {
+                for term in [left_start, left_end, right_start, right_end] {
+                    walk_term(
+                        &Term::Bitvector32(term.clone()),
+                        state,
+                        assumptions,
+                        temporary_views,
+                        selected,
+                    )?;
+                }
+                Ok(())
             }
-            _ => Ok(()),
+            Proposition::CMemoryCanStore { .. }
+            | Proposition::CMemoryMutatesOnly { .. }
+            | Proposition::CMemoryEffectSummary { .. }
+            | Proposition::CFunctionSatisfiesSpecification { .. }
+            | Proposition::CFunctionPartiallySatisfiesSpecification { .. } => Ok(()),
+            _ => Err("unsupported opaque proposition in current-load dependency".into()),
         }
     }
     let mut selected = None;
-    walk_proposition(
-        required,
-        state,
-        assumptions,
-        temporary_views,
-        temporary_unbound_views,
-        &mut selected,
-    )?;
+    walk_proposition(required, state, assumptions, temporary_views, &mut selected)?;
     Ok(selected)
 }
 
@@ -1554,6 +1563,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         })
         .unwrap_or_default();
     let mut dynamic_dependency = None;
+    let temporary_view_index = DynamicViewDependencyIndex::new(&temporary_views, &[]);
     if let Some(composite_body) = definition.composite_body() {
         for body_fact in composite_body.facts() {
             let body_fact = substitute_click_proposition(body_fact, &surface_substitutions)
@@ -1594,8 +1604,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
                 &lowered,
                 &fact_state,
                 available_pure_facts.assumptions(),
-                &temporary_views,
-                &[],
+                &temporary_view_index,
             )
             .map_err(|message| {
                 ClickError::new(format!(
@@ -3101,12 +3110,13 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
         } else {
             Vec::new()
         };
+        let temporary_view_index =
+            DynamicViewDependencyIndex::new(&temporary_views, &temporary_unbound_views);
         if let Some(binding) = dynamic_body_fact_dependency(
             &lowered_fact,
             &state,
             available_pure_facts.assumptions(),
-            &temporary_views,
-            &temporary_unbound_views,
+            &temporary_view_index,
         )
         .map_err(|message| {
             ClickError::new(format!(
@@ -3538,6 +3548,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                 temporary_unbound_views.push(lowered);
             }
         }
+        let temporary_view_index = DynamicViewDependencyIndex::new(&[], &temporary_unbound_views);
         for fact in body_facts {
             let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                     ClickError::new(format!(
@@ -3591,8 +3602,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                     _ => pre_state,
                 },
                 &body_assumptions,
-                &[],
-                &temporary_unbound_views,
+                &temporary_view_index,
             )
             .map_err(|message| {
                 ClickError::new(format!(
@@ -4528,12 +4538,12 @@ mod v11_resource_dependency_tests {
             )
             .with_loan_ledger(Some(ledger.clone()))
             .with_loan_participant(Some(lender));
+        let no_temporary_views = DynamicViewDependencyIndex::new(&[], &[]);
         let dependency = dynamic_body_fact_dependency(
             &proposition,
             &bound_state,
             &PureFactContext::new(),
-            &[],
-            &[],
+            &no_temporary_views,
         )
         .unwrap();
         assert!(
@@ -4545,8 +4555,7 @@ mod v11_resource_dependency_tests {
                 &proposition,
                 &bound_state.clone().with_loan_participant(Some(reader)),
                 &PureFactContext::new(),
-                &[],
-                &[],
+                &no_temporary_views,
             )
             .is_err(),
             "the wrong holder cannot validate the binding"
@@ -4557,13 +4566,17 @@ mod v11_resource_dependency_tests {
         assert!(
             dynamic_body_fact_dependency(
                 &proposition,
-                &bound_state.with_loan_ledger(Some(ended)),
+                &bound_state.clone().with_loan_ledger(Some(ended.clone())),
                 &PureFactContext::new(),
-                &[],
-                &[],
+                &no_temporary_views,
             )
             .is_err(),
             "an ended scope cannot validate the binding"
+        );
+        assert!(
+            unique_borrowed_resource_dependency(&bound_state.with_loan_ledger(Some(ended)), &view,)
+                .is_err(),
+            "a historical-only operation must still reject an ended binding"
         );
 
         let unbound_state = CState::new().with_memory(memory).with_resource_context(
@@ -4574,8 +4587,7 @@ mod v11_resource_dependency_tests {
                 &proposition,
                 &unbound_state,
                 &PureFactContext::new(),
-                &[],
-                &[],
+                &no_temporary_views,
             )
             .is_err()
         );
@@ -4588,11 +4600,28 @@ mod v11_resource_dependency_tests {
                 &proposition,
                 &owner_state,
                 &PureFactContext::new(),
-                &[],
-                &[],
+                &no_temporary_views,
             )
             .unwrap()
             .is_none()
+        );
+
+        let opaque = Proposition::Equal(
+            Term::Bitvector32(Bitvector32Term::ClickFunctionApplication {
+                name: "opaque".into(),
+                arguments: Vec::new(),
+            }),
+            Term::Bitvector32(Bitvector32Term::Constant(0)),
+        );
+        assert!(
+            dynamic_body_fact_dependency(
+                &opaque,
+                &owner_state,
+                &PureFactContext::new(),
+                &no_temporary_views,
+            )
+            .is_err(),
+            "an opaque current-load carrier must fail closed"
         );
     }
 }
