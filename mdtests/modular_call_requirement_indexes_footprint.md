@@ -25,7 +25,7 @@ verifying "requirement_indexed_call_clear_last.c";
 
 int32 clear_last(int32 p[], int32 n) {
     requires 1 <= n;
-    views p[0..n];
+    views p[0..n - 1];
     owns (p + (n - 1))[0..1];
     ensures result == 0;
     ensures p[n - 1] == 0;
@@ -38,7 +38,7 @@ int32 clear_last(int32 p[], int32 n) {
 
 int32 call_clear_last(int32 p[], int32 n) {
     requires 1 <= n;
-    views p[0..n];
+    views p[0..n - 1];
     owns (p + (n - 1))[0..1];
     ensures result == 0;
 } by {

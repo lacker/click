@@ -6,7 +6,6 @@ resource pool_object(
 }
 
 resource pool_slot(pool: struct pool*) {
-    views object(pool);
 }
 
 predicate valid_pool(pool: struct pool*) {
@@ -53,7 +52,7 @@ void pool_grow(struct pool* pool, int32 amount) {
     requires valid_pool(pool);
     requires 0 <= amount;
     requires defined(pool->capacity + amount);
-    views object(pool);
+    views pool->checked_out;
     owns pool->capacity;
     produces amount of pool_slot(pool);
 
@@ -153,7 +152,7 @@ void pool_checkout(struct pool* pool, struct object* object) {
 void pool_return(struct pool* pool, struct object* object) {
     requires valid_pool(pool);
     requires count(pool_object(pool, object)) == 1;
-    views object(pool);
+    views pool->capacity;
     owns pool->checked_out;
     consumes pool_object(pool, object);
     produces object(object);

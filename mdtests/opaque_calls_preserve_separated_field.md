@@ -63,7 +63,7 @@ int32 clear_changed(struct owner* owner) {
 }
 
 int32 opaque_calls_preserve_separated_field(struct owner* owner) {
-    views object(owner);
+    views owner->stable;
     owns owner->changed;
     ensures result == old(owner->stable);
 } by {
