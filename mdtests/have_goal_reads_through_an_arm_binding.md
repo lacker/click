@@ -3,33 +3,24 @@
 A proof `match` arm binds the constructor's payloads, and a struct-pointer
 binding is a memory base (package A5): `id->word` and `p->word` name the same
 cell, because the arm's `fact p == id` identifies them. A `have` goal may
-write either spelling.
+write either spelling, including a goal that also calls a pure function.
 
-It may write either spelling *or* call a pure function. It may not do both.
-`have (p->word & 1) == color_bit(color)` is checked and proved. The same goal
-with the arm's own spelling for the same cell,
-`have (id->word & 1) == color_bit(color)`, does not reach a proof at all: it
-is refused before its body runs, with `the kernel lowering produced 0 paths,
-not one`.
+`have (p->word & 1) == color_bit(color)` and
+`have (id->word & 1) == color_bit(color)` are the same goal written two ways,
+and both are checked and proved here. The third function writes the second
+spelling inside a loop's `preserve` body, which is where a recursive-structure
+proof actually needs it: the arm is entered once per iteration and the goal
+bridges the resource's own body fact to the loaded word.
 
-The two halves are each fine on their own. `have (id->word & 1) == 1` lowers
-(and then fails honestly on the fact it cannot prove), and
-`have color_bit(color) == 1` lowers. Only the combination produces no path.
-
-The cause is visible in
-`lower_fixed_state_proposition_through_kernel_recording_introductions`: a
-proposition that contains a Click function call is lowered under
-`keep_spec_loads_symbolic()`, and the symbolic-load path in
-`src/kernel/spec.rs` yields no path for a base that is an arm binding rather
-than a C local. So the pure call is what switches the load into the mode that
-cannot read the binding's cell.
-
-This blocks package C3 of
-[`issues/recursive-structure-models.md`](../issues/recursive-structure-models.md).
-The insert fixup's black-parent exit has to bridge the frame's own body fact
-`(identity->__rb_parent_color & 1) == color_bit(color)` to the loaded word the
-C `if` tests, and every spelling of that bridge is a goal or a `simp` premise
-of exactly this shape.
+A proof arm's bindings previously carried no declared type, so `id->word`
+resolved against no struct layout and lowered as a width-unknown load. On its
+own that silently read a four-byte cell instead of the owned eight-byte one
+and then failed honestly; combined with a pure call, which lowers the
+proposition with its spec loads kept symbolic, the mismatched width produced no
+path at all and the goal was refused before its body ran. A proof arm now types
+its bindings from the datatype exactly as a resource arm does, so
+`id->word` resolves against `struct node` and reads the cell the arm's
+equation names.
 
 ```c filename=arm_binding_load.c
 struct node { unsigned long word; struct node *left; };
@@ -39,6 +30,15 @@ unsigned long peek_at_the_local(struct node *p) {
 }
 
 unsigned long peek_at_the_binding(struct node *p) {
+    return p->word;
+}
+
+unsigned long spin_over_the_binding(struct node *p, int32 n) {
+    int32 i;
+    i = 0;
+    while (i < n) {
+        i = i + 1;
+    }
     return p->word;
 }
 ```
@@ -77,10 +77,9 @@ resource tree_at(p: struct node*) {
 }
 
 unsigned long peek_at_the_local(struct node* p) {
-    consumes t: tree_at(p);
+    owns t: tree_at(p);
     requires t.model != Tree::Empty;
-    produces u: tree_at(p);
-    ensures u.model == old(t.model);
+    ensures t.model == old(t.model);
 } by {
     match t.model {
         Tree::Empty => { contradiction(t.model == Tree::Empty); },
@@ -88,7 +87,7 @@ unsigned long peek_at_the_local(struct node* p) {
             unfold(t) as { left: l };
             have (p->word & 1) == color_bit(color) by { simp(); }
             step();
-            let u = fold(tree_at(p), { model: Tree::Node(id, color, left_model) },
+            let t = fold(tree_at(p), { model: Tree::Node(id, color, left_model) },
                 { left: l });
             simp();
         },
@@ -96,10 +95,9 @@ unsigned long peek_at_the_local(struct node* p) {
 }
 
 unsigned long peek_at_the_binding(struct node* p) {
-    consumes t: tree_at(p);
+    owns t: tree_at(p);
     requires t.model != Tree::Empty;
-    produces u: tree_at(p);
-    ensures u.model == old(t.model);
+    ensures t.model == old(t.model);
 } by {
     match t.model {
         Tree::Empty => { contradiction(t.model == Tree::Empty); },
@@ -107,14 +105,52 @@ unsigned long peek_at_the_binding(struct node* p) {
             unfold(t) as { left: l };
             have (id->word & 1) == color_bit(color) by { simp(); }
             step();
-            let u = fold(tree_at(p), { model: Tree::Node(id, color, left_model) },
+            let t = fold(tree_at(p), { model: Tree::Node(id, color, left_model) },
                 { left: l });
             simp();
         },
     }
 }
+
+unsigned long spin_over_the_binding(struct node* p, int32 n) {
+    requires n >= 0;
+    owns t: tree_at(p);
+    requires t.model != Tree::Empty;
+    ensures t.model == old(t.model);
+} by {
+    step();
+    step();
+    loop {
+        owns t: tree_at(p);
+        invariant i >= 0;
+        invariant i <= n;
+        invariant t.model == old(t.model);
+        invariant t.model != Tree::Empty;
+
+        initialize by simp;
+        preserve by {
+            match t.model {
+                Tree::Empty => { contradiction(t.model == Tree::Empty); },
+                Tree::Node(id, color, left_model) => {
+                    have Tree::Node(id, color, left_model) == old(t.model) by {
+                        simp() using { t.model == Tree::Node(id, color, left_model);
+                            t.model == old(t.model); }
+                    }
+                    unfold(t) as { left: l };
+                    have (id->word & 1) == color_bit(color) by { simp(); }
+                    step();
+                    let t = fold(tree_at(p), { model: Tree::Node(id, color, left_model) },
+                        { left: l });
+                    close_invariants();
+                },
+            }
+        }
+    }
+    step();
+    simp();
+}
 ```
 
 ```expect
-fail: could not lower `have` proposition: the kernel lowering produced 0 paths, not one
+pass
 ```

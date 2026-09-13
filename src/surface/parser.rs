@@ -4155,7 +4155,19 @@ impl Parser {
                     .filter(|name| self.current_contract_bindings.insert((*name).clone()))
                     .cloned()
                     .collect::<Vec<_>>();
+                // A proof arm's struct-pointer binding is a memory base in the
+                // arm body exactly as a resource arm's is (package A5), so the
+                // arm's bindings get their declared types here too. Without
+                // this, `id->word` in the body resolves against no layout and
+                // lowers as a width-unknown load, which reads a different cell
+                // from the `p->word` the same arm's `fact p == id` identifies
+                // it with.
+                let saved_struct_params = self.current_struct_params.clone();
+                let saved_arm_binding_types = std::mem::take(&mut self.current_arm_binding_types);
+                self.bind_arm_binding_types(&type_name, &variant, &bindings);
                 let tactics = self.parse_possibly_empty_tactic_block();
+                self.current_struct_params = saved_struct_params;
+                self.current_arm_binding_types = saved_arm_binding_types;
                 for name in newly_bound {
                     self.current_contract_bindings.remove(&name);
                 }

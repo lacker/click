@@ -107,6 +107,13 @@ argument at the same point; `mdtests/theorem_argument_arm_binding.md` and
 `mdtests/theorem_argument_arm_binding_algebraic.md` pin the pointer, integer,
 and model cases.
 
+A binding declared `struct ...*` is also a memory base in the arm, as it is in
+a resource arm: `id->word` names the cell the arm's own `fact p == id`
+identifies with `p->word`, and either spelling may be read in a goal that also
+calls a pure Click function
+(`mdtests/have_goal_reads_through_an_arm_binding.md`). A binding of any other
+declared type is refused as a field base, naming the type it was given.
+
 <!-- verified-example: mdtests/proof_match_after_c_step.md -->
 ```click
 step();
