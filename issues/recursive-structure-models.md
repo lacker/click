@@ -1073,6 +1073,30 @@ appears to need one reports the need instead of adding it.
   restatement (`ctx_rb` / `ctx_almost_rb_insert`, loop-carried `Nat` black
   height) is still the prerequisite for the rotation `break`s, the
   recolour `continue`s, and the post-loop `is_rb_root`; next resumption.
+- 2026-09-12: C3, fourth resumption (0b7c7c4a): the invariants are
+  restated frame by frame. `requires is_rb(t.model) == 1; requires
+  ctx_almost_rb_insert(c.model, black_height(t.model)) == 1;` (and the
+  same two as invariants) replace `almost_rb_insert(plug(..))` and
+  `ctx_root_black`; the black height is the pure `black_height(t.model)`
+  of the loop-carried model, which is how C2c spells every case theorem's
+  `bh`, so nothing is bridged. The `requires` is a faithful strengthening
+  (the old two follow from it; it adds per-frame agreement). The whole
+  `examples/rbtree-model/rbtree_model.click` is copied into the fixture.
+  `initialize` and both complete `break`s survived unchanged; `Context::Top`
+  is refuted for the grandparent frame via `ctx_rb_red_focus_not_top`, the
+  uncle's arms split. Frontier: statement 23 (`tmp = gparent->rb_right`
+  read done; `parent->rb_right` next); two rotation `break`s, two recolour
+  `continue`s, the body's end, the post-loop `simp()`, and
+  `rb_insert_color` remain. Verify 5.8s wall (was 0.6s); ~0.9s is the
+  copied library, the rest the body written in all four frame
+  combinations. Watch before C5.
+  (j) gap 71, a proof `match` arm inside `preserve` closes by
+  `contradiction` only when it is the arm's sole tactic:
+  `plan_execution_match` (match_cases.rs) plans an arm as excluded only
+  for `[Contradiction]`; any prefix leaves a live arm and the tactic is
+  refused as not a checked preservation operation. Pinned negative
+  `preserve_arm_contradiction_after_a_have.md`. Worked around by stating
+  the refutation as a theorem applied before the `match` (D10 shape).
   (h) gap 68, a `simp() using` premise inside a `have` body cannot name
   the arm's binding (`have_body_simp_using_names_an_arm_binding.md`): the
   goal is materialized against the lexical bindings but the body's
