@@ -3702,6 +3702,84 @@ impl ResourceOccurrenceId {
 #[derive(Clone, Default)]
 pub struct ResourceContext {
     pub(super) storage: std::sync::Arc<ResourceContextStorage>,
+    /// Checked dependency bundles for resource occurrences that are views of
+    /// an active stable loan.  This is deliberately separate from the
+    /// resource algebra's support graph: equal resource terms can have
+    /// different loan origins, and a rewrite must preserve the opaque
+    /// occurrence identity rather than rediscovering it from the term.
+    pub(super) loan_dependencies: std::sync::Arc<crate::kernel::loans::LoanViewBindingsState>,
+}
+
+impl ResourceContext {
+    /// Return a live dependency for an exact occurrence.  The occurrence
+    /// lookup is checked against this context so stale sidecar entries can
+    /// never authorize a rewritten or removed resource.
+    pub(crate) fn loan_dependency(
+        &self,
+        occurrence: ResourceOccurrenceId,
+    ) -> Option<&crate::kernel::loans::LoanViewBinding> {
+        self.storage
+            .entry_by_occurrence
+            .contains_key(&occurrence)
+            .then(|| self.loan_dependencies.map.get(&occurrence))
+            .flatten()
+    }
+
+    /// Attach one checked dependency to a freshly inserted occurrence.
+    /// Callers must identify the destination occurrence returned by the
+    /// resource insertion operation; value equality is intentionally not a
+    /// valid substitute for that identity.
+    pub(crate) fn with_loan_dependency(
+        mut self,
+        occurrence: ResourceOccurrenceId,
+        dependency: crate::kernel::loans::LoanViewBinding,
+    ) -> Self {
+        if self.storage.entry_by_occurrence.contains_key(&occurrence) {
+            if let Some(existing) = self.loan_dependencies.map.get(&occurrence) {
+                if existing != &dependency {
+                    return self;
+                }
+                return self;
+            }
+            self.loan_dependencies =
+                std::sync::Arc::new(crate::kernel::loans::LoanViewBindingsState {
+                    identity: crate::kernel::loans::next_loan_binding_identity(),
+                    map: self
+                        .loan_dependencies
+                        .map
+                        .with_inserted(occurrence, dependency),
+                });
+        }
+        self
+    }
+
+    pub(crate) fn loan_dependency_state(
+        &self,
+    ) -> std::sync::Arc<crate::kernel::loans::LoanViewBindingsState> {
+        self.loan_dependencies.clone()
+    }
+
+    pub(crate) fn with_loan_dependency_state(
+        mut self,
+        state: std::sync::Arc<crate::kernel::loans::LoanViewBindingsState>,
+    ) -> Self {
+        self.loan_dependencies = state;
+        self
+    }
+
+    pub(crate) fn live_loan_dependencies(
+        &self,
+    ) -> impl Iterator<Item = (ResourceOccurrenceId, &crate::kernel::loans::LoanViewBinding)> {
+        self.loan_dependencies
+            .map
+            .iter()
+            .filter_map(|(occurrence, binding)| {
+                self.storage
+                    .entry_by_occurrence
+                    .contains_key(occurrence)
+                    .then_some((*occurrence, binding))
+            })
+    }
 }
 
 /// The memory-dependent part of a supported observation.  The resource
@@ -3826,13 +3904,16 @@ impl std::fmt::Debug for ResourceContext {
 
 impl PartialEq for ResourceContext {
     fn eq(&self, other: &Self) -> bool {
-        if std::sync::Arc::ptr_eq(&self.storage, &other.storage) {
+        if std::sync::Arc::ptr_eq(&self.storage, &other.storage)
+            && std::sync::Arc::ptr_eq(&self.loan_dependencies, &other.loan_dependencies)
+        {
             return true;
         }
         self.facts() == other.facts()
             && self.storage.supported_by == other.storage.supported_by
             && compare_support_graph(self, other) == std::cmp::Ordering::Equal
             && self.storage.expansions_by_support_entry == other.storage.expansions_by_support_entry
+            && compare_loan_dependencies(self, other) == std::cmp::Ordering::Equal
     }
 }
 
@@ -3859,6 +3940,10 @@ impl std::hash::Hash for ResourceContext {
                 entry.hash(state);
             }
         }
+        for (occurrence, binding) in self.live_loan_dependencies() {
+            occurrence.hash(state);
+            binding.hash(state);
+        }
     }
 }
 
@@ -3874,6 +3959,7 @@ impl Ord for ResourceContext {
             })
             .then_with(|| compare_support_graph(self, other))
             .then_with(|| compare_cached_expansions(self, other))
+            .then_with(|| compare_loan_dependencies(self, other))
     }
 }
 
@@ -3898,6 +3984,14 @@ fn compare_cached_expansions(
             }
         }
     }
+}
+
+fn compare_loan_dependencies(
+    left: &ResourceContext,
+    right: &ResourceContext,
+) -> std::cmp::Ordering {
+    left.live_loan_dependencies()
+        .cmp(right.live_loan_dependencies())
 }
 
 impl PartialOrd for ResourceContext {

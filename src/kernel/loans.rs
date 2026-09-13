@@ -82,14 +82,20 @@ pub(crate) struct LoanViewBindings {
 }
 
 #[derive(Debug, Default)]
-struct LoanViewBindingsState {
-    identity: u64,
-    map: PersistentMap<ResourceOccurrenceId, LoanViewBinding>,
+pub(crate) struct LoanViewBindingsState {
+    pub(crate) identity: u64,
+    pub(crate) map: PersistentMap<ResourceOccurrenceId, LoanViewBinding>,
+}
+
+pub(crate) fn next_loan_binding_identity() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl PartialEq for LoanViewBindings {
     fn eq(&self, other: &Self) -> bool {
-        self.state.identity == other.state.identity
+        (self.state.map.is_empty() && other.state.map.is_empty())
+            || self.state.identity == other.state.identity
     }
 }
 
@@ -97,13 +103,22 @@ impl Eq for LoanViewBindings {}
 
 impl Hash for LoanViewBindings {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.state.identity.hash(state);
+        if self.state.map.is_empty() {
+            0_u64.hash(state);
+        } else {
+            self.state.identity.hash(state);
+        }
     }
 }
 
 impl Ord for LoanViewBindings {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.state.identity.cmp(&other.state.identity)
+        match (self.state.map.is_empty(), other.state.map.is_empty()) {
+            (true, true) => Ordering::Equal,
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            (false, false) => self.state.identity.cmp(&other.state.identity),
+        }
     }
 }
 
@@ -114,6 +129,18 @@ impl PartialOrd for LoanViewBindings {
 }
 
 impl LoanViewBindings {
+    pub(crate) fn from_state(state: Arc<LoanViewBindingsState>) -> Self {
+        Self { state }
+    }
+
+    pub(crate) fn state(&self) -> Arc<LoanViewBindingsState> {
+        self.state.clone()
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&ResourceOccurrenceId, &LoanViewBinding)> {
+        self.state.map.iter()
+    }
+
     pub(crate) fn get(&self, occurrence: &ResourceOccurrenceId) -> Option<&LoanViewBinding> {
         self.state.map.get(occurrence)
     }
@@ -126,10 +153,9 @@ impl LoanViewBindings {
         if self.state.map.get(&occurrence) == Some(&binding) {
             return self.clone();
         }
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
             state: Arc::new(LoanViewBindingsState {
-                identity: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                identity: next_loan_binding_identity(),
                 map: self.state.map.with_inserted(occurrence, binding),
             }),
         }

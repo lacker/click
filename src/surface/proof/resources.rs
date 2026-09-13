@@ -150,6 +150,52 @@ pub(super) struct UnfoldedCompositeResource {
     pub(super) body_was_already_exposed: bool,
 }
 
+/// Resolve the dependency of one viewed representation without selecting an
+/// authority by equal resource spelling.  Duplicate equal views are valid
+/// only when they carry the same checked loan bundle; otherwise the rewrite
+/// is ambiguous and must fail closed.
+fn unique_borrowed_resource_dependency(
+    state: &CState,
+    resource: &CResourceFact,
+) -> Result<Option<crate::kernel::LoanViewBinding>, String> {
+    if !state.loan_bindings_are_consistent() {
+        return Err("resource and loan binding sidecars disagree".into());
+    }
+    let mut selected = None;
+    let mut saw_unbound = false;
+    let mut saw_bound = false;
+    for occurrence in state.resources().occurrences_for_fact(resource) {
+        let Some(binding) = state.resources().loan_dependency(occurrence) else {
+            saw_unbound = true;
+            continue;
+        };
+        saw_bound = true;
+        if selected
+            .as_ref()
+            .is_some_and(|existing| existing != binding)
+        {
+            return Err(
+                "equal viewed resource occurrences carry different loan dependencies".into(),
+            );
+        }
+        selected = Some(binding.clone());
+    }
+    if saw_bound && saw_unbound {
+        return Err("equal viewed resource occurrences mix bound and unbound authorities".into());
+    }
+    Ok(selected)
+}
+
+fn same_loan_authority(
+    left: &crate::kernel::LoanViewBinding,
+    right: &crate::kernel::LoanViewBinding,
+) -> bool {
+    left.loan == right.loan
+        && left.scope == right.scope
+        && left.share == right.share
+        && left.support == right.support
+}
+
 pub(super) fn materialize_counted_population_bodies(
     resource_environment: &ResourceEnvironment,
     _parameters: &[syntax::C0Parameter],
@@ -1215,6 +1261,15 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         click_function_environment,
     )?;
     let observation_pre_state = state.clone();
+    // A viewed composite is itself a checked loan projection.  Its children
+    // are fresh occurrences, so remember the exact bundle before projecting
+    // the body; equal resource terms are not sufficient to recover it later.
+    let borrowed_parent_binding = unique_borrowed_resource_dependency(&state, &abstract_resource)
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `observe` refused ambiguous loan dependency: {message}"
+            ))
+        })?;
     let (memory, contained_resources) = apply_composite_observation_law_with_facts(
         resource_environment,
         definition,
@@ -1254,10 +1309,38 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             describe_resource_clause(resource)
         ))
     })?;
-    let viewed_contained_resources = contained_resources
+    let all_viewed_contained_resources = contained_resources
         .facts()
         .iter()
         .filter_map(|fact| fact.core_with_assumptions(available_pure_facts.assumptions()))
+        .map(|fact| CResourceFact::View(fact.resource().clone()))
+        .collect::<Vec<_>>();
+    if let Some(binding) = borrowed_parent_binding.as_ref() {
+        for child in &all_viewed_contained_resources {
+            if !state.resources().contains_exact_representation(child) {
+                continue;
+            }
+            let expected = crate::kernel::LoanViewBinding {
+                viewed: child.clone(),
+                ..binding.clone()
+            };
+            let existing = unique_borrowed_resource_dependency(&state, child).map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `observe` refused an existing child dependency: {message}"
+                ))
+            })?;
+            if existing
+                .as_ref()
+                .is_none_or(|candidate| !same_loan_authority(candidate, &expected))
+            {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `observe` cannot reuse an unbound or differently bound child"
+                )));
+            }
+        }
+    }
+    let viewed_contained_resources = all_viewed_contained_resources
+        .into_iter()
         .filter(|fact| !state.resources().contains_exact_representation(fact))
         .collect::<Vec<_>>();
     // Holding the folded composite certifies its instantiated body. Observation
@@ -1266,24 +1349,38 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
     // or changing the support must invalidate the observation, while unrelated
     // framed resources remain untouched. A view-only observation has no owned
     // authority to carry this relation and keeps the legacy explicit view.
-    let resources = if let Some((support_entry, support)) = observation_support {
+    let (resources, inserted) = if let Some((support_entry, support)) = observation_support {
         state
             .resources()
             .clone()
-            .unchecked_with_supported_facts_from_occurrence_with_memory(
+            .unchecked_with_supported_facts_from_occurrence_with_memory_and_occurrences(
                 support_entry,
                 support,
-                viewed_contained_resources,
+                viewed_contained_resources.clone(),
                 fact_state.memory(),
             )
     } else {
         state
             .resources()
             .clone()
-            .unchecked_with_facts(viewed_contained_resources)
+            .unchecked_with_facts_and_occurrences(viewed_contained_resources.clone())
     };
+    let mut dependency_bindings = Vec::new();
+    if let Some(binding) = borrowed_parent_binding {
+        for (child, occurrence) in inserted {
+            dependency_bindings.push((
+                occurrence,
+                crate::kernel::LoanViewBinding {
+                    viewed: child,
+                    ..binding.clone()
+                },
+            ));
+        }
+    }
     Ok((
-        state.with_memory(memory).with_resource_context(resources),
+        state
+            .with_memory(memory)
+            .with_resource_context_and_loan_dependencies(resources, dependency_bindings),
         abstract_resource,
     ))
 }
@@ -2410,6 +2507,15 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
         abstract_resource = authority.clone();
     }
     let opening_view = abstract_resource.is_view();
+    let borrowed_parent_binding = if opening_view {
+        unique_borrowed_resource_dependency(&state, &abstract_resource).map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `unfold` refused ambiguous loan dependency: {message}"
+            ))
+        })?
+    } else {
+        None
+    };
     let (requested_population_name, requested_population_arguments) =
         match abstract_resource.resource() {
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
@@ -2654,25 +2760,110 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
         available_pure_facts.insert(lowered_fact);
     }
 
+    // Keep exact identities for children that were already present.  Equal
+    // child facts may have different dependency state, so a later rewrite
+    // must validate those identities individually rather than selecting a
+    // binding by fact value.
+    let preexisting_unfolded_occurrences = unfolded_facts
+        .iter()
+        .filter(|fact| fact.is_view())
+        .flat_map(|fact| state.resources().occurrences_for_fact(fact))
+        .collect::<BTreeSet<_>>();
+
     // Project the complete body in one checked composition. Composing each
     // child separately renormalizes the same ambient resource context once
     // per child, making one simple `unfold` depend on the accumulated proof
     // history rather than the size of the resource body. The definition's
     // pure facts are simultaneous consequences of the same composite law, so
     // make them available while canonicalizing its children.
+    let mut inserted_unfolded_occurrences = Vec::new();
     if !already_unfolded && !body_was_already_exposed {
-        let resources = state
-            .resources()
-            .clone()
-            .try_compose_with_facts(unfolded_facts.clone(), available_pure_facts.assumptions())
-            .map_err(|error| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
-                    describe_resource_clause(resource),
-                    describe_resource_context_validity_error(error, parameters, arguments)
-                ))
-            })?;
-        state = state.with_resource_context(resources);
+        if borrowed_parent_binding.is_some() {
+            let resources = state
+                .resources()
+                .clone()
+                .try_compose_with_facts_delaying_normalization_with_occurrences(
+                    unfolded_facts.clone(),
+                    available_pure_facts.assumptions(),
+                )
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
+                        describe_resource_clause(resource),
+                        describe_resource_context_validity_error(error, parameters, arguments)
+                    ))
+                })?;
+            inserted_unfolded_occurrences = resources.1;
+            state = state.with_resource_context(resources.0);
+        } else {
+            let resources = state
+                .resources()
+                .clone()
+                .try_compose_with_facts(unfolded_facts.clone(), available_pure_facts.assumptions())
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
+                        describe_resource_clause(resource),
+                        describe_resource_context_validity_error(error, parameters, arguments)
+                    ))
+                })?;
+            state = state.with_resource_context(resources);
+        }
+    }
+
+    // Finalizing a viewed composite replaces its folded occurrence with fresh
+    // viewed children.  Keep the exact loan/share/support bundle on each
+    // child.  An exclusive instance view has already been rejected above by
+    // the resource-kind check and never enters this projection path.
+    if let Some(binding) = borrowed_parent_binding {
+        let inserted_child_occurrences = inserted_unfolded_occurrences
+            .iter()
+            .filter(|(child, _)| child.is_view())
+            .map(|(_, occurrence)| *occurrence)
+            .collect::<BTreeSet<_>>();
+        let dependencies = inserted_unfolded_occurrences
+            .into_iter()
+            .filter(|(child, _)| child.is_view())
+            .map(|(child, occurrence)| {
+                (
+                    occurrence,
+                    crate::kernel::LoanViewBinding {
+                        viewed: child,
+                        ..binding.clone()
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        for child in unfolded_facts.iter().filter(|fact| fact.is_view()) {
+            let child_occurrences = state.resources().occurrences_for_fact(child);
+            let mut found_destination = false;
+            for occurrence in child_occurrences {
+                if inserted_child_occurrences.contains(&occurrence) {
+                    found_destination = true;
+                    continue;
+                }
+                if !preexisting_unfolded_occurrences.contains(&occurrence) {
+                    continue;
+                }
+                found_destination = true;
+                let child_binding = state.resources().loan_dependency(occurrence);
+                if child_binding
+                    .as_ref()
+                    .is_none_or(|existing| !same_loan_authority(existing, &binding))
+                {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `unfold` cannot reuse an unbound or differently bound child for a viewed composite"
+                    )));
+                }
+            }
+            if !found_destination {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `unfold` produced no exact destination for a viewed child"
+                )));
+            }
+        }
+        let resources = state.resources().clone();
+        state = state.with_resource_context_and_loan_dependencies(resources, dependencies);
     }
 
     let unfolded_resources = ResourceContext::new().unchecked_with_facts(unfolded_facts);
@@ -3066,6 +3257,8 @@ fn fold_composite_resources_on_outcome_with_facts(
         }
         let _assumptions_id_scope = crate::kernel::PureFactContextIdScope::enter(&assumptions);
         let mut lowered_contained = Vec::new();
+        let mut body_loan_dependency = None;
+        let mut body_has_unbound_view = false;
         let preserve_exposed_body = matches!(
             closure,
             ResourceBodyClosure::CloseOpen {
@@ -3087,6 +3280,36 @@ fn fold_composite_resources_on_outcome_with_facts(
                 &post_state,
                 &value,
             )?;
+            if lowered.is_view() {
+                let binding = unique_borrowed_resource_dependency(&post_state, &lowered)
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` path {path_index}: `fold` refused ambiguous body loan dependency: {message}"
+                        ))
+                    })?;
+                match binding {
+                    Some(binding) => {
+                        if body_has_unbound_view
+                            || body_loan_dependency
+                                .as_ref()
+                                .is_some_and(|existing| !same_loan_authority(existing, &binding))
+                        {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` path {path_index}: `fold` body views carry different or incomplete loan dependencies"
+                            )));
+                        }
+                        body_loan_dependency = Some(binding);
+                    }
+                    None if body_loan_dependency.is_some() => {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` path {path_index}: `fold` body views carry different or incomplete loan dependencies"
+                        )));
+                    }
+                    None => {
+                        body_has_unbound_view = true;
+                    }
+                }
+            }
             if preserve_exposed_body {
                 // This body belonged to the active population before `open`.
                 // The scope used it in place, so closing must leave that one
@@ -3177,6 +3400,12 @@ fn fold_composite_resources_on_outcome_with_facts(
                 &post_state,
                 &value,
             )?;
+            if body_loan_dependency.is_some() && !abstract_resource.is_view() {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` path {path_index}: `fold({})` cannot package a loan-backed viewed body as an owned composite",
+                    describe_resource_clause(resource)
+                )));
+            }
             let (resources, inserted_occurrence) = post_state
                 .resources()
                 .clone()
@@ -3190,6 +3419,22 @@ fn fold_composite_resources_on_outcome_with_facts(
                 })?;
             folded_authority_occurrence = inserted_occurrence;
             post_state = post_state.with_resource_context(resources);
+            if abstract_resource.is_view()
+                && let (Some(occurrence), Some(binding)) =
+                    (folded_authority_occurrence, body_loan_dependency.clone())
+            {
+                let resources = post_state.resources().clone();
+                post_state = post_state.with_resource_context_and_loan_dependencies(
+                    resources,
+                    [(
+                        occurrence,
+                        crate::kernel::LoanViewBinding {
+                            viewed: abstract_resource.clone(),
+                            ..binding
+                        },
+                    )],
+                );
+            }
         }
         if closure == ResourceBodyClosure::Initialize && !lowered_contained.is_empty() {
             let abstract_resource = lower_resource_clause_at_state_with_result(
@@ -3761,4 +4006,54 @@ fn materialize_composite_resource_cells(
         memory = memory.store(pointer, value);
     }
     memory
+}
+
+#[cfg(test)]
+mod v11_resource_dependency_tests {
+    use super::*;
+
+    fn binding_for(
+        support: crate::kernel::ResourceOccurrenceId,
+        viewed: CResourceFact,
+    ) -> crate::kernel::LoanViewBinding {
+        let ledger = crate::kernel::LoanLedger::new();
+        let owner = ledger.fresh_participant().unwrap();
+        let reader = ledger.fresh_participant().unwrap();
+        let escrow = CResourceFact::own_token("v11_surface_support".into(), Vec::new());
+        let opening = ledger.lend(owner, reader, support, escrow).unwrap();
+        crate::kernel::LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed,
+        }
+    }
+
+    #[test]
+    fn duplicate_equal_view_dependencies_fail_closed() {
+        let support = CResourceFact::own_token("v11_surface_support".into(), Vec::new());
+        let child = CResourceFact::view_token("v11_surface_child".into(), Vec::new());
+        let resources = ResourceContext::new().unchecked_with_facts([
+            support.clone(),
+            child.clone(),
+            child.clone(),
+        ]);
+        let support_occurrence = resources.owned_occurrences_for_fact(&support)[0];
+        let occurrences = resources.occurrences_for_fact(&child);
+        let binding = binding_for(support_occurrence, child.clone());
+        let state = CState::new().with_resource_context_and_loan_dependencies(
+            resources,
+            [(occurrences[0], binding.clone())],
+        );
+        assert!(unique_borrowed_resource_dependency(&state, &child).is_err());
+
+        let second = CResourceFact::view_token("v11_surface_other".into(), Vec::new());
+        let mut different = binding;
+        different.viewed = second;
+        let resources = state.resources().clone();
+        let state = state
+            .with_resource_context_and_loan_dependencies(resources, [(occurrences[1], different)]);
+        assert!(unique_borrowed_resource_dependency(&state, &child).is_err());
+    }
 }

@@ -1384,10 +1384,12 @@ impl ResourceContext {
         let mut pending = vec![(entry, false)];
         let mut scheduled = BTreeSet::new();
         let mut visited = BTreeSet::new();
+        let mut removed_occurrences = Vec::new();
         scheduled.insert(entry);
         while let Some((current, leaving)) = pending.pop() {
             if leaving {
                 if self.storage.facts.contains_key(&current) {
+                    removed_occurrences.push(self.occurrence(current));
                     self.remove_entry_only(current);
                 }
                 continue;
@@ -1408,6 +1410,18 @@ impl ResourceContext {
                     pending.push((projection, false));
                 }
             }
+        }
+        if !removed_occurrences.is_empty() {
+            let map = removed_occurrences
+                .into_iter()
+                .fold(self.loan_dependencies.map.clone(), |map, occurrence| {
+                    map.without_key(&occurrence)
+                });
+            self.loan_dependencies =
+                std::sync::Arc::new(crate::kernel::loans::LoanViewBindingsState {
+                    identity: crate::kernel::loans::next_loan_binding_identity(),
+                    map,
+                });
         }
         fact
     }
@@ -1757,6 +1771,24 @@ impl ResourceContext {
             .into_iter()
             .flat_map(ResourceEntryIds::iter)
             .filter(|entry| self.fact(**entry).is_own())
+            .map(|entry| self.occurrence(*entry))
+            .collect()
+    }
+
+    /// Return every exact occurrence for a representation, including viewed
+    /// entries.  Resource rewrites use this only after inserting the exact
+    /// child representation, so the caller can attach a dependency to the
+    /// returned opaque occurrence rather than guessing by value.
+    pub(crate) fn occurrences_for_fact(
+        &self,
+        required: &CResourceFact,
+    ) -> Vec<ResourceOccurrenceId> {
+        self.storage
+            .index
+            .exact
+            .get(required)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
             .map(|entry| self.occurrence(*entry))
             .collect()
     }
@@ -2443,6 +2475,19 @@ impl ResourceContext {
         self
     }
 
+    pub(crate) fn unchecked_with_facts_and_occurrences(
+        mut self,
+        facts: impl IntoIterator<Item = CResourceFact>,
+    ) -> (Self, Vec<(CResourceFact, ResourceOccurrenceId)>) {
+        let mut inserted = Vec::new();
+        for fact in facts {
+            let entry = self.storage.next_entry_id;
+            self.insert_fact(fact.clone());
+            inserted.push((fact, self.occurrence(entry)));
+        }
+        (self, inserted)
+    }
+
     /// Adds duplicable views derived from one exact owned resource.
     ///
     /// The reverse support index makes later removal proportional to the
@@ -2512,12 +2557,28 @@ impl ResourceContext {
     /// exact footprint used to derive each one.  This is the memory-aware
     /// counterpart to the legacy support-only API used by call packaging.
     pub(crate) fn unchecked_with_supported_facts_from_occurrence_with_memory(
-        mut self,
+        self,
         support_occurrence: ResourceOccurrenceId,
         support: &CResourceFact,
         facts: impl IntoIterator<Item = CResourceFact>,
         memory: &CMemory,
     ) -> Self {
+        self.unchecked_with_supported_facts_from_occurrence_with_memory_and_occurrences(
+            support_occurrence,
+            support,
+            facts,
+            memory,
+        )
+        .0
+    }
+
+    pub(crate) fn unchecked_with_supported_facts_from_occurrence_with_memory_and_occurrences(
+        mut self,
+        support_occurrence: ResourceOccurrenceId,
+        support: &CResourceFact,
+        facts: impl IntoIterator<Item = CResourceFact>,
+        memory: &CMemory,
+    ) -> (Self, Vec<(CResourceFact, ResourceOccurrenceId)>) {
         debug_assert!(support.is_own());
         debug_assert!(
             self.storage
@@ -2526,21 +2587,23 @@ impl ResourceContext {
                 .is_some_and(|entry| self.fact(*entry) == support)
         );
         let memory_snapshot = CMemorySnapshotIdentity::of(memory);
-        let facts = facts.into_iter().collect::<Vec<_>>();
+        let mut inserted = Vec::new();
         for fact in facts {
             debug_assert!(fact.is_view());
+            let entry = self.storage.next_entry_id;
             let metadata = ResourceSupportMetadata {
                 memory_snapshot,
                 footprint: memory_footprint_for_fact(&fact),
             };
             self.insert_fact_with_support_occurrence_and_metadata(
-                fact,
+                fact.clone(),
                 Some(support.clone()),
                 Some(support_occurrence),
                 Some(metadata),
             );
+            inserted.push((fact, self.occurrence(entry)));
         }
-        self
+        (self, inserted)
     }
 
     #[allow(dead_code)]
@@ -2936,6 +2999,19 @@ impl ResourceContext {
         facts: impl IntoIterator<Item = CResourceFact>,
         assumptions: &PureFactContext,
     ) -> Result<Self, ResourceContextValidityError> {
+        self.try_compose_certified_group_into_valid_context_delaying_normalization_with_occurrences(
+            facts,
+            assumptions,
+        )
+        .map(|(context, _)| context)
+    }
+
+    pub(crate) fn try_compose_certified_group_into_valid_context_delaying_normalization_with_occurrences(
+        self,
+        facts: impl IntoIterator<Item = CResourceFact>,
+        assumptions: &PureFactContext,
+    ) -> Result<(Self, Vec<(CResourceFact, ResourceOccurrenceId)>), ResourceContextValidityError>
+    {
         let facts = facts.into_iter().collect::<Vec<_>>();
         for fact in &facts {
             self.clone()
@@ -2944,7 +3020,7 @@ impl ResourceContext {
                     assumptions,
                 )?;
         }
-        Ok(self.unchecked_with_facts(facts))
+        Ok(self.unchecked_with_facts_and_occurrences(facts))
     }
 
     pub fn facts(&self) -> &[CResourceFact] {

@@ -2695,11 +2695,45 @@ impl CState {
             .resources
             .clone()
             .invalidate_memory_support(&self.memory, &memory);
+        self.loan_view_bindings = crate::kernel::loans::LoanViewBindings::from_state(
+            self.resources.loan_dependency_state(),
+        );
         self.memory = memory;
     }
 
     pub fn with_resource_context(mut self, resources: ResourceContext) -> Self {
+        // ResourceContext owns the canonical persistent dependency root. The
+        // CState field is only a shared mirror, so replacing a context does
+        // not scan unrelated resources or active loans.
+        self.loan_view_bindings =
+            crate::kernel::loans::LoanViewBindings::from_state(resources.loan_dependency_state());
         self.resources = resources;
+        self
+    }
+
+    /// Replace resource representation and install checked dependencies for
+    /// occurrences created by that rewrite.  The destination occurrences are
+    /// supplied by the resource algebra; this method never derives them from
+    /// equal facts or from the active ledger.
+    pub(crate) fn with_resource_context_and_loan_dependencies(
+        mut self,
+        resources: ResourceContext,
+        dependencies: impl IntoIterator<
+            Item = (
+                crate::kernel::primitives::ResourceOccurrenceId,
+                crate::kernel::loans::LoanViewBinding,
+            ),
+        >,
+    ) -> Self {
+        self = self.with_resource_context(resources);
+        for (occurrence, binding) in dependencies {
+            self.resources = self
+                .resources
+                .with_loan_dependency(occurrence, binding.clone());
+        }
+        self.loan_view_bindings = crate::kernel::loans::LoanViewBindings::from_state(
+            self.resources.loan_dependency_state(),
+        );
         self
     }
 
@@ -2733,11 +2767,25 @@ impl CState {
         &self.loan_view_bindings
     }
 
+    /// The resource-context sidecar is canonical.  The legacy ledger map is
+    /// kept as a mechanically synchronized mirror for call planning and must
+    /// agree in both directions before a checked resource transition runs.
+    pub(crate) fn loan_bindings_are_consistent(&self) -> bool {
+        let resources_state = self.resources.loan_dependency_state();
+        let mirror_state = self.loan_view_bindings.state();
+        (resources_state.map.is_empty() && mirror_state.map.is_empty())
+            || std::sync::Arc::ptr_eq(&resources_state, &mirror_state)
+    }
+
     pub(crate) fn with_loan_view_bindings(
         mut self,
         bindings: crate::kernel::loans::LoanViewBindings,
     ) -> Self {
         self.loan_view_bindings = bindings;
+        self.resources = self
+            .resources
+            .clone()
+            .with_loan_dependency_state(self.loan_view_bindings.state());
         self
     }
 

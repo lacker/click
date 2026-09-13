@@ -2061,7 +2061,7 @@ fn execute_verified_function_applications(
         return_state.resources = return_resources;
         return_state.loan_ledger = return_ledger;
         return_state.loan_participant = return_participant;
-        return_state.loan_view_bindings = return_view_bindings;
+        return_state = return_state.with_loan_view_bindings(return_view_bindings);
         return_state.counted_populations = post_state.counted_populations;
         return_state.next_local_frame = post_state.next_local_frame;
         return_state.next_local_lifetime = post_state.next_local_lifetime;
@@ -12342,7 +12342,42 @@ pub(super) fn expand_composite_resource_fact_with_children(
     if definition.parameters().len() != arguments.len() {
         return None;
     }
-    let expansion_base = context.clone().without_exact_representation(composite)?;
+    // A viewed composite carries its loan dependency on the folded
+    // occurrence.  Expansion must transfer that exact bundle to only the
+    // newly inserted child occurrences; equal children in the ambient frame
+    // are not eligible destinations.
+    let borrowed_parent = if composite.is_view() {
+        let occurrences = context.occurrences_for_fact(composite);
+        let mut selected = None;
+        let mut saw_unbound = false;
+        for occurrence in occurrences {
+            let Some(dependency) = context.loan_dependency(occurrence) else {
+                saw_unbound = true;
+                continue;
+            };
+            if selected
+                .as_ref()
+                .is_some_and(|(_, existing)| existing != dependency)
+            {
+                return None;
+            }
+            selected = Some((occurrence, dependency.clone()));
+        }
+        if saw_unbound && selected.is_some() {
+            return None;
+        }
+        selected
+    } else {
+        None
+    };
+    let expansion_base = borrowed_parent
+        .as_ref()
+        .map(|(occurrence, _)| {
+            context
+                .clone()
+                .without_exact_representation_for_occurrence(*occurrence)
+        })
+        .unwrap_or_else(|| context.clone().without_exact_representation(composite))?;
     let mut state = CState::new()
         .with_memory(memory.clone())
         .with_resource_context(expansion_base.clone());
@@ -12411,7 +12446,7 @@ pub(super) fn expand_composite_resource_fact_with_children(
             .map(|fact| CResourceFact::View(fact.resource().clone()))
             .collect()
     };
-    let mut expanded = expansion_base;
+    let mut expanded = expansion_base.clone();
     let missing = children
         .iter()
         .filter(|child| {
@@ -12420,9 +12455,38 @@ pub(super) fn expand_composite_resource_fact_with_children(
         })
         .cloned()
         .collect::<Vec<_>>();
-    expanded = expanded
-        .try_compose_certified_group_into_valid_context_delaying_normalization(missing, assumptions)
+    let (expanded_context, inserted) = expanded
+        .try_compose_certified_group_into_valid_context_delaying_normalization_with_occurrences(
+            missing,
+            assumptions,
+        )
         .ok()?;
+    expanded = expanded_context;
+    if let Some((_, binding)) = borrowed_parent {
+        let mut transferred_views = BTreeSet::new();
+        for (child, occurrence) in inserted {
+            if !child.is_view() {
+                continue;
+            }
+            transferred_views.insert(child.clone());
+            expanded = expanded.with_loan_dependency(
+                occurrence,
+                crate::kernel::loans::LoanViewBinding {
+                    viewed: child,
+                    ..binding.clone()
+                },
+            );
+        }
+        if children
+            .iter()
+            .filter(|child| child.is_view())
+            .any(|child| !transferred_views.contains(child))
+        {
+            // Reusing an equal ambient child would lose the source occurrence
+            // relation.  The checked expansion has no destination ID to bind.
+            return None;
+        }
+    }
     Some((expanded, children, raw_children))
 }
 
@@ -16279,7 +16343,7 @@ fn function_outcome_from_body_with_resource_transfer(
     return_state.resources = return_resources;
     return_state.loan_ledger = return_ledger;
     return_state.loan_participant = return_participant;
-    return_state.loan_view_bindings = return_view_bindings;
+    return_state = return_state.with_loan_view_bindings(return_view_bindings);
     return_state.counted_populations = state.counted_populations;
     return_state.next_local_frame = state.next_local_frame;
     return_state.next_local_lifetime = state.next_local_lifetime;

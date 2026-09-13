@@ -2,6 +2,8 @@
 // `src/surface/planning/proposition_search.rs`. The kernel itself never
 // calls it, so the tests import the planner explicitly.
 use super::*;
+use crate::kernel::LoanViewBinding;
+use crate::kernel::loans::{LoanLedger, LoanViewBindings};
 use crate::surface::planning::proposition_search::PropositionSearch;
 
 #[test]
@@ -5716,4 +5718,225 @@ fn removing_symbolic_memory_observations_does_not_leave_alias_bucket_entries() {
         assert!(resources.storage.symbolic_memory_support.is_empty());
         assert!(resources.storage.support_metadata_by_projection.is_empty());
     }
+}
+
+#[test]
+fn v11_fresh_view_children_use_exact_occurrences_and_preserve_duplicates() {
+    let support = CResourceFact::own_token("v11_support".into(), Vec::new());
+    let child = CResourceFact::view_token("v11_child".into(), Vec::new());
+    let before = ResourceContext::new().unchecked_with_facts([support.clone(), child.clone()]);
+    let existing_child = before.occurrences_for_fact(&child)[0];
+    let support_occurrence = before.owned_occurrences_for_fact(&support)[0];
+    let (after, inserted) = before
+        .clone()
+        .unchecked_with_facts_and_occurrences([child.clone()]);
+    assert_eq!(inserted.len(), 1);
+    let inserted_child = inserted[0].1;
+    assert_ne!(existing_child, inserted_child);
+
+    let ledger = LoanLedger::new();
+    let owner = ledger.fresh_participant().unwrap();
+    let reader = ledger.fresh_participant().unwrap();
+    let opening = ledger
+        .lend(owner, reader, support_occurrence, support.clone())
+        .unwrap();
+    let binding = LoanViewBinding {
+        loan: opening.loan,
+        scope: opening.scope,
+        share: opening.root_share,
+        support: support_occurrence,
+        viewed: child.clone(),
+    };
+    let after = after.with_loan_dependency(inserted_child, binding.clone());
+    assert!(after.loan_dependency(existing_child).is_none());
+    assert_eq!(after.loan_dependency(inserted_child), Some(&binding));
+    assert_eq!(after.occurrences_for_fact(&child).len(), 2);
+    let recreated = after
+        .without_exact_representation_for_occurrence(inserted_child)
+        .unwrap();
+    assert!(recreated.loan_dependency(inserted_child).is_none());
+    let (recreated, inserted_again) = recreated.unchecked_with_facts_and_occurrences([child]);
+    assert_ne!(inserted_again[0].1, inserted_child);
+    assert!(recreated.loan_dependency(inserted_again[0].1).is_none());
+}
+
+#[test]
+fn v11_duplicate_bound_and_unbound_views_are_not_authority_candidates() {
+    let support = CResourceFact::own_token("v11_duplicate_support".into(), Vec::new());
+    let child = CResourceFact::view_token("v11_duplicate_child".into(), Vec::new());
+    let context = ResourceContext::new().unchecked_with_facts([
+        support.clone(),
+        child.clone(),
+        child.clone(),
+    ]);
+    let occurrences = context.occurrences_for_fact(&child);
+    assert_eq!(occurrences.len(), 2);
+    let support_occurrence = context.owned_occurrences_for_fact(&support)[0];
+    let ledger = LoanLedger::new();
+    let owner = ledger.fresh_participant().unwrap();
+    let reader = ledger.fresh_participant().unwrap();
+    let opening = ledger
+        .lend(owner, reader, support_occurrence, support)
+        .unwrap();
+    let binding = LoanViewBinding {
+        loan: opening.loan,
+        scope: opening.scope,
+        share: opening.root_share,
+        support: support_occurrence,
+        viewed: child.clone(),
+    };
+    let context = context.with_loan_dependency(occurrences[0], binding.clone());
+    assert!(context.loan_dependency(occurrences[1]).is_none());
+    // A checked surface operation must reject this mixed candidate set rather
+    // than silently selecting the one occurrence that happens to be bound.
+    assert!(
+        context
+            .occurrences_for_fact(&child)
+            .iter()
+            .any(|occurrence| context.loan_dependency(*occurrence).is_none())
+    );
+}
+
+#[test]
+fn v11_unbound_owner_observation_composite_still_expands() {
+    let definition = CCompositeResourceDefinition::new(
+        "v11_observation_box",
+        Vec::new(),
+        None,
+        false,
+        vec![
+            CResourceSpec::declared(
+                ResourceFamily::Token,
+                CResourceAccessMode::Own,
+                "v11_observation_child".into(),
+                Vec::new(),
+                Vec::new(),
+                CResourceTransferRole::Consume,
+                CResourceSnapshot::Current,
+            )
+            .unwrap(),
+        ],
+        Vec::new(),
+    );
+    let parent = CResourceFact::view_composite("v11_observation_box".into(), Vec::new());
+    let resources = ResourceContext::new().unchecked_with_fact(parent.clone());
+    let expanded = crate::kernel::functions::expand_composite_resource_fact_with_children(
+        &resources,
+        &parent,
+        &[definition],
+        &CMemory::new(),
+        &PureFactContext::new(),
+    )
+    .expect("an unbound owner-supported observation remains expandable");
+    assert!(
+        expanded
+            .0
+            .contains_exact_representation(&CResourceFact::view_token(
+                "v11_observation_child".into(),
+                Vec::new()
+            ))
+    );
+}
+
+#[test]
+fn v11_composite_expansion_refuses_equal_ambient_child_without_destination() {
+    let definition = CCompositeResourceDefinition::new(
+        "v11_box",
+        Vec::new(),
+        None,
+        false,
+        vec![
+            CResourceSpec::declared(
+                ResourceFamily::Token,
+                CResourceAccessMode::Own,
+                "v11_child".into(),
+                Vec::new(),
+                Vec::new(),
+                CResourceTransferRole::Consume,
+                CResourceSnapshot::Current,
+            )
+            .unwrap(),
+        ],
+        Vec::new(),
+    );
+    let support = CResourceFact::own_token("v11_expansion_support".into(), Vec::new());
+    let parent = CResourceFact::view_composite("v11_box".into(), Vec::new());
+    let child = CResourceFact::view_token("v11_child".into(), Vec::new());
+    let resources =
+        ResourceContext::new().unchecked_with_facts([support.clone(), parent.clone(), child]);
+    let support_occurrence = resources.owned_occurrences_for_fact(&support)[0];
+    let parent_occurrence = resources.occurrences_for_fact(&parent)[0];
+    let ledger = LoanLedger::new();
+    let owner = ledger.fresh_participant().unwrap();
+    let reader = ledger.fresh_participant().unwrap();
+    let opening = ledger
+        .lend(owner, reader, support_occurrence, support)
+        .unwrap();
+    let binding = LoanViewBinding {
+        loan: opening.loan,
+        scope: opening.scope,
+        share: opening.root_share,
+        support: support_occurrence,
+        viewed: parent,
+    };
+    let resources = resources.with_loan_dependency(parent_occurrence, binding);
+    assert!(
+        crate::kernel::functions::expand_composite_resource_fact_with_children(
+            &resources,
+            &CResourceFact::view_composite("v11_box".into(), Vec::new()),
+            &[definition],
+            &CMemory::new(),
+            &PureFactContext::new(),
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn v11_tampered_cstate_mirror_is_rejected_and_stale_sidecar_is_dropped() {
+    let support = CResourceFact::own_token("v11_tamper_support".into(), Vec::new());
+    let child = CResourceFact::view_token("v11_tamper_child".into(), Vec::new());
+    let resources = ResourceContext::new().unchecked_with_facts([support.clone(), child.clone()]);
+    let support_occurrence = resources.owned_occurrences_for_fact(&support)[0];
+    let child_occurrence = resources.occurrences_for_fact(&child)[0];
+    let ledger = LoanLedger::new();
+    let owner = ledger.fresh_participant().unwrap();
+    let reader = ledger.fresh_participant().unwrap();
+    let opening = ledger
+        .lend(owner, reader, support_occurrence, support)
+        .unwrap();
+    let binding = LoanViewBinding {
+        loan: opening.loan,
+        scope: opening.scope,
+        share: opening.root_share,
+        support: support_occurrence,
+        viewed: child,
+    };
+    let state = CState::new().with_resource_context_and_loan_dependencies(
+        resources,
+        [(child_occurrence, binding.clone())],
+    );
+    assert!(state.loan_bindings_are_consistent());
+    let mut tampered = binding.clone();
+    tampered.viewed = CResourceFact::view_token("v11_other_child".into(), Vec::new());
+    let mut tampered_state = state;
+    tampered_state.loan_view_bindings =
+        LoanViewBindings::default().with_inserted(child_occurrence, tampered);
+    assert!(!tampered_state.loan_bindings_are_consistent());
+
+    let retained = tampered_state.with_resource_context(ResourceContext::new());
+    assert!(
+        retained
+            .resources()
+            .live_loan_dependencies()
+            .next()
+            .is_none()
+    );
+    assert!(retained.loan_bindings_are_consistent());
+
+    let first = LoanViewBindings::default().with_inserted(child_occurrence, binding.clone());
+    let mut other_binding = binding;
+    other_binding.viewed = CResourceFact::view_token("v11_identity_other".into(), Vec::new());
+    let second = LoanViewBindings::default().with_inserted(child_occurrence, other_binding);
+    assert_ne!(first, second);
 }

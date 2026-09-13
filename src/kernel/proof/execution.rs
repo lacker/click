@@ -503,6 +503,11 @@ impl CheckedResourceRewrite {
         call_events: &CheckedCallEvents,
         selected_children: Option<Arc<[(String, Variable)]>>,
     ) -> Result<Self, &'static str> {
+        if !before_state.loan_bindings_are_consistent()
+            || !after_state.loan_bindings_are_consistent()
+        {
+            return Err("resource rewrite carries mismatched loan dependency sidecar");
+        }
         let load_equality_capture =
             crate::kernel::CheckedLoadEqualityCapture::start_with_call_events(call_events);
         let assumptions = before_facts.assumptions();
@@ -1093,6 +1098,11 @@ impl CheckedResourceObservation {
         derivations: &PersistentOrderedSet<Theorem>,
         call_events: &CheckedCallEvents,
     ) -> Result<Self, &'static str> {
+        if !before_state.loan_bindings_are_consistent()
+            || !after_state.loan_bindings_are_consistent()
+        {
+            return Err("resource observation carries mismatched loan dependency sidecar");
+        }
         let load_equality_capture =
             crate::kernel::CheckedLoadEqualityCapture::start_with_call_events(call_events);
         let assumptions = before_facts.assumptions();

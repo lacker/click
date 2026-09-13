@@ -16,8 +16,10 @@ pub(crate) use functions::rewrite_resource_instance_selecting_children;
 // V7 routes ordinary calls through it.
 #[allow(dead_code)]
 mod loans;
+#[cfg(test)]
+pub(crate) use loans::LoanLedger;
 pub(crate) use loans::{
-    CheckedLoanCallEvidenceSequence, concat_checked_loan_evidence,
+    CheckedLoanCallEvidenceSequence, LoanViewBinding, concat_checked_loan_evidence,
     empty_checked_loan_evidence_sequence,
 };
 mod loops;
