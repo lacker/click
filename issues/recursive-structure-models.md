@@ -1034,6 +1034,35 @@ appears to need one reports the need instead of adding it.
   (`loop_initialize_smart_have_per_invariant.md`,
   `loop_initialize_helper_have_before_the_closer.md`, three expansion unit
   tests). C3 resumes on the fixup body.
+- 2026-09-12: C3, second resumption (36a8394e): `preserve` is written and
+  the root-blackening `break` is complete (unfold, the write through
+  `rb_set_parent_color`, refold at `RbTree::Node(nid, 0, Color::Black, ..)`);
+  both frames reach the black-parent guard through
+  `ctx_node_is_left_identity`/`_right_identity`. The `expect` line is the
+  frontier report ("still ahead: the body's end, 3 `break`s, 2
+  `continue`s"). Deciding `rb_is_black(parent)` needs the frame's body
+  fact bridged to the loaded word, and every spelling hits a gap:
+  (g) gap 67, a `have` goal that both reads memory through a proof `match`
+  arm's pointer binding and calls a pure function lowers to 0 paths
+  (`have_goal_reads_through_an_arm_binding.md`): the lowering keeps spec
+  loads symbolic when a call is present, and the symbolic-load branch in
+  `kernel/spec.rs` yields no path for an arm-binding base. Kernel side.
+  (h) gap 68, a `simp() using` premise inside a `have` body cannot name
+  the arm's binding (`have_body_simp_using_names_an_arm_binding.md`): the
+  goal is materialized against the lexical bindings but the body's
+  premises are lowered without them. A missed uniform-scoping site; the
+  other `using` positions inside a `have` body need the same check.
+  Beyond the gaps, C3 needs a contract restatement the plan did not
+  record: C2c's frame-level case theorems are stated over `ctx_rb(ctx,
+  bh, focus_color)` / `ctx_almost_rb_insert(ctx, bh)`, while the loop
+  carries `almost_rb_insert(plug(c.model, t.model))` and
+  `ctx_root_black(c.model)`; the invariants must be restated in the
+  frame-level form with the black height as a loop-carried `Nat` before
+  the recolour `continue`s and the post-loop `is_rb_root` can close, and
+  the relevant `examples/rbtree-model` functions copied into the fixture.
+  Diagnostic note: an empty proof `match` arm inside `preserve` falls
+  through to phase automation and reports `missing resource fact views`
+  rather than a frontier.
   (b) gap 63, an unfinished `preserve` is refused at plan time with "must
   execute exactly one complete loop-body iteration", which hides the real
   frontier, so a body path gives no signal until finished end to end.
