@@ -136,7 +136,8 @@ pub use verification::{
     c0_function_names, c0_incremental_selection, c0_prepared_external_dependencies, parse,
     verify_c0_prepared_sources, verify_c0_prepared_sources_at,
     verify_c0_prepared_sources_functions, verify_c0_sources, verify_c0_sources_at,
-    verify_c0_sources_functions, verify_click_theorems, verify_standard_library,
+    verify_c0_sources_functions, verify_c0_sources_in_mode, verify_click_theorems,
+    verify_standard_library,
 };
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;

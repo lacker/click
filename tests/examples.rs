@@ -4,9 +4,10 @@ use std::path::{Component, Path, PathBuf};
 
 use click::cli::{files_with_extension, read_verifying_sources, run_parallel, source_refs};
 use click::instrumentation::{self, ContractFallback};
-use click::surface::verify_c0_sources;
+use click::surface::{ViewSemanticsMode, verify_c0_sources_in_mode};
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
+const VIEW_SEMANTICS: &str = "CLICK_VIEW_SEMANTICS";
 const SOURCE_MANIFEST: &str = "SOURCE.sha256";
 const SOURCE_METADATA: &str = "SOURCE.md";
 
@@ -22,6 +23,18 @@ const QUARANTINED: &[(&str, &str)] = &[(
 /// The body-rerun ratchet (`docs/internals/testing.md`) over every example
 /// project; see `tests/mdtests.rs` for the rule.
 const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[];
+
+/// The view-semantics mode the corpus runs under. `CLICK_VIEW_SEMANTICS=stable-loans`
+/// selects the candidate stable-view interpretation for every project; unset
+/// or `legacy` is the ordinary gate. Rollout scaffolding for
+/// `issues/fix-views.md`; it leaves with the `Legacy` variant at the cutover.
+fn view_semantics() -> ViewSemanticsMode {
+    match std::env::var(VIEW_SEMANTICS).as_deref() {
+        Err(_) | Ok("") | Ok("legacy") => ViewSemanticsMode::Legacy,
+        Ok("stable-loans") => ViewSemanticsMode::StableLoans,
+        Ok(other) => panic!("{VIEW_SEMANTICS} must be `legacy` or `stable-loans`, got `{other}`"),
+    }
+}
 
 #[test]
 fn example_projects() {
@@ -110,6 +123,7 @@ fn example_projects() {
     let census = instrumentation::take_body_rerun_census();
     if requested.is_none()
         && !run_quarantined
+        && view_semantics() == ViewSemanticsMode::Legacy
         && let Some(mismatch) =
             instrumentation::body_rerun_census_mismatch(&census, CONTRACT_FALLBACK_BASELINE)
     {
@@ -157,7 +171,11 @@ fn run_example_project(project: &Path) -> Result<(), String> {
         let c_sources = read_verifying_sources(&click_path, &click_source)?;
         match source_status {
             Some(SourceFixtureStatus::ParserOnly) => {
-                match verify_c0_sources(&click_source, &source_refs(&c_sources)) {
+                match verify_c0_sources_in_mode(
+                    &click_source,
+                    &source_refs(&c_sources),
+                    view_semantics(),
+                ) {
                     Err(error)
                         if error.message().starts_with("failed to parse C source")
                             || error.message().starts_with("failed to parse C header")
@@ -185,7 +203,12 @@ fn run_example_project(project: &Path) -> Result<(), String> {
                 }
             }
             Some(SourceFixtureStatus::Verified) | None => {
-                verify_c0_sources(&click_source, &source_refs(&c_sources)).map_err(|error| {
+                verify_c0_sources_in_mode(
+                    &click_source,
+                    &source_refs(&c_sources),
+                    view_semantics(),
+                )
+                .map_err(|error| {
                     format!(
                         "sidecar `{}` failed: {}",
                         click_path.display(),

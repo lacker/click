@@ -23,6 +23,7 @@ pub const PUBLIC_ENVIRONMENT_VARIABLES: &[&str] = &[
     "CLICK_EXAMPLE",
     "CLICK_RUN_QUARANTINED",
     "CLICK_DISABLE_TACTIC_BUDGETS",
+    "CLICK_VIEW_SEMANTICS",
 ];
 
 /// Stable identifiers for documented command targets, selection rules,

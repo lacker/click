@@ -3,9 +3,10 @@ use std::path::{Path, PathBuf};
 
 use click::cli::{MdTestExpectation, read_mdtest, run_parallel};
 use click::instrumentation::{self, ContractFallback};
-use click::surface::verify_c0_sources;
+use click::surface::{ViewSemanticsMode, verify_c0_sources_in_mode};
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
+const VIEW_SEMANTICS: &str = "CLICK_VIEW_SEMANTICS";
 const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
 
 /// Known-broken mdtests, skipped by default so the suite is a meaningful
@@ -19,6 +20,18 @@ const QUARANTINED: &[(&str, &str)] = &[];
 /// executed a function body because a contract guard declined,
 /// by reason. A count may only fall; lower its pin when it does.
 const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[];
+
+/// The view-semantics mode the corpus runs under. `CLICK_VIEW_SEMANTICS=stable-loans`
+/// selects the candidate stable-view interpretation for every fixture; unset
+/// or `legacy` is the ordinary gate. Rollout scaffolding for
+/// `issues/fix-views.md`; it leaves with the `Legacy` variant at the cutover.
+fn view_semantics() -> ViewSemanticsMode {
+    match std::env::var(VIEW_SEMANTICS).as_deref() {
+        Err(_) | Ok("") | Ok("legacy") => ViewSemanticsMode::Legacy,
+        Ok("stable-loans") => ViewSemanticsMode::StableLoans,
+        Ok(other) => panic!("{VIEW_SEMANTICS} must be `legacy` or `stable-loans`, got `{other}`"),
+    }
+}
 
 #[test]
 fn mdtests() {
@@ -72,12 +85,20 @@ fn mdtests() {
     // available to each file, so concurrency cannot change a verdict. Peak
     // memory stays small: on 2026-09-11 the whole corpus peaked at 171 MB
     // serially and 291 MB on 8 workers.
+    let view_semantics = view_semantics();
+    if view_semantics != ViewSemanticsMode::Legacy {
+        println!(
+            "running {} mdtests under {view_semantics:?} view semantics",
+            paths.len()
+        );
+    }
     let _ = instrumentation::take_body_rerun_census();
     let workers = std::thread::available_parallelism().map_or(1, usize::from);
     let failures = run_parallel(&paths, workers, |path| run_mdtest_in_thread(path));
     let census = instrumentation::take_body_rerun_census();
     if failures.is_empty() {
         if !filtered
+            && view_semantics == ViewSemanticsMode::Legacy
             && std::env::var_os(RUN_QUARANTINED).is_none()
             && let Some(mismatch) =
                 instrumentation::body_rerun_census_mismatch(&census, CONTRACT_FALLBACK_BASELINE)
@@ -159,7 +180,7 @@ fn run_mdtest(path: &Path) -> Result<(), String> {
         .as_ref()
         .ok_or_else(|| format!("`{}` is missing a ```expect block", path.display()))?;
 
-    let result = verify_c0_sources(click_source, &c_sources);
+    let result = verify_c0_sources_in_mode(click_source, &c_sources, view_semantics());
     match (expectation, result) {
         (MdTestExpectation::Pass, Ok(_)) => {}
         (MdTestExpectation::Pass, Err(error)) => {

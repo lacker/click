@@ -679,8 +679,29 @@ pub fn verify_c0_sources(
     click_source: &str,
     c_sources: &[(&str, &str)],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    verify_c0_sources_in_mode(click_source, c_sources, ViewSemanticsMode::Legacy)
+}
+
+/// Verifies a source bundle under an explicit view-semantics mode.
+///
+/// The fixture harnesses use this to run a whole corpus under the candidate
+/// `StableLoans` interpretation while `Legacy` stays the default. The mode is
+/// part of every artifact identity, so a result from one mode cannot certify
+/// a claim in the other. This is rollout scaffolding for the stable-view
+/// cutover (`issues/fix-views.md`) and leaves with the `Legacy` variant.
+pub fn verify_c0_sources_in_mode(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    view_semantics: ViewSemanticsMode,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     instrumentation::with_default_tactic_limits(|| {
-        verify_c0_sources_with_limits(click_source, c_sources)
+        let sources = CSourceContext::bundle_with_mode(c_sources, view_semantics);
+        let result = verify_c0_sources_with_context(click_source, &sources, None, None, None)
+            .map(|(verified, _)| verified);
+        if let Err(error) = &result {
+            error.emit_timing_failure();
+        }
+        result
     })
 }
 
@@ -960,17 +981,6 @@ pub fn verify_c0_prepared_sources_functions(
         )
         .map(|(verified, _)| verified)
     })
-}
-
-pub(in crate::surface) fn verify_c0_sources_with_limits(
-    click_source: &str,
-    c_sources: &[(&str, &str)],
-) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let result = verify_c0_sources_targeted(click_source, c_sources, None);
-    if let Err(error) = &result {
-        error.emit_timing_failure();
-    }
-    result
 }
 
 fn ensure_environment_identity(

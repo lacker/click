@@ -2,17 +2,17 @@
 
 **Status (2026-09-13): the V0-V17 implementation is integrated on master
 behind an internal candidate selector. Ordinary contracts still use the
-legacy weak-view behavior. What remains is the V18 recovery of the top-level
-borrowed-input root, a green candidate corpus, the V18 adversarial review,
-and the V19 cutover. Nothing in this issue is authorization to start agents;
+legacy weak-view behavior. Seven steps remain: finish the top-level
+borrowed-input root and the rest of the V18 implementation, get the
+candidate corpus green, review it adversarially, and cut over. Nothing in this issue is authorization to start agents;
 the remaining cards are future assignments.**
 
 This file is the design and the implementation brief. It is organized as:
 
 - [Current state](#current-state): what is on master, how the candidate
   path is selected, and what is parked.
-- [Remaining work](#remaining-work): the V18 recovery items, the V18 review
-  card, and the V19 cutover card.
+- [Remaining work](#remaining-work): the seven remaining steps, with the
+  parked experiment and failure classes they start from.
 - [Design](#decision-and-violated-invariant): the decision, the laws, the
   kernel/surface design D1-D14, and the regression catalogue R01-R32.
 - [Implementation record](#implementation-record): what each landed card
@@ -65,10 +65,12 @@ content from them is folded into the implementation record below.
 **Selector.** `ViewSemanticsMode` in `src/surface/verification.rs` has the
 variants `Legacy` (default) and `StableLoans`. Candidate fixtures opt in
 through `with_candidate_stable_view_semantics`; the mode is part of every
-artifact identity. There is no committed switch that runs the whole mdtest
-or example corpus under `StableLoans`. The codex candidate-corpus runs were
-made with a local, uncommitted change, so their counts are not reproducible
-from master; the recovery must add a test-harness switch first.
+artifact identity. `CLICK_VIEW_SEMANTICS=stable-loans` makes the mdtest and
+example harnesses verify every fixture under `StableLoans` through
+`verify_c0_sources_in_mode`; the ordinary gate stays `Legacy`. The switch is
+rollout scaffolding and is removed in step 7. The earlier codex corpus
+counts came from an uncommitted local change and are superseded by the
+baseline under remaining work.
 
 **Not on master.**
 
@@ -85,14 +87,33 @@ from master; the recovery must add a test-harness switch first.
 
 ## Remaining work
 
-### V18 recovery: finish the borrowed-input root and make the corpus green
+Seven steps remain, in this order. Steps 1-5 recover and finish the V18
+implementation from the parked experiment; step 6 is the V18 adversarial
+review; step 7 is the V19 cutover. Each step follows the working agreements
+below: an isolated worktree from master, focused positive and negative tests,
+the unfiltered gate, and a handoff. No C source edits, and no change to
+`Legacy` behavior before step 7.
 
-**Read:** D7-D9, D11, the parked WIP commit, and the failure classes below.
-**Depends on:** nothing further; start from master.
+Measure every step against the candidate corpus:
 
-**Boundary:** the candidate call/entry/return paths in `functions.rs`,
-`loans.rs`, `api.rs`, `loops.rs`, the surface proof entry adapters, and the
-candidate fixtures. No C source edits. No change to `Legacy` behavior.
+    CLICK_VIEW_SEMANTICS=stable-loans cargo nextest run --test mdtests --test examples --no-fail-fast --test-threads 1 --no-capture
+
+Baseline on 2026-09-13 at the commit that added the switch: 187 of 1,509
+mdtests and 19 of 26 example projects fail. By error:
+
+- 112 mdtests and 18 examples: "no checked execution matched the contract's
+  execution mode", the missing borrowed-input root (step 1).
+- 32 mdtests: "inline calls are unsupported with candidate stable-view
+  semantics" (step 2).
+- 31 mdtests and 1 example: "the required loan backing or binding is
+  missing" during planning or access (steps 1-3).
+- 2 negatives, `c_callback_contracts_folded_conjunction_deferred` and
+  `c_step_contract_one_call_only`, pass under `StableLoans`; understand
+  them in step 3, do not re-expect them.
+- The composite refusals (steps 4 and 5) do not appear yet because the
+  affected fixtures fail earlier at the root.
+
+Reclassify from a fresh run before each step rather than from these counts.
 
 The parked experiment contains these coherent ideas, each of which needs to
 be re-derived as a reviewable commit with focused positive and negative
@@ -148,7 +169,7 @@ a fresh run rather than trusted:
 2. **Recursive composite views.** `augment_rotate_callback*` need a view of a
    recursive `shape`; the finite composite loan intentionally refuses nested
    or undecidable frontiers. This is required for the rbtree launch path, so
-   an unsupported result does not complete V18. Design it explicitly and put
+   an unsupported result does not complete step 4. Design it explicitly and put
    it through adversarial review before implementing.
 3. **Composite body facts.** `composite_resource_view_then_mutate`,
    `composite_unfold_many_snapshots`, `frame_many_irrelevant_snapshots`, and
@@ -173,29 +194,55 @@ a fresh run rather than trusted:
    possible; change an expected substring only when the new diagnostic names
    the true violated invariant and the positive behavior is already sound.
 
-**Order:**
+### 1. Land the borrowed-input root
 
-1. Add a reproducible harness switch that runs the mdtest and example
-   corpora under `StableLoans`, and record a fresh baseline from master.
-2. Land the borrowed-input root as its own reviewed commit: exact principal
-   occurrence, no close/recovery right, focused positive and negative tests.
-3. Land the sidecar-preserving rebases, then symbolic range/access
-   enforcement, then local and read-only intrinsic views, each with its own
-   tests. Revert rather than carry anything whose invariant cannot be stated.
-4. Finish returned-view provenance, loop/branch authority, and certification
-   before attempting recursive or fact-bearing composites.
-5. Design recursive and fact-bearing composite capabilities explicitly and
-   have them adversarially reviewed.
-6. Only when the candidate corpus is green, assign the V18 review below.
+Give a top-level `views` precondition a checked, nonrecoverable borrowed
+root at contract-proof entry: exact principal occurrence, no close or
+recovery right, reads and nested reborrows only, never ownership (D8). Add
+the focused positive tests (ordinary, nested, partial, symbolic readers) and
+the negatives (derived or ambiguous root selection, root used as owner,
+recovery through the root). This unblocks the `stable_view_*` fixtures and
+every top-level reader in the corpus.
 
-Optimize for small, understandable, green checkpoints. Do not drive the
-failure count down by weakening a guard, changing C, accepting a view by
-fact equality, or updating many expected messages at once.
+### 2. Land the sidecar rebases, symbolic ranges, and intrinsic views
 
-### V18 — Review the complete change adversarially
+Three separate commits, each with its own tests: the ledger/participant/
+binding-preserving `with_resource_context` rebases on the direct, named,
+callback, certification, proof, and loop paths; symbolic borrowed-range
+retention and assumption-aware access checks, without the unreviewed
+`indexed_memory` scan; bounded local views through the activation-local
+bounds rule and exact const/static views as intrinsic read-only authority.
+Inline helper calls, refused outright today, must use their caller's checked
+resources rather than a second entry environment. Revert rather than carry
+anything whose invariant cannot be stated.
+
+### 3. Fix provenance, loop/branch authority, certification, and diagnostics
+
+Failure classes 1, 4, 5, and 6 above: an explicit checked provenance record
+for a returned view deduplicated against a returned owner; validated-range
+loop havoc and the authority-aware branch join; the `struct_conditional_value`
+execution-mode mismatch and the stdlib `count` claim; and the validation
+order behind the expected negative diagnostics. Reclassify from a fresh
+corpus run first.
+
+### 4. Design and implement recursive composite views
+
+Failure class 2. Write the design for a distinct opaque recursive capability
+with an enforcing write/lifetime rule, or an explicit reasoned refusal, have
+it adversarially reviewed, then implement it. Required for the rbtree launch
+path; an unsupported result does not finish this step.
+
+### 5. Design and implement fact-bearing composite bodies
+
+Failure class 3. Record the exact checked facts and the stable memory and
+resource dependencies that justify reusing them across the loan (D7, D12),
+have the design adversarially reviewed, then implement it. Removing the
+current guard alone is unsound.
+
+### 6. Review the complete change adversarially
 
 **Read:** this entire issue and all implementation handoffs.
-**Depends on:** V14, V17.
+**Depends on:** steps 1-5 and a green candidate corpus.
 
 **Boundary:** review and minimal missing regressions/fixes; no new features.
 Assign after implementation, preferably to an agent that did not author the
@@ -212,18 +259,18 @@ core loan rules. This card does not start such an agent now.
   Recheck R01-R32 coverage at its required layer.
 - Verify that the full candidate engine has no legacy fallback and that
   extension-model claims match implemented versus model-only operations.
-- Review scaling evidence and the planned V19 removal list. Run the full
+- Review scaling evidence and the planned step 7 removal list. Run the full
   candidate gate on the exact reviewed commit.
 
 **Done when:** all required semantics have an enforcing path and meaningful
 regressions, every observed defect is fixed/rechecked, and the coordinator
 has an explicit cutover-ready verdict. Unresolved soundness or tooling
-concerns block V19; an optimistic checklist does not replace evidence.
+concerns block step 7; an optimistic checklist does not replace evidence.
 
-### V19 — Cut over, document, and close
+### 7. Cut over, document, and close
 
-**Read:** V18 verdict/removal list and final acceptance below.
-**Depends on:** V18.
+**Read:** the step 6 verdict/removal list and final acceptance below.
+**Depends on:** step 6.
 
 **Boundary:** default entry interpretation, removal of temporary rollout
 scaffolding, public docs and affected expectations; no new semantic design.
@@ -231,9 +278,13 @@ scaffolding, public docs and affected expectations; no new semantic design.
 **Work:**
 
 - Make stable views the sole ordinary-memory interpretation. Remove
-  legacy independent view creation/fallbacks and temporary mode selectors.
-  Retain only justified owner observations, scoped views, and explicit
-  family-specific persistent facts.
+  legacy independent view creation/fallbacks and temporary mode selectors:
+  the `Legacy` variant of `ViewSemanticsMode`, `verify_c0_sources_in_mode`,
+  the `CLICK_VIEW_SEMANTICS` variable in `tests/mdtests.rs` and
+  `tests/examples.rs`, and its entries in `src/cli.rs`,
+  `docs/reference/cli/environment.md`, `docs/reference/inventory.toml`, and
+  `docs/internals/testing.md`. Retain only justified owner observations,
+  scoped views, and explicit family-specific persistent facts.
 - Update `docs/concepts/resources.md`, affected examples, proof/tool docs,
   and the stable-versus-historical descriptions in the shared language
   design. Explain temporary stability, owner reads, partial borrowing,
@@ -250,7 +301,7 @@ scaffolding, public docs and affected expectations; no new semantic design.
 **Done when:** stable memory views are actually enforced everywhere in the
 supported C verifier, the rollout path is gone, the docs describe shipped
 behavior, the full gate passes, and the rbtree launch remains the roadmap.
-If V19 requires a new semantic fix, return it to the relevant card and rerun
+If this step requires a new semantic fix, return it to the relevant step and rerun
 the affected review; do not improvise it inside the final documentation step.
 
 
@@ -1248,8 +1299,8 @@ several agents to edit `functions.rs` or `resource_algebra.rs` at once.
 | V15 | Expansion, audit, refusal diagnostics, and import/proof identity | V8, V10, V12 |
 | V16 | Deterministic complexity gates and local fixes | V10, V11, V15 |
 | V17 | Full corpus/rbtree contract migration and compatibility record | V13, V15, V16 |
-| V18 | Independent adversarial review and production-readiness gate | V14, V17 |
-| V19 | Default semantics cutover, documentation, final cleanup | V18 |
+| V18 | Independent adversarial review and production-readiness gate (step 6 under remaining work) | V14, V17 |
+| V19 | Default semantics cutover, documentation, final cleanup (step 7 under remaining work) | V18 |
 
 Common completion checklist for every implementation card:
 
@@ -1333,8 +1384,8 @@ certify an old-interpretation result as a stable-view result.
 Keep the existing public behavior unchanged until the complete path and
 corpus are ready, and keep this issue open. The candidate path must cover
 ordinary verify/expand/profile/audit, not a hidden stand-alone checker.
-V18 requires the full corpus under the candidate interpretation with no
-uncovered fallback. V19 enables it by default and removes temporary selectors,
+Step 6 requires the full corpus under the candidate interpretation with no
+uncovered fallback. Step 7 enables it by default and removes temporary selectors,
 legacy independent-memory-view construction, and obsolete tests/docs.
 No permanent dual semantics or public compatibility switch is part of P1.
 
@@ -1430,7 +1481,8 @@ borrow or fixing the proof with an unjustified separation assumption.
 
 Acceptance requires:
 
-- V0-V19 have integrated handoffs, all D2 laws have enforcing paths, and
+- V0-V17 and the seven remaining steps have integrated handoffs, all D2 laws
+  have enforcing paths, and
   R01-R32 have the required positive/negative evidence at their stated
   layers. Preserve the result map in durable documentation before closure.
 - Stable views are the default and sole ordinary-memory interpretation.

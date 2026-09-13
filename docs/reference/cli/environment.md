@@ -52,3 +52,16 @@ This variable is an internal experiment handle, not a stable user feature.
 Use it only for an A/B regression that names the expected invariant. The
 kernel reads no environment variable: its behaviour is fixed, and its
 test-only audits are switched on by the tests that run them.
+
+### `CLICK_VIEW_SEMANTICS`
+
+Set `CLICK_VIEW_SEMANTICS=stable-loans` to run the mdtest and example
+harnesses under the candidate stable-view interpretation of `views`; unset or
+`legacy` is the ordinary gate. Only the two fixture harnesses read it. The
+mode is part of every proof-artifact identity, so a result from one mode
+never certifies a claim in the other, and the body-rerun ratchet is skipped
+under `stable-loans`.
+
+This is rollout scaffolding for the stable-view cutover in
+`issues/fix-views.md`. It is removed, with the legacy interpretation, when
+stable views become the only meaning of `views`.
