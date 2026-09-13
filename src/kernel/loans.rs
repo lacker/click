@@ -43,6 +43,7 @@ pub(crate) struct LoanShareId {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StableViewDescription {
     loan: LoanId,
+    support: ResourceOccurrenceId,
     viewed: CResourceFact,
 }
 
@@ -53,6 +54,10 @@ impl StableViewDescription {
 
     pub(crate) fn viewed(&self) -> &CResourceFact {
         &self.viewed
+    }
+
+    pub(crate) fn support(&self) -> ResourceOccurrenceId {
+        self.support
     }
 }
 
@@ -87,11 +92,14 @@ struct LoanScopeRecord {
     root: LoanShareId,
     close_right: LoanParticipantId,
     active: bool,
+    parent: Option<LoanScopeId>,
+    dependencies: crate::persistent::PersistentSet<LoanScopeId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LoanRecord {
     scope: LoanScopeId,
+    support: ResourceOccurrenceId,
     escrow: CResourceFact,
     recovery_right: LoanParticipantId,
     recovered: bool,
@@ -108,7 +116,6 @@ struct LoanShareRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LoanLedgerData {
     arena: u64,
-    next_participant: u64,
     next_scope: u64,
     next_loan: u64,
     next_share: u64,
@@ -191,6 +198,9 @@ pub(crate) enum LoanRefusal {
     StalePredecessor,
     InvalidEvidence,
     UnsupportedResource,
+    UnsupportedPartition,
+    ActiveDependency,
+    MissingBacking,
     IdentitySpaceExhausted,
 }
 
@@ -199,6 +209,7 @@ enum LoanTransitionEvidence {
     Lend {
         lender: LoanParticipantId,
         borrower: LoanParticipantId,
+        support: ResourceOccurrenceId,
         escrow: CResourceFact,
         scope: LoanScopeId,
         loan: LoanId,
@@ -230,12 +241,19 @@ enum LoanTransitionEvidence {
         loan: LoanId,
         holder: LoanParticipantId,
     },
+    RegisterDependency {
+        parent: LoanScopeId,
+        child: LoanScopeId,
+        holder: LoanParticipantId,
+    },
 }
 
 /// Kernel-issued evidence for one exact ledger transition.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedLoanTransition {
     before_state: LoanLedgerStateId,
+    after_state: LoanLedgerStateId,
+    checked_after_state: LoanLedgerStateId,
     evidence: LoanTransitionEvidence,
     /// A structural seal over the bounded operation payload. A second opaque
     /// copy avoids probabilistic hashing and avoids comparing whole ledgers.
@@ -270,9 +288,35 @@ pub(crate) struct StableViewTransferPlan {
     pub(crate) stable_views: Vec<PlannedStableView>,
     pub(crate) memory_effects: Vec<CMemoryRange>,
     pub(crate) ledger: LoanLedger,
+    pub(crate) entry_transitions: Vec<CheckedLoanTransition>,
+    parent_ledger: LoanLedger,
     caller: LoanParticipantId,
     callee: LoanParticipantId,
     loan_roots: Vec<(LoanScopeId, LoanId, LoanShareId, ResourceOccurrenceId)>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StableViewRecovery {
+    pub(crate) ledger: LoanLedger,
+    pub(crate) resources: ResourceContext,
+    pub(crate) transitions: Vec<CheckedLoanTransition>,
+}
+
+impl StableViewRecovery {
+    /// Replays the ordered recovery evidence from the exact entry ledger.
+    /// Applying each item performs the kernel's predecessor and payload checks;
+    /// callers can retain the returned historical successor separately from
+    /// the canonical predecessor stored in `ledger`.
+    pub(crate) fn replay_transitions(
+        &self,
+        predecessor: &LoanLedger,
+    ) -> Result<LoanLedger, LoanRefusal> {
+        let mut current = predecessor.clone();
+        for transition in &self.transitions {
+            current = current.apply(transition)?;
+        }
+        Ok(current)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -282,6 +326,7 @@ pub(crate) enum StableViewPlanError {
     ConflictingRequirement(CResourceFact),
     Loan(LoanRefusal),
     InvalidResidual,
+    UnsupportedPartition,
 }
 
 impl From<LoanRefusal> for StableViewPlanError {
@@ -343,58 +388,160 @@ pub(crate) fn plan_stable_view_transfer(
         transferred_ownership.push(requirement.clone());
     }
 
-    let mut loans_by_origin = BTreeMap::<ResourceOccurrenceId, usize>::new();
     let mut loan_roots = Vec::new();
     let mut planned_ledger = ledger.clone();
-    for requirement in requirements
-        .iter()
-        .filter(|requirement| requirement.fact.is_view())
-    {
-        let Some((origin_support, _)) =
+    let mut entry_transitions = Vec::new();
+    let mut grouped = BTreeMap::<ResourceOccurrenceId, Vec<(usize, CCheckedResourceFact)>>::new();
+    for (index, requirement) in requirements.iter().enumerate() {
+        if !requirement.fact.is_view() {
+            continue;
+        }
+        if let Some(range) = requirement.fact.memory_range()
+            && (range.start().as_const().is_none() || range.end().as_const().is_none())
+        {
+            return Err(StableViewPlanError::UnsupportedPartition);
+        }
+        let Some((support, owned)) =
             caller_resources.directly_supporting_owned_entry(&requirement.fact, assumptions)
         else {
             return Err(StableViewPlanError::MissingResource(
                 requirement.fact.clone(),
             ));
         };
+        if matches!(
+            owned.resource(),
+            CResource::Composite { .. } | CResource::Instance(_)
+        ) {
+            return Err(StableViewPlanError::Loan(LoanRefusal::UnsupportedResource));
+        }
+        grouped
+            .entry(support)
+            .or_default()
+            .push((index, requirement.clone()));
+    }
 
-        let root_index = if let Some(index) = loans_by_origin.get(&origin_support) {
-            *index
-        } else {
-            let Some((support, owned)) =
-                residual.directly_supporting_owned_entry(&requirement.fact, assumptions)
-            else {
-                return Err(StableViewPlanError::ConflictingRequirement(
-                    requirement.fact.clone(),
-                ));
+    let mut planned_views = Vec::<(usize, PlannedStableView)>::new();
+    for (_origin_support, group) in grouped {
+        let mut clusters: Vec<Vec<(usize, CCheckedResourceFact)>> = Vec::new();
+        for item in group {
+            let Some(range) = item.1.fact.memory_range().cloned() else {
+                if !matches!(item.1.fact.resource(), CResource::Token { .. }) {
+                    return Err(StableViewPlanError::Loan(LoanRefusal::UnsupportedResource));
+                }
+                if let Some(token_cluster) = clusters.iter_mut().find(|cluster| {
+                    cluster
+                        .first()
+                        .is_some_and(|(_, requirement)| requirement.fact.memory_range().is_none())
+                }) {
+                    token_cluster.push(item);
+                } else {
+                    clusters.push(vec![item]);
+                }
+                continue;
             };
-            let owned = owned.clone();
-            let opening = planned_ledger.lend(caller, callee, owned.clone())?;
+            if range.start().as_const().is_none() || range.end().as_const().is_none() {
+                return Err(StableViewPlanError::UnsupportedPartition);
+            }
+            let mut pending = vec![item];
+            let mut pending_union = range;
+            let mut cluster_index = 0;
+            while cluster_index < clusters.len() {
+                let Some(existing_union) = concrete_memory_cluster_union(&clusters[cluster_index])
+                else {
+                    cluster_index += 1;
+                    continue;
+                };
+                let Some(union) = concrete_memory_union(&existing_union, &pending_union) else {
+                    cluster_index += 1;
+                    continue;
+                };
+                pending_union = union;
+                pending.extend(clusters.remove(cluster_index));
+                // Expanding the pending interval can make it overlap a
+                // cluster that was previously disjoint, so restart the
+                // indexed merge walk after each removal.
+                cluster_index = 0;
+            }
+            clusters.push(pending);
+        }
+
+        for cluster in clusters {
+            let selected = if cluster
+                .first()
+                .and_then(|(_, item)| item.fact.memory_range())
+                .is_some()
+            {
+                let mut union = cluster
+                    .first()
+                    .and_then(|(_, item)| item.fact.memory_range())
+                    .cloned()
+                    .ok_or(StableViewPlanError::UnsupportedPartition)?;
+                for (_, item) in cluster.iter().skip(1) {
+                    let range = item
+                        .fact
+                        .memory_range()
+                        .ok_or(StableViewPlanError::UnsupportedPartition)?;
+                    union = concrete_memory_union(&union, range)
+                        .ok_or(StableViewPlanError::UnsupportedPartition)?;
+                }
+                CResourceFact::own_memory(union)
+            } else {
+                let resource = cluster
+                    .first()
+                    .map(|(_, item)| item.fact.resource().clone())
+                    .ok_or(StableViewPlanError::UnsupportedPartition)?;
+                CResourceFact::own(CResource::Token {
+                    name: match resource {
+                        CResource::Token { ref name, .. } => name.clone(),
+                        _ => return Err(StableViewPlanError::UnsupportedPartition),
+                    },
+                    arguments: match resource {
+                        CResource::Token { arguments, .. } => arguments,
+                        _ => return Err(StableViewPlanError::UnsupportedPartition),
+                    },
+                })
+            };
+            let Some((support, owned)) = residual
+                .clone()
+                .directly_supporting_owned_entry(&selected, assumptions)
+                .map(|(support, owned)| (support, owned.clone()))
+            else {
+                return Err(StableViewPlanError::ConflictingRequirement(selected));
+            };
+            let opening = planned_ledger.lend(caller, callee, support, selected.clone())?;
+            entry_transitions.push(opening.transition.clone());
             planned_ledger = planned_ledger.apply(&opening.transition)?;
             residual = residual
-                .without_exact_representation_for_occurrence(support)
+                .without_fact_incrementally(&selected, assumptions)
                 .ok_or_else(|| StableViewPlanError::MissingResource(owned.clone()))?;
-            let index = loan_roots.len();
+            let root_index = loan_roots.len();
             loan_roots.push((opening.scope, opening.loan, opening.root_share, support));
-            loans_by_origin.insert(origin_support, index);
-            index
-        };
-        let (scope, loan, share, support) = loan_roots[root_index];
-        let description = planned_ledger
-            .describe_view(loan, requirement.fact.clone(), assumptions)
-            .map_err(|_| StableViewPlanError::ConflictingRequirement(requirement.fact.clone()))?;
-        callee_resources = callee_resources
-            .try_compose_with_fact(requirement.fact.clone(), assumptions)
-            .map_err(|_| StableViewPlanError::InvalidResidual)?;
-        stable_views.push(PlannedStableView {
-            requirement: requirement.clone(),
-            support,
-            loan,
-            scope,
-            share,
-            description,
-        });
+            for (index, requirement) in cluster {
+                let description = planned_ledger
+                    .describe_view(opening.loan, requirement.fact.clone(), assumptions)
+                    .map_err(|_| {
+                        StableViewPlanError::ConflictingRequirement(requirement.fact.clone())
+                    })?;
+                callee_resources = callee_resources
+                    .try_compose_with_fact(requirement.fact.clone(), assumptions)
+                    .map_err(|_| StableViewPlanError::InvalidResidual)?;
+                planned_views.push((
+                    index,
+                    PlannedStableView {
+                        requirement,
+                        support,
+                        loan: opening.loan,
+                        scope: opening.scope,
+                        share: opening.root_share,
+                        description,
+                    },
+                ));
+            }
+            let _ = root_index;
+        }
     }
+    planned_views.sort_by_key(|(index, _)| *index);
+    stable_views.extend(planned_views.into_iter().map(|(_, view)| view));
 
     Ok(StableViewTransferPlan {
         caller_resources_after_requirements: residual,
@@ -403,6 +550,8 @@ pub(crate) fn plan_stable_view_transfer(
         stable_views,
         memory_effects,
         ledger: planned_ledger,
+        entry_transitions,
+        parent_ledger: ledger.clone(),
         caller,
         callee,
         loan_roots,
@@ -415,22 +564,90 @@ impl StableViewTransferPlan {
     pub(crate) fn recover_stable_views(
         self,
         assumptions: &PureFactContext,
-    ) -> Result<(LoanLedger, ResourceContext), StableViewPlanError> {
+    ) -> Result<StableViewRecovery, StableViewPlanError> {
+        let parent_ledger = self.parent_ledger;
+        let stable_views = self.stable_views.clone();
+        let loan_roots = self.loan_roots.clone();
         let mut ledger = self.ledger;
         let mut resources = self.caller_resources_after_requirements;
-        for (scope, loan, root, _) in self.loan_roots.into_iter().rev() {
+        let mut transitions = Vec::new();
+        for (scope, loan, root, _) in loan_roots.into_iter().rev() {
             let transfer = ledger.transfer(root, self.callee, self.caller)?;
             ledger = ledger.apply(&transfer)?;
+            transitions.push(transfer);
             let end = ledger.end(scope, self.caller)?;
             ledger = ledger.apply(&end)?;
-            let (recover, escrow) = ledger.recover(loan, self.caller)?;
+            transitions.push(end);
+            let (recover, escrow, support) = ledger.recover(loan, self.caller)?;
             ledger = ledger.apply(&recover)?;
+            transitions.push(recover);
+            if support
+                != stable_views
+                    .iter()
+                    .find(|view| view.loan == loan)
+                    .map(|view| view.support)
+                    .unwrap_or(support)
+            {
+                return Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence));
+            }
             resources = resources
                 .try_compose_with_fact(escrow, assumptions)
                 .map_err(|_| StableViewPlanError::InvalidResidual)?;
         }
-        Ok((ledger, resources))
+        // Every scope in loan_roots was created by this plan and has just
+        // passed End and Recover. End checks its indexed dependency set, so a
+        // registered child would have refused before this checkpoint. The
+        // plan can therefore roll back directly to the exact predecessor
+        // root without a whole-ledger quiescence scan.
+        ledger = parent_ledger;
+        Ok(StableViewRecovery {
+            ledger,
+            resources,
+            transitions,
+        })
     }
+
+    pub(crate) fn replay_entry(&self, predecessor: &LoanLedger) -> Result<LoanLedger, LoanRefusal> {
+        let mut current = predecessor.clone();
+        for transition in &self.entry_transitions {
+            current = current.apply(transition)?;
+        }
+        (current == self.ledger)
+            .then_some(current)
+            .ok_or(LoanRefusal::InvalidEvidence)
+    }
+}
+
+fn concrete_memory_union(left: &CMemoryRange, right: &CMemoryRange) -> Option<CMemoryRange> {
+    if left.base() != right.base() || left.element_width() != right.element_width() {
+        return None;
+    }
+    let left_start = left.start().as_const()?;
+    let left_end = left.end().as_const()?;
+    let right_start = right.start().as_const()?;
+    let right_end = right.end().as_const()?;
+    if left_start > left_end || right_start > right_end {
+        return None;
+    }
+    if left_end < right_start || right_end < left_start {
+        return None;
+    }
+    Some(CMemoryRange::new_with_element_width(
+        left.base().clone(),
+        left_start.min(right_start).into(),
+        left_end.max(right_end).into(),
+        left.element_width(),
+    ))
+}
+
+fn concrete_memory_cluster_union(
+    cluster: &[(usize, CCheckedResourceFact)],
+) -> Option<CMemoryRange> {
+    let mut union = cluster.first()?.1.fact.memory_range()?.clone();
+    for (_, requirement) in cluster.iter().skip(1) {
+        union = concrete_memory_union(&union, requirement.fact.memory_range()?)?;
+    }
+    Some(union)
 }
 
 impl LoanLedger {
@@ -442,7 +659,6 @@ impl LoanLedger {
                 state: LoanLedgerStateId::fresh(),
                 data: LoanLedgerData {
                     arena,
-                    next_participant: 0,
                     next_scope: 0,
                     next_loan: 0,
                     next_share: 0,
@@ -454,27 +670,28 @@ impl LoanLedger {
         }
     }
 
-    pub(crate) fn fresh_participant(&self) -> Result<(Self, LoanParticipantId), LoanRefusal> {
-        let mut data = self.storage.data.clone();
+    pub(crate) fn fresh_participant(&self) -> Result<LoanParticipantId, LoanRefusal> {
+        static NEXT_PARTICIPANT: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         let participant = LoanParticipantId {
-            arena: data.arena,
-            ordinal: data.next_participant,
+            arena: self.storage.data.arena,
+            ordinal: NEXT_PARTICIPANT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         };
-        data.next_participant = data
-            .next_participant
-            .checked_add(1)
-            .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
-        Ok((self.with_data(data)?, participant))
+        Ok(participant)
     }
 
     pub(crate) fn lend(
         &self,
         lender: LoanParticipantId,
         borrower: LoanParticipantId,
+        support: ResourceOccurrenceId,
         escrow: CResourceFact,
     ) -> Result<LoanOpening, LoanRefusal> {
         self.require_participant(lender)?;
         self.require_participant(borrower)?;
+        if support == ResourceOccurrenceId::default() {
+            return Err(LoanRefusal::MissingBacking);
+        }
         if !escrow.is_own() {
             return Err(LoanRefusal::NotOwnership);
         }
@@ -499,6 +716,7 @@ impl LoanLedger {
         let evidence = LoanTransitionEvidence::Lend {
             lender,
             borrower,
+            support,
             escrow: escrow.clone(),
             scope,
             loan,
@@ -510,6 +728,7 @@ impl LoanLedger {
             root_share: root,
             description: StableViewDescription {
                 loan,
+                support,
                 viewed: CResourceFact::View(escrow.resource().clone()),
             },
             transition: self.issue(evidence)?,
@@ -589,11 +808,27 @@ impl LoanLedger {
         self.issue(LoanTransitionEvidence::End { scope, holder })
     }
 
+    pub(crate) fn register_dependency(
+        &self,
+        parent: LoanScopeId,
+        child: LoanScopeId,
+        holder: LoanParticipantId,
+    ) -> Result<CheckedLoanTransition, LoanRefusal> {
+        self.require_arena(parent.arena)?;
+        self.require_arena(child.arena)?;
+        self.require_participant(holder)?;
+        self.issue(LoanTransitionEvidence::RegisterDependency {
+            parent,
+            child,
+            holder,
+        })
+    }
+
     pub(crate) fn recover(
         &self,
         loan: LoanId,
         holder: LoanParticipantId,
-    ) -> Result<(CheckedLoanTransition, CResourceFact), LoanRefusal> {
+    ) -> Result<(CheckedLoanTransition, CResourceFact, ResourceOccurrenceId), LoanRefusal> {
         self.require_arena(loan.arena)?;
         self.require_participant(holder)?;
         let escrow = self
@@ -604,9 +839,17 @@ impl LoanLedger {
             .ok_or(LoanRefusal::MissingLoan)?
             .escrow
             .clone();
+        let support = self
+            .storage
+            .data
+            .loans
+            .get(&loan)
+            .ok_or(LoanRefusal::MissingLoan)?
+            .support;
         Ok((
             self.issue(LoanTransitionEvidence::Recover { loan, holder })?,
             escrow,
+            support,
         ))
     }
 
@@ -666,7 +909,11 @@ impl LoanLedger {
         {
             return Err(LoanRefusal::InvalidEvidence);
         }
-        Ok(StableViewDescription { loan, viewed })
+        Ok(StableViewDescription {
+            loan,
+            support: record.support,
+            viewed,
+        })
     }
 
     pub(crate) fn apply(&self, transition: &CheckedLoanTransition) -> Result<Self, LoanRefusal> {
@@ -676,7 +923,16 @@ impl LoanLedger {
         if transition.evidence != transition.checked_evidence {
             return Err(LoanRefusal::InvalidEvidence);
         }
-        self.with_data(self.apply_evidence(&transition.evidence)?)
+        if transition.after_state != transition.checked_after_state {
+            return Err(LoanRefusal::InvalidEvidence);
+        }
+        let data = self.apply_evidence(&transition.evidence)?;
+        Ok(Self {
+            storage: Arc::new(LoanLedgerStorage {
+                state: transition.after_state,
+                data,
+            }),
+        })
     }
 
     pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
@@ -690,19 +946,13 @@ impl LoanLedger {
         // Validate at issue time; applying repeats the same local transition
         // check against the exact predecessor.
         self.apply_evidence(&evidence)?;
+        let after_state = LoanLedgerStateId::fresh();
         Ok(CheckedLoanTransition {
             before_state: self.storage.state,
+            after_state,
+            checked_after_state: after_state,
             checked_evidence: evidence.clone(),
             evidence,
-        })
-    }
-
-    fn with_data(&self, data: LoanLedgerData) -> Result<Self, LoanRefusal> {
-        Ok(Self {
-            storage: Arc::new(LoanLedgerStorage {
-                state: LoanLedgerStateId::fresh(),
-                data,
-            }),
         })
     }
 
@@ -713,8 +963,7 @@ impl LoanLedger {
     }
 
     fn require_participant(&self, participant: LoanParticipantId) -> Result<(), LoanRefusal> {
-        (participant.arena == self.storage.data.arena
-            && participant.ordinal < self.storage.data.next_participant)
+        (participant.arena == self.storage.data.arena)
             .then_some(())
             .ok_or(LoanRefusal::WrongArena)
     }
@@ -728,6 +977,7 @@ impl LoanLedger {
             LoanTransitionEvidence::Lend {
                 lender,
                 borrower,
+                support,
                 escrow,
                 scope,
                 loan,
@@ -736,6 +986,11 @@ impl LoanLedger {
                 if !escrow.is_own() {
                     return Err(LoanRefusal::NotOwnership);
                 }
+                if *support == ResourceOccurrenceId::default() {
+                    return Err(LoanRefusal::MissingBacking);
+                }
+                self.require_participant(*lender)?;
+                self.require_participant(*borrower)?;
                 if !matches!(
                     escrow.resource(),
                     CResource::Memory(_) | CResource::Token { .. }
@@ -770,12 +1025,15 @@ impl LoanLedger {
                         root: *root,
                         close_right: *lender,
                         active: true,
+                        parent: None,
+                        dependencies: crate::persistent::PersistentSet::default(),
                     },
                 );
                 data.loans = data.loans.with_inserted(
                     *loan,
                     LoanRecord {
                         scope: *scope,
+                        support: *support,
                         escrow: escrow.clone(),
                         recovery_right: *lender,
                         recovered: false,
@@ -929,6 +1187,9 @@ impl LoanLedger {
                 if scope_record.close_right != *holder {
                     return Err(LoanRefusal::WrongHolder);
                 }
+                if !scope_record.dependencies.is_empty() {
+                    return Err(LoanRefusal::ActiveDependency);
+                }
                 let root = data
                     .shares
                     .get(&scope_record.root)
@@ -951,6 +1212,20 @@ impl LoanLedger {
                         ..scope_record
                     },
                 );
+                if let Some(parent) = data.scopes.get(scope).and_then(|record| record.parent) {
+                    let parent_record = data
+                        .scopes
+                        .get(&parent)
+                        .cloned()
+                        .ok_or(LoanRefusal::MissingScope)?;
+                    data.scopes = data.scopes.with_inserted(
+                        parent,
+                        LoanScopeRecord {
+                            dependencies: parent_record.dependencies.without_value(scope),
+                            ..parent_record
+                        },
+                    );
+                }
             }
             LoanTransitionEvidence::Recover { loan, holder } => {
                 let record = data
@@ -976,6 +1251,52 @@ impl LoanLedger {
                     LoanRecord {
                         recovered: true,
                         ..record
+                    },
+                );
+            }
+            LoanTransitionEvidence::RegisterDependency {
+                parent,
+                child,
+                holder,
+            } => {
+                if parent == child {
+                    return Err(LoanRefusal::InvalidEvidence);
+                }
+                let parent_record = data
+                    .scopes
+                    .get(parent)
+                    .cloned()
+                    .ok_or(LoanRefusal::MissingScope)?;
+                let child_record = data
+                    .scopes
+                    .get(child)
+                    .cloned()
+                    .ok_or(LoanRefusal::MissingScope)?;
+                if !parent_record.active || !child_record.active {
+                    return Err(LoanRefusal::ScopeEnded);
+                }
+                if parent_record.close_right != *holder || child_record.parent.is_some() {
+                    return Err(LoanRefusal::WrongHolder);
+                }
+                let parent_share = data
+                    .shares
+                    .get(&parent_record.root)
+                    .ok_or(LoanRefusal::MissingShare)?;
+                if parent_share.holder != Some(*holder) {
+                    return Err(LoanRefusal::WrongHolder);
+                }
+                data.scopes = data.scopes.with_inserted(
+                    *parent,
+                    LoanScopeRecord {
+                        dependencies: parent_record.dependencies.with_value(*child),
+                        ..parent_record
+                    },
+                );
+                data.scopes = data.scopes.with_inserted(
+                    *child,
+                    LoanScopeRecord {
+                        parent: Some(*parent),
+                        ..child_record
                     },
                 );
             }
@@ -1049,7 +1370,7 @@ impl LoanLedger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::{CResource, CResourceFact};
+    use crate::kernel::{Bitvector32Term, CResource, CResourceFact, Variable};
 
     fn owned(name: &str) -> CResourceFact {
         CResourceFact::own(CResource::Token {
@@ -1058,10 +1379,29 @@ mod tests {
         })
     }
 
+    fn backing(fact: &CResourceFact) -> ResourceOccurrenceId {
+        ResourceContext::new()
+            .unchecked_with_fact(fact.clone())
+            .unique_owned_occurrence_for_fact(fact)
+            .unwrap()
+            .0
+    }
+
+    fn lend_test(
+        ledger: &LoanLedger,
+        lender: LoanParticipantId,
+        borrower: LoanParticipantId,
+        escrow: CResourceFact,
+    ) -> LoanOpening {
+        ledger
+            .lend(lender, borrower, backing(&escrow), escrow)
+            .unwrap()
+    }
+
     fn participants() -> (LoanLedger, LoanParticipantId, LoanParticipantId) {
         let ledger = LoanLedger::new();
-        let (ledger, owner) = ledger.fresh_participant().unwrap();
-        let (ledger, reader) = ledger.fresh_participant().unwrap();
+        let owner = ledger.fresh_participant().unwrap();
+        let reader = ledger.fresh_participant().unwrap();
         (ledger, owner, reader)
     }
 
@@ -1070,7 +1410,7 @@ mod tests {
         let (ledger, owner, reader) = participants();
         let assumptions = PureFactContext::new();
         let escrow = owned("cell");
-        let opening = ledger.lend(owner, owner, escrow.clone()).unwrap();
+        let opening = lend_test(&ledger, owner, owner, escrow.clone());
         let ledger = ledger.apply(&opening.transition).unwrap();
         let (split, left, right) = ledger
             .split(opening.root_share, owner, owner, reader)
@@ -1094,8 +1434,9 @@ mod tests {
             opening.root_share,
             &assumptions
         ));
-        let (recover, recovered) = ledger.recover(opening.loan, owner).unwrap();
+        let (recover, recovered, support) = ledger.recover(opening.loan, owner).unwrap();
         assert_eq!(recovered, escrow);
+        assert_eq!(support, opening.description.support());
         let ledger = ledger.apply(&recover).unwrap();
         assert!(ledger.invariant_holds());
         assert_eq!(
@@ -1107,7 +1448,7 @@ mod tests {
     #[test]
     fn transitions_are_bound_to_their_exact_predecessor() {
         let (ledger, owner, reader) = participants();
-        let opening = ledger.lend(owner, reader, owned("cell")).unwrap();
+        let opening = lend_test(&ledger, owner, reader, owned("cell"));
         let advanced = ledger.apply(&opening.transition).unwrap();
         assert_eq!(
             advanced.apply(&opening.transition),
@@ -1123,8 +1464,8 @@ mod tests {
     #[test]
     fn divergent_successors_have_distinct_state_identities() {
         let (ledger, owner, reader) = participants();
-        let first = ledger.lend(owner, reader, owned("first")).unwrap();
-        let second = ledger.lend(owner, reader, owned("second")).unwrap();
+        let first = lend_test(&ledger, owner, reader, owned("first"));
+        let second = lend_test(&ledger, owner, reader, owned("second"));
         let first = ledger.apply(&first.transition).unwrap();
         let second = ledger.apply(&second.transition).unwrap();
         assert_ne!(first, second);
@@ -1134,7 +1475,7 @@ mod tests {
     #[test]
     fn hostile_transition_payload_is_rechecked() {
         let (ledger, owner, reader) = participants();
-        let mut opening = ledger.lend(owner, reader, owned("cell")).unwrap();
+        let mut opening = lend_test(&ledger, owner, reader, owned("cell"));
         let LoanTransitionEvidence::Lend { borrower, .. } = &mut opening.transition.evidence else {
             panic!("lend evidence")
         };
@@ -1150,7 +1491,7 @@ mod tests {
         let (ledger, owner, reader) = participants();
         let clone = ledger.clone();
         assert!(ledger.shares_storage_with(&clone));
-        let opening = ledger.lend(owner, reader, owned("cell")).unwrap();
+        let opening = lend_test(&ledger, owner, reader, owned("cell"));
         let advanced = ledger.apply(&opening.transition).unwrap();
         assert!(!ledger.shares_storage_with(&advanced));
         assert!(ledger.storage.data.loans.is_empty());
@@ -1160,7 +1501,7 @@ mod tests {
     #[test]
     fn nested_reborrow_must_rejoin_each_parent_before_scope_end() {
         let (ledger, owner, reader) = participants();
-        let opening = ledger.lend(owner, owner, owned("cell")).unwrap();
+        let opening = lend_test(&ledger, owner, owner, owned("cell"));
         let ledger = ledger.apply(&opening.transition).unwrap();
         let (outer_split, retained, reborrowed) = ledger
             .split(opening.root_share, owner, owner, reader)
@@ -1204,11 +1545,12 @@ mod tests {
     fn participants_and_scope_ids_cannot_cross_ledger_arenas() {
         let (first, first_owner, _) = participants();
         let (_second, second_owner, second_reader) = participants();
+        let cell = owned("cell");
         assert_eq!(
-            first.lend(second_owner, second_reader, owned("cell")),
+            first.lend(second_owner, second_reader, backing(&cell), cell.clone()),
             Err(LoanRefusal::WrongArena)
         );
-        let opening = first.lend(first_owner, first_owner, owned("cell")).unwrap();
+        let opening = lend_test(&first, first_owner, first_owner, cell);
         let first = first.apply(&opening.transition).unwrap();
         assert_eq!(
             first.transfer(opening.root_share, second_owner, first_owner),
@@ -1221,7 +1563,7 @@ mod tests {
         let (ledger, owner, reader) = participants();
         let composite = CResourceFact::own_composite("cell".to_string(), Vec::new());
         assert_eq!(
-            ledger.lend(owner, reader, composite),
+            ledger.lend(owner, reader, backing(&composite), composite),
             Err(LoanRefusal::UnsupportedResource)
         );
     }
@@ -1231,15 +1573,17 @@ mod tests {
         for size in [16_usize, 64, 256, 1024] {
             let (mut ledger, owner, reader) = participants();
             for index in 0..size {
-                let opening = ledger
-                    .lend(owner, reader, owned(&format!("cell_{index}")))
-                    .unwrap();
+                let cell = owned(&format!("cell_{index}"));
+                let opening = ledger.lend(owner, reader, backing(&cell), cell).unwrap();
                 ledger = ledger.apply(&opening.transition).unwrap();
             }
             let ancestor = ledger.clone();
             assert!(ledger.shares_storage_with(&ancestor));
             let before = crate::persistent::persistent_node_allocations();
-            let opening = ledger.lend(owner, reader, owned("target")).unwrap();
+            let target = owned("target");
+            let opening = ledger
+                .lend(owner, reader, backing(&target), target)
+                .unwrap();
             let successor = ledger.apply(&opening.transition).unwrap();
             let allocations = crate::persistent::persistent_node_allocations() - before;
             let logarithmic_height = usize::BITS as usize - size.leading_zeros() as usize;
@@ -1278,22 +1622,42 @@ mod tests {
         }
     }
 
+    fn symbolic_memory(start: Bitvector32Term, end: Bitvector32Term, own: bool) -> CResourceFact {
+        let range = crate::kernel::CMemoryRange::new(
+            crate::kernel::Pointer {
+                block: "buffer".into(),
+                offset: crate::kernel::PointerOffsetTerm::Constant(0),
+            },
+            start,
+            end,
+        );
+        if own {
+            CResourceFact::own_memory(range)
+        } else {
+            CResourceFact::view_memory(range)
+        }
+    }
+
     #[test]
     fn joint_planner_uses_one_escrow_for_overlapping_views_and_recovers_it() {
         let assumptions = PureFactContext::new();
-        let owner = memory(0, 8, true);
+        let owner = memory(0, 9, true);
         let caller_resources = ResourceContext::new().unchecked_with_fact(owner.clone());
         let (ledger, caller, callee) = participants();
         let plan = plan_stable_view_transfer(
             &caller_resources,
-            &[checked(memory(0, 6, false)), checked(memory(2, 8, false))],
+            &[
+                checked(memory(0, 6, false)),
+                checked(memory(2, 8, false)),
+                checked(memory(7, 9, false)),
+            ],
             &assumptions,
             &ledger,
             caller,
             callee,
         )
         .unwrap();
-        assert_eq!(plan.stable_views.len(), 2);
+        assert_eq!(plan.stable_views.len(), 3);
         assert_eq!(plan.stable_views[0].loan, plan.stable_views[1].loan);
         assert_eq!(plan.stable_views[0].share, plan.stable_views[1].share);
         assert!(
@@ -1309,8 +1673,126 @@ mod tests {
                 &assumptions
             ));
         }
-        let (_ledger, recovered) = plan.recover_stable_views(&assumptions).unwrap();
-        assert!(recovered.satisfies_fact(&owner, &assumptions));
+        let planned_ledger = plan.ledger.clone();
+        let replayed = plan.replay_entry(&ledger).unwrap();
+        let recovery = plan.recover_stable_views(&assumptions).unwrap();
+        assert!(recovery.resources.satisfies_fact(&owner, &assumptions));
+        assert_eq!(recovery.transitions.len(), 3);
+        assert_eq!(recovery.ledger, ledger);
+        assert_eq!(replayed, planned_ledger);
+        assert!(recovery.replay_transitions(&planned_ledger).is_ok());
+    }
+
+    #[test]
+    fn joint_planner_returns_disjoint_residual_ranges_and_exact_backing() {
+        let assumptions = PureFactContext::new();
+        let owner = memory(0, 8, true);
+        let caller_resources = ResourceContext::new().unchecked_with_fact(owner.clone());
+        let (ledger, caller, callee) = participants();
+        let plan = plan_stable_view_transfer(
+            &caller_resources,
+            &[checked(memory(2, 4, false))],
+            &assumptions,
+            &ledger,
+            caller,
+            callee,
+        )
+        .unwrap();
+        let planned = &plan.stable_views[0];
+        let (support, _) = caller_resources
+            .directly_supporting_owned_entry(&owner, &assumptions)
+            .unwrap();
+        assert_eq!(planned.support, support);
+        assert_eq!(planned.description.support(), support);
+        assert!(
+            plan.caller_resources_after_requirements
+                .satisfies_fact(&memory(0, 2, true), &assumptions)
+        );
+        assert!(
+            plan.caller_resources_after_requirements
+                .satisfies_fact(&memory(4, 8, true), &assumptions)
+        );
+        assert!(
+            !plan
+                .caller_resources_after_requirements
+                .satisfies_fact(&owner, &assumptions)
+        );
+        let recovery = plan.recover_stable_views(&assumptions).unwrap();
+        assert!(recovery.resources.satisfies_fact(&owner, &assumptions));
+        assert_eq!(recovery.ledger, ledger);
+    }
+
+    #[test]
+    fn joint_planner_replays_two_disjoint_entry_loans_by_exact_state_chain() {
+        let assumptions = PureFactContext::new();
+        let owner = memory(0, 8, true);
+        let caller_resources = ResourceContext::new().unchecked_with_fact(owner);
+        let (ledger, caller, callee) = participants();
+        let plan = plan_stable_view_transfer(
+            &caller_resources,
+            &[checked(memory(0, 2, false)), checked(memory(6, 8, false))],
+            &assumptions,
+            &ledger,
+            caller,
+            callee,
+        )
+        .unwrap();
+        assert_eq!(plan.entry_transitions.len(), 2);
+        assert_ne!(plan.stable_views[0].support, plan.stable_views[1].support);
+        let planned_ledger = plan.ledger.clone();
+        assert_eq!(plan.replay_entry(&ledger).unwrap(), planned_ledger);
+        let recovery = plan.recover_stable_views(&assumptions).unwrap();
+        assert_eq!(recovery.ledger, ledger);
+        assert_eq!(recovery.transitions.len(), 6);
+        assert!(recovery.replay_transitions(&planned_ledger).is_ok());
+    }
+
+    #[test]
+    fn joint_planner_refuses_symbolic_partition_without_consuming_state() {
+        let assumptions = PureFactContext::new();
+        let owner = memory(0, 8, true);
+        let caller_resources = ResourceContext::new().unchecked_with_fact(owner.clone());
+        let (ledger, caller, callee) = participants();
+        let before = ledger.clone();
+        let symbolic = symbolic_memory(
+            Bitvector32Term::Variable(Variable(71_001)),
+            Bitvector32Term::Constant(4),
+            false,
+        );
+        assert_eq!(
+            plan_stable_view_transfer(
+                &caller_resources,
+                &[checked(symbolic)],
+                &assumptions,
+                &ledger,
+                caller,
+                callee,
+            ),
+            Err(StableViewPlanError::UnsupportedPartition)
+        );
+        assert!(ledger.shares_storage_with(&before));
+    }
+
+    #[test]
+    fn active_child_dependency_blocks_parent_close_until_child_ends() {
+        let (ledger, owner, reader) = participants();
+        let parent = lend_test(&ledger, owner, owner, owned("parent"));
+        let ledger = ledger.apply(&parent.transition).unwrap();
+        let child = lend_test(&ledger, owner, reader, owned("child"));
+        let ledger = ledger.apply(&child.transition).unwrap();
+        let dependency = ledger
+            .register_dependency(parent.scope, child.scope, owner)
+            .unwrap();
+        let ledger = ledger.apply(&dependency).unwrap();
+        assert_eq!(
+            ledger.end(parent.scope, owner),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        let child_return = ledger.transfer(child.root_share, reader, owner).unwrap();
+        let ledger = ledger.apply(&child_return).unwrap();
+        let child_end = ledger.end(child.scope, owner).unwrap();
+        let ledger = ledger.apply(&child_end).unwrap();
+        assert!(ledger.end(parent.scope, owner).is_ok());
     }
 
     #[test]
