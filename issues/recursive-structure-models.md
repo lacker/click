@@ -1062,7 +1062,13 @@ appears to need one reports the need instead of adding it.
   fails with "have body tactic 1: could not lower `rewrite` equality: the
   kernel lowering hit Paths"; the same file with `owns t` and `let t =
   fold(..)` audits clean. Reproduction: the gap 68 fixture's `peek` in
-  the consumes/produces form. Blocks feature work until fixed.
+  the consumes/produces form. CLOSED by 44acfb0c: the certificate
+  premise lookup accepted a constructor equation's written spelling on the
+  recorded pair alone even when the spelling no longer lowered; it now
+  falls through to the entry-anchored `old(t.model) == ..` form
+  (`consumed_arm_equation_expands_at_entry.md`, gated by an expansion
+  unit test). Gap 67 in progress; C3 resumes after it with the frame-level
+  invariant restatement.
   Beyond the gaps, C3 needs a contract restatement the plan did not
   record: C2c's frame-level case theorems are stated over `ctx_rb(ctx,
   bh, focus_color)` / `ctx_almost_rb_insert(ctx, bh)`, while the loop
