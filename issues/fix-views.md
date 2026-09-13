@@ -1,7 +1,7 @@
 # P1: Give views stable borrowing semantics
 
-**Status: V0-V11 and V14 are implemented behind the candidate-semantics
-boundary. V12 stable-view-backed resource facts are next. Ordinary C
+**Status: V0-V12, V14, and V15 are implemented behind the
+candidate-semantics boundary. V13 contract migration is next. Ordinary C
 contracts still use the existing weak-view behavior until the V19 cutover.**
 The checkpoint began on 2026-09-12 from
 `44339e408c65d67e5251787d680fbf4b542d5287`. Scope-bearing candidate states
@@ -188,12 +188,41 @@ The checked composite route also refuses instance children, unresolved nested
 frontiers, viewed children, and fact-bearing bodies. Those refusals prevent an
 incomplete frontier from hiding mutable or lifetime dependencies; V12 may
 admit fact-bearing bodies only by recording the exact stable-view dependency.
-Replay rechecks permitted-view coverage for reborrows, and ending any scope
+Evidence validation rechecks permitted-view coverage for reborrows, and ending any scope
 removes every indexed backing range before recovery.
 
 The V11b worktree commit `823fc8e9` passed `scripts/check.sh` with all 2,919
 tests and all four fixture gates, plus 30 focused loan tests and 24 candidate
 call-boundary tests. It is integrated in the coordinator as `355df884`.
+
+### 2026-09-12 V12 and V15 integration checkpoint
+
+V12 extends definition validation so a current `views` clause can cover body
+loads only when its existing range, bounds, guard, and predicate analysis
+proves coverage. At proof time, observe, unfold/open, and fold collect every
+current-memory load and require the exact live view binding that covers it.
+The resulting resource occurrence retains those loan dependencies. Unbound,
+stale, ended, wrong-holder, uncovered, and conflicting bindings fail closed.
+Owner-supported observations and persistent scalar or historical snapshot
+facts remain distinct because they do not claim stability from a current
+shared loan. The static and dynamic commits passed the full gate separately
+with 2,919 and 2,926 tests respectively; they are integrated as `684eece7`
+and `96ab2b41`.
+
+V15 binds verified artifacts to the selected source inputs, target/profile,
+resource-semantics version, and view-semantics mode. Legacy internal artifacts
+have explicitly absent identity and cannot masquerade as candidate results.
+Loan refusals now carry a structured category and operation, bounded subject
+resource or range, relevant opaque identifiers, and optional origin. Actual
+candidate execution distinguishes a proven overlap from a failure to prove
+separation, and the structured error survives planning, recovery,
+certification, and proof diagnostics without dumping ledger state. Expansion,
+audit, profile, verification, and certificate tests exercise the shared
+identity boundary. The identity checkpoint passed all 2,919 tests and all
+fixture gates; the diagnostics checkpoint passed its 25 candidate, 32 loan,
+and bounded-rendering tests. Its full gate found only this issue's retired
+terminology, corrected in this checkpoint. The integrated commits are
+`52d293b1` and `fe4f05cb`.
 
 ## Decision and violated invariant
 
