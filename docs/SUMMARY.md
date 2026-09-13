@@ -70,6 +70,7 @@
 - [Maintainer quickstart](internals/maintainer-quickstart.md)
 - [Feature playbook](internals/feature-playbook.md)
 - [Rbtree launch roadmap](internals/roadmap.md)
+- [View output inventory](internals/view-output-inventory.md)
 
 # Documentation policy
 

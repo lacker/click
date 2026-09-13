@@ -17,5 +17,5 @@ theorem lift(callback: void (*)(int32*)) executes callback(int32* data) {
 ```
 
 ```expect
-fail: missing resource fact `owns data[0..2]`
+fail: missing resource fact `owns Buffer(data)`
 ```
