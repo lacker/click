@@ -132,11 +132,11 @@ use validation::{
 pub(in crate::surface) use verification::CSourceContext;
 pub(in crate::surface) use verification::*;
 pub use verification::{
-    C0IncrementalSelection, c0_external_dependencies, c0_function_names, c0_incremental_selection,
-    c0_prepared_external_dependencies, parse, verify_c0_prepared_sources,
-    verify_c0_prepared_sources_at, verify_c0_prepared_sources_functions, verify_c0_sources,
-    verify_c0_sources_at, verify_c0_sources_functions, verify_click_theorems,
-    verify_standard_library,
+    C0IncrementalSelection, CProofArtifactIdentity, ViewSemanticsMode, c0_external_dependencies,
+    c0_function_names, c0_incremental_selection, c0_prepared_external_dependencies, parse,
+    verify_c0_prepared_sources, verify_c0_prepared_sources_at,
+    verify_c0_prepared_sources_functions, verify_c0_sources, verify_c0_sources_at,
+    verify_c0_sources_functions, verify_click_theorems, verify_standard_library,
 };
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
@@ -4884,6 +4884,11 @@ pub struct VerifiedCTheorem {
     /// Fixed-size identity of all selected compiler imports on which this
     /// theorem depends, when verification used the prepared-import route.
     pub import_identity: Option<String>,
+    /// Fixed-size identity of the C inputs, Click proof source, target/profile,
+    /// and resource semantics under which this theorem was checked. `None`
+    /// denotes a theorem assembled by a legacy internal path that has not yet
+    /// crossed the shared verification boundary.
+    pub artifact_identity: Option<verification::CProofArtifactIdentity>,
     pub function_block: FunctionBlock,
     pub claim: VerifiedClaim,
     pub proof_kind: ProofKind,
@@ -4990,6 +4995,8 @@ pub struct C0VerificationSession {
     pub(crate) prepared_imports: Option<Vec<crate::languages::c::compiler_import::PreparedCImport>>,
     baseline_file: ClickFile,
     verified_function_environment: CExecutionEnvironment,
+    environment_identity: verification::CProofArtifactIdentity,
+    view_semantics: verification::ViewSemanticsMode,
 }
 
 impl ClickFile {

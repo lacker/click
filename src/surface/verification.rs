@@ -1,10 +1,76 @@
 use super::validation::combined_algebraic_type_definitions;
 use super::*;
 use crate::languages::c::compiler_import::PreparedCImport;
+use sha2::{Digest, Sha256};
 #[cfg(test)]
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::sync::Arc;
+
+/// Selects the resource interpretation used when producing proof artifacts.
+/// Stable-loan routing is intentionally staged behind the existing legacy
+/// wrappers until the later cutover card; carrying the mode here ensures that
+/// staged artifacts cannot be reused across the cutover boundary.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum ViewSemanticsMode {
+    #[default]
+    Legacy,
+    StableLoans,
+}
+
+/// Fixed-size identity attached to a checked C proof artifact.
+///
+/// The digest covers the immutable C input bundle, the canonical Click source
+/// being checked, the target/profile, and the resource semantics boundary.
+/// The session keeps the same shape as an environment identity, but theorem
+/// artifacts must include the Click source digest too.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct CProofArtifactIdentity {
+    digest: [u8; 32],
+    pub view_semantics: ViewSemanticsMode,
+    pub resource_semantics_version: u32,
+}
+
+impl CProofArtifactIdentity {
+    pub fn digest(&self) -> &[u8; 32] {
+        &self.digest
+    }
+
+    fn for_components(
+        input_digest: [u8; 32],
+        click_digest: [u8; 32],
+        target: &str,
+        view_semantics: ViewSemanticsMode,
+    ) -> Self {
+        let mode = match view_semantics {
+            ViewSemanticsMode::Legacy => b"legacy".as_slice(),
+            ViewSemanticsMode::StableLoans => b"stable-loans".as_slice(),
+        };
+        let version = crate::kernel::RESOURCE_SEMANTICS_VERSION.to_be_bytes();
+        let digest = digest_framed_parts([
+            b"click-c-proof-artifact-v2".as_slice(),
+            &input_digest,
+            &click_digest,
+            target.as_bytes(),
+            mode,
+            &version,
+        ]);
+        Self {
+            digest,
+            view_semantics,
+            resource_semantics_version: crate::kernel::RESOURCE_SEMANTICS_VERSION,
+        }
+    }
+}
+
+fn digest_framed_parts<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    for part in parts {
+        digest.update((part.len() as u64).to_be_bytes());
+        digest.update(part);
+    }
+    digest.finalize().into()
+}
 
 /// Typed input boundary for C verification. The bundle variant preserves the
 /// legacy source map while leaving room for compiler-prepared inputs without
@@ -14,6 +80,8 @@ pub(in crate::surface) struct CSourceContext<'a> {
     imports: Option<&'a [PreparedCImport]>,
     prepared_by_source: Option<BTreeMap<&'a str, &'a PreparedCImport>>,
     prepared_project_identity: Option<String>,
+    input_digest: [u8; 32],
+    view_semantics: ViewSemanticsMode,
     prepared_duplicates: bool,
     parsed_units: RefCell<BTreeMap<String, Arc<syntax::C0TranslationUnit>>>,
     #[cfg(test)]
@@ -22,11 +90,27 @@ pub(in crate::surface) struct CSourceContext<'a> {
 
 impl<'a> CSourceContext<'a> {
     pub(in crate::surface) fn bundle(sources: &[(&'a str, &'a str)]) -> Self {
+        Self::bundle_with_mode(sources, ViewSemanticsMode::Legacy)
+    }
+
+    pub(in crate::surface) fn bundle_with_mode(
+        sources: &[(&'a str, &'a str)],
+        view_semantics: ViewSemanticsMode,
+    ) -> Self {
+        let bundle = sources.iter().copied().collect::<BTreeMap<_, _>>();
+        let mut parts = Vec::with_capacity(bundle.len() * 2 + 1);
+        parts.push(b"click-c-source-bundle-v1".as_slice());
+        for (path, source) in &bundle {
+            parts.push(path.as_bytes());
+            parts.push(source.as_bytes());
+        }
         Self {
-            bundle: Some(sources.iter().copied().collect()),
+            bundle: Some(bundle),
             imports: None,
             prepared_by_source: None,
             prepared_project_identity: None,
+            input_digest: digest_framed_parts(parts),
+            view_semantics,
             prepared_duplicates: false,
             parsed_units: RefCell::new(BTreeMap::new()),
             #[cfg(test)]
@@ -35,6 +119,13 @@ impl<'a> CSourceContext<'a> {
     }
 
     pub(in crate::surface) fn prepared(imports: &'a [PreparedCImport]) -> Self {
+        Self::prepared_with_mode(imports, ViewSemanticsMode::Legacy)
+    }
+
+    pub(in crate::surface) fn prepared_with_mode(
+        imports: &'a [PreparedCImport],
+        view_semantics: ViewSemanticsMode,
+    ) -> Self {
         let mut identities = imports
             .iter()
             .map(|import| import.identity().to_string())
@@ -57,9 +148,24 @@ impl<'a> CSourceContext<'a> {
                 framed.push_str(identity);
                 framed.push(';');
             }
-            use sha2::{Digest, Sha256};
             format!("{:x}", Sha256::digest(framed.as_bytes()))
         };
+        let mut import_pairs = imports
+            .iter()
+            .map(|import| {
+                (
+                    import.logical_source().to_string(),
+                    import.identity().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        import_pairs.sort();
+        let mut identity_parts = Vec::with_capacity(import_pairs.len() * 2 + 1);
+        identity_parts.push(b"click-c-prepared-project-v1".as_slice());
+        for (logical_source, identity) in &import_pairs {
+            identity_parts.push(logical_source.as_bytes());
+            identity_parts.push(identity.as_bytes());
+        }
         Self {
             bundle: None,
             imports: Some(imports),
@@ -70,11 +176,42 @@ impl<'a> CSourceContext<'a> {
                     .collect(),
             ),
             prepared_project_identity: Some(project_identity),
+            input_digest: digest_framed_parts(identity_parts),
+            view_semantics,
             prepared_duplicates: duplicate_logical_source,
             parsed_units: RefCell::new(BTreeMap::new()),
             #[cfg(test)]
             prepared_parse_count: Cell::new(0),
         }
+    }
+
+    pub(in crate::surface) fn environment_identity(&self) -> CProofArtifactIdentity {
+        CProofArtifactIdentity::for_components(
+            self.input_digest,
+            [0; 32],
+            crate::languages::c::target::CTarget::SUPPORTED.name(),
+            self.view_semantics,
+        )
+    }
+
+    pub(in crate::surface) fn artifact_identity(
+        &self,
+        click_source: &str,
+    ) -> CProofArtifactIdentity {
+        let click_digest = digest_framed_parts([
+            b"click-sidecar-source-v1".as_slice(),
+            click_source.as_bytes(),
+        ]);
+        CProofArtifactIdentity::for_components(
+            self.input_digest,
+            click_digest,
+            crate::languages::c::target::CTarget::SUPPORTED.name(),
+            self.view_semantics,
+        )
+    }
+
+    pub(in crate::surface) fn view_semantics(&self) -> ViewSemanticsMode {
+        self.view_semantics
     }
 
     fn bundle_sources(&self) -> Result<&BTreeMap<&'a str, &'a str>, ClickError> {
@@ -835,13 +972,40 @@ pub(in crate::surface) fn verify_c0_sources_with_limits(
     result
 }
 
+fn ensure_environment_identity(
+    expected: &CProofArtifactIdentity,
+    sources: &CSourceContext<'_>,
+) -> Result<(), ClickError> {
+    let actual = sources.environment_identity();
+    if expected == &actual {
+        return Ok(());
+    }
+    Err(ClickError::new(format!(
+        "verification session identity mismatch: inputs, view semantics, or resource semantics version changed (expected {:?}, got {:?})",
+        expected, actual
+    )))
+}
+
 impl C0VerificationSession {
     pub fn new(
         click_source: &str,
         c_sources: &[(&str, &str)],
     ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
         instrumentation::with_default_tactic_limits(|| {
-            Self::new_with_limits(click_source, c_sources)
+            Self::new_with_mode(click_source, c_sources, ViewSemanticsMode::Legacy)
+        })
+    }
+
+    /// Starts a session with an explicit staged resource semantics identity.
+    /// The stable-loan mode is metadata-only here; the later cutover will wire
+    /// it to the kernel selector after all routes share this identity.
+    pub(crate) fn new_with_mode(
+        click_source: &str,
+        c_sources: &[(&str, &str)],
+        view_semantics: ViewSemanticsMode,
+    ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
+        instrumentation::with_default_tactic_limits(|| {
+            Self::new_with_limits(click_source, c_sources, view_semantics)
         })
     }
 
@@ -852,7 +1016,17 @@ impl C0VerificationSession {
         imports: &[PreparedCImport],
     ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
         instrumentation::with_default_tactic_limits(|| {
-            let sources = CSourceContext::prepared(imports);
+            Self::new_prepared_with_mode(click_source, imports, ViewSemanticsMode::Legacy)
+        })
+    }
+
+    pub(crate) fn new_prepared_with_mode(
+        click_source: &str,
+        imports: &[PreparedCImport],
+        view_semantics: ViewSemanticsMode,
+    ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
+        instrumentation::with_default_tactic_limits(|| {
+            let sources = CSourceContext::prepared_with_mode(imports, view_semantics);
             let (verified, verified_function_environment) =
                 verify_c0_sources_with_context(click_source, &sources, None, None, None)?;
             let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
@@ -862,6 +1036,8 @@ impl C0VerificationSession {
                     prepared_imports: Some(imports.to_vec()),
                     baseline_file,
                     verified_function_environment,
+                    environment_identity: sources.environment_identity(),
+                    view_semantics: sources.view_semantics(),
                 },
                 verified,
             ))
@@ -871,10 +1047,12 @@ impl C0VerificationSession {
     fn new_with_limits(
         click_source: &str,
         c_sources: &[(&str, &str)],
+        view_semantics: ViewSemanticsMode,
     ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
+        let sources = CSourceContext::bundle_with_mode(c_sources, view_semantics);
         let (verified, verified_function_environment) =
-            verify_c0_sources_with_environment(click_source, c_sources, None, None, None)?;
-        let baseline_file = parse_c0_click_file(click_source, c_sources)?;
+            verify_c0_sources_with_context(click_source, &sources, None, None, None)?;
+        let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
         Ok((
             Self {
                 c_sources: c_sources
@@ -884,6 +1062,8 @@ impl C0VerificationSession {
                 prepared_imports: None,
                 baseline_file,
                 verified_function_environment,
+                environment_identity: sources.environment_identity(),
+                view_semantics: sources.view_semantics(),
             },
             verified,
         ))
@@ -895,6 +1075,12 @@ impl C0VerificationSession {
     pub fn function_termination_is_verified(&self, name: &str) -> bool {
         self.verified_function_environment
             .has_verified_function_termination(name)
+    }
+
+    /// Identity of the immutable inputs and resource semantics used by this
+    /// reusable verification session.
+    pub fn environment_identity(&self) -> CProofArtifactIdentity {
+        self.environment_identity
     }
 
     pub fn verify_at(
@@ -920,7 +1106,8 @@ impl C0VerificationSession {
             ClickError::new("verification session does not contain prepared imports")
         })?;
         instrumentation::with_default_tactic_limits(|| {
-            let sources = CSourceContext::prepared(imports);
+            let sources = CSourceContext::prepared_with_mode(imports, self.view_semantics);
+            ensure_environment_identity(&self.environment_identity, &sources)?;
             let target = verification_target_at_context(click_source, &sources, line, column)?;
             let target_exists_in_baseline = match &target {
                 VerificationTarget::Function(name) => self
@@ -979,7 +1166,9 @@ impl C0VerificationSession {
             .iter()
             .map(|(name, source)| (name.as_str(), source.as_str()))
             .collect::<Vec<_>>();
-        let target = verification_target_at(click_source, &c_sources, line, column)?;
+        let sources = CSourceContext::bundle_with_mode(&c_sources, self.view_semantics);
+        ensure_environment_identity(&self.environment_identity, &sources)?;
+        let target = verification_target_at_context(click_source, &sources, line, column)?;
         let target_exists_in_baseline = match &target {
             VerificationTarget::Function(name) => self
                 .baseline_file
@@ -998,7 +1187,7 @@ impl C0VerificationSession {
                 "rewritten source location resolves to a proof unit absent from the baseline",
             ));
         }
-        let rewritten_file = parse_c0_click_file(click_source, &c_sources)?;
+        let rewritten_file = parse_c0_click_file_context(click_source, &sources)?;
         let baseline_interface = proof_unit_erased_click_file(self.baseline_file.clone(), &target);
         let rewritten_interface = proof_unit_erased_click_file(rewritten_file, &target);
         if rewritten_interface != baseline_interface {
@@ -1015,9 +1204,9 @@ impl C0VerificationSession {
             VerificationTarget::Theorem(_) => None,
             VerificationTarget::Functions(_) => None,
         };
-        verify_c0_sources_with_environment(
+        verify_c0_sources_with_context(
             click_source,
-            &c_sources,
+            &sources,
             Some(target),
             initial_environment,
             None,
@@ -2102,6 +2291,10 @@ fn verify_c0_sources_with_context(
         for theorem in &mut verified {
             theorem.import_identity = c_sources.prepared_project_identity.clone();
         }
+    }
+    let artifact_identity = c_sources.artifact_identity(click_source);
+    for theorem in &mut verified {
+        theorem.artifact_identity = Some(artifact_identity);
     }
     Ok((verified, function_environment))
 }
@@ -3474,6 +3667,14 @@ pub(in crate::surface) fn parse_verified_sources(
         imports: None,
         prepared_by_source: None,
         prepared_project_identity: None,
+        input_digest: digest_framed_parts(
+            std::iter::once(b"click-c-source-bundle-v1".as_slice()).chain(
+                c_sources
+                    .iter()
+                    .flat_map(|(path, source)| [path.as_bytes(), source.as_bytes()]),
+            ),
+        ),
+        view_semantics: ViewSemanticsMode::Legacy,
         prepared_duplicates: false,
         parsed_units: RefCell::new(BTreeMap::new()),
         #[cfg(test)]
@@ -5233,5 +5434,136 @@ mod prepared_scaling_tests {
                 .expect("prepared verified sources parse");
             assert_eq!(sources.prepared_parse_count.get(), size);
         }
+    }
+}
+
+#[cfg(test)]
+mod artifact_identity_tests {
+    use super::*;
+
+    const CLICK: &str = r#"
+verifying "answer.c";
+int32 answer() {
+    ensures result == 1;
+} by {
+    execute();
+    simp();
+}
+"#;
+
+    const C_SOURCE: &str = "int answer(void) { return 1; }";
+
+    fn position(source: &str, needle: &str) -> (usize, usize) {
+        let offset = source.find(needle).expect("source needle");
+        let line = source[..offset]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count()
+            + 1;
+        let column = offset - source[..offset].rfind('\n').unwrap_or(0);
+        (line, column)
+    }
+
+    #[test]
+    fn direct_and_targeted_routes_attach_the_same_fixed_identity() {
+        let sources = [("answer.c", C_SOURCE)];
+        let direct = verify_c0_sources(CLICK, &sources).expect("direct verification");
+        let (line, column) = position(CLICK, "execute();");
+        let targeted =
+            verify_c0_sources_at(CLICK, &sources, line, column).expect("targeted verification");
+        assert_eq!(direct.len(), targeted.len());
+        assert_eq!(direct[0].artifact_identity, targeted[0].artifact_identity);
+        assert_eq!(
+            direct[0].artifact_identity.unwrap().view_semantics,
+            ViewSemanticsMode::Legacy
+        );
+        assert_eq!(
+            direct[0]
+                .artifact_identity
+                .unwrap()
+                .resource_semantics_version,
+            crate::kernel::RESOURCE_SEMANTICS_VERSION
+        );
+        assert!(
+            std::mem::size_of::<CProofArtifactIdentity>() <= 64,
+            "artifact identity must remain a fixed-size comparison token"
+        );
+    }
+
+    #[test]
+    fn prepared_identity_is_order_independent_and_binds_logical_sources() {
+        let first = PreparedCImport::for_test("answer.c", C_SOURCE);
+        let helper = PreparedCImport::for_test("helper.c", "int helper(void) { return 1; }");
+        let forward_imports = [first.clone(), helper.clone()];
+        let reverse_imports = [helper, first];
+        let forward = CSourceContext::prepared(&forward_imports);
+        let reverse = CSourceContext::prepared(&reverse_imports);
+        assert_eq!(
+            forward.environment_identity(),
+            reverse.environment_identity()
+        );
+    }
+
+    #[test]
+    fn session_rejects_a_cross_mode_or_stale_identity_before_reverification() {
+        let sources = [("answer.c", C_SOURCE)];
+        let (mut session, _) =
+            C0VerificationSession::new(CLICK, &sources).expect("baseline verification");
+        let (line, column) = position(CLICK, "execute();");
+        session.environment_identity =
+            CSourceContext::bundle_with_mode(&sources, ViewSemanticsMode::StableLoans)
+                .environment_identity();
+        let error = session
+            .verify_at(CLICK, line, column)
+            .expect_err("cross-mode session reuse must be refused");
+        assert!(error.message().contains("identity mismatch"), "{error:?}");
+    }
+
+    #[test]
+    fn session_identity_survives_a_proof_only_rewrite() {
+        let sources = [("answer.c", C_SOURCE)];
+        let (session, baseline) =
+            C0VerificationSession::new(CLICK, &sources).expect("baseline verification");
+        let rewritten = CLICK.replace("simp();", "simp();\n    ");
+        let (line, column) = position(&rewritten, "execute();");
+        let verified = session
+            .verify_at(&rewritten, line, column)
+            .expect("proof-only rewrite remains within the session identity");
+        assert_ne!(baseline[0].artifact_identity, verified[0].artifact_identity);
+    }
+
+    #[test]
+    fn artifact_identity_binds_click_source_and_target_profile() {
+        let context = CSourceContext::bundle(&[("answer.c", C_SOURCE)]);
+        let changed_click = context.artifact_identity("proof A");
+        let other_click = context.artifact_identity("proof B");
+        assert_ne!(changed_click, other_click);
+
+        let c_digest = [1; 32];
+        let click_digest = [2; 32];
+        let first_target = CProofArtifactIdentity::for_components(
+            c_digest,
+            click_digest,
+            "x86_64-linux-kernel",
+            ViewSemanticsMode::Legacy,
+        );
+        let second_target = CProofArtifactIdentity::for_components(
+            c_digest,
+            click_digest,
+            "other-target-profile",
+            ViewSemanticsMode::Legacy,
+        );
+        assert_ne!(first_target, second_target);
+    }
+
+    #[test]
+    fn stable_mode_rejects_an_absent_legacy_artifact_identity() {
+        let context = CSourceContext::bundle_with_mode(
+            &[("answer.c", C_SOURCE)],
+            ViewSemanticsMode::StableLoans,
+        );
+        let stable_identity = context.artifact_identity(CLICK);
+        let absent_legacy_identity: Option<CProofArtifactIdentity> = None;
+        assert_ne!(absent_legacy_identity, Some(stable_identity));
     }
 }

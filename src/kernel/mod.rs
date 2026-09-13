@@ -6,6 +6,13 @@
 //! directly.
 //!
 pub(crate) mod api;
+
+/// Version of the resource and stable-view semantics used by proof
+/// artifacts.  This is deliberately separate from source and compiler
+/// identities: changing the authority interpretation must invalidate an old
+/// certificate even when its inputs are byte-identical.
+pub const RESOURCE_SEMANTICS_VERSION: u32 = 1;
+
 pub(crate) mod assumptions;
 mod eval;
 mod functions;
