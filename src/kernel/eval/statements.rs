@@ -440,6 +440,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     outcome,
                     facts,
                     obligations,
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 }];
             }
             let mut state = state.clone();
@@ -529,6 +530,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     outcome,
                     facts,
                     obligations,
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 }];
             }
             let is_external = is_external_memory_pointer(&pointer);
@@ -707,6 +709,7 @@ fn execute_c_aggregate_copy_paths(
                     outcome,
                     facts,
                     obligations,
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 });
                 continue;
             }
@@ -1277,6 +1280,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 outcome,
                 facts,
                 obligations,
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         }
@@ -1760,6 +1764,7 @@ fn execute_c_heap_free_paths(
                 outcome,
                 facts,
                 obligations,
+                loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
         }

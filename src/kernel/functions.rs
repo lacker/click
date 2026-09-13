@@ -2646,6 +2646,7 @@ fn prepare_verified_function_call<'a>(
                     )),
                     facts,
                     obligations,
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
                 }));
             }
         }
@@ -17331,15 +17332,16 @@ mod candidate_stable_view_call_tests {
             Bitvector32Term::Constant(0),
             Bitvector32Term::Constant(2),
         ));
-        let (resources, ledger, participant, bindings) = recover_candidate_stable_view_resources(
-            &outer_callee,
-            &callee_state_with_resource_transfer(inner_template, &inner_transfer),
-            &inner_transfer,
-            ResourceContext::new().unchecked_with_fact(output.clone()),
-            &PureFactContext::new(),
-            &[],
-        )
-        .expect("outer view should authorize the wider returned view");
+        let (resources, ledger, participant, bindings, _loan_evidence) =
+            recover_candidate_stable_view_resources(
+                &outer_callee,
+                &callee_state_with_resource_transfer(inner_template, &inner_transfer),
+                &inner_transfer,
+                ResourceContext::new().unchecked_with_fact(output.clone()),
+                &PureFactContext::new(),
+                &[],
+            )
+            .expect("outer view should authorize the wider returned view");
         assert!(resources.satisfies_fact(&output, &PureFactContext::new()));
         assert_eq!(ledger, outer_callee.loan_ledger().cloned());
         assert_eq!(participant, outer_callee.loan_participant());
