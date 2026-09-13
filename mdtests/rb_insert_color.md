@@ -96,13 +96,14 @@ so its parent word carries no tag and `rb_red_parent`'s cast is the payload.
 Two orderings in that preamble are forced rather than chosen. A pure `have`
 proved by `unfold` and `normalize` stops lowering once `parent == node_parent`
 has been established, so every pure step comes first and only `simp` bridges
-follow. And the loop's in-order invariant names the entry tree through the entry
-`match` arm's constructor rather than `old(t.model)`, because a loop invariant's
-`old` on an instance the body unfolded and refolded before the loop runs out of
-paths
-([`loop_invariant_old_field_after_a_refold.md`](loop_invariant_old_field_after_a_refold.md)).
-`old(c.model)`, on the context the preamble never unfolds, lowers in the same
-invariant.
+follow. The loop's in-order invariant names the entry tree through the entry
+`match` arm's constructor rather than through `old(t.model)`. Both spell the
+same tree: `old` on an instance the preamble unfolded and refolded before the
+loop is the function-entry instance and lowers there too
+([`loop_invariant_old_field_after_a_refold.md`](loop_invariant_old_field_after_a_refold.md)),
+as it does on `c`, the context the preamble never unfolds. The arm's
+constructor is the spelling this fixture keeps, because the arm bindings are
+already what the case theorems are stated over.
 
 What the fixture pins now is the body. `preserve` is omitted, so the loop tactic
 tries to execute one iteration on its own and stops at the first guard it cannot

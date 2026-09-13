@@ -1,32 +1,31 @@
 # a loop invariant's `old(t.model)` after the body refolded `t`
 
-`walk` holds one modelled instance, unfolds it to read a cell, folds it back
-under the same name, and then runs a loop that carries it. Its one invariant is
-the instance's entry model, `t.model == old(t.model)`, which is what every
-ascent and fixup loop states when the tree it walks must end up related to the
-tree it started from.
+`walk` holds one modelled instance, unfolds it inside its entry `match` arm to
+read a cell, folds it back under the same name, and then runs a loop that
+carries it. Its one invariant is the instance's entry model,
+`t.model == old(t.model)`, which is what every ascent and fixup loop states
+when the tree it walks must end up related to the tree it started from.
 
-Take the `unfold` and the matching `fold` away and the same invariant lowers:
-the entry instance is the contract's, and `old(t.model)` reads it. Put them
-back and lowering the invariant at the loop's entry runs out of paths:
+The unfold here precedes the proof's first `step()`, so the C execution starts
+from a state that does not hold `t` at all, and the refold leaves a later
+generation of the instance there. A frontier loop used to resolve `old(...)`
+in its clauses against that execution-start state instead of the contract's
+checked entry state, so lowering the invariant at the loop's entry ran out of
+paths:
 
 ```
 `walk.contract (loop 0 invariant 0 entry)` proof 0: could not lower pure goal:
 the kernel lowering hit Paths
 ```
 
-This is package C3's blocker on the Linux insert fixup. `__rb_insert` must
-unfold `rb_at(node)` before the loop — the first statement is `parent =
-rb_red_parent(node)`, and the parent word's value is a fact of the node's own
-arm — and the fixup loop's invariant is that the in-order sequence of
-`plug(c.model, t.model)` is the one the function was given. Naming that entry
-sequence through `old(t.model)` is refused here; naming it through the entry
-`match` arm's constructor, which the arm bindings spell out, is the shape
-[`rb_insert_color.md`](rb_insert_color.md) uses instead.
-
-It is the focused instance that matters, not `old` itself: in the insert
-fixture `old(c.model)` on the never-unfolded context lowers in the same
-invariant that `old(t.model)` refuses.
+This is the shape package C3 needs on the Linux insert fixup. `__rb_insert`
+must unfold `rb_at(node)` before the loop — the first statement is
+`parent = rb_red_parent(node)`, and the parent word's value is a fact of the
+node's own arm — and the fixup loop's invariant is that the in-order sequence
+of `plug(c.model, t.model)` is the one the function was given. Naming that
+entry sequence through `old(t.model)` lowers here; naming it through the entry
+`match` arm's constructor, which the arm bindings spell out, is the other
+spelling, and [`rb_insert_color.md`](rb_insert_color.md) uses that one.
 
 ```c filename=walk.c
 struct node {
@@ -69,9 +68,8 @@ resource tree_at(p: struct node*) {
 }
 
 int walk(struct node* n) {
-    consumes t: tree_at(n);
+    owns t: tree_at(n);
     requires t.model != Tree::Empty;
-    produces u: tree_at(n);
     ensures result == 0;
 } by {
     match t.model {
@@ -87,7 +85,6 @@ int walk(struct node* n) {
                 owns t: tree_at(n);
                 invariant t.model == old(t.model);
             }
-            let u = fold(tree_at(n), { model: t.model });
             execute();
             simp();
         },
@@ -96,5 +93,5 @@ int walk(struct node* n) {
 ```
 
 ```expect
-fail: could not lower pure goal: the kernel lowering hit Paths
+pass
 ```

@@ -320,8 +320,21 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         claim_label,
         source_index,
     );
+    // `old(...)` in this loop's clauses is the function entry, not the point
+    // the C execution happened to start from. A proof that unfolds a binder
+    // before its first `step()` starts the frontier in a state that does not
+    // hold the instance at all, and one that refolds it there starts in a
+    // state holding a later generation; reading `old(name.field)` out of
+    // either makes the same invariant mean two different things. The checked
+    // contract entry state is the one reference, exactly as
+    // `ExecutionProofContext::old_reference_state` resolves it elsewhere.
+    let old_reference_state = proof_context
+        .constants
+        .function_entry_state
+        .clone()
+        .unwrap_or_else(|| initial_state.clone());
     let proof_environment = ExecutionProofEnvironment {
-        initial_state: &initial_state,
+        initial_state: &old_reference_state,
         function_block: &bound_function_block,
         parsed_function,
         function_environment,

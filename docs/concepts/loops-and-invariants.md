@@ -639,7 +639,11 @@ boundary is in [the language reference](../reference/language/index.md).
 function-level binder of that name, whatever the body did to that instance
 before the loop. A proof that unfolds and refolds the binder before the loop
 does not change what `old(...)` means
-(`mdtests/loop_invariant_old_model_after_refold.md`); an explicit `at(...)`
+(`mdtests/loop_invariant_old_model_after_refold.md`), and neither does opening
+it before the proof's first `step()`, where the C execution starts from a state
+that does not hold the instance at all
+(`mdtests/loop_invariant_old_model_when_the_unfold_precedes_execution.md`,
+`mdtests/loop_invariant_old_field_after_a_refold.md`); an explicit `at(...)`
 snapshot still names a state, and an instance it does not hold is an error
 there.
 
