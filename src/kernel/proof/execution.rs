@@ -5416,6 +5416,7 @@ impl ExecutionProofCore {
                     obligations,
                     &statement_assumptions,
                     &mut ExecutionBudget::default(),
+                    !candidate.loan_evidence().is_empty(),
                 ) {
                     Ok(Ok(exit)) => exit,
                     Ok(Err(error)) => (

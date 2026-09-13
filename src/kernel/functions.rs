@@ -16129,6 +16129,7 @@ pub(super) fn contract_exit_outcome(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
+    candidate_stable_view_semantics: bool,
 ) -> ExecutionResult<
     Result<
         (
@@ -16179,10 +16180,7 @@ pub(super) fn contract_exit_outcome(
         assumptions,
         budget,
         true,
-        function
-            .resource_requires()
-            .iter()
-            .any(CResourceSpec::is_view),
+        candidate_stable_view_semantics,
     )? {
         Ok(transfer) => transfer,
         Err(error) => return Ok(Err(error)),

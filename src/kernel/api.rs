@@ -3635,6 +3635,9 @@ fn checked_loan_evidence_is_valid(
     checked: &CCheckedFunctionExecution,
     function: &CFunction,
 ) -> bool {
+    if !checked.environment.candidate_stable_view_semantics {
+        return true;
+    }
     if !function
         .resource_requires()
         .iter()
