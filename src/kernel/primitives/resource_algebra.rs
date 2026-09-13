@@ -1802,6 +1802,20 @@ impl ResourceContext {
         required: &CResourceFact,
         assumptions: &PureFactContext,
     ) -> Option<(ResourceOccurrenceId, &CResourceFact)> {
+        // Concrete memory requirements have a monotone start position.  Use
+        // the exact bucket or its immediate predecessor before falling back
+        // to the block bucket; repeated disjoint consumption otherwise
+        // revisits every residual range produced by earlier clauses.
+        if let CResource::Memory(range) = required.resource()
+            && let Some(indexed) = self.concrete_memory_start_candidates(range, true)
+        {
+            for entry in indexed {
+                let candidate = self.fact(entry);
+                if resource_fact_entails(candidate, required, assumptions) && candidate.is_own() {
+                    return Some((self.occurrence(entry), candidate));
+                }
+            }
+        }
         self.direct_match_candidate_positions(required)
             .into_iter()
             .flat_map(ResourceEntryIds::iter)
@@ -1829,6 +1843,31 @@ impl ResourceContext {
                 })
             })
             .next()
+    }
+
+    fn concrete_memory_start_candidates(
+        &self,
+        range: &CMemoryRange,
+        owned: bool,
+    ) -> Option<Vec<ResourceEntryId>> {
+        (range.start().as_const().is_some() && range.end().as_const().is_some()).then(|| {
+            let key = (range.base().block.clone(), owned, range.start().clone());
+            self.storage
+                .index
+                .memory_starts
+                .get(&key)
+                .into_iter()
+                .chain(
+                    self.storage
+                        .index
+                        .memory_starts
+                        .get_less_than(&key)
+                        .map(|(_, entries)| entries),
+                )
+                .flat_map(ResourceEntryIds::iter)
+                .copied()
+                .collect()
+        })
     }
 
     /// Return indexed view occurrences that entail `required`. The caller
@@ -3409,6 +3448,13 @@ impl ResourceContext {
         if fact
             .owned_quantity_term()
             .is_some_and(|quantity| resource_quantity_is_zero(quantity, assumptions))
+        {
+            return Some(self);
+        }
+
+        if let CResource::Memory(range) = fact.resource()
+            && let Some(candidates) = self.concrete_memory_start_candidates(range, fact.is_own())
+            && self.consume_fact_from_candidates(fact, assumptions, candidates)
         {
             return Some(self);
         }

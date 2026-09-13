@@ -3808,38 +3808,28 @@ fn checked_loan_evidence_is_valid(
         if path.loan_evidence.is_empty() {
             return !publishes_return_state;
         }
-        let mut outer_recovered_ledger = None;
-        let mut outer_recovered_participant = None;
-        for evidence in path.loan_evidence.to_vec() {
-            let evidence_caller_ledger = evidence.entry.caller_ledger();
-            if evidence
-                .recheck(
-                    evidence_caller_ledger,
-                    Some(evidence.entry.caller_participant()),
-                    &evidence.entry.ledger,
-                    Some(evidence.entry.callee_participant()),
-                )
-                .is_err()
-            {
-                return false;
-            }
-            let is_outer = match caller_ledger {
-                Some(caller_ledger) => {
-                    evidence_caller_ledger == caller_ledger
-                        && Some(evidence.entry.caller_participant()) == caller_participant
-                }
-                None => {
-                    pristine_start
-                        && evidence_caller_ledger.is_pristine()
-                        && evidence_caller_ledger
-                            .contains_participant(evidence.entry.caller_participant())
-                }
-            };
-            if is_outer {
-                outer_recovered_ledger = Some(evidence.recovered_ledger.clone());
-                outer_recovered_participant = Some(evidence.entry.caller_participant());
-            }
+        if !path.loan_evidence.is_valid() {
+            return false;
         }
+        let (outer_recovered_ledger, outer_recovered_participant) =
+            match (caller_ledger, caller_participant) {
+                (Some(caller_ledger), Some(caller_participant)) => (
+                    path.loan_evidence.recovered_ledger_for(
+                        caller_ledger,
+                        caller_participant,
+                        false,
+                    ),
+                    Some(caller_participant),
+                ),
+                (None, None) if pristine_start => {
+                    // The pristine root has no state identity to use as an
+                    // index key.  The sequence keeps the last pristine-root
+                    // recovery as a bounded summary instead.
+                    let (participant, recovered) = path.loan_evidence.pristine_recovery();
+                    (recovered, participant)
+                }
+                _ => (None, None),
+            };
         let CFunctionOutcome::Return {
             state: return_state,
             ..

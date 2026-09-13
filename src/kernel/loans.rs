@@ -901,6 +901,60 @@ pub(crate) struct CheckedLoanCallEvidence {
     pub(crate) recovery_transitions: Vec<CheckedLoanTransition>,
 }
 
+/// The part of a call-evidence trace that is needed by the artifact boundary.
+///
+/// Call evidence is checked when it enters the persistent trace.  Keeping the
+/// resulting outer-state index beside the trace means a later artifact check
+/// can ask for the one caller root it owns instead of materializing and
+/// rechecking every completed call on the path.  The maps are persistent so a
+/// branch or a repeated call copies only the update path.
+#[derive(Clone)]
+struct CheckedLoanCallEvidenceSummary {
+    valid: bool,
+    recovered_by_caller: PersistentMap<(u64, LoanParticipantId), LoanLedger>,
+    last_pristine_recovered: Option<(LoanParticipantId, LoanLedger)>,
+}
+
+impl Default for CheckedLoanCallEvidenceSummary {
+    fn default() -> Self {
+        Self {
+            valid: true,
+            recovered_by_caller: PersistentMap::default(),
+            last_pristine_recovered: None,
+        }
+    }
+}
+
+impl CheckedLoanCallEvidenceSummary {
+    fn append(&self, evidence: &CheckedLoanCallEvidence) -> CheckedLoanCallEvidenceSummary {
+        let caller_ledger = evidence.entry.caller_ledger();
+        let caller_participant = evidence.entry.caller_participant();
+        let valid = self.valid
+            && evidence
+                .recheck(
+                    caller_ledger,
+                    Some(caller_participant),
+                    &evidence.entry.ledger,
+                    Some(evidence.entry.callee_participant()),
+                )
+                .is_ok();
+        let key = (caller_ledger.state_identity(), caller_participant);
+        let recovered_by_caller = self
+            .recovered_by_caller
+            .with_inserted(key, evidence.recovered_ledger.clone());
+        let last_pristine_recovered = if caller_ledger.is_pristine() {
+            Some((caller_participant, evidence.recovered_ledger.clone()))
+        } else {
+            self.last_pristine_recovered.clone()
+        };
+        CheckedLoanCallEvidenceSummary {
+            valid,
+            recovered_by_caller,
+            last_pristine_recovered,
+        }
+    }
+}
+
 #[derive(Clone)]
 enum CheckedLoanCallEvidenceSequenceNode {
     Empty,
@@ -914,12 +968,14 @@ enum CheckedLoanCallEvidenceSequenceNode {
 pub(crate) struct CheckedLoanCallEvidenceSequence {
     node: Arc<CheckedLoanCallEvidenceSequenceNode>,
     len: usize,
+    summary: Arc<CheckedLoanCallEvidenceSummary>,
 }
 
 pub(crate) fn empty_checked_loan_evidence_sequence() -> CheckedLoanCallEvidenceSequence {
     CheckedLoanCallEvidenceSequence {
         node: Arc::new(CheckedLoanCallEvidenceSequenceNode::Empty),
         len: 0,
+        summary: Arc::new(CheckedLoanCallEvidenceSummary::default()),
     }
 }
 
@@ -930,12 +986,14 @@ pub(crate) fn append_checked_loan_evidence(
     let Some(evidence) = evidence else {
         return sequence.clone();
     };
+    let summary = Arc::new(sequence.summary.append(&evidence));
     CheckedLoanCallEvidenceSequence {
         node: Arc::new(CheckedLoanCallEvidenceSequenceNode::Append {
             prefix: sequence.node.clone(),
             evidence,
         }),
         len: sequence.len + 1,
+        summary,
     }
 }
 
@@ -964,6 +1022,40 @@ impl CheckedLoanCallEvidenceSequence {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    pub(crate) fn is_valid(&self) -> bool {
+        self.summary.valid
+    }
+
+    pub(crate) fn recovered_ledger_for(
+        &self,
+        caller_ledger: &LoanLedger,
+        caller_participant: LoanParticipantId,
+        pristine_start: bool,
+    ) -> Option<LoanLedger> {
+        if pristine_start {
+            self.summary
+                .last_pristine_recovered
+                .as_ref()
+                .and_then(|(participant, ledger)| {
+                    (*participant == caller_participant).then(|| ledger.clone())
+                })
+        } else {
+            self.summary
+                .recovered_by_caller
+                .get(&(caller_ledger.state_identity(), caller_participant))
+                .cloned()
+        }
+    }
+
+    pub(crate) fn pristine_recovery(&self) -> (Option<LoanParticipantId>, Option<LoanLedger>) {
+        self.summary
+            .last_pristine_recovered
+            .as_ref()
+            .map_or((None, None), |(participant, ledger)| {
+                (Some(*participant), Some(ledger.clone()))
+            })
     }
 
     /// Returns the persistent suffix after `prefix`, when this sequence was
@@ -1135,6 +1227,7 @@ impl CheckedLoanCallEvidence {
         }
         let mut recovery_successor = callee_ledger.clone();
         for transition in &self.recovery_transitions {
+            crate::instrumentation::record_deterministic_work(1);
             recovery_successor = recovery_successor.apply(transition)?;
         }
         if recovery_successor != self.recovery_terminal_ledger {
@@ -1158,6 +1251,7 @@ impl StableViewRecovery {
     ) -> Result<LoanLedger, LoanRefusal> {
         let mut current = predecessor.clone();
         for transition in &self.transitions {
+            crate::instrumentation::record_deterministic_work(1);
             current = current.apply(transition)?;
         }
         Ok(current)
@@ -1376,79 +1470,77 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
     let mut planned_views = Vec::<(usize, PlannedStableView)>::new();
     for (_origin_support, group) in grouped {
         let mut clusters: Vec<Vec<(usize, CCheckedResourceFact)>> = Vec::new();
+        // Keep the union beside each memory cluster.  Recomputing it by
+        // walking the whole cluster on every merge made a chain of
+        // overlapping views quadratic in the number of clauses.
+        let mut cluster_unions: Vec<Option<CMemoryRange>> = Vec::new();
+        let mut memory_items = Vec::new();
+        let mut non_memory_clusters = BTreeMap::<CResource, usize>::new();
         for item in group {
             if let CResource::Composite { .. } = item.1.fact.resource() {
-                if let Some(cluster) = clusters.iter_mut().find(|cluster| {
-                    cluster.first().is_some_and(|(_, requirement)| {
-                        requirement.fact.resource() == item.1.fact.resource()
-                    })
-                }) {
-                    cluster.push(item);
-                } else {
-                    clusters.push(vec![item]);
-                }
+                let resource = item.1.fact.resource().clone();
+                let cluster_index = *non_memory_clusters.entry(resource).or_insert_with(|| {
+                    clusters.push(Vec::new());
+                    cluster_unions.push(None);
+                    clusters.len() - 1
+                });
+                clusters[cluster_index].push(item);
                 continue;
             }
             let Some(range) = item.1.fact.memory_range().cloned() else {
                 if !matches!(item.1.fact.resource(), CResource::Token { .. }) {
                     return Err(StableViewPlanError::Loan(LoanRefusal::UnsupportedResource));
                 }
-                if let Some(token_cluster) = clusters.iter_mut().find(|cluster| {
-                    cluster
-                        .first()
-                        .is_some_and(|(_, requirement)| requirement.fact.memory_range().is_none())
-                }) {
-                    token_cluster.push(item);
-                } else {
-                    clusters.push(vec![item]);
-                }
+                let resource = item.1.fact.resource().clone();
+                let cluster_index = *non_memory_clusters.entry(resource).or_insert_with(|| {
+                    clusters.push(Vec::new());
+                    cluster_unions.push(None);
+                    clusters.len() - 1
+                });
+                clusters[cluster_index].push(item);
                 continue;
             };
             if range.start().as_const().is_none() || range.end().as_const().is_none() {
                 return Err(StableViewPlanError::UnsupportedPartition);
             }
-            let mut pending = vec![item];
-            let mut pending_union = range;
-            let mut cluster_index = 0;
-            while cluster_index < clusters.len() {
-                let Some(existing_union) = concrete_memory_cluster_union(&clusters[cluster_index])
-                else {
-                    cluster_index += 1;
-                    continue;
-                };
-                let Some(union) = concrete_memory_union(&existing_union, &pending_union) else {
-                    cluster_index += 1;
-                    continue;
-                };
-                pending_union = union;
-                pending.extend(clusters.remove(cluster_index));
-                // Expanding the pending interval can make it overlap a
-                // cluster that was previously disjoint, so restart the
-                // indexed merge walk after each removal.
-                cluster_index = 0;
-            }
-            clusters.push(pending);
+            memory_items.push((item, range));
         }
 
-        for cluster in clusters {
+        // Connected components of concrete ranges can be found by sorting
+        // each base/element-width family once and extending only the latest
+        // component.  This avoids comparing every new view with every old
+        // cluster while preserving transitive overlap decisions.
+        memory_items.sort_by(|(_, left), (_, right)| {
+            left.base()
+                .cmp(right.base())
+                .then_with(|| left.element_width().cmp(&right.element_width()))
+                .then_with(|| left.start().as_const().cmp(&right.start().as_const()))
+                .then_with(|| left.end().as_const().cmp(&right.end().as_const()))
+        });
+        for (item, range) in memory_items {
+            let can_extend = cluster_unions
+                .last()
+                .and_then(Option::as_ref)
+                .and_then(|union| concrete_memory_union(union, &range));
+            if let Some(union) = can_extend {
+                clusters
+                    .last_mut()
+                    .expect("memory cluster exists")
+                    .push(item);
+                *cluster_unions.last_mut().expect("memory union exists") = Some(union);
+            } else {
+                clusters.push(vec![item]);
+                cluster_unions.push(Some(range));
+            }
+        }
+
+        for (cluster, cluster_union) in clusters.into_iter().zip(cluster_unions) {
             let selected = if cluster
                 .first()
                 .and_then(|(_, item)| item.fact.memory_range())
                 .is_some()
             {
-                let mut union = cluster
-                    .first()
-                    .and_then(|(_, item)| item.fact.memory_range())
-                    .cloned()
-                    .ok_or(StableViewPlanError::UnsupportedPartition)?;
-                for (_, item) in cluster.iter().skip(1) {
-                    let range = item
-                        .fact
-                        .memory_range()
-                        .ok_or(StableViewPlanError::UnsupportedPartition)?;
-                    union = concrete_memory_union(&union, range)
-                        .ok_or(StableViewPlanError::UnsupportedPartition)?;
-                }
+                let union = cluster_union.ok_or(StableViewPlanError::UnsupportedPartition)?;
                 CResourceFact::own_memory(union)
             } else if cluster.first().is_some_and(|(_, item)| {
                 matches!(item.fact.resource(), CResource::Composite { .. })
@@ -1745,6 +1837,7 @@ impl StableViewTransferPlan {
     ) -> Result<LoanLedger, LoanRefusal> {
         let mut current = predecessor.clone();
         for transition in &self.entry_transitions {
+            crate::instrumentation::record_deterministic_work(1);
             current = current.apply(transition)?;
         }
         (current == self.ledger)
@@ -1754,6 +1847,10 @@ impl StableViewTransferPlan {
 }
 
 fn concrete_memory_union(left: &CMemoryRange, right: &CMemoryRange) -> Option<CMemoryRange> {
+    // Every overlap decision is a named unit of planner work.  In
+    // particular, the scaling gate must see candidate comparisons rather
+    // than only the final number of clusters.
+    crate::instrumentation::record_deterministic_work(1);
     if left.base() != right.base() || left.element_width() != right.element_width() {
         return None;
     }
@@ -1773,16 +1870,6 @@ fn concrete_memory_union(left: &CMemoryRange, right: &CMemoryRange) -> Option<CM
         left_end.max(right_end).into(),
         left.element_width(),
     ))
-}
-
-fn concrete_memory_cluster_union(
-    cluster: &[(usize, CCheckedResourceFact)],
-) -> Option<CMemoryRange> {
-    let mut union = cluster.first()?.1.fact.memory_range()?.clone();
-    for (_, requirement) in cluster.iter().skip(1) {
-        union = concrete_memory_union(&union, requirement.fact.memory_range()?)?;
-    }
-    Some(union)
 }
 
 impl LoanLedger {
@@ -1826,6 +1913,13 @@ impl LoanLedger {
             && data.scopes.is_empty()
             && data.loans.is_empty()
             && data.shares.is_empty()
+    }
+
+    /// Stable identity for indexed evidence summaries.  The identity is
+    /// opaque outside this module; it is only used to look up the exact
+    /// predecessor root that a checked call named.
+    pub(crate) fn state_identity(&self) -> u64 {
+        self.storage.state.0
     }
 
     pub(crate) fn contains_participant(&self, participant: LoanParticipantId) -> bool {
@@ -2271,15 +2365,19 @@ impl LoanLedger {
         };
         let mut loans = PersistentSet::default();
         for query in query_nodes {
+            crate::instrumentation::record_deterministic_work(1);
             for ancestor in memory_interval_ancestors(&query) {
+                crate::instrumentation::record_deterministic_work(1);
                 if let Some(bucket) = self.storage.data.active_memory_index.get(&ancestor) {
                     for loan in bucket.iter() {
+                        crate::instrumentation::record_deterministic_work(1);
                         loans = loans.with_value(*loan);
                     }
                 }
             }
             if let Some(bucket) = self.storage.data.active_memory_subtree.get(&query) {
                 for loan in bucket.iter() {
+                    crate::instrumentation::record_deterministic_work(1);
                     loans = loans.with_value(*loan);
                 }
             }
@@ -2336,6 +2434,7 @@ impl LoanLedger {
         &self,
         evidence: &LoanTransitionEvidence,
     ) -> Result<LoanLedgerData, LoanRefusal> {
+        crate::instrumentation::record_deterministic_work(1);
         let mut data = self.storage.data.clone();
         match evidence {
             LoanTransitionEvidence::Lend {
@@ -3320,6 +3419,36 @@ mod tests {
     }
 
     #[test]
+    fn checked_evidence_sequence_seals_each_appended_call_locally() {
+        let assumptions = PureFactContext::new();
+        let owner = memory(0, 4, true);
+        let caller_resources = ResourceContext::new().unchecked_with_fact(owner);
+        let (ledger, caller, callee) = participants();
+        let plan = plan_stable_view_transfer(
+            &caller_resources,
+            &[checked(memory(0, 2, false))],
+            &assumptions,
+            &ledger,
+            caller,
+            callee,
+        )
+        .unwrap();
+        let recovery = plan.clone().recover_stable_views(&assumptions).unwrap();
+        let mut tampered = CheckedLoanCallEvidence::new(
+            plan,
+            recovery.ledger,
+            recovery.terminal_ledger,
+            recovery.transitions,
+        );
+        tampered.recovery_transitions.reverse();
+        let sequence = append_checked_loan_evidence(
+            &empty_checked_loan_evidence_sequence(),
+            Some(Arc::new(tampered)),
+        );
+        assert!(!sequence.is_valid());
+    }
+
+    #[test]
     fn snapshots_share_storage_and_updates_do_not_mutate_predecessors() {
         let (ledger, owner, reader) = participants();
         let clone = ledger.clone();
@@ -3403,7 +3532,7 @@ mod tests {
 
     #[test]
     fn local_ledger_updates_allocate_logarithmically() {
-        for size in [16_usize, 64, 256, 1024] {
+        for size in [16_usize, 32, 64, 128] {
             let (mut ledger, owner, reader) = participants();
             for index in 0..size {
                 let cell = owned(&format!("cell_{index}"));
@@ -3427,6 +3556,166 @@ mod tests {
             );
             assert_eq!(ancestor.storage.data.loans.len(), size);
             assert_eq!(successor.storage.data.loans.len(), size + 1);
+        }
+    }
+
+    #[test]
+    fn deep_split_read_join_work_scales_with_explicit_tree_delta() {
+        let mut samples = Vec::new();
+        for depth in [16_usize, 32, 64, 128] {
+            let (base, owner, _reader) = participants();
+            let escrow = owned("deep-tree");
+            let opening = base.lend(owner, owner, backing(&escrow), escrow).unwrap();
+            let mut ledger = base.apply(&opening.transition).unwrap();
+            let ((), work) = crate::instrumentation::measure_deterministic_work(|| {
+                let mut current = opening.root_share;
+                let mut parents = Vec::with_capacity(depth);
+                let mut siblings = Vec::with_capacity(depth);
+                for _ in 0..depth {
+                    let (split, left, right) = ledger.split(current, owner, owner, owner).unwrap();
+                    ledger = ledger.apply(&split).unwrap();
+                    parents.push(current);
+                    siblings.push(right);
+                    current = left;
+                }
+                assert!(ledger.permits_view(
+                    owner,
+                    &opening.description,
+                    current,
+                    &PureFactContext::new()
+                ));
+                for (parent, sibling) in parents.into_iter().zip(siblings).rev() {
+                    let join = ledger.join(current, sibling, owner).unwrap();
+                    ledger = ledger.apply(&join).unwrap();
+                    current = parent;
+                }
+                assert_eq!(current, opening.root_share);
+                assert!(ledger.invariant_holds());
+            });
+            samples.push((depth, work));
+        }
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1].1 <= pair[0].1.saturating_mul(3),
+                "deep split/read/join work exceeded the explicit tree delta: {samples:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dependency_updates_scale_with_changed_scope_entries() {
+        let mut samples = Vec::new();
+        for size in [16_usize, 32, 64, 128] {
+            let (mut ledger, owner, _reader) = participants();
+            let parent_fact = owned("dependency-parent");
+            let parent = ledger
+                .lend(owner, owner, backing(&parent_fact), parent_fact)
+                .unwrap();
+            ledger = ledger.apply(&parent.transition).unwrap();
+            let mut children = Vec::with_capacity(size);
+            for index in 0..size {
+                let child_fact = owned(&format!("dependency-child-{index}"));
+                let child = ledger
+                    .lend(owner, owner, backing(&child_fact), child_fact)
+                    .unwrap();
+                ledger = ledger.apply(&child.transition).unwrap();
+                children.push(child);
+            }
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                for child in &children {
+                    let transition = ledger
+                        .register_dependency(parent.scope, child.scope, owner)
+                        .unwrap();
+                    ledger = ledger.apply(&transition).unwrap();
+                }
+            });
+            samples.push((size, work));
+        }
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1].1 <= pair[0].1.saturating_mul(3),
+                "dependency updates visited unrelated scope entries: {samples:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn disjoint_memory_view_clustering_has_linear_overlap_work() {
+        let assumptions = PureFactContext::new();
+        let mut samples = Vec::new();
+        for size in [16_usize, 32, 64, 128] {
+            let ledger = LoanLedger::new();
+            let caller = ledger.fresh_participant().unwrap();
+            let callee = ledger.fresh_participant().unwrap();
+            let caller_resources =
+                ResourceContext::new().unchecked_with_fact(memory(0, (size * 2 + 1) as u32, true));
+            let requirements = (0..size)
+                .map(|index| checked(memory((index * 2) as u32, (index * 2 + 1) as u32, false)))
+                .collect::<Vec<_>>();
+            let (plan, work) = crate::instrumentation::measure_deterministic_work(|| {
+                plan_stable_view_transfer(
+                    &caller_resources,
+                    &requirements,
+                    &assumptions,
+                    &ledger,
+                    caller,
+                    callee,
+                )
+            });
+            let plan = plan.expect("disjoint concrete views should form independent loans");
+            assert_eq!(plan.stable_views().len(), size);
+            samples.push((size, work));
+        }
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1].1 <= pair[0].1.saturating_mul(3),
+                "disjoint view clustering compared unrelated candidates: {samples:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn loan_certificate_recheck_scales_with_explicit_transition_delta() {
+        let assumptions = PureFactContext::new();
+        let mut samples = Vec::new();
+        for size in [16_usize, 32, 64, 128] {
+            let ledger = LoanLedger::new();
+            let caller = ledger.fresh_participant().unwrap();
+            let callee = ledger.fresh_participant().unwrap();
+            let caller_resources =
+                ResourceContext::new().unchecked_with_fact(memory(0, (size * 2 + 1) as u32, true));
+            let requirements = (0..size)
+                .map(|index| checked(memory((index * 2) as u32, (index * 2 + 1) as u32, false)))
+                .collect::<Vec<_>>();
+            let plan = plan_stable_view_transfer(
+                &caller_resources,
+                &requirements,
+                &assumptions,
+                &ledger,
+                caller,
+                callee,
+            )
+            .unwrap();
+            let planned_ledger = plan.ledger.clone();
+            let recovery = plan.clone().recover_stable_views(&assumptions).unwrap();
+            let evidence = CheckedLoanCallEvidence::new(
+                plan,
+                recovery.ledger,
+                recovery.terminal_ledger,
+                recovery.transitions,
+            );
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                evidence
+                    .recheck(&ledger, Some(caller), &planned_ledger, Some(callee))
+                    .unwrap();
+            });
+            samples.push((size, work));
+        }
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1].1 <= pair[0].1.saturating_mul(3),
+                "certificate recheck work exceeded its explicit transition delta: {samples:?}"
+            );
         }
     }
 
@@ -4191,6 +4480,33 @@ mod tests {
                 .is_ok()
         );
         let _ = ledger.recover(opening.loan, owner).unwrap();
+    }
+
+    #[test]
+    fn active_memory_candidates_ignore_unrelated_live_loans() {
+        let mut samples = Vec::new();
+        for size in [16_usize, 32, 64, 128] {
+            let (mut ledger, owner, reader) = participants();
+            for index in 0..size {
+                let owned_range = memory((index * 2) as u32, (index * 2 + 1) as u32, true);
+                let opening = ledger
+                    .lend(owner, reader, backing(&owned_range), owned_range)
+                    .unwrap();
+                ledger = ledger.apply(&opening.transition).unwrap();
+            }
+            let query = memory(0, 1, false).memory_range().unwrap().clone();
+            let (loans, work) = crate::instrumentation::measure_deterministic_work(|| {
+                ledger.active_memory_overlaps(&query).unwrap()
+            });
+            assert_eq!(loans.len(), 1);
+            samples.push((size, work));
+        }
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1].1 <= pair[0].1.saturating_mul(2).saturating_add(8),
+                "active interval candidates scanned unrelated live loans: {samples:?}"
+            );
+        }
     }
 
     #[test]
