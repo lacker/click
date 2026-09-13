@@ -1047,6 +1047,13 @@ appears to need one reports the need instead of adding it.
   (`have_goal_reads_through_an_arm_binding.md`): the lowering keeps spec
   loads symbolic when a call is present, and the symbolic-load branch in
   `kernel/spec.rs` yields no path for an arm-binding base. Kernel side.
+  CLOSED by 9a49463d, and the diagnosis was one layer too deep: the parser
+  bound arm binding types only for resource match arms, never proof match
+  arms, so `id->word` was an untyped load defaulting to `Int32`, a 4-byte
+  read of an 8-byte cell; under symbolic loads that is a `TypeMismatch`
+  path the lowering filters out. Twelve lines in `parser.rs`; a non-struct
+  proof-arm binding used as a field base now gets the existing diagnostic.
+  Fixture positive with the `preserve`-body shape, 9/9 sites audit clean.
   (h) gap 68, a `simp() using` premise inside a `have` body cannot name
   the arm's binding (`have_body_simp_using_names_an_arm_binding.md`): the
   goal is materialized against the lexical bindings but the body's
