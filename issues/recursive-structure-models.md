@@ -996,6 +996,29 @@ appears to need one reports the need instead of adding it.
   remains: while a contract section's clauses are evaluated one at a time,
   only read authority is published, because a full re-decision per clause
   broke the near-linear width contract. C3 in progress.
+- 2026-09-12: C3, first resumption (56cd741e, 635e4687, 624141dd on
+  master): the insert fixup loop's nine entry invariants are established
+  through pure bridges (`rb_has_parent`, `ctx_node_is_from_parent`,
+  `ctx_reroot_fixed`); the fixture now stops inside the body with `preserve`
+  omitted. The null constant is accepted in a model payload
+  (`model_payload_null_pointer.md`) and three raw-dump diagnostics became
+  messages. Blockers found, next slices:
+  (a) gap 62, a pure `have` proved by `unfold` + `normalize` inside the
+  fixup's ranked `preserve` fails contentlessly ("body did not construct a
+  completed proof object"), and after a `simp`-proved `have` any later
+  unfold-proved `have` fails the same way; stating the fact as a theorem
+  and `apply`ing it works. Every refold in the fixup body hits it. Not yet
+  reduced standalone; same class as gap 30.
+  (b) gap 63, an unfinished `preserve` is refused at plan time with "must
+  execute exactly one complete loop-body iteration", which hides the real
+  frontier, so a body path gives no signal until finished end to end.
+  (c) gap 64, `old(t.model)` in a loop invariant after a pre-loop unfold and
+  refold of `t` hits `Paths` in kernel lowering
+  (`loop_invariant_old_field_after_a_refold.md`, pinned negative).
+  (d) pointer equality symmetry is unavailable to simple tactics inside a
+  pure theorem, and `normalize() using` does not substitute a pointer
+  equality into a constructor argument; `rewrite` then `normalize` does.
+  Worked around by orienting `ctx_node_is`. Not scheduled.
 
 ## Work packages
 
