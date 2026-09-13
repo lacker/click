@@ -16781,6 +16781,53 @@ mod candidate_stable_view_call_tests {
     }
 
     #[test]
+    fn candidate_nested_reader_body_call_reborrows_and_recovers_owner() {
+        let pointer = pointer();
+        let inner = reader("candidate_nested_body_inner", false);
+        let segment = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        let outer = c_function(
+            CType::Int32,
+            "candidate_nested_body_outer",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_seq(
+                c_call_assign("result", inner.name(), vec![c_variable("p")]),
+                c_return(c_variable("result")),
+            ),
+        )
+        .with_resource_summary(vec![CResourceSpec::viewed_memory(segment)], Vec::new());
+        let environment = CExecutionEnvironment::new()
+            .with_candidate_stable_view_semantics()
+            .with_function(inner.clone())
+            .with_verified_function_rule(CVerifiedFunctionRule { function: inner });
+
+        let paths = execute_c_function_paths(
+            &caller(&pointer),
+            &outer,
+            &[CExpression::Value(CValue::pointer(pointer.clone()))],
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("nested candidate reader should execute through the real body call");
+        let CFunctionOutcome::Return { value, state } = &paths[0].outcome else {
+            panic!(
+                "nested candidate reader should return: {:?}",
+                paths[0].outcome
+            );
+        };
+        assert_eq!(value, &int32(7));
+        assert!(state.resources().satisfies_fact(
+            &CResourceFact::own_memory(CMemoryRange::new(
+                pointer,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+            &PureFactContext::new(),
+        ));
+    }
+
+    #[test]
     fn candidate_nested_reader_rejects_stale_outer_binding() {
         let pointer = pointer();
         let function = reader("candidate_stale_nested_reader", false);
