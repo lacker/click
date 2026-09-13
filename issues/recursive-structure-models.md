@@ -1054,6 +1054,25 @@ appears to need one reports the need instead of adding it.
   path the lowering filters out. Twelve lines in `parser.rs`; a non-struct
   proof-arm binding used as a field base now gets the existing diagnostic.
   Fixture positive with the `preserve`-body shape, 9/9 sites audit clean.
+- 2026-09-12: C3, third resumption (ca8b75f8, eca0360b): the black-parent
+  `break` is complete on both frames and the red-parent path reaches the
+  grandparent's cells; `expect` is "still ahead: the body's end, 2
+  `break`s, 2 `continue`s. Already complete: 2 at a `break`"; verify 1.2s.
+  Gap 70 found and CLOSED (ca8b75f8): a `static inline` function's
+  struct-pointer locals had no layouts, because `parse_c_layouts` keyed
+  them by the kernel name carrying the `#inline:<source>` suffix while the
+  sidecar parser looked up the source spelling; every `parent->..` read
+  in `__rb_insert` lowered as a 4-byte read of an 8-byte cell, which is
+  what made every spelling of the black-parent bridge fail differently
+  (`inline_function_struct_pointer_local_layout.md`). Observation, not
+  reduced: `have (x & 1) != 0` is derivable by smart reasoning but reports
+  "no explicit simple certificate for 64-bit equality is false". The
+  frontier is `tmp = gparent->rb_right`, whose cells belong to the frame
+  above; reading them needs `Context::Top` refuted for that frame from
+  `ctx_root_black` plus a red parent. The frame-level invariant
+  restatement (`ctx_rb` / `ctx_almost_rb_insert`, loop-carried `Nat` black
+  height) is still the prerequisite for the rotation `break`s, the
+  recolour `continue`s, and the post-loop `is_rb_root`; next resumption.
   (h) gap 68, a `simp() using` premise inside a `have` body cannot name
   the arm's binding (`have_body_simp_using_names_an_arm_binding.md`): the
   goal is materialized against the lexical bindings but the body's
