@@ -107,48 +107,52 @@ already what the case theorems are stated over.
 
 What the fixture pins now is the body, one exit at a time. `preserve` is
 written, and the frontier report says exactly how far it gets: **the
-root-blackening `break` is complete**, and both context frames reach the
-black-parent guard. That first exit is the whole shape in miniature — the
+root-blackening `break` is complete**, and so is the black-parent one on both
+context frames. That first exit is the whole shape in miniature — the
 enclosing `if (!parent)` is a proof `if`, the write through `rb_set_parent_color`
 needs `t` unfolded, and the `break` needs it folded again at the new model
 `RbTree::Node(nid, 0, Color::Black, nleft, nright)`, which is a null parent and
 a black colour bit. A `break` is an exit, so the invariants are not closed on
 it; only the binders have to be owned.
 
-The black-parent `break` is one statement reached on two frame paths, and both
-paths need the same bridge, which cannot be written today. `Context::Top` is
-refuted for the frame by `parent != 0` against invariant 4, so `c.model` is a
-`Left` or `Right` frame; `ctx_node_is_left_identity`
-and its mirror take invariant 4 to `parent == cid`, which is what lets
-`unfold(c)` hand the C spelling `parent->__rb_parent_color` the cells the frame
-owns at `cid` (package A22's alias index). The guard `rb_is_black(parent)` then
-has to be decided from the frame's own body fact
-`(cid->__rb_parent_color & 1) == color_bit(ccolor)` and the arm's colour. Every
-spelling of that bridge hits one of two verifier gaps:
+**The black-parent `break` is complete too**, on both frame paths.
+`Context::Top` is refuted for the frame by `parent != 0` against invariant 4,
+so `c.model` is a `Left` or `Right` frame; `ctx_node_is_left_identity` and its
+mirror take invariant 4 to `parent == cid`, which is what lets `unfold(c)` hand
+the C spelling `parent->__rb_parent_color` the cells the frame owns at `cid`
+(package A22's alias index). A proof `match` on the arm's own colour then
+decides the guard `rb_is_black(parent)`: in the `Color::Black` arm the frame's
+body fact `(parent->__rb_parent_color & 1) == color_bit(ccolor)` rewrites
+through the arm's constructor to the concrete bit, and the frame's packed-word
+fact carries that bit back into the whole word,
+`parent->__rb_parent_color == address(cgp) + 1`, which is the spelling the
+`step` at the guard decides on. The masked fact alone does not decide it; the
+word does. The frame is refolded at its unchanged model before the `break`,
+because a `break` owes the binders and nothing else.
 
-- a `have` goal that both reads through an arm binding and calls a pure
-  function is refused before its body runs, with `the kernel lowering produced
-  0 paths, not one`
-  ([`have_goal_reads_through_an_arm_binding.md`](have_goal_reads_through_an_arm_binding.md));
-- a `simp() using` premise inside a `have` body cannot name the arm's binding
-  at all
-  ([`have_body_simp_using_names_an_arm_binding.md`](have_body_simp_using_names_an_arm_binding.md)).
+That bridge did not work until the local `parent` had a layout.
+`__rb_insert` is `static __always_inline`, and an inline body's kernel name
+carries an `#inline:<source>` suffix, so the struct names of its automatic
+locals were filed under a name no sidecar ever writes and
+`parent->__rb_parent_color` lowered as a four-byte read of an eight-byte
+member. Every spelling of the bridge failed differently because of it — a
+`have` naming `parent` beside a pure call produced no path, and one naming the
+arm binding `cid` produced a 64-bit fact that no `rewrite` could put into the
+goal. `mdtests/inline_function_struct_pointer_local_layout.md` is the rule
+that now keys those layouts by the source spelling.
 
-Stating the colour fact purely, `have color_bit(ccolor) == 1`, is provable and
-is not enough: the step at the guard still reports two feasible condition
-paths, because nothing connects that pure value to the loaded word.
-
-So the remaining three `break`s, the two `continue`s, the two rotations and the
-frame-level case theorems `examples/rbtree-model` proves for them
-(`ctx_insert_case1_left`, `ctx_insert_case2_left`, `ctx_insert_case3_left` and
-their mirrors) wait on those two gaps. They also wait on a contract change:
-those case theorems are stated over `ctx_rb(ctx, bh, focus_color)` and
-`ctx_almost_rb_insert(ctx, bh)`, while this loop carries
-`almost_rb_insert(plug(c.model, t.model)) == 1` and `ctx_root_black(c.model) == 1`.
-The invariants have to be restated in the frame-level form the pure library
-consumes, with the black height as a loop-carried `Nat`, before the recolour
-`continue`s can close and before the post-loop `simp()` can reach
-`is_rb_root(plug(ctx.model, sub.model)) == 1`.
+The remaining two `break`s are the two rotations, and with the two `continue`s
+they wait on a contract change: the frame-level case theorems
+`examples/rbtree-model` proves for them (`ctx_insert_case1_left`,
+`ctx_insert_case2_left`, `ctx_insert_case3_left` and their mirrors) are stated
+over `ctx_rb(ctx, bh, focus_color)` and `ctx_almost_rb_insert(ctx, bh)`, while
+this loop carries `almost_rb_insert(plug(c.model, t.model)) == 1` and
+`ctx_root_black(c.model) == 1`. The invariants have to be restated in the
+frame-level form the pure library consumes, with the black height as a
+loop-carried `Nat`, before the recolour `continue`s can close and before the
+post-loop `simp()` can reach `is_rb_root(plug(ctx.model, sub.model)) == 1`.
+The `Color::Red` arm of each frame is where that work starts: it proves the
+parent is red and stops there, which is what the frontier report names.
 
 The contract itself is D3 and D4 on the node-keyed model. `__rb_insert` returns
 `void` and reassigns `node`, so the cursor at the exit has no C name and the
@@ -1110,6 +1114,38 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                         unfold(c) as { sibling: cs, up: cu };
                                         step();
                                         step();
+                                        match ccolor {
+                                            Color::Black => {
+                                                have (parent->__rb_parent_color & 1) == 1 by {
+                                                    rewrite((parent->__rb_parent_color & 1)
+                                                        == color_bit(ccolor));
+                                                    rewrite(ccolor == Color::Black);
+                                                    unfold(color_bit(Color::Black));
+                                                    simp();
+                                                }
+                                                have parent->__rb_parent_color
+                                                    == address(cgp) + 1 by {
+                                                    rewrite(parent->__rb_parent_color
+                                                        == address(cgp)
+                                                            + (parent->__rb_parent_color & 1));
+                                                    rewrite((parent->__rb_parent_color & 1) == 1);
+                                                    normalize();
+                                                }
+                                                step();
+                                                let c = fold(ctx_at(node, root),
+                                                    { model: Context::Left(cid, cgp, ccolor,
+                                                        csib, cup) },
+                                                    { sibling: cs, up: cu });
+                                                step();
+                                            },
+                                            Color::Red => {
+                                                have color_bit(ccolor) == 0 by {
+                                                    rewrite(ccolor == Color::Red);
+                                                    unfold(color_bit(Color::Red));
+                                                    simp();
+                                                }
+                                            },
+                                        }
                                     },
                                     Context::Right(cid, cgp, ccolor, csib, cup) => {
                                         have ctx_node_is(Context::Right(cid, cgp, ccolor,
@@ -1129,6 +1165,38 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                         unfold(c) as { sibling: cs, up: cu };
                                         step();
                                         step();
+                                        match ccolor {
+                                            Color::Black => {
+                                                have (parent->__rb_parent_color & 1) == 1 by {
+                                                    rewrite((parent->__rb_parent_color & 1)
+                                                        == color_bit(ccolor));
+                                                    rewrite(ccolor == Color::Black);
+                                                    unfold(color_bit(Color::Black));
+                                                    simp();
+                                                }
+                                                have parent->__rb_parent_color
+                                                    == address(cgp) + 1 by {
+                                                    rewrite(parent->__rb_parent_color
+                                                        == address(cgp)
+                                                            + (parent->__rb_parent_color & 1));
+                                                    rewrite((parent->__rb_parent_color & 1) == 1);
+                                                    normalize();
+                                                }
+                                                step();
+                                                let c = fold(ctx_at(node, root),
+                                                    { model: Context::Right(cid, cgp, ccolor,
+                                                        csib, cup) },
+                                                    { sibling: cs, up: cu });
+                                                step();
+                                            },
+                                            Color::Red => {
+                                                have color_bit(ccolor) == 0 by {
+                                                    rewrite(ccolor == Color::Red);
+                                                    unfold(color_bit(Color::Red));
+                                                    simp();
+                                                }
+                                            },
+                                        }
                                     },
                                 }
                             }
@@ -1163,5 +1231,5 @@ void rb_insert_color(struct rb_node* node, struct rb_root* root) {
 ```
 
 ```expect
-fail: still ahead on this path: the body's end, 3 `break`s, and 2 `continue`s. Already complete: 1 at a `break`
+fail: still ahead on this path: the body's end, 3 `break`s, and 2 `continue`s. Already complete: 2 at a `break`
 ```

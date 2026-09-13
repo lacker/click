@@ -3435,10 +3435,22 @@ pub(in crate::surface) fn parse_c_layouts(
             // An automatic local of struct-pointer type is a memory base in
             // this function's contract exactly as a parameter is; the C
             // parser is the only place its struct name exists.
-            local_struct_pointers.insert(
-                function.name().to_string(),
-                function.local_struct_pointers().clone(),
-            );
+            // A sidecar names a function by its source spelling, and an
+            // inline body's kernel name carries an `#inline:<source>` suffix,
+            // so keying this by the kernel name hid every inline function's
+            // locals and read an eight-byte member as a four-byte one. Two
+            // definitions sharing one source spelling leave no layouts rather
+            // than guessing between them.
+            match local_struct_pointers.entry(function.source_name().to_string()) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(function.local_struct_pointers().clone());
+                }
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    if entry.get() != function.local_struct_pointers() {
+                        entry.insert(BTreeMap::new());
+                    }
+                }
+            }
         }
     }
     Ok((
