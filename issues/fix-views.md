@@ -1,9 +1,9 @@
 # P1: Give views stable borrowing semantics
 
-**Status: V0-V10, the V11 dependency-preservation checkpoint, and V14 are
-implemented behind the candidate-semantics boundary. V11 composite
-decomposition/restoration is next. Ordinary C contracts still use the existing weak-view behavior until
-the V19 cutover.** The checkpoint began on 2026-09-12 from
+**Status: V0-V11 and V14 are implemented behind the candidate-semantics
+boundary. V12 stable-view-backed resource facts are next. Ordinary C
+contracts still use the existing weak-view behavior until the V19 cutover.**
+The checkpoint began on 2026-09-12 from
 `44339e408c65d67e5251787d680fbf4b542d5287`. Scope-bearing candidate states
 now carry checked loan authority through direct, verified, named, callback,
 certification, refinement, branch, and loop paths. Local, alias, aggregate,
@@ -170,6 +170,30 @@ fixture gates. After integrating V11a as `6670f3c8` and V14 as `26698f0c` plus
 gates. V11b starts from `ae28a308` and must decompose memory-backed composite
 views into primitive loans with an explicit checked restoration group; it
 must not re-enable opaque composite escrow.
+
+### 2026-09-12 V11b integration checkpoint
+
+V11b implements the conservative composite-loan boundary as an atomic checked
+restoration group. A view of a folded composite is tied to its exact source
+occurrence, the head is removed from usable caller authority, and its complete
+decidable body is reduced to owned primitive memory and token pieces. Every
+memory piece enters both active-loan indexes, every primitive viewed projection
+is validated against the same loan, and recovery restores exactly the escrowed
+head only after the complete share tree closes. Equal duplicate heads are
+refused rather than selected by term equality, and counted token quantities not
+selected for lending remain in the caller.
+
+Ordinary `LoanLedger::lend` still refuses `Composite` and `Instance` resources.
+The checked composite route also refuses instance children, unresolved nested
+frontiers, viewed children, and fact-bearing bodies. Those refusals prevent an
+incomplete frontier from hiding mutable or lifetime dependencies; V12 may
+admit fact-bearing bodies only by recording the exact stable-view dependency.
+Replay rechecks permitted-view coverage for reborrows, and ending any scope
+removes every indexed backing range before recovery.
+
+The V11b worktree commit `823fc8e9` passed `scripts/check.sh` with all 2,919
+tests and all four fixture gates, plus 30 focused loan tests and 24 candidate
+call-boundary tests. It is integrated in the coordinator as `355df884`.
 
 ## Decision and violated invariant
 
