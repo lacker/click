@@ -278,7 +278,9 @@ outer loan instead of resetting it.
 The loan fix is integrated as `8f67a3ca`; all 41 loan-kernel tests pass. The
 proof fix is integrated as `1b50a361`; its task worktree passed the complete
 gate with 2,950 tests, and the coordinator's 26 candidate-call tests plus the
-new changed-holder regression pass. V18 remains open until the entry-root
+new changed-holder regression pass. After both fixes and the corpus-inventory
+refresh were integrated, the coordinator's authoritative gate passed all
+2,951 tests and all four fixture gates. V18 remains open until the entry-root
 boundary is implemented, the complete candidate corpus passes, and that final
 path receives its own adversarial review.
 
