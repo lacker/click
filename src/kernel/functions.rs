@@ -2847,12 +2847,22 @@ fn function_contract_requirement_is_proven(
                 return Ok(false);
             }
             if let Some(rule) = environment.get_verified_function_rule(target) {
-                return function_refines_named_contract(contract, &rule.function, budget);
+                return function_refines_named_contract(
+                    contract,
+                    &rule.function,
+                    environment.candidate_stable_view_semantics,
+                    budget,
+                );
             }
             let Some(rule) = environment.get_external_function_rule(target) else {
                 return Ok(false);
             };
-            function_refines_named_contract(contract, &rule.function, budget)
+            function_refines_named_contract(
+                contract,
+                &rule.function,
+                environment.candidate_stable_view_semantics,
+                budget,
+            )
         }
         _ => Ok(false),
     }
@@ -3048,6 +3058,7 @@ fn c_parameter_type_spelling(parameter: &CParameter) -> String {
 fn function_refines_named_contract(
     contract: &CFunctionContract,
     function: &CFunction,
+    candidate_stable_view_semantics: bool,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<bool> {
     if contract.exactly_matches(function) {
@@ -3060,7 +3071,14 @@ fn function_refines_named_contract(
     else {
         return Ok(false);
     };
-    function_refines_named_contract_in_case(&context, &[], &BTreeSet::new(), false, budget)
+    function_refines_named_contract_in_case(
+        &context,
+        &[],
+        &BTreeSet::new(),
+        false,
+        candidate_stable_view_semantics,
+        budget,
+    )
 }
 
 pub(super) fn prepare_function_contract_refinement_context(
@@ -3550,6 +3568,7 @@ fn function_refines_named_contract_in_case(
     case_assumptions: &[Proposition],
     unfolded_predicates: &BTreeSet<String>,
     explicit_case: bool,
+    candidate_stable_view_semantics: bool,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<bool> {
     let contract = &context.contract;
@@ -3701,15 +3720,19 @@ fn function_refines_named_contract_in_case(
         set_contract_result(&mut contract_post, contract_interface, result.clone());
         set_contract_result(&mut function_post, function_interface, result);
     }
-    let access_adapter = checked_access_mode_refinement_adapter(
-        contract_interface,
-        function_interface,
-        &contract_entry,
-        &function_entry,
-        &function_post,
-        &preconditions,
-        budget,
-    )?;
+    let access_adapter = if candidate_stable_view_semantics {
+        checked_access_mode_refinement_adapter(
+            contract_interface,
+            function_interface,
+            &contract_entry,
+            &function_entry,
+            &function_post,
+            &preconditions,
+            budget,
+        )?
+    } else {
+        None
+    };
     if access_adapter == Some(false) {
         return Ok(false);
     }
