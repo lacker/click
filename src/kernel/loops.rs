@@ -3535,14 +3535,26 @@ pub(super) fn prepare_loop_top_state(
     // immutable/no-write summary, distinct from no footprint at all.
     let loop_havoc_ranges = (all_ranges_evaluable && !effect_ranges.is_empty())
         .then(|| effect_ranges.iter().flatten().cloned().collect::<Vec<_>>());
+    // The stable-loan barrier is checked below, after the loop's declared
+    // ownership. A loop that declares a resource the function does not hold
+    // also derives its havoc footprint from that bad declaration, so running
+    // the barrier first would report the overlap it caused instead of the
+    // ownership violation that is the real error.
+    let havoc_loan_failure = entry_state
+        .loan_ledger()
+        .filter(|_| statement_may_write_memory(entry_state, body))
+        .and_then(|ledger| {
+            // An unevaluable declared write set is not yet unknown: a loop
+            // body can only write memory the enclosing function owns, so the
+            // checked owned entry footprint is a sound upper bound on what
+            // the head abstraction erases. Only when that footprint cannot be
+            // named either does the write set stay unknown and fail closed.
+            let validated = loop_havoc_ranges
+                .clone()
+                .or_else(|| checked_owned_entry_footprint(entry_state.resources()));
+            validate_loop_havoc_stable_loans(ledger, validated.as_deref(), assumptions).err()
+        });
     let mut resource_failures = Vec::new();
-    if let Some(ledger) = entry_state.loan_ledger()
-        && statement_may_write_memory(entry_state, body)
-        && let Err(error) =
-            validate_loop_havoc_stable_loans(ledger, loop_havoc_ranges.as_deref(), assumptions)
-    {
-        resource_failures.push(error);
-    }
     let mut top_state =
         havoc_loop_modified_locals(entry_state, body, variables, loop_havoc_ranges.as_deref());
     let mut summaries =
@@ -3632,6 +3644,7 @@ pub(super) fn prepare_loop_top_state(
         loop_body_resource_context(&head_state, &top_state, resource_specs, assumptions, budget)?;
     resource_failures.append(&mut rebound_failures);
     resource_failures.extend(body_failures);
+    resource_failures.extend(havoc_loan_failure);
     // D7 at a loop head: the invariants play the part of a contract's
     // requirements, so a folded matched instance publishes the cells of the
     // arm they select. That is what lets a guard such as `root->left != 0`
@@ -5236,6 +5249,23 @@ pub(super) fn havoc_loop_modified_locals(
     state
 }
 
+/// The memory the enclosing function owns where the loop is entered.
+///
+/// A loop body can only write memory the function owns, so this is a checked
+/// upper bound on the bytes the head abstraction may erase, usable as the
+/// validated ranges when the loop's own declared write set did not evaluate.
+/// `None` means the footprint itself is unknown: some owned fact names memory
+/// this level cannot enumerate -- a folded composite, an instance, or a token
+/// -- and the caller must keep failing closed rather than guess a smaller set.
+fn checked_owned_entry_footprint(resources: &ResourceContext) -> Option<Vec<CMemoryRange>> {
+    resources
+        .facts()
+        .iter()
+        .filter(|fact| fact.is_own())
+        .map(|fact| fact.memory_own_range().cloned())
+        .collect()
+}
+
 /// Check the write set that the loop-head abstraction is about to erase
 /// against the active stable-view footprint.  An unknown write set is a
 /// barrier: silently turning it into a fresh snapshot would discard the only
@@ -5339,6 +5369,34 @@ mod v10_tests {
             validate_loop_havoc_stable_loans(&ledger, Some(&[memory_range(2, 3)]), &assumptions)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn owned_entry_footprint_names_memory_owners_and_refuses_unnameable_ones() {
+        let empty = ResourceContext::new();
+        assert_eq!(checked_owned_entry_footprint(&empty), Some(Vec::new()));
+
+        let owned = CResourceFact::own_memory(memory_range(2, 3));
+        let viewed = CResourceFact::view_memory(memory_range(0, 1));
+        let memory_only = ResourceContext::new()
+            .unchecked_with_fact(owned)
+            .unchecked_with_fact(viewed);
+        // A view lends no write authority, so it is not part of the footprint.
+        assert_eq!(
+            checked_owned_entry_footprint(&memory_only),
+            Some(vec![memory_range(2, 3)])
+        );
+
+        // An owned resource whose bytes this level cannot enumerate leaves the
+        // write set unknown, so the barrier stays closed rather than shrinking
+        // to the memory owners that happen to be nameable.
+        let folded = ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own_memory(memory_range(2, 3)))
+            .unchecked_with_fact(CResourceFact::own(CResource::Token {
+                name: "tokens".to_string(),
+                arguments: Vec::new().into(),
+            }));
+        assert_eq!(checked_owned_entry_footprint(&folded), None);
     }
 }
 
