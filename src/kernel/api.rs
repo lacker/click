@@ -3141,6 +3141,13 @@ pub(crate) fn execution_evidence_states_match(
     if left == right {
         return true;
     }
+    // Stable-view authority is semantic state, even though ordinary entry
+    // rebasing is allowed to change the ghost resource representation.  Do
+    // not let a checked execution cross a loan root, holder, or occurrence
+    // binding boundary while comparing the remaining representation.
+    if !loan_authority_states_match(left, right) {
+        return false;
+    }
     let mut left_without_ghost_difference = left.clone();
     left_without_ghost_difference.resources = right.resources.clone();
     left_without_ghost_difference.counted_populations = right.counted_populations.clone();
@@ -3171,7 +3178,8 @@ pub(crate) fn function_entry_representation_states_match(
     right: &CState,
     assumptions: &PureFactContext,
 ) -> bool {
-    left.locals == right.locals
+    loan_authority_states_match(left, right)
+        && left.locals == right.locals
         && left.memory.heap == right.memory.heap
         && left.local_cell_values().eq(right.local_cell_values())
         && c_memories_definitionally_equal(left.memory(), right.memory(), assumptions)
@@ -3189,6 +3197,18 @@ pub(crate) fn function_entry_representation_states_match(
             function.composite_resource_definitions(),
             assumptions,
         )
+}
+
+/// Compare the stable-view authority that cannot be reconstructed from a
+/// resource representation.  Resource occurrences are opaque identities, so
+/// equal-looking resource facts are insufficient when a checked artifact is
+/// rebased onto another proof entry.
+fn loan_authority_states_match(left: &CState, right: &CState) -> bool {
+    left.loan_ledger() == right.loan_ledger()
+        && left.loan_participant() == right.loan_participant()
+        && left.loan_view_bindings() == right.loan_view_bindings()
+        && left.loan_bindings_are_consistent()
+        && right.loan_bindings_are_consistent()
 }
 
 pub(in crate::kernel) fn proof_evidence_function_refines_same_source(
@@ -3365,6 +3385,39 @@ mod proof_case_evidence_tests {
             int32(1),
         );
         assert!(validate_branch_memory_delta_against_loans(&base, &disjoint, &ledger).is_ok());
+    }
+
+    #[test]
+    fn entry_representation_rebase_rejects_changed_loan_authority() {
+        let function = c_function(
+            CType::Void,
+            "loan_entry_rebase",
+            Vec::new(),
+            CStatement::Return(CExpression::Value(CValue::Void)),
+        );
+        let ledger = crate::kernel::loans::LoanLedger::new();
+        let first_holder = ledger.fresh_participant().unwrap();
+        let second_holder = ledger.fresh_participant().unwrap();
+        let first = CState::new()
+            .with_loan_ledger(Some(ledger.clone()))
+            .with_loan_participant(Some(first_holder));
+        let second = CState::new()
+            .with_loan_ledger(Some(ledger))
+            .with_loan_participant(Some(second_holder));
+        let assumptions = PureFactContext::new();
+
+        assert!(!function_entry_representation_states_match(
+            &function,
+            &first,
+            &second,
+            &assumptions,
+        ));
+        assert!(!execution_evidence_states_match(
+            &function,
+            &first,
+            &second,
+            &assumptions,
+        ));
     }
 
     #[test]
@@ -3684,6 +3737,9 @@ fn checked_execution_at_definitionally_equal_entry_state(
     // needed for it.
     let entry_origin_matches = checked.entry_representation_origin.as_ref() == Some(state);
     if !entry_origin_matches {
+        if !loan_authority_states_match(&checked.state, state) {
+            return None;
+        }
         // Recursive composites can expose an unbounded proof relation between
         // folded and projected entry contexts. Certification must not turn a
         // cache probe into that search: without a kernel-issued entry tying

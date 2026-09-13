@@ -8304,6 +8304,13 @@ pub(super) fn bind_c_function_arguments(
         )
         .with_next_local_lifetime(caller_state.next_local_lifetime());
     callee_state.counted_populations = caller_state.counted_populations.clone();
+    // A function entry is a lexical/frame rebind, not an authority reset.
+    // Preserve an already-active candidate loan through calls whose resource
+    // interface is empty; the resource-transfer planner may replace these
+    // fields with a checked callee participant when it lends new views.
+    callee_state.loan_ledger = caller_state.loan_ledger.clone();
+    callee_state.loan_participant = caller_state.loan_participant;
+    callee_state.loan_view_bindings = caller_state.loan_view_bindings.clone();
     callee_state = initialize_c_function_globals(&callee_state, function);
     for (parameter, value) in function.parameters().iter().zip(values) {
         if let Some(layout) = parameter.aggregate_layout() {
@@ -8405,6 +8412,9 @@ fn bind_c_contract_arguments(
         })
         .with_next_local_lifetime(caller_state.next_local_lifetime());
     callee_state.counted_populations = caller_state.counted_populations.clone();
+    callee_state.loan_ledger = caller_state.loan_ledger.clone();
+    callee_state.loan_participant = caller_state.loan_participant;
+    callee_state.loan_view_bindings = caller_state.loan_view_bindings.clone();
     for (parameter, value) in interface.parameters().iter().zip(values) {
         if let Some(layout) = parameter.aggregate_layout() {
             let CValue::Pointer(pointer) = value else {
@@ -17216,6 +17226,29 @@ mod candidate_stable_view_call_tests {
             )),
             &PureFactContext::new(),
         ));
+    }
+
+    #[test]
+    fn candidate_function_entry_preserves_outer_loan_authority() {
+        let pointer = pointer();
+        let function = c_function(
+            CType::Void,
+            "candidate_empty_resource_entry",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(c_void_value()),
+        );
+        let ledger = LoanLedger::new();
+        let participant = ledger.fresh_participant().expect("caller participant");
+        let caller_state = caller(&pointer)
+            .with_loan_ledger(Some(ledger.clone()))
+            .with_loan_participant(Some(participant));
+        let callee =
+            bind_c_function_arguments(&caller_state, &function, &[CValue::pointer(pointer)])
+                .expect("the function argument should bind");
+
+        assert_eq!(callee.loan_ledger(), Some(&ledger));
+        assert_eq!(callee.loan_participant(), Some(participant));
+        assert!(callee.loan_bindings_are_consistent());
     }
 
     #[test]
