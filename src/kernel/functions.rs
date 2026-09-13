@@ -250,6 +250,7 @@ fn recover_candidate_stable_view_resources(
     transfer: &CFunctionResourceTransfer,
     return_resources: ResourceContext,
     assumptions: &PureFactContext,
+    obligations: &[ProofObligation],
 ) -> Result<
     (
         ResourceContext,
@@ -275,11 +276,26 @@ fn recover_candidate_stable_view_resources(
             "stable-view callee changed its authoritative ledger".to_string(),
         ));
     }
+    if callee_state.loan_participant() != Some(plan.callee_participant()) {
+        return Err(CRuntimeError::FunctionContract(
+            "stable-view callee returned with the wrong loan participant".to_string(),
+        ));
+    }
     if !plan.has_stable_views() {
         return Ok((
             return_resources,
             caller_state.loan_ledger().cloned(),
             caller_state.loan_participant(),
+        ));
+    }
+    // Do not use the path assumptions to decide this: they intentionally
+    // include the obligation list for later proof discharge, which would
+    // make an unresolved return condition appear already proved. Candidate
+    // recovery is therefore fail-closed until the return path has no pending
+    // obligations at all.
+    if !obligations.is_empty() {
+        return Err(CRuntimeError::FunctionContract(
+            "stable-view call has an undischarged return obligation".to_string(),
         ));
     }
     let recovery = plan
@@ -498,6 +514,22 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
     budget: &mut ExecutionBudget,
     prepare_contract_resources: bool,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
+    // Candidate stable-view calls must cross the resource boundary even when
+    // the ordinary body-execution caller did not request contract resources.
+    // Keeping this opt-in preserves the historical default while preventing a
+    // candidate-enabled direct call from silently running with unsuspended
+    // caller resources.
+    let prepare_contract_resources =
+        prepare_contract_resources || environment.candidate_stable_view_semantics;
+    if environment.candidate_stable_view_semantics && function.has_inline_body() {
+        return Ok(vec![CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                "inline calls are unsupported with candidate stable-view semantics".to_string(),
+            )),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }]);
+    }
     budget.consume_function_call()?;
     if arguments.len() != function.parameters().len() {
         return Ok(vec![CFunctionPath {
@@ -623,7 +655,9 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             let return_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
             let (outcome, obligations) = if let Some(resource_transfer) = &resource_transfer {
-                if function_needs_outcome_resource_transfer(function) {
+                if resource_transfer.stable_view_plan.is_some()
+                    || function_needs_outcome_resource_transfer(function)
+                {
                     function_outcome_from_body_with_resource_transfer(
                         state,
                         function,
@@ -835,7 +869,9 @@ pub(super) fn execute_c_function_verification_paths(
             let return_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
             let (outcome, obligations) = if let Some(resource_transfer) = &resource_transfer {
-                if function_needs_outcome_resource_transfer(function) {
+                if resource_transfer.stable_view_plan.is_some()
+                    || function_needs_outcome_resource_transfer(function)
+                {
                     function_outcome_from_body_with_resource_transfer(
                         state,
                         function,
@@ -1041,6 +1077,17 @@ pub(super) fn execute_c_function_call_paths(
             &argument_obligations,
         );
         if function.has_inline_body() {
+            if environment.candidate_stable_view_semantics {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                        "inline calls are unsupported with candidate stable-view semantics"
+                            .to_string(),
+                    )),
+                    facts: arguments_path.facts,
+                    obligations: argument_obligations,
+                });
+                continue;
+            }
             // An inline body is call-site code: it runs on the caller's own
             // resources and leaves the caller whatever it did not consume.
             // There is no contract boundary to transfer across.
@@ -1797,6 +1844,7 @@ fn execute_verified_function_applications(
                 &transfer,
                 return_resources,
                 &effective_assumptions,
+                &obligations,
             ) {
                 Ok(recovered) => recovered,
                 Err(error) => {
@@ -9369,6 +9417,13 @@ fn prepare_contract_resource_transfer_with_candidate(
     preserve_explicit_representation: bool,
     candidate_stable_view_semantics: bool,
 ) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
+    if candidate_stable_view_semantics
+        && caller_state.loan_ledger().is_some() != caller_state.loan_participant().is_some()
+    {
+        return Ok(Err(CRuntimeError::FunctionContract(
+            "stable-view caller has an incomplete loan ledger/participant pair".to_string(),
+        )));
+    }
     // In particular, preparing several pure callback interfaces must not
     // repeatedly enumerate the caller's unrelated resource frame.
     if interface.resource_requires().is_empty() && !preserve_explicit_representation {
@@ -15755,6 +15810,7 @@ fn function_outcome_from_body_with_resource_transfer(
             transfer,
             return_resources,
             assumptions,
+            &obligations,
         ) {
             Ok(recovered) => recovered,
             Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
@@ -16416,6 +16472,198 @@ mod candidate_stable_view_call_tests {
             )),
             &PureFactContext::new(),
         ));
+    }
+
+    #[test]
+    fn candidate_direct_reader_recovers_owner_for_following_write() {
+        let pointer = pointer();
+        let function = reader("candidate_direct_reader", false);
+        let paths = execute_c_function_paths(
+            &caller(&pointer),
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer.clone()))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate direct call should execute");
+        let CFunctionOutcome::Return { state, .. } = &paths[0].outcome else {
+            panic!(
+                "candidate direct reader should return: {:?}",
+                paths[0].outcome
+            );
+        };
+        assert!(state.resources().satisfies_fact(
+            &CResourceFact::own_memory(CMemoryRange::new(
+                pointer,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+            &PureFactContext::new(),
+        ));
+    }
+
+    #[test]
+    fn candidate_inline_reader_fails_closed() {
+        let pointer = pointer();
+        let function = reader("candidate_inline_reader", false).with_inline_body();
+        let paths = execute_c_function_call_paths(
+            &caller(&pointer),
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate inline call should return a diagnostic path");
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
+                ..
+            }] if message.contains("inline calls are unsupported")
+        ));
+    }
+
+    #[test]
+    fn candidate_unresolved_return_obligation_refuses_recovery() {
+        let pointer = pointer();
+        let function = reader("candidate_unresolved_return", false);
+        let caller = caller(&pointer);
+        let arguments = vec![CValue::pointer(pointer.clone())];
+        let callee = bind_c_function_arguments(&caller, &function, &arguments)
+            .expect("reader argument should bind");
+        let transfer = prepare_function_resource_transfer(
+            &caller,
+            &callee,
+            &function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("candidate transfer should run")
+        .expect("candidate transfer should be accepted");
+        let callee = callee_state_with_resource_transfer(callee, &transfer);
+        let unresolved = ProofObligation::verification_condition(Proposition::ConditionIs(
+            ConditionTerm::Constant(false),
+            true,
+        ));
+        let (outcome, _) = function_outcome_from_body_with_resource_transfer(
+            &caller,
+            &function,
+            CStatementOutcome::Return {
+                value: int32(7),
+                state: callee,
+            },
+            vec![unresolved],
+            &PureFactContext::new(),
+            &transfer,
+            &arguments,
+            true,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate return transition should complete");
+        assert!(matches!(
+            outcome,
+            CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message))
+                if message.contains("undischarged return obligation")
+        ));
+    }
+
+    #[test]
+    fn candidate_rejects_malformed_ledger_participant_pairs() {
+        let pointer = pointer();
+        let function = reader("candidate_pair_mismatch", false);
+        let assumptions = PureFactContext::new();
+        let mut budget = ExecutionBudget::new();
+        let caller_with_ledger = caller(&pointer).with_loan_ledger(Some(LoanLedger::new()));
+        let callee = bind_c_function_arguments(
+            &caller_with_ledger,
+            &function,
+            &[CValue::pointer(pointer.clone())],
+        )
+        .expect("reader argument should bind");
+        let error = prepare_function_resource_transfer(
+            &caller_with_ledger,
+            &callee,
+            &function,
+            &assumptions,
+            &mut budget,
+            true,
+            true,
+        )
+        .expect("pair validation should not hit the execution budget")
+        .expect_err("ledger-only caller must be refused");
+        assert!(
+            matches!(error, CRuntimeError::FunctionContract(message) if message.contains("incomplete loan ledger/participant pair"))
+        );
+
+        let ledger = LoanLedger::new();
+        let participant = ledger.fresh_participant().expect("participant");
+        let caller_with_participant = caller(&pointer).with_loan_participant(Some(participant));
+        let callee = bind_c_function_arguments(
+            &caller_with_participant,
+            &function,
+            &[CValue::pointer(pointer)],
+        )
+        .expect("reader argument should bind");
+        let error = prepare_function_resource_transfer(
+            &caller_with_participant,
+            &callee,
+            &function,
+            &assumptions,
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("pair validation should not hit the execution budget")
+        .expect_err("participant-only caller must be refused");
+        assert!(
+            matches!(error, CRuntimeError::FunctionContract(message) if message.contains("incomplete loan ledger/participant pair"))
+        );
+    }
+
+    #[test]
+    fn candidate_rejects_wrong_callee_participant_on_recovery() {
+        let pointer = pointer();
+        let function = reader("candidate_wrong_participant", false);
+        let caller = caller(&pointer);
+        let arguments = vec![CValue::pointer(pointer.clone())];
+        let callee = bind_c_function_arguments(&caller, &function, &arguments)
+            .expect("reader argument should bind");
+        let transfer = prepare_function_resource_transfer(
+            &caller,
+            &callee,
+            &function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("candidate transfer should run")
+        .expect("candidate transfer should be accepted");
+        let plan = transfer
+            .stable_view_plan
+            .as_ref()
+            .expect("candidate transfer records a loan plan");
+        let wrong_participant = plan.caller_participant();
+        let callee = callee_state_with_resource_transfer(callee, &transfer)
+            .with_loan_participant(Some(wrong_participant));
+        let error = recover_candidate_stable_view_resources(
+            &caller,
+            &callee,
+            &transfer,
+            transfer.caller_resources_after_requirements.clone(),
+            &PureFactContext::new(),
+            &[],
+        )
+        .expect_err("recovery must refuse the wrong callee participant");
+        assert!(
+            matches!(error, CRuntimeError::FunctionContract(message) if message.contains("wrong loan participant"))
+        );
     }
 
     #[test]
