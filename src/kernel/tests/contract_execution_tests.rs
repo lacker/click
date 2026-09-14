@@ -43,6 +43,47 @@ fn borrowed_contract_input_roots_only_the_exact_principal_view() {
     assert!(rooted.loan_bindings_are_consistent());
 }
 
+/// Every proof unit of one function shares one installed root: a second
+/// install on the same entry state returns the same ledger identity, while a
+/// changed entry state gets a fresh one.
+#[test]
+fn borrowed_contract_input_roots_are_shared_across_proof_units_of_one_function() {
+    let viewed = CResourceFact::view_token("borrowed_input".into(), vec![]);
+    let resources = ResourceContext::new().unchecked_with_fact(viewed.clone());
+    let state = CState::new().with_resource_context(resources);
+    let function = borrowed_input_view_function("shared_root_reader");
+    let first = c_state_with_borrowed_contract_inputs(
+        state.clone(),
+        &function,
+        &[],
+        &PureFactContext::new(),
+    )
+    .expect("first install");
+    let second = c_state_with_borrowed_contract_inputs(
+        state.clone(),
+        &function,
+        &[],
+        &PureFactContext::new(),
+    )
+    .expect("second install on the same entry state");
+    assert_eq!(first.loan_ledger(), second.loan_ledger());
+    assert_eq!(first.loan_participant(), second.loan_participant());
+    assert_eq!(first, second);
+
+    let other_resources = ResourceContext::new().unchecked_with_facts([
+        viewed.clone(),
+        CResourceFact::own_token("extra".into(), vec![]),
+    ]);
+    let changed = c_state_with_borrowed_contract_inputs(
+        CState::new().with_resource_context(other_resources),
+        &function,
+        &[],
+        &PureFactContext::new(),
+    )
+    .expect("install on a changed entry state");
+    assert_ne!(first.loan_ledger(), changed.loan_ledger());
+}
+
 #[test]
 fn borrowed_contract_input_rejects_derived_or_ambiguous_views() {
     let viewed = CResourceFact::view_token("borrowed_input".into(), vec![]);

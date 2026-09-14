@@ -5746,6 +5746,24 @@ int32 run(int32 p[]) {
         );
     }
 
+    /// Two per-claim proofs of one contract must share one borrowed-input
+    /// root; with a fresh root per claim the second claim's completion is
+    /// at a different authority than the certified entry and is refused.
+    #[test]
+    fn stable_mode_per_claim_proofs_share_one_borrowed_input_root() {
+        let click = r#"
+verifying "reader.c";
+
+int32 reader(int32 p[]) {
+    views p[0..1];
+    ensures exact_value: result == p[0] by auto;
+    ensures lower_bound: result >= p[0] by auto;
+}
+"#;
+        let source = "int reader(int *p) { return p[0]; }";
+        verify_in_stable_mode(click, source).expect("both claims certify at one shared root");
+    }
+
     #[test]
     fn stable_mode_routes_a_surface_proof_through_candidate_kernel_semantics() {
         let click = r#"

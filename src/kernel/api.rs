@@ -18,6 +18,24 @@ thread_local! {
     static CHECKED_FUNCTION_BODY_EXECUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+thread_local! {
+    /// The borrowed-input roots installed for each function in this
+    /// verification session, keyed by function name and holding the exact
+    /// entry state they were installed on. Every proof unit of one function
+    /// (each claim proof, loop proof, and certification) must share one
+    /// entry authority: a loan ledger's identity is opaque and fresh, so two
+    /// installs would be two different authorities and no completion from
+    /// one could certify a claim at the other. The pre-install state is
+    /// compared exactly, once per proof unit; a function whose entry state
+    /// changed simply gets a new root.
+    static BORROWED_INPUT_ROOTS: std::cell::RefCell<BTreeMap<String, (CState, CState)>> =
+        const { std::cell::RefCell::new(BTreeMap::new()) };
+}
+
+pub(crate) fn clear_borrowed_input_root_memo() {
+    BORROWED_INPUT_ROOTS.with(|roots| roots.borrow_mut().clear());
+}
+
 #[cfg(test)]
 fn record_checked_function_body_execution() {
     CHECKED_FUNCTION_BODY_EXECUTIONS.with(|count| count.set(count.get() + 1));
@@ -1865,6 +1883,30 @@ pub(crate) fn c_state_with_borrowed_contract_inputs(
     {
         return Err(LoanRefusal::InvalidEvidence.diagnostic(LoanRefusalOperation::Entry));
     }
+    if let Some(rooted) = BORROWED_INPUT_ROOTS.with(|roots| {
+        roots
+            .borrow()
+            .get(function.name())
+            .filter(|(installed_on, _)| installed_on == &state)
+            .map(|(_, rooted)| rooted.clone())
+    }) {
+        return Ok(rooted);
+    }
+    let rooted = install_borrowed_contract_inputs(state.clone(), function, arguments, assumptions)?;
+    BORROWED_INPUT_ROOTS.with(|roots| {
+        roots
+            .borrow_mut()
+            .insert(function.name().to_string(), (state, rooted.clone()));
+    });
+    Ok(rooted)
+}
+
+fn install_borrowed_contract_inputs(
+    state: CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+) -> Result<CState, LoanRefusalDiagnostic> {
     let entry = c_function_entry_state(&state, function, arguments)
         .ok_or_else(|| LoanRefusal::MissingBacking.diagnostic(LoanRefusalOperation::Entry))?;
     let mut budget = ExecutionBudget::default();

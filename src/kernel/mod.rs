@@ -221,6 +221,7 @@ impl VerificationSession {
             assumptions::clear_context_inconsistency_memos();
             assumptions::clear_frame_expansion_memo();
             api::clear_context_free_forall_cache();
+            api::clear_borrowed_input_root_memo();
         }
         Self { fresh: outermost }
     }
