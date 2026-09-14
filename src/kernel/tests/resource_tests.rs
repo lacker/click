@@ -6030,3 +6030,176 @@ fn v11_tampered_cstate_mirror_is_rejected_and_stale_sidecar_is_dropped() {
     let second = LoanViewBindings::default().with_inserted(child_occurrence, other_binding);
     assert_ne!(first, second);
 }
+
+/// A memory footprint is bytes; the element width only spells them (D6).
+/// `p[2..3]` at width 4 and `p[8..12]` at width 1 name the same four bytes,
+/// so each entails the other for ownership and for a view, and a mismatched
+/// width by itself decides nothing either way.
+#[test]
+fn memory_entailment_relates_two_spellings_of_one_byte_footprint() {
+    let assumptions = PureFactContext::new();
+    let base = Pointer {
+        block: "mixed-width-footprint".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let int32_cell = CMemoryRange::new_with_element_width(
+        base.clone(),
+        Bitvector32Term::Constant(2),
+        Bitvector32Term::Constant(3),
+        4,
+    );
+    let same_bytes = CMemoryRange::new_with_element_width(
+        base.clone(),
+        Bitvector32Term::Constant(8),
+        Bitvector32Term::Constant(12),
+        1,
+    );
+    let int32_context =
+        ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(int32_cell.clone()));
+    let byte_context =
+        ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(same_bytes.clone()));
+    assert!(
+        int32_context.satisfies_fact(&CResourceFact::own_memory(same_bytes.clone()), &assumptions)
+    );
+    assert!(
+        byte_context.satisfies_fact(&CResourceFact::own_memory(int32_cell.clone()), &assumptions)
+    );
+    assert!(int32_context.satisfies_fact(&CResourceFact::view_memory(same_bytes), &assumptions));
+    assert!(byte_context.satisfies_fact(&CResourceFact::view_memory(int32_cell), &assumptions));
+
+    // One byte past the end is still one byte too many.
+    let one_byte_over = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+        base.clone(),
+        Bitvector32Term::Constant(8),
+        Bitvector32Term::Constant(13),
+        1,
+    ));
+    assert!(!int32_context.satisfies_fact(&one_byte_over, &assumptions));
+    // A different four bytes of the same block is not the same footprint.
+    let neighbour = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+        base,
+        Bitvector32Term::Constant(12),
+        Bitvector32Term::Constant(16),
+        1,
+    ));
+    assert!(!int32_context.satisfies_fact(&neighbour, &assumptions));
+}
+
+/// Subtraction is bytewise too: taking a width-1 field out of a width-4 owner
+/// leaves exactly the bytes the requirement did not name, spelled in the
+/// owner's own coordinate system, and putting the piece back restores the
+/// original owner.
+#[test]
+fn subtracting_a_byte_field_from_an_int32_owner_leaves_the_bytewise_remainder() {
+    let assumptions = PureFactContext::new();
+    let base = Pointer {
+        block: "mixed-width-split".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let owner = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+        base.clone(),
+        Bitvector32Term::Constant(2),
+        Bitvector32Term::Constant(4),
+        4,
+    ));
+    let byte_field = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+        base.clone(),
+        Bitvector32Term::Constant(8),
+        Bitvector32Term::Constant(12),
+        1,
+    ));
+    let context = ResourceContext::new()
+        .try_compose_with_fact(owner.clone(), &assumptions)
+        .unwrap();
+    let residual = context
+        .clone()
+        .without_fact_incrementally(&byte_field, &assumptions)
+        .expect("a width-1 field is consumable from a width-4 owner");
+    let remainder = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+        base,
+        Bitvector32Term::Constant(3),
+        Bitvector32Term::Constant(4),
+        4,
+    ));
+    assert!(residual.satisfies_fact(&remainder, &assumptions));
+    assert!(!residual.satisfies_fact(&byte_field, &assumptions));
+    assert!(!residual.satisfies_fact(&owner, &assumptions));
+    assert_eq!(
+        residual.clone().normalized(&assumptions).facts(),
+        [remainder]
+    );
+
+    // The bytes are conserved: returning the lent piece rebuilds the owner.
+    let restored = residual
+        .try_compose_with_fact(byte_field, &assumptions)
+        .unwrap()
+        .normalized(&assumptions);
+    assert!(restored.satisfies_fact(&owner, &assumptions));
+    assert!(restored.is_valid(&assumptions));
+}
+
+/// Two owners whose bytes do not meet stay two owners whatever their widths,
+/// and the context composes and stays valid; where they abut, normalization
+/// puts them back together instead of leaving the context fragmented across
+/// two spellings of one block.
+#[test]
+fn bytewise_disjoint_mismatched_width_owners_compose_and_adjacent_ones_merge() {
+    let assumptions = PureFactContext::new();
+    let base = Pointer {
+        block: "mixed-width-composition".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let int32_head = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+        base.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(2),
+        4,
+    ));
+    let distant_bytes = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+        base.clone(),
+        Bitvector32Term::Constant(12),
+        Bitvector32Term::Constant(16),
+        1,
+    ));
+    let disjoint = ResourceContext::new()
+        .try_compose_with_fact(int32_head.clone(), &assumptions)
+        .unwrap()
+        .try_compose_with_fact(distant_bytes.clone(), &assumptions)
+        .expect("bytewise-disjoint owners compose whatever their widths");
+    assert!(disjoint.is_valid(&assumptions));
+    assert!(disjoint.satisfies_fact(&int32_head, &assumptions));
+    assert!(disjoint.satisfies_fact(&distant_bytes, &assumptions));
+    assert!(!disjoint.satisfies_fact(
+        &CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+            base.clone(),
+            Bitvector32Term::Constant(8),
+            Bitvector32Term::Constant(12),
+            1,
+        )),
+        &assumptions
+    ));
+
+    let adjacent_bytes = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+        base.clone(),
+        Bitvector32Term::Constant(8),
+        Bitvector32Term::Constant(12),
+        1,
+    ));
+    let merged = ResourceContext::new()
+        .try_compose_with_fact(int32_head, &assumptions)
+        .unwrap()
+        .try_compose_with_fact(adjacent_bytes, &assumptions)
+        .unwrap()
+        .normalized(&assumptions);
+    assert_eq!(
+        merged.facts(),
+        [CResourceFact::own_memory(
+            CMemoryRange::new_with_element_width(
+                base,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(3),
+                4,
+            )
+        )]
+    );
+}

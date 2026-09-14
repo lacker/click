@@ -47,8 +47,13 @@ fn memory_range_can_be_framed_as_a_byte_footprint() {
     assert_eq!(rebased.element_width(), 1);
 }
 
+/// A footprint is bytes and the element width is only how those bytes are
+/// spelled (D6), so ownership coverage is decided bytewise as well: a
+/// byte-indexed owner of four bytes is the same authority as an int32-indexed
+/// owner of one cell over them, in both directions. Only the bytes decide;
+/// coverage that runs off the end is still refused.
 #[test]
-fn memory_resource_coverage_keeps_ownership_typed_but_allows_read_views() {
+fn memory_resource_coverage_is_decided_bytewise_for_ownership_and_views() {
     let base = Pointer {
         block: "typed-buffer".into(),
         offset: PointerOffsetTerm::Constant(0),
@@ -66,7 +71,26 @@ fn memory_resource_coverage_keeps_ownership_typed_but_allows_read_views() {
         Bitvector32Term::Constant(0),
         Bitvector32Term::Constant(1),
     ));
-    assert!(!available.satisfies_fact(&int32_requirement, &PureFactContext::new()));
+    assert!(available.satisfies_fact(&int32_requirement, &PureFactContext::new()));
+    let int32_available = ResourceContext::new().unchecked_with_fact(int32_requirement.clone());
+    assert!(int32_available.satisfies_fact(
+        &CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(4),
+            1,
+        )),
+        &PureFactContext::new()
+    ));
+    assert!(!int32_available.satisfies_fact(
+        &CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(5),
+            1,
+        )),
+        &PureFactContext::new()
+    ));
 
     let byte_requirement = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
         base,

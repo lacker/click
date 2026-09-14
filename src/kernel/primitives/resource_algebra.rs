@@ -4009,6 +4009,28 @@ enum ResourceNormalizationKey {
     MemoryEnd(PointerBlock, bool, Bitvector32Term),
 }
 
+/// The adjacency coordinate one memory bound contributes to the
+/// normalization index.
+///
+/// Two owned ranges merge when they abut in bytes, and the element width is
+/// only how those bytes are spelled (D6), so a concrete bound is keyed by its
+/// absolute byte position: `p[0..2]` at width 4 ends where `p[8..12]` at
+/// width 1 begins, and the index has to offer that pair to
+/// [`merge_memory_ranges`] for either spelling to disappear again. A bound
+/// that is not concrete, or whose base offset is not, keeps its element-unit
+/// term, which remains the only form the symbolic adjacency comparison can
+/// use. The two forms never collide: a concrete key is always a constant and
+/// a retained term never is.
+fn memory_normalization_position(range: &CMemoryRange, bound: &Bitvector32Term) -> Bitvector32Term {
+    let byte_position = || -> Option<Bitvector32Term> {
+        let base = range.base().offset.as_const()?;
+        let elements = signed_bitvector_constant(bound)?;
+        let byte = base.checked_add(elements.checked_mul(i64::from(range.element_width()))?)?;
+        Some(Bitvector32Term::Constant(i32::try_from(byte).ok()? as u32))
+    };
+    byte_position().unwrap_or_else(|| bound.clone())
+}
+
 #[derive(Default)]
 struct ResourceNormalizationIndex {
     positions: BTreeMap<ResourceNormalizationKey, BTreeSet<usize>>,
@@ -4025,12 +4047,12 @@ impl ResourceNormalizationIndex {
                 keys.push(ResourceNormalizationKey::MemoryStart(
                     range.base().block.clone(),
                     fact.is_own(),
-                    range.start().clone(),
+                    memory_normalization_position(range, range.start()),
                 ));
                 keys.push(ResourceNormalizationKey::MemoryEnd(
                     range.base().block.clone(),
                     fact.is_own(),
-                    range.end().clone(),
+                    memory_normalization_position(range, range.end()),
                 ));
             }
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
@@ -4068,12 +4090,12 @@ impl ResourceNormalizationIndex {
                 keys.push(ResourceNormalizationKey::MemoryEnd(
                     range.base().block.clone(),
                     fact.is_own(),
-                    range.start().clone(),
+                    memory_normalization_position(range, range.start()),
                 ));
                 keys.push(ResourceNormalizationKey::MemoryStart(
                     range.base().block.clone(),
                     fact.is_own(),
-                    range.end().clone(),
+                    memory_normalization_position(range, range.end()),
                 ));
             }
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
@@ -4143,7 +4165,7 @@ fn memory_resource_fact_entails(
             let Some(available) = resource_fact_read_core_range(available) else {
                 return false;
             };
-            memory_range_covers_for_read(&available, required, assumptions)
+            memory_range_covers(&available, required, assumptions)
         }
         (_, _) if required.memory_own_range().is_some() => {
             let Some(available) = available.memory_own_range() else {
@@ -4163,9 +4185,7 @@ fn consume_memory_resource_fact(
 ) -> Option<ResourceFactConsumption> {
     if let Some(required) = required.memory_view_range() {
         return resource_fact_read_core_range(available)
-            .is_some_and(|available| {
-                memory_range_covers_for_read(&available, required, assumptions)
-            })
+            .is_some_and(|available| memory_range_covers(&available, required, assumptions))
             .then_some(ResourceFactConsumption::Preserve);
     }
     if let Some(required) = required.memory_own_range() {
@@ -4815,13 +4835,70 @@ fn pointer_offsets_equal_with_load_bridging(
     }
 }
 
+/// A range as its physical byte footprint: width 1, based at its first byte.
+///
+/// This is the shared spelling-independent form of a memory footprint (D6).
+/// [`CMemoryRange::byte_footprint`] already derives the pointer and the byte
+/// length, and `protected_range_proven_overlapping` in the loan oracle asks
+/// its question in exactly these terms; this helper keeps the memory family's
+/// relations on that one normalization rather than inventing a second.
+fn byte_normalized_memory_range(range: &CMemoryRange) -> CMemoryRange {
+    let (base, bytes) = range.byte_footprint();
+    CMemoryRange::new_with_element_width(base, Bitvector32Term::Constant(0), bytes, 1)
+}
+
+/// Re-spells a range in another element width, naming the same bytes.
+///
+/// `p[2..3]` at width 4 and `p[8..12]` at width 1 are two spellings of one
+/// four-byte footprint, so either may be rewritten as the other. Re-spelling
+/// keeps the range's base pointer, and therefore every base relation the
+/// equal-width relations already decide, which is why the relations below
+/// prefer it to [`byte_normalized_memory_range`]: the byte form moves the
+/// base to the range's first byte and loses those relations. It succeeds only
+/// when the bounds are concrete and the byte offsets divide into whole
+/// `width` elements.
+fn memory_range_in_element_width(range: &CMemoryRange, width: u32) -> Option<CMemoryRange> {
+    if range.element_width() == width {
+        return Some(range.clone());
+    }
+    let source_width = i64::from(range.element_width());
+    let target_width = i64::from(width);
+    let start = signed_bitvector_constant(range.start())?.checked_mul(source_width)?;
+    let end = signed_bitvector_constant(range.end())?.checked_mul(source_width)?;
+    if start % target_width != 0 || end % target_width != 0 {
+        return None;
+    }
+    let start = i32::try_from(start / target_width).ok()?;
+    let end = i32::try_from(end / target_width).ok()?;
+    Some(CMemoryRange::new_with_element_width(
+        range.base().clone(),
+        Bitvector32Term::Constant(start as u32),
+        Bitvector32Term::Constant(end as u32),
+        width,
+    ))
+}
+
 pub(in crate::kernel) fn memory_range_covers(
     available: &CMemoryRange,
     required: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> bool {
     if available.element_width() != required.element_width() {
-        return false;
+        // A footprint is bytes and the element width is only how the bytes
+        // are spelled (D6), so a mismatch is rewritten into one coordinate
+        // system instead of refusing. Neither rewrite adds or drops a byte,
+        // so both are sound; the re-spelling is tried first because it keeps
+        // the bases and endpoints the equal-width paths reason about.
+        if memory_range_in_element_width(required, available.element_width())
+            .is_some_and(|required| memory_range_covers(available, &required, assumptions))
+        {
+            return true;
+        }
+        return memory_range_covers(
+            &byte_normalized_memory_range(available),
+            &byte_normalized_memory_range(required),
+            assumptions,
+        );
     }
     if available == required {
         return true;
@@ -4893,38 +4970,6 @@ pub(in crate::kernel) fn memory_range_covers(
             )
         },
     )
-}
-
-/// Read access is typed at the leaf being inspected, but an enclosing owned
-/// object may use a different logical range width. For example, `object(p)`
-/// is int32-indexed while an embedded `uint8` field is byte-indexed. Views
-/// may use the enclosing object's physical byte footprint; ownership
-/// consumption deliberately stays on [`memory_range_covers`] so residual
-/// ownership never changes coordinate systems implicitly.
-fn memory_range_covers_for_read(
-    available: &CMemoryRange,
-    required: &CMemoryRange,
-    assumptions: &PureFactContext,
-) -> bool {
-    if available.element_width() == required.element_width() {
-        return memory_range_covers(available, required, assumptions);
-    }
-
-    let (available_base, available_bytes) = available.byte_footprint();
-    let (required_base, required_bytes) = required.byte_footprint();
-    let available = CMemoryRange::new_with_element_width(
-        available_base,
-        Bitvector32Term::Constant(0),
-        available_bytes,
-        1,
-    );
-    let required = CMemoryRange::new_with_element_width(
-        required_base,
-        Bitvector32Term::Constant(0),
-        required_bytes,
-        1,
-    );
-    memory_range_covers(&available, &required, assumptions)
 }
 
 fn memory_resource_fact_range(fact: &CResourceFact) -> Option<&CMemoryRange> {
@@ -5032,7 +5077,21 @@ fn split_memory_range(
     assumptions: &PureFactContext,
 ) -> Option<Vec<CMemoryRange>> {
     if available.element_width() != required.element_width() {
-        return None;
+        // Subtraction is bytewise for the same reason coverage is: the
+        // residue is the available bytes the requirement does not name, and
+        // the spelling each side arrived in does not change them. Rewriting
+        // the requirement into the owner's width keeps the residues in the
+        // owner's own coordinate system, so taking a width-1 field out of a
+        // width-4 owner leaves width-4 remainders; only bounds that do not
+        // divide fall back to the byte footprint of both sides.
+        if let Some(required) = memory_range_in_element_width(required, available.element_width()) {
+            return split_memory_range(available, &required, assumptions);
+        }
+        return split_memory_range(
+            &byte_normalized_memory_range(available),
+            &byte_normalized_memory_range(required),
+            assumptions,
+        );
     }
     // Prefer the held range's own start form when the required base is
     // provably that address. A merely structural delta can contain an
@@ -5100,6 +5159,13 @@ pub(crate) fn memory_ranges_proven_overlapping(
     if left.base().blocks_proven_distinct(right.base()) {
         return false;
     }
+    // Overlap keeps its own polarity and its own width rule: it answers
+    // "proven to overlap", so widening it is not the same move as widening
+    // coverage, and the memory family's validity check reads it directly.
+    // Two spellings of one footprint therefore still do not prove an overlap
+    // here. The loan oracle, whose question really is bytewise, rewrites both
+    // sides to width-1 footprints before asking
+    // (`protected_range_proven_overlapping`).
     if left.element_width() != right.element_width() {
         return false;
     }
@@ -5426,7 +5492,17 @@ fn merge_memory_ranges(
     right: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> Option<CMemoryRange> {
-    if left.base() != right.base() || left.element_width() != right.element_width() {
+    if left.element_width() != right.element_width() {
+        // Bytes that abut still abut under either spelling, so a bytewise
+        // split's residue rejoins the owner it came from instead of leaving
+        // the context permanently fragmented across two widths.
+        if let Some(right) = memory_range_in_element_width(right, left.element_width()) {
+            return merge_memory_ranges(left, &right, assumptions);
+        }
+        let left = memory_range_in_element_width(left, right.element_width())?;
+        return merge_memory_ranges(&left, right, assumptions);
+    }
+    if left.base() != right.base() {
         return None;
     }
     if left.end() == right.start()
