@@ -231,8 +231,9 @@ struct CFunctionResourceTransfer {
     /// projection used by modular call havoc and its effect fact.
     memory_effects: Vec<CMemoryRange>,
     post_outputs: Option<ResourceContext>,
-    /// Evaluated ensured views are retained even when ordinary return
-    /// resource composition deduplicates them against caller ownership.
+    /// Every evaluated ensured view, kept beside the composed return
+    /// resources so the provenance routes see each one exactly once even
+    /// when composition merges or normalizes it away.
     candidate_output_views: Vec<CResourceFact>,
     /// Each viewed piece in the one-level frontier of an ensured owned
     /// composite, with that composite's head: the borrows a produced
@@ -2115,12 +2116,6 @@ fn execute_verified_function_applications(
             &argument_values,
             &effective_assumptions,
             true,
-            // Never install an ordinary composite's body as owned authority
-            // beside its produced head: the body lives inside the head, and
-            // exposing it let a caller write it and still use the head's
-            // facts (a verified false theorem, 2026-09-13). Only a counted
-            // population has a population-wide body.
-            false,
             budget,
         )? {
             Ok(transition) => transition,
@@ -11603,26 +11598,16 @@ fn evaluate_contract_return_resources(
         .filter(|fact| fact.is_view())
         .cloned()
         .collect::<Vec<_>>();
-    // A view returned to a caller that already owns the same resource does
-    // not create another persistent capability. Keeping both forms would
-    // make a later valid mutation or free look as though a stale borrow were
-    // still live.
-    let newly_ensured_resources = crate::instrumentation::measure_operation(
-        interface_name,
-        "contract resource transition",
-        "ensured resource view deduplication",
-        || {
-            ensured_resources
-                .facts()
-                .iter()
-                .filter(|fact| {
-                    !fact.is_view()
-                        || !caller_resources_after_requirements.satisfies_fact(fact, assumptions)
-                })
-                .cloned()
-                .collect::<Vec<_>>()
-        },
-    );
+    // Every ensured view is composed into the caller and then classified by
+    // where its live authority comes from. The blanket deduplication that
+    // used to drop an ensured view the caller already satisfied is gone
+    // (fix-views D8: "blanket deduplication against a caller owner is no
+    // longer a valid way to discharge obligations", closed as step 6's
+    // F14(c)). It was a filter against `satisfies_fact`, so an owner the
+    // caller happened to hold silently answered a returned view; the
+    // provenance routes in `recover_candidate_stable_view_resources` decide
+    // that question now, over `candidate_output_views` and the residual
+    // alike.
     let (return_resources, inserted_ensured_occurrences) =
         match crate::instrumentation::measure_operation(
             interface_name,
@@ -11632,7 +11617,7 @@ fn evaluate_contract_return_resources(
                 caller_resources_after_requirements
                     .clone()
                     .try_compose_with_facts_delaying_normalization_with_occurrences(
-                        newly_ensured_resources,
+                        ensured_resources.facts().iter().cloned(),
                         assumptions,
                     )
             },
@@ -11956,7 +11941,6 @@ fn counted_population_quantities(
     definitions: &[CCompositeResourceDefinition],
     tracked_state: &CState,
     assumptions: &PureFactContext,
-    track_ordinary_populations: bool,
 ) -> BTreeMap<(String, ResourceArguments), Bitvector32Term> {
     let mut quantities = BTreeMap::<(String, ResourceArguments), Bitvector32Term>::new();
     for fact in resources.facts() {
@@ -11969,13 +11953,13 @@ fn counted_population_quantities(
         if name == CResourceFact::ALLOCATION_RESOURCE_NAME {
             continue;
         }
-        // Every declared composite denotes a population. Most singleton
-        // resources never expose their count at the surface, but their body
-        // still has one population-wide owner whose lifetime follows the
-        // first produced and last consumed unit.
+        // A counted population has one population-wide owner whose lifetime
+        // follows the first produced and last consumed unit, so its count is
+        // tracked. An ordinary composite's body lives inside its own head and
+        // contributes no such owner, so it enters the transition only when
+        // the state already observes its family.
         let has_declared_body = definitions.iter().any(|definition| {
-            definition.name() == name
-                && definition_has_population_wide_body(definition, track_ordinary_populations)
+            definition.name() == name && definition_has_population_wide_body(definition)
         });
         let population_is_observed = tracked_state.observes_population_family(name)
             || tracked_state
@@ -11997,18 +11981,17 @@ fn counted_population_quantities(
     quantities
 }
 
-fn definition_has_population_wide_body(
-    definition: &CCompositeResourceDefinition,
-    track_ordinary_populations: bool,
-) -> bool {
+/// Only a counted population has a population-wide body.
+///
+/// An ordinary composite's body lives inside its head: installing it as owned
+/// authority beside the produced head let a caller write the body and still
+/// use the head's facts, which verified a false theorem (fix-views step 5,
+/// 2026-09-13). The predicate that also admitted an unconditional,
+/// non-recursive composite with a snapshot-independent footprint was retired
+/// with the `track_ordinary_populations` parameter at step 8c; every caller
+/// had already stopped asking for it.
+fn definition_has_population_wide_body(definition: &CCompositeResourceDefinition) -> bool {
     definition.is_counted_population()
-        || (track_ordinary_populations
-            && !definition.is_recursive()
-            && definition.condition().is_none()
-            && definition
-                .contains()
-                .iter()
-                .all(resource_spec_has_snapshot_independent_footprint))
 }
 
 /// Population quantity relations are decided by exact routes only: syntactic
@@ -12053,29 +12036,6 @@ fn population_quantities_are_equal(
         )
 }
 
-fn resource_spec_has_snapshot_independent_footprint(resource: &CResourceSpec) -> bool {
-    if resource.is_instance() {
-        return false;
-    }
-    let term_independent = match resource.term() {
-        CResourceTerm::Memory(segment) => {
-            segment.guard.is_none()
-                && c_expression_is_snapshot_independent(&segment.base)
-                && c_expression_is_snapshot_independent(&segment.start)
-                && c_expression_is_snapshot_independent(&segment.end)
-        }
-        CResourceTerm::Composite { arguments, .. } | CResourceTerm::Token { arguments, .. } => {
-            arguments.iter().all(c_expression_is_snapshot_independent)
-        }
-        CResourceTerm::Instance { .. } => false,
-    };
-    term_independent
-        && match resource.quantity() {
-            CResourceQuantity::One => true,
-            CResourceQuantity::Count(quantity) => c_expression_is_snapshot_independent(quantity),
-        }
-}
-
 fn population_body_requires_positive_witness(definition: &CCompositeResourceDefinition) -> bool {
     fn resource_is_duplicable_view(resource: &CResourceSpec) -> bool {
         !resource.is_instance() && resource.is_view()
@@ -12086,54 +12046,6 @@ fn population_body_requires_positive_witness(definition: &CCompositeResourceDefi
             .contains()
             .iter()
             .any(|resource| !resource_is_duplicable_view(resource))
-}
-
-fn c_expression_is_snapshot_independent(expression: &CExpression) -> bool {
-    match expression {
-        CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_) => true,
-        CExpression::Cast { expression, .. } => c_expression_is_snapshot_independent(expression),
-        CExpression::Conditional {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            c_expression_is_snapshot_independent(condition)
-                && c_expression_is_snapshot_independent(then_branch)
-                && c_expression_is_snapshot_independent(else_branch)
-        }
-        CExpression::FloatNegate(expression)
-        | CExpression::FloatClassification { expression, .. } => {
-            c_expression_is_snapshot_independent(expression)
-        }
-        CExpression::AddressOf(inner)
-        | CExpression::Not(inner)
-        | CExpression::BitwiseNot(inner) => c_expression_is_snapshot_independent(inner),
-        CExpression::PointerOffsetBytes { pointer, .. } => {
-            c_expression_is_snapshot_independent(pointer)
-        }
-        CExpression::Load(_) | CExpression::TypedLoad { .. } | CExpression::Index(_, _) => false,
-        CExpression::LessThan(left, right)
-        | CExpression::LessEqual(left, right)
-        | CExpression::GreaterThan(left, right)
-        | CExpression::GreaterEqual(left, right)
-        | CExpression::Equal(left, right)
-        | CExpression::NotEqual(left, right)
-        | CExpression::And(left, right)
-        | CExpression::Or(left, right)
-        | CExpression::Add(left, right)
-        | CExpression::Subtract(left, right)
-        | CExpression::Multiply(left, right)
-        | CExpression::Divide(left, right)
-        | CExpression::Remainder(left, right)
-        | CExpression::ShiftLeft(left, right)
-        | CExpression::ShiftRight(left, right)
-        | CExpression::BitwiseAnd(left, right)
-        | CExpression::BitwiseOr(left, right)
-        | CExpression::BitwiseXor(left, right) => {
-            c_expression_is_snapshot_independent(left)
-                && c_expression_is_snapshot_independent(right)
-        }
-    }
 }
 
 #[derive(Default)]
@@ -12169,6 +12081,16 @@ fn apply_counted_population_transition_resources(
     Ok(resources)
 }
 
+/// Installs the population-wide body a counted-population transition
+/// activated, checking it against what the destination already holds.
+///
+/// Nothing fills `activated_body_resources` today. Its only writer was the
+/// ordinary-population activation behind the `track_ordinary_populations`
+/// parameter, which every caller had passed as `false` since fix-views step 5
+/// and which step 8c deleted; a counted population's body reaches a context
+/// through the call-entry evaluation and through surface `fold`/`observe`
+/// instead. The check is kept as written so a future activation route lands
+/// on a barrier rather than on an unchecked composition.
 fn activate_population_body_resources(
     mut resources: ResourceContext,
     transition: &CCountedPopulationTransition,
@@ -12203,7 +12125,6 @@ fn apply_counted_population_transitions(
     argument_values: &[CValue],
     assumptions: &PureFactContext,
     reestablish_invariants: bool,
-    track_ordinary_populations: bool,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CCountedPopulationTransition, CRuntimeError>> {
     apply_counted_population_transitions_with_interface(
@@ -12214,7 +12135,6 @@ fn apply_counted_population_transitions(
         argument_values,
         assumptions,
         reestablish_invariants,
-        track_ordinary_populations,
         budget,
     )
 }
@@ -12227,7 +12147,6 @@ fn apply_counted_population_transitions_with_interface(
     argument_values: &[CValue],
     assumptions: &PureFactContext,
     reestablish_invariants: bool,
-    track_ordinary_populations: bool,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CCountedPopulationTransition, CRuntimeError>> {
     let Some(mut entry_state) =
@@ -12264,21 +12183,18 @@ fn apply_counted_population_transitions_with_interface(
         interface.composite_resource_definitions(),
         caller_state,
         assumptions,
-        track_ordinary_populations,
     );
     let ensured_quantities = counted_population_quantities(
         &ensured,
         interface.composite_resource_definitions(),
         caller_state,
         assumptions,
-        track_ordinary_populations,
     );
     let caller_quantities = counted_population_quantities(
         caller_state.resources(),
         interface.composite_resource_definitions(),
         caller_state,
         assumptions,
-        track_ordinary_populations,
     );
     let keys = required_quantities
         .keys()
@@ -12292,9 +12208,8 @@ fn apply_counted_population_transitions_with_interface(
             .composite_resource_definitions()
             .iter()
             .find(|definition| definition.name() == name);
-        let population_body_definition = declared_population_definition.filter(|definition| {
-            definition_has_population_wide_body(definition, track_ordinary_populations)
-        });
+        let population_body_definition = declared_population_definition
+            .filter(|definition| definition_has_population_wide_body(definition));
         let required_quantity = required_quantities
             .get(&(name.clone(), arguments.clone()))
             .cloned()
@@ -12304,47 +12219,6 @@ fn apply_counted_population_transitions_with_interface(
             .cloned()
             .unwrap_or(Bitvector32Term::Constant(0));
         if population_quantities_are_equal(&required_quantity, &ensured_quantity, assumptions) {
-            let refreshes_ordinary_population = track_ordinary_populations
-                && population_quantity_is_positive(&required_quantity, assumptions)
-                && caller_state.counted_population(&name, &arguments).is_some()
-                && population_body_definition
-                    .is_some_and(|definition| !definition.is_counted_population());
-            if refreshes_ordinary_population {
-                let singleton = ResourceContext::new().unchecked_with_fact(CResourceFact::own(
-                    CResource::Composite {
-                        name: name.clone(),
-                        arguments: arguments.clone(),
-                    },
-                ));
-                let finalized = match evaluate_resource_population_body_resources(
-                    &singleton,
-                    &entry_state,
-                    interface.composite_resource_definitions(),
-                    assumptions,
-                    budget,
-                    true,
-                )? {
-                    Ok(resources) => resources,
-                    Err(error) => return Ok(Err(error)),
-                };
-                let activated = match evaluate_resource_population_body_resources(
-                    &singleton,
-                    post_state,
-                    interface.composite_resource_definitions(),
-                    assumptions,
-                    budget,
-                    true,
-                )? {
-                    Ok(resources) => resources,
-                    Err(error) => return Ok(Err(error)),
-                };
-                transition
-                    .finalized_body_resources
-                    .extend(finalized.facts().iter().cloned());
-                transition
-                    .activated_body_resources
-                    .extend(activated.facts().iter().cloned());
-            }
             // A resource-neutral contract preserves this exact population.
             // Do not ask general arithmetic reasoning to rediscover
             // `old_count + 0 != 0`; on large proof contexts that turns a
@@ -12468,31 +12342,6 @@ fn apply_counted_population_transitions_with_interface(
                 arguments.clone(),
                 new_count.clone(),
             );
-            let activates_ordinary_population = track_ordinary_populations
-                && population_body_definition
-                    .is_some_and(|definition| !definition.is_counted_population());
-            if !population_was_initialized && activates_ordinary_population {
-                let singleton = ResourceContext::new().unchecked_with_fact(CResourceFact::own(
-                    CResource::Composite {
-                        name: name.clone(),
-                        arguments: arguments.clone(),
-                    },
-                ));
-                let activated = match evaluate_resource_population_body_resources(
-                    &singleton,
-                    post_state,
-                    interface.composite_resource_definitions(),
-                    assumptions,
-                    budget,
-                    true,
-                )? {
-                    Ok(resources) => resources,
-                    Err(error) => return Ok(Err(error)),
-                };
-                transition
-                    .activated_body_resources
-                    .extend(activated.facts().iter().cloned());
-            }
             // A visible ensured unit witnesses nonemptiness. The transition
             // preserves the population cardinality invariant algebraically:
             // entry count >= required units, then both sides change by the
@@ -12596,7 +12445,7 @@ fn apply_counted_population_transitions_with_interface(
                 .iter()
                 .find(|definition| {
                     definition.name() == population.name
-                        && definition_has_population_wide_body(definition, true)
+                        && definition_has_population_wide_body(definition)
                 });
         let Some(population_body) = population_body else {
             continue;
@@ -17757,7 +17606,6 @@ fn function_outcome_from_body_with_population_transition(
         argument_values,
         assumptions,
         true,
-        false,
         budget,
     )? {
         Ok(transition) => transition,
@@ -17828,7 +17676,6 @@ fn function_outcome_from_body_with_resource_transfer(
                 argument_values,
                 assumptions,
                 reestablish_population_invariants,
-                false,
                 budget,
             )
         },

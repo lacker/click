@@ -4184,6 +4184,30 @@ fn consume_memory_resource_fact(
     assumptions: &PureFactContext,
 ) -> Option<ResourceFactConsumption> {
     if let Some(required) = required.memory_view_range() {
+        // `Preserve` here is the owner-observation rule in consumption form
+        // (fix-views D7, and see `owner_observation_core`): a viewed clause is
+        // discharged by read authority the consuming context already holds,
+        // and the holding is left untouched, whether it is a view or the
+        // ownership the view is read off.
+        //
+        // The owner route serves the observation sites D7 names — folding,
+        // unfolding, and observing a resource body whose `contains` lists a
+        // viewed range the same context owns. It stays because an owner may
+        // read and inspect what it owns without lending to itself.
+        //
+        // It is not how a call's `views` requirement is met. That takes an
+        // escrowed owner and an opened loan, which only the stable-view
+        // planner does, and the planner reserves and lends before any
+        // requirement it planned can reach consumption: a call transfer sends
+        // exactly the requirements the plan did not reserve down the
+        // definitional route, and those are owned, population-quantity, or
+        // definitionally empty. A view requirement never arrives here from a
+        // call.
+        //
+        // The distinction is not one this algebra can draw: it is handed two
+        // bare facts, so it cannot see whether the requirer is the context
+        // itself or another participant. Keeping the call side honest is the
+        // planner's job, not this function's.
         return resource_fact_read_core_range(available)
             .is_some_and(|available| memory_range_covers(&available, required, assumptions))
             .then_some(ResourceFactConsumption::Preserve);
@@ -4390,6 +4414,25 @@ fn consume_exact_resource_fact(
     })
 }
 
+/// Normalization for the exact families, including the owner-absorbs-view
+/// case (fix-views D7, D2 law 4).
+///
+/// An owner absorbing an equal viewed description drops a *description*, not
+/// authority: the owner keeps every capability the pair had, and a view read
+/// off an owner the same context holds is an observation of that ownership.
+/// D2 law 4 says dropping a description changes no live access share and no
+/// recovery entitlement, so this merge is sound exactly while the view it
+/// swallows is unbound.
+///
+/// A **bound** view — one whose occurrence carries a live `loan_dependency` —
+/// must never be absorbed: the merged fact is a new authority with no
+/// occurrence, so the dependency that authorizes reading it would vanish and
+/// the loan would disappear with it. `ResourceContext::normalized` is the
+/// only caller, and its `loan_bound` guard skips both sides of every pair
+/// whose occurrence has a live dependency, and detaches supported projections
+/// before normalizing at all. That guard, not this function, is what makes
+/// the merge safe: `normalize_pair` sees two bare facts and cannot tell a
+/// bound description from an unbound one.
 fn combine_exact_resource_facts(
     left: &CResourceFact,
     right: &CResourceFact,
@@ -4411,7 +4454,30 @@ fn combine_exact_resource_facts(
     }
 }
 
-fn access_mode_core(resource: &CResourceFact) -> Option<CResourceFact> {
+/// The owner-observation rule (fix-views D7).
+///
+/// An owner may read what it owns and inspect its composite without issuing a
+/// stable loan to itself, so a positive owned fact exposes a viewed
+/// description of the same resource. That description is an *observation* of
+/// ownership the same context holds: it mints no access share, no scope, and
+/// no recovery right, and it is only as good as the ownership it is read off.
+///
+/// Its consumers are the observation sites D7 names:
+///
+/// * [`resource_fact_read_core_range`], which lets an owner load its own bytes
+///   (`memory_resource_fact_permits_read`), and which
+///   [`consume_memory_resource_fact`] reuses to discharge a resource body's
+///   viewed clause at a fold, an unfold, or an observation;
+/// * the escrow record in `crate::kernel::loans`, which names the viewed
+///   description a checked lend transition hands the callee.
+///
+/// It never answers a *call's* `views` requirement on its own. Meeting one
+/// escrows the owner and opens a loan, and only the stable-view planner does
+/// that; a call transfer never routes a view requirement into consumption.
+/// The projection is not authority the callee could carry: it is read off
+/// ownership that stays where it is, so nothing survives the observing
+/// context.
+fn owner_observation_core(resource: &CResourceFact) -> Option<CResourceFact> {
     match resource {
         CResourceFact::Own(resource, quantity)
             if quantity.as_const().is_some_and(|value| value > 0) =>
@@ -4473,6 +4539,29 @@ impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
         ResourceFamily::Memory
     }
 
+    /// Two owners of overlapping bytes are a partition violation. An owner
+    /// overlapping a *view* is decided by the view's binding, which this
+    /// check cannot see (fix-views D7).
+    ///
+    /// A **bound** view — one carrying a live `loan_dependency` — beside a
+    /// usable owner of the same bytes is invalid: lending escrows the owner
+    /// out of the caller residual, so the two cannot coexist. That is
+    /// enforced where the binding is visible, not here: the planner refuses
+    /// an `owns` requirement inside a lent range (its exclusive reservations
+    /// are taken before any view is planned, and the composite lend composes
+    /// them back beside the frontier), and the ledger refuses a write or a
+    /// retire through a lent range.
+    ///
+    /// An **unbound** viewed description beside its owner is an observation
+    /// of that ownership (`owner_observation_core`) or intrinsic read
+    /// authority over read-only or callee-unreachable storage, and is valid.
+    ///
+    /// The discriminator is therefore the binding, and a `ResourceFamilyAlgebra`
+    /// sees two bare facts and the ambient assumptions: no occurrence, no
+    /// context, no ledger. Deciding it here would need the whole trait to
+    /// carry occurrence identity, and it would duplicate a check the planner
+    /// and the ledger already make with the evidence in hand. The check stays
+    /// owner/owner.
     fn pair_validity_error(
         &self,
         left: &CResourceFact,
@@ -4518,7 +4607,7 @@ impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
     }
 
     fn core(&self, fact: &CResourceFact) -> Option<CResourceFact> {
-        access_mode_core(fact)
+        owner_observation_core(fact)
     }
 
     fn observable_facts(
@@ -4593,7 +4682,7 @@ macro_rules! impl_exact_resource_algebra {
             }
 
             fn core(&self, fact: &CResourceFact) -> Option<CResourceFact> {
-                access_mode_core(fact)
+                owner_observation_core(fact)
             }
 
             fn observable_facts(
@@ -5383,10 +5472,18 @@ impl CResourceFact {
         self.resource().family()
     }
 
+    /// This fact's owner observation, per [`owner_observation_core`]: a viewed
+    /// description of ownership this context holds, carrying no access share,
+    /// scope, or recovery right of its own.
     pub fn core(&self) -> Option<Self> {
         resource_family_algebra(self.family()).core(self)
     }
 
+    /// [`Self::core`] with a symbolic owned quantity decided against
+    /// `assumptions` rather than by constant folding. The same observation
+    /// rule, and the same restriction: it is not a capability a call could
+    /// carry away, and it never stands in for the checked lend a `views`
+    /// requirement takes.
     pub fn core_with_assumptions(&self, assumptions: &PureFactContext) -> Option<Self> {
         if matches!(self.resource(), CResource::Instance(_)) {
             return None;
@@ -5460,6 +5557,17 @@ impl CResourceFact {
     }
 }
 
+/// Memory-family normalization. The first two arms absorb an entailed fact
+/// into the entailing one, which includes an owner swallowing a viewed
+/// description of bytes it already covers.
+///
+/// That case is the owner-observation rule again: the view is a description
+/// of ownership this context holds, and dropping a description changes no
+/// live access share (fix-views D7, D2 law 4). It is sound only because a
+/// *bound* view never reaches here — `ResourceContext::normalized` skips any
+/// entry with a live `loan_dependency` and detaches supported projections
+/// first. See [`combine_exact_resource_facts`] for the full argument; the
+/// same guard covers both families.
 fn combine_memory_resource_facts(
     left: &CResourceFact,
     right: &CResourceFact,

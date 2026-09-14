@@ -3384,6 +3384,84 @@ fn installing_a_certified_resource_group_still_checks_the_existing_frame() {
     );
 }
 
+/// fix-views D7 / D2 law 4, the owner-absorbs-view normalization kept at
+/// step 8c. An unbound viewed description beside its owner is an observation
+/// of that ownership: dropping it changes no live access share, so
+/// normalization may merge the pair into the owner alone.
+///
+/// This is also why `evaluate_contract_return_resources` no longer filters
+/// ensured views against caller ownership before composing them. The filter
+/// asked `satisfies_fact`, which an owner answers, so an owner discharged a
+/// returned view for free; composition plus this merge reaches the same
+/// context without consulting ownership, and the provenance routes decide
+/// whether the view was ever legitimate.
+#[test]
+fn an_unbound_view_beside_its_owner_normalizes_into_the_owner() {
+    let base = Pointer {
+        block: "owner_absorbs_view".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let owner = own_memory_fact(base.clone(), 0, 1);
+    let observation = view_memory_fact(base, 0, 1);
+    let normalized = ResourceContext::new()
+        .unchecked_with_facts([owner.clone(), observation.clone()])
+        .normalized(&PureFactContext::new());
+    assert_eq!(
+        normalized.facts(),
+        &[owner],
+        "an unbound observation beside its owner is a description, not a second authority"
+    );
+}
+
+/// The other half of the same rule: a view whose occurrence carries a live
+/// loan dependency is never absorbed. The merged fact is a new authority with
+/// no occurrence, so absorbing a bound view would drop the binding that
+/// authorizes reading it and retire the loan by normalization — exactly what
+/// fix-views D7 forbids ("Combining an owner and a live borrowed description
+/// cannot absorb the loan"). `ResourceContext::normalized`'s `loan_bound`
+/// guard, not the family algebra, is what draws the line: `normalize_pair`
+/// sees two bare facts and cannot tell the two cases apart.
+#[test]
+fn a_loan_bound_view_beside_an_owner_is_not_absorbed_by_normalization() {
+    let base = Pointer {
+        block: "bound_view_survives".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let owner = own_memory_fact(base.clone(), 0, 1);
+    let borrowed = view_memory_fact(base, 0, 1);
+    let context = ResourceContext::new().unchecked_with_facts([owner.clone(), borrowed.clone()]);
+    let borrowed_occurrence = context.occurrences_for_fact(&borrowed)[0];
+    let support_occurrence = context.owned_occurrences_for_fact(&owner)[0];
+    let ledger = LoanLedger::new();
+    let lender = ledger.fresh_participant().unwrap();
+    let reader = ledger.fresh_participant().unwrap();
+    let opening = ledger
+        .lend(lender, reader, support_occurrence, owner.clone())
+        .unwrap();
+    let context = context.with_loan_dependency(
+        borrowed_occurrence,
+        LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support: support_occurrence,
+            viewed: borrowed.clone(),
+            hold: None,
+        },
+    );
+    let normalized = context.normalized(&PureFactContext::new());
+    assert!(
+        normalized.facts().contains(&borrowed),
+        "a bound view must survive normalization: {normalized:?}"
+    );
+    let surviving = normalized.occurrences_for_fact(&borrowed);
+    assert_eq!(surviving, vec![borrowed_occurrence]);
+    assert!(
+        normalized.loan_dependency(borrowed_occurrence).is_some(),
+        "the dependency that authorizes the borrowed description must survive with it"
+    );
+}
+
 #[test]
 fn resource_family_cores_are_view_facts() {
     let base = Pointer {
