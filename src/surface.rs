@@ -154,9 +154,8 @@ pub use verification::{
     verify_c0_prepared_project, verify_c0_prepared_project_at,
     verify_c0_prepared_project_functions, verify_c0_prepared_sources,
     verify_c0_prepared_sources_at, verify_c0_prepared_sources_functions, verify_c0_project,
-    verify_c0_project_at, verify_c0_project_functions, verify_c0_sources,
-    verify_c0_sources_at, verify_c0_sources_functions, verify_click_theorems,
-    verify_cpp_prepared_project,
+    verify_c0_project_at, verify_c0_project_functions, verify_c0_sources, verify_c0_sources_at,
+    verify_c0_sources_functions, verify_click_theorems, verify_cpp_prepared_project,
     verify_cpp_prepared_project_at, verify_cpp_prepared_sources_at, verify_standard_library,
 };
 

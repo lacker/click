@@ -1087,7 +1087,7 @@ returned-open case (root recovery, join duplication, loan leakage out of a
 call) is a review item for the step 8 pre-check rather than something this
 landing re-ran.
 
-### 8. Cut over, document, and close (in progress: 8a and 8b landed 2026-09-14)
+### 8. Cut over, document, and close (in progress: 8a, 8b, and 8c landed 2026-09-14; 8d closes the issue)
 
 **Read:** the step 6 verdict/removal list and final acceptance below.
 **Depends on:** step 6.
@@ -1241,6 +1241,73 @@ stable views the default view semantics"):
 
 Gate corpus under the default: 1,518 mdtests and 27 examples green; unit
 suite green; gate green. Legacy A/B corpus recorded for the removal step.
+
+**8c landed 2026-09-14: the rollout scaffolding and the retired paths are
+gone, and the docs describe shipped behavior.** Three commits from parallel
+agents, cherry-picked and gated as one tip:
+
+- **Docs** ("Document stable views as the shipped meaning of `views`"):
+  `docs/concepts/resources.md` rewritten (a shared borrow for the call,
+  bytewise partial lending, owner observations versus loans, scoped
+  recovery, a new "Borrowing a composite" section with the one-level
+  frontier, loan-stable facts, the owned-piece-inside-a-viewed-composite
+  refusal, escaping borrows, and the counted-population exception); the
+  retired law and every "copyable", "viewed core", "does not freeze", and
+  "without consuming" sentence removed from `spec-state.md`, the language
+  reference, the glossary, `separation-logic.md`, `kernel.md`,
+  `proof-workflow.md`, the tactics index, and the three design pages;
+  `view-output-inventory.md` regenerated (201 files, 357 declarations) with
+  the escaping-borrow class; the input-cursor description says the cursor
+  holds a borrow and `take` owns it.
+- **Legacy paths** ("Retire the legacy view-creation paths the loan
+  machinery replaced"): `access_mode_core` is `owner_observation_core`, the
+  D7 observation rule, consumed only by the owner's own load, the
+  fold/unfold/observe discharge of a body's viewed clause, and the escrow
+  record a lend hands the callee; `consume_memory_resource_fact`'s
+  `Preserve` for a view stays as the fold route (cutting it broke `fold` of
+  a body `views` clause over an owner, D7's own example), and no call view
+  requirement reaches it now that the planner runs for every call;
+  owner-absorbs-view normalization stays because `normalized`'s
+  `loan_bound` guard already skips a bound view (pinned by
+  `a_loan_bound_view_beside_an_owner_is_not_absorbed_by_normalization` and
+  its unbound sibling); the memory `pair_validity_error` keeps owned/owned
+  only, with the decision written on it (the algebra sees bare facts; the
+  binding-aware checks are the planner's and the ledger's); the ensured
+  return-view deduplication is deleted (every ensured view takes the
+  provenance routes); `track_ordinary_populations` and its two dead
+  helpers are deleted. **Found, not closed:** `activated_body_resources`
+  has no writer, so `activate_population_body_resources` never runs and the
+  6.2 exemption of counted populations from the frontier check ("checked
+  where the body is installed") has no enforcing path; a probe shows a
+  caller that does not track the family does not even hold a unit produced
+  to it, so no read follows, but the population body's first installation
+  is unchecked legacy behavior. `consume_exact_resource_fact` has the same
+  owner-to-view `Preserve` route for tokens and composites and needs the
+  same classification. The re-establishment of active population
+  invariants at `functions.rs` ~12599 narrowed to counted populations
+  (conservative, corpus unchanged).
+- **Scaffolding** ("Delete the view-semantics rollout scaffolding"):
+  `ViewSemanticsMode`, the `_with_mode` and `_in_mode` entry points, the
+  mode field on the source context, the session, and the artifact identity
+  (`RESOURCE_SEMANTICS_VERSION` is 2, so no artifact minted under the
+  retired interpretation certifies a claim), the `CLICK_VIEW_SEMANTICS`
+  variable with its parser, the four binary installs, its docs and
+  inventory entries, and the harness switch (the ratchet is unconditional);
+  the `candidate_stable_view_semantics` flag with every gate and the
+  `candidate_semantics` transfer field. The `stable_mode_*` and
+  `candidate_*` module and helper names dropped their prefixes. **One
+  judgment call to review:** the two whole-function judgment routes that
+  read `prepare_contract_resources || candidate` became
+  `prepare_contract_resources` alone with `plan_stable_views: false`
+  (definitional transfer at entry/exit-state construction); always-on
+  broke 28 lowering tests whose subject is C0 lowering, and planning at that
+  route broke two conditional-resource certification tests with an
+  unauthorized `free`. Lending belongs to the call site and to the proof's
+  entry construction, both of which still plan; every stable-view positive
+  and negative, the corpus, and the unconditional ratchet are green.
+
+Gate corpus after 8c: 1,518 mdtests and 27 examples green; 3,082 unit,
+binary, and documentation tests; gate green.
 
 
 ## Decision and violated invariant
