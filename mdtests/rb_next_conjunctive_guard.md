@@ -5,17 +5,17 @@ then left as far as it goes — and it is the same shape as
 [`rb_first_last.md`](rb_first_last.md), which the node-keyed model verifies. The
 second is the ascent
 `while ((parent = rb_parent(node)) && node == parent->rb_right) node = parent;`,
-and it is what stops the function today. Two things are wrong with it and the
-first one wins: an assignment is not an expression in the supported C0 subset,
-so the guard does not parse — `rb_next_guard.c:14: expected ')', got '='` — and
-the conjunctive guard behind it, which leaves the `loop` tactic two statement
-successors (gap 36, package A17), is never reached. The assignment expression
-is owned by the preprocessing issue; A17 owns what comes after it.
+which now parses unchanged. C0 lowers the call, conversion to `parent`'s
+pointer type, write, and expression result into checked statements at the loop
+head. That prefix is re-executed on every iteration, including after
+`continue`, and the existing logical `&&` keeps the parent-link read lazy.
 
 Because a C function verifies as a whole, the descent cannot land ahead of the
-ascent. This fixture pins the refusal so the blocker is a regression rather
-than a note: the C is verbatim, the contract is the one the descent wants, and
-the failure is the guard.
+ascent. This fixture keeps the C verbatim and now pins the next honest proof
+frontier rather than claiming the traversal is complete: the bare `execute()`
+first reaches `if (node->rb_right)` with `t: rb_at(node)` still folded, so the
+branch cannot obtain the required view of that link. Unfolding the entry shape
+and proving the complete descent and ascent remain C4b proof work.
 
 The frame here is `ctx_at(child)` with no `rb_root` argument, because `rb_next`
 takes only the node. That is the other half of gap 35: with the parent in the
@@ -173,5 +173,5 @@ struct rb_node* rb_next(struct rb_node* node) {
 ```
 
 ```expect
-fail: expected `)`, got `=`
+fail: MissingResource
 ```

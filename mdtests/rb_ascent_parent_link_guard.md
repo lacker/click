@@ -21,9 +21,9 @@ would not be published, and the guard would still be refused.
 
 The C is a minimal translation of the Linux guard. `rb_next` writes
 `while ((parent = rb_parent(node)) && node == parent->rb_right) node = parent;`,
-and an assignment is not an expression in the supported C0 subset, so the
-assignment moves into the body exactly as `rb_ascending_walk_to_root.md`
-already writes it. That is the whole translation.
+whose simple variable assignment expression is now supported. This older
+translation keeps the assignment in the body because it isolates folded-frame
+guard reads independently of expression lowering.
 
 The contract consumes the walk's instances and produces none. The ascent stops
 either at the root or at the first node that is not its parent's right child,

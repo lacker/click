@@ -91,6 +91,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "expression.address-of",
     "expression.cast",
     "expression.pointer-integer-cast",
+    "expression.assignment",
     "expression.conditional",
     "expression.statement-expression",
     "expression.builtin-expect",
@@ -2156,6 +2157,18 @@ pub enum C0Expression {
         arguments: Vec<C0Expression>,
         position: Option<SourcePosition>,
     },
+    /// A simple scalar assignment before expression lowering materializes
+    /// its converted result and write as ordinary checked statements. C0
+    /// deliberately keeps the lvalue boundary narrow: only a named scalar
+    /// object is accepted here, not memory lvalues or update operators.
+    Assignment {
+        name: String,
+        value: Box<C0Expression>,
+        c_type: C0Type,
+        struct_name: Option<String>,
+        pointee_constant: bool,
+        position: Option<SourcePosition>,
+    },
     FunctionAddress(String),
     Cast {
         expression: Box<C0Expression>,
@@ -3523,6 +3536,9 @@ impl C0Expression {
             Self::IndirectCall { .. } => {
                 unreachable!("indirect call expressions must be lowered before kernel conversion")
             }
+            Self::Assignment { .. } => {
+                unreachable!("assignment expressions must be lowered before kernel conversion")
+            }
             Self::StatementExpression { .. } => {
                 unreachable!("statement expressions must be lowered before kernel conversion")
             }
@@ -4436,6 +4452,7 @@ fn evaluate_static_integer_expression(
         | C0Expression::Variable(_)
         | C0Expression::Call { .. }
         | C0Expression::IndirectCall { .. }
+        | C0Expression::Assignment { .. }
         | C0Expression::FunctionAddress(_)
         | C0Expression::FloatNegate(_)
         | C0Expression::FloatClassification { .. }
@@ -4967,7 +4984,8 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
                 || contains_aggregate_value(then_branch)
                 || contains_aggregate_value(else_branch)
         }
-        C0Expression::StatementExpression { value, .. } => contains_aggregate_value(value),
+        C0Expression::StatementExpression { value, .. }
+        | C0Expression::Assignment { value, .. } => contains_aggregate_value(value),
         C0Expression::LessThan(left, right)
         | C0Expression::LessEqual(left, right)
         | C0Expression::GreaterThan(left, right)
@@ -12162,7 +12180,7 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> Result<C0Expression, C0SyntaxError> {
-        let expression = self.parse_conditional()?;
+        let expression = self.parse_assignment()?;
         if self.expression_contains_aggregate(&expression) {
             return Err(self.aggregate_expression_error());
         }
@@ -12170,7 +12188,7 @@ impl Parser {
     }
 
     fn parse_expression_allow_direct_aggregate(&mut self) -> Result<C0Expression, C0SyntaxError> {
-        let expression = self.parse_conditional()?;
+        let expression = self.parse_assignment()?;
         if self.expression_contains_aggregate(&expression)
             && self.aggregate_struct_name(&expression).is_none()
         {
@@ -12183,6 +12201,66 @@ impl Parser {
         self.error_here(
             "embedded struct fields are only supported through member access or whole-struct lvalue copies; struct values are not scalar expressions, and tagged union values are not runtime aggregates",
         )
+    }
+
+    /// Parse the one assignment-expression form required by unchanged Linux
+    /// rbtree guards. It has C's low precedence and right associativity, but
+    /// intentionally accepts only `name = assignment-expression` for a
+    /// modeled non-aggregate scalar object.
+    fn parse_assignment(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let target = self.parse_conditional()?;
+        if self.peek() != Some(&Token::Equal) {
+            return Ok(target);
+        }
+
+        let position = self.positions.get(self.position).cloned();
+        self.position += 1;
+        let C0Expression::Variable(name) = target else {
+            return Err(self.error_at_position(
+                position,
+                "assignment expressions currently require a simple scalar variable target",
+            ));
+        };
+        if self.variable_is_constant(&name) {
+            return Err(self.error_at_position(
+                position,
+                format!("cannot assign to const-qualified lvalue `{name}`"),
+            ));
+        }
+        let c_type = self.variable_types.get(&name).copied().ok_or_else(|| {
+            self.error_at_position(
+                position.clone(),
+                format!("assignment expression target `{name}` has no supported C0 type"),
+            )
+        })?;
+        if !c_type.is_supported_static_scalar() {
+            return Err(self.error_at_position(
+                position.clone(),
+                "assignment expressions currently require a modeled arithmetic or supported data-pointer scalar target",
+            ));
+        }
+
+        let value = self.parse_assignment()?;
+        self.reject_discarded_const_pointer(
+            c_type,
+            self.variable_pointee_is_constant(&name),
+            &value,
+        )?;
+        self.validate_char_pointer_assignment(c_type, &value)?;
+        self.validate_struct_pointer_assignment(
+            self.variable_structs.get(&name),
+            Some(c_type),
+            &value,
+        )?;
+
+        Ok(C0Expression::Assignment {
+            struct_name: self.variable_structs.get(&name).cloned(),
+            pointee_constant: self.variable_pointee_is_constant(&name),
+            name,
+            value: Box::new(value),
+            c_type,
+            position,
+        })
     }
 
     fn aggregate_struct_name(&self, expression: &C0Expression) -> Option<String> {
@@ -12219,6 +12297,7 @@ impl Parser {
             C0Expression::UnionAddress { .. }
             | C0Expression::UnionField { .. }
             | C0Expression::StatementExpression { .. }
+            | C0Expression::Assignment { .. }
             | C0Expression::Void
             | C0Expression::FunctionAddress(_)
             | C0Expression::Int32Literal(_)
@@ -12296,6 +12375,7 @@ impl Parser {
                 self.expression_contains_aggregate(target)
                     || self.expression_contains_aggregate(value)
             }
+            C0Expression::Assignment { value, .. } => self.expression_contains_aggregate(value),
             C0Expression::Cast { expression, .. }
             | C0Expression::FloatNegate(expression)
             | C0Expression::FloatClassification { expression, .. }
@@ -12562,6 +12642,7 @@ impl Parser {
             match expression {
                 C0Expression::Call { .. }
                 | C0Expression::IndirectCall { .. }
+                | C0Expression::Assignment { .. }
                 | C0Expression::StatementExpression { .. } => return true,
                 C0Expression::Cast { expression, .. }
                 | C0Expression::FloatNegate(expression)
@@ -12636,6 +12717,7 @@ impl Parser {
             match expression {
                 C0Expression::Call { .. }
                 | C0Expression::IndirectCall { .. }
+                | C0Expression::Assignment { .. }
                 | C0Expression::StatementExpression { .. } => return true,
                 C0Expression::Cast { expression, .. }
                 | C0Expression::FloatNegate(expression)
@@ -12731,6 +12813,9 @@ impl Parser {
             | C0Expression::SizeOfStruct { .. }
             | C0Expression::SizeOfUnion { .. }
             | C0Expression::SizeOfType { .. } => false,
+            C0Expression::Assignment { value, .. } => {
+                self.expression_reads_potentially_changed_value(value)
+            }
             C0Expression::Variable(name) => {
                 if self.variable_is_constant(name) {
                     return false;
@@ -13155,11 +13240,21 @@ impl Parser {
         let mut lowered_arguments = Vec::with_capacity(arguments.len());
         let mut earlier_call_position = None;
         let mut earlier_argument_reads = false;
+        let mut earlier_assignment_position = None;
+        let mut earlier_argument_value_reads = false;
         for argument in arguments {
             let argument_position = first_embedded_call_position(&argument);
+            let assignment_position = first_assignment_position(&argument);
             let argument_reads = self.expression_reads_potentially_changed_value(&argument);
+            let argument_value_reads = expression_reads_runtime_value(&argument);
             let (argument_prefix, argument) = self.lower_expression_calls(argument)?;
             if prefix_has_non_assertion(&prefix) && prefix_has_non_assertion(&argument_prefix) {
+                if earlier_call_position.is_none() || argument_position.is_none() {
+                    return Err(self.error_at_position(
+                        assignment_position.clone().or(argument_position.clone()),
+                        "multiple unsequenced expression side effects in function arguments are not supported",
+                    ));
+                }
                 return Err(self.error_at_position(
                     argument_position.clone(),
                     "multiple unsequenced calls in one expression are not supported",
@@ -13177,11 +13272,27 @@ impl Parser {
                     "an expression call and a potentially aliased read in separate function arguments are not supported",
                 ));
             }
+            if argument_value_reads && let Some(position) = earlier_assignment_position.clone() {
+                return Err(self.error_at_position(
+                    Some(position),
+                    "an assignment expression and an unsequenced read in separate function arguments are not supported",
+                ));
+            }
+            if earlier_argument_value_reads && let Some(position) = assignment_position.clone() {
+                return Err(self.error_at_position(
+                    Some(position),
+                    "an assignment expression and an unsequenced read in separate function arguments are not supported",
+                ));
+            }
             prefix.extend(argument_prefix);
             lowered_arguments.push(argument);
             earlier_argument_reads |= argument_reads;
+            earlier_argument_value_reads |= argument_value_reads;
             if earlier_call_position.is_none() {
                 earlier_call_position = argument_position;
+            }
+            if earlier_assignment_position.is_none() {
+                earlier_assignment_position = assignment_position;
             }
         }
         Ok((prefix, lowered_arguments))
@@ -13222,11 +13333,21 @@ impl Parser {
     ) -> Result<(Vec<C0Statement>, C0Expression, C0Expression), C0SyntaxError> {
         let left_position = first_embedded_call_position(&left);
         let right_position = first_embedded_call_position(&right);
+        let left_assignment = first_assignment_position(&left);
+        let right_assignment = first_assignment_position(&right);
         let left_reads = self.expression_reads_potentially_changed_value(&left);
         let right_reads = self.expression_reads_potentially_changed_value(&right);
+        let left_value_reads = expression_reads_runtime_value(&left);
+        let right_value_reads = expression_reads_runtime_value(&right);
         let (left_prefix, left) = self.lower_expression_calls(left)?;
         let (right_prefix, right) = self.lower_expression_calls(right)?;
         if prefix_has_non_assertion(&left_prefix) && prefix_has_non_assertion(&right_prefix) {
+            if left_position.is_none() || right_position.is_none() {
+                return Err(self.error_at_position(
+                    right_assignment.clone().or(right_position.clone()),
+                    "multiple unsequenced expression side effects are not supported",
+                ));
+            }
             return Err(self.error_at_position(
                 right_position.clone(),
                 "multiple unsequenced calls in one expression are not supported",
@@ -13244,6 +13365,18 @@ impl Parser {
                 "an expression call and a potentially aliased operand read are not supported",
             ));
         }
+        if right_value_reads && let Some(position) = left_assignment {
+            return Err(self.error_at_position(
+                Some(position),
+                "an assignment expression and an unsequenced operand read are not supported",
+            ));
+        }
+        if left_value_reads && let Some(position) = right_assignment {
+            return Err(self.error_at_position(
+                Some(position),
+                "an assignment expression and an unsequenced operand read are not supported",
+            ));
+        }
         let mut prefix = left_prefix;
         prefix.extend(right_prefix);
         Ok((prefix, left, right))
@@ -13254,6 +13387,46 @@ impl Parser {
         expression: C0Expression,
     ) -> Result<(Vec<C0Statement>, C0Expression), C0SyntaxError> {
         match expression {
+            C0Expression::Assignment {
+                name,
+                value,
+                c_type,
+                struct_name,
+                pointee_constant,
+                ..
+            } => {
+                let (mut prefix, value) = self.lower_expression_calls(*value)?;
+                let temporary = self.fresh_synthesized_call_name();
+                self.variable_types.insert(temporary.clone(), c_type);
+                if let Some(struct_name) = &struct_name {
+                    self.variable_structs
+                        .insert(temporary.clone(), struct_name.clone());
+                }
+                if pointee_constant {
+                    self.variable_pointee_constants.insert(temporary.clone());
+                }
+                prefix.push(C0Statement::Declare {
+                    c_type,
+                    name: temporary.clone(),
+                    volatile: false,
+                    pointee_volatile: false,
+                    constant: false,
+                    pointee_constant,
+                });
+                // Conversion happens once when the typed temporary receives
+                // the right operand. The target and expression result then
+                // use that converted value without reevaluating the operand
+                // or rereading a possibly volatile target.
+                prefix.push(C0Statement::Assign {
+                    name: temporary.clone(),
+                    expression: value,
+                });
+                prefix.push(C0Statement::Assign {
+                    name,
+                    expression: C0Expression::Variable(temporary.clone()),
+                });
+                Ok((prefix, C0Expression::Variable(temporary)))
+            }
             C0Expression::Call {
                 function_name,
                 arguments,
@@ -13763,9 +13936,16 @@ impl Parser {
         constructor: fn(Box<C0Expression>, Box<C0Expression>) -> C0Expression,
     ) -> Result<(Vec<C0Statement>, C0Expression), C0SyntaxError> {
         let right_position = first_embedded_call_position(&right);
+        let right_assignment = first_assignment_position(&right);
         let (left_prefix, left) = self.lower_expression_calls(left)?;
         let (right_prefix, right) = self.lower_expression_calls(right)?;
         if !right_prefix.is_empty() {
+            if right_position.is_none() {
+                return Err(self.error_at_position(
+                    right_assignment,
+                    "assignment expressions in the short-circuit right operand are not supported",
+                ));
+            }
             return Err(self.error_at_position(
                 right_position,
                 "calls in the short-circuit right operand are not supported",
@@ -13785,7 +13965,11 @@ impl Parser {
         self.position += 1;
         let then_branch = self.parse_expression_allow_direct_aggregate()?;
         self.expect(Token::Colon)?;
-        let else_branch = self.parse_expression_allow_direct_aggregate()?;
+        // C's middle operand is an expression, while the third operand is a
+        // conditional-expression. An assignment there therefore requires
+        // parentheses; accepting it directly would give `=` the wrong
+        // precedence now that assignment expressions exist.
+        let else_branch = self.parse_conditional()?;
         if let Some(then_type) = self.source_expression_type(&then_branch) {
             self.validate_char_pointer_assignment(then_type, &else_branch)?;
         }
@@ -15022,6 +15206,9 @@ impl Parser {
             C0Expression::Cast { c_type, .. } => {
                 matches!(c_type, C0Type::Float32 | C0Type::Float64)
             }
+            C0Expression::Assignment { c_type, .. } => {
+                matches!(c_type, C0Type::Float32 | C0Type::Float64)
+            }
             C0Expression::StatementExpression { c_type, .. } => {
                 matches!(c_type, C0Type::Float32 | C0Type::Float64)
             }
@@ -15092,6 +15279,7 @@ impl Parser {
             C0Expression::SequentialRead { c_type, .. }
             | C0Expression::SequentialWrite { c_type, .. } => Some(*c_type),
             C0Expression::Cast { c_type, .. } => Some(*c_type),
+            C0Expression::Assignment { c_type, .. } => Some(*c_type),
             C0Expression::StatementExpression { c_type, .. } => Some(*c_type),
             C0Expression::Index(base, _) => {
                 return self.expression_pointee_is_float(base);
@@ -15129,6 +15317,7 @@ impl Parser {
                 })
                 .flatten(),
             C0Expression::IndirectCall { signature, .. } => signature.return_struct_name.clone(),
+            C0Expression::Assignment { struct_name, .. } => struct_name.clone(),
             C0Expression::StatementExpression {
                 c_type: C0Type::Int32Pointer | C0Type::UInt8Pointer,
                 struct_name,
@@ -15196,6 +15385,7 @@ impl Parser {
                 })
                 .flatten(),
             C0Expression::IndirectCall { signature, .. } => signature.return_struct_name.clone(),
+            C0Expression::Assignment { struct_name, .. } => struct_name.clone(),
             C0Expression::StatementExpression {
                 c_type:
                     C0Type::Int16PointerPointer
@@ -15310,6 +15500,7 @@ impl Parser {
                 })
             }
             C0Expression::Cast { c_type, .. } => Some(*c_type),
+            C0Expression::Assignment { c_type, .. } => Some(*c_type),
             C0Expression::StatementExpression { c_type, .. } => Some(*c_type),
             C0Expression::Field { field_type, .. }
             | C0Expression::UnionField { field_type, .. } => Some(*field_type),
@@ -16754,7 +16945,8 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
             .clone()
             .or_else(|| first_embedded_call_position(function))
             .or_else(|| arguments.iter().find_map(first_embedded_call_position)),
-        C0Expression::StatementExpression { value, .. } => first_embedded_call_position(value),
+        C0Expression::StatementExpression { value, .. }
+        | C0Expression::Assignment { value, .. } => first_embedded_call_position(value),
         C0Expression::Cast { expression, .. }
         | C0Expression::FloatNegate(expression)
         | C0Expression::FloatClassification { expression, .. }
@@ -16816,6 +17008,166 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
         | C0Expression::SizeOfStruct { .. }
         | C0Expression::SizeOfUnion { .. }
         | C0Expression::SizeOfType { .. } => None,
+    }
+}
+
+fn first_assignment_position(expression: &C0Expression) -> Option<SourcePosition> {
+    match expression {
+        C0Expression::Assignment {
+            position, value, ..
+        } => position
+            .clone()
+            .or_else(|| first_assignment_position(value)),
+        C0Expression::Call { arguments, .. } => {
+            arguments.iter().find_map(first_assignment_position)
+        }
+        C0Expression::IndirectCall {
+            function,
+            arguments,
+            ..
+        } => first_assignment_position(function)
+            .or_else(|| arguments.iter().find_map(first_assignment_position)),
+        C0Expression::StatementExpression { value, .. }
+        | C0Expression::Cast {
+            expression: value, ..
+        }
+        | C0Expression::FloatNegate(value)
+        | C0Expression::FloatClassification {
+            expression: value, ..
+        }
+        | C0Expression::AddressOf(value)
+        | C0Expression::PointerOffsetBytes { pointer: value, .. }
+        | C0Expression::Not(value)
+        | C0Expression::BitwiseNot(value)
+        | C0Expression::Load(value)
+        | C0Expression::SequentialRead { target: value, .. }
+        | C0Expression::AggregateAddress { pointer: value, .. }
+        | C0Expression::Field { pointer: value, .. }
+        | C0Expression::UnionField { pointer: value, .. }
+        | C0Expression::UnionAddress { pointer: value, .. }
+        | C0Expression::CheckedArrayIndex { index: value, .. } => first_assignment_position(value),
+        C0Expression::SequentialWrite { target, value, .. } => {
+            first_assignment_position(target).or_else(|| first_assignment_position(value))
+        }
+        C0Expression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => first_assignment_position(condition)
+            .or_else(|| first_assignment_position(then_branch))
+            .or_else(|| first_assignment_position(else_branch)),
+        C0Expression::LessThan(left, right)
+        | C0Expression::LessEqual(left, right)
+        | C0Expression::GreaterThan(left, right)
+        | C0Expression::GreaterEqual(left, right)
+        | C0Expression::Equal(left, right)
+        | C0Expression::NotEqual(left, right)
+        | C0Expression::And(left, right)
+        | C0Expression::Or(left, right)
+        | C0Expression::Add(left, right)
+        | C0Expression::Subtract(left, right)
+        | C0Expression::Multiply(left, right)
+        | C0Expression::Divide(left, right)
+        | C0Expression::Remainder(left, right)
+        | C0Expression::ShiftLeft(left, right)
+        | C0Expression::ShiftRight(left, right)
+        | C0Expression::BitwiseAnd(left, right)
+        | C0Expression::BitwiseOr(left, right)
+        | C0Expression::BitwiseXor(left, right)
+        | C0Expression::Index(left, right) => {
+            first_assignment_position(left).or_else(|| first_assignment_position(right))
+        }
+        C0Expression::Void
+        | C0Expression::Variable(_)
+        | C0Expression::FunctionAddress(_)
+        | C0Expression::Int32Literal(_)
+        | C0Expression::UInt8Literal(_)
+        | C0Expression::UInt32Literal(_)
+        | C0Expression::Int64Literal(_)
+        | C0Expression::UInt64Literal(_)
+        | C0Expression::Float32Literal(_)
+        | C0Expression::Float64Literal(_)
+        | C0Expression::SizeOfStruct { .. }
+        | C0Expression::SizeOfUnion { .. }
+        | C0Expression::SizeOfType { .. } => None,
+    }
+}
+
+/// A deliberately conservative companion to assignment lowering. If a
+/// sibling operand computes any runtime value, moving an assignment before
+/// it would choose an order C leaves unspecified (and can turn an
+/// unsequenced modification/read into defined behavior), so that shape is
+/// refused rather than guessed.
+fn expression_reads_runtime_value(expression: &C0Expression) -> bool {
+    match expression {
+        C0Expression::Void
+        | C0Expression::FunctionAddress(_)
+        | C0Expression::Int32Literal(_)
+        | C0Expression::UInt8Literal(_)
+        | C0Expression::UInt32Literal(_)
+        | C0Expression::Int64Literal(_)
+        | C0Expression::UInt64Literal(_)
+        | C0Expression::Float32Literal(_)
+        | C0Expression::Float64Literal(_)
+        | C0Expression::SizeOfStruct { .. }
+        | C0Expression::SizeOfUnion { .. }
+        | C0Expression::SizeOfType { .. } => false,
+        C0Expression::Variable(_)
+        | C0Expression::Call { .. }
+        | C0Expression::IndirectCall { .. }
+        | C0Expression::StatementExpression { .. }
+        | C0Expression::AddressOf(_)
+        | C0Expression::Load(_)
+        | C0Expression::SequentialRead { .. }
+        | C0Expression::SequentialWrite { .. }
+        | C0Expression::AggregateAddress { .. }
+        | C0Expression::Field { .. }
+        | C0Expression::UnionField { .. }
+        | C0Expression::UnionAddress { .. }
+        | C0Expression::Index(_, _) => true,
+        C0Expression::Assignment { value, .. }
+        | C0Expression::Cast {
+            expression: value, ..
+        }
+        | C0Expression::FloatNegate(value)
+        | C0Expression::FloatClassification {
+            expression: value, ..
+        }
+        | C0Expression::PointerOffsetBytes { pointer: value, .. }
+        | C0Expression::Not(value)
+        | C0Expression::BitwiseNot(value)
+        | C0Expression::CheckedArrayIndex { index: value, .. } => {
+            expression_reads_runtime_value(value)
+        }
+        C0Expression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expression_reads_runtime_value(condition)
+                || expression_reads_runtime_value(then_branch)
+                || expression_reads_runtime_value(else_branch)
+        }
+        C0Expression::LessThan(left, right)
+        | C0Expression::LessEqual(left, right)
+        | C0Expression::GreaterThan(left, right)
+        | C0Expression::GreaterEqual(left, right)
+        | C0Expression::Equal(left, right)
+        | C0Expression::NotEqual(left, right)
+        | C0Expression::And(left, right)
+        | C0Expression::Or(left, right)
+        | C0Expression::Add(left, right)
+        | C0Expression::Subtract(left, right)
+        | C0Expression::Multiply(left, right)
+        | C0Expression::Divide(left, right)
+        | C0Expression::Remainder(left, right)
+        | C0Expression::ShiftLeft(left, right)
+        | C0Expression::ShiftRight(left, right)
+        | C0Expression::BitwiseAnd(left, right)
+        | C0Expression::BitwiseOr(left, right)
+        | C0Expression::BitwiseXor(left, right) => {
+            expression_reads_runtime_value(left) || expression_reads_runtime_value(right)
+        }
     }
 }
 

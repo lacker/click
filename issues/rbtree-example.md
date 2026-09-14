@@ -38,6 +38,17 @@ Fix what slows the work before completing the example:
 
 ## State, 2026-09-13
 
+**The traversal parser prerequisite:** the unchanged `rb_next` guard
+`while ((parent = rb_parent(node)) && node == parent->rb_right)` now parses and
+lowers through checked statements. The assignment result has the target's
+scalar type, its right operand is evaluated exactly once, the second conjunct
+remains short-circuited, and a loop guard reruns the assignment after every
+iteration and `continue`. The retained `mdtests/rb_next_conjunctive_guard.md`
+now reaches its next bounded proof frontier: `execute()` needs a view of
+`node->rb_right` while the entry `rb_at(node)` remains folded. C4b still owns
+the complete descent/ascent proof; this support does not claim traversal
+verification.
+
 **The insert fixture**, `examples/rbtree-insert`: `rbtree.h` and
 `rb_insert_color.c` retain the verbatim Linux `__rb_insert` and
 `rb_insert_color` C formerly embedded in `mdtests/rb_insert_color.md`.
@@ -100,9 +111,8 @@ conjunct refused 841126d4; T1 531b5651; T2 92a81e32; T3 bb009743; T4
 C2 c9d5afee; C2b 427e2463; C2c 181d6db6; C4 replacement half 32992501
 (traversals `rb_first`/`rb_last` and the `rb_next` guard are pinned in
 `mdtests/rb_first_last.md` and `rb_next_conjunctive_guard.md`; the verbatim
-`rb_next` guard `while ((parent = rb_parent(node)) && ...)` is an
-assignment expression C0 does not parse, owned by
-kernel-scale-preprocessing). Uniform scoping: bb142e1c (theorem arguments,
+assignment-expression guard now lowers, and the latter fixture records the
+next folded-entry proof frontier). Uniform scoping: bb142e1c (theorem arguments,
 `instantiate`, `extract`), ad5c2307 (loop clauses), 2d96d5d7 (phase
 bodies), 99a07d5c (`using` premises in a `have` body).
 
@@ -498,8 +508,12 @@ abstract augmentation. Depends on C3c and C5 and on the callback packaging
 in [memory-vs-resources.md](memory-vs-resources.md).
 
 **C4b. Traversals.** `rb_first`, `rb_last`, `rb_next`, `rb_prev` on the
-verbatim bodies. Blocked on the assignment-expression guard in
-[kernel-scale-preprocessing.md](kernel-scale-preprocessing.md).
+verbatim bodies. The assignment-expression parser/lowering prerequisite is
+delivered for simple scalar variable targets, including the unchanged
+`rb_next` guard. Remaining: prove the complete `rb_next`/`rb_prev` descent and
+ascent on the node-keyed model. The unchanged regression currently stops at
+the first descent branch because `rb_at(node)` is folded and no view of
+`node->rb_right` has yet been published.
 
 **D1. Attach the Phase C sidecars to the imported pinned translation
 unit** and replace the verbatim-copy fixtures with the pinned regression.

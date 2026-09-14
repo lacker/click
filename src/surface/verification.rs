@@ -3298,6 +3298,9 @@ pub(in crate::surface) fn c0_statement_calls(
             syntax::C0Expression::StatementExpression { value, .. } => {
                 collect_function_addresses(value, names);
             }
+            syntax::C0Expression::Assignment { value, .. } => {
+                collect_function_addresses(value, names);
+            }
             syntax::C0Expression::FunctionAddress(name) => {
                 names.insert(name.clone());
             }

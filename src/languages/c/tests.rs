@@ -9862,6 +9862,202 @@ fn c0_syntax_lowers_calls_in_reevaluated_loop_conditions() {
 }
 
 #[test]
+fn c0_assignment_expression_result_uses_the_target_type() {
+    let function = syntax::parse_function(
+        r#"
+        uint8 converted_assignment_result() {
+            uint8 narrow;
+            return (narrow = 42);
+        }
+        "#,
+    )
+    .expect("a simple scalar assignment expression should parse")
+    .to_kernel_function();
+
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        crate::kernel::CState::new(),
+        function,
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("the converted assignment result should execute");
+    let crate::kernel::Proposition::CFunctionExecutes {
+        outcome: crate::kernel::CFunctionOutcome::Return { value, .. },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!(
+            "the assignment expression should return normally: {:#?}",
+            theorem.proposition()
+        );
+    };
+    assert_eq!(value, &crate::kernel::uint8(42));
+}
+
+#[test]
+fn c0_assignment_expression_short_circuits_a_guard_read() {
+    let function = syntax::parse_function(
+        r#"
+        struct item { int32 value; };
+
+        int32 selected_value(struct item *next) {
+            struct item *parent;
+            if ((parent = next) && parent->value == 7) {
+                return 1;
+            }
+            return 0;
+        }
+        "#,
+    )
+    .expect("a pointer assignment may be the sequenced left conjunct")
+    .to_kernel_function();
+    let null = crate::kernel::Pointer {
+        block: "null".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        crate::kernel::CState::new(),
+        function,
+        vec![crate::kernel::c_pointer_value(null)],
+        Default::default(),
+    )
+    .expect("a false assignment result must skip the field read");
+    let crate::kernel::Proposition::CFunctionExecutes {
+        outcome: crate::kernel::CFunctionOutcome::Return { value, .. },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("the short-circuit guard should return normally");
+    };
+    assert_eq!(value, &crate::kernel::int32(0));
+}
+
+#[test]
+fn c0_assignment_expression_loop_guard_reexecutes_once_after_continue() {
+    let tick = syntax::parse_function(
+        r#"
+        int32 tick(int32 *calls, int32 value) {
+            *calls = *calls + 1;
+            return value;
+        }
+        "#,
+    )
+    .expect("the counter helper should parse")
+    .to_kernel_function();
+    let caller = syntax::parse_functions(
+        r#"
+        int32 tick(int32 *calls, int32 value);
+
+        int32 caller() {
+            int32 calls = 0;
+            int32 value = 2;
+            int32 current;
+            while ((current = tick(&calls, value)) && current > 0) {
+                value = value - 1;
+                continue;
+            }
+            return calls;
+        }
+        "#,
+    )
+    .expect("an assignment call in a loop guard should lower")
+    .into_iter()
+    .find(|function| function.name() == "caller")
+    .expect("caller definition")
+    .to_kernel_function();
+    let environment = crate::kernel::CExecutionEnvironment::new().with_function(tick);
+
+    let theorem = crate::kernel::prove_symbolic_c_function_execution_with_environment(
+        crate::kernel::CState::new(),
+        caller,
+        Vec::new(),
+        Default::default(),
+        environment,
+        crate::kernel::CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .expect("the guard call should execute once on each of three condition checks");
+    let crate::kernel::Proposition::CFunctionExecutes {
+        outcome: crate::kernel::CFunctionOutcome::Return { state, .. },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("the loop should return normally");
+    };
+    let calls = crate::kernel::Pointer {
+        block: "local:calls".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    assert_eq!(
+        state.memory().load(&calls),
+        crate::kernel::CExpressionOutcome::Value(crate::kernel::int32(3))
+    );
+}
+
+#[test]
+fn c0_assignment_expression_preserves_unsequenced_call_read_rejection() {
+    let error = syntax::parse_functions(
+        r#"
+        int32 mutate(int32 *p);
+        int32 probe() {
+            int32 x = 0;
+            return (x = mutate(&x)) + x;
+        }
+        "#,
+    )
+    .expect_err("an assignment wrapper must not hide an unsequenced call/read interaction");
+    assert_eq!(
+        error.message(),
+        "an expression call and a potentially aliased operand read are not supported"
+    );
+}
+
+#[test]
+fn c0_assignment_expression_rejects_unlowerable_lvalue_and_short_circuit_shapes() {
+    let memory_error = syntax::parse_function(
+        r#"
+        int32 memory_target(int32 *p) {
+            return (*p = 1);
+        }
+        "#,
+    )
+    .expect_err("memory-lvalue assignment expressions are outside the supported slice");
+    assert_eq!(
+        memory_error.message(),
+        "assignment expressions currently require a simple scalar variable target"
+    );
+
+    let lazy_error = syntax::parse_function(
+        r#"
+        int32 lazy_assignment(int32 enabled) {
+            int32 value = 0;
+            return enabled && (value = 1);
+        }
+        "#,
+    )
+    .expect_err("the current lowering cannot hoist an assignment from a lazy right operand");
+    assert_eq!(
+        lazy_error.message(),
+        "assignment expressions in the short-circuit right operand are not supported"
+    );
+
+    let argument_error = syntax::parse_functions(
+        r#"
+        int32 combine(int32 left, int32 right);
+        int32 argument_order() {
+            int32 value = 0;
+            return combine((value = 1), value);
+        }
+        "#,
+    )
+    .expect_err("function arguments must not gain an invented assignment/read order");
+    assert_eq!(
+        argument_error.message(),
+        "an assignment expression and an unsequenced read in separate function arguments are not supported"
+    );
+}
+
+#[test]
 fn c0_syntax_rejects_multiple_unsequenced_expression_calls() {
     let error = syntax::parse_function(
         r#"

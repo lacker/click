@@ -322,6 +322,10 @@ id = "c0.expression.pointer-integer-cast"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 
 [[item]]
+id = "c0.expression.assignment"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
 id = "c0.expression.sequential-kernel-read"
 path = "reference/language/c0.md#checked-sequential-kernel-access-primitives"
 

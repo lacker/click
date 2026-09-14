@@ -146,6 +146,18 @@ against the pinned expansions instead of implementing from an outdated issue
 inventory. Related documents may describe earlier slices rather than the
 current code.
 
+Narrow C-semantics update, 2026-09-13: simple expression-valued assignment to
+a named arithmetic or supported typed data-pointer scalar is now parsed with C assignment
+precedence and lowered through the existing checked declaration, call, and
+assignment operations. The result uses the target type, the right operand is
+evaluated once, and assignments in loop-condition prefixes are reevaluated
+after `continue`; the unchanged Linux `rb_next` conjunctive guard is the pinned
+consumer. Memory-lvalue and compound assignment expressions, effectful right
+operands of `&&`/`||`, and assignment/read shapes whose operand or argument
+order C leaves unspecified remain explicitly rejected. This closes that C4b
+parser prerequisite only; it does not complete package 3 or the full Linux
+import milestone.
+
 ## Stage 0: establish the real input and resolve scope
 
 Owner: Astra, with bounded Luna read-only investigation or capture assistance.

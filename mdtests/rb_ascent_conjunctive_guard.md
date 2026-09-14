@@ -13,9 +13,9 @@ refused the whole loop with "requires exactly one statement successor, got 2".
 
 The C is a minimal translation of the Linux guard. `rb_next` writes
 `while ((parent = rb_parent(node)) && node == parent->rb_right) node = parent;`,
-and an assignment is not an expression in the supported C0 subset, so the
-assignment moves into the body exactly as `rb_ascending_walk_to_root.md`
-already writes it. That is the whole translation.
+whose simple variable assignment expression is now supported. This older
+translation keeps the assignment in the body because it isolates the already
+landed conjunctive-exit proof rule independently of expression lowering.
 
 The second conjunct is the focused node's own link rather than
 `node == parent->rb_right`. It reads memory either way, which is the point
