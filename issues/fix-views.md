@@ -737,12 +737,79 @@ or partial recovery; error and diverging return paths.
   `abstract_join_rejects_a_loan_ended_on_only_one_arm` (either arm order
   refused; both arms holding the same recovered ledger join). Candidate
   corpus unchanged at 8 of 1,512 and 2 of 27; gate green.
-- **6.2, kernel hardening:** F3 (frontier check at produce/ensure
-  composition, both modes), F4 (containment evidence for `project` and a
-  stated identity rule), F5, F6, F7, and the bounded-pool planner gap
-  (counted-population requirements go through the existing population
-  transition, or the owned reservation learns the count arithmetic). F3 is
-  the one that changes the argument; the others tighten it.
+- **6.2, kernel hardening (landed 2026-09-14, four commits from parallel
+  agents, cherry-picked and gated as one tip):**
+  - F3 closed ("Check a produced composite's body against what the caller
+    holds"): `produced_composite_frontier_conflict` runs in
+    `evaluate_contract_return_resources`, the one funnel for the
+    verified-rule, refinement-adapter, and direct contract paths. Each
+    ensured owned composite is expanded one level and its frontier composed
+    into the destination for `validity_error`; the destination is what the
+    caller holds across the call, so the plan now records
+    `escrowed_owners` and the check unions them in (the reviewer's
+    `views p[0..1]` + `produces box(p)` variant slipped past the residual
+    alone). Structured refusal
+    `CRuntimeError::ProducedCompositeOverlapsHeldResource`. Counted
+    populations are exempt because their body is population-wide and is
+    checked once where it is installed (`activate_population_body_resources`
+    now validates the composition); an ordinary composite with a quantity
+    other than a constant one is refused, since every unit would own the
+    same range. Regressions:
+    `mdtests/produced_composite_body_overlapping_a_held_owner.md` (both
+    modes, the F3 repro) and
+    `produced_composite_over_a_viewed_owner_is_refused_in_both_modes`;
+    positive witness `mdtests/composite_resource_clone_separate_target.md`.
+    Known limits, by design: frontier-deep not body-deep; an opaque head
+    (no definition, instance schema, matched arm, undecided guard) exposes
+    no frontier and composes unchecked as before.
+  - F4 and F5 closed ("Check projection containment and narrow a reborrow
+    in the kernel"): `project` takes `CompositeProjectionEvidence`, built by
+    the kernel from `expand_composite_resource_fact_with_children` over the
+    head alone, and refuses a head that is not the permitted parent
+    (`InvalidEvidence`) or a child outside the expansion (`MissingBacking`);
+    the surface callers build nothing themselves. Identity rule written on
+    `project`: a projection is derived read-only authority, mints no share,
+    scope, or recovery right, and keeps the ledger identity; identity tracks
+    authority-changing transitions only. A reborrow now carries
+    `permitted = [parent.viewed]` and only the backing under that
+    description (`reborrowed_authority`). Tests:
+    `a_projection_mints_no_share_and_keeps_the_ledger_identity`,
+    `a_reborrow_narrows_to_the_description_that_authorized_it`,
+    `a_reborrow_of_a_memory_view_protects_exactly_the_viewed_bytes`, plus the
+    two projection negatives. Open: building the evidence lowers the whole
+    environment's definitions per projecting tactic (11 projections across
+    the candidate corpus); belongs with F10.
+  - F6 and F7 closed ("Close step 6 findings F6 and F7"): the transfer
+    records `checked_view_frontier` (composite backing pieces, intrinsic
+    read views, empty composite views) and the call-site effect check
+    compares every effect range against it with the same two refusals; the
+    check no longer requires a plan, since an intrinsic-only call has none.
+    `compare_loan_dependencies` and `Hash` for `ResourceContext` key on
+    entry ordinals, the viewed fact, and first-appearance positions, never
+    arena counters, so identical contexts from different ledgers compare
+    equal. Tests: `candidate_rejects_mutable_effect_overlapping_a_composite_view_piece`,
+    `candidate_rejects_mutable_effect_overlapping_an_intrinsic_local_view`,
+    `candidate_allows_a_mutable_effect_disjoint_from_a_composite_view_piece`,
+    `loan_dependencies_from_different_ledgers_compare_equal_and_hash_alike`,
+    `loan_dependencies_differing_in_the_viewed_fact_order_deterministically`.
+  - bounded-pool closed ("Plan population quantities and check the
+    composite lend against reserved owners"): a requirement whose quantity
+    is not the unit (`requirement_is_population_quantity`) leaves the stable
+    planner's exclusive reservation and takes the counted-population route
+    legacy takes, since the caller holds one representative unit while the
+    cardinality lives in the tracked population; a memory-bearing population
+    body is still checked against the ledger after planning (a barrier with
+    no reachable witness yet). The composite lend now composes the reserved
+    owned requirements back beside the frontier before `validity_error`, so
+    `owns p[0..1]` + `views box(p)` over the same byte is refused as a proven
+    overlap. Tests:
+    `candidate_symbolic_token_population_consume_plans_beside_a_lent_view`,
+    `candidate_token_population_consume_without_a_known_count_is_refused_like_legacy`,
+    `composite_planner_rejects_an_owned_requirement_inside_the_viewed_frontier`.
+    `examples/bounded-pool` verifies under the candidate semantics with its
+    sources and sidecar unchanged.
+  - Candidate corpus after 6.2: 8 of 1,514 mdtests (the step 4 list) and
+    1 of 27 examples (input-cursor, step 7). Legacy corpus and gate green.
 - **6.3, decisions before step 8:** the
   `field_derived_precise_effect_after_metadata_write.md` case in F13, F14
   (classify or remove the three ungated paths), F15 (make the CLI honor the
