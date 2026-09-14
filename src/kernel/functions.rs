@@ -1,7 +1,8 @@
 use super::loans::{
-    CheckedLoanCallEvidence, CompositeLoanBacking, LoanLedger, LoanRefusal, LoanRefusalOperation,
-    LoanRefusalSubject, LoanViewBindings, StableViewTransferPlan, append_checked_loan_evidence,
-    empty_checked_loan_evidence_sequence, plan_stable_view_transfer_with_bindings_and_composites,
+    CheckedLoanCallEvidence, CompositeLoanBacking, CompositeProjectionEvidence, LoanLedger,
+    LoanRefusal, LoanRefusalOperation, LoanRefusalSubject, LoanViewBindings,
+    StableViewTransferPlan, append_checked_loan_evidence, empty_checked_loan_evidence_sequence,
+    plan_stable_view_transfer_with_bindings_and_composites,
 };
 use super::prelude::*;
 use std::sync::Arc;
@@ -12827,6 +12828,28 @@ pub(super) fn expand_composite_resource_fact(
         assumptions,
     )
     .map(|(expanded, _, _)| expanded)
+}
+
+/// The kernel's own one-level expansion of a viewed composite, packaged as
+/// the evidence `LoanLedger::project` re-checks a child projection against.
+/// The expansion runs over the head alone, so the admissible children come
+/// from the definition and the current memory, never from the caller's
+/// ambient resource context or its own list of exposed facts (D2 law 10).
+pub(crate) fn checked_composite_projection_evidence(
+    viewed: &CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &PureFactContext,
+) -> Option<CompositeProjectionEvidence> {
+    let head = ResourceContext::new().unchecked_with_fact(viewed.clone());
+    let (_, children, _) = expand_composite_resource_fact_with_children(
+        &head,
+        viewed,
+        definitions,
+        memory,
+        assumptions,
+    )?;
+    CompositeProjectionEvidence::from_checked_expansion(viewed.clone(), children)
 }
 
 pub(super) fn expand_composite_resource_fact_with_children(

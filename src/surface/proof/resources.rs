@@ -198,23 +198,51 @@ fn unique_borrowed_resource_dependency(
 }
 
 /// Record the children a checked rewrite exposed from a viewed composite as
-/// permitted descriptions of the parent's loan. The rewrite has already
-/// derived them from the definition in the current state; the ledger only
-/// checks that the parent is a permitted composite view of a live loan.
+/// permitted descriptions of the parent's loan. The rewrite derived them
+/// from the definition in the current state, but the ledger does not take
+/// that list on trust: the kernel expands the parent one level itself and
+/// `project` re-checks every child against that expansion (D2 law 10).
 fn project_children_into_ledger(
     state: CState,
     binding: &crate::kernel::LoanViewBinding,
     children: impl IntoIterator<Item = CResourceFact>,
+    memory: &CMemory,
+    assumptions: &PureFactContext,
+    resource_environment: &ResourceEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     context_label: &str,
 ) -> Result<CState, ClickError> {
     let (Some(ledger), Some(holder)) = (state.loan_ledger().cloned(), state.loan_participant())
     else {
         return Ok(state);
     };
+    let mut children = children.into_iter().peekable();
+    if children.peek().is_none() {
+        return Ok(state);
+    }
+    // Only a viewed composite rewrite reaches this, so the definitions are
+    // lowered once per projecting tactic rather than once per proof step.
+    let definitions = crate::surface::verification::composite_resource_definitions(
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    let evidence = crate::kernel::checked_composite_projection_evidence(
+        &binding.viewed,
+        &definitions,
+        memory,
+        assumptions,
+    )
+    .ok_or_else(|| {
+        ClickError::new(format!(
+            "{context_label} cannot expand the viewed composite to check a child projection"
+        ))
+    })?;
     let mut ledger = ledger;
     for child in children {
         ledger = ledger
-            .project(holder, binding.loan, &binding.viewed, child)
+            .project(holder, binding.loan, &binding.viewed, &evidence, child)
             .map_err(|refusal| {
                 ClickError::new(format!(
                     "{context_label} cannot project a child of the viewed composite: {refusal:?}"
@@ -1732,6 +1760,11 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             dependency_bindings
                 .iter()
                 .map(|(_, child)| child.viewed.clone()),
+            &memory,
+            available_pure_facts.assumptions(),
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
             &format!("`{claim_label}` tactic {tactic_index}: `observe`"),
         )?;
     }
@@ -3285,10 +3318,16 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 )));
             }
         }
+        let projection_memory = state.memory().clone();
         state = project_children_into_ledger(
             state,
             &binding,
             dependencies.iter().map(|(_, child)| child.viewed.clone()),
+            &projection_memory,
+            available_pure_facts.assumptions(),
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
             &format!("`{claim_label}` tactic {tactic_index}: `unfold`"),
         )?;
         let resources = state.resources().clone();

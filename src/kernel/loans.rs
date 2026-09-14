@@ -333,6 +333,37 @@ fn loan_protects_memory(memory_backing: &[CMemoryRange], permitted: &[CResourceF
             .any(|fact| matches!(fact.resource(), CResource::Composite { .. }))
 }
 
+/// The authority a reborrow inherits from its parent loan. One description,
+/// `viewed`, authorized the transition, so the child loan permits that
+/// description alone and protects only the parent backing that lies within
+/// it (F5 in fix-views):
+///
+/// - a memory view narrows to the viewed range itself, which the parent
+///   already protects through a backing piece or through the escrowed head
+///   the projection that exposed it was checked against;
+/// - the head the parent's backing was checked against - always its first
+///   permitted description - keeps that checked one-level frontier;
+/// - any other description, in particular a projected nested composite
+///   child, brings no byte backing of its own. Its bytes stay protected by
+///   the parent entry, which remains live for the whole child scope because
+///   the reborrow pins the parent's share.
+///
+/// The child therefore never protects bytes outside the parent's footprint,
+/// and its own barrier registrations are the ones its end removes.
+fn reborrowed_authority(
+    parent: &LoanRecord,
+    viewed: &CResourceFact,
+) -> (Vec<CResourceFact>, Vec<CMemoryRange>) {
+    let memory_backing = if let Some(range) = viewed.memory_range() {
+        vec![range.clone()]
+    } else if parent.permitted.first() == Some(viewed) {
+        parent.memory_backing.clone()
+    } else {
+        Vec::new()
+    };
+    (vec![viewed.clone()], memory_backing)
+}
+
 /// A read derived from ownership in the current context. This is useful for
 /// checking the owner's own computation, but it is not transferable loan
 /// authority and contains no loan identity.
@@ -1001,6 +1032,44 @@ pub(crate) struct BorrowedContractInputBacking {
     support: ResourceOccurrenceId,
     head: CResourceFact,
     pieces: Vec<CResourceFact>,
+}
+
+/// A definition-checked one-level expansion of one viewed composite: the
+/// head a loan already permits, and the only children a projection of that
+/// head may add to it. Construction is restricted to the kernel's expansion
+/// boundary, exactly like the two backings above, so `project` re-checks the
+/// containment premise itself instead of trusting the caller's child list
+/// (D2 law 10).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CompositeProjectionEvidence {
+    head: CResourceFact,
+    children: Vec<CResourceFact>,
+}
+
+impl CompositeProjectionEvidence {
+    pub(crate) fn from_checked_expansion(
+        head: CResourceFact,
+        children: Vec<CResourceFact>,
+    ) -> Option<Self> {
+        // A projection is read-only authority derived from a viewed
+        // composite, so the head is a composite view and every admissible
+        // child is a view. An exclusive instance cannot be viewed (D12).
+        (head.is_view()
+            && matches!(head.resource(), CResource::Composite { .. })
+            && children.iter().all(|child| {
+                child.is_view() && !matches!(child.resource(), CResource::Instance(_))
+            }))
+        .then_some(Self { head, children })
+    }
+
+    fn contains_child(&self, child: &CResourceFact) -> bool {
+        self.children.iter().any(|piece| {
+            piece == child
+                || ResourceContext::new()
+                    .unchecked_with_fact(piece.clone())
+                    .satisfies_fact(child, &PureFactContext::default())
+        })
+    }
 }
 
 impl BorrowedContractInputBacking {
@@ -2479,18 +2548,31 @@ impl LoanLedger {
     /// Extend a loan's permitted descriptions by one checked child
     /// projection of a composite description it already permits.
     ///
-    /// The child comes from the kernel's expansion of `parent` in the
-    /// current state, performed by the checked `unfold`, `observe`, or
-    /// `open` that calls this. A projection is derived, read-only authority
-    /// over memory the loan already protects, so it is not a transition:
-    /// the ledger keeps its state identity, which tracks authority-changing
-    /// operations only, and a certificate that re-runs the same checked
-    /// rewrites re-derives the same projections.
+    /// `evidence` is the kernel's own one-level expansion of `parent`, built
+    /// at the expansion boundary by the checked `unfold`, `observe`, or
+    /// `open` that calls this. The ledger re-checks both premises of the
+    /// transition rather than delegating them to its caller (D2 law 10): the
+    /// evidence must describe the very parent the loan permits, and the
+    /// child must be one the expansion contains.
+    ///
+    /// **Identity rule.** A projection keeps the ledger identity, so two
+    /// ledgers that compare equal can differ in derived `permitted` entries,
+    /// and the branch join, the loop backedge,
+    /// `recover_candidate_stable_view_resources`, and `recheck_entry` cannot
+    /// see a projection difference. With containment checked here that is
+    /// safe: every projected description is re-derivable from its parent by
+    /// a checked expansion of the same state, so it is derived read-only
+    /// authority over memory the loan already protects. It mints no share,
+    /// no scope, and no recovery right, and no transition is possible from a
+    /// projected description alone. Ledger identity tracks
+    /// authority-changing transitions only, and a certificate that re-runs
+    /// the same checked rewrites re-derives the same projections.
     pub(crate) fn project(
         &self,
         holder: LoanParticipantId,
         loan: LoanId,
         parent: &CResourceFact,
+        evidence: &CompositeProjectionEvidence,
         child: CResourceFact,
     ) -> Result<Self, LoanRefusal> {
         self.require_arena(loan.arena)?;
@@ -2521,8 +2603,14 @@ impl LoanLedger {
         {
             return Err(LoanRefusal::MissingLoanBinding);
         }
+        if evidence.head != *parent {
+            return Err(LoanRefusal::InvalidEvidence);
+        }
         if !child.is_view() || matches!(child.resource(), CResource::Instance(_)) {
             return Err(LoanRefusal::UnsupportedResource);
+        }
+        if !evidence.contains_child(&child) {
+            return Err(LoanRefusal::MissingBacking);
         }
         if record.permitted.contains(&child) {
             return Ok(self.clone());
@@ -3494,16 +3582,21 @@ impl LoanLedger {
                         dependencies: crate::persistent::PersistentSet::default(),
                     },
                 );
+                // One description authorized this transition, so the child
+                // inherits that description and the parent backing inside
+                // it, not the parent's whole permitted set (F5).
+                let (permitted, memory_backing) =
+                    reborrowed_authority(&parent_loan, &parent.viewed);
                 data.loans = data.loans.with_inserted(
                     *loan,
                     LoanRecord {
                         scope: *scope,
                         support: parent.support,
                         escrow: None,
-                        permitted: parent_loan.permitted.clone(),
+                        permitted: permitted.clone(),
                         origin: LoanOrigin::Reborrowed,
                         recovered: false,
-                        memory_backing: parent_loan.memory_backing.clone(),
+                        memory_backing: memory_backing.clone(),
                     },
                 );
                 data.shares = data.shares.with_inserted(
@@ -3516,7 +3609,7 @@ impl LoanLedger {
                         pinned_by: None,
                     },
                 );
-                for range in &parent_loan.memory_backing {
+                for range in &memory_backing {
                     // A symbolic parent range stays protected by the parent
                     // entry, which remains active while its share is pinned.
                     if memory_interval_nodes(range).is_none() {
@@ -3531,9 +3624,10 @@ impl LoanLedger {
                         true,
                     )?;
                 }
-                // Counted by the same predicate `End` decrements with, so a
+                // Counted by the same predicate `End` decrements with, over
+                // the narrowed authority this child actually holds, so a
                 // reborrow of a byte-less composite loan is conserved.
-                if loan_protects_memory(&parent_loan.memory_backing, &parent_loan.permitted) {
+                if loan_protects_memory(&memory_backing, &permitted) {
                     data.active_memory_loans = data
                         .active_memory_loans
                         .checked_add(1)
@@ -4281,8 +4375,13 @@ mod tests {
             opening.root_share,
             &assumptions
         ));
+        let evidence = CompositeProjectionEvidence::from_checked_expansion(
+            nested_view.clone(),
+            vec![deep.clone()],
+        )
+        .expect("a viewed one-level expansion is projection evidence");
         let projected = ledger
-            .project(reader, opening.loan, &nested_view, deep.clone())
+            .project(reader, opening.loan, &nested_view, &evidence, deep.clone())
             .expect("a child of a permitted composite view projects");
         assert_eq!(projected, ledger, "projection keeps the ledger identity");
         assert!(projected.permits_view(
@@ -4293,18 +4392,51 @@ mod tests {
         ));
         assert!(projected.invariant_holds());
         // Not a permitted parent, an owned child, and an ended scope.
+        let other_view = composite("other", false);
+        let other_evidence = CompositeProjectionEvidence::from_checked_expansion(
+            other_view.clone(),
+            vec![deep.clone()],
+        )
+        .expect("a viewed one-level expansion is projection evidence");
         assert_eq!(
             projected.project(
                 reader,
                 opening.loan,
-                &composite("other", false),
+                &other_view,
+                &other_evidence,
                 deep.clone()
             ),
             Err(LoanRefusal::MissingLoanBinding)
         );
         assert_eq!(
-            projected.project(reader, opening.loan, &nested_view, memory(0, 1, true)),
+            projected.project(
+                reader,
+                opening.loan,
+                &nested_view,
+                &evidence,
+                memory(0, 1, true)
+            ),
             Err(LoanRefusal::UnsupportedResource)
+        );
+        // The evidence must expand the very parent the loan permits, and the
+        // child must be one that expansion contains (F4 in fix-views).
+        assert_eq!(
+            projected.project(
+                reader,
+                opening.loan,
+                &nested_view,
+                &other_evidence,
+                deep.clone()
+            ),
+            Err(LoanRefusal::InvalidEvidence),
+            "evidence for another composite cannot authorize this parent"
+        );
+        let sibling =
+            CResourceFact::view_memory(memory(4, 5, true).memory_range().unwrap().clone());
+        assert_eq!(
+            projected.project(reader, opening.loan, &nested_view, &evidence, sibling),
+            Err(LoanRefusal::MissingBacking),
+            "a child the checked expansion does not contain is refused"
         );
         let transfer = projected
             .transfer(opening.root_share, reader, owner)
@@ -4313,9 +4445,289 @@ mod tests {
         let end = projected.end(opening.scope, owner).unwrap();
         let ended = projected.apply(&end).unwrap();
         assert_eq!(
-            ended.project(owner, opening.loan, &nested_view, deep),
+            ended.project(owner, opening.loan, &nested_view, &evidence, deep),
             Err(LoanRefusal::ScopeEnded)
         );
+    }
+
+    /// A projection is derived read-only authority: it keeps the ledger
+    /// identity, changes only what the loan permits, and mints no share, no
+    /// scope, and no recovery right. No transition is reachable from a
+    /// projected description alone (the identity rule on `project`, F4).
+    #[test]
+    fn a_projection_mints_no_share_and_keeps_the_ledger_identity() {
+        let (ledger, owner, reader) = participants();
+        let head = composite("cell", true);
+        let support = backing(&head);
+        let nested = composite("nested", true);
+        let backing_pieces =
+            CompositeLoanBacking::from_checked_expansion(support, head.clone(), vec![nested])
+                .unwrap();
+        let opening = ledger
+            .lend_composite(owner, reader, support, head, backing_pieces)
+            .unwrap();
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        let assumptions = PureFactContext::new();
+        let nested_view = composite("nested", false);
+        let deep = CResourceFact::view_memory(memory(0, 1, true).memory_range().unwrap().clone());
+        let describe = |viewed: CResourceFact| StableViewDescription {
+            loan: opening.loan,
+            support,
+            viewed,
+        };
+        let evidence = CompositeProjectionEvidence::from_checked_expansion(
+            nested_view.clone(),
+            vec![deep.clone()],
+        )
+        .unwrap();
+        let projected = ledger
+            .project(reader, opening.loan, &nested_view, &evidence, deep.clone())
+            .unwrap();
+        // Equal ledgers, different derived descriptions: identity tracks
+        // authority-changing transitions only.
+        assert_eq!(projected, ledger);
+        assert!(!ledger.permits_view(
+            reader,
+            &describe(deep.clone()),
+            opening.root_share,
+            &assumptions
+        ));
+        assert!(projected.permits_view(
+            reader,
+            &describe(deep.clone()),
+            opening.root_share,
+            &assumptions
+        ));
+        let projected_binding = LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed: deep.clone(),
+        };
+        // The projection carries no share of its own, so every
+        // transition-bearing operation still needs the authority the loan
+        // already had: the borrower's share, the lender's close right, and
+        // the escrow's recovery right.
+        assert_eq!(
+            projected.reborrow(projected_binding.clone(), owner, reader),
+            Err(LoanRefusal::MissingLoanBinding),
+            "a projected description does not hand its holder's share to another participant"
+        );
+        assert_eq!(
+            projected.validate_view_binding(projected_binding, owner),
+            Err(LoanRefusal::MissingLoanBinding)
+        );
+        assert_eq!(
+            projected.lend(owner, reader, support, deep.clone()),
+            Err(LoanRefusal::NotOwnership),
+            "a projected view is not ownership to lend"
+        );
+        assert_eq!(
+            projected.transfer(opening.root_share, owner, reader),
+            Err(LoanRefusal::WrongHolder)
+        );
+        assert_eq!(
+            projected.end(opening.scope, reader),
+            Err(LoanRefusal::WrongHolder)
+        );
+        assert_eq!(
+            projected.recover(opening.loan, owner),
+            Err(LoanRefusal::ScopeStillActive)
+        );
+        assert!(projected.invariant_holds());
+    }
+
+    /// A reborrow is authorized by one description, so the child loan
+    /// permits that description alone: it cannot describe the parent's head
+    /// or a sibling child of it (F5 in fix-views).
+    #[test]
+    fn a_reborrow_narrows_to_the_description_that_authorized_it() {
+        let (ledger, owner, reader) = participants();
+        let borrower = ledger.fresh_participant().unwrap();
+        let assumptions = PureFactContext::new();
+        let head = composite("cell", true);
+        let support = backing(&head);
+        let sibling = memory(0, 4, true);
+        let nested = composite("nested", true);
+        let backing_pieces = CompositeLoanBacking::from_checked_expansion(
+            support,
+            head.clone(),
+            vec![sibling.clone(), nested],
+        )
+        .unwrap();
+        let opening = ledger
+            .lend_composite(owner, reader, support, head.clone(), backing_pieces)
+            .unwrap();
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        let head_view = composite("cell", false);
+        let sibling_view = CResourceFact::view_memory(sibling.memory_range().unwrap().clone());
+        let nested_view = composite("nested", false);
+        let deep = CResourceFact::view_memory(memory(8, 9, true).memory_range().unwrap().clone());
+        let evidence = CompositeProjectionEvidence::from_checked_expansion(
+            nested_view.clone(),
+            vec![deep.clone()],
+        )
+        .unwrap();
+        let ledger = ledger
+            .project(reader, opening.loan, &nested_view, &evidence, deep.clone())
+            .unwrap();
+        let parent = LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed: nested_view.clone(),
+        };
+        let child = ledger.reborrow(parent, reader, borrower).unwrap();
+        let ledger = ledger.apply(&child.transition).unwrap();
+        assert!(ledger.invariant_holds());
+        let describe = |viewed: CResourceFact| StableViewDescription {
+            loan: child.loan,
+            support,
+            viewed,
+        };
+        assert!(ledger.permits_view(
+            borrower,
+            &describe(nested_view),
+            child.root_share,
+            &assumptions
+        ));
+        for wider in [head_view, sibling_view, deep.clone()] {
+            assert!(
+                !ledger.permits_view(borrower, &describe(wider), child.root_share, &assumptions),
+                "a child scope reborrowed from one description cannot describe the rest of the parent loan"
+            );
+        }
+        // A nested composite child has no byte backing of its own; the
+        // parent entry keeps protecting those bytes, and the child is still
+        // counted by the barrier predicate.
+        let child_record = ledger.storage.data.loans.get(&child.loan).unwrap();
+        assert!(child_record.memory_backing.is_empty());
+        assert_eq!(
+            ledger.permits_memory_access_with_assumptions(
+                sibling.memory_range().unwrap(),
+                &assumptions
+            ),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        let transfer = ledger.transfer(child.root_share, borrower, reader).unwrap();
+        let ledger = ledger.apply(&transfer).unwrap();
+        let end = ledger.end(child.scope, reader).unwrap();
+        let ledger = ledger.apply(&end).unwrap();
+        assert!(ledger.invariant_holds());
+        assert!(ledger.has_active_memory_loans());
+        assert_eq!(
+            ledger.permits_memory_access_with_assumptions(
+                sibling.memory_range().unwrap(),
+                &assumptions
+            ),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        // The same holds for a reborrow of a projected child: it authorizes
+        // that description and nothing else of the loan it came from.
+        let projected_parent = LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed: deep.clone(),
+        };
+        let grandchild = ledger.reborrow(projected_parent, reader, borrower).unwrap();
+        let ledger = ledger.apply(&grandchild.transition).unwrap();
+        assert!(ledger.invariant_holds());
+        let describe = |viewed: CResourceFact| StableViewDescription {
+            loan: grandchild.loan,
+            support,
+            viewed,
+        };
+        assert!(ledger.permits_view(
+            borrower,
+            &describe(deep),
+            grandchild.root_share,
+            &assumptions
+        ));
+        for wider in [
+            composite("cell", false),
+            CResourceFact::view_memory(sibling.memory_range().unwrap().clone()),
+            composite("nested", false),
+        ] {
+            assert!(
+                !ledger.permits_view(
+                    borrower,
+                    &describe(wider),
+                    grandchild.root_share,
+                    &assumptions
+                ),
+                "a reborrow of one projected child cannot describe the head or a sibling"
+            );
+        }
+    }
+
+    /// A reborrow of a memory view protects exactly the viewed bytes: it
+    /// registers the viewed range and nothing else of the parent's backing,
+    /// and ending it leaves the parent's own ranges protected (F5).
+    #[test]
+    fn a_reborrow_of_a_memory_view_protects_exactly_the_viewed_bytes() {
+        let (ledger, owner, reader) = participants();
+        let borrower = ledger.fresh_participant().unwrap();
+        let assumptions = PureFactContext::new();
+        let head = composite("cell", true);
+        let support = backing(&head);
+        let viewed_piece = memory(0, 4, true);
+        let other_piece = memory(8, 12, true);
+        let backing_pieces = CompositeLoanBacking::from_checked_expansion(
+            support,
+            head.clone(),
+            vec![viewed_piece.clone(), other_piece.clone()],
+        )
+        .unwrap();
+        let opening = ledger
+            .lend_composite(owner, reader, support, head, backing_pieces)
+            .unwrap();
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        let viewed = CResourceFact::view_memory(viewed_piece.memory_range().unwrap().clone());
+        let parent = LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed: viewed.clone(),
+        };
+        let child = ledger.reborrow(parent, reader, borrower).unwrap();
+        let ledger = ledger.apply(&child.transition).unwrap();
+        assert!(ledger.invariant_holds());
+        let child_record = ledger.storage.data.loans.get(&child.loan).unwrap();
+        assert_eq!(
+            child_record.memory_backing,
+            vec![viewed_piece.memory_range().unwrap().clone()],
+            "the child protects the viewed range, not the parent's other pieces"
+        );
+        assert_eq!(child_record.permitted, vec![viewed]);
+        for range in [
+            viewed_piece.memory_range().unwrap(),
+            other_piece.memory_range().unwrap(),
+        ] {
+            assert_eq!(
+                ledger.permits_memory_access_with_assumptions(range, &assumptions),
+                Err(LoanRefusal::ActiveDependency)
+            );
+        }
+        let transfer = ledger.transfer(child.root_share, borrower, reader).unwrap();
+        let ledger = ledger.apply(&transfer).unwrap();
+        let end = ledger.end(child.scope, reader).unwrap();
+        let ledger = ledger.apply(&end).unwrap();
+        assert!(ledger.invariant_holds());
+        for range in [
+            viewed_piece.memory_range().unwrap(),
+            other_piece.memory_range().unwrap(),
+        ] {
+            assert_eq!(
+                ledger.permits_memory_access_with_assumptions(range, &assumptions),
+                Err(LoanRefusal::ActiveDependency),
+                "the parent composite loan still protects its whole frontier"
+            );
+        }
     }
 
     /// A reborrow of a byte-less composite loan is counted and uncounted by

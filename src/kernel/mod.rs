@@ -81,6 +81,7 @@ pub(crate) use eval::{load_variable_registry_len, with_load_variable_registry_ca
 pub(crate) use functions::ResourceModelArmDecision;
 pub(crate) use functions::ResourceModelArmSelection;
 pub(crate) use functions::arm_binding_program_spelling;
+pub(crate) use functions::checked_composite_projection_evidence;
 pub(crate) use functions::decide_resource_model_arm;
 pub(crate) use functions::establish_resource_derived_loop_frames;
 pub(crate) use functions::initialize_c_function_globals;
