@@ -72,7 +72,7 @@ Specification and proof:
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-## P2: after launch (25)
+## P2: after launch (26)
 
 - [Make `step` simple across a call precondition](simplify-step.md)
 
@@ -97,6 +97,10 @@ C language coverage:
 - [Model variadic functions](variadic-functions.md)
 - [Model concurrency and atomics](concurrency-and-atomics.md)
 - [Model signed eight-bit integers](signed-byte-integers.md)
+
+C++ project coverage:
+
+- [Verify Bitcoin Core `MoneyRange` under a supported Clang profile](bitcoin-core-money-range-cpp.md)
 
 Semantics and reasoning:
 
