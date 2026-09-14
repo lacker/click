@@ -2,7 +2,7 @@
 //!
 //! This adapter consumes Clang's already-typed nodes. It does not print C++ as
 //! C, invoke the C parser, or infer types from source spellings. The first
-//! slice represents a mutable `int&` as an address-valued kernel parameter;
+//! slice represents `int&` and `const int&` as address-valued kernel parameters;
 //! every C++ lvalue-to-rvalue conversion becomes a typed load through that
 //! address and assignment writes the referent without reseating the reference.
 
@@ -75,11 +75,14 @@ fn lower_parameter(parameter: &CppPlace) -> Result<crate::kernel::CParameter, St
             bits: 8,
             is_const: false,
         } => Ok(c_parameter(parameter.name.clone(), CType::Bool)),
-        CppType::LvalueReference { pointee } if is_mutable_int32(pointee) => {
-            Ok(c_parameter(parameter.name.clone(), CType::Int32Pointer))
+        CppType::LvalueReference { pointee }
+            if is_mutable_int32(pointee) || is_const_int32(pointee) =>
+        {
+            Ok(c_parameter(parameter.name.clone(), CType::Int32Pointer)
+                .with_pointee_constant(is_const_int32(pointee)))
         }
         _ => Err(format!(
-            "C++ parameter `{}` is outside direct by-value `bool` and mutable `int&` lowering",
+            "C++ parameter `{}` is outside direct by-value `bool`, `int&`, and `const int&` lowering",
             parameter.name
         )),
     }
@@ -155,7 +158,8 @@ impl LoweringContext<'_> {
                     },
                 ) => Ok(c_variable(place.name.clone())),
                 (CppType::LvalueReference { pointee }, value_type)
-                    if is_mutable_int32(pointee) && is_mutable_int32(value_type) =>
+                    if (is_mutable_int32(pointee) || is_const_int32(pointee))
+                        && is_mutable_int32(value_type) =>
                 {
                     let pointer = self.lower_place(place)?;
                     let occurrence = self.next_load_occurrence;
@@ -223,6 +227,17 @@ fn is_mutable_int32(value_type: &CppType) -> bool {
             bits: 32,
             signed: true,
             is_const: false,
+        }
+    )
+}
+
+fn is_const_int32(value_type: &CppType) -> bool {
+    matches!(
+        value_type,
+        CppType::Integer {
+            bits: 32,
+            signed: true,
+            is_const: true,
         }
     )
 }

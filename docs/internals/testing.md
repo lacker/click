@@ -85,12 +85,13 @@ The C++ fixtures refresh typed artifacts for header-free C++20 functions, then
 make the exporter unavailable and load the artifacts again. This checks the
 intended phase boundary: explicit refresh executes Clang, while ordinary
 loading validates only the config, source, lock, and stored semantic artifact.
-They verify a linear mutable-reference function and a by-value-boolean branch
-with an early return through the shared prepared-input path. Focused coverage
-exercises source/signature mismatch diagnostics, smart-tactic inventory,
-expansion and reverification, and the retained audit session against the same
-immutable artifact. Missing Clang development tooling fails the gate, and
-unsupported C++ does not fall back to the C parser.
+They verify a linear mutable-reference function, a by-value-boolean branch with
+an early return, and a mutable/const reference pair that explicitly aliases one
+owned cell through the shared prepared-input path. Focused coverage exercises
+source/signature mismatch diagnostics, const-write rejection, smart-tactic
+inventory, expansion and reverification, and the retained audit session against
+the same immutable artifact. Missing Clang development tooling fails the gate,
+and unsupported C++ does not fall back to the C parser.
 
 ## What the gate runs
 

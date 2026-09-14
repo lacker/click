@@ -98,11 +98,12 @@ Loading through the C++ library boundary subsequently validates the source,
 lock, and typed artifact without locating or running Clang. This separation is
 intentional: compiler execution belongs to explicit refresh. The library
 lowers this exact artifact directly to the kernel execution vocabulary without
-generating C text or invoking the C parser. A mutable `int&` becomes an
-address-valued parameter; its reads and assignment become typed loads and a
-typed store of the referent, and signed addition retains the kernel's existing
-overflow check. The lowered value remains paired with the immutable semantic
-artifact so Clang declaration identities and source spans are not discarded.
+generating C text or invoking the C parser. An `int&` or `const int&` becomes an
+address-valued parameter with its pointee qualification preserved. Reads become
+typed loads, while only the mutable reference permits a typed store; signed
+addition retains the kernel's existing overflow check. The lowered value
+remains paired with the immutable semantic artifact so Clang declaration
+identities and source spans are not discarded.
 
 The first proof-facing interface uses existing Surface Click pointer syntax
 for the reference's one-cell mutable view:
@@ -131,8 +132,12 @@ rewritten-proof checks remain offline after refresh.
 The sibling `branch-return` integration fixture additionally checks by-value
 `bool`, a braced `if`, fallthrough, and an early return. The semantic artifact
 retains the structured branch and both return edges; Click does not flatten it
-into C text. Supported parameters are currently by-value `bool` and mutable
-`int&`, and selected functions still return `int`.
+into C text. The `const-reference-alias` fixture writes through an `int&` and
+reads through an aliased `const int&`, using one explicit `owns` resource.
+C++ `const` restricts access through that reference; it does not create a Click
+`views` resource or imply that aliases cannot write. Supported parameters are
+currently by-value `bool`, `int&`, and `const int&`, and selected functions
+still return `int`.
 
 Constructors, destructors, local declarations, calls, loops, additional
 functions, and broader C++ syntax remain outside this end-to-end subset.

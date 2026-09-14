@@ -178,9 +178,8 @@ private:
   std::optional<Json> lower_parameter(const clang::ParmVarDecl *parameter) {
     const auto *reference =
         parameter->getType()->getAs<clang::LValueReferenceType>();
-    const bool mutable_int_reference =
+    const bool int_reference =
         reference != nullptr &&
-        !reference->getPointeeType().isConstQualified() &&
         context_.hasSameType(reference->getPointeeType().getUnqualifiedType(),
                              context_.IntTy);
     const bool by_value_bool =
@@ -188,9 +187,9 @@ private:
         context_.hasSameType(parameter->getType().getUnqualifiedType(),
                              context_.BoolTy) &&
         !parameter->getType().isConstQualified();
-    if (!mutable_int_reference && !by_value_bool) {
+    if (!int_reference && !by_value_bool) {
       fail(parameter->getLocation(),
-           "the supported C++ parameter must be a by-value bool or mutable int& parameter");
+           "the supported C++ parameter must be a by-value bool, int&, or const int& parameter");
       return std::nullopt;
     }
     auto value_type =

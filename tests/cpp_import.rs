@@ -24,6 +24,10 @@ const SOURCE: &str = include_str!("fixtures/cpp-verification/increment/increment
 const SIDECAR: &str = include_str!("fixtures/cpp-verification/increment/increment.click");
 const BRANCH_SOURCE: &str = include_str!("fixtures/cpp-verification/branch-return/choose.cpp");
 const BRANCH_SIDECAR: &str = include_str!("fixtures/cpp-verification/branch-return/choose.click");
+const CONST_REFERENCE_SOURCE: &str =
+    include_str!("fixtures/cpp-verification/const-reference-alias/write_then_read.cpp");
+const CONST_REFERENCE_SIDECAR: &str =
+    include_str!("fixtures/cpp-verification/const-reference-alias/write_then_read.click");
 
 struct Project {
     directory: PathBuf,
@@ -38,6 +42,14 @@ impl Project {
 
     fn branch_return() -> Self {
         Self::with_fixture("choose.cpp", "choose", BRANCH_SOURCE)
+    }
+
+    fn const_reference_alias() -> Self {
+        Self::with_fixture(
+            "write_then_read.cpp",
+            "write_then_read",
+            CONST_REFERENCE_SOURCE,
+        )
     }
 
     fn with_fixture(source_name: &str, function: &str, source: &str) -> Self {
@@ -295,6 +307,116 @@ fn locked_cpp_branch_and_early_return_verify_through_the_shared_sidecar_path() {
         .expect("retained audit session must accept the expanded branch proof");
 }
 
+#[test]
+fn const_reference_preserves_qualification_and_may_alias_a_mutable_reference() {
+    let project = Project::const_reference_alias();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, CONST_REFERENCE_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("refresh the const-reference C++ import explicitly");
+    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+
+    let import = load_import(&project.config()).expect("load const-reference artifact offline");
+    let source = &import.export().function;
+    assert_eq!(source.parameters.len(), 2);
+    assert_eq!(
+        source.parameters[0].value_type,
+        CppType::LvalueReference {
+            pointee: Box::new(CppType::Integer {
+                bits: 32,
+                signed: true,
+                is_const: false,
+            }),
+        }
+    );
+    assert_eq!(
+        source.parameters[1].value_type,
+        CppType::LvalueReference {
+            pointee: Box::new(CppType::Integer {
+                bits: 32,
+                signed: true,
+                is_const: true,
+            }),
+        }
+    );
+
+    let lowered = lower_import(&import).expect("lower both C++ reference qualifiers directly");
+    let parameters = lowered.kernel_function().parameters();
+    assert_eq!(parameters[0].c_type(), CType::Int32Pointer);
+    assert!(!parameters[0].pointee_is_constant());
+    assert_eq!(parameters[1].c_type(), CType::Int32Pointer);
+    assert!(parameters[1].pointee_is_constant());
+
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let inputs = read_c_inputs(&sidecar, &click_source).unwrap();
+    let CInput::PreparedCpp(import) = inputs else {
+        panic!("language=c++ must select the C++ prepared-input path")
+    };
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    let verified = verify_cpp_prepared_project(&click_project, &import)
+        .expect("one owned cell should authorize an aliased mutable write and const read");
+    assert_eq!(
+        verified
+            .iter()
+            .map(|theorem| match theorem.claim {
+                VerifiedClaim::Ensure { index, .. } => index,
+            })
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2],
+        "the proof returns ownership and checks both postconditions without an inferred view"
+    );
+
+    let sites = cpp_prepared_project_smart_tactic_source_sites(&click_project, &import).unwrap();
+    assert_eq!(
+        sites
+            .iter()
+            .map(|site| site.tactic_name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["execute", "simp"]
+    );
+    let execute = cpp_prepared_project_tactic_source_position(
+        &click_project,
+        &import,
+        "write_then_read.contract",
+        0,
+    )
+    .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .expect("expand the aliased reference execution into a checkable proof");
+    let rewritten = click_project.with_entry_source(expanded.clone());
+    verify_cpp_prepared_project(&rewritten, &import)
+        .expect("the expanded const-reference proof must reverify");
+    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
+        .expect("retain the const-reference verification environment");
+    let next = cpp_prepared_project_tactic_source_position(
+        &rewritten,
+        &import,
+        "write_then_read.contract",
+        0,
+    )
+    .unwrap();
+    session
+        .verify_at_project(&expanded, next.line, next.column)
+        .expect("retained audit session must accept the expanded const-reference proof");
+
+    let mutable_signature =
+        CONST_REFERENCE_SIDECAR.replace("const int32* readable", "int32* readable");
+    fs::write(&sidecar, &mutable_signature).unwrap();
+    let mismatched_project = read_click_project(&sidecar, &mutable_signature).unwrap();
+    let error = verify_cpp_prepared_project(&mismatched_project, &import).unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("signature mismatch for `write_then_read` parameter 2"),
+        "{}",
+        error.message()
+    );
+}
+
 fn contains_if(statement: &CStatement) -> bool {
     match statement {
         CStatement::If { .. } => true,
@@ -534,7 +656,10 @@ fn cpp_frontend_rejects_unsupported_source_without_a_c_fallback() {
     )
     .unwrap();
     let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("mutable int& parameter"), "{error}");
+    assert!(
+        error.contains("by-value bool, int&, or const int& parameter"),
+        "{error}"
+    );
     assert!(!project.artifact().exists());
 
     fs::write(
@@ -545,6 +670,16 @@ fn cpp_frontend_rejects_unsupported_source_without_a_c_fallback() {
     let error = refresh_import(&project.config()).unwrap_err();
     assert!(error.contains("increment.cpp:8"), "{error}");
     assert!(error.contains("unsupported statement"), "{error}");
+    assert!(!project.artifact().exists());
+
+    fs::write(
+        project.source(),
+        "int increment(const int& value) noexcept {\n    value = 7;\n    return value;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("increment.cpp:2"), "{error}");
+    assert!(error.contains("const-qualified"), "{error}");
     assert!(!project.artifact().exists());
 }
 

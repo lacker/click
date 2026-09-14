@@ -194,11 +194,11 @@ impl CppFunction {
                     require_bool(&parameter.value_type, false, "by-value parameter")?;
                 }
                 CppType::LvalueReference { pointee } => {
-                    require_int32(pointee, false, "reference pointee")?;
+                    require_int32(pointee, true, "reference pointee")?;
                 }
                 _ => {
                     return Err(
-                        "the supported C++ parameters are by-value `bool` and mutable `int&`"
+                        "the supported C++ parameters are by-value `bool`, `int&`, and `const int&`"
                             .into(),
                     );
                 }
@@ -312,7 +312,7 @@ impl CppExpression {
                 let place_type = validate_place_reference(place, places, logical_source)?;
                 match place_type {
                     CppType::LvalueReference { pointee } => {
-                        require_int32(pointee, false, "loaded reference pointee")?;
+                        require_int32(pointee, true, "loaded reference pointee")?;
                         require_int32(value_type, false, "loaded value type")
                     }
                     CppType::Boolean { .. } => {
