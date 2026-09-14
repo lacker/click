@@ -350,19 +350,130 @@ Latent items surfaced, to settle before step 6:
   bytes) and `augment_rotate_callback_child_read` (separation only provable
   through a folded recursive owner) also wait there.
 
-### 4. Design and implement recursive composite views
+### 4. Recursive and nested composite views (designed 2026-09-13)
 
-Failure class 2. Write the design for a distinct opaque recursive capability
-with an enforcing write/lifetime rule, or an explicit reasoned refusal, have
-it adversarially reviewed, then implement it. Required for the rbtree launch
-path; an unsupported result does not finish this step.
+**Problem.** `views R(x)` where `R`'s body contains another composite
+(`contains list(node->next)`, `contains shape(node->left)`) is refused at
+contract entry ("this resource shape is outside stable-view support") and at
+calls ("nested or undecidable composite loan backing is unsupported").
+Today a composite loan escrows the exact head fact and reduces the body one
+level to primitive memory and token pieces, which populate the write index
+and the loan's `permitted` set. A nested child is not primitive, and for a
+recursive definition the primitive footprint is not enumerable at all.
 
-### 5. Design and implement fact-bearing composite bodies
+**Protection argument.** The write index is not what protects a folded
+composite. Every byte under a folded head is reachable only by unfolding
+that head, which needs the owned head fact, and the escrow removes that
+fact from the usable context. Everything else in the context is separate
+from the head by context validity (star), and a callee's produced resources
+compose under the same rule, so no owner of memory under the head can
+appear while the head is in escrow. This holds at every depth without
+enumeration, exactly as it holds today for every folded owner nobody has
+lent. The one-level index stays as defense in depth for memory that is
+legitimately exposed beside its head; today only the population-body
+composition does that, and lending such a head is refused as a second
+route to escrowed bytes (law 1). So recursion adds nothing to enumerate.
 
-Failure class 3. Record the exact checked facts and the stable memory and
-resource dependencies that justify reusing them across the loan (D7, D12),
-have the design adversarially reviewed, then implement it. Removing the
-current guard alone is unsound.
+**Design.**
+
+1. `CompositeLoanBacking` and `BorrowedContractInputBacking` admit nested
+   composite children as permitted view descriptions with no memory backing
+   of their own; primitive children keep entering the index. Instance
+   children stay refused (an exclusive instance cannot be viewed, D12).
+   Viewed children in a body are step 5b. A guarded body whose condition the
+   path cannot decide stays opaque: the head alone is permitted until a
+   path decides it, as the expansion already does.
+2. A new ledger transition `Project` (the D5 "Project description" row)
+   extends a loan's `permitted` set by one checked child projection of an
+   already-permitted composite description. The surface `unfold`, `observe`,
+   and `open` of a viewed composite issue it with the kernel expansion as
+   evidence, bound to the predecessor ledger identity like every transition;
+   the child bindings they already create validate against the extended
+   set. `permitted` thus becomes recursive by explicit checked steps rather
+   than by enumeration, and the certificate pays for exactly the unfolds
+   the proof performs. `End` and `Recover` are unchanged: recovery restores
+   the exact head.
+3. Separation inside one composite. Two requirements that are both pieces
+   of one unfolded composite body (a field of the head node and a field
+   reached through `contains`) are separate by that body's validity, the
+   same star that keeps two owners apart. `candidate_memory_ranges_proven_separate`
+   may consult that relation when both ranges are checked pieces of one
+   expansion; it may not assume it for ranges from different resources.
+   This is what `augment_rotate_callback_child_read` needs.
+4. The root installer uses the same backing rule as the planner.
+
+**Regressions.** R14 and R16 with a two-level list and a recursive shape:
+read through a nested viewed child after two projections; `open` of a
+viewed body exposes no ownership; recovery after return restores the head.
+Negatives: a projection of a fact the definition does not contain, a
+projection after the scope ended, a `Project` whose evidence names another
+loan or predecessor, an instance child, and a lend whose caller context
+exposes a body piece beside the head. Unblocks the `augment_rotate_callback*`
+fixtures, `c_decreases_resource_*`, `recursive_c_resources`,
+`recursive_conditional_resource`, and the linked-list, binary-tree, arena,
+ring-buffer, marked-linked-list, recursive-zero-list, and
+allocated-linked-list examples, subject to their other steps.
+
+### 5. Fact-bearing bodies and composites that package views (designed 2026-09-13)
+
+**5a. Facts in a lent body.** The planner refuses any composite whose
+definition has `fact` clauses ("composite body facts are unsupported in
+stable loan backing"). The refusal is unnecessary under the current ledger:
+recovery restores the exact escrowed head, not a re-fold, so its facts are
+re-asserted precisely as they were folded; the body's memory and tokens are
+stable for the whole loan (escrow plus index); and definition validation
+restricts a fact to the body's own footprint, so nothing a fact reads can
+change while it is lent. On the borrower's side `observe` and `unfold` of
+the viewed composite publish the facts as observations carrying the loan
+dependency (the V12 capture), and a published fact is a proposition about
+the snapshot it was read at, so after the loan ends it remains historical
+rather than a current-memory claim. Design: lift the refusal for ordinary
+composites; keep it for counted population bodies, whose facts can depend
+on a quantity the caller may consume outside the loan (D12). Regressions:
+R15 positive (view a fact-bearing composite, recover, mutate, refold with
+the fact re-proved), the V12 negatives rerun on a lent body (a fact reused
+after scope end as a current-memory claim is refused), and a counted body
+still refused. Unblocks `composite_resource_view_then_mutate`,
+`composite_unfold_many_snapshots`, `frame_many_irrelevant_snapshots`,
+`opaque_calls_preserve_public_store_fact`, and the borrowed-slice,
+detachable-buffer, owned-string, owned-vector, owned-split-buffer, and
+owned-segmented-buffer examples.
+
+**5b. Composites whose body contains a view.** `input_cursor(owner)` owns
+its fields and `views readable_input(owner->data, owner->len)`. Folding it
+while that view is loan-bound is refused ("cannot package a loan-backed
+viewed body as an owned composite"). D7 asks for the opposite: the fold
+captures the dependency bundle. Design: (i) a fold whose body contains a
+bound view produces an owned head whose occurrence carries that binding,
+and unfolding it returns the binding to the child, using the dependency
+machinery that already serves viewed heads; (ii) such a head is not
+independent authority: it cannot be lent as an escrow head, and a call that
+requires a view of it reborrows the underlying loan; (iii) at call return, a
+produced or returned resource carrying a dependency on the call's child
+scope is rebased to the caller's outer binding when the view was a reborrow
+of the caller's view (the preserved-outer route extended to packaged
+views), and is refused as an escaping loan when the view was lent from the
+caller's owner, because recovery would leave a live share inside the
+returned resource (D8's output row); (iv) `End` of a scope whose share is
+held inside a folded owner is therefore never reachable, since the return
+check refuses first. Regressions: R15 and R16 on the fold and unfold, the
+rebase at return, and the escaping refusal with a concrete caller.
+Unblocks the input-cursor example.
+
+**5c. Counted populations.** Two items stay open for a decision at review:
+`owns pool_slot(pool)` with a symbolic quantity is refused by the planner
+(bounded-pool), and `resource_population_split_body_survives_view` holds a
+population body beside its folded population by design and is refused as a
+second route to escrowed bytes. The proposal is that lending a population
+whose body is exposed lends the exposed pieces under the same loan, so
+there is one route; the alternative is to keep the refusal and migrate the
+fixture.
+
+**Order and ownership.** 5a first (smallest change, largest corpus effect),
+then 4 (ledger `Project` transition, backing rules, root, separation rule),
+then 5b, then 5c. The protection argument in 4 and the restoration argument
+in 5a are the two claims an adversarial review should attack before
+implementation; step 6 re-reviews the implementation.
 
 ### 6. Review the complete change adversarially
 
