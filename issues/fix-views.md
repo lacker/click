@@ -430,6 +430,81 @@ check; an opaque footprint gets "prove separation or refuse", never
    failed to prove overlap. `augment_rotate_callback_child_read` must be
    re-examined under rule 3 once implemented.
 
+**Second review (2026-09-13) and its verdict.** A second adversarial
+review attacked the corrected rules and found the design not implementable
+as written. Its load-bearing findings, all traced against the code:
+
+- Rule 3(a) is an axiom, not a derivation. Composite facts take no part in
+  context validity, in the memory indexes, in `CResourceComposition`
+  separation, or in the separation oracle, so nothing maintains the
+  partition the rule records. `views list(a); owns list(a->next)` (or
+  `owns a->next->value`) is accepted at entry today, 3(a) would record the
+  two as separate, 3(d) would pass that to the unfolded pieces, and the
+  store would be admitted while the view frames the read. The first
+  review's counterexample, re-admitted by its own repair.
+- Rule 3(d) launders separation: `expand_composite_resource_fact_with_children`
+  lets an unrelated ambient owner stand in for a body child it covers, so
+  "each of its pieces" can include an owner that was never checked.
+- Rule 2's barriers key on `active_memory_loans`, which an opaque loan
+  with no memory backing never increments; every fail-closed check would
+  report no active loans.
+- Rule 2 has no choke point. `CState::set_memory` consults no ledger and
+  has about a hundred call sites; the ledger is consulted from eight
+  hand-placed ones. Unguarded today: `free_heap_block` reached through a
+  verified call's allocation delta (a `free` under a lent composite that
+  no path can refuse), `with_call_memory_havoc` (no ledger parameter),
+  `abstract_loop_exit_memory`, and the aggregate copy in
+  `execute_c_call_assign_paths`. The loop-head havoc validates the owned
+  footprint and erases the loaned cells with `ledger: None`.
+- Rule 4 binds identities that do not exist (there is no support
+  generation and no transition stores a memory snapshot), and the guard it
+  depends on is a resource-context function, not a memory function.
+- 5a's gate does not see what 5a wants to exclude: `dynamic_body_fact_dependency`
+  returns no dependency for separation, containment, composition,
+  counts, liveness, and the pointer of a `CMemoryLoads` proposition. A
+  body `fact separate(p, q)` restored by `Recover` would carry a
+  separation premise out of the context it was proved in, and under rule 3
+  a separation premise is a write license.
+- 5b(v) guards the return context only; a packaged head can leave by
+  `consumes` with the share inside it. 5b(iv)'s rebase keys on the scope,
+  not on the backing entry the packaged description came from.
+- 3(b) as written refuses heap-versus-heap, which the list and arena
+  examples need; restate it as "a block allocated after the loan was
+  installed is separate from the loan's footprint", sound because rule 2
+  forbids the frees and pointer rewrites that could move the footprint.
+
+Things it tried and could not break: retargeting a premise by rewriting
+the pointer its base was loaded from (fails closed at fact transport),
+smuggling a premise through a branch join, projecting a child from an
+equal ambient occurrence on the viewed path, minting a child binding from
+the head alone, turning a projection into a write target, and reading
+through a projection after scope end.
+
+**Consequence: reordered plan.** Step 4 has two prerequisites that are
+larger than step 4 itself, and both fix holes that exist today at depth
+one, not only under the new design:
+
+- **4.0a One checked memory-delta transition.** Every store, havoc, free,
+  realloc, and aggregate copy, including those applied through verified
+  call rules, loop heads and exits, and branch abstraction, passes through
+  one ledger-consulting validator, and the ledger keeps an opaque-loan
+  count independent of `memory_backing`. The eight hand-placed checks
+  become one. This is step-6-grade soundness work and should land first.
+- **4.0b Composite footprints in the resource algebra.** A folded
+  composite participates in context validity (one-level footprint against
+  memory owners, refusing the `owns list(a); owns a->next->value` context)
+  and in composition-derived separation, so that a partition between an
+  owned clause and a viewed composite clause can be derived at call
+  planning and only assumed at the borrowed-input root. This subsumes the
+  "latent resource-algebra items" below.
+
+With those in place the corrected rules stand, amended by the review: 3(a)
+derived at planning and assumed only at the root; 3(b) as install-time
+freshness; 3(d) restricted to occurrences the expansion produced, keyed by
+occurrence; rule 4 binding the resource-context identity the guard and
+witnesses were resolved in, once such an identity exists; 5b accounting
+dependencies at transfer time and rebasing per backing entry.
+
 **Regressions.** R14 and R16 with a two-level list and a recursive shape:
 read through a nested viewed child after two projections; `open` of a
 viewed body exposes no ownership; recovery after return restores the head;
@@ -466,13 +541,18 @@ established what definition validation actually constrains: only memory
 reads, which must lie in the body's own `owns` or `views` segments. A fact
 may therefore also mention a resource count, a `loadable` or null-ness
 claim about a pointer, or memory covered by a body `views` clause, none of
-which the escrow and index stabilize. Design: gate on the lowered fact
-through the existing dynamic dependency check (`dynamic_body_fact_dependency`):
-a fact is admitted only if every current-memory load lies in a piece this
-loan escrows and indexes and the fact mentions no resource count,
-allocation-liveness claim, or viewed-body memory; any other fact keeps the
-refusal, with a diagnostic naming the dependency. Nested children with
-facts are inspected by the same rule at projection time, not only the head.
+which the escrow and index stabilize. Design, narrowed by the
+second review: a new admission predicate, not a reuse of
+`dynamic_body_fact_dependency`, with an explicit refusal list. A fact is
+admitted only if every proposition it lowers to is a memory load or an
+arithmetic or equality claim over loads whose ranges lie in a depth-one
+piece this loan escrows and indexes; it is refused if it mentions a
+resource count, `loadable` or any allocation-liveness claim, a `separate`
+or `contains` or composition claim, the pointer of a `CMemoryLoads`
+proposition outside the indexed pieces, viewed-body memory, or a pure
+function over pointers (already a hard error in the load collector).
+Facts on nested children wait for step 4's barrier. The diagnostic names
+the offending dependency.
 On the borrower's side `observe` and `unfold` publish admitted facts as
 observations carrying the loan dependency, and a published fact is a
 proposition about the snapshot it was read at, so after the loan it is
@@ -522,10 +602,11 @@ plan. Proposal: lending a population whose body is exposed lends the
 exposed pieces under the same loan, so there is one route; the alternative
 is to keep the refusal and migrate the fixture.
 
-**Order and ownership.** 5a first (smallest change, largest corpus effect),
-then 4, then 5b, then 5c. Rule 2's fail-closed polarity and rule 3's
-premises are the claims a second review should attack before
-implementation; step 6 re-reviews the implementation.
+**Order and ownership.** 5a in its narrowed form first (smallest change,
+largest corpus effect, no dependency on step 4); then 4.0a and 4.0b as
+prerequisites, each gated and reviewed on its own; then step 4's rules;
+then 5b and 5c. Two reviews have now attacked this design; step 6
+re-reviews the implementation.
 
 ### 6. Review the complete change adversarially
 
