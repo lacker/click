@@ -33,11 +33,18 @@ fn normal_state(paths: &[CStatementExecutionPath]) -> CState {
 }
 
 fn assert_loan_write_rejected(outcome: &CStatementOutcome) {
-    assert!(matches!(
-        outcome,
-        CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(message))
-            if message.contains("active stable loan")
-    ));
+    let CStatementOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)) = outcome else {
+        panic!("expected a loan refusal, got {outcome:?}");
+    };
+    assert_eq!(
+        diagnostic.category(),
+        crate::kernel::LoanRefusalCategory::ActiveDependency
+    );
+    assert_eq!(
+        diagnostic.operation(),
+        crate::kernel::LoanRefusalOperation::MemoryAccess
+    );
+    assert!(diagnostic.subject().conflicting_resource_fact().is_some());
 }
 
 #[test]

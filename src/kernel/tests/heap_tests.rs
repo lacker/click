@@ -20,11 +20,21 @@ fn active_heap_memory_loan(range: CMemoryRange) -> LoanLedger {
 }
 
 fn assert_heap_loan_write_rejected(outcome: &CStatementOutcome) {
-    assert!(matches!(
-        outcome,
-        CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(message))
-            if message.contains("active stable loan")
-    ));
+    let CStatementOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)) = outcome else {
+        panic!("expected a loan refusal, got {outcome:?}");
+    };
+    assert_eq!(
+        diagnostic.category(),
+        crate::kernel::LoanRefusalCategory::ActiveDependency
+    );
+    assert_eq!(
+        diagnostic.operation(),
+        crate::kernel::LoanRefusalOperation::MemoryAccess
+    );
+    // A lifetime-ending operation names the loan that still protects the
+    // allocation, not just the fact that some loan refused.
+    assert!(diagnostic.subject().conflicting_resource_fact().is_some());
+    assert!(diagnostic.subject().loan_id().is_some());
 }
 
 fn heap_allocation_paths() -> Vec<CStatementExecutionPath> {

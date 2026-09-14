@@ -2789,15 +2789,6 @@ impl CState {
         self
     }
 
-    pub(crate) fn permits_stable_loan_memory_access(
-        &self,
-        range: &CMemoryRange,
-    ) -> Result<(), crate::kernel::loans::LoanRefusal> {
-        self.loan_ledger
-            .as_ref()
-            .map_or(Ok(()), |ledger| ledger.permits_memory_access(range))
-    }
-
     /// The bounded explanation of a refused access, or `None` when the
     /// access is permitted or no ledger is active.
     pub(crate) fn stable_loan_memory_access_refusal(

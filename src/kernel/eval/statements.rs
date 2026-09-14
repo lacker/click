@@ -2232,10 +2232,8 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                     *pointee_constant,
                 ) {
                     Ok(state) => CStatementOutcome::Normal(state),
-                    Err(error) => {
-                        CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                            "local lifetime end conflicts with an active stable loan: {error:?}"
-                        )))
+                    Err(refusal) => {
+                        CStatementOutcome::RuntimeError(CRuntimeError::LoanRefusal(refusal))
                     }
                 }
             };
@@ -2250,9 +2248,9 @@ pub(in crate::kernel) fn execute_c_statement_paths(
         CStatement::DeclareAggregate { name, layout } => {
             let outcome = match declare_aggregate_local(state, name, layout) {
                 Ok(state) => CStatementOutcome::Normal(state),
-                Err(error) => CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
-                    format!("local lifetime end conflicts with an active stable loan: {error:?}"),
-                )),
+                Err(refusal) => {
+                    CStatementOutcome::RuntimeError(CRuntimeError::LoanRefusal(refusal))
+                }
             };
             vec![CStatementExecutionPath {
                 outcome,
@@ -3028,7 +3026,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
 fn local_declaration_pointer(
     state: &mut CState,
     name: &str,
-) -> Result<Pointer, crate::kernel::loans::LoanRefusal> {
+) -> Result<Pointer, crate::kernel::LoanRefusalDiagnostic> {
     let previous = state.locals.slot(name).cloned();
     if let Some(previous) = previous
         && previous.block.starts_with("local:")
@@ -3044,7 +3042,13 @@ fn local_declaration_pointer(
             end,
             1,
         );
-        state.permits_stable_loan_memory_access(&old_range)?;
+        if let Some(refusal) = state.stable_loan_memory_access_refusal(
+            &old_range,
+            &PureFactContext::default(),
+            crate::kernel::LoanRefusalOperation::MemoryAccess,
+        ) {
+            return Err(refusal);
+        }
         state.set_memory(state.memory.without_local_block(&previous.block));
         let lifetime = state.next_local_lifetime();
         *state = state
@@ -3063,7 +3067,7 @@ pub(in crate::kernel) fn declare_local(
     pointee_volatile: bool,
     constant: bool,
     pointee_constant: bool,
-) -> Result<CState, crate::kernel::loans::LoanRefusal> {
+) -> Result<CState, crate::kernel::LoanRefusalDiagnostic> {
     let mut state = state.clone();
     let pointer = local_declaration_pointer(&mut state, name)?;
     // A declared local's block is placed at its type's alignment; record it
@@ -3277,7 +3281,7 @@ pub(in crate::kernel) fn declare_aggregate_local(
     state: &CState,
     name: &str,
     layout: &CAggregateLayout,
-) -> Result<CState, crate::kernel::loans::LoanRefusal> {
+) -> Result<CState, crate::kernel::LoanRefusalDiagnostic> {
     let mut state = state.clone();
     let pointer = local_declaration_pointer(&mut state, name)?;
     register_block_alignment(&pointer.block, layout.alignment_bytes());
