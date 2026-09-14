@@ -1,28 +1,18 @@
-# A const callback table discharges three named field contracts
+# A const callback table supplies a packaged read-only suite
 
-`dummy_callbacks` binds the three fields of `struct rb_augment_callbacks` to
-the three no-op helpers with bare designators, the way `lib/rbtree.c` writes
-`static const struct rb_augment_callbacks dummy_callbacks = { .propagate =
-dummy_propagate, ... }`. `erase_dummy` passes `&dummy_callbacks` to the
-erase-shaped helper, and each of the helper's three requirements is discharged
-by concrete formation from the address the initializer named: `Propagate` from
-`&dummy_propagate`, `Copy` from `&dummy_copy` and `Rotate` from
-`&dummy_rotate`. The three contracts differ, so a swapped binding is a proof
-failure and not a signature coincidence;
-`mdtests/rb_augment_callbacks_rejects_mismatch.md` binds `.rotate` to
-`dummy_copy` and is refused.
+This uses the unchanged C from `rb_augment_callbacks_table.md`. The package
+contains read-only views of the three callback cells, together with their
+named contract facts; it does not claim write ownership of const storage.
+Explicit refinement theorems establish the concrete callback facts before
+folding. The caller and helper use matching field-level separation premises,
+so neither needs `object(&dummy_callbacks)`.
 
-This fixture states the three facts on the helper directly. The separate
-`mdtests/rb_augment_callbacks_const_suite.md` packages read-only field views and
-explicitly proved callback facts over the same unchanged C. An ownership-based
-package must not acquire write authority for this const table. That read-only
-package passes in the ordinary interpretation but still exposes a candidate
-stable-loan integration failure; see `issues/global-variables.md` and rbtree C6.
-
-The callbacks only `views` the links they talk about, which is what the no-op
-bodies actually do. An `owns` footprint on more than one of them cannot be
-used together with the resource form today: see the note in
-`mdtests/rb_augment_callbacks_helper.md`.
+This checks the local caller and helper contracts under their stated separation
+premises. It is not the complete Linux erase proof or a program-startup proof
+that derives those premises for arbitrary external arguments. The callback
+bodies remain no-ops; proving mutation-capable callbacks remains separate work.
+This fixture passes ordinary verification; its candidate stable-loan failure is
+tracked under rbtree C6 and fix-views, as recorded in `issues/global-variables.md`.
 
 ```c filename=rb_augment_callbacks_table.c
 struct node {
@@ -114,15 +104,41 @@ void dummy_rotate(struct node* old, struct node* new) {
     simp();
 }
 
+resource callback_suite(augment: const struct rb_augment_callbacks*) {
+    views augment->propagate;
+    views augment->copy;
+    views augment->rotate;
+    fact Propagate(augment->propagate);
+    fact Copy(augment->copy);
+    fact Rotate(augment->rotate);
+}
+
 void erase_augmented(struct node* node, struct node* parent,
                      const struct rb_augment_callbacks* augment) {
-    views object(augment);
-    requires loadable(augment->propagate);
-    requires loadable(augment->copy);
-    requires loadable(augment->rotate);
-    requires Propagate(augment->propagate);
-    requires Copy(augment->copy);
-    requires Rotate(augment->rotate);
+    views callback_suite(augment);
+    requires node != 0;
+    requires parent != 0;
+    requires separate(memory(augment->propagate[0..1]), memory(object(parent)));
+    requires separate(memory(augment->copy[0..1]), memory(object(parent)));
+    requires separate(memory(augment->rotate[0..1]), memory(object(parent)));
+    views parent->left;
+    views parent->right;
+    ensures parent->left == old(parent->left);
+    ensures parent->right == old(parent->right);
+} by {
+    open(callback_suite(augment)) {
+        execute();
+        simp();
+    }
+}
+
+void erase_dummy(struct node* node, struct node* parent) {
+    views dummy_callbacks.propagate;
+    views dummy_callbacks.copy;
+    views dummy_callbacks.rotate;
+    requires separate(memory(dummy_callbacks.propagate[0..1]), memory(object(parent)));
+    requires separate(memory(dummy_callbacks.copy[0..1]), memory(object(parent)));
+    requires separate(memory(dummy_callbacks.rotate[0..1]), memory(object(parent)));
     requires node != 0;
     requires parent != 0;
     views parent->left;
@@ -130,21 +146,19 @@ void erase_augmented(struct node* node, struct node* parent,
     ensures parent->left == old(parent->left);
     ensures parent->right == old(parent->right);
 } by {
+    apply(dummy_propagate_contract());
+    apply(dummy_copy_contract());
+    apply(dummy_rotate_contract());
+    fold(callback_suite(&dummy_callbacks));
     execute();
     simp();
 }
 
-void erase_dummy(struct node* node, struct node* parent) {
-    requires node != 0;
-    requires parent != 0;
-    views parent->left;
-    views parent->right;
-    ensures parent->left == old(parent->left);
-    ensures parent->right == old(parent->right);
-} by {
-    execute();
-    simp();
-}
+theorem dummy_propagate_contract() { ensures Propagate(&dummy_propagate) by { unfold(Propagate); simp(); } }
+
+theorem dummy_copy_contract() { ensures Copy(&dummy_copy) by { unfold(Copy); simp(); } }
+
+theorem dummy_rotate_contract() { ensures Rotate(&dummy_rotate) by { unfold(Rotate); simp(); } }
 ```
 
 ```expect

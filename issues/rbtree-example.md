@@ -506,7 +506,15 @@ verifier gaps. Depends on C3c.
 **C6. Augmented variants and callbacks.** `__rb_insert_augmented`,
 `rb_erase_augmented`, and the propagate/copy/rotate callbacks over an
 abstract augmentation. Depends on C3c and C5 and on the callback packaging
-in [memory-vs-resources.md](memory-vs-resources.md).
+in [memory-vs-resources.md](memory-vs-resources.md). The 2026-09-14 globals
+audit adds `mdtests/rb_augment_callbacks_const_suite.md`: the unchanged const
+callback-table caller and a package with read-only fields pass under ordinary
+semantics, but candidate stable loans refuse the helper call with `an exclusive
+instance inside a composite view is unsupported`. This final-semantics
+integration remains P1 here and in [fix-views.md](fix-views.md), even though the
+broader [global initializer issue](global-variables.md) is now P2. Keep the table
+const and preserve the callback guarantees; the no-op fixture is not evidence
+for the complete mutation-capable augmentation proof.
 
 **C4b. Traversals.** `rb_first`, `rb_last`, `rb_next`, `rb_prev` on the
 verbatim bodies. The assignment-expression parser/lowering prerequisite is

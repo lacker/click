@@ -1,304 +1,173 @@
-# Model file-scope objects, statics, and string literals
+# Extend static-storage initializers and string-literal coverage
 
-Array initialization parity: one-dimensional struct arrays now infer bounds
-from non-empty positional element groups at file scope and in function-local
-static storage. Function-local scalar statics accept inferred one-dimensional
-bounds and fixed or inferred multidimensional shapes. The
-`static_array_parity_*.md` regressions cover linkage, initialization, and
-persistent updates. Inferred element designators, multidimensional struct
-arrays, and uninitialized incomplete struct arrays remain unsupported.
+**Priority: P2. Audited 2026-09-14 at `c3283eb2`.** The original P1
+file-scope objects, statics, and basic string-literal milestone is delivered.
+This issue retains broader initializer/literal coverage; it no longer stands
+for implementing global storage from scratch. The remaining const callback
+suite integration is P1 under [rbtree C6](rbtree-example.md),
+[stable views](fix-views.md), and [resource/callback transport](memory-vs-resources.md).
+It is not closed by this audit or demoted with the language-coverage remainder.
 
-Found by the 2026-09-01 kernel audit at cb034b21.
+## Delivered scope
 
-Data-only translation units now contribute their scalar, array, struct, and
-struct-array declarations directly to bundle linking. They need no function
-definition. The `data_only_*.md` regressions cover initialization, relocations,
-duplicate definitions, and private-versus-external linkage; the
-`examples/multifile-registry/` project exercises their composition with calls.
+The original audit was at `cb034b21` on 2026-09-01. Current code and tests have
+substantially overtaken that diagnosis:
 
-The scalar file-scope slice is now implemented for both externally linked and
-internal-linkage objects: supported integer globals, compatible `extern`
-declarations, coalesced tentative definitions, exactly one linked initialized
-external definition, per-translation-unit file-scope `static` storage, literal
-or zero initialization, shared storage across calls, `old(global)`, and
-one-cell contract footprints. Bounded integer
-constant expressions in those initializers are folded before storage lowering;
-comparisons, short-circuit logical expressions, selected conditional branches,
-and checked integer casts are included; runtime loads and calls remain rejected.
-Fixed-size scalar arrays now use the same stable linkage,
-coalesced tentative-definition, and element-initialization model.
-Function-local scalar `static` objects and
-scalar `static` arrays with fixed or inferred shapes are also initialized once
-per program state with stable function-qualified storage.
-Basic ASCII C string literals are now lowered to function-owned,
-NUL-terminated, read-only `uint8` storage and remain stable through calls.
-Zero-initialized struct globals and function-local struct statics with
-supported scalar leaf fields now use stable typed aggregate storage, including
-cross-file `extern` sharing, coalesced tentative definitions, and field-level
-contract effects. Positional
-compile-time scalar and null-pointer initializers now populate those same
-objects, with omitted leaves retaining zero initialization. Designated and
-const-qualified scalar globals and scalar tables now use read-only backing
-blocks and preserve pointer-to-const views across translation units.
-Static-storage pointers can now use address constants for declared scalar
-objects, array elements, and scalar struct fields, including
-cross-translation-unit globals and function-local statics. Subobject addresses
-are represented as the containing stable block plus their ABI byte offset.
-Const-qualified aggregate globals and function-local aggregate statics now use
-read-only backing blocks, preserve their field access across translation units,
-and reject field writes. Compatible `extern const` aggregate declarations are
-checked against their linked definitions.
-Static scalar arrays now accept literal index designators with zero-filled
-omitted elements across external, file-scope `static`, and function-local
-`static` storage. File-scope `static` incomplete scalar arrays now resolve to
-complete definitions in the same translation unit. Fixed multidimensional
-file-scope scalar arrays retain their declared shape, use row-major flat
-storage, and require shape-compatible cross-file declarations. External
-declarations may omit the outer dimension while retaining complete inner
-dimensions; bundle linking resolves those declarations against one complete
-fixed-size definition. External-linkage initialized definitions may also omit
-the outer dimension when nested positional initializer groups infer it, and
-file-scope `static` definitions may do the same while retaining private storage.
-Unresolved private or external incomplete tentative definitions and wider
-string-literal forms remain unsupported. Dynamic initialization
-remains unsupported, while bounded integer constant expressions are folded for
-scalar objects and arrays. Static address initializer chains are resolved
-after the complete source bundle is linked, so declaration and translation-unit
-definition order does not affect stable relocations. Fixed-size one-dimensional arrays
-of those aggregates now use one stable ABI-sized block, support nested
-positional element initializers, cross-file `extern` sharing, file-scope
-`static`, function-local `static`, indexed field access, and field-level
-contract effects.
-The `cstr` predicate layer still exists only on the spec side over uint8
-buffers.
+| Delivered capability | Representative evidence in `mdtests/` |
+| --- | --- |
+| Stable scalar globals, cross-file extern linkage, private statics and ordinary current-value contracts | `file_scope_globals.md`, `file_scope_static_globals.md`, `global_entry_requires_current_value.md`, `file_scope_global_link_errors.md`, `file_scope_static_link_errors.md` |
+| Data-only translation units, typed objects and relocations | `data_only_translation_unit.md`, `data_only_duplicate_definition.md`, `data_only_private_not_external.md` |
+| Tentative-definition coalescing, incomplete extern arrays and compatible shape resolution | `file_scope_tentative_globals.md`, `file_scope_tentative_arrays.md`, `file_scope_tentative_aggregates.md`, `file_scope_incomplete_extern_arrays.md`, and their link-error regressions |
+| Fixed/inferred scalar arrays, supported multidimensional shapes and one-dimensional struct arrays | `file_scope_multidimensional_arrays.md`, `file_scope_inferred_multidimensional_array_bounds.md`, `file_scope_static_inferred_multidimensional_array_bounds.md`, `static_array_parity_aggregate.md`, `static_array_parity_scalar.md`, `static_array_parity_multidimensional.md`, `static_array_parity_fixed_multidimensional.md` |
+| Constant-expression initialization, selected conditional branches, casts and supported designators | `static_integer_constant_initializers.md`, `static_integer_constant_expression_control.md`, `designated_aggregate_static_objects.md`; parser tests cover sparse scalar designators independently of the outstanding caller fixture below |
+| Const storage and callback-table dispatch/refinement | `const_global_table.md`, `const_aggregate_objects.md`, `const_callback_table_dispatch.md`, `const_callback_table_abstract.md`, and their write/signature rejection fixtures |
+| Function-local static storage and ownership transfer without initializer reset | `static_scalar_locals.md`, `static_local_arrays.md`, `program_entry_static_ownership.md`, `private_state_mutation_reset.md`, `private_state_wide_return.md` |
+| Resources over globals and private objects from several files | `qualified_static_resource.md`, `qualified_static_ownership.md`, `qualified_static_struct.md`, `qualified_function_static_ownership.md` |
+| Stable object/subobject address initializers | `static_subobject_pointer_initializers_cross_file.md`, `static_initializer_dependency_chain_cross_file.md`, `static_pointer_initializer_const_discard.md`; the general pointer-initializer caller below remains incomplete |
+| Basic ASCII strings, supported escapes, adjacent-literal concatenation, read-only storage and call propagation | `string_literals.md`, `string_literals_call.md`, `string_literals_reject_write.md`, `concatenated_string_literals.md`, `concatenated_string_literals_rejected.md` |
 
-Found by the function-contracts campaign (2026-09-11): resources over
-file-scope objects are not yet expressible. `fold(suite(&table))` for a
-`static const struct` callback table demands `owns
-global:table#file-static:...[0..2]`, which no contract can hold, so
-`mdtests/rb_augment_callbacks_table.md` states the three field contracts
-directly with `views object(augment)` instead of a composite. Relatedly,
-`object(&static_object)` is not spellable (`object(...) currently expects a
-named C struct pointer parameter`), so a caller cannot state
-`separate(memory(object(&table)), memory(object(parent)))`, and a file-static
-block and an external-argument block are not automatically separate. The
-regression is that table fixture with a `callback_suite(&dummy_callbacks)`
-composite folded once at startup and viewed by the helper.
+Implementation evidence includes the declaration/linking/constant-initializer
+and string-literal tests in `src/languages/c/tests.rs`, static initialization
+in `src/kernel/functions.rs`, and
+`src/kernel/functions/program_entry_tests.rs`.
 
-## Violated invariant
+The old acceptance requirement to materialize initializer values at every
+function entry was incorrect. Static storage is initialized once at program
+startup. A parameterless `main` proof receives initialized writable ownership
+and const views; ordinary function entry neither restores mutable initializers
+nor mints fresh ownership. Ordinary contracts describe current state and use
+`old(...)` for their entry snapshot. `global_entry_initializer_rejected.md`,
+`static_entry_initializer_rejected.md`, and the kernel startup/call tests
+protect this boundary. Do not restore the old behavior to make a caller pass.
 
-Click should model every supported object with static storage duration as
-memory that exists at function entry, with contracts able to name it in
-footprints and postconditions, so that real C that keeps state in globals or
-function-local persistent state can be verified.
+The retired `global_effect_requires_mutable.md` reference is superseded by
+`global_write_requires_ownership.md` and the field/array effect regressions.
+Automatic local aggregate designators and adjacent basic string concatenation
+are also implemented, despite the old issue's final unsupported list.
 
-## Intended regression
+## Remaining P1 integration: const callback suites
 
-The landed regressions are `mdtests/file_scope_globals.md` for
-cross-translation-unit external state, `mdtests/file_scope_static_globals.md`
-for independent internal-linkage state, `mdtests/static_scalar_locals.md` for
-one-time function-local static storage, `mdtests/file_scope_global_arrays.md`
-and `mdtests/file_scope_global_arrays_cross_file.md` for initialized arrays and
-cross-file `extern` storage, `mdtests/file_scope_static_arrays.md` for private
-array storage, `mdtests/global_effect_requires_mutable.md` for effect
-certification, `mdtests/static_local_arrays.md` for one-time function-local
-static array storage and indexed effects, `mdtests/static_array_local_effect.md`
-for rejecting an unauthorized static-array write, `mdtests/aggregate_static_objects.md`
-for zero-initialized cross-file and function-private aggregate state,
-`mdtests/aggregate_static_effect.md` for rejecting an unauthorized
-aggregate-field write, and `mdtests/initialized_aggregate_static_objects.md`
-for initialized cross-file and function-private aggregate state,
-`mdtests/initialized_aggregate_static_arrays.md` for initialized aggregate
-arrays with cross-file, file-scope-static, and function-local-static storage,
-and `mdtests/aggregate_array_static_effect.md` for rejecting an unauthorized
-indexed aggregate-array write, and
-`mdtests/designated_aggregate_static_objects.md` for designated field and
-array-element initialization across external, file-scope-static, and
-function-local-static storage, `mdtests/const_aggregate_objects.md` for
-const-qualified aggregate arrays across translation units and function-local
-static storage, and `mdtests/const_aggregate_write_rejected.md` for rejecting
-`mdtests/static_pointer_initializers_cross_file.md`,
-`mdtests/static_subobject_pointer_initializers_cross_file.md`, and
-`mdtests/static_pointer_initializer_const_discard.md` cover stable address
-constants for objects and scalar subobjects plus pointee-const rejection, while
-`mdtests/static_initializer_dependency_chain_cross_file.md` covers linked
-initializer chains whose definitions follow their use and cross translation units.
-`mdtests/designated_scalar_static_arrays.md` covers sparse literal-index
-initializers across external, file-scope-static, and function-local-static
-arrays, while `mdtests/designated_scalar_static_arrays_rejected.md` covers
-duplicate designators. `mdtests/static_integer_constant_initializers.md`
-covers bounded arithmetic, bitwise, and shift expressions in scalar static
-initializers and arrays, while
-`mdtests/static_integer_constant_initializers_rejected.md` covers the
-runtime-load boundary, and
-`mdtests/static_integer_constant_expression_control.md` covers comparisons,
-short-circuiting, selected conditional branches, and checked integer casts.
-`mdtests/file_scope_tentative_globals.md` covers repeated tentative scalar
-declarations across translation units and their replacement by one initialized
-definition.
-`mdtests/file_scope_tentative_arrays.md` covers the same linkage behavior for
-fixed-size scalar arrays.
-`mdtests/file_scope_incomplete_extern_arrays.md` covers external declarations
-whose array bound is completed by a fixed-size definition in another
-translation unit.
-`mdtests/file_scope_incomplete_extern_array_link_errors.md` covers the
-unresolved-declaration diagnostic when no definition supplies the bound.
-`mdtests/file_scope_incomplete_tentative_arrays.md` covers external-linkage
-incomplete tentative definitions resolved by a complete fixed-size definition,
-and `mdtests/file_scope_incomplete_tentative_array_link_errors.md` covers the
-unresolved tentative-definition diagnostic. `mdtests/file_scope_static_incomplete_arrays.md`
-covers same-translation-unit completion for private arrays, while
-`mdtests/file_scope_static_incomplete_array_link_errors.md` covers the retained
-internal-linkage failure when only an external same-named array exists.
-`mdtests/file_scope_inferred_scalar_array_bounds.md` covers bound inference
-from non-empty positional initializers for external and file-scope `static`
-scalar arrays, while
-`mdtests/file_scope_inferred_scalar_array_rejections.md` covers the retained
-designator boundary.
-`mdtests/file_scope_multidimensional_arrays.md` covers fixed multidimensional
-scalar-array initialization, row-major indexing, zero-fill, and cross-file
-sharing, while `mdtests/file_scope_multidimensional_array_link_errors.md`
-covers incompatible shapes with the same flattened element count.
-`mdtests/file_scope_incomplete_multidimensional_extern_arrays.md` covers
-incomplete outer dimensions in external declarations, and
-`mdtests/file_scope_incomplete_multidimensional_extern_array_link_errors.md`
-covers incompatible retained inner dimensions during linking.
-`mdtests/file_scope_incomplete_multidimensional_tentative_arrays.md` covers
-external-linkage tentative definitions with an omitted outer dimension, while
-`mdtests/file_scope_incomplete_multidimensional_tentative_array_link_errors.md`,
-`mdtests/file_scope_incomplete_multidimensional_tentative_array_shape_errors.md`,
-and `mdtests/file_scope_incomplete_multidimensional_tentative_array_definition_errors.md`
-cover unresolved declarations, incompatible retained inner dimensions, and
-duplicate complete definitions.
-`mdtests/file_scope_inferred_multidimensional_array_bounds.md` covers inferring
-an external definition's outer bound from nested positional rows, while
-`mdtests/file_scope_inferred_multidimensional_array_rejections.md` covers the
-retained flat-initializer boundary.
-`mdtests/file_scope_static_inferred_multidimensional_array_bounds.md` covers
-private storage and same-spelled external-array isolation for the static variant.
-`mdtests/file_scope_tentative_array_link_errors.md` covers incompatible array
-bounds remaining rejected during cross-translation-unit linking.
-`mdtests/file_scope_tentative_aggregates.md` covers coalesced tentative
-aggregate objects and aggregate arrays, plus initialized-definition precedence.
-`mdtests/file_scope_tentative_aggregate_link_errors.md` covers incompatible
-aggregate-array bounds remaining rejected during linking.
-`mdtests/file_scope_duplicate_aggregate_link_errors.md` covers multiple
-initialized aggregate definitions remaining rejected during linking.
-The three `string_literals` tests for stable read-only literal storage,
-call-summary propagation, and indirect-write rejection, plus
-`mdtests/concatenated_string_literals.md` and
-`mdtests/concatenated_string_literals_rejected.md` for C's adjacent-literal
-concatenation and the retained escape boundary.
+The blanket statement that resources over globals are inexpressible is false:
+`qualified_static_resource.md` folds and passes a resource containing private
+mutable globals from two translation units, starting at `main`.
 
-## Acceptance criteria
+For const callback tables the distinction is read authority versus ownership.
+The unchanged C in `rb_augment_callbacks_table.md` already verifies using
+explicit named contracts on the table fields. A combined packaged caller and
+helper now verifies in the ordinary resource interpretation as
+`rb_augment_callbacks_const_suite.md`:
 
-- The parser accepts supported scalar file-scope declarations with optional
-  bounded integer constant-expressions (including comparisons, short-circuit
-  logical and conditional operators, and checked integer casts), literal,
-  null-pointer, or stable object/subobject-address initializers, literal
-  scalar-array index designators,
-  `extern` declarations, coalesced tentative definitions, and internal-linkage
-  `static` definitions, including const-qualified scalar objects and scalar arrays, and
-  rejects incompatible declarations, multiple initialized, or missing external
-  definitions across the source bundle.
-- The kernel models each externally linked scalar as one stable global block
-  and each file-scope `static` scalar as one stable translation-unit-qualified
-  block, materialized at entry with its folded integer literal, null, or stable address
-  initial value (or zero) and
-  shared across that object's function frames.
-- The kernel models each fixed-size scalar global as one stable flat array
-  block, initialized element-by-element with bounded integer constant
-  expressions folded to literals and omitted values set to zero; fixed
-  multidimensional definitions retain their declared shape for C0 indexing and
-  use row-major offsets into that block;
-  compatible tentative declarations coalesce across translation units and one
-  initialized definition supersedes them;
-  incompatible array bounds or shapes and multiple initialized definitions remain
-  rejected;
-  literal index designators select sparse elements without changing the block
-  identity or linkage;
-  external definitions are shared across translation units and file-scope
-  `static` arrays are translation-unit-private. Const-qualified scalar globals
-  and arrays use read-only backing blocks, and pointer-to-const views reject
-  stores while preserving reads and provenance.
-- The parser accepts zero-initialized, positionally initialized, or designated
-  struct globals and function-local struct statics whose layouts contain
-  supported scalar leaf fields, coalesces compatible tentative declarations,
-  links one initialized definition, and zero-fills omitted leaves. Designated
-  fields use literal scalar values and may appear in any order. Const-qualified
-  globals and function-local statics are read-only, and `extern` declarations
-  must match the definition's const qualifier.
-- The kernel materializes each supported aggregate as one stable typed-field
-  block, using global linkage or function-qualified static storage, applies
-  explicit initializer cells once after zero-filling, and keeps that state
-  across calls. Compatible tentative definitions coalesce across translation
-  units, while multiple initialized definitions and incompatible layouts are
-  rejected.
-- The parser accepts fixed-size one-dimensional arrays of supported struct
-  aggregates at file scope and as function-local statics, requires nested
-  element groups, coalesces compatible tentative declarations, links one
-  initialized definition, accepts literal `[index] = {...}` element
-  designators, and zero-fills omitted fields and elements. Non-literal
-  designators, multidimensional, uninitialized incomplete definitions, and dynamic-initialization forms
-  remain rejected.
-- The parser accepts fixed-dimensional scalar arrays and `extern T name[];`
-  and external-linkage tentative
-  `T name[];` for supported scalar arrays, and bundle linking resolves the
-  omitted bound against one complete fixed-size external definition. Incomplete
-  aggregate definitions without initializers,
-  empty or designated scalar-array initializers, and unresolved incomplete
-  tentative definitions remain rejected. External multidimensional declarations
-  and external-linkage tentative definitions may omit only the outer dimension
-  while retaining complete inner dimensions; the latter resolve against one
-  complete fixed-size definition during bundle linking.
-  External-linkage multidimensional definitions may likewise omit the outer
-  dimension when nested positional initializer groups infer a positive row
-  count; flat, empty, and designated inferred multidimensional initializers
-  remain rejected. File-scope `static` multidimensional definitions may use the
-  same nested inference while retaining translation-unit-private storage;
-  incomplete static declarations without initializers remain rejected.
-  Fixed multidimensional definitions require nested positional initializer
-  groups, retain their declared row-major shape, and reject shape-mismatched
-  cross-file declarations. File-scope
-  `static` incomplete scalar arrays resolve only within their own translation
-  unit. Non-empty positional scalar-array initializers may
-  infer the fixed bound before the normal array model is built.
-- The kernel materializes each aggregate array as one stable byte-addressed
-  block with complete ABI element stride, zero-fills every leaf, applies
-  explicit initializer cells once, and preserves the block across calls.
-  Compatible tentative definitions coalesce across translation units, while
-  multiple initialized definitions and incompatible bounds or layouts are
-  rejected.
-- Surface Click can name scalar globals and owning-translation-unit statics in
-  `requires`, `ensures`, `mutable`, and resource clauses using their address,
-  and `old()` applies to them.
-- Surface Click can name aggregate leaf fields in `requires`, `ensures`,
-  `mutable`, and resource clauses, with field ranges mapped to their ABI
-  offsets and `old()` referring to the entry field value.
-- A function-local scalar `static` has one function-qualified memory block,
-  is initialized only when that block first enters the state, remains shared
-  across recursive/nested calls, and is nameable by its owning function's
-  contracts.
-- A function-local array of a supported scalar type with fixed or inferred bounds
-  has one function-qualified memory block, supports multidimensional shapes,
-  and is initialized element-by-element
-  with omitted entries zero-filled, remains shared across recursive/nested
-  calls, and is nameable by indexed contract ranges.
-- Effect certification treats scalar global and file-scope static writes like
-  any other footprint write, and function-local static writes require the same
-  explicit footprint. Array elements use ordinary indexed memory ranges, and a
-  global write not named in `mutable` is rejected. Aggregate-array indexed
-  fields use the same ABI offsets and effect checks. String literals remain
-  read-only through copied pointers; automatic/local aggregate designators,
-  non-literal designators, const-qualified automatic aggregate locals,
-  aggregate incomplete multidimensional definitions with initializers,
-  file-scope static incomplete multidimensional declarations without
-  initializers, unresolved incomplete tentative definitions, dynamic or
-  non-literal initialization, and wider literal forms remain open. Scalar
-  array bounds may be inferred from non-empty positional initializers; static
-  address initializers are revalidated after external globals are linked,
-  including chains such as `alias = &target; alias_ref = &alias`, with
-  deterministic unresolved-target, type-mismatch, and const-discard diagnostics.
-- `scripts/check.sh` passes.
+- `callback_suite` contains `views` of its three const callback cells, not
+  `owns` of those cells;
+- explicit refinement theorems establish the three concrete contract facts
+  before folding; and
+- caller and helper state matching field-level separation from the callback
+  node. This is conditional local verification under those premises, not a
+  derivation of separation for arbitrary external pointers.
 
-Related: [Supported translation units and headers](../docs/reference/language/c0.md#supported-expressions-and-statements).
+That same fixture **fails in the candidate stable-loan interpretation**, with
+`an exclusive instance inside a composite view is unsupported` when applying
+`erase_augmented`. Reproduce through the ordinary fixture harness:
+
+```sh
+RUST_MIN_STACK=8388608 CLICK_VIEW_SEMANTICS=stable-loans \
+  MDTEST_FILTER=rb_augment_callbacks_const_suite \
+  cargo nextest run --test mdtests --no-capture
+```
+
+This is a bounded integration failure, not evidence that const initialization
+or the C table declaration is unsupported. Fix-views/C6 must settle the checked
+representation of this package under final borrowing semantics. Preserve the
+unchanged C, required callback guarantees and read-only table storage. Do not
+mint write authority for const cells, make the table writable, rely on legacy
+views after cutover, or require an artificial `main` in a library proof merely
+to manufacture the package. The final proof must also handle real mutation-capable
+augmentation callbacks and their effects; the no-op audit fixture does not
+complete that requirement.
+
+`object(&static_object)` still fails parsing with
+`object(...) currently expects a named C struct pointer parameter`. The parser
+in `src/surface/parser.rs::parse_current_contract_segments_inner` requires a
+named struct-pointer parameter. Field ranges can express the relevant table
+separation, as the ordinary passing suite shows. Generalizing the convenience
+spelling is therefore deferred unless an unchanged MVR proof exposes an
+obligation that cannot be expressed with the existing field ranges. No
+unconditional separation between a static object and an arbitrary external
+argument may be assumed.
+
+## Existing P2 caller and linkage work stays separate
+
+Five fixtures cited as delivered coverage in the old issue currently expect
+`fail: run.contract`, not success. They must not be counted as positive
+end-to-end evidence. Audit verification reproduced their current failures:
+
+| Fixture | Current failure |
+| --- | --- |
+| `aggregate_static_objects.md` | A post-call equality needed by `have` is not derived. |
+| `initialized_aggregate_static_objects.md` | A post-call equality needed by `have` is not derived. |
+| `designated_scalar_static_arrays.md` | The next `read_private` precondition is not established. |
+| `initialized_aggregate_static_arrays.md` | Owned entry clauses cannot be evaluated in a dependency order. |
+| `static_pointer_initializers_cross_file.md` | The final sum reports possible signed overflow. |
+
+These observations do not prove one common verifier defect: contract permission
+coverage, proof steps, dependent resource evaluation and state transport must
+be distinguished. The related work belongs with
+[static-state-caller-transport.md](static-state-caller-transport.md), and any
+resource-engine defects with their existing owners. That issue also retains
+`examples/multifile-registry`, which remains quarantined in the ordinary gate.
+Their initializer syntax and layout can have parser coverage while their caller
+proofs remain incomplete. No expectation or quarantine is changed by this audit.
+
+[linked-initializer-private-names.md](linked-initializer-private-names.md)
+retains the defining-translation-unit initializer-resolution gap.
+[private-static-helper-ownership.md](private-static-helper-ownership.md)
+retains the unchanged upstream PCG wrapper/client acceptance work. Neither is
+an additional global-storage implementation milestone or a demonstrated
+rbtree dependency.
+
+## Deferred language coverage
+
+Retain these original broader requirements as P2, without requiring them to
+close the P1 rbtree/static-table work:
+
+- Inferred bounds with element designators, including
+  `int table[] = { [2] = 7 };` and the corresponding supported struct-array
+  forms. The bound must follow the selected elements and omitted cells remain
+  zero-filled.
+- Multidimensional static arrays of structs, broader nested/designated
+  initializer shapes, and remaining valid incomplete/tentative-definition
+  completion rules. Preserve shape, linkage identity, ABI stride and one-time
+  initialization; unresolved extern declarations must still be rejected.
+- Additional legal integer constant-expression forms in designators and
+  initializers. Calls or runtime loads in C static initializers remain invalid;
+  this issue does not authorize accepting them or adding C++ dynamic startup.
+- Wider literal prefixes/encodings, non-ASCII characters and additional escape
+  forms, with explicit element types and encoding semantics. Basic ASCII and
+  adjacent basic literals are already delivered.
+- General `object(...)` syntax for static aggregate addresses, if useful after
+  the current field-based specification path; it must preserve exact object
+  identity and layout and confer no new permissions.
+
+## Acceptance criteria for the retained P2 work
+
+Use small unchanged C fixtures for each chosen extension. Verify initial values
+at actual startup (for example, a supported `main` returning `table[2]`), or
+state current-value preconditions at ordinary entry; then cover retained state
+across calls. Preserve duplicate-definition, incompatible-shape, unknown-name,
+const-write, ownership and stale-initializer rejection tests. Keep syntax-only
+coverage distinct from passing program proofs and from known negative caller
+fixtures. Run focused tests and the full unpiped `scripts/check.sh`; update
+[Supported C0](../docs/reference/language/c0.md) as each supported boundary grows.
+
+The original completion history remains in Git.
+
+## Audit validation
+
+Of the 54 explicit fixture paths in the old issue, 53 still exist: 27 expect
+success and 26 expect rejection. The missing path has the ownership-based
+replacement noted above. The five incomplete caller fixtures were reproduced
+without changing their expectations. The focused callback fixture gate passes,
+and `click audit mdtests/rb_augment_callbacks_const_suite.md` checks all 16 smart
+tactic sites across eight claims successfully in ordinary mode. Candidate
+stable loans fail promptly as recorded above. The full unpiped
+`scripts/check.sh` exits successfully, including the new ordinary-mode fixture.

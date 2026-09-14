@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (8)
+## P1: before launch (7)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -63,7 +63,6 @@ Soundness and kernel shape:
 
 Program import and execution:
 
-- [Model file-scope objects, statics, and string literals](global-variables.md)
 - [Add basic C++ verification with references and scoped cleanup](basic-cpp-support.md)
 
 Specification and proof:
@@ -73,7 +72,7 @@ Specification and proof:
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-## P2: after launch (24)
+## P2: after launch (25)
 
 - [Make `step` simple across a call precondition](simplify-step.md)
 
@@ -84,6 +83,7 @@ normal tooling-first policy and moves up.
 
 C language coverage:
 
+- [Extend static-storage initializers and string-literal coverage](global-variables.md)
 - [Apply Bool integer promotions in ordinary scalar operators](bool-scalar-operator-promotions.md)
 - [Preserve the type of conditional expressions containing calls](conditional-call-result-type.md)
 - [Import kernel-scale preprocessed translation units](kernel-scale-preprocessing.md)
