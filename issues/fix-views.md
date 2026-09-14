@@ -719,9 +719,24 @@ or partial recovery; error and diverging return paths.
 
 **Ordered plan to a cutover-ready verdict.**
 
-- **6.1, mechanical:** F1 with a regression mdtest, F2 with the invariant
-  recomputing the counter, F9, F12, and the R22 regression. Small, no
-  design.
+- **6.1, mechanical (landed 2026-09-14, "Close the step 6 mechanical
+  findings"):** F1 closed by `refuse_retiring_a_lent_allocation`, called on
+  both retire paths, with the reviewer's repro pinned as
+  `stable_mode_undecided_continuity_retire_refuses_a_lent_allocation`
+  (surface, candidate mode, since legacy refuses the same program with a
+  different message). F2 closed: the reborrow arm counts with
+  `loan_protects_memory`, and `invariant_holds` recomputes
+  `active_memory_loans` from the live loans;
+  `ending_a_reborrow_of_a_byteless_composite_loan_keeps_the_barrier_armed`.
+  F9 closed: both loan-preserving havocs drop a zero-width cell. F12: the
+  surface aggregate-copy test was never a ledger witness, because a root
+  view has no owner beside it and the write-authority check runs first; it
+  now pins `missing resource fact \`owns s[0..1]\`` exactly, and the
+  ledger-level aggregate witness is the new kernel test
+  `owner_authorized_aggregate_copy_into_a_lent_range_is_refused`. R22:
+  `abstract_join_rejects_a_loan_ended_on_only_one_arm` (either arm order
+  refused; both arms holding the same recovered ledger join). Candidate
+  corpus unchanged at 8 of 1,512 and 2 of 27; gate green.
 - **6.2, kernel hardening:** F3 (frontier check at produce/ensure
   composition, both modes), F4 (containment evidence for `project` and a
   stated identity rule), F5, F6, F7, and the bounded-pool planner gap
