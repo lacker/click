@@ -930,6 +930,37 @@ mod tests {
     };
 
     #[test]
+    fn context_free_normalization_checks_uint64_constant_disequality() {
+        let equality = ConditionTerm::Bitvector64Equal(
+            Box::new(Bitvector32Term::UInt64Constant(1)),
+            Box::new(Bitvector32Term::UInt64Constant(0)),
+        );
+        assert!(normalizes_context_free_leaf(&Proposition::ConditionIs(
+            equality.clone(),
+            false,
+        )));
+        assert!(!normalizes_context_free_leaf(&Proposition::ConditionIs(
+            equality, true,
+        )));
+
+        let same_bits = ConditionTerm::Bitvector64Equal(
+            Box::new(Bitvector32Term::UInt64Constant(u64::MAX)),
+            Box::new(Bitvector32Term::Int64Constant(-1)),
+        );
+        assert!(normalizes_context_free_leaf(&Proposition::ConditionIs(
+            same_bits, true,
+        )));
+
+        let symbolic = ConditionTerm::Bitvector64Equal(
+            Box::new(Bitvector32Term::Variable(Variable(90_000))),
+            Box::new(Bitvector32Term::UInt64Constant(0)),
+        );
+        assert!(!normalizes_context_free_leaf(&Proposition::ConditionIs(
+            symbolic, false,
+        )));
+    }
+
+    #[test]
     fn quantified_structural_matching_preserves_scope_and_rejects_logic() {
         let eq = |a, b| {
             Proposition::ConditionIs(

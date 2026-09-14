@@ -228,6 +228,9 @@ fn equality_is_vacuous(equality: &Proposition) -> bool {
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
             left == right
         }
+        Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(left, right), true) => {
+            left == right
+        }
         Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) => {
             left == right
         }
@@ -1588,6 +1591,12 @@ pub(in crate::surface) fn plan_explicit_equality_rewrites_from(
             Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
                 Proposition::ConditionIs(
                     ConditionTerm::Bitvector32Equal(right.clone(), left.clone()),
+                    true,
+                )
+            }
+            Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(left, right), true) => {
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector64Equal(right.clone(), left.clone()),
                     true,
                 )
             }

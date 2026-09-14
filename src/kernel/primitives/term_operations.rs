@@ -1377,6 +1377,14 @@ impl Bitvector32Term {
         uint64_constant(self)
     }
 
+    /// The raw bits of either signed or unsigned 64-bit constant arithmetic.
+    /// Equality is insensitive to the source signedness, so its constructor
+    /// may compare both constant families without changing C semantics.
+    pub(crate) fn bitvector64_as_const(&self) -> Option<u64> {
+        self.uint64_as_const()
+            .or_else(|| self.int64_as_const().map(|value| value as u64))
+    }
+
     fn int64_binary(
         left: Self,
         right: Self,
@@ -1970,7 +1978,7 @@ impl ConditionTerm {
         if let Some(condition) = Self::address_equality_as_pointer_equality(&left, &right) {
             return condition;
         }
-        match (left.int64_as_const(), right.int64_as_const()) {
+        match (left.bitvector64_as_const(), right.bitvector64_as_const()) {
             (Some(left), Some(right)) => Self::Constant(left == right),
             _ => Self::Bitvector64Equal(Box::new(left), Box::new(right)),
         }
@@ -1983,7 +1991,7 @@ impl ConditionTerm {
         if let Some(condition) = Self::address_equality_as_pointer_equality(&left, &right) {
             return condition;
         }
-        match (left.uint64_as_const(), right.uint64_as_const()) {
+        match (left.bitvector64_as_const(), right.bitvector64_as_const()) {
             (Some(left), Some(right)) => Self::Constant(left == right),
             _ => Self::Bitvector64Equal(Box::new(left), Box::new(right)),
         }

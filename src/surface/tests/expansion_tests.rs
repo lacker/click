@@ -3993,6 +3993,73 @@ fn restricted_simp_expands_to_explicit_equality_rewrites() {
 }
 
 #[test]
+fn uint64_bit_test_inequality_expands_to_rewrite_and_normalize() {
+    let click_source = r#"
+        theorem set_low_bit_is_nonzero(word: uint64) {
+            requires 1u64 == (word & 1u64);
+
+            ensures (word & 1u64) != 0u64 by {
+                simp();
+            }
+        }
+    "#;
+    verify_click_theorems(click_source)
+        .expect("the reversed set-bit premise should prove the masked word is nonzero");
+
+    let offset = click_source.find("simp();").unwrap();
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
+        .expect("the smart uint64 inequality should expand");
+    assert!(
+        expanded.contains("rewrite((word & 1u64) == 1u64);"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("normalize();"), "{expanded}");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    verify_click_theorems(&expanded)
+        .expect("the explicit uint64 inequality certificate should independently reverify");
+}
+
+#[test]
+fn uint64_bit_test_inequality_rejects_missing_false_and_malformed_evidence() {
+    let insufficient = r#"
+        theorem low_bits_match_is_not_enough(word: uint64, other: uint64) {
+            requires (word & 1u64) == (other & 1u64);
+            ensures (word & 1u64) != 0u64 by { simp(); }
+        }
+    "#;
+    verify_click_theorems(insufficient)
+        .expect_err("equal low bits do not establish that either low bit is set");
+
+    let false_claim = r#"
+        theorem clear_low_bit_is_not_nonzero(word: uint64) {
+            requires (word & 1u64) == 0u64;
+            ensures (word & 1u64) != 0u64 by { simp(); }
+        }
+    "#;
+    verify_click_theorems(false_claim)
+        .expect_err("a premise that clears the bit must refute the nonzero claim");
+
+    let unavailable_rewrite = r#"
+        theorem unproved_set_bit_cannot_be_a_certificate(word: uint64) {
+            ensures (word & 1u64) != 0u64 by {
+                rewrite((word & 1u64) == 1u64);
+                normalize();
+            }
+        }
+    "#;
+    let error = verify_click_theorems(unavailable_rewrite)
+        .expect_err("an explicit certificate may not cite an unavailable set-bit equality");
+    assert!(
+        error
+            .message()
+            .contains("`rewrite` requires its equality to be an exact available fact"),
+        "unexpected malformed-certificate error: {}",
+        error.message()
+    );
+}
+
+#[test]
 fn pure_rewrite_retains_a_structural_surface_successor_for_simp() {
     let click_source = r#"
         theorem rewrite_pair(x: int32, y: int32, z: int32) {

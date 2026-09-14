@@ -414,9 +414,10 @@ blocks C3; each is a candidate package when it starts to.
   frontier report. Not reproduced, no change: the clause-position note
   naming the wrong clause; "could not apply checked contract resource
   effect" for an unproved produced-model claim (the shapes tried report an
-  unclosed goal). Still open: `have (x & 1) != 0` derivable by smart
-  reasoning reports "no explicit simple certificate for 64-bit equality is
-  false", a missing simple certificate rather than a diagnostic.
+  unclosed goal). Closed 2026-09-14: a justified 64-bit bit-test inequality
+  now expands to its selected equality rewrite and a checked context-free
+  normalization; `mdtests/wide_inequality_certificate.md` retains the pure
+  regression and its required set-bit premise.
 - **Pure-proof limits:** `normalize()` and `normalize() using` do not
   close pointer-equality transitivity or symmetry inside a pure theorem
   (`simp()` does; `rewrite(a == b); normalize();` substitutes a pointer
