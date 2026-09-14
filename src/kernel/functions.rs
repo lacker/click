@@ -10284,11 +10284,32 @@ fn prepare_contract_resource_transfer_with_candidate(
     } else {
         Vec::new()
     };
+    // A population's cardinality lives in the tracked population and its
+    // transition, not in the resource algebra: the caller holds one
+    // representative unit whose quantity is the unit, while `N of p` is
+    // discharged definitionally and the count arithmetic is checked by
+    // `apply_counted_population_transitions_with_interface`. The stable
+    // planner's exclusive reservation asks for one owned entry that directly
+    // entails the whole requirement, which no representative can supply for a
+    // symbolic or non-unit constant quantity, so such a requirement takes the
+    // route legacy takes. A token population protects no memory, so the
+    // ledger has nothing to say about it; a population whose body owns memory
+    // is still checked against the active loans after planning.
+    let population_quantity_requirements = if candidate_stable_view_semantics {
+        checked_required_resources
+            .iter()
+            .filter(|requirement| requirement_is_population_quantity(requirement))
+            .cloned()
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     let stable_requirements = checked_required_resources
         .iter()
         .filter(|requirement| {
             !intrinsic_read_views.contains(requirement)
                 && !empty_composite_views.contains(requirement)
+                && !population_quantity_requirements.contains(requirement)
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -10445,6 +10466,47 @@ fn prepare_contract_resource_transfer_with_candidate(
     } else {
         None
     };
+    // Excluding a counted-population requirement from the exclusive
+    // reservation costs nothing for a token population, whose units protect
+    // no bytes. A population whose body owns memory is a different matter:
+    // its units carry write authority over that storage into the callee, so
+    // it is checked against the loans this plan and the caller hold, exactly
+    // as a direct owned transfer of those bytes would be.
+    if let Some(plan) = &stable_view_plan {
+        for requirement in &population_quantity_requirements {
+            let singleton = ResourceContext::new().unchecked_with_fact(requirement.fact.clone());
+            let body = match evaluate_resource_population_body_resources(
+                &singleton,
+                callee_state,
+                interface.composite_resource_definitions(),
+                assumptions,
+                budget,
+                false,
+            )? {
+                Ok(resources) => resources,
+                Err(error) => return Ok(Err(error)),
+            };
+            let body = expand_all_composite_resource_facts(
+                &body,
+                interface.composite_resource_definitions(),
+                callee_state.memory(),
+                assumptions,
+            )
+            .unwrap_or(body);
+            for fact in body.facts().iter().filter(|fact| fact.is_own()) {
+                let Some(range) = fact.memory_range() else {
+                    continue;
+                };
+                if let Some(diagnostic) = plan.ledger.memory_access_refusal(
+                    range,
+                    assumptions,
+                    LoanRefusalOperation::Plan,
+                ) {
+                    return Ok(Err(CRuntimeError::LoanRefusal(diagnostic)));
+                }
+            }
+        }
+    }
     let Some(canonical_resources) = expand_all_composite_resource_facts(
         &required_resources,
         interface.composite_resource_definitions(),
@@ -10505,6 +10567,39 @@ fn prepare_contract_resource_transfer_with_candidate(
         if !callee_resources.satisfies_fact(&empty_view.fact, assumptions) {
             callee_resources = match callee_resources
                 .try_compose_with_fact(empty_view.fact.clone(), assumptions)
+            {
+                Ok(resources) => resources,
+                Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+            };
+        }
+    }
+    for requirement in &population_quantity_requirements {
+        // The plan never saw this requirement, so the callee context has to
+        // receive exactly what the canonical boundary would have handed it:
+        // the requirement expanded through its definition, the same way
+        // `canonical_resources` expands every other required resource.
+        let singleton = ResourceContext::new().unchecked_with_fact(requirement.fact.clone());
+        let expanded = expand_all_composite_resource_facts(
+            &singleton,
+            interface.composite_resource_definitions(),
+            callee_state.memory(),
+            assumptions,
+        )
+        .map(|expanded| {
+            expand_decidable_composite_resource_frontier(
+                &expanded,
+                interface.composite_resource_definitions(),
+                callee_state.memory(),
+                assumptions,
+            )
+        })
+        .unwrap_or(singleton);
+        for fact in expanded.facts() {
+            if callee_resources.satisfies_fact(fact, assumptions) {
+                continue;
+            }
+            callee_resources = match callee_resources
+                .try_compose_with_facts_delaying_normalization([fact.clone()], assumptions)
             {
                 Ok(resources) => resources,
                 Err(error) => return Ok(Err(resource_context_runtime_error(error))),
@@ -10574,10 +10669,17 @@ fn prepare_contract_resource_transfer_with_candidate(
         .as_ref()
         .map(|plan| plan.caller_resources_after_requirements.clone())
         .unwrap_or_else(|| caller_state.resources().clone());
-    for resource in required_resource_list
+    // The requirements the plan did not reserve are consumed here, off the
+    // residual the plan published, by the same definitional route legacy
+    // uses. Everything else the plan already removed.
+    let population_quantity_resources = population_quantity_requirements
         .iter()
-        .filter(|_| stable_view_plan.is_none())
-    {
+        .map(|requirement| requirement.fact.resource().clone())
+        .collect::<BTreeSet<_>>();
+    for resource in required_resource_list.iter().filter(|resource| {
+        stable_view_plan.is_none()
+            || (resource.is_own() && population_quantity_resources.contains(resource.resource()))
+    }) {
         // A borrowed view of the caller's own stack object needs no resource
         // from the caller, but it still has to name storage that object has.
         // A range running past the block would otherwise let the callee read
@@ -11118,6 +11220,23 @@ fn conflicting_destination_fact(
                 .cloned()
         }
     }
+}
+
+/// Whether a requirement asks for a quantity of a resource population other
+/// than the unit.
+///
+/// Only `CResourceSpec::quantified` builds one, and only over a composite or
+/// token term, so this is exactly the `N of p` clause. It is not a claim
+/// about one owned entry: the caller holds a representative unit while the
+/// declared cardinality lives in the tracked population, so the count is
+/// decided by the counted-population transition and the definitional route,
+/// never by an exact-entry reservation.
+fn requirement_is_population_quantity(requirement: &CCheckedResourceFact) -> bool {
+    matches!(
+        requirement.fact.resource(),
+        CResource::Composite { .. } | CResource::Token { .. }
+    ) && requirement.fact.is_own()
+        && requirement.fact.owned_quantity_term() != Some(&Bitvector32Term::Constant(1))
 }
 
 fn counted_population_quantities(
@@ -19435,6 +19554,176 @@ mod candidate_stable_view_call_tests {
                 .diagnostic(crate::kernel::LoanRefusalOperation::Transition)
                 .category(),
             crate::kernel::LoanRefusalCategory::WrongScope
+        );
+    }
+
+    /// An empty-bodied token population: the caller holds one representative
+    /// unit and the declared cardinality lives in the tracked population, so
+    /// `n of slot(p)` is never one owned entry the reservation can select.
+    fn token_population_reader(name: &str, population: &str) -> CFunction {
+        let segment = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        let unit = CResourceSpec::declared(
+            ResourceFamily::Composite,
+            CResourceAccessMode::Own,
+            population.into(),
+            vec![c_variable("p")],
+            vec![CType::Int32Pointer],
+            CResourceTransferRole::Consume,
+            CResourceSnapshot::Entry,
+        )
+        .expect("a unit population term");
+        let counted = CResourceSpec::quantified(
+            c_variable("n"),
+            unit,
+            CResourceTransferRole::Consume,
+            CResourceSnapshot::Entry,
+        )
+        .expect("a counted population requirement");
+        c_function(
+            CType::Int32,
+            name,
+            vec![
+                c_parameter("p", CType::Int32Pointer),
+                c_parameter("n", CType::Int32),
+            ],
+            c_return(c_load(c_variable("p"))),
+        )
+        .with_resource_summary(
+            vec![CResourceSpec::viewed_memory(segment), counted],
+            Vec::new(),
+        )
+        .with_composite_resource_definitions(vec![
+            CCompositeResourceDefinition::counted_population(
+                population,
+                vec![c_parameter("p", CType::Int32Pointer)],
+                None,
+                Vec::new(),
+                Vec::new(),
+            ),
+        ])
+    }
+
+    /// A declared quantity must be known nonnegative before any resource
+    /// route looks at it; that check is unrelated to the planner gap.
+    fn nonnegative_quantity(quantity: Variable) -> PureFactContext {
+        PureFactContext::new().assume_condition(
+            ConditionTerm::Bitvector32SignedGreaterEqual(
+                Box::new(Bitvector32Term::Variable(quantity)),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        )
+    }
+
+    fn token_population_unit(population: &str, pointer: &Pointer) -> CResourceFact {
+        CResourceFact::own_composite(population.into(), vec![CValue::pointer(pointer.clone())])
+    }
+
+    /// The planner's exclusive reservation has no "N units out of a
+    /// population whose count is at least N" step, and a token population
+    /// protects no memory, so nothing about the loan ledger could supply one.
+    /// Such a requirement is planned the way legacy plans it, beside a view
+    /// the same call lends.
+    #[test]
+    fn candidate_symbolic_token_population_consume_plans_beside_a_lent_view() {
+        let pointer = pointer();
+        let function = token_population_reader("candidate_population_reader", "slot");
+        let unit = token_population_unit("slot", &pointer);
+        let base = caller(&pointer);
+        let caller = base
+            .clone()
+            .with_resource_context(base.resources().clone().unchecked_with_fact(unit.clone()))
+            .with_counted_population(
+                "slot",
+                vec![CValue::pointer(pointer.clone()).into()].into(),
+                Bitvector32Term::Constant(2),
+            );
+        let arguments = vec![
+            CValue::pointer(pointer.clone()),
+            CValue::Int32(Bitvector32Term::Variable(Variable(4242))),
+        ];
+        let assumptions = nonnegative_quantity(Variable(4242));
+        let callee = bind_c_function_arguments(&caller, &function, &arguments)
+            .expect("population reader arguments should bind");
+        let transfer = prepare_function_resource_transfer(
+            &caller,
+            &callee,
+            &function,
+            &assumptions,
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("population transfer should run")
+        .expect("a symbolic population quantity should not refuse the plan");
+        let plan = transfer
+            .stable_view_plan
+            .as_ref()
+            .expect("the view clause still records a loan plan");
+        assert_eq!(plan.stable_views().len(), 1);
+        let viewed = CMemoryRange::new(
+            pointer.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        assert_eq!(
+            plan.ledger.permits_memory_access(&viewed),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        assert!(
+            transfer
+                .callee_resources
+                .satisfies_fact(&CResourceFact::view_memory(viewed), &PureFactContext::new())
+        );
+    }
+
+    /// The count itself is still checked, by the counted-population
+    /// transition rather than by the planner, and it refuses in the candidate
+    /// mode exactly as it refuses in the legacy one.
+    #[test]
+    fn candidate_token_population_consume_without_a_known_count_is_refused_like_legacy() {
+        let pointer = pointer();
+        let function = token_population_reader("candidate_uncounted_population_reader", "slot");
+        let caller = caller(&pointer);
+        let arguments = vec![
+            CExpression::Value(CValue::pointer(pointer.clone())),
+            CExpression::Value(CValue::Int32(Bitvector32Term::Variable(Variable(4242)))),
+        ];
+        let refusal = |candidate: bool| {
+            let mut environment =
+                CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
+                    function: function.clone(),
+                });
+            if candidate {
+                environment = environment.with_candidate_stable_view_semantics();
+            }
+            let paths = execute_c_function_call_paths(
+                &caller,
+                &function,
+                &arguments,
+                &nonnegative_quantity(Variable(4242)),
+                &environment,
+                CExecutionSemantics::APPLY_VERIFIED_RULES,
+                &mut ExecutionBudget::new(),
+            )
+            .expect("the population call should execute");
+            let [
+                CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(error),
+                    ..
+                },
+            ] = paths.as_slice()
+            else {
+                panic!("an uninitialized population should refuse: {paths:?}");
+            };
+            error.clone()
+        };
+        let candidate = refusal(true);
+        assert_eq!(candidate, refusal(false));
+        assert!(
+            matches!(&candidate, CRuntimeError::FunctionContract(message)
+                if message.contains("counted population `slot` is not initialized")),
+            "{candidate:?}"
         );
     }
 }

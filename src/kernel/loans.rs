@@ -2031,8 +2031,21 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                     .clone()
                     .without_fact_incrementally(&selected, assumptions)
                     .ok_or(StableViewPlanError::MissingResource(selected.clone()))?;
+                // The exclusive requirements were reserved out of `residual`
+                // before any view was planned, so the residual alone cannot
+                // see a callee contract that asks to own bytes its own viewed
+                // composite covers.  Put the reserved owners back beside the
+                // frontier: this is the caller's partition as the contract
+                // actually demands it, and a self-overlapping contract is
+                // refused here rather than handing the callee an owner and a
+                // view of the same authority (law 1, law 8).
                 let protected = remaining
                     .clone()
+                    .unchecked_with_facts(
+                        transferred_ownership
+                            .iter()
+                            .map(|requirement| requirement.fact.clone()),
+                    )
                     .unchecked_with_facts(backing.pieces.clone());
                 if protected.validity_error(assumptions).is_some() {
                     return Err(StableViewPlanError::ConflictingRequirement(selected));
@@ -5751,6 +5764,74 @@ mod tests {
                 .category(),
             LoanRefusalCategory::Unsupported
         );
+    }
+
+    /// The exclusive requirements are reserved before any view is planned,
+    /// so the residual the composite frontier is checked against no longer
+    /// holds them.  A callee contract asking to own bytes its own viewed
+    /// composite covers must still be refused as a proven overlap, and a
+    /// contract whose owned clause lies outside the frontier must still plan.
+    #[test]
+    fn composite_planner_rejects_an_owned_requirement_inside_the_viewed_frontier() {
+        let (ledger, owner, reader) = participants();
+        let assumptions = PureFactContext::new();
+        let head = composite("cell", true);
+        let view = composite("cell", false);
+        let piece = memory(0, 4, true);
+        let plan_with_owned = |owned: CResourceFact| {
+            let context =
+                ResourceContext::new().unchecked_with_facts([head.clone(), owned.clone()]);
+            let support = context.unique_owned_occurrence_for_fact(&head).unwrap().0;
+            let mut backings = BTreeMap::new();
+            backings.insert(
+                support,
+                CompositeLoanBacking::from_checked_expansion(
+                    support,
+                    head.clone(),
+                    vec![piece.clone()],
+                )
+                .unwrap(),
+            );
+            plan_stable_view_transfer_with_bindings_and_composites(
+                &context,
+                &[
+                    CCheckedResourceFact {
+                        fact: owned,
+                        role: CResourceTransferRole::Consume,
+                        snapshot: CResourceSnapshot::Entry,
+                        clause_position: None,
+                    },
+                    checked(view.clone()),
+                ],
+                &assumptions,
+                &ledger,
+                owner,
+                reader,
+                &LoanViewBindings::default(),
+                &backings,
+            )
+        };
+        let overlap = plan_with_owned(memory(0, 1, true))
+            .expect_err("an owned clause inside the viewed frontier must be refused");
+        assert!(
+            matches!(overlap, StableViewPlanError::ConflictingRequirement(_)),
+            "{overlap:?}"
+        );
+        assert_eq!(
+            overlap
+                .loan_diagnostic(LoanRefusalOperation::Plan)
+                .expect("planner refusal diagnostic")
+                .category(),
+            LoanRefusalCategory::ProvenOverlap
+        );
+        let disjoint = memory(4, 8, true);
+        let plan = plan_with_owned(disjoint.clone())
+            .expect("an owned clause outside the frontier still plans");
+        assert!(
+            plan.callee_resources
+                .satisfies_fact(&disjoint, &assumptions)
+        );
+        assert_eq!(plan.stable_views().len(), 1);
     }
 
     #[test]
