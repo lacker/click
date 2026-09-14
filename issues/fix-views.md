@@ -52,8 +52,9 @@ content from them is folded into the implementation record below.
   cover a resource fact and capture the exact loan dependency. Refusals carry
   a structured category, operation, bounded subject, and origin. Proof and
   cache artifacts are bound to a resource-semantics identity, so a legacy
-  result cannot certify a candidate claim. Four-size scaling curves live in
-  `src/surface/tests/scaling_tests.rs`.
+  result cannot certify a candidate claim. Eight four-size scaling curves
+  live in the `src/kernel/loans.rs` tests; the surface scaling suite has no
+  loan curve yet (F10).
 - The V13 fixtures `stable_view_ordinary_reader`, `stable_view_nested_reader`,
   `stable_view_partial_borrow`, `stable_view_fact_workflow`, and
   `stable_view_returned_pointer` exercise the candidate route through surface
@@ -489,7 +490,7 @@ loan ends. Regressions: R15 positive (view a fact-bearing composite,
 recover, mutate, refold with the fact re-proved), a count fact refused, a
 liveness fact refused, and a current-memory reuse after scope end refused.
 
-### 6. Review the complete change adversarially
+### 6. Review the complete change adversarially (reviewed 2026-09-13, fixes pending)
 
 **Read:** this entire issue and all implementation handoffs.
 **Depends on:** steps 1-5 and a green candidate corpus.
@@ -516,6 +517,209 @@ core loan rules. This card does not start such an agent now.
 regressions, every observed defect is fixed/rechecked, and the coordinator
 has an explicit cutover-ready verdict. Unresolved soundness or tooling
 concerns block step 7; an optimistic checklist does not replace evidence.
+
+**Review record (2026-09-13, at master d2a80734).** Three independent
+read-only reviewers, none of whom authored the loan rules: A attacked the
+ledger and authority core, B attacked the call boundary and write paths, C
+mapped R01-R32 to their witnesses, ran the candidate corpus, and walked the
+step 7 removal list. Corpus at the reviewed commit: 8 of 1,512 mdtests and 2
+of 27 examples fail, exactly step 4's list, nothing unexplained. Findings are
+numbered F1-F16 and grouped by what they mean for the cutover.
+
+**Verdict: not cutover-ready.** Two confirmed defects (F1, F2), one confirmed
+legacy hole that the step 4 plan's premise depends on (F3), and one missing
+required regression (R22) block step 7. The rest is hardening, coverage, and
+cutover logistics. What held up under direct attack is recorded at the end.
+
+*Confirmed defects.*
+
+- **F1 (B, confirmed, candidate-only regression).** A call whose allocation
+  continuity is undecided can retire an allocation whose bytes it lent as a
+  view. `apply_verified_heap_allocation_delta` has two retire branches; the
+  definite-free branch consults the ledger, the undecided-continuity branch
+  scans only `preserved_caller_resources` and skips the ledger barrier. Under
+  candidate semantics the owner backing the view has been escrowed out of the
+  caller residual, so the scan no longer sees it. Repro: `external_alloc(4)`,
+  store 7, call `realloc_like(p, n)` declared `views p[0..4]; consumes
+  allocation(p, 4); produces allocation(p, n)`, then read `p[0]`; candidate
+  proves `result == 7`, legacy refuses with "resource would remain usable
+  after its allocation is freed". Adding the same `memory_access_refusal`
+  block before the undecided retire flips the fixture to a loan conflict.
+  Closing rule: every path that retires an allocation identity consults the
+  ledger that carries this call's own loans; a `preserved` scan is not a
+  substitute once lending empties the residual. Same rule for any other site
+  still reasoning from `preserved_caller_resources`.
+- **F2 (A, confirmed, latent).** `active_memory_loans` is not conserved. The
+  `Reborrow` arm increments under `!parent.memory_backing.is_empty()`, the
+  `End` arm decrements under `loan_protects_memory(backing, permitted)`,
+  which is true for any composite loan. A reborrow of a byte-less composite
+  loan (the nested case 4b admits) therefore increments nothing and its end
+  decrements the parent's contribution; a unit test (`lend_composite` with a
+  token-only frontier, `reborrow`, `transfer`, `end`) fails
+  `has_active_memory_loans()` with `invariant_holds()` true throughout. That
+  counter is the only barrier such a loan has: with it at zero
+  `validate_loop_havoc_stable_loans` accepts an unknown write set and
+  `validate_branch_memory_delta_against_loans` returns before reading a cell.
+  Not exploitable today only because `recover_stable_views` discards the
+  mutated ledger. Closing rule: increment and decrement both use
+  `loan_protects_memory`; `invariant_holds` recomputes the counter from the
+  live loans.
+- **F3 (B, confirmed, both modes).** Composing a produced composite does not
+  check its body against facts the destination already holds. `resource
+  zz_box3(p) { owns p[0..1]; }`, `extern void repackage(int32* p) { produces
+  zz_box3(p); }`, `extern void take_box(int32* p) { consumes zz_box3(p); }`;
+  a caller holding `owns p[0..1]` calls both, reads `p[0]`, and still
+  discharges its own owner at exit. One owner became two. This is the same
+  family as the ordinary-population hole fixed in step 5, and it falsifies
+  the step 4 premise that a valid context is a partition maintained by
+  construction. Composite views at depth inherit whatever this admits, and a
+  cutover makes the premise load-bearing for the whole corpus instead of one
+  opt-in mode. Closing rule: composing a produced or ensured composite checks
+  its one-level frontier for overlap against the destination's primitive and
+  composite facts, as the composite lend already does with
+  `remaining.unchecked_with_facts(backing.pieces).validity_error`. Note that
+  the lend-side check runs after `owns` requirements leave the residual, so
+  it does not see an owned requirement overlapping the lent composite either.
+
+*Kernel shape (plausible, no exploit found).*
+
+- **F4 (A).** `LoanLedger::project` checks that `parent` is a live permitted
+  composite and that `child` is a non-instance view, then pushes `child`
+  verbatim; containment is delegated to the two surface callers. D2 law 10
+  says the kernel checks transition premises itself. Second-order effect:
+  `project` keeps the ledger identity, so the branch join, loop backedge,
+  `recover_candidate_stable_view_resources`, and `recheck_entry` cannot see a
+  projection difference; the join today rejects such arms only because both
+  projection sites also add bindings and binding-map identity is compared.
+  Closing rule: `project` takes the checked expansion as evidence and
+  re-checks containment, and the identity story for read-only extensions is
+  stated (either projections change identity and the identity consumers are
+  taught to accept the extension, or an explicit projection set is compared).
+- **F5 (A).** A reborrow copies the parent loan's whole `permitted` set and
+  backing, although one description authorized it; narrowing lives only in
+  the planner's `satisfies_fact` checks. Carry the descriptions derived from
+  `parent.viewed`.
+- **F6 (B).** The call-site mutable-effect check iterates
+  `plan.stable_views()` memory ranges, so it cannot see composite views,
+  intrinsic views, or empty composite views (filtered out before planning).
+  Covered today by two accidents: resource-derived frames derive effects only
+  from `owns`, and pre-existing caller loans are checked separately. Compare
+  effect ranges against the full checked frontier.
+- **F7 (B).** `compare_loan_dependencies` orders `ResourceContext` by
+  process-local occurrence and loan identities, unlike
+  `compare_support_graph`'s stable ordinals, and it now runs on every
+  candidate call. Conservative direction (missed fixpoints and interning,
+  not accepted junk) but it must be fixed before artifact identity depends on
+  loan dependencies.
+- **F8 (B, C).** Returned-input views are removed from the residual one
+  occurrence at a time by exact representation, leaving unbound view
+  descriptions the planner then special-cases. Separately, the ensured
+  return-view deduplication at `functions.rs` ~10711 still runs before the
+  provenance routes in both modes; it is defanged, not removed.
+- **F9 (A).** Both loan-preserving havocs keep a zero-width cell's value
+  without consulting the ledger. Probably unreachable (`CValue::Void` is the
+  only zero-width value and nothing stores it into cells); the default should
+  still drop the cell.
+- **F10 (A, C, scaling).** Per store or free, the symbolic query walks every
+  symbolic protected range in the block (bounded, charged). The two
+  loan-preserving havocs run that query once per surviving cell: cells x
+  symbolic loans x oracle per loop head and branch join. `authorizes_bindings`
+  runs bindings x permitted entailments per return path.
+  `interface_successor_loans_are_inherited` is a quadratic scan over two
+  occurrence-keyed persistent maps, and the binding count grows with proof
+  length (one per exposed child per unfold/observe), not with the contract.
+  `src/surface/tests/scaling_tests.rs` has no loan curve; the eight four-size
+  curves live in `src/kernel/loans.rs`. Add a binding-count curve and a
+  cells x loans curve.
+
+*Coverage (C).*
+
+- **F11.** R22 has no test at all (one arm ends a loan, the other keeps it,
+  the join must not yield unconditional ownership; D14's worked trace).
+  PARTIAL: R01 (no same-value store negative), R03, R04 (no fresh scope
+  over the same resource), R07 (no concrete caller with live memory making
+  the bad call; the borrow probes are off-gate), R08 (no width-crossing
+  overlap), R11 (no retarget after a pointer field write), R12 (no
+  certificate-level stale-view negative), R16 (D5's open/close-body
+  obligations were folded into read-only projection; the "open obligation
+  holding a share" half has no enforcing path), R18 (only two routes pinned),
+  R21, R23 (backedge share discard), R26 (tamper side strong, positive side
+  unmeasured, see F15), R31 (no `views p[0..0]` regression), R32 (see F10).
+- **F12.** `stable_mode_root_view_refuses_an_aggregate_copy_into_it` asserts
+  `active loan || missing resource fact`; tighten to the loan conflict.
+
+*Cutover obstacles (C).*
+
+- **F13.** `examples/input-cursor` (composite packaging a borrowed view) and
+  `examples/bounded-pool` (counted population with a symbolic quantity) are
+  the deferred-syntax cases, and both are documented flagship examples
+  (`docs/concepts/larger-examples.md`, `docs/reference/examples.md`,
+  `docs/reference/cli/verify.md`, `docs/internals/testing.md`).
+  `field_derived_precise_effect_after_metadata_write.md` is a
+  `verified-example` in three doc pages. Step 7 as written cannot absorb
+  this: the deferred syntax lands first, or these get quarantined and the
+  pages lose their worked examples. Decision needed.
+- **F14.** Three legacy paths are not behind the mode flag and survive a
+  naive cutover: the planner disjunction at `functions.rs` ~10223
+  (`candidate && (ledger.is_some() || any view requirement)`, which routes a
+  view-free, ledger-free call through legacy planning); `intrinsic_read_views`
+  (D10's checked lending from implicit local authority was never implemented,
+  a `local:` block prefix plus no caller fact is the whole test, and the R10
+  kernel regressions pass only because they install a ledger by hand); and
+  the return-view deduplication in F8. Each needs an explicit justification
+  as a no-op shortcut or removal.
+- **F15.** The CLI registers `CLICK_VIEW_SEMANTICS` but never reads it, so
+  `click expand`, `profile`, and `audit` have never run under candidate
+  semantics, and `scripts/check.sh` never runs the candidate corpus. The
+  acceptance criterion that ordinary verification, expansion, and audit agree
+  is unmeasured, and expansion disagreeing with verification is a
+  tooling-stability stop condition that is currently unobservable.
+- **F16.** Cutover bookkeeping the step 7 card omits: `verify_c0_project_in_mode`
+  and the `src/surface.rs` re-exports; `prepare_contract_resources` becomes
+  always-true for the two body-execution paths once the `||` disappears
+  (audit those callers); `call_havoc_symbolic_write_set.md` must migrate its
+  contract (drop `views p[0..1]`, which its own `owns p[0..length]` makes
+  unsatisfiable) rather than flip, or the havoc-distinctness property it
+  tests is exercised nowhere; the two global-storage negatives flip with
+  justification but `global_store_requires_owned_cell.md`'s title and prose
+  become false; the body-rerun ratchet baselines in `tests/mdtests.rs` and
+  `tests/examples.rs` are skipped under the switch and must be re-pinned;
+  the eleven doc locations that state the legacy law (`docs/concepts/
+  resources.md`, `spec-state.md`, `docs/reference/language/index.md`,
+  `glossary.md`, `docs/internals/separation-logic.md`,
+  `design/supporting-more-languages.md`, `view-output-inventory.md`,
+  `larger-examples.md`, `docs/reference/examples.md`); the step 3 latent
+  items (`verification.rs` ~2547 advising the removed `mutable` clause, two
+  debug-form refusals in `api.rs` and `loops.rs`); and the
+  `track_ordinary_populations` parameter, which every caller passes as
+  `false` and can be deleted in either mode.
+
+*Held under attack.* Recovering a root (origin pinned at issue and apply,
+no close right, no escrow); adding two arms' capabilities at a join (ledger,
+participant, and binding identities compared first); element-width mismatch
+hiding an overlap (both sides byte-normalized before the oracle);
+cross-block bucketing (differing blocks are unprovable anyway); symbolic
+query beside concrete loans (refused); loan leakage out of a call (exact
+parent ledger returned, transitions rechecked from the callee root,
+undischarged obligations refuse recovery); reading past the frontier without
+a projection; entry-time owner/view overlap; a callee writing what the caller
+only views; law 8 with a symbolic owned/viewed pair from one owner; definite
+free under a lent view; using duplicated authority inside one call; double
+or partial recovery; error and diverging return paths.
+
+**Ordered plan to a cutover-ready verdict.**
+
+- **6.1, mechanical:** F1 with a regression mdtest, F2 with the invariant
+  recomputing the counter, F9, F12, and the R22 regression. Small, no
+  design.
+- **6.2, kernel hardening:** F3 (frontier check at produce/ensure
+  composition, both modes), F4 (containment evidence for `project` and a
+  stated identity rule), F5, F6, F7. F3 is the one that changes the
+  argument; the others tighten it.
+- **6.3, decisions before step 7:** F13 (flagship examples), F14 (classify
+  or remove the three ungated paths), F15 (make the CLI honor the switch for
+  one measured expand/profile/audit pass, or accept the gap explicitly), then
+  the coverage list in F11 and the two scaling curves in F10.
 
 ### 7. Cut over, document, and close
 
