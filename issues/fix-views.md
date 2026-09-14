@@ -76,8 +76,8 @@ baseline under remaining work.
 
 - The codex V18 experiment, which the borrowed-input root (step 1) was
   re-derived from, is parked as one unverified commit on branch
-  `claude/fix-views-v18-wip`. What remains unlanded from it is the
-  returned-view provenance lookup and the loop and branch changes. Take ideas and tests
+  `claude/fix-views-v18-wip`. Nothing of it remains to land; steps 1-3
+  re-derived or superseded every idea it contained. Take ideas and tests
   from it; do not integrate it as is.
 
 **Borrowed-input root (step 1, landed 2026-09-13).** Under `StableLoans`, a
@@ -102,8 +102,8 @@ query is refused outright while any concrete loan is indexed.
 
 ## Remaining work
 
-Seven steps, numbered stably; steps 1 and 2 landed on 2026-09-13 and steps
-3-7 remain. Steps 1-5 recover and finish the V18 implementation from the parked
+Seven steps, numbered stably; steps 1-3 landed on 2026-09-13 and steps
+4-7 remain. Steps 1-5 recover and finish the V18 implementation from the parked
 experiment; step 6 is the V18 adversarial review; step 7 is the V19 cutover. Each step follows the working agreements
 below: an isolated worktree from master, focused positive and negative tests,
 the unfiltered gate, and a handoff. No C source edits, and no change to
@@ -146,6 +146,11 @@ mdtests, 7 examples), composite body facts (4 mdtests, 3 examples),
 unproved range separation (4 mdtests, 1 example), returned-view provenance
 and stale evidence on named-contract and callback paths (about 6), expected
 negative diagnostics, and a few certification mismatches.
+
+After step 3 (2026-09-13): 23 of 1,509 mdtests and 15 of 26 examples fail.
+Apart from the three deliberately unchanged expectations listed under step
+3, every remaining failure is a composite or instance class for steps 4
+and 5.
 
 Reclassify from a fresh run before each step rather than from these counts.
 
@@ -253,67 +258,97 @@ Regressions: `candidate_inline_reader_uses_the_callers_checked_resources`,
 `candidate_local_array_view_*`, and the `stable_mode_inline_helper_*`
 surface tests.
 
-### 3. Fix provenance, loop/branch authority, certification, and diagnostics
+### 3. Fix provenance, loop/branch authority, certification, and diagnostics (done 2026-09-13)
 
-Split on 2026-09-13 into four packages with disjoint file boundaries, each
-assigned to an Opus subagent from master `6ec2792b` and integrated by the
-coordinator one gated commit at a time:
+Landed as fourteen commits from four Opus subagents plus one coordinator
+fix, integrated together on one gated tip. Candidate corpus after step 3:
+23 of 1,509 mdtests and 15 of 26 examples fail, from 45 and 15.
 
-- **Return provenance** (`src/kernel/functions.rs` return/output recovery,
-  named-contract, refinement, and callback application):
-  `c_named_function_contract_pipeline`, `c_step_contract_selected_footprint`,
-  `c_named_function_contract_rejects_larger_mutable_footprint`,
-  `c_named_function_contract_accepts_symbolic_borrowed_subrange`,
-  `c_named_function_contract_borrows_guarded_composite`,
-  `const_callback_contract`, examples `bounded-pool`,
-  `owned-segmented-buffer`, `owned-split-buffer`.
-- **Planner partitions** (`plan_stable_view_transfer_with_bindings_and_composites`,
-  `prepare_contract_resource_transfer_with_candidate`,
-  `candidate_memory_ranges_relation`): symbolic view ranges lent from a
-  covering owner; `modular_call_requirement_indexes_footprint`,
-  `old_snapshot_loadable_after_free`, `requires_memory_read`,
-  `augment_rotate_callback_child_read`,
-  `composite_piece_caller_frames_viewed_field`, `execute_modular_swap_get`,
-  `step_modular_swap_get`, `execute_expands_certified_post_call_fact`,
-  `c_decreases_resource_rejects_inactive_child`,
-  `resource_population_split_body_survives_view`,
-  `struct_aggregate_helper_view`, example `owned-vector`.
-- **Loops, branches, certification** (`src/kernel/loops.rs`, the branch
-  join and certification matching in `src/kernel/api.rs`, the checked
-  `branch ensuring` interface): `loop_owns_clause_requires_function_ownership`,
-  `proof_branch_pointer_local`, `struct_conditional_value`,
-  `pure_click_functions`, `call_havoc_symbolic_write_set`.
-- **Diagnostics and check order** (`src/kernel/eval/statements.rs`,
-  `src/surface/diagnostics.rs`): run the ordinary owned-authority check
-  before the loan check so a write with no owner keeps its historical
-  "missing resource fact" message and the loan refusal fires only for an
-  owner-authorized write that hits a loan; give that refusal the D13 shape
-  (loan origin and attempted range); re-judge the negatives
-  `composite_piece_rejects_store_outside_owned_field`,
-  `global_byte_array_rejects_neighbor_ownership`,
-  `global_store_requires_owned_cell`, `resource_context_read_rejects_write`,
-  `resource_population_body_access_requires_authority`,
-  `return_population_rejects_missing_ownership`,
-  `struct_byte_array_resource_range_rejects_neighbor`; and migrate the
-  sidecar of `field_derived_precise_effect_after_metadata_write`, whose
-  `views owned_buffer(owner); owns owner[0..1]` is the overlapping
-  owner/view pattern V17 replaces (C unchanged).
+- **Return provenance** ("Give returned stable views a checked projection
+  provenance", "Certify a one-call execution theorem from its proof entry
+  state"): a view surviving a call boundary must be a checked input child, a
+  preserved outer binding, or a live checked projection of a held owned
+  occurrence (`ResourceContext::exact_projection_support`); fact equality
+  against an ambient owner is still refused. Normalization no longer merges
+  a fact whose occurrence carries a loan dependency. One-call execution
+  theorems certify from their proof's rooted entry state.
+- **Planner partitions** ("Plan symbolic view ranges from their covering
+  owner", "Decide symbolic effect separation and open the owners a call
+  needs", "Treat an empty composite view as needing no loan backing", "Bind
+  every view occurrence the plan composes for the callee"): a symbolic view
+  range is backed by the owned occurrence that entails it and the whole
+  covering owner is escrowed as one loan (no writable remainder, law 8);
+  an unbound view description is neither authority nor a veto when an owner
+  covers the requirement; `candidate_memory_ranges_relation` decides
+  symbolic separation by the same arithmetic as the overlap oracle; a call
+  unfolds exactly the folded owners its own requirements need; every
+  composed callee view occurrence carries its binding.
+- **Loops, branches, certification** ("Validate loop ownership before the
+  stable-loan havoc barrier", "Compare branch-join authority instead of an
+  incidental sidecar", "Authorize a pristine return state's empty loan
+  population"): declared loop ownership is validated first and loop havoc
+  falls back to the checked owned entry footprint, still failing closed when
+  an owner cannot be enumerated; a `branch ensuring` successor may carry
+  only a loan dependency some arm held; a return state's bindings must be
+  authorized by the authority that same state carries.
+- **Shared roots** ("Share one borrowed-input root across the proof units
+  of a function"): the kernel keeps the installed root per function for the
+  verification session, keyed by the exact pre-install entry state, so
+  every claim proof, loop proof, and certification of one function shares
+  one entry authority.
+- **Diagnostics and check order** ("Check owned authority before the
+  stable loan barrier", "Give loan refusals the D13 conflict shape",
+  "Report a lent local's lifetime end as a loan conflict"): scalar stores,
+  free, and realloc run their owned-authority check first, so a write with
+  no owner keeps "missing resource fact"; a loan refusal now names the loan,
+  its origin, the protected resource, and the attempted range through
+  `LoanLedger::memory_access_refusal`; the entry refusal names the `views`
+  clause that overlaps the contract's own `owns` clause.
 
-Left for steps 4 and 5: every "this resource shape is outside stable-view
-support" entry refusal (composite and instance input views, including the
-recursive `shape` and list fixtures and six examples), "composite body facts
-are unsupported", and "cannot package a loan-backed viewed body".
+Decided, not changed:
 
+- `global_store_requires_owned_cell` and
+  `global_byte_array_rejects_neighbor_ownership` keep failing under
+  `StableLoans` with the loan-conflict message. File-scope storage has no
+  store-site ownership check (legacy's message comes from a post-execution
+  footprint check), and gating the loan check on visible ownership would
+  skip it for writes covered only through a folded composite. Their
+  expectations become the loan message at step 7.
+- `call_havoc_symbolic_write_set` keeps failing at entry: its contract's
+  `views p[0..1]` overlaps its own `owns p[0..length]`, which no caller can
+  supply. The entry refusal now names both clauses; the expectation flips
+  at step 7 because it is also checked under legacy.
+- `field_derived_precise_effect_after_metadata_write` is not migrated:
+  owning the composite widens the callee's mutable footprint to the whole
+  body and breaks the caller's frame under legacy too. It needs a way to
+  own a composite while declaring a narrower checked write footprint.
 
-Failure classes 1, 4, 5, and 6 above: an explicit checked provenance record
-for a returned view deduplicated against a returned owner; validated-range
-loop havoc and the authority-aware branch join; the `struct_conditional_value`
-execution-mode mismatch and the stdlib `count` claim; and the validation
-order behind the expected negative diagnostics. Also give the ledger's write
-refusal the D13 shape: today a store into a rooted view reports "memory
-write conflicts with an active stable loan" with the refusal's debug form,
-not the loan origin and the attempted range. Reclassify from a fresh corpus
-run first.
+Latent items surfaced, to settle before step 6:
+
+- `compare_loan_dependencies` in `src/kernel/primitives.rs` compares raw
+  `ResourceOccurrenceId`s, which are process-local fresh counters, unlike
+  `compare_support_graph`, which uses stable entry ordinals. Now that callee
+  contexts carry loan dependencies, two structurally identical contexts
+  compare unequal; inert under legacy, but a cross-run artifact identity
+  will see it.
+- `struct_aggregate_helper_view` fails because the planner selects an
+  owner at element width 1 while the residual owner is at width 4 over the
+  same bytes and `memory_range_covers` refuses any width mismatch; byte-level
+  coverage in the shared resource algebra is needed.
+- The aggregate-copy path has no store-site owned-authority check, so its
+  loan check still precedes any ownership diagnostic; two `String`-typed
+  loan refusals (loop havoc in `loops.rs`, branch join in `api.rs`) still
+  print the debug form.
+- `src/surface/verification.rs` still advises a removed `mutable` clause
+  in the outside-the-owned-footprint message.
+- Every remaining example failure and the remaining "resource shape is
+  outside stable-view support", "composite body facts are unsupported",
+  "nested or undecidable composite loan backing", and "cannot package a
+  loan-backed viewed body" mdtest failures belong to steps 4 and 5.
+  `resource_population_split_body_survives_view` (a population body held
+  beside its folded population, refused as a second route to escrowed
+  bytes) and `augment_rotate_callback_child_read` (separation only provable
+  through a folded recursive owner) also wait there.
 
 ### 4. Design and implement recursive composite views
 
