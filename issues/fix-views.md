@@ -102,8 +102,8 @@ query is refused outright while any concrete loan is indexed.
 
 ## Remaining work
 
-Seven steps, numbered stably; steps 1-3 landed on 2026-09-13 and steps
-4-7 remain. Steps 1-5 recover and finish the V18 implementation from the parked
+Seven steps, numbered stably; steps 1-3, 4a, and 5 landed on 2026-09-13;
+4b, 6, and 7 remain. Steps 1-5 recover and finish the V18 implementation from the parked
 experiment; step 6 is the V18 adversarial review; step 7 is the V19 cutover. Each step follows the working agreements
 below: an isolated worktree from master, focused positive and negative tests,
 the unfiltered gate, and a handoff. No C source edits, and no change to
@@ -151,6 +151,12 @@ After step 3 (2026-09-13): 23 of 1,509 mdtests and 15 of 26 examples fail.
 Apart from the three deliberately unchanged expectations listed under step
 3, every remaining failure is a composite or instance class for steps 4
 and 5.
+After 4a and 5 (2026-09-13): 20 of 1,512 mdtests and 9 of 27 examples
+fail; the six buffer examples and four fact fixtures verify. What is left
+is step 4b (nested composite input views: seven examples and most of the
+mdtests), the packaged view of input-cursor and the counted population of
+bounded-pool (deferred with a refusal), and the three unchanged
+expectations.
 
 Reclassify from a fresh run before each step rather than from these counts.
 
@@ -403,8 +409,25 @@ are the reviews' confirmed findings; each is a bug for memory views too.
 a composite whose body packages a borrowed view (input-cursor), and a
 counted population with a symbolic quantity (bounded-pool).
 
-**Order.** 4a: the hardening list above and step 5's facts (small, no
-dependency on the rest). 4b: nested backing in `CompositeLoanBacking` and
+**4a landed 2026-09-13** ("Harden the stable-loan barriers and admit body
+facts a loan stabilizes", with "Keep a produced composite's body inside
+its head" before it). Doing it exposed a legacy soundness bug: the
+verified-rule path tracked every non-recursive unconditional composite as
+a population and installed a produced composite's body as owned memory in
+the caller beside the head, so `make_zero(box); box->value = 5;
+read_zero(box)` verified `result == 0` while the program returns 5. The
+candidate semantics caught it (the second lend was refused as overlapping
+a live footprint). The tracking is off for ordinary composites; every
+existing fixture still passes, and
+`mdtests/produced_composite_body_stays_inside_its_head.md` pins the store
+as a missing-ownership refusal under both semantics. The hardening list
+above is done except the two `String`-typed loan refusals that still print
+the debug form. Candidate corpus after 4a and 5: 20 of 1,512 mdtests and
+9 of 27 examples fail; every remaining example is a nested composite input
+view, the packaged view of input-cursor, or the counted population of
+bounded-pool.
+
+**Order.** 4b next: nested backing in `CompositeLoanBacking` and
 `BorrowedContractInputBacking`, the `Project` transition, and the
 projection calls in the surface. Regressions for 4b: R14 and R16 with a
 two-level list and a recursive shape (read through a child after two
@@ -416,11 +439,12 @@ inside the viewed frontier.
 
 ### 5. Facts in lent bodies (plan, 2026-09-13)
 
-Allowed. Recovery restores the exact escrowed head, not a re-fold, so a
-fact is re-asserted precisely as folded, and the body is stable for the
-whole loan. Refused: a fact that mentions a resource count or an
-allocation-liveness claim, the two things the body does not stabilize
-(D12). On the borrower's side `observe` and `unfold` publish the facts as
+Landed 2026-09-13 with 4a. Recovery restores the exact escrowed head, not
+a re-fold, so a fact is re-asserted precisely as folded, and the body is
+stable for the whole loan. Refused (`CCompositeResourceDefinition::facts_are_loan_stable`):
+a counted population, and a definition whose facts claim liveness of
+storage the body does not own; `loadable` over the body's own cells is
+stable because a live loan forbids freeing the allocation (D12). On the borrower's side `observe` and `unfold` publish the facts as
 observations carrying the loan dependency; a published fact is a
 proposition about the snapshot it was read at and is historical after the
 loan ends. Regressions: R15 positive (view a fact-bearing composite,
