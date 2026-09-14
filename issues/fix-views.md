@@ -436,7 +436,7 @@ viewed body exposes no ownership; recovery after return restores the head;
 a store through an owned parameter separate by 3(a) succeeds; a store
 through an owner produced by an external contract with no separation
 premise is refused; a store through a piece of an unfolded owned composite
-separate by 3(d) succeeds; a `Project` replayed after the pointer cell it
+separate by 3(d) succeeds; a `Project` applied again after the pointer cell it
 depends on changed is refused (the write that changed it is itself refused
 under rule 2, so this needs a hostile-evidence test); a projection after
 the scope ended, one naming another loan, an instance child, and a lend
