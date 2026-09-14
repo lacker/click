@@ -10121,9 +10121,39 @@ fn prepare_contract_resource_transfer_with_candidate(
         })
         .cloned()
         .collect::<Vec<_>>();
+    // A composite view whose checked body is empty on this path protects no
+    // bytes and holds no token, so there is nothing to lend and nothing a
+    // loan could suspend (D6: an empty permission grants no dereference).
+    // Demanding backing for it would turn the empty witness of a partial
+    // recursive resource into a missing-backing refusal and hide the
+    // structural validation that is the real verdict on such a call.
+    // Legacy discharges such a requirement by definitional expansion and is
+    // left exactly as it was.
+    let empty_composite_views = if candidate_stable_view_semantics {
+        checked_required_resources
+            .iter()
+            .filter(|requirement| {
+                requirement.fact.is_view()
+                    && matches!(requirement.fact.resource(), CResource::Composite { .. })
+                    && expand_all_composite_resource_facts(
+                        &ResourceContext::new().unchecked_with_fact(requirement.fact.clone()),
+                        interface.composite_resource_definitions(),
+                        callee_state.memory(),
+                        assumptions,
+                    )
+                    .is_some_and(|expanded| expanded.facts().is_empty())
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     let stable_requirements = checked_required_resources
         .iter()
-        .filter(|requirement| !intrinsic_read_views.contains(requirement))
+        .filter(|requirement| {
+            !intrinsic_read_views.contains(requirement)
+                && !empty_composite_views.contains(requirement)
+        })
         .cloned()
         .collect::<Vec<_>>();
     let candidate_stable_view_semantics = candidate_stable_view_semantics
@@ -10316,6 +10346,18 @@ fn prepare_contract_resource_transfer_with_candidate(
     } else {
         canonical_resources
     };
+    for empty_view in &empty_composite_views {
+        // The head names a resource the callee may state; its checked body is
+        // empty, so composing it adds a description and no authority.
+        if !callee_resources.satisfies_fact(&empty_view.fact, assumptions) {
+            callee_resources = match callee_resources
+                .try_compose_with_fact(empty_view.fact.clone(), assumptions)
+            {
+                Ok(resources) => resources,
+                Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+            };
+        }
+    }
     for intrinsic_view in &intrinsic_read_views {
         let in_bounds = matches!(
             intrinsic_view.fact.resource(),
