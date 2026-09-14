@@ -1726,7 +1726,11 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                             })
                     })
                     .ok_or(StableViewPlanError::InvalidResidual)?;
-                callee_resources = next_resources;
+                // Record the dependency on the occurrence itself, not just in
+                // the sidecar: normalization must not merge two adjacent bound
+                // views into one fact whose occurrence no requirement can then
+                // find again.
+                callee_resources = next_resources.with_loan_dependency(occurrence, binding.clone());
                 owner_occurrences.insert(binding.clone(), occurrence);
                 callee_view_bindings = callee_view_bindings.with_inserted(occurrence, binding);
                 planned_views.push((
@@ -1927,7 +1931,11 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                             })
                     })
                     .ok_or(StableViewPlanError::InvalidResidual)?;
-                callee_resources = next_resources;
+                // Record the dependency on the occurrence itself, not just in
+                // the sidecar: normalization must not merge two adjacent bound
+                // views into one fact whose occurrence no requirement can then
+                // find again.
+                callee_resources = next_resources.with_loan_dependency(occurrence, binding.clone());
                 owner_occurrences.insert(binding.clone(), occurrence);
                 callee_view_bindings = callee_view_bindings.with_inserted(occurrence, binding);
                 planned_views.push((
@@ -1985,7 +1993,8 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                         })
                 })
                 .ok_or(StableViewPlanError::InvalidResidual)?;
-            callee_resources = next_resources;
+            callee_resources =
+                next_resources.with_loan_dependency(occurrence, child_binding.clone());
             child_occurrence = Some(occurrence);
             callee_view_bindings =
                 callee_view_bindings.with_inserted(occurrence, child_binding.clone());
@@ -5284,6 +5293,40 @@ mod tests {
         assert_eq!(plan.stable_views[0].loan, plan.stable_views[1].loan);
     }
 
+    /// Every view the plan composes into the callee context carries its loan
+    /// binding on the occurrence itself, not only in the plan's sidecar. The
+    /// sidecar alone left the fact indistinguishable from an unbound view, so
+    /// normalization was free to merge it with a neighbour and the
+    /// per-requirement occurrence lookup then failed with `InvalidResidual`.
+    #[test]
+    fn joint_planner_binds_every_composed_callee_view_occurrence() {
+        let assumptions = PureFactContext::new();
+        let owner = memory(0, 5, true);
+        let caller_resources = ResourceContext::new().unchecked_with_fact(owner);
+        let (ledger, caller, callee) = participants();
+        let first = memory(0, 1, false);
+        let second = memory(3, 4, false);
+        let plan = plan_stable_view_transfer(
+            &caller_resources,
+            &[checked(first.clone()), checked(second.clone())],
+            &assumptions,
+            &ledger,
+            caller,
+            callee,
+        )
+        .expect("two views plan from one owner");
+        assert_eq!(plan.stable_views.len(), 2);
+        let bound = plan
+            .callee_resources
+            .live_loan_dependencies()
+            .map(|(occurrence, binding)| (occurrence, binding.viewed.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(bound.len(), 2);
+        assert_ne!(bound[0].0, bound[1].0);
+        assert!(bound.iter().any(|(_, viewed)| *viewed == first));
+        assert!(bound.iter().any(|(_, viewed)| *viewed == second));
+    }
+
     #[test]
     fn joint_planner_refuses_an_unbound_view_the_caller_does_not_own() {
         let assumptions = PureFactContext::new();
@@ -5420,7 +5463,23 @@ mod tests {
             );
             assert_eq!(plan.stable_views.len(), 1);
         }
-        assert_eq!(left.callee_resources, right.callee_resources);
+        // Whole-context equality is not the right comparison here: each plan
+        // binds its composed view occurrences, and an occurrence identity is
+        // freshly allocated per plan by construction (law 5). Compare what
+        // clause order must not change: the facts, and the viewed fact each
+        // live binding carries.
+        assert_eq!(
+            left.callee_resources.facts(),
+            right.callee_resources.facts()
+        );
+        let bound = |plan: &StableViewTransferPlan| {
+            plan.callee_resources
+                .live_loan_dependencies()
+                .map(|(_, binding)| binding.viewed.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(bound(&left), vec![read.fact.clone()]);
+        assert_eq!(bound(&left), bound(&right));
         assert_eq!(left.memory_effects, right.memory_effects);
     }
 
