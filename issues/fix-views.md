@@ -106,9 +106,9 @@ query is refused outright while any concrete loan is indexed.
 
 Eight steps, numbered stably; steps 1-5 landed on 2026-09-13; 6, 7, and 8
 remain. Steps 1-5 recover and finish the V18 implementation from the parked
-experiment; step 6 is the V18 adversarial review (6.1 and 6.2 landed;
-6.3 decisions open); step 7 is escaping borrows (landed 2026-09-14); step 8
-is the V19 cutover. Each step follows the working agreements
+experiment; step 6 is the V18 adversarial review (6.1, 6.2, and 6.3
+landed); step 7 is escaping borrows (landed 2026-09-14); step 8 is the V19
+cutover, whose pre-check list is in the 6.3 record. Each step follows the working agreements
 below: an isolated worktree from master, focused positive and negative tests,
 the unfiltered gate, and a handoff. No C source edits, and no change to
 `Legacy` behavior before step 8.
@@ -813,12 +813,102 @@ or partial recovery; error and diverging return paths.
     1 of 27 examples (input-cursor, step 7). Legacy corpus and gate green.
   - After step 7: 9 of 1,516 mdtests (the step 4 list plus the globals
     audit's `rb_augment_callbacks_const_suite.md`) and 0 of 27 examples.
-- **6.3, decisions before step 8:** the
-  `field_derived_precise_effect_after_metadata_write.md` case in F13, F14
-  (classify or remove the three ungated paths), F15 (make the CLI honor the
-  switch for one measured expand/profile/audit pass, or accept the gap
-  explicitly), then the coverage list in F11 and the two scaling curves in
-  F10.
+  - After 6.3: 8 of 1,517 mdtests and 0 of 27 examples.
+- **6.3, decisions (2026-09-14):**
+  - **F13, metadata-write fixture: migrated, not quarantined.** The fixture
+    was the legacy idiom of an owned piece inside a viewed composite whose
+    facts depend on that piece (`len < cap`), which 6.2 refuses as a proven
+    overlap and no stable loan could keep. It now owns the composite and
+    promises the preserved cell (`ensures owner->data[0] == old(owner->data[0])`);
+    the caller frames `data[0]` through that promise rather than through the
+    callee's write footprint, and it verifies under both semantics with the
+    C unchanged. The two doc pages that cite it (`docs/concepts/aliasing-and-frames.md`,
+    `docs/reference/language/index.md`) now say that a narrow write inside a
+    composite is ownership of the whole plus an ensures about the untouched
+    cells. A checked partial composite borrow (own the head, declare a
+    narrower write footprint) is a possible later extension with explicit
+    syntax; nothing in the corpus needs it now.
+  - **F14(a), planner shortcut: kept through step 8, with its removal cost
+    measured.** Removing `candidate && (ledger.is_some() || any view)` and
+    running the candidate corpus turned 16 fixtures: 15 negatives whose
+    expected `missing resource fact` became the loan-shaped "required loan
+    backing or binding is missing", plus two verdict changes. The diagnostic
+    half is closed now: a planned owned requirement the caller cannot supply
+    reports `CRuntimeError::MissingResource` for that fact (a view the
+    planner cannot back stays a loan refusal), which returns 12 of the 15 to
+    their expected message under the planner. Three blockers remain for the
+    removal and are the step 8 pre-check list: `conditional_resource_branchless_free.md`
+    (a conditional composite `owned_item(null)` whose condition is false is
+    not discharged by the planner; legacy discharges it definitionally),
+    `token_resource_rejects_call_duplicate.md` (a quantity-2 token
+    requirement goes through the population route and reports differently),
+    and `borrowed_local_view_bounds_rejected.md` (with the planner in charge
+    the local view past the block is refused as a read of uninitialized
+    storage instead of a missing fact; both refuse, the message changes).
+  - **F14(b), `intrinsic_read_views`: classified as a rule, not a hole.** A
+    view of caller-local storage the caller holds no resource fact for is
+    intrinsic read authority for the call: nothing else can reach that
+    storage while the caller is suspended, the callee cannot write through a
+    view, and a view returned from the call still has to pass the
+    provenance routes. It is neither lent nor recovered because there is no
+    owner to escrow. This is D10's "implicit local authority" as an explicit
+    rule with no ledger transition; the comment on the selector says so.
+  - **F14(c), return-view deduplication: removed at step 8.** Under the
+    candidate semantics the dropped views are captured in
+    `candidate_output_views` and run the provenance routes, so the filter is
+    harmless now; it is on the step 8 removal list already.
+  - **F15 closed** ("Make the CLI honor CLICK_VIEW_SEMANTICS"): one parser
+    in `src/cli.rs`, installed by the four subcommand entries as the
+    process default that `CSourceContext::bundle`/`prepared` and the
+    session constructors read (a single static to delete at step 8; an
+    unrecognized value is a command error); the two fixture harnesses share
+    the parser. Measured agreement pass under `stable-loans`: `verify` of
+    all 27 examples exits 0 with proof counts identical to legacy; `audit`
+    of input-cursor, bounded-pool, arena, borrowed-slice and the five
+    `stable_view_*` fixtures reports no failing site; `profile` runs on all
+    of them (arena is certification-bound in both modes); `expand` of one
+    claim in each of the four examples and of `stable_view_ordinary_reader`
+    yields a rewrite that verifies, profiles, and audits. No disagreement
+    between verify, expand, profile, and audit in either mode, so R26's
+    positive half is measured. Test
+    `verify_honors_the_view_semantics_environment_variable` (the same
+    sidecar refused with the footprint message under legacy and the loan
+    message under `stable-loans`). Note: `click verify examples/` stops at
+    the quarantined `multifile-registry` in both modes; the CLI has no
+    quarantine, which predates this work.
+  - **F11 partially closed** ("Add fix-views regressions R01, R04, R08,
+    R11, R23, and R31"), each confirmed to fail with its guard stubbed:
+    `owner_authorized_same_value_store_into_a_lent_range_is_refused` (R01);
+    `an_old_descriptor_is_refused_after_a_fresh_scope_over_the_same_resource`
+    (R04); `bytewise_overlap_is_decided_across_mismatched_element_widths`
+    (R08); `stable_mode_field_derived_view_reads_the_entry_footprint` and
+    `stable_mode_field_derived_view_does_not_retarget_after_a_pointer_write`
+    (R11); `loop_back_edge_refuses_a_dropped_share_or_a_regenerated_root`
+    (R23); `mdtests/empty_view_authorizes_nothing.md` (R31, both modes; the
+    nonnull half has nothing to pin, since Click proves `p != 0` from no
+    memory clause at all). Still PARTIAL after this: R03, R07 (no concrete
+    caller with live memory), R12 (certificate-level stale view), R16 (the
+    open-obligation half of D5 was folded into read-only projection), R18
+    (route matrix), R21.
+  - **F10 closed as far as a local change allows** ("Measure and fix the
+    interface-join and havoc loan curves"): `interface_successor_loans_are_inherited`
+    was B(B+1)/2 in the binding count (36, 136, 528, 2080 for B = 8..64) and
+    is now one membership index over binding values (24, 48, 96, 192),
+    pinned by `interface_binding_inheritance_is_near_linear_in_the_binding_count`.
+    The loop-head havoc is N^2 + 1 in cells times symbolic loans (65, 257,
+    1025, 4097) and no local change fixes it: a symbolic base cannot enter
+    the dyadic index, the per-block bucket and empty-bucket early-out
+    already exist, and each cell's answer is its own. It is pinned as a
+    measurement (`loop_head_havoc_work_over_cells_and_symbolic_loans`, an
+    upper bound so a later index change still passes) and recorded in
+    `docs/internals/verification-efficiency.md` as a known violation, not
+    an exception; the fixed dyadic walk the query paid per cell with an
+    empty concrete index is gone. `authorizes_bindings` records no
+    deterministic work on its path, so its curve is not landed.
+  - Candidate corpus after 6.3: 8 of 1,517 mdtests (the step 4 list minus
+    the migrated metadata-write fixture, plus the globals audit's
+    `rb_augment_callbacks_const_suite.md`) and 0 of 27 examples. Legacy
+    corpus and gate green.
 - **Step 7, escaping borrows,** after 6.1 and 6.2 and before the cutover.
 
 ### 7. Escaping borrows (required, decided 2026-09-14; landed 2026-09-14)
