@@ -330,7 +330,7 @@ fn c_update_expression(
     }
 }
 
-fn stable_loan_memory_write_outcome(
+pub(in crate::kernel) fn stable_loan_memory_write_outcome(
     state: &CState,
     pointer: &Pointer,
     bytes: u32,

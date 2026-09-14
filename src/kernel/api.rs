@@ -1920,11 +1920,42 @@ fn install_borrowed_contract_inputs(
     .map_err(|_| LoanRefusal::InvalidEvidence.diagnostic(LoanRefusalOperation::Entry))?
     .map_err(|_| LoanRefusal::MissingBacking.diagnostic(LoanRefusalOperation::Entry))?;
 
+    // The contract's partition is the precondition: an owned clause that
+    // provably overlaps a viewed clause, or a viewed composite's direct
+    // frontier, is a contract no caller can satisfy. Refuse it here rather
+    // than proving a vacuous body under it.
+    let owned_input_ranges = checked_inputs
+        .iter()
+        .filter(|input| input.fact.is_own())
+        .filter_map(|input| input.fact.memory_range().cloned())
+        .collect::<Vec<_>>();
+    let refuse_owned_overlap = |viewed_range: &CMemoryRange| {
+        owned_input_ranges
+            .iter()
+            .find(|owned| {
+                crate::kernel::loans::protected_range_proven_overlapping(
+                    owned,
+                    viewed_range,
+                    assumptions,
+                )
+            })
+            .map(|owned| {
+                LoanRefusal::ActiveDependency.proven_overlap_diagnostic(
+                    LoanRefusalOperation::Entry,
+                    LoanRefusalSubject::for_resource(CResourceFact::own_memory(owned.clone())),
+                )
+            })
+    };
     let mut selected = BTreeMap::new();
     for input in checked_inputs
         .into_iter()
         .filter(|input| input.fact.is_view())
     {
+        if let Some(range) = input.fact.memory_range()
+            && let Some(diagnostic) = refuse_owned_overlap(range)
+        {
+            return Err(diagnostic);
+        }
         if matches!(
             input.fact.resource(),
             CResource::Memory(range)
@@ -2063,6 +2094,11 @@ fn install_borrowed_contract_inputs(
             },
         );
         for piece in backing_pieces {
+            if let Some(range) = piece.memory_range()
+                && let Some(diagnostic) = refuse_owned_overlap(range)
+            {
+                return Err(diagnostic);
+            }
             let occurrences = state
                 .resources()
                 .view_occurrences_for_fact(&piece, assumptions);

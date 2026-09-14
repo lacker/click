@@ -1297,6 +1297,7 @@ impl CCompositeResourceDefinition {
             recursive,
             matched_recursive: false,
             counted_population: false,
+            facts_claim_liveness: false,
             contains,
             facts,
         }
@@ -1305,6 +1306,21 @@ impl CCompositeResourceDefinition {
     pub fn with_witnesses(mut self, witnesses: Vec<CParameter>) -> Self {
         self.witnesses = witnesses;
         self
+    }
+
+    pub fn with_liveness_facts(mut self, facts_claim_liveness: bool) -> Self {
+        self.facts_claim_liveness = facts_claim_liveness;
+        self
+    }
+
+    /// Whether a stable loan of this composite may carry its body facts:
+    /// recovery restores the exact escrowed head, so a fact is re-asserted
+    /// precisely as folded, which is sound when everything the fact depends
+    /// on is stable for the loan. The body's memory and tokens are; a
+    /// resource population the caller may consume elsewhere and the
+    /// liveness of storage the fact names are not (D12).
+    pub fn facts_are_loan_stable(&self) -> bool {
+        !self.counted_population && !self.facts_claim_liveness
     }
 
     pub fn witnesses(&self) -> &[CParameter] {
@@ -1328,6 +1344,7 @@ impl CCompositeResourceDefinition {
             recursive: false,
             matched_recursive: false,
             counted_population: true,
+            facts_claim_liveness: false,
             contains,
             facts,
         }

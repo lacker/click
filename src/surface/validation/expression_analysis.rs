@@ -1,4 +1,6 @@
 use super::*;
+use crate::surface::PredicateEnvironment;
+use std::collections::BTreeSet;
 
 pub(super) fn c_expression_uses_variable(expression: &CExpression, variable: &str) -> bool {
     match expression {
@@ -244,6 +246,78 @@ pub(in crate::surface) fn proposition_contains_resource_count(
         ClickProposition::Separate { .. }
         | ClickProposition::Contains { .. }
         | ClickProposition::Loadable { .. } => false,
+    }
+}
+
+/// Whether a proposition claims allocation liveness (`loadable(...)`),
+/// directly or through a called predicate's body.
+pub(in crate::surface) fn proposition_contains_liveness_claim(
+    proposition: &ClickProposition,
+    owned_bases: &[&CExpression],
+    predicate_environment: &PredicateEnvironment,
+    visited_predicates: &mut BTreeSet<String>,
+) -> bool {
+    match proposition {
+        // Liveness of storage the body itself owns is stable under a loan:
+        // a live loan over any of those bytes forbids freeing the
+        // allocation. Liveness of anything else is not.
+        ClickProposition::Loadable { segment } => {
+            !owned_bases.iter().any(|base| **base == segment.base)
+        }
+        ClickProposition::PredicateCall { name, .. } => {
+            if !visited_predicates.insert(name.clone()) {
+                return false;
+            }
+            predicate_environment.get(name).is_some_and(|definition| {
+                proposition_contains_liveness_claim(
+                    &definition.body,
+                    owned_bases,
+                    predicate_environment,
+                    visited_predicates,
+                )
+            })
+        }
+        ClickProposition::At { proposition, .. }
+        | ClickProposition::Not(proposition)
+        | ClickProposition::ForAll {
+            body: proposition, ..
+        }
+        | ClickProposition::Exists {
+            body: proposition, ..
+        } => proposition_contains_liveness_claim(
+            proposition,
+            owned_bases,
+            predicate_environment,
+            visited_predicates,
+        ),
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            proposition_contains_liveness_claim(
+                left,
+                owned_bases,
+                predicate_environment,
+                visited_predicates,
+            ) || proposition_contains_liveness_claim(
+                right,
+                owned_bases,
+                predicate_environment,
+                visited_predicates,
+            )
+        }
+        ClickProposition::RangeAll { body, .. } | ClickProposition::RangeAny { body, .. } => {
+            proposition_contains_liveness_claim(
+                body,
+                owned_bases,
+                predicate_environment,
+                visited_predicates,
+            )
+        }
+        ClickProposition::Comparison { .. }
+        | ClickProposition::FloatClassification { .. }
+        | ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Defined { .. } => false,
     }
 }
 

@@ -5367,6 +5367,22 @@ pub(in crate::surface) fn composite_resource_definitions(
             })
             .collect();
         let observes_its_population = body.facts().iter().any(proposition_contains_resource_count);
+        let owned_bases = body
+            .contains()
+            .iter()
+            .filter_map(|resource| match resource {
+                ResourceClause::OwnMemory(segment) => Some(&segment.base),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let facts_claim_liveness = body.facts().iter().any(|fact| {
+            proposition_contains_liveness_claim(
+                fact,
+                &owned_bases,
+                predicate_environment,
+                &mut BTreeSet::new(),
+            )
+        });
         let matched = if let Some(matched) = &body.matched {
             let schema = definition
                 .field_schema()
@@ -5514,6 +5530,7 @@ pub(in crate::surface) fn composite_resource_definitions(
                 )
             }
             .with_witnesses(witnesses)
+            .with_liveness_facts(facts_claim_liveness)
             .with_resource_match_body(matched)
             .with_matched_recursion(matched_recursive)
             .with_instance_schema(definition.field_schema().cloned()),
@@ -6409,6 +6426,33 @@ int32 reader(int32 p[]) {
 "#;
         let source = "int reader(int *p) { return p[0]; }";
         verify_in_stable_mode(click, source).expect("both claims certify at one shared root");
+    }
+
+    /// A whole-struct assignment through a rooted view is a write into the
+    /// lent range; the aggregate-copy path consults the ledger too.
+    #[test]
+    fn stable_mode_root_view_refuses_an_aggregate_copy_into_it() {
+        let click = r#"
+verifying "reader.c";
+
+int32 copy_pair(struct pair* s, struct pair* t) {
+    views s[0..1];
+    owns t[0..1];
+    ensures result == 0;
+} by {
+    execute();
+    simp();
+}
+"#;
+        let source = "struct pair { int a; int b; };\nint copy_pair(struct pair *s, struct pair *t) { *s = *t; return 0; }";
+        let error = verify_in_stable_mode(click, source)
+            .expect_err("an aggregate copy into a contract input view must be refused");
+        assert!(
+            error.message().contains("active loan")
+                || error.message().contains("missing resource fact"),
+            "{}",
+            error.message()
+        );
     }
 
     #[test]

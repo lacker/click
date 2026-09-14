@@ -84,6 +84,61 @@ fn borrowed_contract_input_roots_are_shared_across_proof_units_of_one_function()
     assert_ne!(first.loan_ledger(), changed.loan_ledger());
 }
 
+/// An owned clause that provably overlaps a viewed clause of the same
+/// contract is a partition no caller can supply; the root installer refuses
+/// it instead of proving a vacuous body under it.
+#[test]
+fn borrowed_contract_input_refuses_an_owned_clause_inside_a_viewed_range() {
+    let pointer = crate::kernel::Pointer {
+        block: "buffer".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let viewed = CResourceFact::view_memory(CMemoryRange::new(
+        pointer.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(2),
+    ));
+    let owned = CResourceFact::own_memory(CMemoryRange::new(
+        pointer.clone(),
+        Bitvector32Term::Constant(1),
+        Bitvector32Term::Constant(2),
+    ));
+    let state = CState::new()
+        .with_memory(CMemory::new().with_block(pointer.block.clone(), 8))
+        .with_resource_context(
+            ResourceContext::new().unchecked_with_facts([viewed.clone(), owned.clone()]),
+        );
+    let function = c_function(
+        CType::Int32,
+        "overlapping_reader",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_return(c_load(c_variable("p"))),
+    )
+    .with_resource_summary(
+        vec![
+            CResourceSpec::viewed_memory(CMemorySegment::new(
+                c_variable("p"),
+                c_int32_literal(0),
+                c_int32_literal(2),
+            )),
+            CResourceSpec::owned_memory(CMemorySegment::new(
+                c_variable("p"),
+                c_int32_literal(1),
+                c_int32_literal(2),
+            )),
+        ],
+        vec![],
+    );
+    let refusal = c_state_with_borrowed_contract_inputs(
+        state,
+        &function,
+        &[CExpression::Value(CValue::pointer(pointer))],
+        &PureFactContext::new(),
+    )
+    .expect_err("an owned clause inside the viewed range is refused at entry");
+    assert_eq!(refusal.category(), LoanRefusalCategory::ProvenOverlap);
+}
+
 #[test]
 fn borrowed_contract_input_rejects_derived_or_ambiguous_views() {
     let viewed = CResourceFact::view_token("borrowed_input".into(), vec![]);

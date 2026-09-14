@@ -1805,20 +1805,6 @@ impl CMemory {
         Some((memory, bytes, resolved_base, pending))
     }
 
-    pub(in crate::kernel) fn with_loop_memory_havoc(
-        self,
-        variable: Variable,
-        preserved_blocks: &BTreeSet<PointerBlock>,
-        mutable_ranges: Option<&[CMemoryRange]>,
-    ) -> Self {
-        self.with_loop_memory_havoc_preserving_loans(
-            variable,
-            preserved_blocks,
-            mutable_ranges,
-            None,
-        )
-    }
-
     pub(in crate::kernel) fn with_loop_memory_havoc_preserving_loans(
         mut self,
         variable: Variable,

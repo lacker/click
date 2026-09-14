@@ -2312,6 +2312,11 @@ pub struct CCompositeResourceDefinition {
     /// answers for the definition as a whole.
     pub(super) matched_recursive: bool,
     pub(super) counted_population: bool,
+    /// Whether a body fact mentions an allocation-liveness claim
+    /// (`loadable(...)`, directly or through a predicate). A loan of the
+    /// composite stabilizes its memory and tokens, not the liveness of
+    /// storage the fact names, so such facts are not restored by recovery.
+    pub(super) facts_claim_liveness: bool,
     pub(super) contains: Vec<CResourceSpec>,
     pub(super) facts: Vec<SpecProposition>,
 }

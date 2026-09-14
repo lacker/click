@@ -133,8 +133,9 @@ use validation::{
     combined_click_function_definitions, combined_external_function_blocks,
     combined_predicate_definitions, combined_resource_definitions, contains_old_expression,
     describe_c0_type, describe_resource_clause, proposition_contains_at_expression,
-    proposition_contains_old_expression, proposition_contains_resource_count,
-    standard_library_theorem_definitions, standard_library_theorem_index,
+    proposition_contains_liveness_claim, proposition_contains_old_expression,
+    proposition_contains_resource_count, standard_library_theorem_definitions,
+    standard_library_theorem_index,
 };
 pub(in crate::surface) use verification::CSourceContext;
 pub(in crate::surface) use verification::*;

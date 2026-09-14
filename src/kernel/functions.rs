@@ -1724,6 +1724,28 @@ fn execute_verified_function_applications(
             bindings: selected_bindings,
         } = primary;
         let additional_calls = applicable.into_iter();
+        // The planner has checked these effects against the views this call
+        // lends; the caller's other active loans (its own contract inputs,
+        // an enclosing call's loans) are checked here, so a summary can
+        // never havoc memory that is lent elsewhere.
+        if let Some(diagnostic) = entry_state.loan_ledger().and_then(|ledger| {
+            transfer.memory_effects.iter().find_map(|range| {
+                ledger.memory_access_refusal(
+                    range,
+                    &effective_assumptions,
+                    LoanRefusalOperation::MemoryAccess,
+                )
+            })
+        }) {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)),
+                facts,
+                obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
+            });
+            continue;
+        }
         let memory = if transfer.memory_effects.is_empty() {
             entry_state.memory.clone()
         } else {
@@ -2056,6 +2078,7 @@ fn execute_verified_function_applications(
             &return_resources,
             interface,
             &allocation_assumptions,
+            post_state.loan_ledger(),
         );
         drop(allocation_delta_timing);
         let (memory, allocation_effects) = match allocation_delta {
@@ -7477,6 +7500,7 @@ fn apply_verified_heap_allocation_delta(
     output_resources: &ResourceContext,
     interface: &CFunctionContractInterface,
     assumptions: &PureFactContext,
+    ledger: Option<&LoanLedger>,
 ) -> Result<(CMemory, Vec<ExecutionPureFact>), VerifiedAllocationDeltaError> {
     let mut effects = Vec::new();
     let input = expand_all_composite_resource_facts(
@@ -7617,6 +7641,26 @@ fn apply_verified_heap_allocation_delta(
                     resource: resource.clone(),
                 },
             ));
+        }
+        // A callee that retires an allocation frees every byte of it; a live
+        // loan over any of those bytes forbids that exactly as a direct
+        // `free` would (D6, D10).
+        if let Some(ledger) = ledger {
+            let whole_allocation = CMemoryRange::new_with_element_width(
+                base.clone(),
+                Bitvector32Term::Constant(0),
+                bytes.clone(),
+                1,
+            );
+            if let Some(diagnostic) = ledger.memory_access_refusal(
+                &whole_allocation,
+                &allocation_assumptions,
+                LoanRefusalOperation::MemoryAccess,
+            ) {
+                return Err(VerifiedAllocationDeltaError::Runtime(
+                    CRuntimeError::LoanRefusal(diagnostic),
+                ));
+            }
         }
         let before_free = memory.clone();
         if memory.live_heap_block_size(&base).is_none() {
@@ -10263,9 +10307,12 @@ fn prepare_contract_resource_transfer_with_candidate(
                         "composite loan definition is missing".to_string(),
                     )));
                 };
-                if !definition.facts().is_empty() {
+                // Recovery restores the exact escrowed head, so its facts are
+                // re-asserted precisely as folded; that is sound only when
+                // everything a fact depends on is stable for the loan.
+                if !definition.facts_are_loan_stable() {
                     return Ok(Err(CRuntimeError::FunctionContract(
-                        "composite body facts are unsupported in stable loan backing".to_string(),
+                        "composite body facts depend on a resource count or an allocation-liveness claim, which a stable loan does not stabilize".to_string(),
                     )));
                 }
                 let pieces = expanded.facts().to_vec();
@@ -17608,6 +17655,167 @@ mod candidate_stable_view_call_tests {
         .expect("composite return should recover");
         assert!(resources.satisfies_fact(&head, &PureFactContext::new()));
         assert!(evidence.is_some());
+    }
+
+    /// A composite view lent twice in a row: the first return must leave
+    /// the caller exactly the recovered head, so the second lend finds one
+    /// owner and no exposed body piece beside it.
+    fn composite_reader_with_definition(
+        name: &str,
+        definition: CCompositeResourceDefinition,
+    ) -> CFunction {
+        let required = CResourceSpec::declared(
+            ResourceFamily::Composite,
+            CResourceAccessMode::View,
+            "cell".into(),
+            vec![c_variable("p")],
+            vec![CType::Int32Pointer],
+            CResourceTransferRole::Borrow,
+            CResourceSnapshot::Entry,
+        )
+        .unwrap();
+        c_function(
+            CType::Int32,
+            name,
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(c_load(c_variable("p"))),
+        )
+        .with_resource_summary(vec![required], Vec::new())
+        .with_composite_resource_definitions(vec![definition])
+    }
+
+    fn fact_bearing_cell_definition() -> CCompositeResourceDefinition {
+        let segment = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        CCompositeResourceDefinition::new(
+            "cell",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            None,
+            false,
+            vec![CResourceSpec::owned_memory(segment)],
+            vec![SpecProposition::Defined(SpecExpression::Value(int32(0)))],
+        )
+    }
+
+    fn plan_composite_lend(function: &CFunction) -> Result<(), CRuntimeError> {
+        let pointer = pointer();
+        let head =
+            CResourceFact::own_composite("cell".into(), vec![CValue::pointer(pointer.clone())]);
+        let caller = CState::new()
+            .with_memory(
+                CMemory::new()
+                    .with_block(pointer.block.clone(), 4)
+                    .store(pointer.clone(), int32(7)),
+            )
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(head));
+        let callee = bind_c_function_arguments(&caller, function, &[CValue::pointer(pointer)])
+            .expect("composite reader arguments should bind");
+        prepare_function_resource_transfer(
+            &caller,
+            &callee,
+            function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("composite transfer should run")
+        .map(|_| ())
+    }
+
+    /// Recovery restores the exact escrowed head, so a body fact over the
+    /// body's own cells is re-asserted as folded: such a composite lends.
+    #[test]
+    fn candidate_composite_with_body_facts_is_lendable() {
+        let function = composite_reader_with_definition(
+            "candidate_fact_bearing_reader",
+            fact_bearing_cell_definition(),
+        );
+        plan_composite_lend(&function).expect("a fact over the body's own cells is loan-stable");
+    }
+
+    /// A fact that claims liveness of storage outside the body, or one that
+    /// reads a population count, is not stabilized by the loan.
+    #[test]
+    fn candidate_composite_with_unstable_facts_is_refused() {
+        let liveness = composite_reader_with_definition(
+            "candidate_liveness_fact_reader",
+            fact_bearing_cell_definition().with_liveness_facts(true),
+        );
+        let error = plan_composite_lend(&liveness).expect_err("a liveness fact is refused");
+        assert!(
+            matches!(&error, CRuntimeError::FunctionContract(message) if message.contains("allocation-liveness")),
+            "{error:?}"
+        );
+        let segment = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        let counted = composite_reader_with_definition(
+            "candidate_counted_fact_reader",
+            CCompositeResourceDefinition::counted_population(
+                "cell",
+                vec![c_parameter("p", CType::Int32Pointer)],
+                None,
+                vec![CResourceSpec::owned_memory(segment)],
+                vec![SpecProposition::Defined(SpecExpression::Value(int32(0)))],
+            ),
+        );
+        assert!(plan_composite_lend(&counted).is_err());
+    }
+
+    #[test]
+    fn candidate_composite_reader_can_be_called_twice() {
+        let pointer = pointer();
+        let head =
+            CResourceFact::own_composite("cell".into(), vec![CValue::pointer(pointer.clone())]);
+        let caller = CState::new()
+            .with_memory(
+                CMemory::new()
+                    .with_block(pointer.block.clone(), 4)
+                    .store(pointer.clone(), int32(7)),
+            )
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(head.clone()));
+        let function = composite_reader("candidate_composite_reader_twice");
+        let first = execute_c_function_call_paths(
+            &caller,
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer.clone()))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("first composite call should execute");
+        let [
+            CFunctionPath {
+                outcome:
+                    CFunctionOutcome::Return {
+                        state: after_first, ..
+                    },
+                ..
+            },
+        ] = first.as_slice()
+        else {
+            panic!("first composite call should return: {first:?}");
+        };
+        assert_eq!(after_first.resources().facts(), std::slice::from_ref(&head));
+        let second = execute_c_function_call_paths(
+            after_first,
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer.clone()))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("second composite call should execute");
+        assert!(
+            matches!(
+                second.as_slice(),
+                [CFunctionPath {
+                    outcome: CFunctionOutcome::Return { .. },
+                    ..
+                }]
+            ),
+            "{second:?}"
+        );
     }
 
     #[test]

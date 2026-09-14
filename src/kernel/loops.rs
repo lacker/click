@@ -511,6 +511,24 @@ pub(super) fn execute_c_call_assign_paths(
                             loan_evidence: path.loan_evidence.clone(),
                         };
                     };
+                    if let Some(outcome) = crate::kernel::eval::stable_loan_memory_write_outcome(
+                        &state,
+                        &slot,
+                        layout.size_bytes(),
+                        &crate::kernel::reasoning::path_facts::assumptions_with_path_context(
+                            assumptions,
+                            &path.facts,
+                            &path.obligations,
+                        ),
+                    ) {
+                        return CStatementExecutionPath {
+                            outcome,
+                            facts: path.facts,
+                            obligations: path.obligations,
+
+                            loan_evidence: path.loan_evidence.clone(),
+                        };
+                    }
                     let next_memory = match copy_aggregate_fields_checked(
                         state.memory.clone(),
                         pointer.pointer(),
@@ -2233,6 +2251,36 @@ fn abstract_loop_exit_memory(
             restatement.pin(&fresh, &held);
         }
         havoced.push((pointer, fresh));
+    }
+    if let Some(ledger) = successor.loan_ledger() {
+        for pointer in dropped
+            .iter()
+            .chain(havoced.iter().map(|(pointer, _)| pointer))
+        {
+            let byte_width = memory
+                .cells
+                .get(pointer)
+                .map(CValue::byte_width)
+                .unwrap_or(0);
+            if byte_width == 0 {
+                continue;
+            }
+            let range = CMemoryRange::new_with_element_width(
+                pointer.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(byte_width),
+                1,
+            );
+            if ledger
+                .permits_memory_access_with_assumptions(&range, assumptions)
+                .is_err()
+            {
+                return Err(format!(
+                    "the cell in `{}` that the exits abstract is under an active stable-view loan",
+                    pointer.block
+                ));
+            }
+        }
     }
     let mut abstracted = BTreeSet::new();
     if !dropped.is_empty() || !havoced.is_empty() {
@@ -5239,11 +5287,18 @@ pub(super) fn havoc_loop_modified_locals(
             .filter(|name| state.locals.get(name).is_some())
             .filter_map(|name| state.locals.slot(name).map(|slot| slot.block.clone()))
             .collect();
-        let havoced_memory = state.memory.clone().with_loop_memory_havoc(
-            variables.next(),
-            &preserved_blocks,
-            mutable_ranges,
-        );
+        // Cells under an active stable-view loan are stable across the loop
+        // by the loan itself; erasing them would only lose loan-supported
+        // framing, never authority.
+        let havoced_memory = state
+            .memory
+            .clone()
+            .with_loop_memory_havoc_preserving_loans(
+                variables.next(),
+                &preserved_blocks,
+                mutable_ranges,
+                state.loan_ledger(),
+            );
         state.set_memory(havoced_memory);
     }
     state

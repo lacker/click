@@ -5446,11 +5446,10 @@ fn observed_wide_footprint_and_unknown_loop_barrier_are_invalidated() {
     let state = CState::new()
         .with_memory(memory)
         .with_resource_context(resources);
-    let barrier =
-        state
-            .memory()
-            .clone()
-            .with_loop_memory_havoc(Variable(81), &BTreeSet::new(), None);
+    let barrier = state
+        .memory()
+        .clone()
+        .with_loop_memory_havoc_preserving_loans(Variable(81), &BTreeSet::new(), None, None);
     let after = state.with_memory(barrier);
     assert!(
         !after
@@ -5533,9 +5532,10 @@ fn memory_invalidation_scales_with_affected_intervals_and_barrier_output() {
             crate::instrumentation::measure_deterministic_work(|| {
                 state
                     .clone()
-                    .with_memory(memory.clone().with_loop_memory_havoc(
+                    .with_memory(memory.clone().with_loop_memory_havoc_preserving_loans(
                         Variable(820),
                         &BTreeSet::new(),
+                        None,
                         None,
                     ))
             });

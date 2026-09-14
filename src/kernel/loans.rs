@@ -290,7 +290,7 @@ fn without_unindexed_memory(
 /// refuses the writes that no partition can license: a store through the
 /// viewed pointer itself, through a pointer assumed equal to it, or into a
 /// concretely overlapping offset of the same object.
-fn protected_range_proven_overlapping(
+pub(crate) fn protected_range_proven_overlapping(
     query: &CMemoryRange,
     protected: &CMemoryRange,
     assumptions: &PureFactContext,
@@ -320,6 +320,17 @@ fn protected_range_proven_overlapping(
     // so ask in both orders; overlap itself is symmetric.
     memory_ranges_proven_overlapping(&query, &protected, assumptions)
         || memory_ranges_proven_overlapping(&protected, &query, assumptions)
+}
+
+/// Whether an active loan protects memory: any byte-backed loan, and any
+/// loan of a composite head, whose body is memory whether or not the
+/// one-level frontier enumerated any of it. The fail-closed barriers
+/// (unknown loop write sets, branch joins) consult this count.
+fn loan_protects_memory(memory_backing: &[CMemoryRange], permitted: &[CResourceFact]) -> bool {
+    !memory_backing.is_empty()
+        || permitted
+            .iter()
+            .any(|fact| matches!(fact.resource(), CResource::Composite { .. }))
 }
 
 /// A read derived from ownership in the current context. This is useful for
@@ -3026,6 +3037,7 @@ impl LoanLedger {
                         return Err(LoanRefusal::UnsupportedResource);
                     }
                 };
+                let protects_memory = !memory_backing.is_empty();
                 data.next_scope = data
                     .next_scope
                     .checked_add(1)
@@ -3090,7 +3102,7 @@ impl LoanLedger {
                     *loan,
                     &symbolic_memory_ranges(&memory_backing),
                 );
-                if !memory_backing.is_empty() {
+                if protects_memory {
                     data.active_memory_loans = data
                         .active_memory_loans
                         .checked_add(1)
@@ -3142,6 +3154,9 @@ impl LoanLedger {
                     .filter_map(CResourceFact::memory_own_range)
                     .cloned()
                     .collect::<Vec<_>>();
+                // A composite head is memory whether or not its one-level
+                // frontier enumerated any of it.
+                let protects_memory = true;
                 data.next_scope = data
                     .next_scope
                     .checked_add(1)
@@ -3212,7 +3227,7 @@ impl LoanLedger {
                     *loan,
                     &symbolic_memory_ranges(&memory_backing),
                 );
-                if !memory_backing.is_empty() {
+                if protects_memory {
                     data.active_memory_loans = data
                         .active_memory_loans
                         .checked_add(1)
@@ -3262,6 +3277,7 @@ impl LoanLedger {
                     .filter_map(CResourceFact::memory_range)
                     .cloned()
                     .collect::<Vec<_>>();
+                let protects_memory = loan_protects_memory(&memory_backing, &permitted);
                 data.next_scope = data
                     .next_scope
                     .checked_add(1)
@@ -3326,7 +3342,7 @@ impl LoanLedger {
                     *loan,
                     &symbolic_memory_ranges(&memory_backing),
                 );
-                if !memory_backing.is_empty() {
+                if protects_memory {
                     data.active_memory_loans = data
                         .active_memory_loans
                         .checked_add(1)
@@ -3650,7 +3666,7 @@ impl LoanLedger {
                             false,
                         )?;
                     }
-                    if !record.memory_backing.is_empty() {
+                    if loan_protects_memory(&record.memory_backing, &record.permitted) {
                         data.active_memory_loans = data
                             .active_memory_loans
                             .checked_sub(1)
@@ -4150,6 +4166,34 @@ mod tests {
                 .permits_memory_access_with_assumptions(&parameter_range(9, 0, 1, 4), &assumptions),
             Err(LoanRefusal::ActiveDependency)
         );
+    }
+
+    /// A composite loan is a memory loan whether or not its one-level
+    /// frontier enumerated any bytes: the head is memory.
+    #[test]
+    fn composite_lend_counts_as_a_memory_loan_without_byte_backing() {
+        let (ledger, owner, reader) = participants();
+        let head = CResourceFact::own(CResource::Composite {
+            name: "box".to_string(),
+            arguments: Vec::new().into(),
+        });
+        let piece = owned("box_token");
+        let support = backing(&head);
+        let backing =
+            CompositeLoanBacking::from_checked_expansion(support, head.clone(), vec![piece])
+                .expect("a token-only frontier is a checked expansion");
+        let opening = ledger
+            .lend_composite(owner, reader, support, head, backing)
+            .expect("composite lend");
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        assert!(ledger.has_active_memory_loans());
+        assert!(ledger.invariant_holds());
+        let transfer = ledger.transfer(opening.root_share, reader, owner).unwrap();
+        let ledger = ledger.apply(&transfer).unwrap();
+        let end = ledger.end(opening.scope, owner).unwrap();
+        let ledger = ledger.apply(&end).unwrap();
+        assert!(!ledger.has_active_memory_loans());
+        assert!(ledger.invariant_holds());
     }
 
     #[test]
