@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 2;
+pub(crate) const EXPORT_SCHEMA: u32 = 3;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -16,6 +16,7 @@ pub struct CppExport {
     pub profile: CppProfile,
     pub logical_source: String,
     pub function: CppFunction,
+    pub reachable_functions: Vec<CppFunction>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -104,6 +105,21 @@ pub struct CppPlaceReference {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CppFunctionReference {
+    pub declaration_id: String,
+    pub name: String,
+    pub span: CppSpan,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CppCallArgument {
+    Value { value: CppExpression },
+    Reference { place: CppPlaceReference },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CppStatement {
     Assign {
@@ -119,6 +135,11 @@ pub enum CppStatement {
         condition: CppExpression,
         then_branch: Vec<CppStatement>,
         else_branch: Vec<CppStatement>,
+        span: CppSpan,
+    },
+    Call {
+        callee: CppFunctionReference,
+        arguments: Vec<CppCallArgument>,
         span: CppSpan,
     },
 }
@@ -164,22 +185,64 @@ impl CppExport {
                 self.logical_source
             ));
         }
-        self.function.validate(function, logical_source)
+        if self.function.name != function {
+            return Err(format!(
+                "C++ export resolved `{}` instead of selected function `{function}`",
+                self.function.name
+            ));
+        }
+
+        let mut functions = BTreeMap::new();
+        let mut names = BTreeMap::new();
+        for source in std::iter::once(&self.function).chain(&self.reachable_functions) {
+            source.validate(logical_source)?;
+            if functions
+                .insert(source.declaration_id.clone(), source)
+                .is_some()
+            {
+                return Err(format!(
+                    "duplicate C++ function declaration identity `{}`",
+                    source.declaration_id
+                ));
+            }
+            if let Some(previous) = names.insert(source.name.clone(), source.declaration_id.clone())
+            {
+                return Err(format!(
+                    "reachable C++ functions `{previous}` and `{}` share unsupported overloaded name `{}`",
+                    source.declaration_id, source.name
+                ));
+            }
+        }
+
+        let mut visiting = Vec::new();
+        let mut visited = std::collections::BTreeSet::new();
+        validate_reachable_calls(
+            &self.function.declaration_id,
+            &functions,
+            &mut visiting,
+            &mut visited,
+            logical_source,
+        )?;
+        if visited.len() != functions.len() {
+            return Err(
+                "C++ export contains a function outside the selected function's reachable graph"
+                    .into(),
+            );
+        }
+        Ok(())
     }
 }
 
 impl CppFunction {
-    fn validate(&self, expected_name: &str, logical_source: &str) -> Result<(), String> {
-        if self.name != expected_name || self.declaration_id.is_empty() {
-            return Err(format!(
-                "C++ export resolved `{}` instead of selected function `{expected_name}`",
-                self.name
-            ));
+    fn validate(&self, logical_source: &str) -> Result<(), String> {
+        if self.name.is_empty() || self.declaration_id.is_empty() {
+            return Err("C++ function is missing declaration identity".into());
         }
         require_int32(&self.return_type, false, "function return type")?;
         if !self.is_noexcept {
             return Err(format!(
-                "selected C++ function `{expected_name}` must be explicitly non-throwing"
+                "C++ function `{}` must be explicitly non-throwing",
+                self.name
             ));
         }
         self.span.validate(logical_source)?;
@@ -273,6 +336,42 @@ impl CppStatement {
                 }
                 Ok(())
             }
+            Self::Call {
+                callee,
+                arguments,
+                span,
+            } => {
+                span.validate(logical_source)?;
+                callee.span.validate(logical_source)?;
+                if callee.declaration_id.is_empty() || callee.name.is_empty() {
+                    return Err("C++ call is missing resolved declaration identity".into());
+                }
+                for argument in arguments {
+                    argument.validate(places, logical_source)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl CppCallArgument {
+    fn validate(
+        &self,
+        places: &BTreeMap<String, (String, CppType)>,
+        logical_source: &str,
+    ) -> Result<(), String> {
+        match self {
+            Self::Value { value } => value.validate(places, logical_source),
+            Self::Reference { place } => {
+                let value_type = validate_place_reference(place, places, logical_source)?;
+                match value_type {
+                    CppType::LvalueReference { pointee } => {
+                        require_int32(pointee, true, "call reference argument")
+                    }
+                    _ => Err("C++ reference argument does not name a supported reference".into()),
+                }
+            }
         }
     }
 }
@@ -353,9 +452,166 @@ impl CppStatement {
                 else_branch,
                 ..
             } => sequence_always_returns(then_branch) && sequence_always_returns(else_branch),
-            Self::Assign { .. } => false,
+            Self::Assign { .. } | Self::Call { .. } => false,
         }
     }
+}
+
+fn validate_reachable_calls(
+    declaration_id: &str,
+    functions: &BTreeMap<String, &CppFunction>,
+    visiting: &mut Vec<String>,
+    visited: &mut std::collections::BTreeSet<String>,
+    logical_source: &str,
+) -> Result<(), String> {
+    if visited.contains(declaration_id) {
+        return Ok(());
+    }
+    if let Some(start) = visiting.iter().position(|active| active == declaration_id) {
+        let mut cycle = visiting[start..]
+            .iter()
+            .filter_map(|identity| {
+                functions
+                    .get(identity)
+                    .map(|function| function.name.as_str())
+            })
+            .collect::<Vec<_>>();
+        cycle.push(
+            functions
+                .get(declaration_id)
+                .map_or("<unknown>", |function| function.name.as_str()),
+        );
+        return Err(format!(
+            "recursive C++ calls are outside the supported slice: {}",
+            cycle.join(" -> ")
+        ));
+    }
+    let function = functions.get(declaration_id).ok_or_else(|| {
+        format!("C++ reachable graph refers to missing declaration `{declaration_id}`")
+    })?;
+    visiting.push(declaration_id.to_string());
+    let mut calls = Vec::new();
+    collect_calls(&function.body, &mut calls);
+    for (callee, arguments) in calls {
+        callee.span.validate(logical_source)?;
+        let target = functions.get(&callee.declaration_id).ok_or_else(|| {
+            format!(
+                "C++ call to `{}` refers to missing reachable definition `{}`",
+                callee.name, callee.declaration_id
+            )
+        })?;
+        if target.name != callee.name {
+            return Err(format!(
+                "C++ declaration `{}` is named `{}`, not `{}`",
+                callee.declaration_id, target.name, callee.name
+            ));
+        }
+        validate_call_arguments(function, target, arguments)?;
+        validate_reachable_calls(
+            &callee.declaration_id,
+            functions,
+            visiting,
+            visited,
+            logical_source,
+        )?;
+    }
+    visiting.pop();
+    visited.insert(declaration_id.to_string());
+    Ok(())
+}
+
+fn collect_calls<'a>(
+    statements: &'a [CppStatement],
+    calls: &mut Vec<(&'a CppFunctionReference, &'a [CppCallArgument])>,
+) {
+    for statement in statements {
+        match statement {
+            CppStatement::Call {
+                callee, arguments, ..
+            } => calls.push((callee, arguments)),
+            CppStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_calls(then_branch, calls);
+                collect_calls(else_branch, calls);
+            }
+            CppStatement::Assign { .. } | CppStatement::Return { .. } => {}
+        }
+    }
+}
+
+fn validate_call_arguments(
+    caller: &CppFunction,
+    callee: &CppFunction,
+    arguments: &[CppCallArgument],
+) -> Result<(), String> {
+    if arguments.len() != callee.parameters.len() {
+        return Err(format!(
+            "C++ call from `{}` to `{}` has {} arguments for {} parameters",
+            caller.name,
+            callee.name,
+            arguments.len(),
+            callee.parameters.len()
+        ));
+    }
+    for (index, (argument, parameter)) in arguments.iter().zip(&callee.parameters).enumerate() {
+        let compatible = match (argument, &parameter.value_type) {
+            (
+                CppCallArgument::Value { value },
+                CppType::Boolean {
+                    bits: 8,
+                    is_const: false,
+                },
+            ) => matches!(
+                value.value_type(),
+                CppType::Boolean {
+                    bits: 8,
+                    is_const: false,
+                }
+            ),
+            (
+                CppCallArgument::Reference { place },
+                CppType::LvalueReference { pointee: expected },
+            ) => {
+                let actual = caller
+                    .parameters
+                    .iter()
+                    .find(|candidate| candidate.declaration_id == place.declaration_id)
+                    .map(|candidate| &candidate.value_type);
+                match (actual, expected.as_ref()) {
+                    (
+                        Some(CppType::LvalueReference { pointee: actual }),
+                        CppType::Integer {
+                            bits: 32,
+                            signed: true,
+                            is_const: expected_const,
+                        },
+                    ) => matches!(
+                        actual.as_ref(),
+                        CppType::Integer {
+                            bits: 32,
+                            signed: true,
+                            is_const: actual_const,
+                        } if *expected_const || !*actual_const
+                    ),
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        if !compatible {
+            return Err(format!(
+                "C++ call from `{}` to `{}` has unsupported argument {} for parameter `{}`",
+                caller.name,
+                callee.name,
+                index + 1,
+                parameter.name
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl CppSpan {

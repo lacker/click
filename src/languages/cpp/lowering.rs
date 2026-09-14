@@ -9,13 +9,13 @@
 use std::collections::BTreeMap;
 
 use super::{
-    CppBinaryOperator, CppExpression, CppFunction, CppPlace, CppPlaceReference, CppStatement,
-    CppType, PreparedCppImport,
+    CppBinaryOperator, CppCallArgument, CppExpression, CppFunction, CppPlace, CppPlaceReference,
+    CppStatement, CppType, PreparedCppImport,
 };
 use crate::kernel::{
-    CExpression, CFunction, CStatement, CType, LoadSourceId, LoadSourceOwnerId, c_add, c_function,
-    c_if, c_int32_literal, c_parameter, c_return, c_seq, c_skip, c_typed_load_with_source,
-    c_typed_store, c_variable,
+    CExpression, CFunction, CStatement, CType, LoadSourceId, LoadSourceOwnerId, c_add, c_call,
+    c_function, c_if, c_int32_literal, c_parameter, c_return, c_seq, c_skip,
+    c_typed_load_with_source, c_typed_store, c_variable,
 };
 
 /// One kernel function together with the immutable semantic artifact that
@@ -25,6 +25,7 @@ use crate::kernel::{
 pub struct LoweredCppFunction {
     source: PreparedCppImport,
     function: CFunction,
+    reachable_functions: Vec<CFunction>,
 }
 
 impl LoweredCppFunction {
@@ -39,12 +40,30 @@ impl LoweredCppFunction {
     pub fn kernel_function(&self) -> &CFunction {
         &self.function
     }
+
+    pub fn reachable_kernel_functions(&self) -> &[CFunction] {
+        &self.reachable_functions
+    }
 }
 
 /// Lowers the first pinned C++ import slice directly to the kernel's checked
 /// execution vocabulary.
 pub fn lower_import(import: &PreparedCppImport) -> Result<LoweredCppFunction, String> {
-    let source = &import.export().function;
+    let function = lower_function(import, &import.export().function)?;
+    let reachable_functions = import
+        .export()
+        .reachable_functions
+        .iter()
+        .map(|source| lower_function(import, source))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(LoweredCppFunction {
+        source: import.clone(),
+        function,
+        reachable_functions,
+    })
+}
+
+fn lower_function(import: &PreparedCppImport, source: &CppFunction) -> Result<CFunction, String> {
     let places = source
         .parameters
         .iter()
@@ -62,11 +81,12 @@ pub fn lower_import(import: &PreparedCppImport) -> Result<LoweredCppFunction, St
         next_load_occurrence: 0,
     };
     let body = context.lower_sequence(&source.body)?;
-    let function = c_function(CType::Int32, source.name.clone(), parameters, body);
-    Ok(LoweredCppFunction {
-        source: import.clone(),
-        function,
-    })
+    Ok(c_function(
+        CType::Int32,
+        source.name.clone(),
+        parameters,
+        body,
+    ))
 }
 
 fn lower_parameter(parameter: &CppPlace) -> Result<crate::kernel::CParameter, String> {
@@ -128,6 +148,22 @@ impl LoweringContext<'_> {
                 let else_branch = self.lower_sequence(else_branch)?;
                 Ok(c_if(condition, then_branch, else_branch))
             }
+            CppStatement::Call {
+                callee, arguments, ..
+            } => {
+                let arguments = arguments
+                    .iter()
+                    .map(|argument| self.lower_call_argument(argument))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(c_call(callee.name.clone(), arguments))
+            }
+        }
+    }
+
+    fn lower_call_argument(&mut self, argument: &CppCallArgument) -> Result<CExpression, String> {
+        match argument {
+            CppCallArgument::Value { value } => self.lower_expression(value),
+            CppCallArgument::Reference { place } => self.lower_place(place),
         }
     }
 

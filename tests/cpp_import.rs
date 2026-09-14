@@ -11,8 +11,8 @@ use click::kernel::{
     prove_symbolic_c_function_execution,
 };
 use click::languages::cpp::{
-    CppBinaryOperator, CppExpression, CppStatement, CppType, load_import, lower_import,
-    refresh_import,
+    CppBinaryOperator, CppCallArgument, CppExpression, CppStatement, CppType, load_import,
+    lower_import, refresh_import,
 };
 use click::surface::{
     C0VerificationSession, VerifiedClaim, cpp_prepared_project_smart_tactic_source_sites,
@@ -28,6 +28,10 @@ const CONST_REFERENCE_SOURCE: &str =
     include_str!("fixtures/cpp-verification/const-reference-alias/write_then_read.cpp");
 const CONST_REFERENCE_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/const-reference-alias/write_then_read.click");
+const DIRECT_CALL_SOURCE: &str =
+    include_str!("fixtures/cpp-verification/direct-call/call_set_seven.cpp");
+const DIRECT_CALL_SIDECAR: &str =
+    include_str!("fixtures/cpp-verification/direct-call/call_set_seven.click");
 
 struct Project {
     directory: PathBuf,
@@ -50,6 +54,10 @@ impl Project {
             "write_then_read",
             CONST_REFERENCE_SOURCE,
         )
+    }
+
+    fn direct_call() -> Self {
+        Self::with_fixture("call_set_seven.cpp", "call_set_seven", DIRECT_CALL_SOURCE)
     }
 
     fn with_fixture(source_name: &str, function: &str, source: &str) -> Self {
@@ -146,7 +154,8 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
     let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
-    assert_eq!(prepared.export().schema, 2);
+    assert_eq!(prepared.export().schema, 3);
+    assert!(prepared.export().reachable_functions.is_empty());
     assert_eq!(prepared.logical_source(), "increment.cpp");
     assert_eq!(prepared.identity().len(), 64);
     let function = &prepared.export().function;
@@ -425,6 +434,98 @@ fn contains_if(statement: &CStatement) -> bool {
     }
 }
 
+fn contains_call(statement: &CStatement, expected: &str) -> bool {
+    match statement {
+        CStatement::Call { function_name, .. } => function_name == expected,
+        CStatement::Seq(first, second) => {
+            contains_call(first, expected) || contains_call(second, expected)
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => contains_call(then_branch, expected) || contains_call(else_branch, expected),
+        _ => false,
+    }
+}
+
+#[test]
+fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline() {
+    let project = Project::direct_call();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, DIRECT_CALL_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("export the resolved C++ call graph");
+    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+
+    let import = load_import(&project.config()).expect("load the call graph artifact offline");
+    assert_eq!(import.export().schema, 3);
+    assert_eq!(import.export().function.name, "call_set_seven");
+    assert_eq!(import.export().reachable_functions.len(), 1);
+    let reachable = &import.export().reachable_functions[0];
+    assert_eq!(reachable.name, "set_seven");
+    let CppStatement::Call {
+        callee, arguments, ..
+    } = &import.export().function.body[0]
+    else {
+        panic!("first caller operation was not a resolved call")
+    };
+    assert_eq!(callee.declaration_id, reachable.declaration_id);
+    assert!(matches!(
+        arguments.as_slice(),
+        [CppCallArgument::Reference { place }]
+            if place.declaration_id == import.export().function.parameters[0].declaration_id
+    ));
+
+    let lowered = lower_import(&import).expect("lower both C++ functions directly");
+    assert!(contains_call(lowered.kernel_function().body(), "set_seven"));
+    assert_eq!(lowered.reachable_kernel_functions().len(), 1);
+    assert_eq!(lowered.reachable_kernel_functions()[0].name(), "set_seven");
+
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    let verified = verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify the helper and caller through shared modular call rules");
+    assert_eq!(verified.len(), 6);
+
+    let sites = cpp_prepared_project_smart_tactic_source_sites(&click_project, &import).unwrap();
+    assert_eq!(
+        sites
+            .iter()
+            .map(|site| site.tactic_name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["execute", "simp", "execute", "simp"]
+    );
+    let execute = cpp_prepared_project_tactic_source_position(
+        &click_project,
+        &import,
+        "call_set_seven.contract",
+        0,
+    )
+    .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .expect("expand the caller's modular execution proof");
+    let rewritten = click_project.with_entry_source(expanded.clone());
+    verify_cpp_prepared_project(&rewritten, &import)
+        .expect("the expanded modular C++ proof must reverify");
+    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
+        .expect("retain the modular C++ verification environment");
+    let next = cpp_prepared_project_tactic_source_position(
+        &rewritten,
+        &import,
+        "call_set_seven.contract",
+        0,
+    )
+    .unwrap();
+    session
+        .verify_at_project(&expanded, next.line, next.column)
+        .expect("retained audit session must accept the expanded caller proof");
+}
+
 #[test]
 fn cpp_profile_expansion_and_audit_session_share_the_locked_input() {
     let project = Project::new();
@@ -680,6 +781,46 @@ fn cpp_frontend_rejects_unsupported_source_without_a_c_fallback() {
     let error = refresh_import(&project.config()).unwrap_err();
     assert!(error.contains("increment.cpp:2"), "{error}");
     assert!(error.contains("const-qualified"), "{error}");
+    assert!(!project.artifact().exists());
+}
+
+#[test]
+fn cpp_direct_calls_reject_missing_throwing_and_recursive_definitions() {
+    let project = Project::direct_call();
+    fs::write(
+        project.source(),
+        "int set_seven(int& value) noexcept;\n\nint call_set_seven(int& value) noexcept {\n    set_seven(value);\n    return value;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("call_set_seven.cpp:4"), "{error}");
+    assert!(
+        error.contains("no reachable function definition"),
+        "{error}"
+    );
+    assert!(!project.artifact().exists());
+
+    fs::write(
+        project.source(),
+        "int set_seven(int& value) {\n    value = 7;\n    return value;\n}\n\nint call_set_seven(int& value) noexcept {\n    set_seven(value);\n    return value;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("call_set_seven.cpp:1"), "{error}");
+    assert!(error.contains("explicit noexcept function"), "{error}");
+    assert!(!project.artifact().exists());
+
+    fs::write(
+        project.source(),
+        "int call_set_seven(int& value) noexcept {\n    call_set_seven(value);\n    return value;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("recursive C++ calls"), "{error}");
+    assert!(
+        error.contains("call_set_seven -> call_set_seven"),
+        "{error}"
+    );
     assert!(!project.artifact().exists());
 }
 

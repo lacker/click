@@ -86,12 +86,15 @@ make the exporter unavailable and load the artifacts again. This checks the
 intended phase boundary: explicit refresh executes Clang, while ordinary
 loading validates only the config, source, lock, and stored semantic artifact.
 They verify a linear mutable-reference function, a by-value-boolean branch with
-an early return, and a mutable/const reference pair that explicitly aliases one
-owned cell through the shared prepared-input path. Focused coverage exercises
-source/signature mismatch diagnostics, const-write rejection, smart-tactic
-inventory, expansion and reverification, and the retained audit session against
-the same immutable artifact. Missing Clang development tooling fails the gate,
-and unsupported C++ does not fall back to the C parser.
+an early return, a mutable/const reference pair that explicitly aliases one
+owned cell, and a selected function that reaches another `noexcept` definition
+through a resolved direct call. The call fixture checks modular contracts,
+offline loading, expansion/reverification, and retained audit against the same
+multi-function artifact. Focused negative coverage rejects missing, throwing,
+and recursive reachable definitions. Other coverage exercises source/signature
+mismatch diagnostics, const-write rejection, and smart-tactic inventory.
+Missing Clang development tooling fails the gate, and unsupported C++ does not
+fall back to the C parser.
 
 ## What the gate runs
 

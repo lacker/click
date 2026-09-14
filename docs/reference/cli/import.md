@@ -60,8 +60,10 @@ assembly are silently deleted to make an import pass.
 
 ## Preliminary C++ semantic artifact
 
-The first C++ frontend boundary accepts one header-free C++20 source containing
-one selected, explicitly `noexcept` function. The linear reference fixture is:
+The preliminary C++ frontend boundary accepts one header-free C++20 source with
+one selected, explicitly `noexcept` free function and the uniquely named
+`noexcept` free-function definitions reachable from its supported direct call
+statements. The linear reference fixture is:
 
 ```cpp
 int increment(int& value) noexcept {
@@ -139,8 +141,17 @@ C++ `const` restricts access through that reference; it does not create a Click
 currently by-value `bool`, `int&`, and `const int&`, and selected functions
 still return `int`.
 
-Constructors, destructors, local declarations, calls, loops, additional
-functions, and broader C++ syntax remain outside this end-to-end subset.
+The `direct-call` fixture selects a caller and captures the transitive closure
+of definitions reached by discarded-result direct call statements. Each call
+node records the declaration identity resolved by Clang, reference arguments
+retain their parameter identity, and all captured functions lower into the
+ordinary modular call environment. Each definition has its own sidecar
+contract and proof. The artifact rejects recursion, ambiguous reachable names,
+missing definitions, and reachable functions that are not `noexcept`.
+
+Constructors, destructors, local declarations, call results, methods, indirect
+calls, loops, external specifications, object operations, and broader C++
+syntax remain outside this end-to-end subset.
 
 ## Validation and supported profile
 

@@ -4481,11 +4481,32 @@ pub(in crate::surface) fn parse_verified_sources_context(
             .cpp_lowered
             .as_ref()
             .expect("C++ source context retains its direct lowering");
-        let function = cpp_function_interface(import, lowered)?;
-        return Ok(BTreeMap::from([(
-            function.name().to_string(),
-            (import.logical_source().to_string(), function),
-        )]));
+        if import.export().reachable_functions.len() != lowered.reachable_kernel_functions().len() {
+            return Err(ClickError::new(
+                "prepared C++ lowering does not match its reachable function artifact",
+            ));
+        }
+        let source_functions =
+            std::iter::once(&import.export().function).chain(&import.export().reachable_functions);
+        let kernel_functions =
+            std::iter::once(lowered.kernel_function()).chain(lowered.reachable_kernel_functions());
+        let mut functions = BTreeMap::new();
+        for (source, kernel) in source_functions.zip(kernel_functions) {
+            let function = cpp_function_interface(source, kernel)?;
+            let name = function.name().to_string();
+            if functions
+                .insert(
+                    name.clone(),
+                    (import.logical_source().to_string(), function),
+                )
+                .is_some()
+            {
+                return Err(ClickError::new(format!(
+                    "prepared C++ import defines function `{name}` more than once"
+                )));
+            }
+        }
+        return Ok(functions);
     }
 
     let mut parsed = BTreeMap::new();
@@ -5145,10 +5166,9 @@ pub(in crate::surface) fn external_c0_function(
 /// typed declaration. The body deliberately remains absent here: executable
 /// semantics come from `lower_import`, never from reconstructing C++ as C.
 fn cpp_function_interface(
-    import: &PreparedCppImport,
-    lowered: &LoweredCppFunction,
+    source: &crate::languages::cpp::CppFunction,
+    lowered: &crate::kernel::CFunction,
 ) -> Result<syntax::C0Function, ClickError> {
-    let source = &import.export().function;
     let return_type = match source.return_type {
         crate::languages::cpp::CppType::Integer {
             bits: 32,
@@ -5203,7 +5223,7 @@ fn cpp_function_interface(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(
         syntax::C0Function::external(return_type, source.name.clone(), parameters)
-            .with_prelowered_kernel_function(lowered.kernel_function().clone()),
+            .with_prelowered_kernel_function(lowered.clone()),
     )
 }
 

@@ -3,12 +3,14 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
+#include "clang/AST/DeclCXX.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/SourceManager.h"
@@ -78,7 +80,8 @@ public:
         selected_name_(std::move(selected_name)), state_(state) {}
 
   bool VisitFunctionDecl(clang::FunctionDecl *declaration) {
-    if (declaration->isThisDeclarationADefinition() &&
+    if (!llvm::isa<clang::CXXMethodDecl>(declaration) &&
+        declaration->isThisDeclarationADefinition() &&
         declaration->getNameAsString() == selected_name_ &&
         source_manager_.isWrittenInMainFile(
             source_manager_.getSpellingLoc(declaration->getLocation()))) {
@@ -97,9 +100,24 @@ public:
            "selected function `" + selected_name_ + "` is overloaded");
       return;
     }
-    auto function = lower_function(matches_.front());
+    const clang::FunctionDecl *selected = matches_.front()->getDefinition();
+    if (selected == nullptr) {
+      fail(matches_.front()->getLocation(),
+           "selected function has no reachable definition");
+      return;
+    }
+    known_functions_.insert(selected->getCanonicalDecl());
+    auto function = lower_function(selected);
     if (!function) {
       return;
+    }
+    llvm::json::Array reachable_functions;
+    for (std::size_t index = 0; index < reachable_definitions_.size(); ++index) {
+      auto reachable = lower_function(reachable_definitions_[index]);
+      if (!reachable) {
+        return;
+      }
+      reachable_functions.push_back(std::move(*reachable));
     }
 
     llvm::json::Object profile;
@@ -111,18 +129,19 @@ public:
     profile["rtti"] = false;
 
     llvm::json::Object artifact;
-    artifact["schema"] = 2;
+    artifact["schema"] = 3;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["logical_source"] = logical_source_;
     artifact["function"] = std::move(*function);
+    artifact["reachable_functions"] = std::move(reachable_functions);
     state_.artifact.emplace(std::move(artifact));
   }
 
 private:
   using Json = llvm::json::Value;
 
-  std::optional<Json> lower_function(clang::FunctionDecl *declaration) {
+  std::optional<Json> lower_function(const clang::FunctionDecl *declaration) {
     const auto *prototype =
         declaration->getType()->getAs<clang::FunctionProtoType>();
     if (prototype == nullptr || !prototype->isNothrow()) {
@@ -241,6 +260,9 @@ private:
 
   std::optional<Json> lower_statement(const clang::Stmt *statement,
                                       const clang::FunctionDecl *function) {
+    if (const auto *call = llvm::dyn_cast<clang::CallExpr>(statement)) {
+      return lower_call(call, function);
+    }
     if (const auto *binary = llvm::dyn_cast<clang::BinaryOperator>(statement)) {
       if (binary->getOpcode() != clang::BO_Assign) {
         fail(binary->getOperatorLoc(),
@@ -298,6 +320,99 @@ private:
     }
     fail(statement->getBeginLoc(),
          "unsupported statement in the first C++ slice");
+    return std::nullopt;
+  }
+
+  std::optional<Json> lower_call(const clang::CallExpr *call,
+                                 const clang::FunctionDecl *caller) {
+    const clang::FunctionDecl *callee = call->getDirectCallee();
+    if (callee == nullptr) {
+      fail(call->getExprLoc(),
+           "the supported C++ slice requires a direct free-function call");
+      return std::nullopt;
+    }
+    if (llvm::isa<clang::CXXMethodDecl>(callee)) {
+      fail(call->getExprLoc(),
+           "C++ method calls are outside the supported direct-call slice");
+      return std::nullopt;
+    }
+    const clang::FunctionDecl *definition = callee->getDefinition();
+    if (definition == nullptr) {
+      fail(call->getExprLoc(),
+           "direct C++ call has no reachable function definition");
+      return std::nullopt;
+    }
+    const clang::SourceLocation definition_location =
+        source_manager_.getSpellingLoc(definition->getLocation());
+    if (!source_manager_.isWrittenInMainFile(definition_location)) {
+      fail(call->getExprLoc(),
+           "the supported C++ call graph requires definitions in the selected file");
+      return std::nullopt;
+    }
+    if (call->getNumArgs() != definition->getNumParams()) {
+      fail(call->getExprLoc(),
+           "the supported C++ slice requires a call with one argument per parameter");
+      return std::nullopt;
+    }
+
+    llvm::json::Array arguments;
+    for (unsigned index = 0; index < call->getNumArgs(); ++index) {
+      auto argument = lower_call_argument(call->getArg(index),
+                                          definition->getParamDecl(index), caller);
+      if (!argument) {
+        return std::nullopt;
+      }
+      arguments.push_back(std::move(*argument));
+    }
+
+    const clang::FunctionDecl *canonical = definition->getCanonicalDecl();
+    if (known_functions_.insert(canonical).second) {
+      reachable_definitions_.push_back(definition);
+    }
+
+    llvm::json::Object reference;
+    reference["declaration_id"] = declaration_id(definition);
+    reference["name"] = definition->getNameAsString();
+    reference["span"] = span(call->getCallee()->getSourceRange());
+
+    llvm::json::Object result;
+    result["kind"] = "call";
+    result["callee"] = std::move(reference);
+    result["arguments"] = std::move(arguments);
+    result["span"] = span(call->getSourceRange());
+    if (!state_.error.empty()) {
+      return std::nullopt;
+    }
+    return Json(std::move(result));
+  }
+
+  std::optional<Json>
+  lower_call_argument(const clang::Expr *argument,
+                      const clang::ParmVarDecl *parameter,
+                      const clang::FunctionDecl *caller) {
+    llvm::json::Object result;
+    if (parameter->getType()->getAs<clang::LValueReferenceType>() != nullptr) {
+      auto place = lower_place_reference(argument, caller);
+      if (!place) {
+        return std::nullopt;
+      }
+      result["kind"] = "reference";
+      result["place"] = std::move(*place);
+      return Json(std::move(result));
+    }
+    if (context_.hasSameType(parameter->getType().getUnqualifiedType(),
+                             context_.BoolTy) &&
+        !parameter->getType().isConstQualified()) {
+      auto value = lower_expression(argument, caller);
+      if (!value) {
+        return std::nullopt;
+      }
+      result["kind"] = "value";
+      result["value"] = std::move(*value);
+      return Json(std::move(result));
+    }
+    fail(argument->getExprLoc(),
+         "unsupported argument in the direct C++ call slice");
     return std::nullopt;
   }
 
@@ -404,7 +519,7 @@ private:
             : llvm::dyn_cast<clang::ParmVarDecl>(reference->getDecl());
     if (parameter == nullptr || parameter->getDeclContext() != expected_function) {
       fail(expression->getExprLoc(),
-           "the supported C++ slice can access only selected function parameters");
+           "the supported C++ slice can access only current function parameters");
       return std::nullopt;
     }
     llvm::json::Object result;
@@ -480,6 +595,8 @@ private:
   std::string selected_name_;
   ExportState &state_;
   std::vector<clang::FunctionDecl *> matches_;
+  std::unordered_set<const clang::FunctionDecl *> known_functions_;
+  std::vector<const clang::FunctionDecl *> reachable_definitions_;
 };
 
 class ExportConsumer : public clang::ASTConsumer {
