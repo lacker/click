@@ -4454,7 +4454,7 @@ fn combine_exact_resource_facts(
     }
 }
 
-/// The owner-observation rule (the owner-observation rule in docs/internals/stable-views.md).
+/// The owner-observation rule (docs/internals/stable-views.md).
 ///
 /// An owner may read what it owns and inspect its composite without issuing a
 /// stable loan to itself, so a positive owned fact exposes a viewed

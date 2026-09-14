@@ -509,8 +509,9 @@ fn recover_candidate_stable_view_resources(
         // already decides it with this exact block test, in
         // `install_borrowed_contract_inputs` (such a contract input view
         // gets no borrowed root) and in `intrinsic_read_views` (such a
-        // requirement is supplied without a ledger transition, docs/internals/stable-views.md
-        // D10 and 6.3's F14(b)). The return route has to admit it on the
+        // requirement is supplied without a ledger transition; see the
+        // implicit-local-authority rule in docs/internals/stable-views.md).
+        // The return route has to admit it on the
         // same terms, or a call that merely carries one across its
         // boundary would be refused for having no binding that was never
         // created. Ordinary mutable storage, file-static globals included,
@@ -11942,8 +11943,8 @@ fn counted_population_quantities(
 ///
 /// An ordinary composite's body lives inside its head: installing it as owned
 /// authority beside the produced head let a caller write the body and still
-/// use the head's facts, which verified a false theorem (docs/internals/stable-views.md,
-/// 2026-09-13). The predicate that also admitted an unconditional,
+/// use the head's facts, which verified a false theorem (found on
+/// 2026-09-13 while landing stable views). The predicate that also admitted an unconditional,
 /// non-recursive composite with a snapshot-independent footprint was retired
 /// with the `track_ordinary_populations` parameter at step 8c; every caller
 /// had already stopped asking for it.
@@ -12043,8 +12044,8 @@ fn apply_counted_population_transition_resources(
 ///
 /// Nothing fills `activated_body_resources` today. Its only writer was the
 /// ordinary-population activation behind the `track_ordinary_populations`
-/// parameter, which every caller had passed as `false` since docs/internals/stable-views.md
-/// and which step 8c deleted; a counted population's body reaches a context
+/// parameter, which every caller had passed as `false` since that fix and
+/// which the stable-views cutover deleted; a counted population's body reaches a context
 /// through the call-entry evaluation and through surface `fold`/`observe`
 /// instead. The check is kept as written so a future activation route lands
 /// on a barrier rather than on an unchecked composition.
