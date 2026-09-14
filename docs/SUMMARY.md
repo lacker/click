@@ -61,6 +61,7 @@
 - [Proof objects](internals/proof-objects.md)
 - [Kernel](internals/kernel.md)
 - [Separation logic](internals/separation-logic.md)
+- [Stable views](internals/stable-views.md)
 - [Memory derivation DAG](internals/memory-dag.md)
 - [Mathematical integers](internals/mathematical-integers.md)
 - [Canonicalization](internals/canonicalization.md)

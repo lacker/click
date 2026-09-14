@@ -10,6 +10,7 @@ name differ, user-facing documentation uses the Surface Click name.
 - [Proof objects](proof-objects.md)
 - [Kernel implementation](kernel.md)
 - [Separation logic](separation-logic.md)
+- [Stable views](stable-views.md)
 - [Memory derivation DAG](memory-dag.md)
 - [Mathematical integers](mathematical-integers.md)
 
