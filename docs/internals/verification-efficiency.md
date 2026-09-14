@@ -97,6 +97,23 @@ charged to visible semantic output rather than hidden ambient state:
 - Independent kernel certification may add a small constant multiple of the
   selected function's work. It must not multiply that work by the number of
   claims, unrelated functions, or globally declared theorems.
+- A loan-preserving havoc (loop head, interface join) decides, per surviving
+  cell, whether an active loan protects it. Concrete protected ranges answer
+  from the dyadic index; a range with a symbolic base or bounds cannot be
+  indexed, so the query walks its block's symbolic bucket, and the havoc
+  costs cells times symbolic loans in that block. Neither count is output the
+  havoc must produce, so this is a known violation of the contract rather
+  than an exception, pinned as a measurement
+  (`loop_head_havoc_work_over_cells_and_symbolic_loans` in
+  `src/kernel/proof/execution.rs`: 65, 257, 1025, and 4097 units for 8, 16,
+  32, and 64 of each). Removing it needs a secondary index over symbolic base
+  terms, or a havoc narrowed to a checked write set so most cells are never
+  queried. The fixed dyadic walk the query used to pay per cell is gone: with
+  no concrete range registered the walk can only return the empty set and is
+  skipped. Interface-join binding inheritance, by contrast, compares the
+  successor's bindings against the arms' through one membership index over
+  binding values and is linear in the binding count, which grows with proof
+  length (`interface_binding_inheritance_is_near_linear_in_the_binding_count`).
 
 ## Execution capacity follows selected syntax
 
