@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 /// Selects the resource interpretation used when producing proof artifacts.
 /// Stable-loan routing is intentionally staged behind the existing legacy
@@ -16,6 +17,56 @@ pub enum ViewSemanticsMode {
     #[default]
     Legacy,
     StableLoans,
+}
+
+/// The mode used by the entry points that do not take one explicitly, as a
+/// `ViewSemanticsMode` discriminant. `Legacy` until a front end installs
+/// another selection.
+static PROCESS_VIEW_SEMANTICS: AtomicU8 = AtomicU8::new(ViewSemanticsMode::LEGACY_CODE);
+
+impl ViewSemanticsMode {
+    const LEGACY_CODE: u8 = 0;
+    const STABLE_LOANS_CODE: u8 = 1;
+
+    fn code(self) -> u8 {
+        match self {
+            Self::Legacy => Self::LEGACY_CODE,
+            Self::StableLoans => Self::STABLE_LOANS_CODE,
+        }
+    }
+
+    fn from_code(code: u8) -> Self {
+        match code {
+            Self::STABLE_LOANS_CODE => Self::StableLoans,
+            _ => Self::Legacy,
+        }
+    }
+
+    /// The selection used by the entry points that take no explicit mode.
+    ///
+    /// This is rollout scaffolding for `issues/fix-views.md`: the fixture
+    /// harnesses name a mode per fixture through the `_in_mode` entry points,
+    /// while the command-line front end has one selection for the whole
+    /// process and installs it once, before any verification starts. It
+    /// leaves with the `Legacy` variant at the cutover.
+    pub fn process_default() -> Self {
+        Self::from_code(PROCESS_VIEW_SEMANTICS.load(Ordering::Relaxed))
+    }
+
+    /// Installs the process-wide selection. Call once from a front end before
+    /// verification begins; every later default-mode entry point observes it.
+    pub fn set_process_default(mode: Self) {
+        PROCESS_VIEW_SEMANTICS.store(mode.code(), Ordering::Relaxed);
+    }
+
+    /// The documented spelling of this mode, as `CLICK_VIEW_SEMANTICS` takes
+    /// it and as the artifact identity frames it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Legacy => "legacy",
+            Self::StableLoans => "stable-loans",
+        }
+    }
 }
 
 /// Fixed-size identity attached to a checked C proof artifact.
@@ -42,10 +93,7 @@ impl CProofArtifactIdentity {
         target: &str,
         view_semantics: ViewSemanticsMode,
     ) -> Self {
-        let mode = match view_semantics {
-            ViewSemanticsMode::Legacy => b"legacy".as_slice(),
-            ViewSemanticsMode::StableLoans => b"stable-loans".as_slice(),
-        };
+        let mode = view_semantics.name().as_bytes();
         let version = crate::kernel::RESOURCE_SEMANTICS_VERSION.to_be_bytes();
         let digest = digest_framed_parts([
             b"click-c-proof-artifact-v2".as_slice(),
@@ -74,7 +122,10 @@ fn digest_framed_parts<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> [u8; 32
 
 /// Typed input boundary for C verification. The bundle variant preserves the
 /// legacy source map while leaving room for compiler-prepared inputs without
-/// ambient or global state.
+/// ambient or global state. The one exception is the view-semantics rollout
+/// selector: [`CSourceContext::bundle`] and [`CSourceContext::prepared`] take
+/// the process default, and the `_with_mode` constructors name it explicitly.
+/// That selector leaves with the `Legacy` variant at the cutover.
 pub(in crate::surface) struct CSourceContext<'a> {
     bundle: Option<BTreeMap<&'a str, &'a str>>,
     imports: Option<&'a [PreparedCImport]>,
@@ -91,7 +142,7 @@ pub(in crate::surface) struct CSourceContext<'a> {
 
 impl<'a> CSourceContext<'a> {
     pub(in crate::surface) fn bundle(sources: &[(&'a str, &'a str)]) -> Self {
-        Self::bundle_with_mode(sources, ViewSemanticsMode::Legacy)
+        Self::bundle_with_mode(sources, ViewSemanticsMode::process_default())
     }
 
     pub(in crate::surface) fn bundle_with_mode(
@@ -121,7 +172,7 @@ impl<'a> CSourceContext<'a> {
     }
 
     pub(in crate::surface) fn prepared(imports: &'a [PreparedCImport]) -> Self {
-        Self::prepared_with_mode(imports, ViewSemanticsMode::Legacy)
+        Self::prepared_with_mode(imports, ViewSemanticsMode::process_default())
     }
 
     pub(in crate::surface) fn prepared_with_mode(
@@ -782,7 +833,11 @@ pub fn verify_c0_sources(
     click_source: &str,
     c_sources: &[(&str, &str)],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    verify_c0_sources_in_mode(click_source, c_sources, ViewSemanticsMode::Legacy)
+    verify_c0_sources_in_mode(
+        click_source,
+        c_sources,
+        ViewSemanticsMode::process_default(),
+    )
 }
 
 pub(in crate::surface) fn resolve_click_project_context(
@@ -1385,7 +1440,11 @@ impl C0VerificationSession {
         c_sources: &[(&str, &str)],
     ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
         instrumentation::with_default_tactic_limits(|| {
-            Self::new_with_mode(click_source, c_sources, ViewSemanticsMode::Legacy)
+            Self::new_with_mode(
+                click_source,
+                c_sources,
+                ViewSemanticsMode::process_default(),
+            )
         })
     }
 
@@ -1409,7 +1468,11 @@ impl C0VerificationSession {
         imports: &[PreparedCImport],
     ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
         instrumentation::with_default_tactic_limits(|| {
-            Self::new_prepared_with_mode(click_source, imports, ViewSemanticsMode::Legacy)
+            Self::new_prepared_with_mode(
+                click_source,
+                imports,
+                ViewSemanticsMode::process_default(),
+            )
         })
     }
 
@@ -4333,7 +4396,7 @@ pub(in crate::surface) fn parse_verified_sources(
             ),
         ),
         specification_digest: None,
-        view_semantics: ViewSemanticsMode::Legacy,
+        view_semantics: ViewSemanticsMode::process_default(),
         prepared_duplicates: false,
         parsed_units: RefCell::new(BTreeMap::new()),
         #[cfg(test)]

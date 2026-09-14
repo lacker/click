@@ -63,6 +63,66 @@ mod tests {
     }
 
     #[test]
+    fn rejects_an_unknown_view_semantics_selection() {
+        assert!(
+            click::cli::parse_view_semantics(Some("stable_loans"))
+                .unwrap_err()
+                .contains("CLICK_VIEW_SEMANTICS must be `legacy` or `stable-loans`")
+        );
+    }
+
+    /// `CLICK_VIEW_SEMANTICS` reaches ordinary command verification, not only
+    /// the fixture harnesses (`issues/fix-views.md`, finding F15). The sidecar
+    /// below is refused in both modes, but for different reasons: legacy frames
+    /// the store by the owned footprint, while the candidate stable-view
+    /// semantics reports the conflict with the contract input view's loan. A
+    /// command that ignored the variable would print the legacy message twice.
+    #[test]
+    fn verify_honors_the_view_semantics_environment_variable() {
+        let directory = std::env::temp_dir().join(format!(
+            "click-view-semantics-switch-{}",
+            std::process::id()
+        ));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        let sidecar = directory.join("viewed_global.click");
+        fs::write(
+            directory.join("viewed_global.c"),
+            "int32 words[2];\nvoid set_second() { words[1] = 7; }\n",
+        )
+        .unwrap();
+        fs::write(
+            &sidecar,
+            "verifying \"viewed_global.c\";\nvoid set_second() {\n    views words[1..2];\n    ensures words[1] == 7 by auto;\n}\n",
+        )
+        .unwrap();
+        let run = || entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
+
+        // SAFETY: the gate runs every test in its own nextest process
+        // (`scripts/check.sh`), so nothing else in this process reads the
+        // environment while these two calls change it, and no verification
+        // thread has been started yet at either call.
+        unsafe { env::remove_var(click::cli::VIEW_SEMANTICS_VARIABLE) };
+        let legacy = run();
+        unsafe { env::set_var(click::cli::VIEW_SEMANTICS_VARIABLE, "stable-loans") };
+        let stable = run();
+        unsafe { env::remove_var(click::cli::VIEW_SEMANTICS_VARIABLE) };
+
+        assert!(legacy.contains("outside the owned footprint"), "{legacy}");
+        assert!(
+            !legacy.contains("conflicts with an active loan"),
+            "{legacy}"
+        );
+        assert!(
+            stable.contains("stable-view memory access conflicts with an active loan"),
+            "{stable}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn dispatches_import_help_without_spawning() {
         entry(["import".to_string(), "--help".to_string()]).unwrap();
     }

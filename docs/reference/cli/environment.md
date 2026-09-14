@@ -55,12 +55,20 @@ test-only audits are switched on by the tests that run them.
 
 ### `CLICK_VIEW_SEMANTICS`
 
-Set `CLICK_VIEW_SEMANTICS=stable-loans` to run the mdtest and example
-harnesses under the candidate stable-view interpretation of `views`; unset or
-`legacy` is the ordinary gate. Only the two fixture harnesses read it. The
-mode is part of every proof-artifact identity, so a result from one mode
-never certifies a claim in the other, and the body-rerun ratchet is skipped
-under `stable-loans`.
+Set `CLICK_VIEW_SEMANTICS=stable-loans` to select the candidate stable-view
+interpretation of `views`; unset or `legacy` is the ordinary gate. Any other
+value is rejected, so a misspelled selection cannot quietly run under the
+wrong semantics.
+
+`click verify`, `click profile`, `click expand`, and `click audit` read the
+variable once at startup and run everything they check under the selected
+interpretation, including the verification of a rewrite an expansion
+produces. The mdtest and example harnesses read it too, selecting the mode
+per fixture. The mode is part of every proof-artifact identity, so a result
+from one mode never certifies a claim in the other; `--changed-since`
+baseline markers already record every `CLICK_*` variable that was set, so a
+baseline attested under one mode is not reused under the other. The
+body-rerun ratchet is skipped under `stable-loans`.
 
 This is rollout scaffolding for the stable-view cutover in
 `issues/fix-views.md`. It is removed, with the legacy interpretation, when

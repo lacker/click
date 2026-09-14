@@ -4,12 +4,12 @@ use std::path::{Component, Path, PathBuf};
 
 use click::cli::{
     files_with_extension, read_click_project, read_verifying_sources, run_parallel, source_refs,
+    view_semantics_from_environment,
 };
 use click::instrumentation::{self, ContractFallback};
 use click::surface::{ViewSemanticsMode, verify_c0_sources_in_mode};
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
-const VIEW_SEMANTICS: &str = "CLICK_VIEW_SEMANTICS";
 const SOURCE_MANIFEST: &str = "SOURCE.sha256";
 const SOURCE_METADATA: &str = "SOURCE.md";
 
@@ -31,11 +31,7 @@ const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[];
 /// or `legacy` is the ordinary gate. Rollout scaffolding for
 /// `issues/fix-views.md`; it leaves with the `Legacy` variant at the cutover.
 fn view_semantics() -> ViewSemanticsMode {
-    match std::env::var(VIEW_SEMANTICS).as_deref() {
-        Err(_) | Ok("") | Ok("legacy") => ViewSemanticsMode::Legacy,
-        Ok("stable-loans") => ViewSemanticsMode::StableLoans,
-        Ok(other) => panic!("{VIEW_SEMANTICS} must be `legacy` or `stable-loans`, got `{other}`"),
-    }
+    view_semantics_from_environment().unwrap_or_else(|message| panic!("{message}"))
 }
 
 #[test]
