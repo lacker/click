@@ -344,6 +344,90 @@ fn owner_authorized_write_into_a_lent_range_is_refused() {
     assert!(subject.loan_id().is_some());
 }
 
+/// D2 law 2 is an access restriction, not an equality check: a store of the
+/// value the lent cell already holds is refused exactly like a store of a
+/// different one. The cell is pre-populated with the stored value, so the
+/// only difference from
+/// `owner_authorized_write_into_a_lent_range_is_refused` is that the write
+/// would change nothing (R01's same-value negative; F11 in fix-views).
+#[test]
+fn owner_authorized_same_value_store_into_a_lent_range_is_refused() {
+    let pointer = Pointer {
+        block: "block".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let owned = own_memory_fact(pointer.clone(), 0, 2);
+    let viewed = view_memory_fact(pointer.clone(), 0, 1);
+    let resources = ResourceContext::new().unchecked_with_facts([owned, viewed.clone()]);
+    let support = resources.occurrences_for_fact(&viewed)[0];
+    let ledger = crate::kernel::loans::LoanLedger::new();
+    let participant = ledger.fresh_participant().expect("a fresh participant");
+    let opening = ledger
+        .borrowed_contract_input(participant, support, viewed.clone(), None)
+        .expect("a checked contract input root");
+    let ledger = ledger
+        .apply(&opening.transition)
+        .expect("the input root applies");
+    let bindings = crate::kernel::loans::LoanViewBindings::default().with_inserted(
+        support,
+        crate::kernel::loans::LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed,
+            hold: None,
+        },
+    );
+    // The cell already holds 9; the body stores 9 into it.
+    let populated = CMemory::new()
+        .with_block(pointer.block.clone(), 8)
+        .store(pointer.clone(), int32(9));
+    let state = CState::new()
+        .with_memory(populated.clone())
+        .with_resource_context(resources)
+        .with_loan_ledger(Some(ledger))
+        .with_loan_participant(Some(participant))
+        .with_loan_view_bindings(bindings);
+    let function = c_function(
+        CType::Void,
+        "store_the_same_value_into_a_lent_cell",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_store(c_variable("p"), c_int32_literal(9)),
+    );
+    let pointer_for_assertions = pointer.clone();
+    let arguments = vec![c_pointer_value(pointer)];
+    let theorem = prove_symbolic_c_function_execution_with_environment(
+        state,
+        function,
+        arguments,
+        PureFactContext::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .expect("a same-value store into a lent range has a checked outcome");
+    let Proposition::CFunctionExecutes { outcome, .. } = theorem.proposition() else {
+        panic!("expected a function execution proposition");
+    };
+    let CFunctionOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)) = outcome else {
+        panic!("expected a loan refusal, got {outcome:?}");
+    };
+    assert_eq!(diagnostic.category(), LoanRefusalCategory::ActiveDependency);
+    assert_eq!(
+        diagnostic.operation(),
+        crate::kernel::LoanRefusalOperation::MemoryAccess
+    );
+    let subject = diagnostic.subject();
+    assert_eq!(
+        subject.conflicting_resource_fact(),
+        Some(&view_memory_fact(pointer_for_assertions, 0, 1))
+    );
+    assert_eq!(
+        subject.origin(),
+        Some(crate::kernel::LoanOriginKind::ContractInputView)
+    );
+}
+
 #[test]
 fn certified_program_entry_claims_do_not_authorize_ordinary_calls() {
     let function = c_function(CType::Int32, "main", vec![], c_return(c_int32_literal(0)))

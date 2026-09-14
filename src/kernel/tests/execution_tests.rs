@@ -1643,3 +1643,117 @@ fn prerequisite_loop_rule_fixture() -> (CStatement, CVerifiedLoopRule) {
     assert!(!rule.paths.is_empty());
     (statement, rule)
 }
+
+/// R23's back-edge case. A loop head that holds a stable-view root can only
+/// close its back edge at the *same* loan authority. Two body paths that a
+/// term-level comparison would call equal are refused here: one that handed
+/// the live share away, and one that built a fresh root over the same support
+/// occurrence instead of carrying the head's. The resource context, the
+/// support occurrence, the viewed term, and the occurrence bindings are
+/// identical in every state below; only ledger identity separates them
+/// (D2 laws 4 and 5; F11 in fix-views).
+#[test]
+fn loop_back_edge_refuses_a_dropped_share_or_a_regenerated_root() {
+    let pointer = Pointer {
+        block: "block".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let viewed = view_memory_fact(pointer, 0, 1);
+    let resources = ResourceContext::new().unchecked_with_fact(viewed.clone());
+    let support = resources.occurrences_for_fact(&viewed)[0];
+
+    let rooted = |ledger: LoanLedger| {
+        let participant = ledger.fresh_participant().expect("a participant");
+        let opening = ledger
+            .borrowed_contract_input(participant, support, viewed.clone(), None)
+            .expect("a checked contract input root");
+        let ledger = ledger.apply(&opening.transition).expect("the root applies");
+        (ledger, participant, opening)
+    };
+
+    let (head_ledger, participant, opening) = rooted(LoanLedger::new());
+    let bindings = crate::kernel::loans::LoanViewBindings::default().with_inserted(
+        support,
+        crate::kernel::loans::LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed: viewed.clone(),
+            hold: None,
+        },
+    );
+    let at = |ledger: LoanLedger, participant| {
+        CState::new()
+            .with_resource_context(resources.clone())
+            .with_loan_ledger(Some(ledger))
+            .with_loan_participant(Some(participant))
+            .with_loan_view_bindings(bindings.clone())
+    };
+    let head = at(head_ledger.clone(), participant);
+    let assumptions = PureFactContext::new();
+    let definitions: &[CCompositeResourceDefinition] = &[];
+
+    // The head state closes its own back edge.
+    assert_eq!(
+        crate::kernel::c_loop_state_components_match_at_back_edge(
+            &head,
+            &head,
+            &assumptions,
+            definitions,
+        ),
+        Ok(())
+    );
+
+    // A body path that generated a fresh root over the same resource, in the
+    // head's own arena and for the head's own participant. The viewed term
+    // and the support occurrence are the ones the head used, and the
+    // participant and the occurrence bindings are unchanged, so ledger
+    // identity is the only thing left to notice it.
+    let regenerated = head_ledger
+        .borrowed_contract_input(participant, support, viewed.clone(), None)
+        .expect("a second contract input root over the same support");
+    assert_eq!(
+        regenerated.description.viewed(),
+        opening.description.viewed()
+    );
+    assert_eq!(
+        regenerated.description.support(),
+        opening.description.support()
+    );
+    assert_ne!(regenerated.loan, opening.loan);
+    let regenerated_state = at(
+        head_ledger
+            .apply(&regenerated.transition)
+            .expect("the regenerated root applies"),
+        participant,
+    );
+    let refusal = crate::kernel::c_loop_state_components_match_at_back_edge(
+        &head,
+        &regenerated_state,
+        &assumptions,
+        definitions,
+    )
+    .expect_err("a back edge cannot regenerate the head's root");
+    assert!(refusal.contains("stable-view loan authority"), "{refusal}");
+
+    // A body path that handed the live share to someone else.
+    let reader = head_ledger
+        .fresh_participant()
+        .expect("a second participant");
+    let transfer = head_ledger
+        .transfer(opening.root_share, participant, reader)
+        .expect("the share transfers");
+    let dropped = at(
+        head_ledger.apply(&transfer).expect("the transfer applies"),
+        participant,
+    );
+    let refusal = crate::kernel::c_loop_state_components_match_at_back_edge(
+        &head,
+        &dropped,
+        &assumptions,
+        definitions,
+    )
+    .expect_err("a back edge cannot discard the share the head holds");
+    assert!(refusal.contains("stable-view loan authority"), "{refusal}");
+}

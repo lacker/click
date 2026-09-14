@@ -6413,6 +6413,69 @@ int32 reader(int32 p[], int32 q[]) {
         );
     }
 
+    const RETARGET_SOURCE: &str = "struct buffer { int *data; };\n\
+int read_entry(struct buffer *owner, int *other) { return owner->data[0]; }\n\
+int read_retargeted(struct buffer *owner, int *other) {\n\
+    owner->data = other;\n\
+    return owner->data[0];\n\
+}\n";
+
+    /// R11's positive half: a contract input view over a pointer field's
+    /// pointee is authority for reading that pointee.
+    #[test]
+    fn stable_mode_field_derived_view_reads_the_entry_footprint() {
+        let click = r#"
+verifying "reader.c";
+
+int32 read_entry(struct buffer* owner, int32* other) {
+    owns owner->data;
+    views owner->data[0..1];
+    ensures result == owner->data[0];
+} by {
+    execute();
+    simp();
+}
+"#;
+        verify_in_stable_mode(click, RETARGET_SOURCE)
+            .expect("a field-derived contract input view reads its own footprint");
+    }
+
+    /// R11's retargeting half: `views owner->data[0..1]` selects its
+    /// footprint from the value `owner->data` holds at entry. Writing the
+    /// pointer field does not move that authority to the new pointee, so the
+    /// load after the write has nothing behind it: `other` carries no clause
+    /// of its own, and the entry view does not follow the field
+    /// (F11 in fix-views).
+    #[test]
+    fn stable_mode_field_derived_view_does_not_retarget_after_a_pointer_write() {
+        let click = r#"
+verifying "reader.c";
+
+int32 read_retargeted(struct buffer* owner, int32* other) {
+    owns owner->data;
+    views owner->data[0..1];
+    ensures result == owner->data[0];
+} by {
+    execute();
+    simp();
+}
+"#;
+        let error = verify_in_stable_mode(click, RETARGET_SOURCE)
+            .expect_err("the entry view must not follow a rewritten pointer field");
+        assert!(
+            error.message().contains("missing resource fact `views "),
+            "{}",
+            error.message()
+        );
+        // The view the state still holds is anchored at the pointer field's
+        // entry load, not at whatever `owner->data` points at now.
+        assert!(
+            error.message().contains("views owner[(load(arg-memory@"),
+            "{}",
+            error.message()
+        );
+    }
+
     fn verify_in_stable_mode_with_header(
         click: &str,
         header: &str,

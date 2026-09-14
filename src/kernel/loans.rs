@@ -4700,6 +4700,63 @@ mod tests {
         );
     }
 
+    /// A concrete block range at one offset, at an explicit element width.
+    fn buffer_range(start: u32, end: u32, width: u32) -> CMemoryRange {
+        CMemoryRange::new_with_element_width(
+            crate::kernel::Pointer {
+                block: "buffer".into(),
+                offset: crate::kernel::PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(start),
+            Bitvector32Term::Constant(end),
+            width,
+        )
+    }
+
+    /// Loans and accesses are compared bytewise, so a mismatched element
+    /// width can neither hide an overlap nor manufacture one. The ledger
+    /// holds a width-4 loan over bytes 0..4 and a width-1 loan over byte 5;
+    /// byte 4 is the gap between them, and it separates the accepted
+    /// mismatched-width queries from the refused ones (R08's width-crossing
+    /// case; F11 in fix-views).
+    #[test]
+    fn bytewise_overlap_is_decided_across_mismatched_element_widths() {
+        let (ledger, owner, reader) = participants();
+        // Bytes 0..4, spelled as one width-4 element.
+        let wide = lend_test(
+            &ledger,
+            owner,
+            reader,
+            CResourceFact::own_memory(buffer_range(0, 1, 4)),
+        );
+        let ledger = ledger.apply(&wide.transition).unwrap();
+        // Byte 5, spelled as one width-1 element.
+        let narrow = lend_test(
+            &ledger,
+            owner,
+            reader,
+            CResourceFact::own_memory(buffer_range(5, 6, 1)),
+        );
+        let ledger = ledger.apply(&narrow.transition).unwrap();
+        assert!(ledger.invariant_holds());
+
+        // A width-1 access at byte 2, inside the width-4 loan.
+        assert_eq!(
+            ledger.permits_memory_access(&buffer_range(2, 3, 1)),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        // The reverse direction: a width-4 access covering bytes 4..8, which
+        // contains the width-1 loan's byte 5.
+        assert_eq!(
+            ledger.permits_memory_access(&buffer_range(1, 2, 4)),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        // Byte 4 alone: mismatched widths against both loans, no shared byte.
+        assert_eq!(ledger.permits_memory_access(&buffer_range(4, 5, 1)), Ok(()));
+        // Bytes 8..12 at width 4: past both loans.
+        assert_eq!(ledger.permits_memory_access(&buffer_range(2, 3, 4)), Ok(()));
+    }
+
     /// Ending a child scope over a symbolic root leaves the root's
     /// protection in place, and the invariant tracks the symbolic entries.
     #[test]
@@ -5419,6 +5476,93 @@ mod tests {
                 .diagnostic(LoanRefusalOperation::Recovery)
                 .category(),
             LoanRefusalCategory::Recovery
+        );
+    }
+
+    /// D2 law 4: a description outlives its authority, and D2 law 5: a
+    /// reused resource term is not a reused identity. The first loan over a
+    /// cell ends and is recovered, then a fresh loan starts over the very
+    /// same support occurrence and the very same resource term. One
+    /// participant lends to itself throughout, so the old binding's share is
+    /// never handed away: only scope and loan identity separate the two, and
+    /// the old description, binding, and reborrow are all refused while the
+    /// new ones are accepted (R04's fresh-scope case; F11 in fix-views).
+    #[test]
+    fn an_old_descriptor_is_refused_after_a_fresh_scope_over_the_same_resource() {
+        let (ledger, owner, reader) = participants();
+        let assumptions = PureFactContext::new();
+        let escrow = owned("cell");
+        let support = backing(&escrow);
+        let first = ledger
+            .lend(owner, owner, support, escrow.clone())
+            .expect("a first loan over the cell");
+        let ledger = ledger.apply(&first.transition).unwrap();
+        let old_binding = LoanViewBinding {
+            loan: first.loan,
+            scope: first.scope,
+            share: first.root_share,
+            support,
+            viewed: first.description.viewed().clone(),
+            hold: None,
+        };
+        assert!(ledger.permits_view(owner, &first.description, first.root_share, &assumptions));
+        assert_eq!(
+            ledger.validate_view_binding(old_binding.clone(), owner),
+            Ok(())
+        );
+        ledger
+            .reborrow(old_binding.clone(), owner, reader)
+            .expect("the live binding reborrows");
+
+        // Close the first loan and recover its escrow. The share stays with
+        // the same holder, so nothing but scope liveness changes.
+        let end = ledger.end(first.scope, owner).unwrap();
+        let ledger = ledger.apply(&end).unwrap();
+        let (recover, recovered, recovered_support) = ledger.recover(first.loan, owner).unwrap();
+        assert_eq!(recovered, escrow);
+        assert_eq!(recovered_support, support);
+        let ledger = ledger.apply(&recover).unwrap();
+
+        // A fresh loan over the same support occurrence and resource term.
+        let second = ledger
+            .lend(owner, owner, support, escrow)
+            .expect("a fresh loan over the same cell");
+        let ledger = ledger.apply(&second.transition).unwrap();
+        assert!(ledger.invariant_holds());
+        assert_ne!(first.loan, second.loan);
+        assert_ne!(first.scope, second.scope);
+        assert_eq!(first.description.viewed(), second.description.viewed());
+
+        // The new scope authorizes reading, binding, and reborrowing.
+        let new_binding = LoanViewBinding {
+            loan: second.loan,
+            scope: second.scope,
+            share: second.root_share,
+            support,
+            viewed: second.description.viewed().clone(),
+            hold: None,
+        };
+        assert!(ledger.permits_view(owner, &second.description, second.root_share, &assumptions));
+        assert_eq!(
+            ledger.validate_view_binding(new_binding.clone(), owner),
+            Ok(())
+        );
+        ledger
+            .reborrow(new_binding, owner, reader)
+            .expect("the live binding reborrows");
+
+        // The old descriptor authorizes nothing, on any of the three routes.
+        assert!(!ledger.permits_view(owner, &first.description, first.root_share, &assumptions));
+        // Nor when paired with the new scope's live share: the description
+        // still names the ended loan.
+        assert!(!ledger.permits_view(owner, &first.description, second.root_share, &assumptions));
+        assert_eq!(
+            ledger.validate_view_binding(old_binding.clone(), owner),
+            Err(LoanRefusal::MissingLoanBinding)
+        );
+        assert_eq!(
+            ledger.reborrow(old_binding, owner, reader),
+            Err(LoanRefusal::MissingLoanBinding)
         );
     }
 
