@@ -10431,6 +10431,262 @@ fn candidate_planning_resources(
     resources
 }
 
+/// One checked owned-interface-to-viewed-implementation adapter for a
+/// composite view (fix-views step 8a).
+struct CompositeViewAdapter {
+    /// The planning resources this adapter works from. Unchanged in the
+    /// owned-composite form; in the materialized form the caller's covering
+    /// owners have been replaced by the head below.
+    resources: ResourceContext,
+    /// The owned composite the lend escrows.
+    head: CResourceFact,
+    /// The viewed descriptions the loan permits beside its own head.
+    adapted: Vec<CResourceFact>,
+    /// What recovery hands back instead of the head, when the head was
+    /// materialized for this call.
+    restored: Vec<CResourceFact>,
+}
+
+/// Back a viewed composite `C(args)` the caller does not own by an owned
+/// description of the same authority.
+///
+/// The rule: `C`'s kernel-checked one-level frontier, evaluated in the
+/// caller's memory, must be covered piecewise by owned authority the caller
+/// holds, and `C`'s definition facts must already hold at the call. They are
+/// what `observe(C)` publishes inside the callee, so they are established
+/// here rather than assumed. Two covering forms are admitted:
+///
+/// * an owned composite `D` in the caller whose own checked frontier covers
+///   `C`'s: `D`'s head is escrowed and `views C(args)` becomes an additional
+///   permitted description of that loan, exactly like a projection. Recovery
+///   restores `D`;
+/// * the caller's owned frontier itself: `owns C(args)` is materialized out
+///   of exactly those facts for the call, and recovery restores them, so a
+///   `views` requirement leaves the caller's packaging as it found it.
+///
+/// Anything else is refused by returning `None`, which leaves the ordinary
+/// missing-backing diagnostic naming the viewed clause. A counted population
+/// is refused: its body is population-wide, not one unit's frontier. So is a
+/// borrowing composite, whose fold needs step 7's hold.
+///
+/// The materialized head carries no sidecar binding, so a hold a consumed
+/// owned occurrence carried does not travel with it. That direction only
+/// costs a later refusal -- the hold stays in the ledger and the loan behind
+/// it cannot be ended -- and no owned frontier piece carries one today,
+/// since a hold lives on the viewed piece an unfold hands it to.
+fn candidate_composite_view_adapter(
+    resources: &ResourceContext,
+    required: &CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    caller_state: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<CompositeViewAdapter>> {
+    let CResource::Composite { name, arguments } = required.resource() else {
+        return Ok(None);
+    };
+    let Some(definition) = definitions
+        .iter()
+        .find(|definition| definition.name() == name)
+    else {
+        return Ok(None);
+    };
+    if definition.is_counted_population()
+        || definition.is_recursive()
+        || !definition.facts_are_loan_stable()
+    {
+        return Ok(None);
+    }
+    let head = CResourceFact::own(required.resource().clone());
+    let Some(frontier) = checked_one_level_frontier(&head, definitions, caller_state, assumptions)
+    else {
+        return Ok(None);
+    };
+    // An empty frontier protects nothing and is handled before planning; an
+    // exclusive instance cannot be viewed at all (D12). A borrowing
+    // composite -- one whose body views storage it does not own -- is step
+    // 7's mechanism: folding one places a hold on the loan behind the viewed
+    // piece, which this rule does not do, so it stays out of the adapter.
+    if frontier.is_empty()
+        || frontier
+            .iter()
+            .any(|child| !child.is_own() || matches!(child.resource(), CResource::Instance(_)))
+    {
+        return Ok(None);
+    }
+    if !composite_definition_facts_hold(definition, arguments, caller_state, assumptions, budget)? {
+        return Ok(None);
+    }
+    // The materialized form: the caller's own owners already cover the
+    // frontier piecewise, so the head is exactly those facts under another
+    // name and recovery gives them back unchanged.
+    if let Some(remaining) = remove_frontier(resources.clone(), &frontier, assumptions)
+        && let Ok(materialized) = remaining.try_compose_with_fact(head.clone(), assumptions)
+    {
+        return Ok(Some(CompositeViewAdapter {
+            resources: materialized,
+            head,
+            adapted: Vec::new(),
+            restored: frontier,
+        }));
+    }
+    // The owned-composite form: one folded owner in the caller whose checked
+    // frontier covers this one. Only the caller's own composite facts are
+    // examined, and each is expanded at most once.
+    let owners = resources
+        .facts()
+        .iter()
+        .filter(|fact| fact.is_own() && matches!(fact.resource(), CResource::Composite { .. }))
+        .cloned()
+        .collect::<Vec<_>>();
+    for owner in owners {
+        crate::instrumentation::record_deterministic_work(1);
+        let CResource::Composite {
+            name: owner_name, ..
+        } = owner.resource()
+        else {
+            continue;
+        };
+        let Some(owner_definition) = definitions
+            .iter()
+            .find(|definition| definition.name() == owner_name)
+        else {
+            continue;
+        };
+        // A counted population's body is population-wide, so one unit's head
+        // is not the restoration recipe a lend needs (step 5).
+        if owner_definition.is_counted_population()
+            || owner_definition.is_recursive()
+            || !owner_definition.facts_are_loan_stable()
+        {
+            continue;
+        }
+        // The escrow has to name one occurrence, as a same-composite lend
+        // does: two equal-looking owners are not the same authority (law 5).
+        if resources.owned_occurrences_for_fact(&owner).len() != 1 {
+            continue;
+        }
+        let Some(owner_frontier) =
+            checked_one_level_frontier(&owner, definitions, caller_state, assumptions)
+        else {
+            continue;
+        };
+        let covering = ResourceContext::new().unchecked_with_facts(owner_frontier);
+        if remove_frontier(covering, &frontier, assumptions).is_none() {
+            continue;
+        }
+        return Ok(Some(CompositeViewAdapter {
+            resources: resources.clone(),
+            head: owner,
+            adapted: vec![required.clone()],
+            restored: Vec::new(),
+        }));
+    }
+    Ok(None)
+}
+
+/// The kernel's own one-level expansion of one owned composite head, read in
+/// the caller's memory. This is the same boundary the composite lend and
+/// `project` use, so nothing enters a loan that the definition does not
+/// contain.
+fn checked_one_level_frontier(
+    head: &CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    caller_state: &CState,
+    assumptions: &PureFactContext,
+) -> Option<Vec<CResourceFact>> {
+    let singleton = ResourceContext::new().unchecked_with_fact(head.clone());
+    let (_, children, _) = expand_composite_resource_fact_with_children(
+        &singleton,
+        head,
+        definitions,
+        caller_state.memory(),
+        assumptions,
+    )?;
+    Some(children)
+}
+
+/// Removes a checked frontier from a context piecewise, or reports that the
+/// context does not cover it. Each piece is consumed incrementally, so a
+/// wider owned range is split rather than swallowed whole.
+fn remove_frontier(
+    mut resources: ResourceContext,
+    frontier: &[CResourceFact],
+    assumptions: &PureFactContext,
+) -> Option<ResourceContext> {
+    for piece in frontier {
+        crate::instrumentation::record_deterministic_work(1);
+        resources = resources.without_fact_incrementally(piece, assumptions)?;
+    }
+    Some(resources)
+}
+
+/// Whether a composite definition's body facts already hold at the call.
+///
+/// This mirrors what the surface `fold` requires of the facts it re-asserts:
+/// each fact is lowered at the state the definition's parameters are bound
+/// in and must be available by the kernel's exact routes. There is no search
+/// here; a fact the caller has not established is a prompt refusal the proof
+/// can answer with an explicit step.
+fn composite_definition_facts_hold(
+    definition: &CCompositeResourceDefinition,
+    arguments: &[AlgebraicValue],
+    caller_state: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<bool> {
+    if definition.facts().is_empty() {
+        return Ok(true);
+    }
+    if definition.parameters().len() != arguments.len() {
+        return Ok(false);
+    }
+    let mut state = CState::new()
+        .with_memory(caller_state.memory().clone())
+        .with_resource_context(caller_state.resources().clone());
+    for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+        let Some(argument) = argument.as_c_value() else {
+            return Ok(false);
+        };
+        if parameter.c_type() != argument.c_type() {
+            return Ok(false);
+        }
+        state.locals.set_typed(
+            parameter.name().to_string(),
+            argument.clone(),
+            parameter.c_type(),
+        );
+    }
+    if bind_composite_witnesses(definition, arguments, &mut state, assumptions).is_none() {
+        return Ok(false);
+    }
+    if evaluate_composite_resource_body_condition(definition, &state, assumptions, budget)
+        != Some(true)
+    {
+        return Ok(false);
+    }
+    for fact in definition.facts() {
+        let paths = lower_spec_proposition_at_state_with_loop_entry(
+            &state,
+            fact,
+            Some(&state),
+            assumptions,
+            budget,
+        )?;
+        let [path] = paths.as_slice() else {
+            return Ok(false);
+        };
+        let mut established = assumptions.clone();
+        for load in &path.facts {
+            established = established.assume_proposition(load.proposition().clone());
+        }
+        if !contract_refinement_proves(&established, &path.proposition) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn prepare_contract_resource_transfer_with_candidate(
     caller_state: &CState,
     callee_state: &CState,
@@ -10644,7 +10900,7 @@ fn prepare_contract_resource_transfer_with_candidate(
         .cloned()
         .collect::<Vec<_>>();
     let candidate_semantics = candidate_stable_view_semantics;
-    let planning_resources = if candidate_stable_view_semantics {
+    let mut planning_resources = if candidate_stable_view_semantics {
         candidate_planning_resources(
             caller_state.resources(),
             &stable_requirements,
@@ -10685,11 +10941,45 @@ fn prepare_contract_resource_transfer_with_candidate(
                 requirement.fact.is_view()
                     && matches!(requirement.fact.resource(), CResource::Composite { .. })
             }) {
-                let Some((support, owned)) = planning_resources
+                // Prefer the caller's own owner for this very composite.
+                // Only when there is none does the adapter look for another
+                // owned description of the same authority (fix-views 8a).
+                let mut adapted = Vec::new();
+                let mut restored = Vec::new();
+                let mut selected = requirement.fact.clone();
+                if planning_resources
                     .directly_supporting_owned_entry(&requirement.fact, assumptions)
+                    .is_none()
+                    // A view the caller already holds is reborrowed from its
+                    // own binding, which needs no backing of its own.
+                    && planning_resources
+                        .view_occurrences_for_fact(&requirement.fact, assumptions)
+                        .is_empty()
+                {
+                    match candidate_composite_view_adapter(
+                        &planning_resources,
+                        &requirement.fact,
+                        interface.composite_resource_definitions(),
+                        caller_state,
+                        assumptions,
+                        budget,
+                    )? {
+                        Some(adapter) => {
+                            planning_resources = adapter.resources;
+                            selected = adapter.head;
+                            adapted = adapter.adapted;
+                            restored = adapter.restored;
+                        }
+                        None => continue,
+                    }
+                }
+                let Some((support, owned)) = planning_resources
+                    .directly_supporting_owned_entry(&selected, assumptions)
+                    .map(|(support, owned)| (support, owned.clone()))
                 else {
                     continue;
                 };
+                let owned = &owned;
                 // One checked level: primitive children enter the write
                 // index, nested composite children become permitted
                 // descriptions that projection can open later. The head's
@@ -10754,10 +11044,12 @@ fn prepare_contract_resource_transfer_with_candidate(
                         "composite body facts depend on a resource count or an allocation-liveness claim, which a stable loan does not stabilize".to_string(),
                     )));
                 }
-                let Some(backing) = CompositeLoanBacking::from_checked_expansion(
+                let Some(backing) = CompositeLoanBacking::from_checked_adapter(
                     support,
                     owned.clone(),
                     expanded_children,
+                    adapted,
+                    restored,
                 ) else {
                     return Ok(Err(CRuntimeError::FunctionContract(
                         "composite loan frontier is not a checked expansion".to_string(),
@@ -18644,6 +18936,288 @@ mod candidate_stable_view_call_tests {
             ),
         );
         assert!(plan_composite_lend(&counted).is_err());
+    }
+
+    // The owned-interface-to-viewed-implementation adapter (fix-views 8a):
+    // the callee's clause names one composite, the caller owns another whose
+    // checked frontier covers it.
+
+    fn cell_definition(end: u32, facts: Vec<SpecProposition>) -> CCompositeResourceDefinition {
+        let segment =
+            CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(end));
+        CCompositeResourceDefinition::new(
+            "cell",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            None,
+            false,
+            vec![CResourceSpec::owned_memory(segment)],
+            facts,
+        )
+    }
+
+    fn wide_definition(end: u32) -> CCompositeResourceDefinition {
+        let segment =
+            CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(end));
+        CCompositeResourceDefinition::new(
+            "wide",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            None,
+            false,
+            vec![CResourceSpec::owned_memory(segment)],
+            Vec::new(),
+        )
+    }
+
+    /// A reader that views `cell(p)` and knows both definitions.
+    fn adapter_reader(
+        name: &str,
+        cell: CCompositeResourceDefinition,
+        wide: CCompositeResourceDefinition,
+    ) -> CFunction {
+        let required = CResourceSpec::declared(
+            ResourceFamily::Composite,
+            CResourceAccessMode::View,
+            "cell".into(),
+            vec![c_variable("p")],
+            vec![CType::Int32Pointer],
+            CResourceTransferRole::Borrow,
+            CResourceSnapshot::Entry,
+        )
+        .unwrap();
+        c_function(
+            CType::Int32,
+            name,
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(c_load(c_variable("p"))),
+        )
+        .with_resource_summary(vec![required], Vec::new())
+        .with_composite_resource_definitions(vec![cell, wide])
+    }
+
+    /// The caller owns `wide(p)` over an eight-byte block and nothing else.
+    fn adapter_caller(pointer: &Pointer) -> CState {
+        let second = Pointer {
+            block: pointer.block.clone(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        CState::new()
+            .with_memory(
+                CMemory::new()
+                    .with_block(pointer.block.clone(), 8)
+                    .store(pointer.clone(), int32(7))
+                    .store(second, int32(9)),
+            )
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(
+                CResourceFact::own_composite("wide".into(), vec![CValue::pointer(pointer.clone())]),
+            ))
+    }
+
+    fn plan_adapter_lend(
+        function: &CFunction,
+    ) -> (CState, Result<CFunctionResourceTransfer, CRuntimeError>) {
+        let pointer = pointer();
+        let caller = adapter_caller(&pointer);
+        let callee =
+            bind_c_function_arguments(&caller, function, &[CValue::pointer(pointer.clone())])
+                .expect("adapter reader arguments should bind");
+        let transfer = prepare_function_resource_transfer(
+            &caller,
+            &callee,
+            function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("adapter transfer should run");
+        (caller, transfer)
+    }
+
+    /// The caller owns `wide(p)` over `p[0..2]`; the callee views `cell(p)`
+    /// over `p[0..1]`. The lend escrows the owner the caller actually holds,
+    /// `views cell(p)` joins that loan's permitted descriptions, and recovery
+    /// restores `wide(p)` exactly.
+    #[test]
+    fn candidate_composite_view_is_backed_by_a_covering_owned_composite() {
+        let function = adapter_reader(
+            "candidate_adapter_reader",
+            cell_definition(1, Vec::new()),
+            wide_definition(2),
+        );
+        let pointer = pointer();
+        let (caller, transfer) = plan_adapter_lend(&function);
+        let transfer = transfer.expect("a covering owner backs the viewed composite");
+        let plan = transfer
+            .stable_view_plan
+            .as_ref()
+            .expect("the adapter lend records a loan plan");
+        assert_eq!(plan.stable_views().len(), 1);
+        assert!(transfer.callee_resources.satisfies_fact(
+            &CResourceFact::view_composite("cell".into(), vec![CValue::pointer(pointer.clone())]),
+            &PureFactContext::new(),
+        ));
+        // The whole escrowed frontier is protected, not just the adapted
+        // clause's own bytes.
+        for end in [1, 2] {
+            let range = CMemoryRange::new(
+                pointer.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(end),
+            );
+            assert_eq!(
+                plan.ledger.permits_memory_access(&range),
+                Err(LoanRefusal::ActiveDependency)
+            );
+        }
+        let callee =
+            bind_c_function_arguments(&caller, &function, &[CValue::pointer(pointer.clone())])
+                .expect("adapter reader arguments should bind");
+        let callee_state = callee_state_with_resource_transfer(callee, &transfer);
+        let (resources, _, _, _, _) = recover_candidate_stable_view_resources(
+            &caller,
+            &callee_state,
+            &transfer,
+            ResourceContext::new(),
+            &PureFactContext::new(),
+            &PureFactContext::new(),
+            &[],
+        )
+        .expect("the adapter lend should recover");
+        let head = CResourceFact::own_composite("wide".into(), vec![CValue::pointer(pointer)]);
+        assert!(resources.satisfies_fact(&head, &PureFactContext::new()));
+        assert_eq!(resources.facts(), [head]);
+    }
+
+    /// The owner's body has to cover every piece of the viewed composite's
+    /// checked frontier. Half of it is not backing.
+    #[test]
+    fn candidate_composite_view_over_an_uncovered_owner_is_refused() {
+        let function = adapter_reader(
+            "candidate_uncovered_adapter_reader",
+            cell_definition(2, Vec::new()),
+            wide_definition(1),
+        );
+        let (_, transfer) = plan_adapter_lend(&function);
+        let error = transfer.expect_err("an owner that covers half the frontier is not backing");
+        let CRuntimeError::LoanRefusal(diagnostic) = &error else {
+            panic!("{error:?}");
+        };
+        assert_eq!(
+            diagnostic.category(),
+            crate::kernel::loans::LoanRefusalCategory::Missing
+        );
+        assert_eq!(
+            diagnostic.subject().resource_fact(),
+            Some(&CResourceFact::view_composite(
+                "cell".into(),
+                vec![CValue::pointer(pointer())]
+            ))
+        );
+    }
+
+    /// The viewed composite's facts are what `observe` publishes inside the
+    /// callee, so the caller has to have established them. A fact the owner's
+    /// frontier does not give is a refusal, not an assumption.
+    #[test]
+    fn candidate_composite_view_with_an_unestablished_fact_is_refused() {
+        let unestablished = SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_load(c_variable("p"))),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::CExpression(c_int32_literal(0)),
+        };
+        let function = adapter_reader(
+            "candidate_unestablished_fact_adapter_reader",
+            cell_definition(1, vec![unestablished]),
+            wide_definition(2),
+        );
+        let (_, transfer) = plan_adapter_lend(&function);
+        let error = transfer.expect_err("an unestablished body fact is refused");
+        let CRuntimeError::LoanRefusal(diagnostic) = &error else {
+            panic!("{error:?}");
+        };
+        assert_eq!(
+            diagnostic.category(),
+            crate::kernel::loans::LoanRefusalCategory::Missing
+        );
+        // The same adapter with a fact the call already establishes is
+        // accepted, so the refusal above is the fact check and not the shape.
+        let established = adapter_reader(
+            "candidate_established_fact_adapter_reader",
+            cell_definition(
+                1,
+                vec![SpecProposition::Defined(SpecExpression::Value(int32(0)))],
+            ),
+            wide_definition(2),
+        );
+        plan_adapter_lend(&established)
+            .1
+            .expect("an established body fact backs the adapter");
+    }
+
+    /// With no owned composite to escrow, the planner materializes the viewed
+    /// composite out of exactly the owned frontier the caller holds, and
+    /// recovery hands those facts back: the caller's packaging is the same
+    /// after the call as before it, and the unlent remainder stays writable.
+    #[test]
+    fn candidate_composite_view_is_materialized_from_the_caller_frontier() {
+        let pointer = pointer();
+        let function = composite_reader("candidate_materialized_adapter_reader");
+        let caller = caller_with_owned_end(&pointer, 2, 8);
+        let callee =
+            bind_c_function_arguments(&caller, &function, &[CValue::pointer(pointer.clone())])
+                .expect("composite reader arguments should bind");
+        let transfer = prepare_function_resource_transfer(
+            &caller,
+            &callee,
+            &function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("materialized transfer should run")
+        .expect("the caller's own frontier backs the viewed composite");
+        let plan = transfer
+            .stable_view_plan
+            .as_ref()
+            .expect("the materialized lend records a loan plan");
+        let lent = CMemoryRange::new(
+            pointer.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        let kept = CMemoryRange::new(
+            pointer.clone(),
+            Bitvector32Term::Constant(1),
+            Bitvector32Term::Constant(2),
+        );
+        assert_eq!(
+            plan.ledger.permits_memory_access(&lent),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        assert_eq!(plan.ledger.permits_memory_access(&kept), Ok(()));
+        assert!(transfer.callee_resources.satisfies_fact(
+            &CResourceFact::view_composite("cell".into(), vec![CValue::pointer(pointer.clone())]),
+            &PureFactContext::new(),
+        ));
+        let callee_state = callee_state_with_resource_transfer(callee, &transfer);
+        let (resources, _, _, _, _) = recover_candidate_stable_view_resources(
+            &caller,
+            &callee_state,
+            &transfer,
+            ResourceContext::new(),
+            &PureFactContext::new(),
+            &PureFactContext::new(),
+            &[],
+        )
+        .expect("the materialized lend should recover");
+        // Recovery hands back the frontier the head was materialized from,
+        // never a `cell(p)` head the caller never held. (`return_resources`
+        // is empty here, so what is left is exactly the recovered escrow.)
+        assert_eq!(
+            resources.facts(),
+            [CResourceFact::own(CResource::Memory(lent))]
+        );
     }
 
     /// A callee that views `p[0..1]` and, in the same contract, produces a

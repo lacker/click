@@ -948,6 +948,7 @@ enum LoanTransitionEvidence {
         support_fact: CResourceFact,
         escrow: CResourceFact,
         backing: Vec<CResourceFact>,
+        adapted: Vec<CResourceFact>,
         scope: LoanScopeId,
         loan: LoanId,
         root: LoanShareId,
@@ -1042,6 +1043,16 @@ pub(crate) struct CompositeLoanBacking {
     support: ResourceOccurrenceId,
     head: CResourceFact,
     pieces: Vec<CResourceFact>,
+    /// Extra viewed composite descriptions this loan permits beside its own
+    /// head: the owned-interface-to-viewed-implementation adapter, where the
+    /// caller escrows `head` and the callee's clause names a different
+    /// composite whose checked frontier `pieces` already covers.
+    adapted: Vec<CResourceFact>,
+    /// What recovery hands back instead of `head`. Empty for an ordinary
+    /// lend, where the escrowed head is the restoration recipe; the exact
+    /// owned facts the planner consumed when the head itself was
+    /// materialized for the call.
+    restored: Vec<CResourceFact>,
 }
 
 /// Definition-checked primitive footprint for an externally supplied folded
@@ -1118,10 +1129,28 @@ impl BorrowedContractInputBacking {
 }
 
 impl CompositeLoanBacking {
+    /// The ordinary same-composite lend: the caller owns the very composite
+    /// the callee views, so the escrowed head is also the only description
+    /// the loan permits and the exact restoration recipe.
     pub(crate) fn from_checked_expansion(
         support: ResourceOccurrenceId,
         head: CResourceFact,
         pieces: Vec<CResourceFact>,
+    ) -> Option<Self> {
+        Self::from_checked_adapter(support, head, pieces, Vec::new(), Vec::new())
+    }
+
+    /// The adapter form (fix-views step 8a). `adapted` are the viewed
+    /// composite descriptions this loan permits beside its own head, and
+    /// `restored` are the owned facts recovery hands back in place of the
+    /// head. Both are empty for an ordinary same-composite lend, which is
+    /// what [`CompositeLoanBacking::from_checked_expansion`] builds.
+    pub(crate) fn from_checked_adapter(
+        support: ResourceOccurrenceId,
+        head: CResourceFact,
+        pieces: Vec<CResourceFact>,
+        adapted: Vec<CResourceFact>,
+        restored: Vec<CResourceFact>,
     ) -> Option<Self> {
         // A nested composite child stays folded inside the escrowed head; it
         // enters the loan as a permitted description with no byte backing.
@@ -1132,12 +1161,31 @@ impl CompositeLoanBacking {
             && matches!(head.resource(), CResource::Composite { .. })
             && pieces
                 .iter()
-                .all(|piece| !matches!(piece.resource(), CResource::Instance(_))))
+                .all(|piece| !matches!(piece.resource(), CResource::Instance(_)))
+            // An adapted description is read-only authority over the same
+            // escrow, so it is a composite view; it never names an exclusive
+            // instance (D12) and never carries ownership.
+            && adapted.iter().all(|description| {
+                description.is_view() && matches!(description.resource(), CResource::Composite { .. })
+            })
+            // A restoration is what the caller gets back, so it is owned
+            // authority. An instance is not restorable this way.
+            && restored.iter().all(|fact| {
+                fact.is_own() && !matches!(fact.resource(), CResource::Instance(_))
+            }))
         .then_some(Self {
             support,
             head,
             pieces,
+            adapted,
+            restored,
         })
+    }
+
+    /// Whether this backing was checked to permit `description` beside its
+    /// own head.
+    pub(crate) fn adapts(&self, description: &CResourceFact) -> bool {
+        self.adapted.contains(description)
     }
 }
 
@@ -1185,6 +1233,12 @@ pub(crate) struct StableViewTransferPlan {
     /// For a view lent as a child of the caller's own binding: that parent
     /// binding, which an escaping borrow holds after the child ends.
     pub(crate) rebound_parents: BTreeMap<LoanId, LoanViewBinding>,
+    /// For an adapter lend whose escrowed head was materialized for the call
+    /// out of owned facts the caller already held: exactly those facts, which
+    /// recovery hands back in place of the head (fix-views step 8a). The
+    /// escrow stays the head in the ledger, so the loan still protects the
+    /// whole frontier; only what the caller gets back differs.
+    adapter_restorations: BTreeMap<LoanId, Vec<CResourceFact>>,
 }
 
 /// What a call leaves behind for a borrowing composite it produced or
@@ -1869,12 +1923,24 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
     }
 
     let mut loan_roots = Vec::new();
+    let mut adapter_restorations = BTreeMap::<LoanId, Vec<CResourceFact>>::new();
     let mut escrowed_owners = Vec::new();
     let mut escrowed_holds = Vec::new();
     let mut planned_ledger = ledger.clone();
     let mut entry_transitions = Vec::new();
     let mut grouped = BTreeMap::<ResourceOccurrenceId, Vec<(usize, CCheckedResourceFact)>>::new();
     let mut rebound = BTreeMap::<LoanViewBinding, Vec<(usize, CCheckedResourceFact)>>::new();
+    // The checked adapter entry that permits a viewed composite beside a
+    // different escrowed head (fix-views step 8a). Only a backing the caller
+    // built at the kernel's expansion boundary can answer here, and only for
+    // the exact description it was checked against, so this is one indexed
+    // lookup over this call's own backings rather than a search.
+    let adapter_support = |required: &CResourceFact| {
+        composite_backings
+            .iter()
+            .find(|(support, backing)| backing.support == **support && backing.adapts(required))
+            .map(|(support, backing)| (*support, backing.head.clone()))
+    };
     // Owner occurrences that must back a view whose byte bounds are not
     // concrete.  The concrete sweep below cannot order such a range, so the
     // covering owner itself becomes the single lent backing for everything
@@ -1914,13 +1980,15 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                 .push((index, requirement.clone()));
             continue;
         }
-        let Some((support, owned)) =
-            caller_resources.directly_supporting_owned_entry(&requirement.fact, assumptions)
-        else {
+        let direct = caller_resources
+            .directly_supporting_owned_entry(&requirement.fact, assumptions)
+            .map(|(support, owned)| (support, owned.clone()));
+        let Some((support, owned)) = direct.or_else(|| adapter_support(&requirement.fact)) else {
             return Err(StableViewPlanError::MissingResource(
                 requirement.fact.clone(),
             ));
         };
+        let owned = &owned;
         match owned.resource() {
             CResource::Instance(_) => {
                 return Err(StableViewPlanError::Loan(LoanRefusal::UnsupportedResource));
@@ -2129,8 +2197,14 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                     .map(|(_, item)| &item.fact)
                     .ok_or(StableViewPlanError::UnsupportedPartition)?;
                 let residual_for_selection = residual.clone();
+                // The adapter's head is a different composite from the
+                // clause, so select it by the checked backing and then take
+                // the residual's own occurrence of that head.
+                let head = adapter_support(required)
+                    .map(|(_, head)| head)
+                    .unwrap_or_else(|| required.clone());
                 let (support, owned) = residual_for_selection
-                    .directly_supporting_owned_entry(required, assumptions)
+                    .directly_supporting_owned_entry(&head, assumptions)
                     .ok_or_else(|| StableViewPlanError::ConflictingRequirement(required.clone()))?;
                 if matches!(owned.resource(), CResource::Composite { .. })
                     && residual_for_selection
@@ -2217,7 +2291,20 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                 support,
                 true,
             ));
-            escrowed_owners.push(selected.clone());
+            // What the caller actually holds across the call: for an adapter
+            // lend the head is a name the planner gave to owned facts the
+            // caller had, so those facts are the honest escrow record and
+            // what recovery hands back.
+            match composite_backings
+                .get(&support)
+                .filter(|backing| !backing.restored.is_empty())
+            {
+                Some(backing) => {
+                    escrowed_owners.extend(backing.restored.iter().cloned());
+                    adapter_restorations.insert(opening.loan, backing.restored.clone());
+                }
+                None => escrowed_owners.push(selected.clone()),
+            }
             if let Some(binding) = parent_view_bindings.get(&support)
                 && binding.hold.is_some()
             {
@@ -2361,6 +2448,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
         escrowed_holds,
         transferred_holds,
         rebound_parents,
+        adapter_restorations,
     })
 }
 
@@ -2477,6 +2565,19 @@ impl StableViewTransferPlan {
                         .unwrap_or(support)
                 {
                     return Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence));
+                }
+                // An adapter lend escrowed a head the planner materialized
+                // for this call. Recovery restores exactly the owned facts it
+                // was materialized from, so a `views` requirement leaves the
+                // caller's own packaging exactly as it found it.
+                if let Some(restored) = self.adapter_restorations.get(&loan) {
+                    for fact in restored {
+                        resources = resources
+                            .try_compose_with_fact(fact.clone(), assumptions)
+                            .map_err(|_| StableViewPlanError::InvalidResidual)?;
+                        recovered_escrows.push((fact.clone(), None));
+                    }
+                    continue;
                 }
                 resources = resources
                     .try_compose_with_fact(escrow.clone(), assumptions)
@@ -2817,6 +2918,7 @@ impl LoanLedger {
             support_fact: escrow.clone(),
             escrow: escrow.clone(),
             backing: backing.pieces,
+            adapted: backing.adapted,
             scope,
             loan,
             root,
@@ -3706,6 +3808,7 @@ impl LoanLedger {
                 support_fact,
                 escrow,
                 backing,
+                adapted,
                 scope,
                 loan,
                 root,
@@ -3725,6 +3828,15 @@ impl LoanLedger {
                     .iter()
                     .any(|fact| matches!(fact.resource(), CResource::Instance(_)))
                 {
+                    return Err(LoanRefusal::UnsupportedResource);
+                }
+                // An adapted description is another name for the very bytes
+                // this escrow suspends, never a second authority: it is a
+                // composite view and it carries no backing of its own.
+                if adapted.iter().any(|description| {
+                    !description.is_view()
+                        || !matches!(description.resource(), CResource::Composite { .. })
+                }) {
                     return Err(LoanRefusal::UnsupportedResource);
                 }
                 if scope.arena != data.arena
@@ -3781,6 +3893,7 @@ impl LoanLedger {
                                     .iter()
                                     .map(|fact| CResourceFact::View(fact.resource().clone())),
                             )
+                            .chain(adapted.iter().cloned())
                             .collect(),
                         origin: LoanOrigin::Escrowed(*lender),
                         recovered: false,
@@ -6752,6 +6865,8 @@ mod tests {
             support,
             head: composite("other", true),
             pieces: Vec::new(),
+            adapted: Vec::new(),
+            restored: Vec::new(),
         };
         let unsupported = ledger
             .lend_composite(owner, reader, support, head, tampered)
