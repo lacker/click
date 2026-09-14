@@ -361,6 +361,14 @@ struct LoanScopeRecord {
     dependencies: crate::persistent::PersistentSet<LoanScopeId>,
 }
 
+fn origin_kind(origin: &LoanOrigin) -> LoanOriginKind {
+    match origin {
+        LoanOrigin::Escrowed(_) => LoanOriginKind::LentOwner,
+        LoanOrigin::Reborrowed => LoanOriginKind::Reborrow,
+        LoanOrigin::BorrowedContractInput => LoanOriginKind::ContractInputView,
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum LoanOrigin {
     /// Ownership was placed in this ledger's escrow and may be recovered by
@@ -504,14 +512,33 @@ pub enum LoanRefusalOperation {
     MemoryAccess,
 }
 
+/// Where the authority a loan protects came from. A refusal names it so the
+/// reader knows which declaration to look at: a contract's own `views`
+/// clause, an owner lent for a call, or a nested reborrow of a live loan.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum LoanOriginKind {
+    ContractInputView,
+    LentOwner,
+    Reborrow,
+}
+
 /// One bounded local subject for a refusal. A diagnostic may retain either
-/// the selected resource fact or its concrete memory range, plus the small
-/// identity needed to explain a loan transition. It never retains a ledger,
-/// resource frame, or transition history.
+/// the selected resource fact or its concrete memory range, the one other
+/// fact the refusal is a conflict with, and the small identity needed to
+/// explain a loan transition. It never retains a ledger, resource frame, or
+/// transition history.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct LoanRefusalSubject {
     resource: Option<CResourceFact>,
-    range: Option<CMemoryRange>,
+    /// Boxed for the same reason as `conflicting`: a refusal that names a
+    /// range and a fact must stay within the bounded payload size.
+    range: Option<Box<CMemoryRange>>,
+    /// The fact on the other side of a conflict: the resource a live loan
+    /// protects for a refused access, or the owned entry that already
+    /// supports a contract input view at entry. Boxed so that naming both
+    /// sides keeps the diagnostic within its bounded payload size.
+    conflicting: Option<Box<CResourceFact>>,
+    origin: Option<LoanOriginKind>,
     loan: Option<(u64, u64)>,
     scope: Option<(u64, u64)>,
     share: Option<(u64, u64)>,
@@ -523,10 +550,45 @@ impl LoanRefusalSubject {
         Self {
             resource: None,
             range: None,
+            conflicting: None,
+            origin: None,
             loan: None,
             scope: None,
             share: None,
             support: None,
+        }
+    }
+
+    /// The attempted range, the protected resource it overlaps, and the loan
+    /// that protects it: the D13 shape for a refused write, free, or
+    /// reallocation.
+    pub(crate) fn for_memory_conflict(
+        attempted: CMemoryRange,
+        protected: CResourceFact,
+        loan: LoanId,
+        origin: LoanOriginKind,
+    ) -> Self {
+        Self {
+            range: Some(Box::new(attempted)),
+            conflicting: Some(Box::new(protected)),
+            origin: Some(origin),
+            loan: Some((loan.arena, loan.ordinal)),
+            ..Self::none()
+        }
+    }
+
+    /// A contract input view and the owned entry in the same contract that
+    /// already supports it.
+    pub(crate) fn for_supported_view(
+        viewed: CResourceFact,
+        owner: CResourceFact,
+        support: ResourceOccurrenceId,
+    ) -> Self {
+        Self {
+            resource: Some(viewed),
+            conflicting: Some(Box::new(owner)),
+            support: Some((support.arena(), support.ordinal())),
+            ..Self::none()
         }
     }
 
@@ -544,7 +606,7 @@ impl LoanRefusalSubject {
     #[allow(dead_code)]
     fn range(range: CMemoryRange) -> Self {
         Self {
-            range: Some(range),
+            range: Some(Box::new(range)),
             ..Self::none()
         }
     }
@@ -591,7 +653,15 @@ impl LoanRefusalSubject {
     }
 
     pub fn memory_range(&self) -> Option<&CMemoryRange> {
-        self.range.as_ref()
+        self.range.as_deref()
+    }
+
+    pub fn conflicting_resource_fact(&self) -> Option<&CResourceFact> {
+        self.conflicting.as_deref()
+    }
+
+    pub fn origin(&self) -> Option<LoanOriginKind> {
+        self.origin
     }
 
     pub fn loan_id(&self) -> Option<(u64, u64)> {
@@ -768,6 +838,7 @@ impl LoanRefusal {
             operation,
             subject: if selected_subject.resource.is_some()
                 || selected_subject.range.is_some()
+                || selected_subject.conflicting.is_some()
                 || selected_subject.loan.is_some()
                 || selected_subject.scope.is_some()
                 || selected_subject.share.is_some()
@@ -2789,6 +2860,76 @@ impl LoanLedger {
             }
         }
         Ok(())
+    }
+
+    /// Explain a refused access in the D13 shape: the loan that refused it,
+    /// where that loan came from, the range it protects, and the range the
+    /// operation attempted. Only the refusal path pays for the explanation,
+    /// and it revisits the same index buckets the check itself used, so a
+    /// permitted access costs nothing and a refused one never walks the
+    /// ledger.
+    pub(crate) fn memory_access_refusal(
+        &self,
+        range: &CMemoryRange,
+        assumptions: &PureFactContext,
+        operation: LoanRefusalOperation,
+    ) -> Option<LoanRefusalDiagnostic> {
+        let refusal = self
+            .permits_memory_access_with_assumptions(range, assumptions)
+            .err()?;
+        let subject = match self.conflicting_memory_loan(range, assumptions) {
+            Some((loan, protected, origin)) => LoanRefusalSubject::for_memory_conflict(
+                range.clone(),
+                CResourceFact::view_memory(protected),
+                loan,
+                origin,
+            ),
+            None => LoanRefusalSubject::with_range(range.clone()),
+        };
+        Some(refusal.diagnostic_with_subject(operation, subject))
+    }
+
+    /// The first active loan whose protected footprint explains a refusal of
+    /// `range`, with the protected range and the loan's origin.
+    fn conflicting_memory_loan(
+        &self,
+        range: &CMemoryRange,
+        assumptions: &PureFactContext,
+    ) -> Option<(LoanId, CMemoryRange, LoanOriginKind)> {
+        let described = |loan: LoanId, protected: &CMemoryRange| {
+            let record = self.storage.data.loans.get(&loan)?;
+            Some((loan, protected.clone(), origin_kind(&record.origin)))
+        };
+        if let Ok(loans) = self.active_memory_overlaps(range) {
+            for loan in loans {
+                let Some(record) = self.storage.data.loans.get(&loan) else {
+                    continue;
+                };
+                let protected = record
+                    .memory_backing
+                    .iter()
+                    .find(|protected| {
+                        protected_range_proven_overlapping(range, protected, assumptions)
+                    })
+                    .or_else(|| record.memory_backing.first());
+                if let Some(protected) = protected {
+                    return described(loan, protected);
+                }
+            }
+        }
+        let block = self
+            .storage
+            .data
+            .unindexed_memory
+            .get(&range.base().block)?;
+        for (loan, protected_ranges) in block.iter() {
+            for protected in protected_ranges {
+                if protected_range_proven_overlapping(range, protected, assumptions) {
+                    return described(*loan, protected);
+                }
+            }
+        }
+        None
     }
 
     /// [`Self::permits_memory_access_with_assumptions`] without path

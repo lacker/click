@@ -1967,14 +1967,17 @@ fn install_borrowed_contract_inputs(
         ) {
             continue;
         }
-        if state
+        // A view the same contract already owns is not authority a caller
+        // lends: the two clauses describe one right twice. Name both so the
+        // reader can see which `views` and which `owns` overlap.
+        if let Some((_, owner)) = state
             .resources()
             .directly_supporting_owned_entry(&viewed, assumptions)
-            .is_some()
         {
+            let owner = owner.clone();
             return Err(LoanRefusal::ActiveDependency.diagnostic_with_subject(
                 LoanRefusalOperation::Entry,
-                LoanRefusalSubject::with_support_id(*occurrence),
+                LoanRefusalSubject::for_supported_view(viewed, owner, *occurrence),
             ));
         }
         selected.entry(*occurrence).or_insert(viewed);

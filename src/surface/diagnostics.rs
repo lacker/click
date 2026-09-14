@@ -745,11 +745,53 @@ pub(super) fn describe_runtime_error(
     }
 }
 
+/// The D13 shape for a refusal that is a conflict between two named things:
+/// which loan refused, where that loan came from, what it protects, and what
+/// the refused operation attempted. Both halves are bounded facts from the
+/// refusal subject; nothing here reads the ledger or the resource frame.
+fn describe_loan_conflict(
+    diagnostic: &crate::kernel::LoanRefusalDiagnostic,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    let subject = diagnostic.subject();
+    let conflicting = subject.conflicting_resource_fact()?;
+    let conflicting = describe_resource_fact(conflicting, parameters, arguments);
+    if diagnostic.operation() == crate::kernel::LoanRefusalOperation::Entry {
+        let viewed = subject.resource_fact()?;
+        // This message follows the proof's own sentence about the contract
+        // input, so it names the two clauses directly and adds no prefix.
+        return Some(format!(
+            "the contract's `views` clause overlaps its own `owns` clause: `{}` is already supported by `{conflicting}`; \
+             a view must name authority the caller lends, not authority this contract owns",
+            describe_resource_fact(viewed, parameters, arguments)
+        ));
+    }
+    let attempted = subject.memory_range()?;
+    let origin = match subject.origin()? {
+        crate::kernel::LoanOriginKind::ContractInputView => "a contract input view",
+        crate::kernel::LoanOriginKind::LentOwner => "an owner lent for a call",
+        crate::kernel::LoanOriginKind::Reborrow => "a reborrow of a live loan",
+    };
+    let loan = subject
+        .loan_id()
+        .map_or_else(String::new, |(arena, ordinal)| {
+            format!(" (loan {arena}:{ordinal})")
+        });
+    Some(format!(
+        "stable-view memory access conflicts with an active loan: the attempted range `{}` overlaps `{conflicting}`, lent as {origin}{loan}",
+        describe_memory_range(attempted, parameters, arguments)
+    ))
+}
+
 pub(in crate::surface) fn describe_loan_refusal(
     diagnostic: &crate::kernel::LoanRefusalDiagnostic,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> String {
+    if let Some(conflict) = describe_loan_conflict(diagnostic, parameters, arguments) {
+        return conflict;
+    }
     let category = match diagnostic.category() {
         crate::kernel::LoanRefusalCategory::ProvenOverlap => {
             "a required resource overlaps a live borrowed footprint"

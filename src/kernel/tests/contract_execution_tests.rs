@@ -160,6 +160,7 @@ fn owner_authorized_write_into_a_lent_range_is_refused() {
         vec![c_parameter("p", CType::Int32Pointer)],
         c_store(c_variable("p"), c_int32_literal(9)),
     );
+    let pointer_for_assertions = pointer.clone();
     let arguments = vec![c_pointer_value(pointer)];
     let theorem = prove_symbolic_c_function_execution_with_environment(
         state,
@@ -173,14 +174,30 @@ fn owner_authorized_write_into_a_lent_range_is_refused() {
     let Proposition::CFunctionExecutes { outcome, .. } = theorem.proposition() else {
         panic!("expected a function execution proposition");
     };
-    assert!(
-        matches!(
-            outcome,
-            CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message))
-                if message.contains("active stable loan")
-        ),
-        "{outcome:?}"
+    let CFunctionOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)) = outcome else {
+        panic!("expected a loan refusal, got {outcome:?}");
+    };
+    // The D13 shape: which loan, where it came from, what it protects, and
+    // what the write attempted.
+    assert_eq!(diagnostic.category(), LoanRefusalCategory::ActiveDependency);
+    assert_eq!(
+        diagnostic.operation(),
+        crate::kernel::LoanRefusalOperation::MemoryAccess
     );
+    let subject = diagnostic.subject();
+    assert_eq!(
+        subject.conflicting_resource_fact(),
+        Some(&view_memory_fact(pointer_for_assertions.clone(), 0, 1))
+    );
+    assert_eq!(
+        subject.memory_range().map(CMemoryRange::base),
+        Some(&pointer_for_assertions)
+    );
+    assert_eq!(
+        subject.origin(),
+        Some(crate::kernel::LoanOriginKind::ContractInputView)
+    );
+    assert!(subject.loan_id().is_some());
 }
 
 #[test]

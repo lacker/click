@@ -5681,6 +5681,21 @@ int32 reader(int32 p[], int32 q[]) {
             "{}",
             error.message()
         );
+        // The refusal names the invariant and both clauses, so the contract
+        // can be repaired without reading the ledger.
+        assert!(
+            error
+                .message()
+                .contains("the contract's `views` clause overlaps its own `owns` clause"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            error.message().contains("`views p[0..1]`")
+                && error.message().contains("is already supported by `owns "),
+            "{}",
+            error.message()
+        );
     }
 
     fn verify_in_stable_mode_with_header(

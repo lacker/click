@@ -32,8 +32,8 @@ pub(crate) use loans::{
     empty_checked_loan_evidence_sequence,
 };
 pub use loans::{
-    LoanOverlapStatus, LoanRefusalCategory, LoanRefusalDiagnostic, LoanRefusalOperation,
-    LoanRefusalSubject,
+    LoanOriginKind, LoanOverlapStatus, LoanRefusalCategory, LoanRefusalDiagnostic,
+    LoanRefusalOperation, LoanRefusalSubject,
 };
 mod loops;
 mod memory_provenance;

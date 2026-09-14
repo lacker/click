@@ -351,13 +351,12 @@ fn stable_loan_memory_range_outcome(
     assumptions: &PureFactContext,
 ) -> Option<CStatementOutcome> {
     state
-        .permits_stable_loan_memory_access_with_assumptions(range, assumptions)
-        .err()
-        .map(|error| {
-            CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                "memory write conflicts with an active stable loan: {error:?}"
-            )))
-        })
+        .stable_loan_memory_access_refusal(
+            range,
+            assumptions,
+            crate::kernel::LoanRefusalOperation::MemoryAccess,
+        )
+        .map(|diagnostic| CStatementOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)))
 }
 
 pub(in crate::kernel) fn write_c_lvalue_paths(

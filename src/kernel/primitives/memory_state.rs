@@ -2798,14 +2798,17 @@ impl CState {
             .map_or(Ok(()), |ledger| ledger.permits_memory_access(range))
     }
 
-    pub(crate) fn permits_stable_loan_memory_access_with_assumptions(
+    /// The bounded explanation of a refused access, or `None` when the
+    /// access is permitted or no ledger is active.
+    pub(crate) fn stable_loan_memory_access_refusal(
         &self,
         range: &CMemoryRange,
         assumptions: &PureFactContext,
-    ) -> Result<(), crate::kernel::loans::LoanRefusal> {
-        self.loan_ledger.as_ref().map_or(Ok(()), |ledger| {
-            ledger.permits_memory_access_with_assumptions(range, assumptions)
-        })
+        operation: crate::kernel::LoanRefusalOperation,
+    ) -> Option<crate::kernel::LoanRefusalDiagnostic> {
+        self.loan_ledger
+            .as_ref()
+            .and_then(|ledger| ledger.memory_access_refusal(range, assumptions, operation))
     }
 
     pub fn locals(&self) -> &CLocalEnvironment {
