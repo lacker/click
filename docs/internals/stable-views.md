@@ -187,7 +187,11 @@ permission to load needs current authority.
 A composite body's facts may be covered by a stable view when they depend
 only on memory the loan stabilizes; a fact that counts a population or
 claims allocation liveness is not loan-stable and such a composite cannot be
-lent. A valid context is a partition: distinct owned occurrences are
+lent. A fold whose body has facts cannot view memory the folding context
+itself owns: that view is only an observation, the owner could still write
+the bytes, and the folded facts would outlive the values they describe
+(`mdtests/fold_cannot_view_memory_its_context_owns.md`). A body without
+facts of its own may observe its context's owner. A valid context is a partition: distinct owned occurrences are
 bytewise disjoint, composites included, and the kernel does not reason
 inside a folded composite beyond its one-level frontier. Counted populations
 keep the population-wide reading: a unit's body enters the caller where the

@@ -3875,6 +3875,29 @@ fn fold_composite_resources_on_outcome_with_facts(
                         )));
                     }
                     None => {
+                        // A view of memory this context owns is an owner
+                        // observation, and folding it would capture the
+                        // body's facts beside an owner that can still write
+                        // the bytes (law 6 in docs/internals/stable-views.md).
+                        // A body with facts must own that memory, or the view
+                        // must come in as a borrow. A body with no facts of
+                        // its own packages nothing that could go stale (a
+                        // nested composite's facts were checked by its own
+                        // fold), so its observation stays an observation.
+                        let assumptions = pure_facts.assumptions();
+                        if !body_facts.is_empty()
+                            && lowered.memory_view_range().is_some()
+                            && post_state
+                                .resources()
+                                .directly_supporting_owned_entry(&lowered, assumptions)
+                                .is_some()
+                        {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` path {path_index}: `fold({})` body views memory this context owns: `{}` is backed by an owner that can still write it, so the folded facts would not be stable; own it in the body or borrow it through a call",
+                                describe_resource_clause(resource),
+                                describe_resource_fact(&lowered, parameters, arguments)
+                            )));
+                        }
                         body_has_unbound_view = true;
                     }
                 }
