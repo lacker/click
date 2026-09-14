@@ -350,6 +350,8 @@ pub(super) fn is_c_type_keyword(name: &str) -> bool {
     matches!(
         name,
         "void"
+            | "_Bool"
+            | "bool"
             | "struct"
             | "int32"
             | "int"
@@ -2388,6 +2390,7 @@ impl Parser {
 
         let scalar_type = match spelling.as_str() {
             "void" => C0Type::Void,
+            "_Bool" | "bool" => C0Type::Bool,
             "int16" | "short" | "int16_t" => C0Type::Int16,
             "int32" | "int" | "int32_t" => C0Type::Int32,
             "uint8" | "uint8_t" => C0Type::UInt8,

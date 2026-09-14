@@ -111,7 +111,7 @@ public:
     profile["rtti"] = false;
 
     llvm::json::Object artifact;
-    artifact["schema"] = 1;
+    artifact["schema"] = 2;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["logical_source"] = logical_source_;
@@ -123,11 +123,6 @@ private:
   using Json = llvm::json::Value;
 
   std::optional<Json> lower_function(clang::FunctionDecl *declaration) {
-    if (declaration->getNumParams() != 1) {
-      fail(declaration->getLocation(),
-           "the first C++ slice requires exactly one parameter");
-      return std::nullopt;
-    }
     const auto *prototype =
         declaration->getType()->getAs<clang::FunctionProtoType>();
     if (prototype == nullptr || !prototype->isNothrow()) {
@@ -141,35 +136,31 @@ private:
     if (!return_type) {
       return std::nullopt;
     }
-    auto parameter = lower_parameter(declaration->getParamDecl(0));
-    if (!parameter) {
-      return std::nullopt;
+    llvm::json::Array parameters;
+    for (const clang::ParmVarDecl *parameter : declaration->parameters()) {
+      auto lowered = lower_parameter(parameter);
+      if (!lowered) {
+        return std::nullopt;
+      }
+      parameters.push_back(std::move(*lowered));
     }
     const auto *body =
         llvm::dyn_cast_or_null<clang::CompoundStmt>(declaration->getBody());
-    if (body == nullptr || body->size() != 2) {
+    if (body == nullptr || body->body_empty()) {
       fail(declaration->getLocation(),
-           "the first C++ slice requires one assignment and one return");
+           "the supported C++ function requires a nonempty compound body");
       return std::nullopt;
     }
 
     llvm::json::Array statements;
     for (const clang::Stmt *statement : body->body()) {
-      auto lowered = lower_statement(statement, declaration->getParamDecl(0));
+      auto lowered = lower_statement(statement, declaration);
       if (!lowered) {
         return std::nullopt;
       }
       statements.push_back(std::move(*lowered));
     }
-    if (!llvm::isa<clang::BinaryOperator>(*body->body_begin()) ||
-        !llvm::isa<clang::ReturnStmt>(*(body->body_begin() + 1))) {
-      fail(body->getBeginLoc(),
-           "the first C++ slice requires assignment followed by return");
-      return std::nullopt;
-    }
 
-    llvm::json::Array parameters;
-    parameters.push_back(std::move(*parameter));
     llvm::json::Object result;
     result["declaration_id"] = declaration_id(declaration);
     result["name"] = declaration->getNameAsString();
@@ -187,10 +178,19 @@ private:
   std::optional<Json> lower_parameter(const clang::ParmVarDecl *parameter) {
     const auto *reference =
         parameter->getType()->getAs<clang::LValueReferenceType>();
-    if (reference == nullptr ||
-        reference->getPointeeType().isConstQualified()) {
+    const bool mutable_int_reference =
+        reference != nullptr &&
+        !reference->getPointeeType().isConstQualified() &&
+        context_.hasSameType(reference->getPointeeType().getUnqualifiedType(),
+                             context_.IntTy);
+    const bool by_value_bool =
+        reference == nullptr &&
+        context_.hasSameType(parameter->getType().getUnqualifiedType(),
+                             context_.BoolTy) &&
+        !parameter->getType().isConstQualified();
+    if (!mutable_int_reference && !by_value_bool) {
       fail(parameter->getLocation(),
-           "the first C++ slice requires a mutable int& parameter");
+           "the supported C++ parameter must be a by-value bool or mutable int& parameter");
       return std::nullopt;
     }
     auto value_type =
@@ -221,8 +221,15 @@ private:
       result["pointee"] = std::move(*pointee);
       return Json(std::move(result));
     }
+    if (context_.hasSameType(type.getUnqualifiedType(), context_.BoolTy)) {
+      llvm::json::Object result;
+      result["kind"] = "boolean";
+      result["bits"] = static_cast<std::int64_t>(context_.getTypeSize(type));
+      result["is_const"] = type.isConstQualified();
+      return Json(std::move(result));
+    }
     if (!context_.hasSameType(type.getUnqualifiedType(), context_.IntTy)) {
-      fail(location, "the first C++ slice supports only int and int& types");
+      fail(location, "the supported C++ slice supports bool, int, and int& types");
       return std::nullopt;
     }
     llvm::json::Object result;
@@ -234,15 +241,15 @@ private:
   }
 
   std::optional<Json> lower_statement(const clang::Stmt *statement,
-                                      const clang::ParmVarDecl *parameter) {
+                                      const clang::FunctionDecl *function) {
     if (const auto *binary = llvm::dyn_cast<clang::BinaryOperator>(statement)) {
       if (binary->getOpcode() != clang::BO_Assign) {
         fail(binary->getOperatorLoc(),
              "the first C++ slice supports only simple assignment statements");
         return std::nullopt;
       }
-      auto target = lower_place_reference(binary->getLHS(), parameter);
-      auto value = lower_expression(binary->getRHS(), parameter);
+      auto target = lower_place_reference(binary->getLHS(), function);
+      auto value = lower_expression(binary->getRHS(), function);
       if (!target || !value) {
         return std::nullopt;
       }
@@ -259,7 +266,7 @@ private:
              "the first C++ slice requires an int return value");
         return std::nullopt;
       }
-      auto value = lower_expression(returned->getRetValue(), parameter);
+      auto value = lower_expression(returned->getRetValue(), function);
       if (!value) {
         return std::nullopt;
       }
@@ -269,16 +276,62 @@ private:
       result["span"] = span(returned->getSourceRange());
       return Json(std::move(result));
     }
+    if (const auto *conditional = llvm::dyn_cast<clang::IfStmt>(statement)) {
+      if (conditional->getInit() != nullptr ||
+          conditional->getConditionVariable() != nullptr) {
+        fail(conditional->getIfLoc(),
+             "the supported C++ if statement cannot declare an initializer or condition variable");
+        return std::nullopt;
+      }
+      auto condition = lower_expression(conditional->getCond(), function);
+      auto then_branch = lower_branch(conditional->getThen(), function);
+      auto else_branch = lower_branch(conditional->getElse(), function);
+      if (!condition || !then_branch || !else_branch) {
+        return std::nullopt;
+      }
+      llvm::json::Object result;
+      result["kind"] = "if";
+      result["condition"] = std::move(*condition);
+      result["then_branch"] = std::move(*then_branch);
+      result["else_branch"] = std::move(*else_branch);
+      result["span"] = span(conditional->getSourceRange());
+      return Json(std::move(result));
+    }
     fail(statement->getBeginLoc(),
          "unsupported statement in the first C++ slice");
     return std::nullopt;
   }
 
+  std::optional<llvm::json::Array>
+  lower_branch(const clang::Stmt *statement,
+               const clang::FunctionDecl *function) {
+    llvm::json::Array result;
+    if (statement == nullptr) {
+      return result;
+    }
+    if (const auto *compound = llvm::dyn_cast<clang::CompoundStmt>(statement)) {
+      for (const clang::Stmt *member : compound->body()) {
+        auto lowered = lower_statement(member, function);
+        if (!lowered) {
+          return std::nullopt;
+        }
+        result.push_back(std::move(*lowered));
+      }
+      return result;
+    }
+    auto lowered = lower_statement(statement, function);
+    if (!lowered) {
+      return std::nullopt;
+    }
+    result.push_back(std::move(*lowered));
+    return result;
+  }
+
   std::optional<Json> lower_expression(const clang::Expr *expression,
-                                       const clang::ParmVarDecl *parameter) {
+                                       const clang::FunctionDecl *function) {
     if (const auto *parentheses =
             llvm::dyn_cast<clang::ParenExpr>(expression)) {
-      return lower_expression(parentheses->getSubExpr(), parameter);
+      return lower_expression(parentheses->getSubExpr(), function);
     }
     if (const auto *cast =
             llvm::dyn_cast<clang::ImplicitCastExpr>(expression)) {
@@ -287,7 +340,7 @@ private:
              "unsupported implicit conversion in the first C++ slice");
         return std::nullopt;
       }
-      auto place = lower_place_reference(cast->getSubExpr(), parameter);
+      auto place = lower_place_reference(cast->getSubExpr(), function);
       auto value_type = lower_type(cast->getType(), cast->getExprLoc());
       if (!place || !value_type) {
         return std::nullopt;
@@ -321,8 +374,8 @@ private:
              "unsupported binary operator in the first C++ slice");
         return std::nullopt;
       }
-      auto left = lower_expression(binary->getLHS(), parameter);
-      auto right = lower_expression(binary->getRHS(), parameter);
+      auto left = lower_expression(binary->getLHS(), function);
+      auto right = lower_expression(binary->getRHS(), function);
       auto value_type = lower_type(binary->getType(), binary->getExprLoc());
       if (!left || !right || !value_type) {
         return std::nullopt;
@@ -343,16 +396,16 @@ private:
 
   std::optional<Json>
   lower_place_reference(const clang::Expr *expression,
-                        const clang::ParmVarDecl *expected_parameter) {
+                        const clang::FunctionDecl *expected_function) {
     expression = expression->IgnoreParenImpCasts();
     const auto *reference = llvm::dyn_cast<clang::DeclRefExpr>(expression);
     const auto *parameter =
         reference == nullptr
             ? nullptr
             : llvm::dyn_cast<clang::ParmVarDecl>(reference->getDecl());
-    if (parameter == nullptr || parameter != expected_parameter) {
+    if (parameter == nullptr || parameter->getDeclContext() != expected_function) {
       fail(expression->getExprLoc(),
-           "the first C++ slice can access only its int& parameter");
+           "the supported C++ slice can access only selected function parameters");
       return std::nullopt;
     }
     llvm::json::Object result;

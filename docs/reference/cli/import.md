@@ -61,7 +61,7 @@ assembly are silently deleted to make an import pass.
 ## Preliminary C++ semantic artifact
 
 The first C++ frontend boundary accepts one header-free C++20 source containing
-one selected function of this exact shape:
+one selected, explicitly `noexcept` function. The linear reference fixture is:
 
 ```cpp
 int increment(int& value) noexcept {
@@ -128,8 +128,14 @@ uses its direct kernel lowering. `click verify`, `click profile`, `click
 expand`, and `click audit` all load the same locked C++ input; verification and
 rewritten-proof checks remain offline after refresh.
 
-Constructors, destructors, additional functions, control flow, and broader C++
-syntax remain outside this first end-to-end slice.
+The sibling `branch-return` integration fixture additionally checks by-value
+`bool`, a braced `if`, fallthrough, and an early return. The semantic artifact
+retains the structured branch and both return edges; Click does not flatten it
+into C text. Supported parameters are currently by-value `bool` and mutable
+`int&`, and selected functions still return `int`.
+
+Constructors, destructors, local declarations, calls, loops, additional
+functions, and broader C++ syntax remain outside this end-to-end subset.
 
 ## Validation and supported profile
 

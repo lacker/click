@@ -81,16 +81,16 @@ Homebrew's `llvm@19` package provides the expected toolchain. The Linux CI job
 installs the pinned development packages before entering the network-free
 gate.
 
-The C++ fixture refreshes a typed artifact for one header-free C++20 function,
-then makes the exporter unavailable and loads the artifact again. This checks
-the intended phase boundary: explicit refresh executes Clang, while ordinary
+The C++ fixtures refresh typed artifacts for header-free C++20 functions, then
+make the exporter unavailable and load the artifacts again. This checks the
+intended phase boundary: explicit refresh executes Clang, while ordinary
 loading validates only the config, source, lock, and stored semantic artifact.
-It then verifies the checked-in C++ source and sidecar through the shared
-prepared-input path. Focused coverage exercises source/signature mismatch
-diagnostics, smart-tactic inventory, expansion and reverification, and the
-retained audit session against the same immutable artifact. Missing Clang
-development tooling fails the gate, and unsupported C++ does not fall back to
-the C parser.
+They verify a linear mutable-reference function and a by-value-boolean branch
+with an early return through the shared prepared-input path. Focused coverage
+exercises source/signature mismatch diagnostics, smart-tactic inventory,
+expansion and reverification, and the retained audit session against the same
+immutable artifact. Missing Clang development tooling fails the gate, and
+unsupported C++ does not fall back to the C parser.
 
 ## What the gate runs
 

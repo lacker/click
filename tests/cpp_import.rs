@@ -22,14 +22,25 @@ use click::surface::{
 
 const SOURCE: &str = include_str!("fixtures/cpp-verification/increment/increment.cpp");
 const SIDECAR: &str = include_str!("fixtures/cpp-verification/increment/increment.click");
+const BRANCH_SOURCE: &str = include_str!("fixtures/cpp-verification/branch-return/choose.cpp");
+const BRANCH_SIDECAR: &str = include_str!("fixtures/cpp-verification/branch-return/choose.click");
 
 struct Project {
     directory: PathBuf,
     exporter: PathBuf,
+    source_name: String,
 }
 
 impl Project {
     fn new() -> Self {
+        Self::with_fixture("increment.cpp", "increment", SOURCE)
+    }
+
+    fn branch_return() -> Self {
+        Self::with_fixture("choose.cpp", "choose", BRANCH_SOURCE)
+    }
+
+    fn with_fixture(source_name: &str, function: &str, source: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let directory = std::env::temp_dir().join(format!(
             "click-cpp-import-{}-{}",
@@ -45,12 +56,13 @@ impl Project {
             .expect("scripts/check.sh supplies the pinned C++ exporter");
         let exporter = directory.join("click-cpp-exporter");
         fs::copy(&built_exporter, &exporter).expect("copy C++ exporter into isolated fixture");
-        fs::write(directory.join("increment.cpp"), SOURCE).unwrap();
+        fs::write(directory.join(source_name), source).unwrap();
         let project = Self {
             directory,
             exporter,
+            source_name: source_name.to_string(),
         };
-        project.write_config("increment");
+        project.write_config(function);
         project
     }
 
@@ -59,7 +71,8 @@ impl Project {
     }
 
     fn artifact(&self) -> PathBuf {
-        self.directory.join("increment.cpp.click-cpp.json")
+        self.directory
+            .join(format!("{}.click-cpp.json", self.source_name))
     }
 
     fn lock(&self) -> PathBuf {
@@ -67,7 +80,7 @@ impl Project {
     }
 
     fn source(&self) -> PathBuf {
-        self.directory.join("increment.cpp")
+        self.directory.join(&self.source_name)
     }
 
     fn write_config(&self, function: &str) {
@@ -80,10 +93,10 @@ impl Project {
             "rtti": false,
             "exporter": self.exporter,
             "working_directory": ".",
-            "source": "increment.cpp",
-            "logical_source": "increment.cpp",
+            "source": &self.source_name,
+            "logical_source": &self.source_name,
             "function": function,
-            "artifact": "increment.cpp.click-cpp.json"
+            "artifact": format!("{}.click-cpp.json", self.source_name)
         });
         let mut bytes = serde_json::to_vec_pretty(&config).unwrap();
         bytes.push(b'\n');
@@ -121,6 +134,7 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
     let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
+    assert_eq!(prepared.export().schema, 2);
     assert_eq!(prepared.logical_source(), "increment.cpp");
     assert_eq!(prepared.identity().len(), 64);
     let function = &prepared.export().function;
@@ -189,6 +203,104 @@ fn locked_cpp_function_verifies_through_the_shared_sidecar_path_offline() {
             .iter()
             .all(|theorem| { theorem.import_identity.as_deref() == Some(import.identity()) })
     );
+}
+
+#[test]
+fn locked_cpp_branch_and_early_return_verify_through_the_shared_sidecar_path() {
+    let project = Project::branch_return();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, BRANCH_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("refresh the branching C++ import explicitly");
+    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+
+    let import = load_import(&project.config()).expect("load branching artifact offline");
+    let source = &import.export().function;
+    assert_eq!(source.parameters.len(), 2);
+    assert!(matches!(
+        source.parameters[0].value_type,
+        CppType::Boolean {
+            bits: 8,
+            is_const: false,
+        }
+    ));
+    assert!(matches!(
+        source.body.as_slice(),
+        [
+            CppStatement::Assign { .. },
+            CppStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            },
+            CppStatement::Assign { .. },
+            CppStatement::Return { .. },
+        ] if matches!(then_branch.as_slice(), [CppStatement::Return { .. }])
+            && else_branch.is_empty()
+    ));
+
+    let lowered = lower_import(&import).expect("lower the typed branch directly");
+    assert_eq!(
+        lowered.kernel_function().parameters()[0].c_type(),
+        CType::Bool
+    );
+    assert!(contains_if(lowered.kernel_function().body()));
+
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let inputs = read_c_inputs(&sidecar, &click_source).unwrap();
+    let CInput::PreparedCpp(import) = inputs else {
+        panic!("language=c++ must select the C++ prepared-input path")
+    };
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    let verified = verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify both C++ return paths against one contract");
+    assert_eq!(
+        verified
+            .iter()
+            .map(|theorem| match theorem.claim {
+                VerifiedClaim::Ensure { index, .. } => index,
+            })
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 0, 1, 2],
+        "both return paths certify returned ownership and both postconditions"
+    );
+
+    let sites = cpp_prepared_project_smart_tactic_source_sites(&click_project, &import).unwrap();
+    assert_eq!(
+        sites
+            .iter()
+            .map(|site| site.tactic_name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["execute", "simp"]
+    );
+    let execute =
+        cpp_prepared_project_tactic_source_position(&click_project, &import, "choose.contract", 0)
+            .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .expect("expand the branch execution into a checkable source proof");
+    let rewritten = click_project.with_entry_source(expanded.clone());
+    verify_cpp_prepared_project(&rewritten, &import)
+        .expect("the expanded branch proof must reverify");
+    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
+        .expect("retain the original branch verification environment");
+    let next =
+        cpp_prepared_project_tactic_source_position(&rewritten, &import, "choose.contract", 0)
+            .unwrap();
+    session
+        .verify_at_project(&expanded, next.line, next.column)
+        .expect("retained audit session must accept the expanded branch proof");
+}
+
+fn contains_if(statement: &CStatement) -> bool {
+    match statement {
+        CStatement::If { .. } => true,
+        CStatement::Seq(first, second) => contains_if(first) || contains_if(second),
+        _ => false,
+    }
 }
 
 #[test]
@@ -423,6 +535,16 @@ fn cpp_frontend_rejects_unsupported_source_without_a_c_fallback() {
     .unwrap();
     let error = refresh_import(&project.config()).unwrap_err();
     assert!(error.contains("mutable int& parameter"), "{error}");
+    assert!(!project.artifact().exists());
+
+    fs::write(
+        project.source(),
+        "struct Guard {\n    int& value;\n    explicit Guard(int& input) noexcept : value(input) {}\n    ~Guard() noexcept { value = 0; }\n};\n\nint increment(int& value) noexcept {\n    Guard guard(value);\n    return value;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("increment.cpp:8"), "{error}");
+    assert!(error.contains("unsupported statement"), "{error}");
     assert!(!project.artifact().exists());
 }
 

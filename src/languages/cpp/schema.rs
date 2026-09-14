@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 1;
+pub(crate) const EXPORT_SCHEMA: u32 = 2;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -44,6 +44,10 @@ pub struct CppFunction {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CppType {
+    Boolean {
+        bits: u32,
+        is_const: bool,
+    },
     Integer {
         bits: u32,
         signed: bool,
@@ -111,6 +115,12 @@ pub enum CppStatement {
         value: CppExpression,
         span: CppSpan,
     },
+    If {
+        condition: CppExpression,
+        then_branch: Vec<CppStatement>,
+        else_branch: Vec<CppStatement>,
+        span: CppSpan,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -173,39 +183,49 @@ impl CppFunction {
             ));
         }
         self.span.validate(logical_source)?;
-        if self.parameters.len() != 1 {
-            return Err("the first C++ import slice requires exactly one parameter".into());
-        }
-        let parameter = &self.parameters[0];
-        parameter.span.validate(logical_source)?;
-        if parameter.declaration_id.is_empty() || parameter.name.is_empty() {
-            return Err("C++ parameter is missing declaration identity".into());
-        }
-        match &parameter.value_type {
-            CppType::LvalueReference { pointee } => {
-                require_int32(pointee, false, "reference pointee")?;
+        let mut places = BTreeMap::new();
+        for parameter in &self.parameters {
+            parameter.span.validate(logical_source)?;
+            if parameter.declaration_id.is_empty() || parameter.name.is_empty() {
+                return Err("C++ parameter is missing declaration identity".into());
             }
-            _ => {
-                return Err(
-                    "the first C++ import slice requires a mutable `int&` parameter".into(),
-                );
+            match &parameter.value_type {
+                CppType::Boolean { .. } => {
+                    require_bool(&parameter.value_type, false, "by-value parameter")?;
+                }
+                CppType::LvalueReference { pointee } => {
+                    require_int32(pointee, false, "reference pointee")?;
+                }
+                _ => {
+                    return Err(
+                        "the supported C++ parameters are by-value `bool` and mutable `int&`"
+                            .into(),
+                    );
+                }
+            }
+            if places
+                .insert(
+                    parameter.declaration_id.clone(),
+                    (parameter.name.clone(), parameter.value_type.clone()),
+                )
+                .is_some()
+            {
+                return Err(format!(
+                    "duplicate C++ parameter declaration identity `{}`",
+                    parameter.declaration_id
+                ));
             }
         }
-
-        let places = BTreeMap::from([(
-            parameter.declaration_id.clone(),
-            (parameter.name.clone(), parameter.value_type.clone()),
-        )]);
-        if self.body.len() != 2 {
-            return Err("the first C++ import slice requires one assignment and one return".into());
+        if self.body.is_empty() {
+            return Err("supported C++ function has no executable statements".into());
         }
         for statement in &self.body {
             statement.validate(&places, logical_source)?;
         }
-        if !matches!(self.body[0], CppStatement::Assign { .. })
-            || !matches!(self.body[1], CppStatement::Return { .. })
-        {
-            return Err("the first C++ import slice requires assignment followed by return".into());
+        if !sequence_always_returns(&self.body) {
+            return Err(
+                "supported non-void C++ function can reach the end without returning".into(),
+            );
         }
         Ok(())
     }
@@ -231,17 +251,41 @@ impl CppStatement {
                     }
                     _ => return Err("C++ assignment target is not a mutable reference".into()),
                 }
-                value.validate(places, logical_source)
+                value.validate(places, logical_source)?;
+                require_int32(value.value_type(), false, "assignment value")
             }
             Self::Return { value, span } => {
                 span.validate(logical_source)?;
-                value.validate(places, logical_source)
+                value.validate(places, logical_source)?;
+                require_int32(value.value_type(), false, "return value")
+            }
+            Self::If {
+                condition,
+                then_branch,
+                else_branch,
+                span,
+            } => {
+                span.validate(logical_source)?;
+                condition.validate(places, logical_source)?;
+                require_bool(condition.value_type(), false, "if condition")?;
+                for statement in then_branch.iter().chain(else_branch) {
+                    statement.validate(places, logical_source)?;
+                }
+                Ok(())
             }
         }
     }
 }
 
 impl CppExpression {
+    fn value_type(&self) -> &CppType {
+        match self {
+            Self::IntegerLiteral { value_type, .. }
+            | Self::Load { value_type, .. }
+            | Self::Binary { value_type, .. } => value_type,
+        }
+    }
+
     fn validate(
         &self,
         places: &BTreeMap<String, (String, CppType)>,
@@ -264,14 +308,18 @@ impl CppExpression {
                 value_type,
                 span,
             } => {
-                require_int32(value_type, false, "loaded value type")?;
                 span.validate(logical_source)?;
                 let place_type = validate_place_reference(place, places, logical_source)?;
                 match place_type {
                     CppType::LvalueReference { pointee } => {
-                        require_int32(pointee, false, "loaded reference pointee")
+                        require_int32(pointee, false, "loaded reference pointee")?;
+                        require_int32(value_type, false, "loaded value type")
                     }
-                    _ => Err("C++ load does not name a supported reference".into()),
+                    CppType::Boolean { .. } => {
+                        require_bool(place_type, false, "loaded parameter")?;
+                        require_bool(value_type, false, "loaded value type")
+                    }
+                    _ => Err("C++ load does not name a supported parameter".into()),
                 }
             }
             Self::Binary {
@@ -284,8 +332,28 @@ impl CppExpression {
                 require_int32(value_type, false, "binary result type")?;
                 span.validate(logical_source)?;
                 left.validate(places, logical_source)?;
-                right.validate(places, logical_source)
+                right.validate(places, logical_source)?;
+                require_int32(left.value_type(), false, "binary left operand")?;
+                require_int32(right.value_type(), false, "binary right operand")
             }
+        }
+    }
+}
+
+fn sequence_always_returns(statements: &[CppStatement]) -> bool {
+    statements.iter().any(CppStatement::always_returns)
+}
+
+impl CppStatement {
+    fn always_returns(&self) -> bool {
+        match self {
+            Self::Return { .. } => true,
+            Self::If {
+                then_branch,
+                else_branch,
+                ..
+            } => sequence_always_returns(then_branch) && sequence_always_returns(else_branch),
+            Self::Assign { .. } => false,
         }
     }
 }
@@ -334,6 +402,13 @@ fn require_int32(value: &CppType, allow_const: bool, label: &str) -> Result<(), 
             is_const,
         } if allow_const || !is_const => Ok(()),
         _ => Err(format!("{label} is outside the first C++ `int` slice")),
+    }
+}
+
+fn require_bool(value: &CppType, allow_const: bool, label: &str) -> Result<(), String> {
+    match value {
+        CppType::Boolean { bits: 8, is_const } if allow_const || !is_const => Ok(()),
+        _ => Err(format!("{label} is outside the supported C++ `bool` slice")),
     }
 }
 

@@ -5166,6 +5166,14 @@ fn cpp_function_interface(
         .parameters
         .iter()
         .map(|parameter| match &parameter.value_type {
+            crate::languages::cpp::CppType::Boolean {
+                bits: 8,
+                is_const: false,
+            } => Ok(syntax::C0Parameter::new(
+                C0Type::Bool,
+                parameter.name.clone(),
+                None,
+            )),
             crate::languages::cpp::CppType::LvalueReference { pointee }
                 if matches!(
                     pointee.as_ref(),
@@ -5183,7 +5191,7 @@ fn cpp_function_interface(
                 ))
             }
             _ => Err(ClickError::new(format!(
-                "C++ declaration `{}` parameter `{}` is outside the supported reference interface",
+                "C++ declaration `{}` parameter `{}` is outside the supported bool/reference interface",
                 source.declaration_id, parameter.name
             ))),
         })

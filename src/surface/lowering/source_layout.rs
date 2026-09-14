@@ -67,21 +67,89 @@ impl SourceExecutionLayout {
         };
         let mut layout = SourceExecutionLayoutData::default();
         let mut next_statement_index = 0;
+
+        fn redirect_control_successor(
+            layout: &mut SourceExecutionLayoutData,
+            last_statement_index: usize,
+            exited_if_index: usize,
+            continuation_node: usize,
+        ) {
+            let Some(region) = layout.statements.get_mut(&last_statement_index) else {
+                return;
+            };
+            region.continuation_node = continuation_node;
+            layout
+                .exited_branch_regions
+                .entry(last_statement_index)
+                .or_default()
+                .push(exited_if_index);
+            if let SourceStatementKind::If { .. } = region.kind {
+                let arm_lasts: Vec<usize> = layout
+                    .exited_branch_regions
+                    .iter()
+                    .filter(|(_, exited)| exited.contains(&last_statement_index))
+                    .map(|(index, _)| *index)
+                    .collect();
+                for arm_last in arm_lasts {
+                    redirect_control_successor(
+                        layout,
+                        arm_last,
+                        exited_if_index,
+                        continuation_node,
+                    );
+                }
+            }
+        }
+
         fn visit(
             statement: &CStatement,
             next_statement_index: &mut usize,
             layout: &mut SourceExecutionLayoutData,
-        ) -> Result<(), ClickError> {
+        ) -> Result<usize, ClickError> {
             match statement {
                 CStatement::Seq(first, second) => {
                     visit(first, next_statement_index, layout)?;
                     visit(second, next_statement_index, layout)
                 }
-                CStatement::If { .. } | CStatement::While { .. } | CStatement::Switch { .. } => {
-                    Err(ClickError::new(
-                        "typed-frontend source layout does not yet support control-flow statements",
-                    ))
+                CStatement::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    let statement_index = *next_statement_index;
+                    *next_statement_index += 1;
+                    let then_statement_index = *next_statement_index;
+                    let then_last = visit(then_branch, next_statement_index, layout)?;
+                    let else_statement_index = *next_statement_index;
+                    let else_last = visit(else_branch, next_statement_index, layout)?;
+                    let continuation_node = *next_statement_index;
+                    layout.statements.insert(
+                        statement_index,
+                        SourceStatementRegion {
+                            continuation_node,
+                            kind: SourceStatementKind::If {
+                                then_statement_index,
+                                else_statement_index,
+                            },
+                        },
+                    );
+                    redirect_control_successor(
+                        layout,
+                        then_last,
+                        statement_index,
+                        continuation_node,
+                    );
+                    redirect_control_successor(
+                        layout,
+                        else_last,
+                        statement_index,
+                        continuation_node,
+                    );
+                    Ok(statement_index)
                 }
+                CStatement::While { .. } | CStatement::Switch { .. } => Err(ClickError::new(
+                    "typed-frontend source layout does not yet support loop or switch statements",
+                )),
                 _ => {
                     let statement_index = *next_statement_index;
                     *next_statement_index += 1;
@@ -92,7 +160,7 @@ impl SourceExecutionLayout {
                             kind: SourceStatementKind::Plain,
                         },
                     );
-                    Ok(())
+                    Ok(statement_index)
                 }
             }
         }

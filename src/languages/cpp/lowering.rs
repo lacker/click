@@ -14,8 +14,8 @@ use super::{
 };
 use crate::kernel::{
     CExpression, CFunction, CStatement, CType, LoadSourceId, LoadSourceOwnerId, c_add, c_function,
-    c_int32_literal, c_parameter, c_return, c_seq, c_typed_load_with_source, c_typed_store,
-    c_variable,
+    c_if, c_int32_literal, c_parameter, c_return, c_seq, c_skip, c_typed_load_with_source,
+    c_typed_store, c_variable,
 };
 
 /// One kernel function together with the immutable semantic artifact that
@@ -61,16 +61,7 @@ pub fn lower_import(import: &PreparedCppImport) -> Result<LoweredCppFunction, St
         places,
         next_load_occurrence: 0,
     };
-    let mut statements = source
-        .body
-        .iter()
-        .map(|statement| context.lower_statement(statement));
-    let first = statements
-        .next()
-        .ok_or_else(|| "C++ function has no executable statements".to_string())??;
-    let body = statements.try_fold(first, |body, statement| {
-        statement.map(|statement| c_seq(body, statement))
-    })?;
+    let body = context.lower_sequence(&source.body)?;
     let function = c_function(CType::Int32, source.name.clone(), parameters, body);
     Ok(LoweredCppFunction {
         source: import.clone(),
@@ -80,11 +71,15 @@ pub fn lower_import(import: &PreparedCppImport) -> Result<LoweredCppFunction, St
 
 fn lower_parameter(parameter: &CppPlace) -> Result<crate::kernel::CParameter, String> {
     match &parameter.value_type {
+        CppType::Boolean {
+            bits: 8,
+            is_const: false,
+        } => Ok(c_parameter(parameter.name.clone(), CType::Bool)),
         CppType::LvalueReference { pointee } if is_mutable_int32(pointee) => {
             Ok(c_parameter(parameter.name.clone(), CType::Int32Pointer))
         }
         _ => Err(format!(
-            "C++ parameter `{}` is outside direct mutable `int&` lowering",
+            "C++ parameter `{}` is outside direct by-value `bool` and mutable `int&` lowering",
             parameter.name
         )),
     }
@@ -98,6 +93,19 @@ struct LoweringContext<'a> {
 }
 
 impl LoweringContext<'_> {
+    fn lower_sequence(&mut self, statements: &[CppStatement]) -> Result<CStatement, String> {
+        let mut statements = statements
+            .iter()
+            .map(|statement| self.lower_statement(statement));
+        let Some(first) = statements.next() else {
+            return Ok(c_skip());
+        };
+        let first = first?;
+        statements.try_fold(first, |body, statement| {
+            statement.map(|statement| c_seq(body, statement))
+        })
+    }
+
     fn lower_statement(&mut self, statement: &CppStatement) -> Result<CStatement, String> {
         match statement {
             CppStatement::Assign { target, value, .. } => {
@@ -106,6 +114,17 @@ impl LoweringContext<'_> {
                 Ok(c_typed_store(pointer, value, CType::Int32))
             }
             CppStatement::Return { value, .. } => Ok(c_return(self.lower_expression(value)?)),
+            CppStatement::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let condition = self.lower_expression(condition)?;
+                let then_branch = self.lower_sequence(then_branch)?;
+                let else_branch = self.lower_sequence(else_branch)?;
+                Ok(c_if(condition, then_branch, else_branch))
+            }
         }
     }
 
@@ -124,26 +143,40 @@ impl LoweringContext<'_> {
             }
             CppExpression::Load {
                 place, value_type, ..
-            } if is_mutable_int32(value_type) => {
-                let pointer = self.lower_place(place)?;
-                let occurrence = self.next_load_occurrence;
-                self.next_load_occurrence = self
-                    .next_load_occurrence
-                    .checked_add(1)
-                    .ok_or_else(|| "C++ load occurrence capacity exceeded".to_string())?;
-                Ok(c_typed_load_with_source(
-                    pointer,
-                    CType::Int32,
-                    Some(LoadSourceId {
-                        owner: LoadSourceOwnerId {
-                            source_unit: self.source_unit.into(),
-                            function: self.function_name.into(),
-                        },
-                        occurrence,
-                    }),
-                ))
-            }
-            CppExpression::Load { .. } => Err("C++ load is outside direct `int` lowering".into()),
+            } => match (&self.place(place)?.value_type, value_type) {
+                (
+                    CppType::Boolean {
+                        bits: 8,
+                        is_const: false,
+                    },
+                    CppType::Boolean {
+                        bits: 8,
+                        is_const: false,
+                    },
+                ) => Ok(c_variable(place.name.clone())),
+                (CppType::LvalueReference { pointee }, value_type)
+                    if is_mutable_int32(pointee) && is_mutable_int32(value_type) =>
+                {
+                    let pointer = self.lower_place(place)?;
+                    let occurrence = self.next_load_occurrence;
+                    self.next_load_occurrence = self
+                        .next_load_occurrence
+                        .checked_add(1)
+                        .ok_or_else(|| "C++ load occurrence capacity exceeded".to_string())?;
+                    Ok(c_typed_load_with_source(
+                        pointer,
+                        CType::Int32,
+                        Some(LoadSourceId {
+                            owner: LoadSourceOwnerId {
+                                source_unit: self.source_unit.into(),
+                                function: self.function_name.into(),
+                            },
+                            occurrence,
+                        }),
+                    ))
+                }
+                _ => Err("C++ load is outside direct bool/reference lowering".into()),
+            },
             CppExpression::Binary {
                 operator: CppBinaryOperator::Add,
                 left,
@@ -162,6 +195,11 @@ impl LoweringContext<'_> {
     }
 
     fn lower_place(&self, place: &CppPlaceReference) -> Result<CExpression, String> {
+        self.place(place)?;
+        Ok(c_variable(place.name.clone()))
+    }
+
+    fn place(&self, place: &CppPlaceReference) -> Result<&CppPlace, String> {
         let Some(parameter) = self.places.get(place.declaration_id.as_str()) else {
             return Err(format!(
                 "C++ lowering found unknown declaration `{}`",
@@ -174,7 +212,7 @@ impl LoweringContext<'_> {
                 place.declaration_id, parameter.name, place.name
             ));
         }
-        Ok(c_variable(parameter.name.clone()))
+        Ok(parameter)
     }
 }
 
