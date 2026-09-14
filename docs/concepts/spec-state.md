@@ -64,10 +64,11 @@ Click already has a few spec-only mechanisms:
 
 These are useful, but they are not the same as first-class mutable spec state.
 
-Across a function call, viewed resources are copyable and owned resources
-follow the callee's resource verbs. `owns` receives and returns ownership;
-`consumes` receives it; `produces` returns it. Click can split a covered
-subrange out of a larger owned range and rejoin adjacent returned ranges.
+Across a function call, a viewed resource is a shared borrow for the duration of
+that call and owned resources follow the callee's resource verbs. `owns`
+receives and returns ownership; `consumes` receives it; `produces` returns it.
+Click can split a covered subrange out of a larger owned range, lend that
+subrange alone, and rejoin adjacent returned ranges.
 
 ## The design constraint
 

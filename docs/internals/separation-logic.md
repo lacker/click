@@ -124,21 +124,17 @@ an invalid state:
 valid(own(memory(p[0..1])) * own(memory(p[0..1]))) = false
 ```
 
-`core(m)` returns the duplicable read-only view of `m`. For memory resources,
-Click wants:
+`core(m)` names the read-only description that an owned resource can be lent
+as. The family's `entails` still uses it to decide which owner covers a view
+requirement, but covering only selects the lender. The transition that
+satisfies `views p[...]` from `owns p[...]` is a lend: it suspends the owner
+for the borrow and recovers it at the return, and an owner is never held
+alongside an independent view of the same memory.
 
-```text
-core(view(memory(range))) = view(memory(range))
-core(own(memory(range)))  = view(memory(range))
-```
-
-That is why `owns p[...]` can satisfy a callee's `views p[...]` requirement
-without losing write authority.
-
-In the current code, `CResourceFact::core()` returns
-`Option<CResourceFact>`, but every current resource fact has a non-empty
-viewed core. The full resource-state `core` is the composition of the viewed
-cores of the held resource facts.
+In the current code `CResourceFact::core()` returns `Option<CResourceFact>`,
+and the loan ledger is its one consumer: escrowing an owner records the viewed
+description the borrower reads through. Nothing composes an owner with its own
+core.
 
 ## Total compose vs try compose
 
@@ -275,15 +271,16 @@ a later explicit `observe(...)` unless they were independently common facts in
 both arms.
 
 Function entry projects `views composite(...)` resources one step
-automatically: the view remains available, and immediate contained resource
-facts are available through their views. This is entry setup, not a general
-recursive execution heuristic.
+automatically: the view remains available, and the definition's checked
+one-level frontier is available through its own views under the same borrow.
+This is entry setup, not a general recursive execution heuristic.
 
-Functions with structural loop proofs also project the immediate core of held
-owned composites during proof setup. Loop invariants and effect footprints may
-therefore read dependent metadata needed to describe the owned backing range.
-This projection is one step and duplicable; it does not unfold or consume the
-owned composite.
+Functions with structural loop proofs also publish the immediate read authority
+of held owned composites during proof setup. Loop invariants and effect
+footprints may therefore read dependent metadata needed to describe the owned
+backing range. This is an observation supported by the owner the same context
+holds, not a borrow: it is one step, it does not unfold or consume the owned
+composite, and it cannot satisfy another contract's `views` clause.
 
 `execute()` advances the current execution frontier to function exit. The former
 `execute_rest()` and `symbolic_execute()` spellings are rejected with a
@@ -312,8 +309,10 @@ Examples:
   for the segment without exposing the contained resource fact that justified it.
 - A valid state containing two owned memory resources exposes that their ranges
   are separate.
-- An owned memory resource exposes its viewed memory core, but the viewed core
-  is a resource fact, not a pure fact.
+- An owned memory resource supports a viewed observation of its own memory.
+  That observation is a resource fact rather than a pure fact, and it is
+  authority derived from the owner rather than a separately transferable
+  borrow.
 
 This distinction matters. `observe(...)` should be a deterministic tactic
 that adds observable pure facts and viewed immediate contained resource facts.
@@ -376,20 +375,30 @@ The memory family implements these rules:
   `range`.
 - `own(memory(range))`, requested with `owns`, `consumes`, or `produces`,
   permits loads and stores to `range`.
-- `core(view(memory(range))) = view(memory(range))`.
-- `core(own(memory(range))) = view(memory(range))`.
-- viewed memory resources are duplicable.
+- `core(own(memory(range)))` names the viewed description that an owner is lent
+  as. Entailment selects the covering owner; a lend is what satisfies the view
+  requirement.
+- Two viewed memory resources may cover overlapping ranges. Readers need not
+  prove disjointness of what they read.
 - owned memory resources are exclusive.
-- A valid state cannot contain overlapping owned memory ranges.
+- A valid state cannot contain overlapping owned memory ranges. Overlap is
+  decided bytewise, across differing element widths.
+- An owned range overlapping a viewed one is refused at contract entry and at
+  call planning, by the loan ledger rather than by the family's
+  `pair_validity_error`.
 - Adjacent or covering memory resources may be normalized when facts prove the
-  ranges line up.
+  ranges line up. Normalization rewrites descriptions; the authority a loan
+  suspends lives in the ledger, so no rewrite of the fact list retires one.
 - A store through owned memory updates the symbolic memory state. Later reads
   see the updated value unless another owner writes a new value.
-- Repeated reads with no intervening write to the same cell are stable.
+- A write, a `free`, a `realloc`, a call's memory effect, and loop or branch
+  havoc all consult the loan ledger. A nonempty loan over part of an allocation
+  protects that whole allocation's lifetime.
 
-Read stability is a memory-model promise, not a permission to mutate. A viewed
-memory resource allows code to rely on the current cell value across ordinary
-repeated loads, but it does not allow stores.
+Read stability is an access restriction, not an equality check afterward. While
+a view is active, nothing in any compatible component may write the covered
+bytes, so repeated loads are stable; a store of the value already there is
+refused like any other store.
 
 ## Declared resource and population rules
 
@@ -418,8 +427,9 @@ exact-argument population, regardless of its quantity:
 
 In the algebraic model, a composite resource is not a separate multiplicity
 kind. It is a declared resource whose facts have laws connecting its population
-to one body made from other resource facts and pure facts. Its core is the
-viewed resource fact.
+to one body made from other resource facts and pure facts. Lending one exposes
+its checked one-level frontier; a deeper child becomes readable only through a
+checked projection under the same loan.
 
 ## Implementation boundary
 
@@ -432,7 +442,10 @@ The code maps onto this model as follows:
   same-family validity, entailment, consumption and residual ownership,
   pair normalization, core, and observable facts.
 - `MemoryResourceAlgebra` implements range coverage, splitting, joining,
-  exclusive writes, and viewed cores.
+  exclusive writes, and the viewed descriptions a lend records.
+- `src/kernel/loans.rs` is the loan ledger. It holds the scopes, escrows,
+  access shares, recovery rights, and dependencies that make a view a borrow,
+  and every write, free, havoc, and branch join consults it.
 - `TokenResourceAlgebra` implements strict exact-match tokens.
 - `CompositeResourceAlgebra` implements the folded fact's exact-match algebra.
   Source declarations add separate definition laws connecting that folded fact

@@ -45,20 +45,19 @@ resource facts over a range. The context is not just a bag of pure facts:
 `ResourceFamilyAlgebra` defines how each family validates, combines, transfers,
 and consumes its facts.
 
-In the current model, the viewed element grants read authority over memory.
-It does not freeze the contents against an owner's writes. Algebraically, it
-is the core of the owned element:
-
-```text
-core(own(memory(p[lo..hi]))) = view(memory(p[lo..hi]))
-core(view(memory(p[lo..hi]))) = view(memory(p[lo..hi]))
-```
+The viewed element grants read authority over memory for a borrow. While that
+borrow is active, the covered memory stays unchanged and stays allocated: no
+component may store into it, free it, or end its lifetime. A view is temporary
+stability, not permanent immutability.
 
 The Click surface requests these elements with `owns`/`consumes`/`produces` and
 `views` respectively.
 
-That is why owned memory can satisfy viewed requirements without consuming the
-owned element.
+An owner and a view of the same memory cannot sit side by side in one resource
+context. Ownership satisfies a viewed requirement by lending: the owned element
+moves into escrow for the borrow, and the lender recovers it when the borrow
+ends. Lending is a checked transition. No entailment, normalization, fold, or
+theorem turns a view back into ownership.
 
 This resource-family boundary is intentionally more general than memory
 ownership. Click also has exact-match user-defined resources, which can model
@@ -100,9 +99,9 @@ integer word; the language reference describes how fold and unfold bind it.
 
 ## Viewed memory
 
-`views` permits loads. It does not permit stores. While no write to the
-same cell occurs in the current execution, repeated reads of that cell are
-stable: they produce the same symbolic value.
+`views` permits loads. It does not permit stores. The covered memory is stable
+for as long as the view is active, so repeated reads of the same cell produce
+the same symbolic value: nothing that could change the cell is allowed to run.
 
 <!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
@@ -111,27 +110,47 @@ int32 peek(int32 p[]) {
 }
 ```
 
-Viewed resources are copyable across function calls. If a caller owns
-`p[0..1]`, it may satisfy a helper's `views p[0..1]` requirement and still keep
-its owned element afterward. This is a call-scoped borrow: satisfying the
-callee's `views` clause does not add a new persistent view to the caller when
-the call returns. A view that the caller already held is different—it remains
-in the caller's resource context until explicitly transferred or consumed.
+A `views` clause on a function is a shared borrow that lasts the whole call,
+from the checked entry transition to the checked return transition, not to the
+last load in the body. If a caller owns `p[0..1]`, it may satisfy a helper's
+`views p[0..1]` requirement, and Click lends that owned element for the call.
+The caller cannot write, free, or reallocate those bytes while the call is in
+progress. The return recovers the owner and adds no new persistent view. A view
+the caller already held is different: it remains in the caller's resource
+context until explicitly transferred or consumed.
 
-This distinction matters at deallocation. `free` requires allocation authority
-and complete owned access, then rejects any other direct or composite resource
-that may still refer to the freed allocation. A scoped call borrow has ended
-and therefore does not block `free`; a pre-existing persistent view does block
-it locally. A view proved separate from the freed allocation survives.
-When several allocation authorities are held, `free` selects the one whose
-evaluated base pointer matches the argument; unrelated authorities remain
-available for later deallocation.
+Stability excludes the conflicting access instead of comparing values
+afterward, so a store of the value a cell already holds is refused like any
+other store. Initialization, bytewise stores, deallocation, and the abstract
+effect of an opaque call all obey the same rule.
+
+A contract cannot own and view the same memory. Click refuses such a contract
+when the function is entered and again when a call to it is planned, naming the
+clauses that overlap. Reading through a second pointer needs no second clause:
+ownership already authorizes the read, however the address is spelled.
+
+Borrowing is partial. `owns a[0..8]` can supply a helper's `views a[2..4]`, and
+the caller keeps `a[0..2]` and `a[4..8]` writable for the call; the lent middle
+comes back at the return. Overlap is decided in bytes rather than in elements,
+so an `int32` owner and a `uint8` view of the same storage conflict.
+
+This matters at deallocation. `free` requires allocation authority and complete
+owned access, then rejects any other direct or composite resource that may
+still refer to the freed allocation. A live borrow of any part of an allocation
+also blocks freeing or reallocating it, because the borrow protects the
+allocation's lifetime and not only its bytes. A call's own borrow has ended by
+the time the call returns, so it does not block a later `free`; a view proved
+separate from the freed allocation survives. When several allocation
+authorities are held, `free` selects the one whose evaluated base pointer
+matches the argument; unrelated authorities remain available for later
+deallocation.
 
 ## Owned memory
 
-An owned memory resource permits both loads and stores and entails its viewed
-core. Stores update the symbolic memory state; later reads of the same cell see
-the written value unless a later write changes it again.
+An owned memory resource permits both loads and stores. An owner reads its own
+memory directly and never needs a view of it. Stores update the symbolic memory
+state; later reads of the same cell see the written value unless a later write
+changes it again.
 
 <!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
@@ -341,6 +360,13 @@ consumes `live_fd(fd)`, and neither step unfolds owned contained resources. This
 one-step behavior is intentional: large composite resources should not be
 recursively expanded by default proof automation.
 
+The viewed fact an `observe` publishes from a resource the same context owns is
+an observation, not a borrow. It is read authority derived from that owner and
+is usable only while the owner is held; it cannot satisfy another function's
+`views` clause, which only the checked lending transition supplies. When the
+observed resource is itself borrowed, the published fact carries that borrow's
+identity, so it stays tied to the loan it was read through.
+
 A guarded directly recursive resource also has a finite inductive witness.
 `decreases list(node)`, or `decreases n;` naming the binder of an
 `owns n: list(node);` clause, can use a direct contained child as a hidden
@@ -432,6 +458,44 @@ Together, the three resource tactics are deliberately local:
 These steps are bounded by design. A proof that needs facts inside a nested
 composite resource should name the path with repeated `observe(...)` steps
 instead of relying on `auto` to search through every possible nested body.
+
+### Borrowing a composite
+
+`views` of a composite covers its checked one-level frontier. Lending one puts
+the folded head in escrow and protects the direct memory children the
+definition names; a contained composite becomes a read-only description under
+the same borrow. Reading further down is projection: `unfold`, `observe`, and
+`open` of a borrowed composite add the child to the borrow's permitted
+descriptions after the kernel rechecks that the definition contains it. A
+projection exposes nothing owned, so the depth a proof reaches costs nothing in
+authority.
+
+A fact in a lent body is stable for the whole borrow, because recovery restores
+the exact head that was escrowed rather than refolding it. Two body shapes
+cannot promise that and are refused when lent: a counted population, whose
+units another call may consume, and a definition whose facts claim that storage
+the body does not own is still live.
+
+A contract cannot lend a composite and own a piece of it at the same time. An
+`owns` clause naming a cell inside a composite the same contract views is
+refused as a proven overlap. Write a narrow effect as ownership of the whole
+composite plus an `ensures` about the cells the function leaves alone.
+
+A composite whose definition body contains a `views` clause is a struct holding
+a borrow — a cursor, an iterator, a parser over input it does not own. Folding
+one makes the folded head a dependency of the borrow behind its viewed pieces,
+so the lender recovers its memory only once the composite is unfolded or
+consumed. A function may produce such a composite over one of its own viewed
+inputs: that input's borrow stays open past the return with the produced
+composite holding it, and the caller recovers the input when it consumes the
+composite. Click infers the relationship when exactly one viewed input can back
+the piece and refuses the contract when none or several can.
+
+A counted population is the exception to all of this. Its body belongs to the
+population rather than to each unit, so a population body that views memory is
+read as an observation supported by whatever holds that memory, and folding a
+unit places no hold. Lending a unit of a bodyless token population leaves the
+remaining units usable.
 
 A contract clause speaks about parameters, so `consumes t: tree_at(root);`
 names the tree at the entry argument. These tactics are not contract clauses:
@@ -713,9 +777,9 @@ refused (`mdtests/binding_cell_read_rejects_an_unowned_offset.md`). The lookup
 is keyed by the pointer and takes one hop, so a binding costs one indexed
 query and no equality graph is walked.
 
-If a fact reads mutable memory, the composite body must contain an owned memory
-resource covering that memory. This is what makes the fact stable while the
-resource is folded:
+If a fact reads mutable memory, the composite body must contain a memory
+resource covering that memory. That child is what makes the fact stable while
+the resource is folded:
 
 <!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
@@ -736,12 +800,12 @@ resource indexed_zero(p: int32*, k: int32, n: int32) {
 ```
 
 This symbolic check proves the index is inside the range; the memory base must
-still match the contained owned memory resource directly.
+still match the contained memory resource directly.
 
-`views flag[0..1]` is not enough for this purpose. A viewed resource authorizes
-inspection but does not prevent a holder of an owned memory resource from
-changing the cell. Pure scalar facts such as `fd >= 0` do not need a contained
-memory resource.
+A `views` child covers a fact as well as an `owns` child does, and makes the
+definition a borrowing composite: the fact holds for as long as the borrow the
+body packages, and the folded head keeps that borrow open. Pure scalar facts
+such as `fd >= 0` do not need a contained memory resource.
 
 This is resource-context reasoning, not theorem application. Theorems stay
 pure; `apply(theorem(...))` can add proposition facts, but it does not consume
@@ -844,13 +908,16 @@ Click implements:
 - one-step fact views for folded composite resources, plus
   `observe(resource)` tactics that explicitly record fact-view projection
   without exposing contained owned resource facts,
-- owned memory implying viewed authority,
+- checked lending of owned memory to satisfy a viewed requirement, with scoped
+  recovery at the return,
 - visible owned resources imply `separate(...)` facts; provably overlapping
   visible writes are rejected,
 - composite resources project direct `contains(parent, child)` facts for owned
   contained resources and direct `separate(child1, child2)` facts for owned
   sibling resources without exposing the hidden owned resource facts,
-- copyable read transfer,
+- shared read borrows whose covered memory stays unchanged and allocated,
+  including partial ranges, composite frontiers, and a composite that packages
+  a borrow and outlives the call that produced it,
 - linear write transfer through function summaries,
 - covered subrange splitting and adjacent range rejoining,
 - fixed- or runtime-sized heap allocation authority through the built-in owned

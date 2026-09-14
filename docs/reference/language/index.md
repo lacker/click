@@ -898,7 +898,8 @@ package it as a named predicate and unfold it at proof sites when needed.
 ## Read and write resources
 
 Memory resources have viewed and owned resource elements. `views
-base[start..end]` supplies persistent read access; `owns`, `consumes`, and
+base[start..end]` borrows read access and keeps that range unchanged and
+allocated for the borrow; `owns`, `consumes`, and
 `produces` supply write access with the transfer behavior described below.
 These are resource facts, not classical predicates, and are carried in the
 verifier's resource context rather than copied as pure facts.
@@ -1434,7 +1435,7 @@ int32 open(int32 fd) {
 ```
 
 `owns` means the function starts and ends with the owned resource. `views`
-means the function can rely on the viewed/core resource without consuming it.
+means the function borrows the resource for the call and reads it only.
 `consumes` requires an owned resource and does not return it. `produces`
 returns an owned resource. `requires` and `ensures` accept pure propositions
 only. Prefer `owns X by proof;` over the exactly equivalent pair
@@ -1482,13 +1483,14 @@ the arguments the exit reached. Naming a position the proof does not hold
 fails by naming the missing resource
 (`mdtests/loop_ascending_produces_wrong_arguments.md`).
 
-An owned memory resource implies its viewed core: ownership permits both loads
-and stores, while a view permits loads and is copyable across calls. A callee
-using `views` borrows the caller's viewed or owned element for that call. It
-does not consume the original element or create a second persistent view when
-the call returns. A view that was already present in the caller remains
-persistent. Owned elements are transferred by `owns`, `consumes`, and
-`produces`.
+Ownership permits both loads and stores; a view permits loads and keeps the
+covered memory unchanged and allocated while the borrow is active. A callee
+using `views` borrows the caller's viewed or owned element for that call. The
+lent element is out of the caller's reach until the return recovers it, and no
+second persistent view is created. A view that was already present in the
+caller remains persistent. A contract may not own and view the same memory:
+the overlap is refused at entry and at the call. Owned elements are transferred
+by `owns`, `consumes`, and `produces`.
 
 Fixed-size heap objects add the built-in owned resource
 `allocation(base, bytes)`. It is exclusive authority and responsibility for

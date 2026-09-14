@@ -28,11 +28,16 @@ allocation authority.
 examples/input-cursor/
 ```
 
-This fixture defines a viewed `readable_input(data, len)` resource and an
-`input_cursor(owner)` resource that owns cursor metadata while viewing the
-nested input resource. Two cursor resources can therefore share one input and
-advance independently. The example exercises explicit observation through
-both composite layers and modular calls with precise metadata effects.
+This fixture is the reference example for a struct that holds a borrow. Its
+`input_cursor(owner)` resource owns the cursor metadata and views the nested
+`readable_input(data, len)` resource, so a folded cursor keeps the input lent:
+`input_cursor_init` borrows the input from its caller and produces a cursor
+that holds that borrow open, and the caller recovers the input only when it
+consumes the cursor. Two cursors can share one input and advance
+independently, because each borrows and neither writes it. `input_cursor_take`
+owns the cursor, unfolds it to advance the position, and folds it again. The
+example exercises explicit observation through both composite layers and
+modular calls with precise metadata effects.
 
 ### JSON-C reference count
 

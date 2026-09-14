@@ -1,23 +1,22 @@
 # Stable-view output inventory
 
-This is the durable V13 audit of the explicit `views` and view-producing
-surfaces in the current C corpus. It records what each surface means under the
-stable-view rules in `issues/fix-views.md`; it is not an inventory of a new
-escaping-loan feature.
+This is the durable audit of the explicit `views` and view-producing surfaces
+in the C corpus. It records what each surface means now that `views` is a
+shared borrow.
 
 ## Snapshot and extraction
 
-The snapshot below was generated on 2026-09-12 from the integrated V17
-contract migrations at commit `41437441`. The extraction deliberately reads
-only Click code blocks in `mdtests/*.md`, and whole `*.click` files in
+The snapshot below was regenerated on 2026-09-14 by the script that follows,
+at the commit that made stable views the default. The extraction deliberately
+reads only Click code blocks in `mdtests/*.md`, and whole `*.click` files in
 `examples/` and `design/borrow-probes/`. It counts non-comment lines whose
 first token is `views`, so prose mentions and C source embedded in a different
 block cannot silently enter the inventory.
 
 ```text
-files containing a view declaration: 198
-view declarations:                  336
-  mdtests:                          178 files
+files containing a view declaration: 201
+view declarations:                  357
+  mdtests:                          181 files
   examples:                          19 files
   design:                             1 file
 ```
@@ -54,25 +53,23 @@ print(Counter("mdtests" if path.parts[0] == "mdtests" else path.parts[0]
 ```
 
 The counts are corpus bookkeeping, not a claim that every declaration has the
-same semantic role. Each declaration is assigned one of the four output
-classes below by the lowering/checking path that consumes it.
+same semantic role. Each declaration is assigned one of the output classes
+below by the lowering and checking path that consumes it.
 
 ## Classification and outcome
 
 | Inventory class | Extraction/count rule | Outcome under stable views |
 | --- | --- | --- |
-| Existing outer dependency | The 336 explicit `views` declarations above, when used to read memory already owned by the caller or an enclosing resource | Preserve the outer dependency. A view grants read access for the checked scope; it does not create an independent owner or lifetime. The V13 ordinary-reader, nested-reader, and partial-borrow examples exercise this class. |
-| Returned input access | Function/resource return planning that carries a view derived from an input occurrence. The relevant implementation paths are `function_resource_summary`, `evaluate_contract_return_resources`, `candidate_output_views`, `returned_views`, and `recover_candidate_stable_view_resources` in `src/kernel/functions.rs` | Preserve only the checked input dependency and its occurrence identity. A returned view cannot mint a fresh authority or extend the input lifetime. This is the class for returned input access, rather than an escaping loan. |
-| Immutable support | Resource-fact observation and composite expansion: `resource_clause_section_supply`, `selected_instance_arm_views`, `expand_composite_resource_fact`, and the selected-arm helpers in `src/kernel/loops.rs` | Use views as immutable support for the fact while its source occurrence remains live. The `stable_view_fact_workflow` mdtest covers the public validation/lowering path; dynamic loan capture remains the V12 follow-up dependency. |
-| Unsupported escape | Any output form that would retain a stable view after its checked dependency ends. There is no supported `produces views` surface form. The raw returned-pointer case in `stable_view_returned_pointer` is deliberately classified here for a stable loan: the C pointer remains legal only because the caller retains independent ownership and performs the later write through that ownership. | Reject an escaping stable loan. Do not add implicit lifetime extension or an output resource that hides the missing dependency. |
+| Existing outer dependency | The 357 explicit `views` declarations above, when used to read memory already owned by the caller or an enclosing resource | Lend the outer authority. A view grants read access for the borrow and suspends the lender's write, free, and lifetime authority until the return recovers it; it creates no independent owner or lifetime. The ordinary-reader, nested-reader, and partial-borrow fixtures exercise this class. |
+| Returned input access | Function/resource return planning that carries a view derived from an input occurrence. The relevant implementation paths are `function_resource_summary`, `evaluate_contract_return_resources`, `candidate_output_views`, `returned_views`, and `recover_candidate_stable_view_resources` in `src/kernel/functions.rs` (the `candidate_` prefixes are leftover rollout spellings of the shipped path) | Preserve only the checked input dependency and its occurrence identity. A returned view cannot mint a fresh authority or extend the input lifetime. This is the class for returned input access, rather than an escaping loan. A carried view of read-only storage is accepted, because read-only blocks are intrinsic read authority with no ledger root. |
+| Immutable support | Resource-fact observation and composite expansion: `resource_clause_section_supply`, `selected_instance_arm_views`, `expand_composite_resource_fact`, and the selected-arm helpers in `src/kernel/loops.rs` | Use views as support for the fact while its source occurrence remains live. An observation published from an owner the same context holds is authority derived from that owner, not a transferable borrow; one published through a borrow carries that loan's identity and is historical after the loan ends. |
+| Escaping borrow inside a produced composite | An ensured owned composite whose definition body contains a `views` clause, backed by one of the call's own viewed inputs | Return the backing loan open, with the produced composite as its dependency. The caller keeps the escrow and the close and recovery rights and recovers its owner only when it unfolds or consumes the composite. Exactly one viewed input must be able to back each viewed piece; none or several is refused with a diagnostic naming the composite and the inputs. |
+| Unsupported escape | Any other output form that would retain a stable view after its checked dependency ends. There is no supported `produces views` surface form. The raw returned-pointer case in `stable_view_returned_pointer` is deliberately classified here: the C pointer remains legal only because the caller retains independent ownership and performs the later write through that ownership. | Reject the escaping loan. Do not add implicit lifetime extension or an output resource that hides the missing dependency. |
 
-The classification also covers legacy unbound `CResourceFact::View` values. A
-current-state view fact may be statically recognized by V12, but it must not be
-treated as stable merely because an old surface clause says `views`: the
-dynamic loan binding must capture the actual source occurrence before the fact
-can survive a transfer, fold, call, or output boundary. Until that dynamic
-piece lands, `stable_view_fact_workflow` is a validation/lowering witness and
-not evidence for an escaping view.
+The classification also covers unbound `CResourceFact::View` values. A
+current-state view fact is not stable merely because a surface clause says
+`views`: the loan binding must capture the actual source occurrence before the
+fact can survive a transfer, fold, call, or output boundary.
 
 ## Source-path audit
 
@@ -83,8 +80,8 @@ The audit has a concrete owner for each semantic class:
   lifetime.
 * `src/surface/lowering/resource_lowering.rs` lowers a view requirement to a
   `CResourceFact::View`; its output is still tied to the enclosing occurrence.
-* `src/kernel/functions.rs` validates returned resources and recovers candidate
-  stable-view resources only when the checked input dependency is present.
+* `src/kernel/functions.rs` validates returned resources and recovers lent
+  authority only when the checked input dependency is present.
 * `src/kernel/functions.rs::resource_clause_section_supply`,
   `selected_instance_arm_views`, and
   `expand_composite_resource_fact` provide immutable composite/resource-fact
@@ -93,34 +90,21 @@ The audit has a concrete owner for each semantic class:
   `with_guard_prefix_arm_views` add the same scoped support to loop proof
   states; they do not preserve it beyond the loop state.
 * `src/kernel/loans.rs::LoanViewBinding` is the identity-bearing representation
-  required for the dynamic V12 step. Any output path that lacks such a binding
-  remains an unsupported stable-loan escape.
+  a borrowed fact carries, including the hold that an escaping borrow places on
+  its backing loan. Any output path that lacks such a binding remains an
+  unsupported escape.
 
-The V13 fixture set gives normal proof-workflow coverage for each relevant
-shape: `stable_view_ordinary_reader`, `stable_view_nested_reader`,
+The `stable_view_*` mdtests give normal proof-workflow coverage for each
+relevant shape: `stable_view_ordinary_reader`, `stable_view_nested_reader`,
 `stable_view_partial_borrow`, `stable_view_fact_workflow`, and
-`stable_view_returned_pointer`. The existing shared-reader fixtures remain in
-place; the migration removes only overlapping sequential aliases and whole
-composite-view/owned-field contracts that claimed more stable read access than
-their implementation needed.
+`stable_view_returned_pointer`. `examples/input-cursor` is the escaping-borrow
+project. The kernel transitions are covered by
+`candidate_stable_view_call_tests` in `src/kernel/functions.rs` and the loan
+tests in `src/kernel/loans.rs`.
 
-The candidate kernel transition is already covered by the focused
-`candidate_stable_view_call_tests` in `src/kernel/functions.rs`. The surface
-`ViewSemanticsMode::StableLoans` selector still needs one shared top-level
-input-capability initialization before these corpus fixtures can run through
-that selector: an independently verified function begins with an assumed view,
-so it needs a checked nonrecoverable root authority tied to the exact resource
-occurrence. The attempted surface route correctly fails closed at that
-boundary; the V13 sidecar fixtures therefore remain legacy-route witnesses
-until that common proof/certification state constructor is integrated. This is
-the concrete V12 dynamic dependency, rather than a reason to weaken
-`checked_loan_evidence_is_valid` or skip candidate evidence.
-
-When V12 dynamic capture is integrated, rerun the extraction and this table's
-fixtures. A changed count requires a classification entry or an explicit
-unsupported-escape rejection; a newly accepted output must name its retained
-input occurrence and prove that its lifetime is still live at every use. The
-V17 contract migrations reduced the snapshot from 200 files/345 declarations
-to 198 files/337 declarations by removing redundant view requirements, and
-the last migration batch (`bounded_pool.click` and two mdtests) to 336; they
-did not change the four semantic classes above.
+Rerun the extraction when contracts change. A changed count requires a
+classification entry or an explicit unsupported-escape rejection; a newly
+accepted output must name its retained input occurrence and prove that its
+lifetime is still live at every use. The contract migrations that preceded the
+cutover removed redundant and overlapping view requirements rather than adding
+semantic classes; the classes above are the complete set.

@@ -344,10 +344,11 @@ Direct whole-struct lvalue loads and copies are lowered into typed leaf loads
 and stores using the same address-backed layout; the kernel still never
 represents a struct as a runtime `CValue`. Resource clauses may name embedded
 aggregates directly and expand into typed leaf ranges while preserving their
-field metadata. A read-only view may be discharged from an enclosing owned
-object by comparing physical byte footprints even when the object's logical
-range width differs from the viewed leaf; ownership consumption remains
-width-sensitive so it cannot silently change coordinate systems. Fixed
+field metadata. Memory coverage, splitting, and joining are decided bytewise: a
+pair is re-spelled into one element width, or compared as byte footprints when
+the bounds do not divide. An enclosing owned object can therefore be lent to
+satisfy a leaf-width view, and two owners of the same bytes at different widths
+are refused as overlapping. Typed loads and stores keep their own widths. Fixed
 multidimensional arrays of embedded structs and supported scalar fields retain
 their declared shapes in C0 metadata. Indexed leaf access flattens indices in
 row-major order before adding the nested struct's complete ABI stride or the
@@ -557,10 +558,13 @@ Nonnull `free` requires the exact live base, allocation authority, and complete
 owned access. It frees that allocation, clears its cells, consumes those
 resources, and rejects surviving direct or composite resource aliases at the
 `free` transition. A `views` requirement on an opaque call is a scoped borrow:
-call application preserves the caller's original owned or viewed resource but
-does not create a new persistent view on return. Thus a borrow from ownership
-ends before a following `free`, while any independently present view remains
-and must be proved separate or causes `free` to fail locally. Deallocated
+call application escrows the caller's owned resource, or reborrows its existing
+view, and the return recovers it without creating a persistent view. Retiring
+an allocation also consults the loan ledger on every path, so a live borrow of
+any part of an allocation refuses the `free` or the undecided-continuity
+realloc that would invalidate it. Thus a borrow from ownership ends before a
+following `free`, while a view that survives the call must be proved separate
+or causes `free` to fail locally. Deallocated
 identity tombstones make use-after-free and double-free explicit, but carry no
 resource authority. `HeapAllocated` and `HeapFreed`
 memory derivation DAG edges preserve these transitions for later checking; an allocation

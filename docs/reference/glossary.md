@@ -114,9 +114,10 @@ while checking signed overflow and other C definedness conditions separately.
 
 ### Borrow
 
-Scoped use of a resource view without taking ownership. A callee's `views`
-requirement can borrow from the caller's owned resource for the duration of the
-call without consuming it or creating a new persistent view afterward.
+Scoped read-only use of a resource without taking ownership. A callee's `views`
+requirement borrows from the caller's owned or viewed resource for the duration
+of the call. The lender's authority is suspended while the borrow is active and
+recovered at the return, and no new persistent view is created.
 
 ### Bounded search
 
@@ -310,8 +311,11 @@ Context-dependent translation from convenient Surface Click forms into more
 ### Entailment
 
 A checked relationship in which one fact or resource state is sufficient to
-establish another. For example, owned memory entails its viewed core, and a
-larger range can entail access to a covered subrange.
+establish another. For example, a larger owned range entails access to a
+covered subrange. Ownership covers a view requirement, but covering only
+selects the lender: satisfying `views` from ownership is a checked lending
+transition that suspends the owner until the borrow ends, not a free
+duplication.
 
 ### Execution fact
 
@@ -402,8 +406,11 @@ discharges these conditions with no tactic of its own.
 
 Historically Click spelled the footprint with `mutable`/`immutable` effect
 clauses and closed the condition with a `frame` tactic. Both were removed:
-`owns` and `views` are the footprint, and a narrow write inside a wider range
-is spelled `views X; owns Y;`.
+`owns` and `views` are the footprint. A function that writes one part of an
+object and reads another owns the part it writes and views the disjoint
+remainder; inside a composite it owns the whole and promises the cells it
+leaves alone, because an owned piece inside a viewed composite is refused as an
+overlap.
 
 ### Frontier
 
@@ -676,7 +683,8 @@ by choosing a branch arm. The opposite arm receives the opposite polarity.
 ### Permission
 
 Memory-access authority granted by a viewed or owned memory resource fact. A
-viewed fact permits reads; an owned fact permits reads and writes. Permission
+viewed fact permits reads and keeps the covered memory unchanged and allocated
+while the borrow is active; an owned fact permits reads and writes. Permission
 is the meaning of those memory resources, not a separate proof-state store.
 
 ### Population
@@ -852,7 +860,7 @@ transferred according to its resource definition.
 ### Resource family
 
 A group of related resources governed by one algebra for validity, entailment,
-composition, splitting, core views, and consumption. Memory resources are the
+composition, splitting, lending, and consumption. Memory resources are the
 main built-in family; declared resources use exact-match family rules.
 
 ### Resource projection

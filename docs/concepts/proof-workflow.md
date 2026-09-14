@@ -268,8 +268,8 @@ execution, snapshots, and expansion all use this same layout. Every
 continuing arm must establish every `ensuring` assertion. Exact common facts
 and resources remain available automatically; facts about changed state that
 the continuation needs must be listed explicitly. Deterministic consequences
-of listed resources, such as memory loadability and the view of an owned
-resource, remain available.
+of listed resources, such as memory loadability and the read authority an owner
+supports, remain available.
 
 Arm-only snapshots are not exported. The function-entry state used by
 `old(...)` and the common-frontier snapshot remain available. Changed

@@ -134,21 +134,21 @@ shared representation.
 
 ## Shared resources and Rust borrowing
 
-The P1 [views issue](../issues/fix-views.md) recommends stable shared borrowing
-for ordinary memory. It supersedes the original investigation's advice to
-preserve weak C views. The implementation observations below describe the
-investigated baseline, not a requirement to retain it.
+Stable shared borrowing for ordinary memory shipped from the P1
+[views issue](../issues/fix-views.md), superseding the original
+investigation's advice to preserve weak C views. The observations below
+describe the shipped semantics.
 
 The analogy between Click `owns`/`views` and Rust `&mut`/`&` is useful and
 close at ordinary function-call boundaries. Keep the two access modes. A
 literal identification of the current memory resource laws with Rust
 references would nevertheless be incorrect.
 
-The central missing concept is a borrow protocol: which authority is lent,
-which accesses the lender must suspend, how that authority can be reborrowed,
-and when the lender can recover it. This is a promising extension around
-the current resource system, not evidence that the resource system must be
-replaced. Its adequacy for unsafe Rust still requires a separate investigation.
+The concept the investigation found missing was a borrow protocol: which
+authority is lent, which accesses the lender must suspend, how that authority
+can be reborrowed, and when the lender can recover it. C now has one, built
+around the existing resource system rather than replacing it. Its adequacy for
+unsafe Rust still requires a separate investigation.
 
 The earlier advice to separate storage, validity, and access should not be
 read as a proposal to replace `owns` and `views` with three competing resource
@@ -156,26 +156,31 @@ systems. Click already separates allocated storage and initialization from
 memory-access authority. Rust references can package the relevant facts and
 authority together while the checker retains those distinctions internally.
 
-### What the investigated C implementation guarantees
+### What the C implementation guarantees
 
 The [resource documentation](../docs/concepts/resources.md) and
 [memory resource algebra](../src/kernel/primitives/resource_algebra.rs) agree:
 
-- Memory ownership permits reads and writes. A memory view permits reads.
-- Ownership entails a viewed core without surrendering write authority.
-- Views can coexist with an overlapping owner. A view does not freeze the
-  memory contents against writes by that owner.
+- Memory ownership permits reads and writes. A memory view permits reads and
+  keeps the covered memory unchanged and allocated while the borrow is active.
+- A view cannot coexist with an overlapping owner. Ownership satisfies a view
+  requirement by lending: the owner is escrowed for the borrow and recovered at
+  the return, and no rule turns a view back into ownership.
 - A memory write changes the current snapshot. A prior observation remains
-  a fact about its prior snapshot unless checked framing transports it.
-- Ownership can satisfy a callee's view requirement for the duration of a
-  call without leaving a persistent caller view afterward.
+  a fact about its prior snapshot unless checked framing transports it, and an
+  observation taken through a borrow is historical once the borrow ends.
 - `owns` borrows and returns the resource selected at function entry;
   `consumes` and `produces` express other transfer roles.
+- A composite whose body views memory is a struct holding a borrow. Folding one
+  keeps the lender's authority suspended until the composite is unfolded or
+  consumed, which is the C shape of `struct Cursor<'a>`.
 
-The algebra's `pair_validity_error` checks overlapping owned ranges; it
-does not reject an owner/view overlap. Its `memory_resource_fact_permits_write`
-checks the address range, width, and owned authority. It does not distinguish
-two Rust borrow origins for accesses to the same address.
+The algebra's `pair_validity_error` still checks only overlapping owned ranges;
+the owner/view partition is enforced by the loan ledger at contract entry and
+at call planning rather than by the family's pair validity.
+`memory_resource_fact_permits_write` checks the address range, width, and owned
+authority, and the ledger then checks the write against the live loans. Neither
+distinguishes two Rust borrow origins for accesses to the same address.
 
 These are the current sequential C semantics. The existing
 [`pointer_params_may_alias_without_separate` regression](../mdtests/pointer_params_may_alias_without_separate.md)
@@ -183,10 +188,12 @@ rejects an unchanged-value claim after a potentially aliasing write. It
 passed when rerun during this investigation, meaning the false claim was
 correctly rejected.
 
-The new [C probe](borrow-probes/alias.c) writes 7 through `p` and then reads
-through `q`. Its sidecar owns `p`, views `q`, and requires `p == q`. Click
-verified `result == 7` using ordinary verification. This is positive evidence
-that a current view can observe an owner's mutation, not a Click soundness bug.
+The [C probe](borrow-probes/alias.c) writes 7 through `p` and then reads
+through `q`. Its sidecar owns `p` and requires `p == q`, and Click verifies
+`result == 7` using ordinary verification. Ownership of the location authorizes
+both accesses, so the aliased read needs no view clause of its own; the
+investigation's original sidecar, which viewed `q` beside the owner, is the
+shape the stable-view rules refuse.
 
 ### Where the Rust analogy holds and where it needs more structure
 
@@ -194,9 +201,9 @@ that a current view can observe an owner's mutation, not a Click soundness bug.
 | --- | --- |
 | A helper reads through `&i32` and returns | Close to a call-scoped `views` requirement satisfied from ownership. |
 | A helper mutates through `&mut i32` and returns | Close to `owns`, with exclusive access lent for the call and returned afterward. |
-| A shared borrow remains usable across a write | Requires restricting the writer. Current memory `views` does not do this. |
-| A mutable reference is reborrowed | Requires tracking a child borrow and restricting the parent until it can be used again. |
-| A function returns a borrowed reference | Borrow obligations survive the call; returning all entry authority at function return is insufficient. |
+| A shared borrow remains usable across a write | Memory `views` restricts the writer: the lender's authority is suspended for the borrow. |
+| A mutable reference is reborrowed | Click tracks shared child borrows and their dependency on the parent. An exclusive child that also restricts conflicting parent reads exists only in the checked design model. |
+| A function returns a borrowed reference | Supported where the borrow escapes inside a produced composite, which keeps the input's loan open until the composite is consumed. A bare returned reference carries no loan. |
 | `&Cell<i32>` supports a mutation | Shared access needs a type-specific protocol, not a universal read-only view of all underlying bytes. |
 | `&mut MaybeUninit<i32>` is initialized | Ownership and wrapper validity can exist before the payload is a valid `i32`. |
 
@@ -206,17 +213,12 @@ An implementation must identify its supported model and compiler assumptions;
 passing the safe borrow checker is not evidence that arbitrary unsafe accesses
 have been justified. [Rust Reference](https://doc.rust-lang.org/reference/behavior-considered-undefined.html)
 
-### Projecting a view versus lending authority
+### Observing through an owner versus lending authority
 
-For today's memory resources, the schematic rule is:
-
-```text
-own(R) entails view(R), with own(R) still usable
-```
-
-That supports a read-only operation within a context that can also write.
-For a shared Rust borrow of an ordinary integer, the protocol instead needs
-something like:
+Click's memory resources now distinguish two things the investigation
+conflated. An owner may read its own memory and publish observations supported
+by that ownership, which is not a transferable borrow. Lending is the other
+operation, and it is what a `views` requirement uses:
 
 ```text
 exclusive authority over R
@@ -226,11 +228,12 @@ end k, after its active accesses and dependent borrows are finished
     -> restored lender authority over the current R
 ```
 
-This is explanatory notation, not proposed Click syntax or checked rules.
-Reborrowing needs a dependency relation between the child and parent loans.
-The lender retains an entitlement to recover authority, not a second usable
-writer during the loan. A mutable child loan must also restrict conflicting
-parent reads, not only writes.
+This is explanatory notation, not Click syntax. C implements this shape:
+reborrowing carries a dependency relation between the child and parent loans,
+and the lender retains an entitlement to recover authority rather than a second
+usable writer during the loan. A mutable child loan must also restrict
+conflicting parent reads, not only writes; that case lives in the checked
+design model and has no C surface.
 
 Duplicability is compatible with this design. A shared-borrow description can
 be copied while every actual access additionally requires evidence that its
@@ -345,28 +348,28 @@ distinctions, not cross-target layout agreement or source-to-machine refinement.
 
 ## Near-term decisions
 
-1. Retain `owns` and `views`, but change ordinary memory views to stable
-   shared borrows under the P1 [fix-views plan](../issues/fix-views.md).
-   Until that lands, document the weaker current semantics accurately.
+1. Done: `owns` and `views` are retained, and ordinary memory views are stable
+   shared borrows.
 2. Preserve the existing separation of access mode, transfer role, and
    snapshot in `CResourceSpec`. These are already separate fields; no broad
    refactor is needed to create that separation.
-3. Continue the P1 work on supported observations and scoped call borrows.
-   Its support/version/scope boundary is useful groundwork, but is not yet a
-   full Rust loan system. Do not broaden that issue's semantics silently.
-4. Preserve a place for access-origin and loan checks beside storage lookup
-   when changing memory-access interfaces. Implement them when the proposed
-   borrow rules and their regressions are concrete.
+3. Treat the shipped C loan ledger as groundwork, not a full Rust loan system.
+   It has shared reborrows, scoped recovery, and escaping borrows inside a
+   produced composite; exclusive reborrows and thread-context splitting exist
+   only in the checked design model. Do not broaden those semantics silently.
+4. Keep access-origin and loan checks beside storage lookup when changing
+   memory-access interfaces. Rust borrow origins are still not distinguished
+   for two accesses to the same address.
 5. Deliver the P1 basic C++ slice through a typed compiler import and checked
    cleanup edges. Share this edge design with goto without waiting for full
    goto or adding exception handling to the first milestone.
 
-Valid C aliasing is not a reason to preserve weak view contracts. The
-follow-up [ownership-only probe](borrow-probes/alias-owned.click) verifies the
-same C and postcondition without a conflicting view, and the
+Valid C aliasing was not a reason to keep views weak. The
+[ownership-only probe](borrow-probes/alias-owned.click) verifies the same C and
+postcondition without a conflicting view, and the
 [field-split probe](borrow-probes/field-split.click) preserves a caller's field
-invariant using a view of the unchanged field. These support a contract
-migration, not a claim that the new borrow rules have been implemented.
+invariant using a view of the unchanged field. Both migrations left the C
+unchanged, which is the standard every later frontend inherits.
 Do not call a mutable reborrow a duplicable owner. Only the explicitly scoped
 basic C++ issue adds a second-language requirement to P1.
 

@@ -1821,7 +1821,10 @@ API. `ExecutionProofBranches::join_with_interface` checks and abstracts every
 continuing arm independently against the declared pure/resource interface,
 requires the abstract successor states and exported fact sequence to agree
 exactly, and installs the resulting `ProofStep::Branch` atomically. Pure,
-non-owning `views`, and exact ownership interfaces cross this seam. The checker
+non-owning `views`, and exact ownership interfaces cross this seam. A join also
+compares the arms' loan ledgers, participants, and view bindings by identity,
+so arms that ended a borrow differently do not join and their capabilities are
+never added together. The checker
 consumes the persistent `ProofFacts` assumption index directly, so it
 does not clone or rebuild the ambient fact context. When both arms retain the
 same persistent resource snapshot, the join preserves that complete common
