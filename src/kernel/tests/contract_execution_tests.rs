@@ -117,6 +117,72 @@ fn borrowed_contract_input_rejects_derived_or_ambiguous_views() {
     assert_eq!(refusal.category(), LoanRefusalCategory::Missing);
 }
 
+/// The loan barrier exists for exactly one shape: a write the ordinary
+/// owned-authority check already accepted, landing inside a concretely lent
+/// range. An unowned write never reaches it, because the missing-ownership
+/// check now runs first.
+#[test]
+fn owner_authorized_write_into_a_lent_range_is_refused() {
+    let pointer = Pointer {
+        block: "block".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let owned = own_memory_fact(pointer.clone(), 0, 2);
+    let viewed = view_memory_fact(pointer.clone(), 0, 1);
+    let resources = ResourceContext::new().unchecked_with_facts([owned, viewed.clone()]);
+    let support = resources.occurrences_for_fact(&viewed)[0];
+    let ledger = crate::kernel::loans::LoanLedger::new();
+    let participant = ledger.fresh_participant().expect("a fresh participant");
+    let opening = ledger
+        .borrowed_contract_input(participant, support, viewed.clone(), None)
+        .expect("a checked contract input root");
+    let ledger = ledger
+        .apply(&opening.transition)
+        .expect("the input root applies");
+    let bindings = crate::kernel::loans::LoanViewBindings::default().with_inserted(
+        support,
+        crate::kernel::loans::LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed,
+        },
+    );
+    let state = CState::new()
+        .with_resource_context(resources)
+        .with_loan_ledger(Some(ledger))
+        .with_loan_participant(Some(participant))
+        .with_loan_view_bindings(bindings);
+    let function = c_function(
+        CType::Void,
+        "write_owned_lent_cell",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_store(c_variable("p"), c_int32_literal(9)),
+    );
+    let arguments = vec![c_pointer_value(pointer)];
+    let theorem = prove_symbolic_c_function_execution_with_environment(
+        state,
+        function,
+        arguments,
+        PureFactContext::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .expect("an owner-authorized write into a lent range has a checked outcome");
+    let Proposition::CFunctionExecutes { outcome, .. } = theorem.proposition() else {
+        panic!("expected a function execution proposition");
+    };
+    assert!(
+        matches!(
+            outcome,
+            CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message))
+                if message.contains("active stable loan")
+        ),
+        "{outcome:?}"
+    );
+}
+
 #[test]
 fn certified_program_entry_claims_do_not_authorize_ordinary_calls() {
     let function = c_function(CType::Int32, "main", vec![], c_return(c_int32_literal(0)))

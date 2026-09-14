@@ -5625,10 +5625,13 @@ int32 reader(int32 p[], int32 q[]) {
         verify_in_stable_mode(click, source).expect("an owned write beside a rooted view");
     }
 
-    /// The viewed pointer itself carries no write authority, and the ledger
-    /// refuses the store before any owner lookup could be attempted.
+    /// The viewed pointer itself carries no write authority. A pure view
+    /// holds no owner for the store, so the ordinary owned-authority check
+    /// refuses it first and the historical missing-ownership diagnostic is
+    /// what the candidate mode reports, exactly as legacy does. The loan
+    /// barrier is reserved for an owner-authorized write.
     #[test]
-    fn stable_mode_root_view_refuses_a_write_through_the_viewed_pointer() {
+    fn stable_mode_root_view_reports_missing_ownership_for_an_unowned_write() {
         let click = r#"
 verifying "reader.c";
 
@@ -5644,9 +5647,7 @@ int32 reader(int32 p[]) {
         let error = verify_in_stable_mode(click, source)
             .expect_err("a store through a contract input view must be refused");
         assert!(
-            error
-                .message()
-                .contains("memory write conflicts with an active stable loan"),
+            error.message().contains("missing resource fact `owns p"),
             "{}",
             error.message()
         );
@@ -5719,8 +5720,9 @@ int32 run(int32 p[]) {
             .expect("an inline reader beside a rooted view");
     }
 
-    /// The same helper writing through the caller's rooted view is checked
-    /// against the caller's ledger, so the store is refused inside the body.
+    /// The same helper writing through the caller's rooted view runs on the
+    /// caller's resources, which hold no owner for the store, so the store is
+    /// refused inside the body with the ordinary missing-ownership message.
     #[test]
     fn stable_mode_inline_helper_cannot_write_through_the_callers_rooted_view() {
         let click = r#"
@@ -5738,9 +5740,7 @@ int32 run(int32 p[]) {
         let error = verify_in_stable_mode_with_header(click, INLINE_HELPERS, source)
             .expect_err("an inline store through a rooted view must be refused");
         assert!(
-            error
-                .message()
-                .contains("memory write conflicts with an active stable loan"),
+            error.message().contains("missing resource fact `owns p"),
             "{}",
             error.message()
         );

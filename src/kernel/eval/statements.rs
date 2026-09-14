@@ -529,19 +529,6 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     loan_evidence: empty_checked_loan_evidence_sequence(),
                 }];
             }
-            if let Some(outcome) = stable_loan_memory_write_outcome(
-                state,
-                &pointer,
-                value.byte_width(),
-                &effective_assumptions,
-            ) {
-                return vec![CStatementExecutionPath {
-                    outcome,
-                    facts,
-                    obligations,
-                    loan_evidence: empty_checked_loan_evidence_sequence(),
-                }];
-            }
             let is_external = is_external_memory_pointer(&pointer);
             let authorized_range = is_external
                 .then(|| {
@@ -566,6 +553,22 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     facts,
                     obligations,
 
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
+                }];
+            }
+            // The write is owner-authorized here, so a refusal below names the
+            // stable loan it conflicts with rather than masking the ordinary
+            // missing-ownership diagnostic above.
+            if let Some(outcome) = stable_loan_memory_write_outcome(
+                state,
+                &pointer,
+                value.byte_width(),
+                &effective_assumptions,
+            ) {
+                return vec![CStatementExecutionPath {
+                    outcome,
+                    facts,
+                    obligations,
                     loan_evidence: empty_checked_loan_evidence_sequence(),
                 }];
             }
@@ -1285,17 +1288,6 @@ pub(crate) fn execute_c_realloc_assign_paths(
             old_bytes.clone(),
             1,
         );
-        if let Some(outcome) =
-            stable_loan_memory_range_outcome(state, &old_allocation_range, assumptions)
-        {
-            paths.push(CStatementExecutionPath {
-                outcome,
-                facts,
-                obligations,
-                loan_evidence: empty_checked_loan_evidence_sequence(),
-            });
-            continue;
-        }
         for new_size_path in evaluate_c_expression_paths(
             state,
             element_count_expression.unwrap_or(size_expression),
@@ -1464,6 +1456,22 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 });
                 continue;
             };
+            // Ownership of the old allocation and its complete access is
+            // established, so a refusal here names the live loan that keeps
+            // these bytes from being reallocated.
+            if let Some(outcome) = stable_loan_memory_range_outcome(
+                state,
+                &old_allocation_range,
+                &effective_assumptions,
+            ) {
+                paths.push(CStatementExecutionPath {
+                    outcome,
+                    facts: all_facts,
+                    obligations: all_obligations,
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
+                });
+                continue;
+            }
             let resource_assumptions = state
                 .resources()
                 .observable_facts_assuming_valid(&effective_assumptions)
@@ -1771,17 +1779,6 @@ fn execute_c_heap_free_paths(
             bytes.clone(),
             1,
         );
-        if let Some(outcome) =
-            stable_loan_memory_range_outcome(state, &full_allocation_range, assumptions)
-        {
-            paths.push(CStatementExecutionPath {
-                outcome,
-                facts,
-                obligations,
-                loan_evidence: empty_checked_loan_evidence_sequence(),
-            });
-            continue;
-        }
         let allocation = CResourceFact::own_allocation(pointer.pointer().clone(), bytes.clone());
         let Some(resources) = state
             .resources
@@ -1819,6 +1816,19 @@ fn execute_c_heap_free_paths(
             });
             continue;
         };
+        // The free is authorized by the allocation and its complete access, so
+        // a refusal here is about a live loan of these bytes, not ownership.
+        if let Some(outcome) =
+            stable_loan_memory_range_outcome(state, &full_allocation_range, &effective_assumptions)
+        {
+            paths.push(CStatementExecutionPath {
+                outcome,
+                facts,
+                obligations,
+                loan_evidence: empty_checked_loan_evidence_sequence(),
+            });
+            continue;
+        }
         let resource_assumptions = state
             .resources()
             .observable_facts_assuming_valid(&effective_assumptions)
