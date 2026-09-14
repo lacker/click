@@ -2045,6 +2045,7 @@ fn typed_range_disjoint_from_pointer_evidence(
         .iter()
         .find(|fact| exact_separation_fact_covers_range_and_pointer(fact, range, pointer))
     {
+        crate::kernel::record_implicit_reasoning_provenance(assumptions, fact);
         return Some(RangeDisjointFromPointerEvidence::ExactSeparationFact(
             fact.clone(),
         ));
@@ -2237,6 +2238,16 @@ fn typed_store_separated_ranges_evidence(
             let authority = composition.map_or_else(
                 || StoreSeparatedRangesAuthority::ExactProposition(proposition.clone()),
                 |resources| StoreSeparatedRangesAuthority::ResourceComposition(resources.clone()),
+            );
+            let authority_proposition = match &authority {
+                StoreSeparatedRangesAuthority::ExactProposition(proposition) => proposition.clone(),
+                StoreSeparatedRangesAuthority::ResourceComposition(resources) => {
+                    Proposition::CResourceComposition(resources.clone())
+                }
+            };
+            crate::kernel::record_implicit_reasoning_provenance(
+                assumptions,
+                &authority_proposition,
             );
             Some(MemoryDagHopJustification::StoreSeparatedRanges {
                 authority,
@@ -3010,7 +3021,7 @@ fn c_memory_load_is_directly_unchanged(
         if crate::kernel::assumptions::reasoning_interrupted() {
             return false;
         }
-        match proposition {
+        let proved = match proposition {
             Proposition::CMemoryMutatesOnly {
                 before: effect_before,
                 after: effect_after,
@@ -3107,7 +3118,11 @@ fn c_memory_load_is_directly_unchanged(
                     )
             }
             _ => false,
+        };
+        if proved {
+            crate::kernel::record_implicit_reasoning_provenance(assumptions, proposition);
         }
+        proved
     })
 }
 
@@ -3216,6 +3231,62 @@ pub(crate) fn prove_c_condition_fact_direct_transport(
     prove_c_condition_fact_transport_with_assumptions(fact, after, Some((assumptions, true)))
 }
 
+/// Constructs condition-transport authority from the exact contextual facts
+/// consumed by its bounded check. The explicit source remains the innermost
+/// premise so consumers can distinguish it from frame or equality evidence.
+pub(crate) fn c_condition_fact_transport_theorem(
+    source: &Proposition,
+    target: Proposition,
+    premises: impl IntoIterator<Item = Proposition>,
+) -> Theorem {
+    let transport = Proposition::Implies(Box::new(source.clone()), Box::new(target));
+    let premises = premises
+        .into_iter()
+        .filter(|premise| premise != source)
+        .collect::<BTreeSet<_>>();
+    Theorem::new(premises.into_iter().rev().fold(transport, |body, premise| {
+        Proposition::Implies(Box::new(premise), Box::new(body))
+    }))
+}
+
+/// Parses the retained-premise representation of a condition transport.
+/// Returns the exact contextual premises followed by the transported target;
+/// arbitrary implication theorems and malformed source placement are rejected.
+pub(crate) fn c_condition_fact_transport_parts<'a>(
+    theorem: &'a Theorem,
+    source: &Proposition,
+) -> Option<(Vec<&'a Proposition>, &'a Proposition)> {
+    let mut proposition = theorem.proposition();
+    let mut premises = Vec::new();
+    loop {
+        let Proposition::Implies(premise, body) = proposition else {
+            return None;
+        };
+        if premise.as_ref() == source {
+            return matches!(body.as_ref(), Proposition::ConditionIs(_, _))
+                .then_some((premises, body.as_ref()));
+        }
+        premises.push(premise.as_ref());
+        proposition = body.as_ref();
+    }
+}
+
+/// Applies condition-transport evidence only when every retained contextual
+/// premise is an exact fact of the supplied context. The explicit source is
+/// supplied separately because callers already hold its proof when applying
+/// the innermost implication.
+pub(crate) fn c_condition_fact_transport_target_in_context<'a>(
+    theorem: &'a Theorem,
+    source: &Proposition,
+    assumptions: &PureFactContext,
+) -> Option<&'a Proposition> {
+    let (premises, target) = c_condition_fact_transport_parts(theorem, source)?;
+    premises
+        .into_iter()
+        .all(|premise| assumptions.proves_exact(premise))
+        .then_some(target)
+}
+
 /// Instantiates one universally quantified int32 fact and records the exact
 /// implication premises consumed from its body. The theorem remains
 /// conditional on the quantified fact and every listed premise.
@@ -3300,14 +3371,38 @@ fn prove_c_condition_fact_transport_with_assumptions(
     // expansion stack.
     match fact {
         Proposition::ConditionIs(condition, value) => {
-            let transported = transport_framed_atomic_condition(condition, after, assumptions)?;
+            let (transported, premises) = crate::kernel::collect_reasoning_provenance(|| {
+                crate::kernel::capture_implicit_reasoning_provenance(|| {
+                    transport_framed_atomic_condition(condition, after, assumptions)
+                })
+            });
+            let transported = transported?;
             if &transported == condition {
                 return None;
             }
-            Some(Theorem::new(Proposition::Implies(
-                Box::new(fact.clone()),
-                Box::new(Proposition::ConditionIs(transported, *value)),
-            )))
+            // As with target-directed transport, provenance is a candidate
+            // dependency list, not proof authority. Re-run the exact rewrite
+            // using only those facts (and the explicit source premise) before
+            // placing the list in a theorem.
+            if let Some((_, direct)) = assumptions {
+                let restricted = premises
+                    .iter()
+                    .cloned()
+                    .fold(PureFactContext::new(), |context, premise| {
+                        context.assume_proposition(premise)
+                    })
+                    .assume_proposition(fact.clone());
+                if transport_framed_atomic_condition(condition, after, Some((&restricted, direct)))
+                    != Some(transported.clone())
+                {
+                    return None;
+                }
+            }
+            Some(c_condition_fact_transport_theorem(
+                fact,
+                Proposition::ConditionIs(transported, *value),
+                premises,
+            ))
         }
         _ => None,
     }

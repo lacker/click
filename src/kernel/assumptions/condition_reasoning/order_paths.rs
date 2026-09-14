@@ -565,6 +565,13 @@ impl PureFactContext {
                 })
             })
             .collect::<Vec<_>>();
+        let terms_match = |current: &Bitvector32Term, other: &Bitvector32Term| {
+            current == other
+                || crate::kernel::api::extended_dag_bridging_active()
+                    && crate::kernel::api::atomic_loads_equal_along_memory_derivations(
+                        current, other, self,
+                    )
+        };
         let mut stack = vec![(left.clone(), false, Vec::new())];
         let mut seen = BTreeSet::new();
         while let Some((current, strict_so_far, path)) = stack.pop() {
@@ -574,19 +581,28 @@ impl PureFactContext {
             let constant_connection = signed_bitvector_constant(&current)
                 .zip(signed_bitvector_constant(right))
                 .and_then(|(current, right)| (current <= right).then_some(current < right));
-            if (current == *right || constant_connection.is_some())
+            if (terms_match(&current, right) || constant_connection.is_some())
                 && (!require_strict || strict_so_far || constant_connection == Some(true))
                 && !path.is_empty()
             {
                 return Some(path);
             }
             for edge in order_facts.iter().rev() {
-                if current != edge.lower {
+                let constant_connection = signed_bitvector_constant(&current)
+                    .zip(signed_bitvector_constant(&edge.lower))
+                    .and_then(|(current, edge_left)| {
+                        (current <= edge_left).then_some(current < edge_left)
+                    });
+                if !terms_match(&current, &edge.lower) && constant_connection.is_none() {
                     continue;
                 }
                 let mut extended = path.clone();
                 extended.push(edge.clone());
-                stack.push((edge.upper.clone(), strict_so_far || edge.strict, extended));
+                stack.push((
+                    edge.upper.clone(),
+                    strict_so_far || edge.strict || constant_connection == Some(true),
+                    extended,
+                ));
             }
         }
         None

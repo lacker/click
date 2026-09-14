@@ -621,8 +621,8 @@ impl PureFactContext {
         right: &Pointer,
     ) -> bool {
         self.memory_separation_candidates(&left.block, &right.block)
-            .any(|(_, left_range, right_range, _)| {
-                self.pointer_in_range_by_shallow_fact_graph_with_width(
+            .any(|(proposition, left_range, right_range, composition)| {
+                let proved = self.pointer_in_range_by_shallow_fact_graph_with_width(
                     left,
                     left_range.base(),
                     left_range.start(),
@@ -646,7 +646,15 @@ impl PureFactContext {
                     right_range.start(),
                     right_range.end(),
                     right_range.element_width(),
-                )
+                );
+                if proved {
+                    let authority = composition.map_or_else(
+                        || proposition.clone(),
+                        |resources| Proposition::CResourceComposition(resources.clone()),
+                    );
+                    record_implicit_reasoning_provenance(self, &authority);
+                }
+                proved
             })
             || self
                 .resource_compositions
@@ -765,19 +773,34 @@ impl PureFactContext {
         // snapshot-aware containment prover, which may itself inspect memory
         // loads and is deliberately the more expensive second phase.
         let mut candidates = self.memory_separation_candidates(&left.block, &right.block);
+        let record_candidate =
+            |proposition: &Proposition, composition: Option<&ResourceContext>| {
+                let authority = composition.map_or_else(
+                    || proposition.clone(),
+                    |resources| Proposition::CResourceComposition(resources.clone()),
+                );
+                record_implicit_reasoning_provenance(self, &authority);
+            };
         if crate::instrumentation::measure_operation(
             "kernel",
             "explicit range arms",
             "explicit range: shallow candidates",
             || {
-                candidates.clone().any(|(_, left_range, right_range, _)| {
-                    #[cfg(test)]
-                    MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
-                    pointer_in_memory_range_shallow(left, left_range)
-                        && pointer_in_memory_range_shallow(right, right_range)
-                        || pointer_in_memory_range_shallow(right, left_range)
-                            && pointer_in_memory_range_shallow(left, right_range)
-                })
+                candidates
+                    .clone()
+                    .any(|(proposition, left_range, right_range, composition)| {
+                        #[cfg(test)]
+                        MEMORY_SEPARATION_CANDIDATE_CHECKS
+                            .with(|checks| checks.set(checks.get() + 1));
+                        let proved = pointer_in_memory_range_shallow(left, left_range)
+                            && pointer_in_memory_range_shallow(right, right_range)
+                            || pointer_in_memory_range_shallow(right, left_range)
+                                && pointer_in_memory_range_shallow(left, right_range);
+                        if proved {
+                            record_candidate(proposition, composition);
+                        }
+                        proved
+                    })
             },
         ) {
             return true;
@@ -787,14 +810,21 @@ impl PureFactContext {
             "explicit range arms",
             "explicit range: exact-fact candidates",
             || {
-                candidates.clone().any(|(_, left_range, right_range, _)| {
-                    #[cfg(test)]
-                    MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
-                    self.pointer_in_range_by_exact_facts(left, left_range)
-                        && self.pointer_in_range_by_exact_facts(right, right_range)
-                        || self.pointer_in_range_by_exact_facts(right, left_range)
-                            && self.pointer_in_range_by_exact_facts(left, right_range)
-                })
+                candidates
+                    .clone()
+                    .any(|(proposition, left_range, right_range, composition)| {
+                        #[cfg(test)]
+                        MEMORY_SEPARATION_CANDIDATE_CHECKS
+                            .with(|checks| checks.set(checks.get() + 1));
+                        let proved = self.pointer_in_range_by_exact_facts(left, left_range)
+                            && self.pointer_in_range_by_exact_facts(right, right_range)
+                            || self.pointer_in_range_by_exact_facts(right, left_range)
+                                && self.pointer_in_range_by_exact_facts(left, right_range);
+                        if proved {
+                            record_candidate(proposition, composition);
+                        }
+                        proved
+                    })
             },
         ) {
             return true;
@@ -804,9 +834,16 @@ impl PureFactContext {
             "explicit range arms",
             "explicit range: resource shallow",
             || {
-                self.resource_compositions
-                    .iter()
-                    .any(|resources| resources.proves_owned_pointers_separate_shallow(left, right))
+                self.resource_compositions.iter().any(|resources| {
+                    let proved = resources.proves_owned_pointers_separate_shallow(left, right);
+                    if proved {
+                        record_implicit_reasoning_provenance(
+                            self,
+                            &Proposition::CResourceComposition(resources.clone()),
+                        );
+                    }
+                    proved
+                })
             },
         ) {
             return true;
@@ -817,15 +854,26 @@ impl PureFactContext {
             "explicit range: resource fact graph",
             || {
                 self.resource_compositions.iter().any(|resources| {
-                    resources.proves_owned_pointers_separate_by(left, right, |pointer, range| {
-                        self.pointer_in_range_by_shallow_fact_graph_with_width(
-                            pointer,
-                            range.base(),
-                            range.start(),
-                            range.end(),
-                            range.element_width(),
-                        )
-                    })
+                    let proved = resources.proves_owned_pointers_separate_by(
+                        left,
+                        right,
+                        |pointer, range| {
+                            self.pointer_in_range_by_shallow_fact_graph_with_width(
+                                pointer,
+                                range.base(),
+                                range.start(),
+                                range.end(),
+                                range.element_width(),
+                            )
+                        },
+                    );
+                    if proved {
+                        record_implicit_reasoning_provenance(
+                            self,
+                            &Proposition::CResourceComposition(resources.clone()),
+                        );
+                    }
+                    proved
                 })
             },
         ) {
@@ -838,7 +886,7 @@ impl PureFactContext {
             "explicit range arms",
             "explicit range: recursive candidates",
             || {
-                candidates.any(|(_, left_range, right_range, _)| {
+                candidates.any(|(proposition, left_range, right_range, composition)| {
                     #[cfg(test)]
                     {
                         MEMORY_SEPARATION_CANDIDATE_CHECKS
@@ -846,14 +894,24 @@ impl PureFactContext {
                         MEMORY_SEPARATION_RECURSIVE_CANDIDATE_CHECKS
                             .with(|checks| checks.set(checks.get() + 1));
                     }
-                    pointer_in_memory_range_for_memory_resolution(left, left_range, self)
-                        && pointer_in_memory_range_for_memory_resolution(right, right_range, self)
-                        || pointer_in_memory_range_for_memory_resolution(right, left_range, self)
+                    let proved =
+                        pointer_in_memory_range_for_memory_resolution(left, left_range, self)
                             && pointer_in_memory_range_for_memory_resolution(
-                                left,
+                                right,
                                 right_range,
                                 self,
                             )
+                            || pointer_in_memory_range_for_memory_resolution(
+                                right, left_range, self,
+                            ) && pointer_in_memory_range_for_memory_resolution(
+                                left,
+                                right_range,
+                                self,
+                            );
+                    if proved {
+                        record_candidate(proposition, composition);
+                    }
+                    proved
                 })
             },
         )
@@ -1855,56 +1913,71 @@ impl PureFactContext {
             {
                 return index < start || end <= index;
             }
-            if self.prop_facts.iter().any(|proposition| match proposition {
-                Proposition::CMemoryDisjoint {
-                    left_base,
-                    left_start,
-                    left_end,
-                    right_base,
-                    right_start,
-                    right_end,
-                } => {
-                    memory_range_shallowly_contained_in_parts(
-                        range, left_base, left_start, left_end,
-                    ) && pointer_in_range_shallow(pointer, right_base, right_start, right_end, 4)
-                        || memory_range_shallowly_contained_in_parts(
-                            range,
+            if let Some(proposition) =
+                self.prop_facts
+                    .iter()
+                    .find(|proposition| match proposition {
+                        Proposition::CMemoryDisjoint {
+                            left_base,
+                            left_start,
+                            left_end,
                             right_base,
                             right_start,
                             right_end,
-                        ) && pointer_in_range_shallow(
-                            pointer, left_base, left_start, left_end, 4,
-                        )
-                }
-                Proposition::CResourceSeparate {
-                    left: CResource::Memory(left_range),
-                    right: CResource::Memory(right_range),
-                } => {
-                    memory_range_shallowly_contained(range, left_range)
-                        && (pointer_in_memory_range_shallow(pointer, right_range)
-                            || self.pointer_directly_in_memory_range(pointer, right_range))
-                        || memory_range_shallowly_contained(range, right_range)
-                            && (pointer_in_memory_range_shallow(pointer, left_range)
-                                || self.pointer_directly_in_memory_range(pointer, left_range))
-                        || pointer_in_memory_range_shallow(pointer, left_range)
-                            && memory_range_contained_for_memory_resolution(
+                        } => {
+                            memory_range_shallowly_contained_in_parts(
+                                range, left_base, left_start, left_end,
+                            ) && pointer_in_range_shallow(
+                                pointer,
+                                right_base,
+                                right_start,
+                                right_end,
+                                4,
+                            ) || memory_range_shallowly_contained_in_parts(
                                 range,
-                                right_range,
-                                self,
+                                right_base,
+                                right_start,
+                                right_end,
+                            ) && pointer_in_range_shallow(
+                                pointer, left_base, left_start, left_end, 4,
                             )
-                        || pointer_in_memory_range_shallow(pointer, right_range)
-                            && memory_range_contained_for_memory_resolution(range, left_range, self)
-                        || self.pointer_directly_in_memory_range(pointer, left_range)
-                            && memory_range_contained_for_memory_resolution(
-                                range,
-                                right_range,
-                                self,
-                            )
-                        || self.pointer_directly_in_memory_range(pointer, right_range)
-                            && memory_range_contained_for_memory_resolution(range, left_range, self)
-                }
-                _ => false,
-            }) {
+                        }
+                        Proposition::CResourceSeparate {
+                            left: CResource::Memory(left_range),
+                            right: CResource::Memory(right_range),
+                        } => {
+                            memory_range_shallowly_contained(range, left_range)
+                                && (pointer_in_memory_range_shallow(pointer, right_range)
+                                    || self.pointer_directly_in_memory_range(pointer, right_range))
+                                || memory_range_shallowly_contained(range, right_range)
+                                    && (pointer_in_memory_range_shallow(pointer, left_range)
+                                        || self
+                                            .pointer_directly_in_memory_range(pointer, left_range))
+                                || pointer_in_memory_range_shallow(pointer, left_range)
+                                    && memory_range_contained_for_memory_resolution(
+                                        range,
+                                        right_range,
+                                        self,
+                                    )
+                                || pointer_in_memory_range_shallow(pointer, right_range)
+                                    && memory_range_contained_for_memory_resolution(
+                                        range, left_range, self,
+                                    )
+                                || self.pointer_directly_in_memory_range(pointer, left_range)
+                                    && memory_range_contained_for_memory_resolution(
+                                        range,
+                                        right_range,
+                                        self,
+                                    )
+                                || self.pointer_directly_in_memory_range(pointer, right_range)
+                                    && memory_range_contained_for_memory_resolution(
+                                        range, left_range, self,
+                                    )
+                        }
+                        _ => false,
+                    })
+            {
+                record_implicit_reasoning_provenance(self, proposition);
                 return true;
             }
 
@@ -2105,35 +2178,43 @@ impl PureFactContext {
         {
             return true;
         }
-        if self.prop_facts.iter().any(|proposition| match proposition {
-            Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } => {
-                memory_range_shallowly_contained_in_parts(range, left_base, left_start, left_end)
-                    && pointer_in_range_shallow(pointer, right_base, right_start, right_end, 4)
-                    || memory_range_shallowly_contained_in_parts(
-                        range,
-                        right_base,
-                        right_start,
-                        right_end,
-                    ) && pointer_in_range_shallow(pointer, left_base, left_start, left_end, 4)
-            }
-            Proposition::CResourceSeparate {
-                left: CResource::Memory(left_range),
-                right: CResource::Memory(right_range),
-            } => {
-                memory_range_shallowly_contained(range, left_range)
-                    && pointer_in_memory_range_shallow(pointer, right_range)
-                    || memory_range_shallowly_contained(range, right_range)
-                        && pointer_in_memory_range_shallow(pointer, left_range)
-            }
-            _ => false,
-        }) {
+        if let Some(proposition) = self
+            .prop_facts
+            .iter()
+            .find(|proposition| match proposition {
+                Proposition::CMemoryDisjoint {
+                    left_base,
+                    left_start,
+                    left_end,
+                    right_base,
+                    right_start,
+                    right_end,
+                } => {
+                    memory_range_shallowly_contained_in_parts(
+                        range, left_base, left_start, left_end,
+                    ) && pointer_in_range_shallow(pointer, right_base, right_start, right_end, 4)
+                        || memory_range_shallowly_contained_in_parts(
+                            range,
+                            right_base,
+                            right_start,
+                            right_end,
+                        ) && pointer_in_range_shallow(
+                            pointer, left_base, left_start, left_end, 4,
+                        )
+                }
+                Proposition::CResourceSeparate {
+                    left: CResource::Memory(left_range),
+                    right: CResource::Memory(right_range),
+                } => {
+                    memory_range_shallowly_contained(range, left_range)
+                        && pointer_in_memory_range_shallow(pointer, right_range)
+                        || memory_range_shallowly_contained(range, right_range)
+                            && pointer_in_memory_range_shallow(pointer, left_range)
+                }
+                _ => false,
+            })
+        {
+            record_implicit_reasoning_provenance(self, proposition);
             return true;
         }
         if let Some(index) = self.direct_pointer_element_index_from_base_with_width(

@@ -1132,10 +1132,10 @@ fn certified_transitions_from_execution(
                         let Some(theorem) = theorem else {
                             continue;
                         };
-                        let Proposition::Implies(_, conclusion) = theorem.proposition() else {
-                            unreachable!("condition transport must produce an implication")
-                        };
-                        let target = conclusion.as_ref();
+                        let (_, target) = crate::kernel::c_condition_fact_transport_parts(
+                            &theorem, &fact,
+                        )
+                        .expect("condition transport must retain its explicit source");
                         if target == &fact {
                             continue;
                         }
@@ -1195,12 +1195,13 @@ fn certified_transitions_from_execution(
                         let Some(theorem) = theorem else {
                             continue;
                         };
-                        let Proposition::Implies(_, conclusion) = theorem.proposition() else {
-                            unreachable!("condition transport must produce an implication")
-                        };
+                        let (_, target) = crate::kernel::c_condition_fact_transport_parts(
+                            &theorem, &fact,
+                        )
+                        .expect("condition transport must retain its explicit source");
                         transported_facts.push(CertifiedFactTransport {
                             source: fact,
-                            target: conclusion.as_ref().clone(),
+                            target: target.clone(),
                             theorem,
                             statement_local,
                             frame_premises,
@@ -1265,14 +1266,12 @@ fn certified_transitions_from_execution(
                     ) else {
                         continue;
                     };
-                    let Proposition::Implies(theorem_source, theorem_target) =
-                        theorem.proposition()
+                    let Some((frame_premises, theorem_target)) =
+                        crate::kernel::c_condition_fact_transport_parts(theorem, source)
                     else {
                         continue;
                     };
-                    if theorem_source.as_ref() != source
-                        || theorem_target.as_ref() != execution_fact.proposition()
-                    {
+                    if theorem_target != execution_fact.proposition() {
                         continue;
                     }
                     let transport = CertifiedFactTransport {
@@ -1280,7 +1279,7 @@ fn certified_transitions_from_execution(
                         target: execution_fact.proposition().clone(),
                         theorem: theorem.clone(),
                         statement_local: false,
-                        frame_premises: Vec::new(),
+                        frame_premises: frame_premises.into_iter().cloned().collect(),
                     };
                     if !transported_facts.contains(&transport) {
                         transported_facts.push(transport);
@@ -1426,19 +1425,19 @@ fn direct_transport_with_frame_premises(
     after: &crate::kernel::CMemory,
     assumptions: &PureFactContext,
 ) -> (Option<Theorem>, Vec<Proposition>) {
-    let (theorem, used) = crate::kernel::collect_reasoning_provenance(|| {
-        crate::kernel::capture_implicit_reasoning_provenance(|| {
-            prove_c_condition_fact_direct_transport(fact, after, assumptions)
-        })
-    });
-    if theorem.is_none() {
+    let Some(theorem) = prove_c_condition_fact_direct_transport(fact, after, assumptions) else {
         return (None, Vec::new());
-    }
-    let frame_premises = used
+    };
+    let Some((premises, _)) = crate::kernel::c_condition_fact_transport_parts(&theorem, fact)
+    else {
+        return (None, Vec::new());
+    };
+    let frame_premises = premises
         .into_iter()
-        .filter(|premise| premise != fact && assumptions.proves_exact(premise))
+        .filter(|premise| assumptions.proves_exact(premise))
+        .cloned()
         .collect();
-    (theorem, frame_premises)
+    (Some(theorem), frame_premises)
 }
 
 #[cfg(test)]

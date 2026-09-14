@@ -133,23 +133,50 @@ pub fn c_condition_facts_match_for_transport(
 /// deterministic memory-resolution evidence. Unlike whole-fact transport,
 /// this permits a target to retain an old load on one side while transporting
 /// the other side to a newer snapshot.
+pub(crate) fn c_condition_fact_target_reaches_in_context(
+    source: &Proposition,
+    target: &Proposition,
+    assumptions: &PureFactContext,
+) -> bool {
+    if !matches!(source, Proposition::ConditionIs(_, _))
+        || !matches!(target, Proposition::ConditionIs(_, _))
+    {
+        return false;
+    }
+    let with_source = assumptions.clone().assume_proposition(source.clone());
+    certification_proves_proposition(&with_source, target)
+}
+
+/// Exports target-directed transport only when every contextual dependency
+/// can be retained as an explicit theorem premise. Callers that merely need
+/// to check a fact inside one live context use the context-bound predicate
+/// above instead of turning that context into reusable authority.
 pub fn prove_c_condition_fact_target_transport(
     source: &Proposition,
     target: &Proposition,
     assumptions: &PureFactContext,
 ) -> Option<Theorem> {
-    if !matches!(source, Proposition::ConditionIs(_, _))
-        || !matches!(target, Proposition::ConditionIs(_, _))
-    {
+    let (proved, premises) = crate::kernel::collect_reasoning_provenance(|| {
+        crate::kernel::capture_implicit_reasoning_provenance(|| {
+            c_condition_fact_target_reaches_in_context(source, target, assumptions)
+        })
+    });
+    if !proved {
         return None;
     }
-    let with_source = assumptions.clone().assume_proposition(source.clone());
-    certification_proves_proposition(&with_source, target).then(|| {
-        Theorem::new(Proposition::Implies(
-            Box::new(source.clone()),
-            Box::new(target.clone()),
-        ))
-    })
+    // Provenance collection proposes an output-sized premise set; it is not
+    // itself authority. Recheck against only that set plus the explicit
+    // source, so an unrecorded ambient dependency can only make construction
+    // fail, never disappear into the exported theorem.
+    let restricted = premises
+        .iter()
+        .cloned()
+        .fold(PureFactContext::new(), |context, premise| {
+            context.assume_proposition(premise)
+        })
+        .assume_proposition(source.clone());
+    certification_proves_proposition(&restricted, target)
+        .then(|| c_condition_fact_transport_theorem(source, target.clone(), premises))
 }
 
 #[derive(Clone, Debug)]

@@ -174,13 +174,15 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         let Some(theorem) = prove_c_condition_fact_transport(&source, memory, assumptions) else {
             continue;
         };
-        let Proposition::Implies(theorem_source, target) = theorem.proposition() else {
+        let Some(target) =
+            c_condition_fact_transport_target_in_context(&theorem, &source, assumptions)
+        else {
             continue;
         };
-        if theorem_source.as_ref() != &source || target.as_ref() == &source {
+        if target == &source {
             continue;
         }
-        let target = target.as_ref().clone();
+        let target = target.clone();
         let base = load_assumptions
             .take()
             .unwrap_or_else(|| assumptions.clone());

@@ -4700,6 +4700,17 @@ fn bitvector_index_in_range_shallow(
     end: &Bitvector32Term,
     assumptions: &PureFactContext,
 ) -> bool {
+    let recorded_exact_order_path = |left: &Bitvector32Term,
+                                     right: &Bitvector32Term,
+                                     strict: bool| {
+        let Some(path) = assumptions.exact_signed_order_path_evidence(left, right, strict) else {
+            return false;
+        };
+        for step in path {
+            record_implicit_reasoning_provenance(assumptions, &step.premise);
+        }
+        true
+    };
     if let (Some(index), Some(start), Some(end)) = (
         signed_bitvector_constant(index),
         signed_bitvector_constant(start),
@@ -4726,13 +4737,13 @@ fn bitvector_index_in_range_shallow(
         // Canonical-keyed bound lookup before any searching arm: indexed
         // and deterministic, so check sees the same answer.
         || assumptions.canonical_bound_holds(start, index, false)
-        || assumptions.has_exact_order_path(start, index, false)
+        || recorded_exact_order_path(start, index, false)
         || assumptions.should_defer_non_exact_condition_reasoning()
             && assumptions.has_order_path_for_memory_resolution(start, index, false)
         || start == &Bitvector32Term::Constant(0)
             && index.add_const_parts().is_some_and(|(base, increment)| {
                 (increment as i32) > 0
-                    && (assumptions.has_exact_order_path(start, &base, false)
+                    && (recorded_exact_order_path(start, &base, false)
                         || assumptions.should_defer_non_exact_condition_reasoning()
                             && assumptions
                                 .has_order_path_for_memory_resolution(start, &base, false))
@@ -4757,7 +4768,7 @@ fn bitvector_index_in_range_shallow(
         .exact_condition_value(&ConditionTerm::signed_less_than(index.clone(), end.clone()))
         == Some(true)
         || assumptions.canonical_bound_holds(index, end, true)
-        || assumptions.has_exact_order_path(index, end, true)
+        || recorded_exact_order_path(index, end, true)
         || assumptions.should_defer_non_exact_condition_reasoning()
             && assumptions.has_order_path_for_memory_resolution(index, end, true);
     if lower_bound_is_exact && upper_bound_is_exact {
@@ -4792,16 +4803,13 @@ fn bitvector_index_in_range_shallow(
     }
     i32::try_from(offset).is_ok_and(|offset| {
         affine_bitvector_difference_atom(end, start).is_some_and(|length| {
-            assumptions.has_exact_order_path(
-                &Bitvector32Term::Constant(offset as u32),
-                &length,
-                true,
-            ) || assumptions.should_defer_non_exact_condition_reasoning()
-                && assumptions.has_order_path_for_memory_resolution(
-                    &Bitvector32Term::Constant(offset as u32),
-                    &length,
-                    true,
-                )
+            recorded_exact_order_path(&Bitvector32Term::Constant(offset as u32), &length, true)
+                || assumptions.should_defer_non_exact_condition_reasoning()
+                    && assumptions.has_order_path_for_memory_resolution(
+                        &Bitvector32Term::Constant(offset as u32),
+                        &length,
+                        true,
+                    )
         })
     })
 }

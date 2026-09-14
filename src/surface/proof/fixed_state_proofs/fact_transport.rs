@@ -895,21 +895,22 @@ pub(in crate::surface::proof) fn certified_fact_transport_reaches(
     }
     if let Some(theorem) =
         crate::kernel::prove_c_condition_fact_target_transport(source, target, assumptions)
+        && crate::kernel::c_condition_fact_transport_target_in_context(
+            &theorem,
+            source,
+            assumptions,
+        ) == Some(target)
     {
-        let Proposition::Implies(theorem_source, theorem_target) = theorem.proposition() else {
-            unreachable!("target-directed condition transport must produce an implication")
-        };
-        if theorem_source.as_ref() == source && theorem_target.as_ref() == target {
-            return true;
-        }
+        return true;
+    }
+    if crate::kernel::api::c_condition_fact_target_reaches_in_context(source, target, assumptions) {
+        return true;
     }
     let Some(theorem) = prove_c_condition_fact_transport(source, after, assumptions) else {
         return false;
     };
-    let Proposition::Implies(_, conclusion) = theorem.proposition() else {
-        unreachable!("condition transport must produce an implication")
-    };
-    conclusion.as_ref() == target
+    crate::kernel::c_condition_fact_transport_target_in_context(&theorem, source, assumptions)
+        == Some(target)
 }
 
 /// Whether a kernel proposition is an equality of two structurally identical

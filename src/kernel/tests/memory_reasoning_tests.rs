@@ -515,18 +515,45 @@ fn target_directed_transport_preserves_pointer_field_across_disjoint_buffer_writ
         ),
         4,
     );
-    let assumptions = PureFactContext::new().assume_proposition(Proposition::CResourceSeparate {
+    let separation = Proposition::CResourceSeparate {
         left: CResource::Memory(memory_range(field_pointer, 0, 1)),
         right: CResource::Memory(memory_range(written_pointer, 0, 1)),
-    });
+    };
+    let assumptions = PureFactContext::new().assume_proposition(separation.clone());
     let source = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
     let target = Proposition::ConditionIs(
         ConditionTerm::pointer_offset_equal(current_offset, old_offset),
         true,
     );
 
-    prove_c_condition_fact_target_transport(&source, &target, &assumptions)
+    let theorem = prove_c_condition_fact_target_transport(&source, &target, &assumptions)
         .expect("an explicit frame should preserve the pointer-valued field load");
+    let (premises, theorem_target) = c_condition_fact_transport_parts(&theorem, &source)
+        .expect("target transport retains its explicit source");
+    assert_eq!(premises, vec![&separation]);
+    assert_eq!(theorem_target, &target);
+    assert_eq!(
+        c_condition_fact_transport_target_in_context(&theorem, &source, &PureFactContext::new()),
+        None,
+    );
+    assert_eq!(
+        c_condition_fact_transport_target_in_context(&theorem, &source, &assumptions),
+        Some(&target),
+        "the source is intrinsically true and the retained frame premise is present",
+    );
+}
+
+#[test]
+fn condition_transport_consumer_accepts_its_separately_proved_source() {
+    let source = Proposition::ConditionIs(ConditionTerm::Variable(Variable(90_004)), true);
+    let target = Proposition::ConditionIs(ConditionTerm::Variable(Variable(90_005)), true);
+    let theorem = c_condition_fact_transport_theorem(&source, target.clone(), []);
+
+    assert_eq!(
+        c_condition_fact_transport_target_in_context(&theorem, &source, &PureFactContext::new()),
+        Some(&target),
+        "the source is the innermost theorem premise, not retained context",
+    );
 }
 
 #[test]
@@ -1249,11 +1276,15 @@ fn direct_transport_composes_framed_loads_inside_an_indexed_address() {
 
     let theorem = prove_c_condition_fact_direct_transport(&fact, &after, &assumptions)
         .expect("the address loads and then the indexed cell should transport");
-    let Proposition::Implies(source, target) = theorem.proposition() else {
-        panic!("transport theorem must be an implication");
-    };
-    assert_eq!(source.as_ref(), &fact);
-    assert_ne!(target.as_ref(), &fact);
+    let (premises, target) = c_condition_fact_transport_parts(&theorem, &fact)
+        .expect("transport theorem must retain its explicit source");
+    assert!(!premises.is_empty());
+    assert!(
+        premises
+            .iter()
+            .all(|premise| assumptions.proves_exact(premise))
+    );
+    assert_ne!(target, &fact);
     assert_eq!(c_condition_fact_memories(target), vec![after]);
 }
 
@@ -1960,6 +1991,15 @@ fn direct_condition_transport_uses_relative_separate_range() {
         ),
         true,
     );
+    let effect = Proposition::CMemoryEffectSummary {
+        before,
+        after: after.clone(),
+        mutable_ranges: vec![CMemoryRange::new(
+            owner.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )],
+    };
     let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_than(
@@ -1980,32 +2020,27 @@ fn direct_condition_transport_uses_relative_separate_range() {
                 Bitvector32Term::add(data_index_from_owner, Bitvector32Term::Constant(2)),
             )),
         })
-        .assume_proposition(Proposition::CMemoryEffectSummary {
-            before,
-            after: after.clone(),
-            mutable_ranges: vec![CMemoryRange::new(
-                owner,
-                Bitvector32Term::Constant(0),
-                Bitvector32Term::Constant(1),
-            )],
-        });
+        .assume_proposition(effect.clone());
 
     let theorem = prove_c_condition_fact_direct_transport(&fact, &after, &assumptions)
         .expect("relative exact separation should directly frame the data load");
+    let (premises, target) = c_condition_fact_transport_parts(&theorem, &fact)
+        .expect("transport theorem must retain its explicit source");
+    assert_eq!(premises.len(), 2);
+    assert!(premises.contains(&&effect));
+    assert!(
+        premises
+            .iter()
+            .all(|premise| assumptions.proves_exact(premise))
+    );
     assert_eq!(
-        theorem.proposition(),
-        &Proposition::Implies(
-            Box::new(fact),
-            Box::new(Proposition::ConditionIs(
-                ConditionTerm::equal(
-                    Bitvector32Term::MemoryLoad(
-                        crate::kernel::intern_c_memory(after),
-                        Box::new(data)
-                    ),
-                    Bitvector32Term::Variable(Variable(94)),
-                ),
-                true,
-            )),
+        target,
+        &Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(after), Box::new(data)),
+                Bitvector32Term::Variable(Variable(94)),
+            ),
+            true,
         )
     );
 }
@@ -2038,6 +2073,15 @@ fn direct_condition_transport_uses_indexed_relative_separate_range() {
         ),
         true,
     );
+    let effect = Proposition::CMemoryEffectSummary {
+        before,
+        after: after.clone(),
+        mutable_ranges: vec![CMemoryRange::new(
+            owner.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )],
+    };
     let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length.clone()),
@@ -2055,32 +2099,30 @@ fn direct_condition_transport_uses_indexed_relative_separate_range() {
                 Bitvector32Term::add(data_index_from_owner, length),
             )),
         })
-        .assume_proposition(Proposition::CMemoryEffectSummary {
-            before,
-            after: after.clone(),
-            mutable_ranges: vec![CMemoryRange::new(
-                owner,
-                Bitvector32Term::Constant(0),
-                Bitvector32Term::Constant(1),
-            )],
-        });
+        .assume_proposition(effect.clone());
 
     let theorem = prove_c_condition_fact_direct_transport(&fact, &after, &assumptions)
         .expect("an indexed pointer in a relative separate range should be directly framed");
+    let (premises, target) = c_condition_fact_transport_parts(&theorem, &fact)
+        .expect("transport theorem must retain its explicit source");
+    assert_eq!(premises.len(), 3);
+    assert!(premises.contains(&&effect));
+    assert!(
+        premises
+            .iter()
+            .all(|premise| assumptions.proves_exact(premise))
+    );
     assert_eq!(
-        theorem.proposition(),
-        &Proposition::Implies(
-            Box::new(fact),
-            Box::new(Proposition::ConditionIs(
-                ConditionTerm::equal(
-                    Bitvector32Term::MemoryLoad(
-                        crate::kernel::intern_c_memory(after),
-                        Box::new(data_one)
-                    ),
-                    Bitvector32Term::Variable(Variable(94)),
+        target,
+        &Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::MemoryLoad(
+                    crate::kernel::intern_c_memory(after),
+                    Box::new(data_one)
                 ),
-                true,
-            )),
+                Bitvector32Term::Variable(Variable(94)),
+            ),
+            true,
         )
     );
 }
