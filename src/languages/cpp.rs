@@ -5,9 +5,11 @@
 //! feed C++ text or generated C through the C parser.
 
 mod import;
+mod lowering;
 mod schema;
 
 pub use import::{PreparedCppImport, load_import, refresh_import};
+pub use lowering::{LoweredCppFunction, lower_import};
 pub use schema::{
     CppBinaryOperator, CppExport, CppExpression, CppFunction, CppPlace, CppPlaceReference,
     CppProfile, CppSpan, CppStatement, CppType,

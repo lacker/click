@@ -3,8 +3,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use click::kernel::{
+    Bitvector32Term, CExpression, CFunctionOutcome, CMemory, CMemoryRange, CResourceFact, CState,
+    CStatement, CType, CUndefinedBehavior, Pointer, PointerOffsetTerm, Proposition,
+    PureFactContext, ResourceContext, c_typed_pointer_value, int32,
+    prove_symbolic_c_function_execution,
+};
 use click::languages::cpp::{
-    CppBinaryOperator, CppExpression, CppStatement, CppType, load_import, refresh_import,
+    CppBinaryOperator, CppExpression, CppStatement, CppType, load_import, lower_import,
+    refresh_import,
 };
 
 const SOURCE: &str = include_str!("fixtures/cpp-import/increment.cpp");
@@ -142,6 +149,116 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
             ..
         }
     ));
+}
+
+#[test]
+fn locked_cpp_artifact_lowers_directly_and_executes_reference_semantics() {
+    let project = Project::new();
+    refresh_import(&project.config()).unwrap();
+    fs::remove_file(&project.exporter).unwrap();
+    let prepared = load_import(&project.config()).expect("load the locked artifact offline");
+    let declaration_id = prepared.export().function.declaration_id.clone();
+    let function_span = prepared.export().function.span.clone();
+    let lowered = lower_import(&prepared).expect("lower the typed artifact directly");
+
+    assert_eq!(lowered.source().identity(), prepared.identity());
+    assert_eq!(lowered.source_function().declaration_id, declaration_id);
+    assert_eq!(lowered.source_function().span, function_span);
+    let function = lowered.kernel_function();
+    assert_eq!(function.name(), "increment");
+    assert_eq!(function.return_type(), CType::Int32);
+    assert_eq!(function.parameters().len(), 1);
+    assert_eq!(function.parameters()[0].name(), "value");
+    assert_eq!(function.parameters()[0].c_type(), CType::Int32Pointer);
+    assert!(matches!(
+        function.body(),
+        CStatement::Seq(store, returned)
+            if matches!(
+                store.as_ref(),
+                CStatement::TypedStore {
+                    pointer: CExpression::Variable(pointer),
+                    value: CExpression::Add(left, right),
+                    value_type: CType::Int32,
+                    volatile: false,
+                } if pointer == "value"
+                    && matches!(
+                        left.as_ref(),
+                        CExpression::TypedLoad {
+                            pointer,
+                            value_type: CType::Int32,
+                            volatile: false,
+                            ..
+                        } if matches!(pointer.as_ref(), CExpression::Variable(name) if name == "value")
+                    )
+                    && matches!(right.as_ref(), CExpression::Value(value) if value == &int32(1))
+            )
+            && matches!(
+                returned.as_ref(),
+                CStatement::Return(CExpression::TypedLoad {
+                    pointer,
+                    value_type: CType::Int32,
+                    volatile: false,
+                    ..
+                }) if matches!(pointer.as_ref(), CExpression::Variable(name) if name == "value")
+            )
+    ));
+
+    let pointer = Pointer {
+        block: "cpp-reference".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let resources =
+        ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+            pointer.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )));
+    let arguments = vec![c_typed_pointer_value(pointer.clone(), CType::Int32Pointer)];
+    let state = CState::new()
+        .with_memory(CMemory::new().store(pointer.clone(), int32(41)))
+        .with_resource_context(resources.clone());
+    let expected_state = CState::new()
+        .with_memory(CMemory::new().store(pointer.clone(), int32(42)))
+        .with_resource_context(resources.clone());
+    let theorem = prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        PureFactContext::new(),
+    )
+    .expect("the lowered reference function should execute");
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CFunctionExecutes {
+            state,
+            function: function.clone(),
+            arguments: arguments.clone(),
+            outcome: CFunctionOutcome::Return {
+                value: int32(42),
+                state: expected_state,
+            },
+        }
+    );
+
+    let max_state = CState::new()
+        .with_memory(CMemory::new().store(pointer, int32(i32::MAX as u32)))
+        .with_resource_context(resources);
+    let overflow = prove_symbolic_c_function_execution(
+        max_state.clone(),
+        function.clone(),
+        arguments.clone(),
+        PureFactContext::new(),
+    )
+    .expect("concrete signed overflow should produce a checked outcome");
+    assert_eq!(
+        overflow.proposition(),
+        &Proposition::CFunctionExecutes {
+            state: max_state,
+            function: function.clone(),
+            arguments,
+            outcome: CFunctionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
+        }
+    );
 }
 
 #[test]

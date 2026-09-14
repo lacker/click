@@ -5807,8 +5807,8 @@ pub(crate) enum GeneratedLoadBinding {
 }
 
 /// The source-side identity of one generated load occurrence.  This is kept
-/// kernel-private and deliberately carries no parser or surface types: the C
-/// lowering may assign an owner and an occurrence number, while proof
+/// kernel-private and deliberately carries no parser or surface types: a
+/// frontend lowering may assign an owner and an occurrence number, while proof
 /// presentation only compares the opaque identity it receives.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub(crate) struct LoadSourceId {

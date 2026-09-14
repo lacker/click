@@ -96,9 +96,16 @@ exporter, profile, artifact, and configuration identities.
 
 Loading through the C++ library boundary subsequently validates the source,
 lock, and typed artifact without locating or running Clang. This separation is
-intentional: compiler execution belongs to explicit refresh. Verifier lowering,
-sidecar binding, constructors, destructors, and broader C++ syntax remain
-outside this first artifact-only slice.
+intentional: compiler execution belongs to explicit refresh. The library can
+lower this exact artifact directly to the kernel execution vocabulary without
+generating C text or invoking the C parser. A mutable `int&` becomes an
+address-valued parameter; its reads and assignment become typed loads and a
+typed store of the referent, and signed addition retains the kernel's existing
+overflow check. The lowered value remains paired with the immutable semantic
+artifact so Clang declaration identities and source spans are not discarded.
+
+Sidecar binding, public C++ contract syntax, constructors, destructors, and
+broader C++ syntax remain outside this slice.
 
 ## Validation and supported profile
 

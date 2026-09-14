@@ -1,0 +1,190 @@
+//! Direct lowering from the pinned C++ semantic artifact to kernel execution.
+//!
+//! This adapter consumes Clang's already-typed nodes. It does not print C++ as
+//! C, invoke the C parser, or infer types from source spellings. The first
+//! slice represents a mutable `int&` as an address-valued kernel parameter;
+//! every C++ lvalue-to-rvalue conversion becomes a typed load through that
+//! address and assignment writes the referent without reseating the reference.
+
+use std::collections::BTreeMap;
+
+use super::{
+    CppBinaryOperator, CppExpression, CppFunction, CppPlace, CppPlaceReference, CppStatement,
+    CppType, PreparedCppImport,
+};
+use crate::kernel::{
+    CExpression, CFunction, CStatement, CType, LoadSourceId, LoadSourceOwnerId, c_add, c_function,
+    c_int32_literal, c_parameter, c_return, c_seq, c_typed_load_with_source, c_typed_store,
+    c_variable,
+};
+
+/// One kernel function together with the immutable semantic artifact that
+/// produced it. Keeping the source artifact attached retains Clang declaration
+/// identities and spans even though they are not part of kernel equality.
+#[derive(Clone, Debug)]
+pub struct LoweredCppFunction {
+    source: PreparedCppImport,
+    function: CFunction,
+}
+
+impl LoweredCppFunction {
+    pub fn source(&self) -> &PreparedCppImport {
+        &self.source
+    }
+
+    pub fn source_function(&self) -> &CppFunction {
+        &self.source.export().function
+    }
+
+    pub fn kernel_function(&self) -> &CFunction {
+        &self.function
+    }
+}
+
+/// Lowers the first pinned C++ import slice directly to the kernel's checked
+/// execution vocabulary.
+pub fn lower_import(import: &PreparedCppImport) -> Result<LoweredCppFunction, String> {
+    let source = &import.export().function;
+    let places = source
+        .parameters
+        .iter()
+        .map(|parameter| (parameter.declaration_id.as_str(), parameter))
+        .collect::<BTreeMap<_, _>>();
+    let parameters = source
+        .parameters
+        .iter()
+        .map(lower_parameter)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut context = LoweringContext {
+        source_unit: import.logical_source(),
+        function_name: &source.name,
+        places,
+        next_load_occurrence: 0,
+    };
+    let mut statements = source
+        .body
+        .iter()
+        .map(|statement| context.lower_statement(statement));
+    let first = statements
+        .next()
+        .ok_or_else(|| "C++ function has no executable statements".to_string())??;
+    let body = statements.try_fold(first, |body, statement| {
+        statement.map(|statement| c_seq(body, statement))
+    })?;
+    let function = c_function(CType::Int32, source.name.clone(), parameters, body);
+    Ok(LoweredCppFunction {
+        source: import.clone(),
+        function,
+    })
+}
+
+fn lower_parameter(parameter: &CppPlace) -> Result<crate::kernel::CParameter, String> {
+    match &parameter.value_type {
+        CppType::LvalueReference { pointee } if is_mutable_int32(pointee) => {
+            Ok(c_parameter(parameter.name.clone(), CType::Int32Pointer))
+        }
+        _ => Err(format!(
+            "C++ parameter `{}` is outside direct mutable `int&` lowering",
+            parameter.name
+        )),
+    }
+}
+
+struct LoweringContext<'a> {
+    source_unit: &'a str,
+    function_name: &'a str,
+    places: BTreeMap<&'a str, &'a CppPlace>,
+    next_load_occurrence: u32,
+}
+
+impl LoweringContext<'_> {
+    fn lower_statement(&mut self, statement: &CppStatement) -> Result<CStatement, String> {
+        match statement {
+            CppStatement::Assign { target, value, .. } => {
+                let pointer = self.lower_place(target)?;
+                let value = self.lower_expression(value)?;
+                Ok(c_typed_store(pointer, value, CType::Int32))
+            }
+            CppStatement::Return { value, .. } => Ok(c_return(self.lower_expression(value)?)),
+        }
+    }
+
+    fn lower_expression(&mut self, expression: &CppExpression) -> Result<CExpression, String> {
+        match expression {
+            CppExpression::IntegerLiteral {
+                value, value_type, ..
+            } if is_mutable_int32(value_type) => {
+                let value = value
+                    .parse::<i32>()
+                    .map_err(|_| format!("unsupported C++ integer literal `{value}`"))?;
+                Ok(c_int32_literal(value as u32))
+            }
+            CppExpression::IntegerLiteral { .. } => {
+                Err("C++ integer literal is outside direct `int` lowering".into())
+            }
+            CppExpression::Load {
+                place, value_type, ..
+            } if is_mutable_int32(value_type) => {
+                let pointer = self.lower_place(place)?;
+                let occurrence = self.next_load_occurrence;
+                self.next_load_occurrence = self
+                    .next_load_occurrence
+                    .checked_add(1)
+                    .ok_or_else(|| "C++ load occurrence capacity exceeded".to_string())?;
+                Ok(c_typed_load_with_source(
+                    pointer,
+                    CType::Int32,
+                    Some(LoadSourceId {
+                        owner: LoadSourceOwnerId {
+                            source_unit: self.source_unit.into(),
+                            function: self.function_name.into(),
+                        },
+                        occurrence,
+                    }),
+                ))
+            }
+            CppExpression::Load { .. } => Err("C++ load is outside direct `int` lowering".into()),
+            CppExpression::Binary {
+                operator: CppBinaryOperator::Add,
+                left,
+                right,
+                value_type,
+                ..
+            } if is_mutable_int32(value_type) => {
+                let left = self.lower_expression(left)?;
+                let right = self.lower_expression(right)?;
+                Ok(c_add(left, right))
+            }
+            CppExpression::Binary { .. } => {
+                Err("C++ binary expression is outside direct `int` lowering".into())
+            }
+        }
+    }
+
+    fn lower_place(&self, place: &CppPlaceReference) -> Result<CExpression, String> {
+        let Some(parameter) = self.places.get(place.declaration_id.as_str()) else {
+            return Err(format!(
+                "C++ lowering found unknown declaration `{}`",
+                place.declaration_id
+            ));
+        };
+        if parameter.name != place.name {
+            return Err(format!(
+                "C++ declaration `{}` is named `{}`, not `{}`",
+                place.declaration_id, parameter.name, place.name
+            ));
+        }
+        Ok(c_variable(parameter.name.clone()))
+    }
+}
+
+fn is_mutable_int32(value_type: &CppType) -> bool {
+    matches!(
+        value_type,
+        CppType::Integer {
+            bits: 32,
+            signed: true,
+            is_const: false,
+        }
+    )
+}
