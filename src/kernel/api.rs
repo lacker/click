@@ -4082,6 +4082,25 @@ fn checked_execution_at_definitionally_equal_entry_state(
     Some(SymbolicCExecution { paths, limit: None })
 }
 
+/// Whether every stable-view binding a state publishes is authorized by the
+/// authority that same state carries.
+///
+/// A state holding a ledger must have each binding authorized by it under the
+/// state's own holder. A state holding no ledger carries no authority to root
+/// a binding in, so the only authorized population there is the empty one --
+/// which is exactly what a modular proof that never lent anything reaches.
+/// Treating that pristine case as unauthorized, or treating a ledger-less
+/// state as vacuously authorized, are the two ways to get this wrong.
+fn state_loan_bindings_are_authorized(state: &CState, assumptions: &PureFactContext) -> bool {
+    match (state.loan_ledger(), state.loan_participant()) {
+        (Some(ledger), Some(participant)) => {
+            ledger.authorizes_bindings(participant, state.loan_view_bindings(), assumptions)
+        }
+        (None, None) => state.loan_view_bindings().iter().next().is_none(),
+        _ => false,
+    }
+}
+
 fn checked_loan_evidence_is_valid(
     checked: &CCheckedFunctionExecution,
     function: &CFunction,
@@ -4119,15 +4138,7 @@ fn checked_loan_evidence_is_valid(
                         && checked.state.loan_participant() == return_state.loan_participant()
                         && return_state.loan_bindings_are_consistent()
                         && checked.state.loan_bindings_are_consistent()
-                        && return_state.loan_ledger().is_some_and(|ledger| {
-                            return_state.loan_participant().is_some_and(|participant| {
-                                ledger.authorizes_bindings(
-                                    participant,
-                                    return_state.loan_view_bindings(),
-                                    &checked.assumptions,
-                                )
-                            })
-                        })
+                        && state_loan_bindings_are_authorized(return_state, &checked.assumptions)
                 }
                 _ => !publishes_return_state,
             };
@@ -4165,16 +4176,71 @@ fn checked_loan_evidence_is_valid(
             && return_state.loan_participant() == outer_recovered_participant
             && return_state.loan_bindings_are_consistent()
             && checked.state.loan_bindings_are_consistent()
-            && return_state.loan_ledger().is_none_or(|ledger| {
-                return_state.loan_participant().is_some_and(|participant| {
-                    ledger.authorizes_bindings(
-                        participant,
-                        return_state.loan_view_bindings(),
-                        &checked.assumptions,
-                    )
-                })
-            })
+            && state_loan_bindings_are_authorized(return_state, &checked.assumptions)
     })
+}
+
+#[cfg(test)]
+mod candidate_loan_authorization_tests {
+    use super::*;
+
+    #[test]
+    fn a_pristine_return_state_is_authorized_and_a_rootless_binding_is_not() {
+        let assumptions = PureFactContext::new();
+        // A modular proof that never lent anything returns with no ledger and
+        // no binding. That is authorized: there is nothing to authorize.
+        assert!(state_loan_bindings_are_authorized(
+            &CState::new(),
+            &assumptions
+        ));
+
+        let support_fact = CResourceFact::own_token("authorization_support".into(), Vec::new());
+        // The binding's viewed fact must be a view the loan actually permits,
+        // which is the view form of the escrowed resource.
+        let viewed = CResourceFact::view_token("authorization_support".into(), Vec::new());
+        let resources =
+            ResourceContext::new().unchecked_with_facts([support_fact.clone(), viewed.clone()]);
+        let support = resources.owned_occurrences_for_fact(&support_fact)[0];
+        let occurrence = resources.occurrences_for_fact(&viewed)[0];
+        let ledger = crate::kernel::loans::LoanLedger::new();
+        let owner = ledger.fresh_participant().expect("owner identity");
+        let reader = ledger.fresh_participant().expect("reader identity");
+        let opening = ledger
+            .lend(owner, reader, support, support_fact)
+            .expect("the view is backed by a fresh loan");
+        let binding = crate::kernel::loans::LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed,
+        };
+        let lent = ledger
+            .apply(&opening.transition)
+            .expect("the opening applies to its own predecessor");
+
+        let authorized = CState::new()
+            .with_loan_ledger(Some(lent))
+            .with_loan_participant(Some(reader))
+            .with_resource_context_and_loan_dependencies(
+                resources.clone(),
+                [(occurrence, binding.clone())],
+            );
+        assert!(state_loan_bindings_are_authorized(
+            &authorized,
+            &assumptions
+        ));
+
+        // The same binding with the ledger taken away has no authority behind
+        // it, and a ledger-less state must not be vacuously authorized.
+        let rootless = CState::new()
+            .with_resource_context_and_loan_dependencies(resources, [(occurrence, binding)]);
+        assert!(!state_loan_bindings_are_authorized(&rootless, &assumptions));
+
+        // A holder the ledger does not know is not an authority either.
+        let unheld = authorized.clone().with_loan_participant(None);
+        assert!(!state_loan_bindings_are_authorized(&unheld, &assumptions));
+    }
 }
 
 fn path_function_outcome(path: &SymbolicCExecutionPath) -> Option<&CFunctionOutcome> {
