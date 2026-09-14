@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (10)
+## P1: before launch (8)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -63,8 +63,6 @@ Soundness and kernel shape:
 
 Program import and execution:
 
-- [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
-- [Widen the struct model](struct-model.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
 - [Add basic C++ verification with references and scoped cleanup](basic-cpp-support.md)
 

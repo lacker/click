@@ -41,77 +41,47 @@ are supported and preserve pointer provenance. Casts between `char **` and
 `unsigned char **` remain unsupported; sharing byte storage does not make their
 pointer cells interchangeable.
 
-Struct support is partial. C0 accepts LP64-layout multi-field struct
-declarations with `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`,
-`uint64`, named enum fields,
-fixed-dimensional arrays of the supported `int32` and `uint8` scalars, and
-pointer-valued fields, plus chained `p->child->field`
-loads/stores through struct pointers. Inline scalar arrays retain their element
-width and are accessed through C's array-to-pointer conversion, so
-`uint8 buf[16]` uses byte-width indexing rather than pointer-sized storage. It
-retains pointee struct names through field chains and models field alignment and
-tail padding. Embedded struct fields are aggregate places for nested member
-access, so `p->inner.value` lowers to the combined outer and inner offsets
-without constructing a runtime struct value. Local arrays of the supported
-structs are also accepted for indexed `items[i].field` loads and stores, using
-the ABI-sized struct stride.
-One-dimensional function parameters declared as arrays of those structs are
-supported with the same stride; their declarator length is syntax metadata and
-does not change the pointer ABI. Copyable struct values are also supported when
-every field is `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`, `uint64`,
-a named enum field, a
-modeled data pointer, a fixed-dimensional array of `int32` or `uint8` elements,
-an embedded struct whose fields satisfy the same rule, or a fixed-dimensional
-array of such embedded structs: parameters, locals, assignments, and returns
-use fresh address-backed copies, recursively copying nested fields and array
-elements.
-Data-pointer fields are shallow-copied, so their pointer value is shared even
-though the containing struct storage is fresh. Whole-struct lvalue loads and
-copies, such as `dst = *src`, `*dst = *src`, and `dst->inner = src->inner`,
-are lowered to typed leaf copies; aggregate arguments and returns use the same
-address-backed representation. Pointer-backed aggregate returns can state
-field-wise postconditions over mixed-width and nested fields; the returned
-aggregate is still a fresh copy rather than an alias of the source.
-Positional aggregate initializers for copyable struct-valued locals and
-fixed-dimensional local arrays of those structs support nested structs,
-fixed-dimensional scalar arrays, embedded-struct arrays, nested element groups,
-and zero-filled omitted members and elements. Designated field initializers for
-those locals support scalar and nested embedded-struct fields; static/file-scope
-designated initializers and array designators remain unsupported. Unions and
-conditional expressions over copyable structs require matching branch types
-and copy only the selected branch into fresh address-backed storage.
-A function-pointer field is an eight-byte callback value that keeps its
-declared signature: it is copied like a data-pointer field, and a file-scope
-or function-local static object may bind one to a function address in a
-positional or designated initializer. A load through such a field yields that
-concrete address, so the indirect call dispatches to exactly that function.
-Writes to a `const` table remain rejected.
-A bare function designator decays to the same address as `&name` in every value
-position, but only when the name is declared as a function in the translation
-unit that uses it; `&name` has no such requirement.
-Packed layout and union forms outside the named embedded read-only slice
-remain unsupported. Address-taking of modeled
-scalar leaf fields, including indexed cells in fixed-dimensional scalar-array
-fields and nested embedded-struct leaves, preserves the field's ABI offset and
-allocation provenance; pointer forms for unsupported scalar widths remain
-unsupported.
-Fixed-dimensional arrays of embedded structs and supported scalar fields are
-supported through indexed leaf-field access and by-value copies with row-major
-ABI stride. Scalar-array dimensions are retained as metadata while their cells
-are lowered by element width.
-Bitfields and other compiler-dependent layout rules are tracked in
-`issues/multiple-compilers.md`. Named enums use
-the four-byte scalar ABI representation; their enumerators are resolved to
-int32 values in C expressions, while enum parameters, returns, locals, arrays,
-and anonymous declarations remain unsupported. Click contracts can use field
-places with `views` and the owned-resource verbs, including direct embedded
-aggregate places. Such a clause expands into typed leaf ranges, preserving
-mixed field widths and ABI metadata. A read-only helper view can be justified
-by an enclosing owned object through its physical byte footprint; owned
-`consumes`/`produces` transitions remain typed and do not reinterpret a range
-implicitly. Explicit ranges such as `owns owner[0..3]`
-remain useful for broader footprints. The supported ABI is LP64; other target
-ABIs are rejected rather than approximated.
+Struct support is partial; the [struct subset](c0.md#struct-subset) defines
+its current type and layout boundary. Supported records include scalar and
+pointer fields, named enums, fixed-dimensional scalar arrays, embedded structs,
+and fixed-dimensional embedded-struct arrays. Member access, local arrays, and
+array parameters preserve the documented LP64 field offsets, array strides,
+and tail padding. Address-taking preserves the containing allocation and the
+selected field's ABI offset.
+
+Copyable structs use fresh address-backed storage for parameters, locals,
+assignments, and returns. Copies preserve nested fields and array elements;
+data-pointer fields retain the same pointee rather than copying it. Supported
+function-pointer fields also copy their value and signature. A struct may
+contain a supported named read-only union; copies preserve its overlapping
+typed member views rather than treating them as disjoint fields. Direct
+whole-union values and union-member writes remain unsupported.
+
+Whole-struct lvalue copies and pointer-backed aggregate returns are supported,
+including field-wise return postconditions. Positional and designated local
+initializers support the documented nested fields and fixed-dimensional local
+struct arrays, with zero-filled omitted elements. Supported conditional
+aggregate expressions require matching struct types and copy only the selected
+branch. Static-storage positional and designated initializers, including
+function addresses in callback tables, are supported for the shapes described
+in [file-scope objects](c0.md#file-scope-scalar-globals) and the struct
+reference. Automatic/local const aggregates,
+whole-union initialization, and broader aggregate initializer forms remain
+outside the documented subset.
+
+A callback field keeps its declared signature. A load from a provably identified
+static callback table yields the concrete function address; an abstract loaded
+callback needs an applicable named contract. Writes to a const table remain
+rejected. A bare function designator decays to the same address as `&name` in
+value positions when that function is declared in the translation unit.
+
+Packed layout, bitfields, and other compiler-dependent layout rules remain
+outside the single-profile baseline; `issues/multiple-compilers.md` tracks that
+work. Named enum fields use the four-byte scalar ABI representation; broader
+enum shapes remain outside the documented subset. Click resource clauses can
+name supported fields and embedded aggregate places with their typed byte
+ranges. This aggregate-shape support does not complete the separate stable-view
+or general resource-transition projects.
 
 ## External C functions
 
@@ -151,8 +121,8 @@ remain unsupported. The exact trailing struct spelling
 LP64 eight-byte alignment requirement; other alignment forms remain
 unsupported. Const-qualified static-storage aggregates are read-only, while
 automatic/local const aggregates remain unsupported.
-System header includes other than the modeled integer-type-only `<stdint.h>`
-and `<inttypes.h>`, function-like macros
+System header includes other than the modeled `<stdint.h>`, `<inttypes.h>`,
+and `<stdbool.h>`, function-like macros
 with more than three parameters, empty arguments, stringification, token pasting,
 macro redefinitions without an intervening `#undef`,
 relational comparisons, arithmetic, ternaries, and other general conditional

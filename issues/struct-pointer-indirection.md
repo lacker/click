@@ -51,4 +51,4 @@ abstract function-pointer values are tracked separately in
 `struct S** name` (2026-09-05, `mdtests/rb_parent_family.md` passes a link slot
 to `rb_link_node`).
 
-Related: [struct-model.md](struct-model.md).
+Related: [Supported struct subset](../docs/reference/language/c0.md#struct-subset).

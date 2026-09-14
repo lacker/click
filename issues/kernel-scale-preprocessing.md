@@ -621,7 +621,7 @@ because one implementation package landed.
 
 ## References
 
-- [Multi-function files and headers](multi-function-files-and-headers.md)
+- [Supported translation units and preprocessing](../docs/reference/language/c0.md#supported-expressions-and-statements)
 - [GNU C extensions](gnu-c-extensions.md)
 - [Multiple compilers and targets](multiple-compilers.md)
 - [Linux rbtree inline helpers](linux-rbtree-inline-helpers.md)

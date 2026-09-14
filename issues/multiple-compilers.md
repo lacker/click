@@ -70,6 +70,8 @@ or set of ABI-affecting flags.
 - Existing LP64 behavior remains unchanged, and `scripts/check.sh` passes.
 
 Related: [signed-byte-integers.md](signed-byte-integers.md) for signed-byte types;
-[struct-model.md](struct-model.md) for aggregate layout and field access;
-[multi-function-files-and-headers.md](multi-function-files-and-headers.md)
-for compiler/header integration boundaries.
+[Supported struct layout and field access](../docs/reference/language/c0.md#struct-subset);
+[translation units and preprocessing](../docs/reference/language/c0.md#supported-expressions-and-statements)
+for the delivered single-profile baseline;
+[kernel-scale-preprocessing.md](kernel-scale-preprocessing.md) for remaining
+compiler/header integration work.

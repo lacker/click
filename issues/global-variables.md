@@ -301,4 +301,4 @@ concatenation and the retained escape boundary.
   deterministic unresolved-target, type-mismatch, and const-discard diagnostics.
 - `scripts/check.sh` passes.
 
-Related: [multi-function-files-and-headers.md](multi-function-files-and-headers.md).
+Related: [Supported translation units and headers](../docs/reference/language/c0.md#supported-expressions-and-statements).
