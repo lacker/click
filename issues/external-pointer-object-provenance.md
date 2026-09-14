@@ -2,6 +2,7 @@
 
 P1: a helper contract hides undefined pointer ordering in a concrete caller.
 Reproduced at `3ad0d2e1`.
+Reconfirmed at `82108f2d` after stable views became the default.
 
 ## Violated invariant
 
@@ -38,8 +39,6 @@ int g(void) {
 ```click
 verifying "pointers.c";
 int32 f(int32* p, int32* q) {
-    views p[0..1];
-    views q[0..1];
     ensures result == 0 or result == 1;
 } by { execute(); simp(); }
 
@@ -51,6 +50,11 @@ int32 g() {
 `click verify pointers.click` exits 0 for both functions. The caller passes
 pointers to unrelated local objects. Their relational comparison has
 undefined behavior under [C11 section 6.5.8 paragraph 5](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf#page=114).
+
+The reproduction does not require `views`: pointer ordering reads no pointee
+memory, and stable-view loans govern memory authority rather than C object
+provenance. Adding `views p[0..1]` and `views q[0..1]` also still verifies, so
+the stable-view rollout does not change the result.
 
 As a control, a standalone `g` with identical locals and
 `return &a < &b;` correctly fails with
