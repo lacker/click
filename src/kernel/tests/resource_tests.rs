@@ -5746,6 +5746,7 @@ fn v11_fresh_view_children_use_exact_occurrences_and_preserve_duplicates() {
         share: opening.root_share,
         support: support_occurrence,
         viewed: child.clone(),
+        hold: None,
     };
     let after = after.with_loan_dependency(inserted_child, binding.clone());
     assert!(after.loan_dependency(existing_child).is_none());
@@ -5784,6 +5785,7 @@ fn v11_duplicate_bound_and_unbound_views_are_not_authority_candidates() {
         share: opening.root_share,
         support: support_occurrence,
         viewed: child.clone(),
+        hold: None,
     };
     let context = context.with_loan_dependency(occurrences[0], binding.clone());
     assert!(context.loan_dependency(occurrences[1]).is_none());
@@ -5820,6 +5822,7 @@ fn context_with_one_loan_dependency(view_the_support: bool) -> ResourceContext {
             share: opening.root_share,
             support: support_occurrence,
             viewed: if view_the_support { support } else { child },
+            hold: None,
         },
     )
 }
@@ -5963,6 +5966,7 @@ fn v11_composite_expansion_refuses_equal_ambient_child_without_destination() {
         share: opening.root_share,
         support: support_occurrence,
         viewed: parent,
+        hold: None,
     };
     let resources = resources.with_loan_dependency(parent_occurrence, binding);
     assert!(
@@ -5996,6 +6000,7 @@ fn v11_tampered_cstate_mirror_is_rejected_and_stale_sidecar_is_dropped() {
         share: opening.root_share,
         support: support_occurrence,
         viewed: child,
+        hold: None,
     };
     let state = CState::new().with_resource_context_and_loan_dependencies(
         resources,

@@ -84,86 +84,29 @@ int32 input_cursor_peek(struct input_cursor* owner) {
 
 int32 input_cursor_take(struct input_cursor* owner) {
     requires owner->pos < owner->len;
-    views input_cursor(owner);
-    owns owner->pos;
+    owns input_cursor(owner);
 
     ensures result == old(owner->data[owner->pos]);
     ensures owner->pos == old(owner->pos) + 1;
     ensures owner->len == old(owner->len);
     ensures owner->data == old(owner->data);
 } by {
-    observe(input_cursor(owner));
+    unfold(input_cursor(owner));
     observe(readable_input(owner->data, owner->len));
     step();
     step();
     step();
     step();
     have 0 <= owner->pos by {
-        simp() using {
-            at(statement(2).entry, separate(memory(owner->pos), memory(owner->len)));
-            at(statement(2).entry, separate(memory(owner->pos), memory(owner->data)));
-            at(statement(2).entry, separate(memory(owner->len), memory(owner->data)));
-            at(statement(2).entry, contains(input_cursor(owner), memory(owner->pos)));
-            at(statement(2).entry, contains(input_cursor(owner), memory(owner->len)));
-            at(statement(2).entry, contains(input_cursor(owner), memory(owner->data)));
-            at(statement(2).entry, loadable(old(owner->pos)));
-            at(statement(2).entry, loadable(old(owner->len)));
-            at(statement(2).entry, loadable(old(owner->data)));
-            0 <= old(owner->pos);
-            at(statement(2).entry, separate(memory(object(owner)), memory(owner->data[0..owner->len])));
-            at(statement(2).entry, loadable(old(owner->data[0..owner->len])));
-            old(owner->pos) < owner->len;
-            old(owner->pos) <= owner->len;
-            0 <= owner->len;
-        }
+        simp();
     }
     have owner->pos <= owner->len by {
         simp() using {
             old(owner->pos) < owner->len;
         }
     }
-    have separate(
-        memory(object(owner)),
-        memory(owner->data[0..owner->len])
-    ) by {
-        simp();
-    }
-    have loadable(old((load_int32_pointer(byte_offset(owner, 8)) + load_int32(owner))[0..1])) by {
-        simp() using {
-            at(statement(2).entry, separate(memory(owner->pos), memory(owner->len)));
-            at(statement(2).entry, separate(memory(owner->pos), memory(owner->data)));
-            at(statement(2).entry, separate(memory(owner->len), memory(owner->data)));
-            at(statement(2).entry, contains(input_cursor(owner), memory(owner->pos)));
-            at(statement(2).entry, contains(input_cursor(owner), memory(owner->len)));
-            at(statement(2).entry, contains(input_cursor(owner), memory(owner->data)));
-            at(statement(2).entry, loadable(old(owner->pos)));
-            at(statement(2).entry, loadable(old(owner->len)));
-            at(statement(2).entry, loadable(old(owner->data)));
-            0 <= old(owner->pos);
-            at(statement(2).entry, separate(memory(object(owner)), memory(owner->data[0..owner->len])));
-            at(statement(2).entry, loadable(old(owner->data[0..owner->len])));
-            old(owner->pos) < owner->len;
-            old(owner->pos) <= owner->len;
-            0 <= owner->len;
-        }
-    }
-    have result == old(owner->data[owner->pos]) by {
-        normalize();
-    }
-    have owner->pos == (old(owner->pos) + 1) by {
-        normalize();
-    }
-    have owner->len == old(owner->len) by {
-        normalize();
-    }
-    have owner->data == old(owner->data) by {
-        normalize();
-    }
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
+    fold(input_cursor(owner));
+    simp();
 }
 
 int32 input_cursor_clone(
@@ -247,18 +190,15 @@ int32 input_cursor_shared_pipeline(
         }
         assumption();
     }
+    transport(at(statement(4).entry, left->len) == length, left->len == length) using {
+        at(statement(4).entry, left->len) == length;
+    }
     step();
-    have left->len == left->len by {
-        normalize();
-    }
-    have left->data == left->data by {
-        normalize();
-    }
     transport(at(statement(5).entry, right->len) == length, right->len == length) using {
         at(statement(5).entry, right->len) == length;
     }
-    transport(at(statement(4).entry, left->len) == length, left->len == length) using {
-        at(statement(4).entry, left->len) == length;
+    transport(at(statement(5).entry, left->len) == length, left->len == length) using {
+        at(statement(5).entry, left->len) == length;
     }
     have right->pos == 0 by {
         transport(at(statement(5).entry, right->pos) == 0, right->pos == 0) using {

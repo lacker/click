@@ -59,6 +59,17 @@ pub(crate) struct LoanShareId {
     ordinal: u64,
 }
 
+/// A restriction a folded borrowing composite places on the scope of the
+/// loan it packages: while the hold exists the scope cannot end, so the
+/// owner behind the loan cannot be recovered and written while the composite
+/// still describes it. A hold mints no share, scope, or recovery right and
+/// keeps the ledger identity (see `LoanLedger::hold`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) struct LoanHoldId {
+    arena: u64,
+    ordinal: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StableViewDescription {
     loan: LoanId,
@@ -90,6 +101,10 @@ pub(crate) struct LoanViewBinding {
     pub(crate) share: LoanShareId,
     pub(crate) support: ResourceOccurrenceId,
     pub(crate) viewed: CResourceFact,
+    /// Present on the binding of a folded borrowing composite (and on the
+    /// body piece it restores when unfolded): the occurrence keeps this
+    /// loan's scope open until the hold is released.
+    pub(crate) hold: Option<LoanHoldId>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -401,6 +416,9 @@ struct LoanScopeRecord {
     parent: Option<LoanScopeId>,
     parent_share: Option<LoanShareId>,
     dependencies: crate::persistent::PersistentSet<LoanScopeId>,
+    /// Holds placed by folded borrowing composites; `End` refuses while any
+    /// remain.
+    holds: crate::persistent::PersistentSet<LoanHoldId>,
 }
 
 fn origin_kind(origin: &LoanOrigin) -> LoanOriginKind {
@@ -455,6 +473,10 @@ struct LoanLedgerData {
     next_scope: u64,
     next_loan: u64,
     next_share: u64,
+    next_hold: u64,
+    /// Every live hold, with the scope it restricts and the participant that
+    /// placed it and may release it.
+    holds: PersistentMap<LoanHoldId, (LoanScopeId, LoanParticipantId)>,
     scopes: PersistentMap<LoanScopeId, LoanScopeRecord>,
     loans: PersistentMap<LoanId, LoanRecord>,
     shares: PersistentMap<LoanShareId, LoanShareRecord>,
@@ -1103,12 +1125,14 @@ impl CompositeLoanBacking {
     ) -> Option<Self> {
         // A nested composite child stays folded inside the escrowed head; it
         // enters the loan as a permitted description with no byte backing.
-        // An exclusive instance cannot be viewed (D12).
+        // So does a viewed piece of a borrowing composite: the head packages
+        // a description its hold keeps stable, and there is no owner here to
+        // escrow for it. An exclusive instance cannot be viewed (D12).
         (head.is_own()
             && matches!(head.resource(), CResource::Composite { .. })
             && pieces
                 .iter()
-                .all(|piece| piece.is_own() && !matches!(piece.resource(), CResource::Instance(_))))
+                .all(|piece| !matches!(piece.resource(), CResource::Instance(_))))
         .then_some(Self {
             support,
             head,
@@ -1138,6 +1162,28 @@ pub(crate) struct StableViewTransferPlan {
     /// the residual alone would not see what the caller still holds across
     /// the call.
     escrowed_owners: Vec<CResourceFact>,
+    /// The hold bindings of escrowed borrowing composites, by escrow fact.
+    /// The head leaves the caller residual for the call, but its hold stays
+    /// in the ledger, and recovery hands the binding back to the restored
+    /// head (step 7).
+    escrowed_holds: Vec<(CResourceFact, LoanViewBinding)>,
+    /// Owned requirements whose caller occurrence carried a hold binding: the
+    /// composite went to the callee together with its borrow. Recovery
+    /// re-binds it if the callee returned it and releases the hold if the
+    /// callee consumed it (step 7).
+    pub(crate) transferred_holds: Vec<(CResourceFact, LoanViewBinding)>,
+    /// For a view lent as a child of the caller's own binding: that parent
+    /// binding, which an escaping borrow holds after the child ends.
+    pub(crate) rebound_parents: BTreeMap<LoanId, LoanViewBinding>,
+}
+
+/// What a call leaves behind for a borrowing composite it produced or
+/// returned: the loan the composite keeps open and the binding, carrying the
+/// hold, that its occurrence in the caller must carry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct EscapedHold {
+    pub(crate) head: CResourceFact,
+    pub(crate) binding: LoanViewBinding,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1145,6 +1191,14 @@ pub(crate) struct StableViewRecovery {
     pub(crate) ledger: LoanLedger,
     pub(crate) terminal_ledger: LoanLedger,
     pub(crate) resources: ResourceContext,
+    /// The escrowed owners recovery handed back, in recovery order, each
+    /// with the hold binding its occurrence carried before the call.
+    pub(crate) recovered_escrows: Vec<(CResourceFact, Option<LoanViewBinding>)>,
+    /// The holds this call's produced borrowing composites now carry.
+    pub(crate) escaped_holds: Vec<EscapedHold>,
+    /// The holds a consumed borrowing composite released, before
+    /// `transitions`.
+    pub(crate) released_holds: Vec<LoanHoldId>,
     pub(crate) view_bindings: LoanViewBindings,
     pub(crate) transitions: Vec<CheckedLoanTransition>,
 }
@@ -1219,6 +1273,11 @@ pub(crate) struct CheckedLoanCallEvidence {
     pub(crate) entry: StableViewTransferPlan,
     pub(crate) recovered_ledger: LoanLedger,
     pub(crate) recovery_terminal_ledger: LoanLedger,
+    /// Holds the recovery released before its transitions: a consumed
+    /// borrowing composite gives its borrow back (step 7). A release keeps
+    /// the ledger identity but changes what `End` accepts, so a recheck
+    /// applies them first.
+    pub(crate) recovery_releases: Vec<LoanHoldId>,
     pub(crate) recovery_transitions: Vec<CheckedLoanTransition>,
 }
 
@@ -1524,12 +1583,14 @@ impl CheckedLoanCallEvidence {
         entry: StableViewTransferPlan,
         recovered_ledger: LoanLedger,
         recovery_terminal_ledger: LoanLedger,
+        recovery_releases: Vec<LoanHoldId>,
         recovery_transitions: Vec<CheckedLoanTransition>,
     ) -> Self {
         Self {
             entry,
             recovered_ledger,
             recovery_terminal_ledger,
+            recovery_releases,
             recovery_transitions,
         }
     }
@@ -1554,6 +1615,10 @@ impl CheckedLoanCallEvidence {
             return Err(LoanRefusal::InvalidEvidence);
         }
         let mut recovery_successor = callee_ledger.clone();
+        for hold in &self.recovery_releases {
+            crate::instrumentation::record_deterministic_work(1);
+            recovery_successor = recovery_successor.release(*hold, self.entry.caller)?;
+        }
         for transition in &self.recovery_transitions {
             crate::instrumentation::record_deterministic_work(1);
             recovery_successor = recovery_successor.apply(transition)?;
@@ -1561,7 +1626,14 @@ impl CheckedLoanCallEvidence {
         if recovery_successor != self.recovery_terminal_ledger {
             return Err(LoanRefusal::InvalidEvidence);
         }
-        if self.recovered_ledger != *caller_ledger {
+        // The caller resumes either at the exact predecessor root (every
+        // loan of the call ended and recovered) or at the rechecked terminal
+        // successor (a loan survived the call under an escaping borrow, or a
+        // consumed composite released a hold). Nothing else is a valid
+        // continuation.
+        if self.recovered_ledger != *caller_ledger
+            && self.recovered_ledger != self.recovery_terminal_ledger
+        {
             return Err(LoanRefusal::InvalidEvidence);
         }
         Ok(())
@@ -1576,8 +1648,13 @@ impl StableViewRecovery {
     pub(crate) fn recheck_transitions(
         &self,
         predecessor: &LoanLedger,
+        caller: LoanParticipantId,
     ) -> Result<LoanLedger, LoanRefusal> {
         let mut current = predecessor.clone();
+        for hold in &self.released_holds {
+            crate::instrumentation::record_deterministic_work(1);
+            current = current.release(*hold, caller)?;
+        }
         for transition in &self.transitions {
             crate::instrumentation::record_deterministic_work(1);
             current = current.apply(transition)?;
@@ -1702,6 +1779,8 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
     let mut residual = caller_resources.clone();
     let mut callee_resources = ResourceContext::new();
     let mut transferred_ownership = Vec::new();
+    let mut transferred_holds = Vec::new();
+    let mut rebound_parents = BTreeMap::new();
     let mut stable_views = Vec::new();
     let mut callee_view_bindings = LoanViewBindings::default();
     let mut memory_effects = Vec::new();
@@ -1719,6 +1798,13 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                 requirement.fact.clone(),
             ));
         }
+        if let Some((occurrence, _)) =
+            residual.directly_supporting_owned_entry(&requirement.fact, assumptions)
+            && let Some(binding) = parent_view_bindings.get(&occurrence)
+            && binding.hold.is_some()
+        {
+            transferred_holds.push((requirement.fact.clone(), binding.clone()));
+        }
         residual = residual
             .without_fact_incrementally(&requirement.fact, assumptions)
             .ok_or_else(|| StableViewPlanError::MissingResource(requirement.fact.clone()))?;
@@ -1733,6 +1819,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
 
     let mut loan_roots = Vec::new();
     let mut escrowed_owners = Vec::new();
+    let mut escrowed_holds = Vec::new();
     let mut planned_ledger = ledger.clone();
     let mut entry_transitions = Vec::new();
     let mut grouped = BTreeMap::<ResourceOccurrenceId, Vec<(usize, CCheckedResourceFact)>>::new();
@@ -1855,6 +1942,11 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                 true,
             ));
             escrowed_owners.push(selected.clone());
+            if let Some(binding) = parent_view_bindings.get(&support)
+                && binding.hold.is_some()
+            {
+                escrowed_holds.push((selected.clone(), binding.clone()));
+            }
             let mut owner_occurrences = BTreeMap::<LoanViewBinding, ResourceOccurrenceId>::new();
             for (index, requirement) in cluster {
                 let description = planned_ledger
@@ -1868,6 +1960,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                     share: opening.root_share,
                     support,
                     viewed: requirement.fact.clone(),
+                    hold: None,
                 };
                 let (next_resources, occurrence) = callee_resources
                     .try_compose_with_fact_with_occurrence(requirement.fact.clone(), assumptions)
@@ -2074,6 +2167,11 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                 true,
             ));
             escrowed_owners.push(selected.clone());
+            if let Some(binding) = parent_view_bindings.get(&support)
+                && binding.hold.is_some()
+            {
+                escrowed_holds.push((selected.clone(), binding.clone()));
+            }
             let mut owner_occurrences = BTreeMap::<LoanViewBinding, ResourceOccurrenceId>::new();
             for (index, requirement) in cluster {
                 let description = planned_ledger
@@ -2087,6 +2185,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                     share: opening.root_share,
                     support,
                     viewed: requirement.fact.clone(),
+                    hold: None,
                 };
                 let (next_resources, occurrence) = callee_resources
                     .try_compose_with_fact_with_occurrence(requirement.fact.clone(), assumptions)
@@ -2134,6 +2233,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
             share: opening.root_share,
             support: binding.support,
             viewed: binding.viewed.clone(),
+            hold: None,
         };
         loan_roots.push((
             opening.scope,
@@ -2142,6 +2242,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
             binding.support,
             false,
         ));
+        rebound_parents.insert(opening.loan, binding.clone());
         let mut child_occurrence = None;
         for (index, requirement) in group {
             if !ResourceContext::new()
@@ -2205,6 +2306,9 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
         callee,
         loan_roots,
         escrowed_owners,
+        escrowed_holds,
+        transferred_holds,
+        rebound_parents,
     })
 }
 
@@ -2242,9 +2346,18 @@ impl StableViewTransferPlan {
 
     /// Closes every unmodified root share and returns the exact escrowed
     /// ownership to the residual caller context.
+    /// Recovers the call's loans. `escaping` names the loans a produced
+    /// borrowing composite keeps open, with that composite's head fact; such
+    /// a loan is not ended (an escrowed owner stays escrowed) and the caller
+    /// receives a hold binding for the head instead. `consumed_holds` are the
+    /// hold bindings of owned composites the callee consumed without
+    /// returning: their holds are released, and a root the caller can then
+    /// close is ended and its owner recovered (step 7).
     pub(crate) fn recover_stable_views(
         self,
         assumptions: &PureFactContext,
+        escaping: &BTreeMap<LoanId, Vec<CResourceFact>>,
+        consumed_holds: &[LoanViewBinding],
     ) -> Result<StableViewRecovery, StableViewPlanError> {
         let parent_ledger = self.parent_ledger;
         let stable_views = self.stable_views.clone();
@@ -2252,10 +2365,51 @@ impl StableViewTransferPlan {
         let mut ledger = self.ledger;
         let mut resources = self.caller_resources_after_requirements;
         let mut transitions = Vec::new();
-        for (scope, loan, root, _, recoverable) in loan_roots.into_iter().rev() {
+        let mut recovered_escrows = Vec::new();
+        let mut pending_holds: Vec<(Vec<CResourceFact>, LoanViewBinding)> = Vec::new();
+        let mut released_holds = Vec::new();
+        let mut keep_terminal = false;
+        for (scope, loan, root, support, recoverable) in loan_roots.into_iter().rev() {
             let transfer = ledger.transfer(root, self.callee, self.caller)?;
             ledger = ledger.apply(&transfer)?;
             transitions.push(transfer);
+            if let Some(heads) = escaping.get(&loan) {
+                if recoverable {
+                    // The owner stays escrowed: the produced composite now
+                    // describes it, and the caller's binding to this open
+                    // loan is what the composite's hold rests on.
+                    let viewed = stable_views
+                        .iter()
+                        .find(|view| view.loan == loan)
+                        .map(|view| view.requirement.fact.clone())
+                        .ok_or(StableViewPlanError::Loan(LoanRefusal::MissingLoanBinding))?;
+                    pending_holds.push((
+                        heads.clone(),
+                        LoanViewBinding {
+                            loan,
+                            scope,
+                            share: root,
+                            support,
+                            viewed,
+                            hold: None,
+                        },
+                    ));
+                    keep_terminal = true;
+                    continue;
+                }
+                // The caller lent a view of its own: the child ends as usual
+                // and the composite holds the caller's parent binding.
+                let end = ledger.end(scope, self.caller)?;
+                ledger = ledger.apply(&end)?;
+                transitions.push(end);
+                let parent = self
+                    .rebound_parents
+                    .get(&loan)
+                    .cloned()
+                    .ok_or(StableViewPlanError::Loan(LoanRefusal::MissingLoanBinding))?;
+                pending_holds.push((heads.clone(), parent));
+                continue;
+            }
             let end = ledger.end(scope, self.caller)?;
             ledger = ledger.apply(&end)?;
             transitions.push(end);
@@ -2273,21 +2427,73 @@ impl StableViewTransferPlan {
                     return Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence));
                 }
                 resources = resources
-                    .try_compose_with_fact(escrow, assumptions)
+                    .try_compose_with_fact(escrow.clone(), assumptions)
                     .map_err(|_| StableViewPlanError::InvalidResidual)?;
+                let hold_binding = self
+                    .escrowed_holds
+                    .iter()
+                    .find(|(held, _)| *held == escrow)
+                    .map(|(_, binding)| binding.clone());
+                recovered_escrows.push((escrow, hold_binding));
             }
         }
-        // Every scope in loan_roots was created by this plan and has just
-        // passed End and Recover. End checks its indexed dependency set, so a
-        // registered child would have refused before this checkpoint. The
-        // plan can therefore roll back directly to the exact predecessor
-        // root without a whole-ledger quiescence scan.
-        let terminal_ledger = ledger;
-        ledger = parent_ledger;
+        // A composite the callee consumed took its borrow with it: release
+        // the hold, and if that leaves a root this caller may close, close it
+        // and recover the owner, as the fold's mirror image.
+        for binding in consumed_holds {
+            let Some(hold) = binding.hold else {
+                continue;
+            };
+            ledger = ledger.release(hold, self.caller)?;
+            released_holds.push(hold);
+            keep_terminal = true;
+            if !ledger.scope_can_end(binding.scope, self.caller) {
+                continue;
+            }
+            let end = ledger.end(binding.scope, self.caller)?;
+            ledger = ledger.apply(&end)?;
+            transitions.push(end);
+            if ledger.loan_is_recoverable_by(binding.loan, self.caller) {
+                let (recover, escrow, _) = ledger.recover(binding.loan, self.caller)?;
+                ledger = ledger.apply(&recover)?;
+                transitions.push(recover);
+                resources = resources
+                    .try_compose_with_fact(escrow.clone(), assumptions)
+                    .map_err(|_| StableViewPlanError::InvalidResidual)?;
+                recovered_escrows.push((escrow, None));
+            }
+        }
+        // Every scope in loan_roots that this plan ended has just passed End
+        // and Recover. End checks its indexed dependency set, so a registered
+        // child would have refused before this checkpoint. When nothing
+        // survives the call, the plan rolls back to the exact predecessor
+        // root without a whole-ledger quiescence scan; a surviving (escaping)
+        // loan or a released hold keeps the terminal ledger, since the call
+        // changed authority.
+        let terminal_ledger = ledger.clone();
+        ledger = if keep_terminal { ledger } else { parent_ledger };
+        let mut escaped_holds = Vec::new();
+        for (heads, binding) in pending_holds {
+            let (held, hold) = ledger.hold(&binding, self.caller)?;
+            ledger = held;
+            let binding = LoanViewBinding {
+                hold: Some(hold),
+                ..binding
+            };
+            for head in heads {
+                escaped_holds.push(EscapedHold {
+                    head,
+                    binding: binding.clone(),
+                });
+            }
+        }
         Ok(StableViewRecovery {
             ledger,
             terminal_ledger,
             resources,
+            recovered_escrows,
+            escaped_holds,
+            released_holds,
             view_bindings: self.parent_view_bindings,
             transitions,
         })
@@ -2346,6 +2552,8 @@ impl LoanLedger {
                     next_scope: 0,
                     next_loan: 0,
                     next_share: 0,
+                    next_hold: 0,
+                    holds: PersistentMap::default(),
                     scopes: PersistentMap::default(),
                     loans: PersistentMap::default(),
                     shares: PersistentMap::default(),
@@ -2534,7 +2742,7 @@ impl LoanLedger {
         if backing
             .pieces
             .iter()
-            .any(|fact| !fact.is_own() || matches!(fact.resource(), CResource::Instance(_)))
+            .any(|fact| matches!(fact.resource(), CResource::Instance(_)))
         {
             return Err(LoanRefusal::UnsupportedResource);
         }
@@ -2659,6 +2867,145 @@ impl LoanLedger {
                 state: self.storage.state,
                 data,
             }),
+        })
+    }
+
+    /// Places a hold on the scope of `binding`'s loan for a folded borrowing
+    /// composite: a composite whose body packages the description `binding`
+    /// authorizes. While the hold exists `End` refuses, so the owner behind
+    /// the loan cannot be recovered and written while the folded composite
+    /// still describes it and carries its body facts.
+    ///
+    /// A hold only adds a restriction. It mints no share, scope, or recovery
+    /// right, and nothing can be derived from it that the binding did not
+    /// already authorize, so the ledger identity is kept (the same rule as
+    /// `project`). What carries the hold is the binding of the composite's
+    /// occurrence, which every join and recovery compares; the hold is
+    /// released when that occurrence is consumed by a call that does not
+    /// return it.
+    pub(crate) fn hold(
+        &self,
+        binding: &LoanViewBinding,
+        holder: LoanParticipantId,
+    ) -> Result<(Self, LoanHoldId), LoanRefusal> {
+        self.validate_view_binding(binding.clone(), holder)?;
+        let data = &self.storage.data;
+        let scope_record = data
+            .scopes
+            .get(&binding.scope)
+            .cloned()
+            .ok_or(LoanRefusal::MissingScope)?;
+        let hold = LoanHoldId {
+            arena: data.arena,
+            ordinal: data.next_hold,
+        };
+        let mut data = data.clone();
+        data.next_hold = data
+            .next_hold
+            .checked_add(1)
+            .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+        data.holds = data.holds.with_inserted(hold, (binding.scope, holder));
+        data.scopes = data.scopes.with_inserted(
+            binding.scope,
+            LoanScopeRecord {
+                holds: scope_record.holds.with_value(hold),
+                ..scope_record
+            },
+        );
+        Ok((
+            Self {
+                storage: Arc::new(LoanLedgerStorage {
+                    state: self.storage.state,
+                    data,
+                }),
+            },
+            hold,
+        ))
+    }
+
+    /// Removes a hold placed by `holder`. Releasing restores the scope's
+    /// ability to end; it grants nothing, so the identity is kept as well.
+    pub(crate) fn release(
+        &self,
+        hold: LoanHoldId,
+        holder: LoanParticipantId,
+    ) -> Result<Self, LoanRefusal> {
+        self.require_arena(hold.arena)?;
+        self.require_participant(holder)?;
+        let data = &self.storage.data;
+        let (scope, placed_by) = data
+            .holds
+            .get(&hold)
+            .copied()
+            .ok_or(LoanRefusal::MissingScope)?;
+        if placed_by != holder {
+            return Err(LoanRefusal::WrongHolder);
+        }
+        let scope_record = data
+            .scopes
+            .get(&scope)
+            .cloned()
+            .ok_or(LoanRefusal::MissingScope)?;
+        let mut data = data.clone();
+        data.holds = data.holds.without_key(&hold);
+        data.scopes = data.scopes.with_inserted(
+            scope,
+            LoanScopeRecord {
+                holds: scope_record.holds.without_value(&hold),
+                ..scope_record
+            },
+        );
+        Ok(Self {
+            storage: Arc::new(LoanLedgerStorage {
+                state: self.storage.state,
+                data,
+            }),
+        })
+    }
+
+    /// The descriptions a live loan authorizes, or none for an ended or
+    /// unknown loan.
+    pub(crate) fn permitted_descriptions(&self, loan: LoanId) -> Vec<CResourceFact> {
+        let data = &self.storage.data;
+        data.loans
+            .get(&loan)
+            .filter(|record| {
+                !record.recovered
+                    && data
+                        .scopes
+                        .get(&record.scope)
+                        .is_some_and(|scope| scope.active)
+            })
+            .map(|record| record.permitted.clone())
+            .unwrap_or_default()
+    }
+
+    /// The scope a live hold restricts, if the hold exists.
+    pub(crate) fn held_scope(&self, hold: LoanHoldId) -> Option<LoanScopeId> {
+        self.storage.data.holds.get(&hold).map(|(scope, _)| *scope)
+    }
+
+    /// Whether `holder` could end `scope` now: it holds the close right and
+    /// the whole root share, and nothing depends on or holds the scope.
+    pub(crate) fn scope_can_end(&self, scope: LoanScopeId, holder: LoanParticipantId) -> bool {
+        let data = &self.storage.data;
+        data.scopes.get(&scope).is_some_and(|record| {
+            record.active
+                && record.close_right == Some(holder)
+                && record.dependencies.is_empty()
+                && record.holds.is_empty()
+                && data
+                    .shares
+                    .get(&record.root)
+                    .is_some_and(|root| root.holder == Some(holder))
+        })
+    }
+
+    /// Whether `holder` is the recovery right of an escrowed, unrecovered
+    /// loan.
+    pub(crate) fn loan_is_recoverable_by(&self, loan: LoanId, holder: LoanParticipantId) -> bool {
+        self.storage.data.loans.get(&loan).is_some_and(|record| {
+            !record.recovered && record.origin == LoanOrigin::Escrowed(holder)
         })
     }
 
@@ -3243,6 +3590,7 @@ impl LoanLedger {
                         parent: None,
                         parent_share: None,
                         dependencies: crate::persistent::PersistentSet::default(),
+                        holds: crate::persistent::PersistentSet::default(),
                     },
                 );
                 data.loans = data.loans.with_inserted(
@@ -3316,7 +3664,7 @@ impl LoanLedger {
                 self.require_participant(*borrower)?;
                 if backing
                     .iter()
-                    .any(|fact| !fact.is_own() || matches!(fact.resource(), CResource::Instance(_)))
+                    .any(|fact| matches!(fact.resource(), CResource::Instance(_)))
                 {
                     return Err(LoanRefusal::UnsupportedResource);
                 }
@@ -3359,6 +3707,7 @@ impl LoanLedger {
                         parent: None,
                         parent_share: None,
                         dependencies: crate::persistent::PersistentSet::default(),
+                        holds: crate::persistent::PersistentSet::default(),
                     },
                 );
                 data.loans = data.loans.with_inserted(
@@ -3476,6 +3825,7 @@ impl LoanLedger {
                         parent: None,
                         parent_share: None,
                         dependencies: crate::persistent::PersistentSet::default(),
+                        holds: crate::persistent::PersistentSet::default(),
                     },
                 );
                 data.loans = data.loans.with_inserted(
@@ -3609,6 +3959,7 @@ impl LoanLedger {
                         parent: Some(parent.scope),
                         parent_share: Some(parent.share),
                         dependencies: crate::persistent::PersistentSet::default(),
+                        holds: crate::persistent::PersistentSet::default(),
                     },
                 );
                 // One description authorized this transition, so the child
@@ -3802,7 +4153,7 @@ impl LoanLedger {
                 if scope_record.close_right != Some(*holder) {
                     return Err(LoanRefusal::WrongHolder);
                 }
-                if !scope_record.dependencies.is_empty() {
+                if !scope_record.dependencies.is_empty() || !scope_record.holds.is_empty() {
                     return Err(LoanRefusal::ActiveDependency);
                 }
                 let root = data
@@ -4059,8 +4410,25 @@ impl LoanLedger {
                 return false;
             }
         }
+        for (hold, (scope, _)) in data.holds.iter() {
+            if hold.arena != data.arena
+                || !data
+                    .scopes
+                    .get(scope)
+                    .is_some_and(|record| record.active && record.holds.contains(hold))
+            {
+                return false;
+            }
+        }
         for (scope_id, scope) in data.scopes.iter() {
             if scope_id.arena != data.arena || scope.root.arena != data.arena {
+                return false;
+            }
+            if scope
+                .holds
+                .iter()
+                .any(|hold| data.holds.get(hold).map(|(held, _)| held) != Some(scope_id))
+            {
                 return false;
             }
             let Some(active_leaves) = self.conserved_active_leaves(*scope_id, scope.root) else {
@@ -4345,6 +4713,7 @@ mod tests {
             share: opening.root_share,
             support,
             viewed,
+            hold: None,
         };
         let child = ledger.reborrow(parent, holder, reader).unwrap();
         let ledger = ledger.apply(&child.transition).unwrap();
@@ -4533,6 +4902,7 @@ mod tests {
             share: opening.root_share,
             support,
             viewed: deep.clone(),
+            hold: None,
         };
         // The projection carries no share of its own, so every
         // transition-bearing operation still needs the authority the loan
@@ -4607,6 +4977,7 @@ mod tests {
             share: opening.root_share,
             support,
             viewed: nested_view.clone(),
+            hold: None,
         };
         let child = ledger.reborrow(parent, reader, borrower).unwrap();
         let ledger = ledger.apply(&child.transition).unwrap();
@@ -4661,6 +5032,7 @@ mod tests {
             share: opening.root_share,
             support,
             viewed: deep.clone(),
+            hold: None,
         };
         let grandchild = ledger.reborrow(projected_parent, reader, borrower).unwrap();
         let ledger = ledger.apply(&grandchild.transition).unwrap();
@@ -4722,6 +5094,7 @@ mod tests {
             share: opening.root_share,
             support,
             viewed: viewed.clone(),
+            hold: None,
         };
         let child = ledger.reborrow(parent, reader, borrower).unwrap();
         let ledger = ledger.apply(&child.transition).unwrap();
@@ -4786,6 +5159,7 @@ mod tests {
             share: opening.root_share,
             support,
             viewed: CResourceFact::view_composite("box".to_string(), Vec::new()),
+            hold: None,
         };
         let child = ledger.reborrow(parent, reader, owner).unwrap();
         let ledger = ledger.apply(&child.transition).unwrap();
@@ -4806,6 +5180,106 @@ mod tests {
         let ledger = ledger.apply(&end).unwrap();
         assert!(!ledger.has_active_memory_loans());
         assert!(ledger.invariant_holds());
+    }
+
+    /// A hold placed by a folded borrowing composite keeps the loan's scope
+    /// from ending, and therefore the owner from being recovered, until it is
+    /// released by the participant that placed it. It keeps the ledger
+    /// identity and mints nothing (step 7 in fix-views).
+    #[test]
+    fn a_hold_blocks_ending_the_scope_until_released_and_keeps_identity() {
+        let (ledger, owner, reader) = participants();
+        let assumptions = PureFactContext::new();
+        let escrow = CResourceFact::own_memory(parameter_range(31, 0, 1, 4));
+        let support = backing(&escrow);
+        let opening = ledger.lend(owner, reader, support, escrow.clone()).unwrap();
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        let binding = LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed: escrow.core().unwrap(),
+            hold: None,
+        };
+        let (held, hold) = ledger
+            .hold(&binding, reader)
+            .expect("the borrower may hold");
+        assert!(held.invariant_holds());
+        assert_eq!(held, ledger, "a hold keeps the ledger identity");
+        assert_eq!(held.held_scope(hold), Some(opening.scope));
+        // Nothing is minted: the held binding still authorizes exactly the
+        // same description, and no share can be derived from the hold.
+        assert!(held.permits_view(
+            reader,
+            &StableViewDescription {
+                loan: opening.loan,
+                support,
+                viewed: escrow.core().unwrap(),
+            },
+            opening.root_share,
+            &assumptions,
+        ));
+        let transfer = held.transfer(opening.root_share, reader, owner).unwrap();
+        let held = held.apply(&transfer).unwrap();
+        assert_eq!(
+            held.end(opening.scope, owner),
+            Err(LoanRefusal::ActiveDependency),
+            "a held scope cannot end"
+        );
+        assert_eq!(
+            held.release(hold, owner),
+            Err(LoanRefusal::WrongHolder),
+            "only the participant that placed the hold releases it"
+        );
+        let released = held.release(hold, reader).expect("release");
+        assert!(released.invariant_holds());
+        assert_eq!(released.held_scope(hold), None);
+        assert_eq!(
+            released.release(hold, reader),
+            Err(LoanRefusal::MissingScope),
+            "a hold is released once"
+        );
+        let end = released
+            .end(opening.scope, owner)
+            .expect("an unheld scope ends");
+        let released = released.apply(&end).unwrap();
+        let (recover, recovered_escrow, _) = released.recover(opening.loan, owner).unwrap();
+        let released = released.apply(&recover).unwrap();
+        assert_eq!(recovered_escrow, escrow);
+        assert!(released.invariant_holds());
+    }
+
+    /// A hold requires a live binding of its placer: a stale or foreign
+    /// binding is refused, and a contract-input root (which never ends) can
+    /// still be held so the fold inside a modular proof is recorded.
+    #[test]
+    fn a_hold_needs_a_live_binding_and_may_rest_on_a_contract_input_root() {
+        let (ledger, holder, other) = participants();
+        let viewed = CResourceFact::view_memory(parameter_range(32, 0, 1, 4));
+        let resources = ResourceContext::new().unchecked_with_fact(viewed.clone());
+        let support = resources.occurrences_for_fact(&viewed)[0];
+        let opening = ledger
+            .borrowed_contract_input(holder, support, viewed.clone(), None)
+            .unwrap();
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        let binding = LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed,
+            hold: None,
+        };
+        assert_eq!(
+            ledger.hold(&binding, other),
+            Err(LoanRefusal::MissingLoanBinding),
+            "the share is not held by `other`"
+        );
+        let (held, hold) = ledger.hold(&binding, holder).unwrap();
+        assert!(held.invariant_holds());
+        assert_eq!(held.held_scope(hold), Some(opening.scope));
+        assert_eq!(held, ledger);
     }
 
     /// A composite loan is a memory loan whether or not its one-level
@@ -4853,6 +5327,7 @@ mod tests {
             share: opening.root_share,
             support,
             viewed,
+            hold: None,
         };
         let child = ledger
             .reborrow(parent, holder, reader)
@@ -5012,7 +5487,10 @@ mod tests {
         )
         .unwrap();
         let planned_ledger = plan.ledger.clone();
-        let recovery = plan.clone().recover_stable_views(&assumptions).unwrap();
+        let recovery = plan
+            .clone()
+            .recover_stable_views(&assumptions, &BTreeMap::new(), &[])
+            .unwrap();
         let recovery_subject = recovery.diagnostic_subject();
         assert!(
             recovery_subject.loan_id().is_some()
@@ -5024,6 +5502,7 @@ mod tests {
             plan,
             recovery.ledger.clone(),
             recovery.terminal_ledger.clone(),
+            recovery.released_holds.clone(),
             recovery.transitions.clone(),
         );
         assert!(
@@ -5083,11 +5562,15 @@ mod tests {
             callee,
         )
         .unwrap();
-        let recovery = plan.clone().recover_stable_views(&assumptions).unwrap();
+        let recovery = plan
+            .clone()
+            .recover_stable_views(&assumptions, &BTreeMap::new(), &[])
+            .unwrap();
         let evidence = Arc::new(CheckedLoanCallEvidence::new(
             plan,
             recovery.ledger,
             recovery.terminal_ledger,
+            recovery.released_holds,
             recovery.transitions,
         ));
         let mut sequence = empty_checked_loan_evidence_sequence();
@@ -5134,12 +5617,13 @@ mod tests {
         .unwrap();
         let alternate_recovery = alternate_plan
             .clone()
-            .recover_stable_views(&assumptions)
+            .recover_stable_views(&assumptions, &BTreeMap::new(), &[])
             .unwrap();
         let alternate_evidence = Arc::new(CheckedLoanCallEvidence::new(
             alternate_plan,
             alternate_recovery.ledger,
             alternate_recovery.terminal_ledger,
+            alternate_recovery.released_holds,
             alternate_recovery.transitions,
         ));
         let mut separately_built_different = empty_checked_loan_evidence_sequence();
@@ -5167,11 +5651,15 @@ mod tests {
             callee,
         )
         .unwrap();
-        let recovery = plan.clone().recover_stable_views(&assumptions).unwrap();
+        let recovery = plan
+            .clone()
+            .recover_stable_views(&assumptions, &BTreeMap::new(), &[])
+            .unwrap();
         let evidence = Arc::new(CheckedLoanCallEvidence::new(
             plan,
             recovery.ledger,
             recovery.terminal_ledger,
+            recovery.released_holds,
             recovery.transitions,
         ));
         let mut samples = Vec::new();
@@ -5213,11 +5701,15 @@ mod tests {
             callee,
         )
         .unwrap();
-        let recovery = plan.clone().recover_stable_views(&assumptions).unwrap();
+        let recovery = plan
+            .clone()
+            .recover_stable_views(&assumptions, &BTreeMap::new(), &[])
+            .unwrap();
         let mut tampered = CheckedLoanCallEvidence::new(
             plan,
             recovery.ledger,
             recovery.terminal_ledger,
+            recovery.released_holds,
             recovery.transitions,
         );
         tampered.recovery_transitions.reverse();
@@ -5313,6 +5805,7 @@ mod tests {
             share: opening.root_share,
             support: opening.description.support(),
             viewed: memory(0, 4, false),
+            hold: None,
         };
         assert_eq!(
             ledger.reborrow(parent, owner, foreign_reader),
@@ -5579,11 +6072,15 @@ mod tests {
             )
             .unwrap();
             let planned_ledger = plan.ledger.clone();
-            let recovery = plan.clone().recover_stable_views(&assumptions).unwrap();
+            let recovery = plan
+                .clone()
+                .recover_stable_views(&assumptions, &BTreeMap::new(), &[])
+                .unwrap();
             let evidence = CheckedLoanCallEvidence::new(
                 plan,
                 recovery.ledger,
                 recovery.terminal_ledger,
+                recovery.released_holds,
                 recovery.transitions,
             );
             let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
@@ -5870,7 +6367,9 @@ mod tests {
                 .permits_memory_access(&memory(0, 4, false).memory_range().unwrap().clone())
                 .is_err()
         );
-        let recovery = plan.recover_stable_views(&assumptions).unwrap();
+        let recovery = plan
+            .recover_stable_views(&assumptions, &BTreeMap::new(), &[])
+            .unwrap();
         assert!(recovery.resources.satisfies_fact(&head, &assumptions));
         assert!(
             recovery
@@ -5910,11 +6409,115 @@ mod tests {
             ),
             &assumptions,
         ));
-        let recovery = plan.recover_stable_views(&assumptions).unwrap();
+        let recovery = plan
+            .recover_stable_views(&assumptions, &BTreeMap::new(), &[])
+            .unwrap();
         assert!(
             recovery
                 .resources
                 .satisfies_fact(&owned_units, &assumptions)
+        );
+    }
+
+    /// Step 7: a loan a produced borrowing composite escapes through is not
+    /// recovered at return; the caller keeps the escrow lent, holds the
+    /// loan through the composite's binding, and recovers the owner only
+    /// when a later call consumes the composite.
+    #[test]
+    fn escaping_borrow_keeps_the_loan_open_until_the_composite_is_consumed() {
+        let assumptions = PureFactContext::new();
+        let owner_fact = memory(0, 8, true);
+        let viewed = memory(0, 8, false);
+        let caller_resources = ResourceContext::new().unchecked_with_fact(owner_fact.clone());
+        let (ledger, caller, callee) = participants();
+        let plan = plan_stable_view_transfer(
+            &caller_resources,
+            &[checked(viewed.clone())],
+            &assumptions,
+            &ledger,
+            caller,
+            callee,
+        )
+        .expect("the view is lent from the owner");
+        let loan = plan.stable_views()[0].loan;
+        let head = composite("cursor", true);
+        let mut escaping = BTreeMap::new();
+        escaping.insert(loan, vec![head.clone()]);
+        let recovery = plan
+            .clone()
+            .recover_stable_views(&assumptions, &escaping, &[])
+            .expect("an escaping loan recovers open");
+        assert!(
+            recovery.recovered_escrows.is_empty(),
+            "the owner stays escrowed"
+        );
+        assert!(!recovery.resources.satisfies_fact(&owner_fact, &assumptions));
+        assert_eq!(recovery.escaped_holds.len(), 1);
+        let escaped = &recovery.escaped_holds[0];
+        assert_eq!(escaped.head, head);
+        let hold = escaped.binding.hold.expect("the composite carries a hold");
+        let open = recovery.ledger;
+        assert!(open.invariant_holds());
+        assert!(
+            open.has_active_memory_loans(),
+            "the lent bytes stay protected"
+        );
+        assert_eq!(
+            open.permits_memory_access_with_assumptions(
+                &memory(0, 8, true).memory_own_range().unwrap().clone(),
+                &assumptions
+            ),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        assert_eq!(open.held_scope(hold), Some(escaped.binding.scope));
+        assert_eq!(
+            open.end(escaped.binding.scope, caller),
+            Err(LoanRefusal::ActiveDependency),
+            "the held scope cannot be ended behind the composite's back"
+        );
+        assert_eq!(
+            recovery.terminal_ledger, open,
+            "the surviving loan keeps the terminal ledger"
+        );
+
+        // A later call consumes the composite: its hold is released, the
+        // root ends, and the owner comes back.
+        let next = plan_stable_view_transfer(
+            &recovery.resources,
+            &[],
+            &assumptions,
+            &open,
+            caller,
+            open.fresh_participant().unwrap(),
+        )
+        .expect("an empty plan on the open ledger");
+        let recovered = next
+            .recover_stable_views(
+                &assumptions,
+                &BTreeMap::new(),
+                std::slice::from_ref(&escaped.binding),
+            )
+            .expect("consuming the composite recovers the owner");
+        assert_eq!(
+            recovered.recovered_escrows,
+            vec![(owner_fact.clone(), None)]
+        );
+        assert!(
+            recovered
+                .resources
+                .satisfies_fact(&owner_fact, &assumptions)
+        );
+        assert!(recovered.ledger.invariant_holds());
+        assert!(!recovered.ledger.has_active_memory_loans());
+        assert_eq!(recovered.ledger.held_scope(hold), None);
+        assert!(
+            recovered
+                .ledger
+                .permits_memory_access_with_assumptions(
+                    &owner_fact.memory_own_range().unwrap().clone(),
+                    &assumptions
+                )
+                .is_ok()
         );
     }
 
@@ -5923,8 +6526,10 @@ mod tests {
         let (ledger, owner, reader) = participants();
         let head = composite("cell", true);
         let support = backing(&head);
-        // A nested composite child is admitted as a permitted description;
-        // a viewed piece is not a checked expansion of an owned head.
+        // A nested composite child is admitted as a permitted description,
+        // and so is a viewed piece: a borrowing composite packages a
+        // description its hold keeps stable (step 7). Neither carries byte
+        // backing of its own.
         let nested = composite("nested", true);
         assert!(
             CompositeLoanBacking::from_checked_expansion(support, head.clone(), vec![nested])
@@ -5936,18 +6541,17 @@ mod tests {
                 head.clone(),
                 vec![composite("nested", false)]
             )
-            .is_none()
+            .is_some()
         );
+        // A backing whose head is not the escrow is not this composite's
+        // checked expansion, whatever it was built from.
         let tampered = CompositeLoanBacking {
             support,
-            head,
-            pieces: vec![CResourceFact::View(CResource::Token {
-                name: "tampered".into(),
-                arguments: Vec::new().into(),
-            })],
+            head: composite("other", true),
+            pieces: Vec::new(),
         };
         let unsupported = ledger
-            .lend_composite(owner, reader, support, tampered.head.clone(), tampered)
+            .lend_composite(owner, reader, support, head, tampered)
             .expect_err("tampered composite backing must be refused");
         assert_eq!(
             unsupported
@@ -6039,12 +6643,18 @@ mod tests {
         }
         let planned_ledger = plan.ledger.clone();
         let rechecked = plan.recheck_entry(&ledger).unwrap();
-        let recovery = plan.recover_stable_views(&assumptions).unwrap();
+        let recovery = plan
+            .recover_stable_views(&assumptions, &BTreeMap::new(), &[])
+            .unwrap();
         assert!(recovery.resources.satisfies_fact(&owner, &assumptions));
         assert_eq!(recovery.transitions.len(), 3);
         assert_eq!(recovery.ledger, ledger);
         assert_eq!(rechecked, planned_ledger);
-        assert!(recovery.recheck_transitions(&planned_ledger).is_ok());
+        assert!(
+            recovery
+                .recheck_transitions(&planned_ledger, caller)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -6081,7 +6691,9 @@ mod tests {
                 .caller_resources_after_requirements
                 .satisfies_fact(&owner, &assumptions)
         );
-        let recovery = plan.recover_stable_views(&assumptions).unwrap();
+        let recovery = plan
+            .recover_stable_views(&assumptions, &BTreeMap::new(), &[])
+            .unwrap();
         assert!(recovery.resources.satisfies_fact(&owner, &assumptions));
         assert_eq!(recovery.ledger, ledger);
     }
@@ -6105,10 +6717,16 @@ mod tests {
         assert_ne!(plan.stable_views[0].support, plan.stable_views[1].support);
         let planned_ledger = plan.ledger.clone();
         assert_eq!(plan.recheck_entry(&ledger).unwrap(), planned_ledger);
-        let recovery = plan.recover_stable_views(&assumptions).unwrap();
+        let recovery = plan
+            .recover_stable_views(&assumptions, &BTreeMap::new(), &[])
+            .unwrap();
         assert_eq!(recovery.ledger, ledger);
         assert_eq!(recovery.transitions.len(), 6);
-        assert!(recovery.recheck_transitions(&planned_ledger).is_ok());
+        assert!(
+            recovery
+                .recheck_transitions(&planned_ledger, caller)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -6167,7 +6785,9 @@ mod tests {
                 .all(|fact| *fact != owner)
         );
         assert!(plan.callee_resources.satisfies_fact(&view, &assumptions));
-        let recovery = plan.recover_stable_views(&assumptions).unwrap();
+        let recovery = plan
+            .recover_stable_views(&assumptions, &BTreeMap::new(), &[])
+            .unwrap();
         assert_eq!(recovery.ledger, ledger);
         assert!(recovery.resources.satisfies_fact(&owner, &assumptions));
     }
@@ -6458,6 +7078,7 @@ mod tests {
             share: opening.root_share,
             support,
             viewed: parent_view.clone(),
+            hold: None,
         };
         let parent_resources = ResourceContext::new().unchecked_with_fact(parent_view.clone());
         let (occurrence, _) = parent_resources
@@ -6485,7 +7106,9 @@ mod tests {
             opening.root_share,
             &assumptions
         ));
-        let recovery = plan.recover_stable_views(&assumptions).unwrap();
+        let recovery = plan
+            .recover_stable_views(&assumptions, &BTreeMap::new(), &[])
+            .unwrap();
         assert_eq!(recovery.ledger, ledger);
         assert_eq!(recovery.view_bindings, parent_bindings);
         assert!(
@@ -6516,6 +7139,7 @@ mod tests {
             share: opening.root_share,
             support: opening.description.support(),
             viewed: parent_view,
+            hold: None,
         };
         let bindings = LoanViewBindings::default().with_inserted(occurrence, binding);
         let invalid = plan_stable_view_transfer_with_bindings(
@@ -6635,6 +7259,7 @@ mod tests {
             share: parent.root_share,
             support: parent.description.support(),
             viewed: memory(0, 8, false),
+            hold: None,
         };
         let child = ledger.reborrow(parent_binding, owner, reader).unwrap();
         let ledger = ledger.apply(&child.transition).unwrap();

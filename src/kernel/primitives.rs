@@ -4034,6 +4034,7 @@ struct StableLoanDependency<'a> {
     loan: usize,
     scope: usize,
     share: usize,
+    hold: Option<usize>,
 }
 
 /// Where a dependency's supporting occurrence lives, without naming its arena.
@@ -4072,12 +4073,14 @@ fn stable_loan_dependencies(context: &ResourceContext) -> Vec<StableLoanDependen
     let mut scopes = std::collections::BTreeMap::new();
     let mut shares = std::collections::BTreeMap::new();
     let mut supports = std::collections::BTreeMap::new();
+    let mut holds = std::collections::BTreeMap::new();
     ordered
         .into_iter()
         .map(|(entry, binding)| {
             let loan = first_appearance(&mut loans, binding.loan);
             let scope = first_appearance(&mut scopes, binding.scope);
             let share = first_appearance(&mut shares, binding.share);
+            let hold = binding.hold.map(|hold| first_appearance(&mut holds, hold));
             let support = match context.storage.entry_by_occurrence.get(&binding.support) {
                 Some(entry) => StableLoanSupport::Entry(*entry),
                 None => {
@@ -4091,6 +4094,7 @@ fn stable_loan_dependencies(context: &ResourceContext) -> Vec<StableLoanDependen
                 loan,
                 scope,
                 share,
+                hold,
             }
         })
         .collect()

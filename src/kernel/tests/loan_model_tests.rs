@@ -1513,6 +1513,7 @@ fn correspondence_calls_production_shared_reborrow_and_end_ordering() {
         share: opening.root_share,
         support: opening.description.support(),
         viewed: opening.description.viewed().clone(),
+        hold: None,
     };
     let child = ledger
         .reborrow(binding, parent_holder, child_holder)

@@ -1,6 +1,6 @@
 use super::loans::{
-    CheckedLoanCallEvidence, CompositeLoanBacking, CompositeProjectionEvidence, LoanLedger,
-    LoanRefusal, LoanRefusalOperation, LoanRefusalSubject, LoanViewBindings,
+    CheckedLoanCallEvidence, CompositeLoanBacking, CompositeProjectionEvidence, LoanId, LoanLedger,
+    LoanRefusal, LoanRefusalOperation, LoanRefusalSubject, LoanViewBinding, LoanViewBindings,
     StableViewTransferPlan, append_checked_loan_evidence, empty_checked_loan_evidence_sequence,
     plan_stable_view_transfer_with_bindings_and_composites,
 };
@@ -234,6 +234,16 @@ struct CFunctionResourceTransfer {
     /// Evaluated ensured views are retained even when ordinary return
     /// resource composition deduplicates them against caller ownership.
     candidate_output_views: Vec<CResourceFact>,
+    /// Each viewed piece in the one-level frontier of an ensured owned
+    /// composite, with that composite's head: the borrows a produced
+    /// composite packages, which the caller side binds to exactly one loan of
+    /// this call (step 7).
+    produced_borrowing_pieces: Vec<(CResourceFact, CResourceFact)>,
+    /// Whether the call was prepared under the candidate semantics at all. A
+    /// call with no view requirement and no caller ledger takes the legacy
+    /// planning route and has no plan, but a borrow it produces still has
+    /// to be backed by a loan of this call, which such a call cannot supply.
+    candidate_semantics: bool,
     /// Candidate stable-view transition, when this call was prepared through
     /// the opt-in planner. The plan owns the checked successor ledger and is
     /// consumed only after postconditions have been evaluated.
@@ -261,12 +271,17 @@ fn callee_state_with_resource_transfer(
         .with_loan_view_bindings(plan.callee_view_bindings().clone())
 }
 
+/// `output_assumptions` carries the call's certified output facts (the
+/// callee's ensures) on top of `assumptions`, for matching a produced
+/// composite's viewed pieces, which are evaluated at the post-state, against
+/// the descriptions lent at entry. It is not used to decide obligations.
 fn recover_candidate_stable_view_resources(
     caller_state: &CState,
     callee_state: &CState,
     transfer: &CFunctionResourceTransfer,
     return_resources: ResourceContext,
     assumptions: &PureFactContext,
+    output_assumptions: &PureFactContext,
     obligations: &[ProofObligation],
 ) -> Result<
     (
@@ -279,6 +294,13 @@ fn recover_candidate_stable_view_resources(
     CRuntimeError,
 > {
     let Some(plan) = &transfer.stable_view_plan else {
+        if transfer.candidate_semantics
+            && let Some((head, piece)) = transfer.produced_borrowing_pieces.first()
+        {
+            return Err(CRuntimeError::FunctionContract(format!(
+                "produced borrowing composite {head:?} packages a view {piece:?} that no viewed input of this call backs"
+            )));
+        }
         return Ok((
             return_resources,
             caller_state.loan_ledger().cloned(),
@@ -302,7 +324,13 @@ fn recover_candidate_stable_view_resources(
             LoanRefusal::WrongHolder.diagnostic(LoanRefusalOperation::Recovery),
         ));
     }
-    if !plan.has_stable_views() {
+    // A call with nothing lent still has step 7 work when it consumed a
+    // borrowing composite (its hold is released) or produced one (its
+    // borrow must be backed, which no loan of this call can do).
+    if !plan.has_stable_views()
+        && plan.transferred_holds.is_empty()
+        && transfer.produced_borrowing_pieces.is_empty()
+    {
         return Ok((
             return_resources,
             caller_state.loan_ledger().cloned(),
@@ -321,9 +349,84 @@ fn recover_candidate_stable_view_resources(
             "stable-view call has an undischarged return obligation".to_string(),
         ));
     }
+    // Escaping borrows (step 7). Every viewed piece a produced or returned
+    // owned composite packages must be backed by exactly one loan of this
+    // call: a view lent here (the composite keeps that loan open and holds
+    // it), or the hold binding the composite itself brought in (the callee
+    // returned it, so it keeps its borrow). None, or more than one, is
+    // refused: a composite describing memory no loan stabilizes would let
+    // the caller write or free what the composite still reads, and an
+    // ambiguous backing cannot be elided.
+    let mut escaping = std::collections::BTreeMap::<LoanId, Vec<CResourceFact>>::new();
+    let mut rebound_heads = Vec::<(CResourceFact, LoanViewBinding)>::new();
+    // A loan backs a piece when one of its permitted descriptions denotes
+    // the piece's resource under the certified output facts: the piece was
+    // evaluated at the post-state, where the composite's fields are fresh
+    // loads the ensures relate to the lent arguments.
+    let loan_backs_piece = |loan: LoanId, piece: &CResourceFact| {
+        plan.ledger
+            .permitted_descriptions(loan)
+            .iter()
+            .any(|permitted| {
+                permitted.is_view()
+                    && super::memory_provenance::c_resources_directly_match(
+                        permitted.resource(),
+                        piece.resource(),
+                        output_assumptions,
+                    )
+            })
+    };
+    for (head, piece) in &transfer.produced_borrowing_pieces {
+        let mut backing_loans = std::collections::BTreeSet::new();
+        let mut entering = None;
+        for stable_view in plan.stable_views() {
+            if loan_backs_piece(stable_view.loan, piece) {
+                backing_loans.insert(stable_view.loan);
+            }
+        }
+        for (_, binding) in &plan.transferred_holds {
+            if loan_backs_piece(binding.loan, piece) {
+                backing_loans.insert(binding.loan);
+                entering = Some(binding.clone());
+            }
+        }
+        match (backing_loans.len(), entering) {
+            (0, _) => {
+                return Err(CRuntimeError::FunctionContract(format!(
+                    "produced borrowing composite {head:?} packages a view {piece:?} that no viewed input of this call backs"
+                )));
+            }
+            (1, Some(binding)) => {
+                if !rebound_heads.iter().any(|(bound, _)| bound == head) {
+                    rebound_heads.push((head.clone(), binding));
+                }
+            }
+            (1, None) => {
+                let loan = backing_loans
+                    .into_iter()
+                    .next()
+                    .expect("one backing loan was counted");
+                let heads = escaping.entry(loan).or_default();
+                if !heads.contains(head) {
+                    heads.push(head.clone());
+                }
+            }
+            _ => {
+                return Err(CRuntimeError::FunctionContract(format!(
+                    "produced borrowing composite {head:?} packages a view {piece:?} that more than one viewed input of this call could back; the borrow cannot be elided"
+                )));
+            }
+        }
+    }
+    let consumed_holds = plan
+        .transferred_holds
+        .iter()
+        .filter(|(fact, _)| !return_resources.contains_exact_representation(fact))
+        .map(|(_, binding)| binding.clone())
+        .collect::<Vec<_>>();
     let recovery = plan
         .clone()
-        .recover_stable_views(assumptions)
+        .recover_stable_views(assumptions, &escaping, &consumed_holds)
         .map_err(|error| {
             error
                 .loan_diagnostic(LoanRefusalOperation::Recovery)
@@ -336,12 +439,13 @@ fn recover_candidate_stable_view_resources(
         plan.clone(),
         recovery.ledger.clone(),
         recovery.terminal_ledger.clone(),
+        recovery.released_holds.clone(),
         recovery.transitions.clone(),
     ));
     // Recheck the kernel-issued discharge evidence from the exact callee root
     // before installing the canonical predecessor root in the caller state.
     recovery
-        .recheck_transitions(actual_ledger)
+        .recheck_transitions(actual_ledger, plan.caller_participant())
         .map_err(|error| {
             CRuntimeError::LoanRefusal(error.diagnostic_with_subject(
                 LoanRefusalOperation::Recovery,
@@ -349,7 +453,6 @@ fn recover_candidate_stable_view_resources(
             ))
         })?;
     let recovered_ledger = recovery.ledger;
-    let mut recovered_resources = recovery.resources;
     let mut residual = return_resources;
     // A return view can only survive the call scope when it is one of the
     // checked child views that entered the call, when the caller already held
@@ -418,18 +521,55 @@ fn recover_candidate_stable_view_resources(
                 })?;
         }
     }
-    for fact in residual.facts() {
-        if !recovered_resources.satisfies_fact(fact, assumptions) {
-            recovered_resources = recovered_resources
-                .try_compose_with_fact(fact.clone(), assumptions)
-                .map_err(resource_context_runtime_error)?;
+    // The return residual carries the callee's outputs with their support
+    // bookkeeping: a core the return published as a projection of a produced
+    // owner is recorded against that owner's occurrence, so consuming the
+    // owner later drops it. Compose the recovered escrows into that residual
+    // rather than rebuilding the residual fact by fact, which would keep the
+    // facts and lose what supports them.
+    let mut recovered_resources = residual;
+    let mut recovered_bindings = recovery.view_bindings;
+    for (escrow, hold_binding) in recovery.recovered_escrows {
+        if recovered_resources.satisfies_fact(&escrow, assumptions) {
+            continue;
         }
+        let (next, occurrence) = recovered_resources
+            .try_compose_with_fact_with_occurrence(escrow, assumptions)
+            .map_err(resource_context_runtime_error)?;
+        recovered_resources = next;
+        // An escrowed borrowing composite keeps its hold binding across the
+        // call: the hold stayed in the ledger while the head was lent, and
+        // the recovered head is the occurrence that carries it again.
+        if let (Some(binding), Some(occurrence)) = (hold_binding, occurrence) {
+            recovered_resources =
+                recovered_resources.with_loan_dependency(occurrence, binding.clone());
+            recovered_bindings = recovered_bindings.with_inserted(occurrence, binding);
+        }
+    }
+    // The produced and returned borrowing composites carry their holds.
+    for (head, binding) in recovery
+        .escaped_holds
+        .into_iter()
+        .map(|escaped| (escaped.head, escaped.binding))
+        .chain(rebound_heads)
+    {
+        let Some(occurrence) = recovered_resources
+            .owned_occurrences_for_fact(&head)
+            .into_iter()
+            .find(|occurrence| recovered_resources.loan_dependency(*occurrence).is_none())
+        else {
+            return Err(CRuntimeError::FunctionContract(format!(
+                "produced borrowing composite {head:?} has no occurrence to carry its borrow"
+            )));
+        };
+        recovered_resources = recovered_resources.with_loan_dependency(occurrence, binding.clone());
+        recovered_bindings = recovered_bindings.with_inserted(occurrence, binding);
     }
     Ok((
         recovered_resources,
         Some(recovered_ledger),
         Some(plan.caller_participant()),
-        recovery.view_bindings,
+        recovered_bindings,
         Some(loan_evidence),
     ))
 }
@@ -2015,7 +2155,11 @@ fn execute_verified_function_applications(
             "verified function rule application",
             "verified call return resource evaluation",
         );
-        let (return_resources, returned_views) = match evaluate_contract_return_resources(
+        let ContractReturnResources {
+            return_resources,
+            ensured_views: returned_views,
+            produced_borrowing_pieces,
+        } = match evaluate_contract_return_resources(
             &caller_resources_after_requirements,
             escrowed_owners(&transfer),
             &entry_resource_state,
@@ -2038,6 +2182,7 @@ fn execute_verified_function_applications(
             }
         };
         transfer.candidate_output_views = returned_views;
+        transfer.produced_borrowing_pieces = produced_borrowing_pieces;
         drop(return_resource_timing);
         let return_resources = match activate_population_body_resources(
             return_resources,
@@ -2191,6 +2336,7 @@ fn execute_verified_function_applications(
             &transfer,
             return_resources,
             &effective_assumptions,
+            &assumptions_with_path_context(&effective_assumptions, &facts, &[]),
             &obligations,
         ) {
             Ok(recovered) => recovered,
@@ -4660,7 +4806,11 @@ fn checked_access_mode_refinement_adapter(
     let post = function_post
         .clone()
         .with_resource_context(function_resources);
-    let (returned, returned_views) = match evaluate_contract_return_resources(
+    let ContractReturnResources {
+        return_resources: returned,
+        ensured_views: returned_views,
+        produced_borrowing_pieces,
+    } = match evaluate_contract_return_resources(
         &transfer.caller_resources_after_requirements,
         escrowed_owners(&transfer),
         &caller,
@@ -4674,11 +4824,13 @@ fn checked_access_mode_refinement_adapter(
         Err(_) => return Ok(Some(false)),
     };
     transfer.candidate_output_views = returned_views;
+    transfer.produced_borrowing_pieces = produced_borrowing_pieces;
     if recover_candidate_stable_view_resources(
         &caller,
         &callee,
         &transfer,
         returned,
+        assumptions,
         assumptions,
         &[],
     )
@@ -10170,6 +10322,8 @@ fn prepare_contract_resource_transfer_with_candidate(
             memory_effects: Vec::new(),
             post_outputs: None,
             candidate_output_views: Vec::new(),
+            produced_borrowing_pieces: Vec::new(),
+            candidate_semantics: false,
             stable_view_plan: None,
             checked_view_frontier: Vec::new(),
         }));
@@ -10313,6 +10467,7 @@ fn prepare_contract_resource_transfer_with_candidate(
         })
         .cloned()
         .collect::<Vec<_>>();
+    let candidate_semantics = candidate_stable_view_semantics;
     let candidate_stable_view_semantics = candidate_stable_view_semantics
         && (caller_state.loan_ledger().is_some()
             || stable_requirements
@@ -10381,9 +10536,13 @@ fn prepare_contract_resource_transfer_with_candidate(
                         "could not check the frontier of a composite view".to_string(),
                     )));
                 };
+                // A viewed piece is a description the head packages (a
+                // borrowing composite, step 7): it has no owner here to
+                // escrow, so it enters the loan as a permitted description
+                // with no byte backing, protected by the hold its head keeps.
                 if expanded_children
                     .iter()
-                    .any(|fact| matches!(fact.resource(), CResource::Instance(_)) || !fact.is_own())
+                    .any(|fact| matches!(fact.resource(), CResource::Instance(_)))
                 {
                     return Ok(Err(CRuntimeError::FunctionContract(
                         "an exclusive instance inside a composite view is unsupported".to_string(),
@@ -10765,6 +10924,8 @@ fn prepare_contract_resource_transfer_with_candidate(
         memory_effects: Vec::new(),
         post_outputs: None,
         candidate_output_views: Vec::new(),
+        produced_borrowing_pieces: Vec::new(),
+        candidate_semantics,
         stable_view_plan,
         checked_view_frontier,
     }))
@@ -10866,7 +11027,7 @@ fn evaluate_function_return_resources(
     function: &CFunction,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Result<(ResourceContext, Vec<CResourceFact>), CRuntimeError>> {
+) -> ExecutionResult<Result<ContractReturnResources, CRuntimeError>> {
     evaluate_contract_return_resources(
         caller_resources_after_requirements,
         escrowed_owners,
@@ -10889,7 +11050,7 @@ fn evaluate_contract_return_resources(
     interface: &CFunctionContractInterface,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Result<(ResourceContext, Vec<CResourceFact>), CRuntimeError>> {
+) -> ExecutionResult<Result<ContractReturnResources, CRuntimeError>> {
     let ensured_resources = match crate::instrumentation::measure_operation(
         interface_name,
         "contract resource transition",
@@ -11060,7 +11221,47 @@ fn evaluate_contract_return_resources(
         destination_by_source_occurrence.insert(*source_occurrence, destination_occurrence);
     }
     let mut return_resources = return_resources;
+    let mut produced_borrowing_pieces = Vec::new();
     for (support, source_occurrence, expansion, projected) in projected_cores_by_support {
+        // Only the one-level frontier names the borrows this composite
+        // packages; a nested composite's own body is that composite's
+        // business (the 4b rule). A counted population is not a struct
+        // holding a borrow: its body is population-wide and enters the
+        // caller where the population is activated, so its viewed pieces
+        // keep the observation reading there rather than an escaping loan.
+        let is_population = match support.resource() {
+            CResource::Composite { name, .. } => {
+                support.owned_quantity_term() != Some(&Bitvector32Term::Constant(1))
+                    || post_state.observes_population_family(name)
+                    || entry_state.observes_population_family(name)
+                    || interface
+                        .composite_resource_definitions()
+                        .iter()
+                        .any(|definition| {
+                            definition.name() == name && definition.is_counted_population()
+                        })
+            }
+            _ => false,
+        };
+        if let Some((_, children, _)) = (!is_population)
+            .then(|| {
+                expand_composite_resource_fact_with_children(
+                    &ResourceContext::new().unchecked_with_fact(support.clone()),
+                    &support,
+                    interface.composite_resource_definitions(),
+                    post_state.memory(),
+                    assumptions,
+                )
+            })
+            .flatten()
+        {
+            produced_borrowing_pieces.extend(
+                children
+                    .into_iter()
+                    .filter(|piece| piece.is_view())
+                    .map(|piece| (support.clone(), piece)),
+            );
+        }
         let Some(support_occurrence) = destination_by_source_occurrence
             .get(&source_occurrence)
             .copied()
@@ -11082,7 +11283,18 @@ fn evaluate_contract_return_resources(
                 expansion,
             );
     }
-    Ok(Ok((return_resources, ensured_views)))
+    Ok(Ok(ContractReturnResources {
+        return_resources,
+        ensured_views,
+        produced_borrowing_pieces,
+    }))
+}
+
+/// The outputs of a contract's return-resource evaluation.
+pub(crate) struct ContractReturnResources {
+    pub(crate) return_resources: ResourceContext,
+    pub(crate) ensured_views: Vec<CResourceFact>,
+    pub(crate) produced_borrowing_pieces: Vec<(CResourceFact, CResourceFact)>,
 }
 
 /// Checks every produced or ensured composite's body against the context it
@@ -17149,7 +17361,11 @@ fn function_outcome_from_body_with_resource_transfer(
     let entry_resource_state =
         with_contract_argument_views(caller_state, function, argument_values);
     let mut transfer = transfer.clone();
-    let (return_resources, returned_views) = match crate::instrumentation::measure_operation(
+    let ContractReturnResources {
+        return_resources,
+        ensured_views: returned_views,
+        produced_borrowing_pieces,
+    } = match crate::instrumentation::measure_operation(
         function.name(),
         "contract resource transition",
         "return resource evaluation",
@@ -17179,6 +17395,7 @@ fn function_outcome_from_body_with_resource_transfer(
         Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations, None)),
     };
     transfer.candidate_output_views = returned_views;
+    transfer.produced_borrowing_pieces = produced_borrowing_pieces;
     match crate::instrumentation::measure_operation(
         function.name(),
         "contract resource transition",
@@ -17202,6 +17419,7 @@ fn function_outcome_from_body_with_resource_transfer(
             &state,
             &transfer,
             return_resources,
+            assumptions,
             assumptions,
             &obligations,
         ) {
@@ -18074,6 +18292,7 @@ mod candidate_stable_view_call_tests {
             &transfer,
             ResourceContext::new(),
             &PureFactContext::new(),
+            &PureFactContext::new(),
             &[],
         )
         .expect("composite return should recover");
@@ -18710,6 +18929,7 @@ mod candidate_stable_view_call_tests {
             &transfer,
             transfer.caller_resources_after_requirements.clone(),
             &PureFactContext::new(),
+            &PureFactContext::new(),
             &[],
         )
         .expect_err("recovery without a ledger must be refused");
@@ -18724,6 +18944,7 @@ mod candidate_stable_view_call_tests {
             &callee,
             &transfer,
             transfer.caller_resources_after_requirements.clone(),
+            &PureFactContext::new(),
             &PureFactContext::new(),
             &[],
         )
@@ -18824,6 +19045,7 @@ mod candidate_stable_view_call_tests {
                 &inner_callee,
                 &inner_transfer,
                 inner_transfer.caller_resources_after_requirements.clone(),
+                &PureFactContext::new(),
                 &PureFactContext::new(),
                 &[],
             )
@@ -18942,6 +19164,7 @@ mod candidate_stable_view_call_tests {
                 &inner_transfer,
                 ResourceContext::new().unchecked_with_fact(output.clone()),
                 &PureFactContext::new(),
+                &PureFactContext::new(),
                 &[],
             )
             .expect("outer view should authorize the wider returned view");
@@ -19043,6 +19266,7 @@ mod candidate_stable_view_call_tests {
             &callee_state_with_resource_transfer(callee_template, &transfer),
             &transfer,
             return_resources,
+            &PureFactContext::new(),
             &PureFactContext::new(),
             &[],
         )

@@ -222,6 +222,7 @@ fn arm_with_view_binding(
         share: opening.root_share,
         support,
         viewed,
+        hold: None,
     };
     let state = CState::new()
         .with_loan_ledger(Some(ledger.clone()))

@@ -208,6 +208,7 @@ fn owner_authorized_aggregate_copy_into_a_lent_range_is_refused() {
             share: opening.root_share,
             support,
             viewed,
+            hold: None,
         },
     );
     let state = CState::new()
@@ -289,6 +290,7 @@ fn owner_authorized_write_into_a_lent_range_is_refused() {
             share: opening.root_share,
             support,
             viewed,
+            hold: None,
         },
     );
     let state = CState::new()

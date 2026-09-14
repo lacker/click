@@ -5655,6 +5655,7 @@ mod tests {
             share: opening.root_share,
             support,
             viewed,
+            hold: None,
         };
         let state = CState::new()
             .with_loan_ledger(Some(ledger))

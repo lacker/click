@@ -2091,6 +2091,7 @@ fn install_borrowed_contract_inputs(
                 share: opening.root_share,
                 support: occurrence,
                 viewed,
+                hold: None,
             },
         );
         for piece in backing_pieces {
@@ -2113,6 +2114,7 @@ fn install_borrowed_contract_inputs(
                             share: opening.root_share,
                             support: occurrence,
                             viewed: piece,
+                            hold: None,
                         },
                     );
                 }
@@ -4295,6 +4297,7 @@ mod candidate_loan_authorization_tests {
             share: opening.root_share,
             support,
             viewed,
+            hold: None,
         };
         let lent = ledger
             .apply(&opening.transition)

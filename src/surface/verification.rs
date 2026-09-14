@@ -6463,6 +6463,182 @@ int32 copy_pair(struct pair* s, struct pair* t) {
         );
     }
 
+    const BORROWING_BOX_PRELUDE: &str = r#"
+verifying "reader.c";
+
+resource box(p: struct s*) {
+    owns p->a;
+    owns p->b;
+    owns p->d;
+    views p->d[0..p->b];
+    fact 0 <= p->b;
+}
+
+extern int32 setup(struct s* p, int32 d[], int32 n) {
+    requires 0 <= n;
+    consumes object(p);
+    views d[0..n];
+    produces box(p);
+    ensures p->b == n;
+    ensures p->d == d;
+}
+
+extern void drop_box(struct s* p) {
+    consumes box(p);
+    produces object(p);
+}
+"#;
+
+    const BORROWING_BOX_HEADER: &str = "struct s { int32 a; int32 b; int32* d; };\nint32 setup(struct s* p, int32 d[], int32 n);\nvoid drop_box(struct s* p);\n";
+
+    /// Step 7: a produced composite that packages a view of a lent input
+    /// keeps that input lent: the owner stays escrowed, so the caller has no
+    /// write authority over the array while the box describes it (the
+    /// write-authority check runs before the ledger, as in step 3).
+    #[test]
+    fn stable_mode_escaping_borrow_refuses_a_write_while_the_composite_lives() {
+        let click = format!(
+            "{BORROWING_BOX_PRELUDE}
+int32 f(struct s* p, int32 d[], int32 n) {{
+    requires 0 < n;
+    owns object(p);
+    owns d[0..n];
+    ensures result == 0;
+}}
+"
+        );
+        let source = format!(
+            "{BORROWING_BOX_HEADER}int32 f(struct s* p, int32 d[], int32 n) {{ setup(p, d, n); d[0] = 1; drop_box(p); return 0; }}"
+        );
+        let error = verify_in_stable_mode(&click, &source)
+            .expect_err("a write into memory a live borrowing composite views must be refused");
+        assert!(
+            error.message().contains("missing resource fact `owns "),
+            "{}",
+            error.message()
+        );
+    }
+
+    /// Consuming the composite releases its hold: the loan ends, the owner
+    /// is recovered, and the same write is accepted afterwards.
+    #[test]
+    fn stable_mode_consuming_the_composite_recovers_the_owner() {
+        let click = format!(
+            "{BORROWING_BOX_PRELUDE}
+int32 f(struct s* p, int32 d[], int32 n) {{
+    requires 0 < n;
+    owns object(p);
+    owns d[0..n];
+    ensures result == 0;
+}}
+"
+        );
+        let source = format!(
+            "{BORROWING_BOX_HEADER}int32 f(struct s* p, int32 d[], int32 n) {{ setup(p, d, n); drop_box(p); d[0] = 1; return 0; }}"
+        );
+        verify_in_stable_mode(&click, &source)
+            .expect("after the composite is consumed the owner is back");
+    }
+
+    /// Unfolding a held composite hands the hold to the restored piece, and
+    /// folding it back reuses that hold: the write stays refused while the
+    /// piece is out, and one consumption still releases everything.
+    #[test]
+    fn stable_mode_unfold_keeps_the_escaped_borrow_held() {
+        let refused = format!(
+            "{BORROWING_BOX_PRELUDE}
+int32 f(struct s* p, int32 d[], int32 n) {{
+    requires 0 < n;
+    owns object(p);
+    owns d[0..n];
+    ensures result == 0;
+}} by {{
+    step();
+    unfold(box(p));
+    step();
+    step();
+    step();
+    simp();
+}}
+"
+        );
+        let source = format!(
+            "{BORROWING_BOX_HEADER}int32 f(struct s* p, int32 d[], int32 n) {{ setup(p, d, n); d[0] = 1; drop_box(p); return 0; }}"
+        );
+        let error = verify_in_stable_mode(&refused, &source)
+            .expect_err("the unfolded piece still holds the loan");
+        assert!(
+            error.message().contains("missing resource fact `owns "),
+            "{}",
+            error.message()
+        );
+
+        let accepted = format!(
+            "{BORROWING_BOX_PRELUDE}
+int32 f(struct s* p, int32 d[], int32 n) {{
+    requires 0 < n;
+    owns object(p);
+    owns d[0..n];
+    ensures result == 0;
+}} by {{
+    step();
+    unfold(box(p));
+    fold(box(p));
+    step();
+    step();
+    step();
+    simp();
+}}
+"
+        );
+        let source = format!(
+            "{BORROWING_BOX_HEADER}int32 f(struct s* p, int32 d[], int32 n) {{ setup(p, d, n); drop_box(p); d[0] = 1; return 0; }}"
+        );
+        verify_in_stable_mode(&accepted, &source)
+            .expect("a refold reuses the hold, so one consumption releases it");
+    }
+
+    /// A produced composite whose viewed piece no viewed input of the call
+    /// backs describes memory nothing stabilizes; the call is refused.
+    #[test]
+    fn stable_mode_produced_borrowing_composite_without_a_backing_input_is_refused() {
+        let click = r#"
+verifying "reader.c";
+
+resource box(p: struct s*) {
+    owns p->a;
+    owns p->b;
+    owns p->d;
+    views p->d[0..p->b];
+    fact 0 <= p->b;
+}
+
+extern int32 conjure(struct s* p, int32 n) {
+    requires 0 <= n;
+    consumes object(p);
+    produces box(p);
+    ensures p->b == n;
+}
+
+int32 f(struct s* p, int32 n) {
+    requires 0 < n;
+    consumes object(p);
+    produces box(p);
+    ensures result == 0;
+}
+"#;
+        let source = "struct s { int32 a; int32 b; int32* d; };\nint32 conjure(struct s* p, int32 n);\nint32 f(struct s* p, int32 n) { conjure(p, n); return 0; }";
+        let error = verify_in_stable_mode(click, source)
+            .expect_err("a borrow with no source cannot be produced");
+        assert!(
+            error
+                .message()
+                .contains("no viewed input of this call backs"),
+            "{}",
+            error.message()
+        );
+    }
+
     /// A callee whose contract leaves allocation continuity undecided may
     /// deallocate; retiring the allocation must consult the ledger that
     /// carries this call's own loans, because lending has removed the owner

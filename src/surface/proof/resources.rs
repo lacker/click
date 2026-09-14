@@ -2907,6 +2907,21 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     } else {
         None
     };
+    // An owned borrowing composite carries the hold binding of the view it
+    // packages (step 7). Unfolding hands that binding, hold included, to the
+    // restored piece, so the loan stays held and a later fold reuses the
+    // same hold instead of placing another.
+    let held_piece_binding = if opening_view {
+        None
+    } else {
+        unique_borrowed_resource_dependency(&state, &abstract_resource)
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `unfold` refused ambiguous hold binding: {message}"
+                ))
+            })?
+            .filter(|binding| binding.hold.is_some())
+    };
     let (requested_population_name, requested_population_arguments) =
         match abstract_resource.resource() {
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
@@ -3241,6 +3256,38 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 })?;
             inserted_unfolded_occurrences = resources.1;
             state = state.with_resource_context(resources.0);
+        } else if let Some(binding) = held_piece_binding.as_ref() {
+            let (resources, inserted) = state
+                .resources()
+                .clone()
+                .try_compose_with_facts_delaying_normalization_with_occurrences(
+                    unfolded_facts.clone(),
+                    available_pure_facts.assumptions(),
+                )
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
+                        describe_resource_clause(resource),
+                        describe_resource_context_validity_error(error, parameters, arguments)
+                    ))
+                })?;
+            let assumptions = available_pure_facts.assumptions().clone();
+            let dependencies = inserted
+                .into_iter()
+                .filter(|(child, _)| {
+                    child.is_view()
+                        && crate::kernel::c_resources_directly_match(
+                            binding.viewed.resource(),
+                            child.resource(),
+                            &assumptions,
+                        )
+                })
+                // The binding keeps the loan's own description: that is what
+                // the ledger authorizes, and the piece's current spelling is
+                // related to it only through facts the ledger does not hold.
+                .map(|(_, occurrence)| (occurrence, binding.clone()))
+                .collect::<Vec<_>>();
+            state = state.with_resource_context_and_loan_dependencies(resources, dependencies);
         } else {
             let resources = state
                 .resources()
@@ -3922,11 +3969,34 @@ fn fold_composite_resources_on_outcome_with_facts(
                 &post_state,
                 &value,
             )?;
-            if body_loan_dependency.is_some() && !abstract_resource.is_view() {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` path {path_index}: `fold({})` cannot package a loan-backed viewed body as an owned composite",
-                    describe_resource_clause(resource)
-                )));
+            // An owned composite that packages a loan-backed view is a
+            // borrowing composite (step 7 in fix-views). Its head keeps the
+            // loan's scope open through a hold, so the owner behind the view
+            // cannot be recovered and written while the composite still
+            // describes it. A piece that already carries a hold (restored by
+            // an earlier unfold) is folded back under the same hold.
+            let mut body_loan_dependency = body_loan_dependency;
+            if let Some(binding) = body_loan_dependency.as_mut()
+                && !abstract_resource.is_view()
+                && binding.hold.is_none()
+            {
+                let (Some(ledger), Some(holder)) = (
+                    post_state.loan_ledger().cloned(),
+                    post_state.loan_participant(),
+                ) else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` path {path_index}: `fold({})` packages a loan-backed view without a loan ledger",
+                        describe_resource_clause(resource)
+                    )));
+                };
+                let (ledger, hold) = ledger.hold(binding, holder).map_err(|refusal| {
+                    ClickError::new(format!(
+                        "`{claim_label}` path {path_index}: `fold({})` cannot hold the loan behind its viewed body: {refusal:?}",
+                        describe_resource_clause(resource)
+                    ))
+                })?;
+                binding.hold = Some(hold);
+                post_state = post_state.with_loan_ledger(Some(ledger));
             }
             let (resources, inserted_occurrence) = post_state
                 .resources()
@@ -3941,19 +4011,23 @@ fn fold_composite_resources_on_outcome_with_facts(
                 })?;
             folded_authority_occurrence = inserted_occurrence;
             post_state = post_state.with_resource_context(resources);
-            if abstract_resource.is_view()
-                && let (Some(occurrence), Some(binding)) =
-                    (folded_authority_occurrence, body_loan_dependency.clone())
+            if let (Some(occurrence), Some(binding)) =
+                (folded_authority_occurrence, body_loan_dependency.clone())
             {
+                // A viewed fold describes the head itself under the loan; an
+                // owned fold keeps the packaged piece's description, which is
+                // what the loan authorizes and what an unfold restores.
+                let viewed = if abstract_resource.is_view() {
+                    abstract_resource.clone()
+                } else {
+                    binding.viewed.clone()
+                };
                 let resources = post_state.resources().clone();
                 post_state = post_state.with_resource_context_and_loan_dependencies(
                     resources,
                     [(
                         occurrence,
-                        crate::kernel::LoanViewBinding {
-                            viewed: abstract_resource.clone(),
-                            ..binding
-                        },
+                        crate::kernel::LoanViewBinding { viewed, ..binding },
                     )],
                 );
             }
@@ -4549,6 +4623,7 @@ mod v11_resource_dependency_tests {
             share: opening.root_share,
             support,
             viewed,
+            hold: None,
         }
     }
 
@@ -4616,6 +4691,7 @@ mod v11_resource_dependency_tests {
             share: opening.root_share,
             support,
             viewed: view.clone(),
+            hold: None,
         };
         // The borrower receives only the view; the lender's owned support
         // remains in the caller state that supplied the exact occurrence.
