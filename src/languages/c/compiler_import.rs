@@ -15,8 +15,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::compiler_process::{CompilerLimits, run_compiler};
 use super::provenance::CSourceMap;
+use crate::languages::compiler_process::{CompilerLimits, run_compiler};
 
 const SCHEMA: u32 = 1;
 const TARGET: &str = "x86_64-linux-kernel";

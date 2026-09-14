@@ -23,7 +23,7 @@ commands:\n  \
   profile  measure verification and identify slow tactics\n  \
   expand   replace one smart tactic with its checked simple certificate\n  \
   audit    check expansion across a project or repository\n  \
-  import   prepare and lock compiler-selected C sources";
+  import   prepare and lock compiler-selected sources";
 
 fn main() {
     if let Err(message) = entry(env::args().skip(1)) {

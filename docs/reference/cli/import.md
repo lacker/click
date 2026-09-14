@@ -3,7 +3,9 @@
 Compiler imports let a sidecar verify the C selected by a configured compiler
 preprocessor. Click still parses and lowers the resulting C and independently
 checks its proofs. This mode is explicit and separate from the existing bounded
-source-bundle preprocessor.
+source-bundle preprocessor. The same command also refreshes the preliminary
+typed C++ artifact described below; that artifact is not connected to
+verification yet.
 
 ```text
 usage: click import lock <sidecar.click>
@@ -55,6 +57,48 @@ Lock creation is source preparation, not proof verification. The C parser can
 still reject an unsupported construct when a proof tool loads the prepared
 translation unit. No C declarations, function bodies, storage, attributes, or
 assembly are silently deleted to make an import pass.
+
+## Preliminary C++ semantic artifact
+
+The first C++ frontend boundary accepts one header-free C++20 source containing
+one selected function of this exact shape:
+
+```cpp
+int increment(int& value) noexcept {
+    value = value + 1;
+    return value;
+}
+```
+
+Its import configuration explicitly sets `"language": "c++"`, the standard
+to `c++20`, target to `x86_64-unknown-linux-gnu`, exceptions and RTTI to false,
+and paths for the pinned exporter, working directory, `.cpp` source, logical
+source, selected function, and semantic artifact. `click import lock` executes
+the repository-owned Clang 19.1.7 LibTooling exporter and records the source,
+exporter, profile, artifact, and configuration identities.
+
+```json
+{
+  "schema": 1,
+  "language": "c++",
+  "standard": "c++20",
+  "target": "x86_64-unknown-linux-gnu",
+  "exceptions": false,
+  "rtti": false,
+  "exporter": "target/cpp-exporter/click-cpp-exporter",
+  "working_directory": ".",
+  "source": "increment.cpp",
+  "logical_source": "increment.cpp",
+  "function": "increment",
+  "artifact": "increment.cpp.click-cpp.json"
+}
+```
+
+Loading through the C++ library boundary subsequently validates the source,
+lock, and typed artifact without locating or running Clang. This separation is
+intentional: compiler execution belongs to explicit refresh. Verifier lowering,
+sidecar binding, constructors, destructors, and broader C++ syntax remain
+outside this first artifact-only slice.
 
 ## Validation and supported profile
 

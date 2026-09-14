@@ -1,4 +1,4 @@
-//! Owned, bounded execution of the external preprocessing dependency.
+//! Owned, bounded execution of external compiler frontend dependencies.
 //!
 //! This module never interprets command strings. Every exit, including a
 //! successful compiler exit with a surviving descendant, cleans up the owned
@@ -11,19 +11,19 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct CompilerLimits {
+pub(crate) struct CompilerLimits {
     pub timeout: Duration,
     pub max_stdout_bytes: usize,
     pub max_stderr_bytes: usize,
 }
 
 #[derive(Debug)]
-pub(super) struct CompilerOutput {
+pub(crate) struct CompilerOutput {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
 }
 
-pub(super) fn run_compiler(
+pub(crate) fn run_compiler(
     executable: &Path,
     arguments: &[String],
     cwd: &Path,

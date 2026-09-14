@@ -45,7 +45,7 @@ debugging that genuinely needs complete internal terms can opt in with
 Run the full suite with:
 
 ```sh
-cargo test
+scripts/check.sh
 ```
 
 Run the markdown proof fixtures with:
@@ -73,14 +73,30 @@ These fixtures cover compiler conditional selection, token pasting and macro
 rescanning, contextual headers, configured system dependencies, stale locks,
 artifact tampering, import identity, and original-source diagnostics. They do
 not claim that the complete captured Linux translation unit verifies.
+
+The gate also builds `tools/cpp-exporter/main.cpp` against exactly Clang and
+LLVM 19.1.7, then runs `tests/cpp_import.rs`. Set `LLVM_CONFIG` when the pinned
+`llvm-config` is not installed in a standard versioned location. On macOS,
+Homebrew's `llvm@19` package provides the expected toolchain. The Linux CI job
+installs the pinned development packages before entering the network-free
+gate.
+
+The C++ fixture refreshes a typed artifact for one header-free C++20 function,
+then makes the exporter unavailable and loads the artifact again. This checks
+the intended phase boundary: explicit refresh executes Clang, while ordinary
+loading validates only the config, source, lock, and stored semantic artifact.
+Missing Clang development tooling fails the gate, and unsupported C++ does not
+fall back to the C parser.
+
 ## What the gate runs
 
 `scripts/check.sh` is the single source of truth for "is this tree green", and
 CI runs exactly that script. In order it runs `cargo fmt --check`, then
 `cargo clippy --all-targets -- -D warnings`, then the mdBook render and the
 docs lint, then `cargo nextest run --lib --bins --test documentation`, then
-the mdtest and example fixture harnesses one after the other, each verifying
-its fixtures on every core. Judge the verdict from the script's exit status.
+the mdtest, example, C compiler-import, and C++ semantic-import fixture
+harnesses one after the other. The proof fixtures verify their inputs on every
+core. Judge the verdict from the script's exit status.
 
 The tree is clippy-clean, so a new diagnostic belongs to the change that
 introduced it. When a lint is wrong about a deliberate design, silence exactly

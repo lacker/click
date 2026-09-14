@@ -7,7 +7,7 @@ click verify   Verify a sidecar, proof unit, project, or examples directory.
 click profile  Measure verification and identify slow tactics.
 click expand   Replace smart proof source with a checked explicit proof.
 click audit    Check expansion across a project or repository.
-click import   Create or refresh a compiler-preprocessed source lock.
+click import   Create or refresh a compiler-produced source artifact.
 ```
 
 Use `click --help` for the command list and `click COMMAND --help` for exact

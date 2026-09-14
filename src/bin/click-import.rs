@@ -1,7 +1,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-use click::languages::c::compiler_import::create_lock;
+use click::languages::refresh_compiler_import;
 
 const USAGE: &str = "usage: click import lock <sidecar.click>\n\nCreates the checked compiler import artifact and sidecar.click.import.lock.json.";
 
@@ -23,7 +23,7 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
         return Ok(());
     }
     let path = parse_arguments(arguments)?;
-    create_lock(&path)
+    refresh_compiler_import(&path)
 }
 
 fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<PathBuf, String> {
