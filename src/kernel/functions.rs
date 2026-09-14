@@ -2017,6 +2017,7 @@ fn execute_verified_function_applications(
         );
         let (return_resources, returned_views) = match evaluate_contract_return_resources(
             &caller_resources_after_requirements,
+            escrowed_owners(&transfer),
             &entry_resource_state,
             &output_resource_state,
             name,
@@ -2038,8 +2039,23 @@ fn execute_verified_function_applications(
         };
         transfer.candidate_output_views = returned_views;
         drop(return_resource_timing);
-        let return_resources =
-            activate_population_body_resources(return_resources, &population_transition);
+        let return_resources = match activate_population_body_resources(
+            return_resources,
+            &population_transition,
+            &effective_assumptions,
+        ) {
+            Ok(resources) => resources,
+            Err(error) => {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
+                });
+                continue;
+            }
+        };
         transfer.post_outputs = Some(return_resources);
         let return_resources = transfer
             .post_outputs
@@ -4646,6 +4662,7 @@ fn checked_access_mode_refinement_adapter(
         .with_resource_context(function_resources);
     let (returned, returned_views) = match evaluate_contract_return_resources(
         &transfer.caller_resources_after_requirements,
+        escrowed_owners(&transfer),
         &caller,
         &post,
         "refinement",
@@ -10727,8 +10744,21 @@ fn evaluate_contract_return_resource_context(
     Ok(Ok(context))
 }
 
+/// The owned facts a candidate call's lend escrowed. They are not in the
+/// caller residual for the duration of the call, but recovery composes each
+/// one back, so a check on what the caller will hold has to read them.
+fn escrowed_owners(transfer: &CFunctionResourceTransfer) -> &[CResourceFact] {
+    transfer
+        .stable_view_plan
+        .as_ref()
+        .map(|plan| plan.escrowed_owners())
+        .unwrap_or_default()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn evaluate_function_return_resources(
     caller_resources_after_requirements: &ResourceContext,
+    escrowed_owners: &[CResourceFact],
     entry_state: &CState,
     post_state: &CState,
     function: &CFunction,
@@ -10737,6 +10767,7 @@ fn evaluate_function_return_resources(
 ) -> ExecutionResult<Result<(ResourceContext, Vec<CResourceFact>), CRuntimeError>> {
     evaluate_contract_return_resources(
         caller_resources_after_requirements,
+        escrowed_owners,
         entry_state,
         post_state,
         function.name(),
@@ -10746,8 +10777,10 @@ fn evaluate_function_return_resources(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn evaluate_contract_return_resources(
     caller_resources_after_requirements: &ResourceContext,
+    escrowed_owners: &[CResourceFact],
     entry_state: &CState,
     post_state: &CState,
     interface_name: &str,
@@ -10773,6 +10806,34 @@ fn evaluate_contract_return_resources(
         Ok(resources) => resources,
         Err(error) => return Ok(Err(error)),
     };
+    // A composite arrives folded, so composing its head says nothing about
+    // what its body covers. Check the body against the destination before the
+    // head enters it, or a contract that produces a composite over bytes the
+    // destination still owns turns one owner into two.
+    if let Some(error) = crate::instrumentation::measure_operation(
+        interface_name,
+        "contract resource transition",
+        "ensured composite frontier check",
+        || {
+            // A lend empties the escrowed owner out of the residual, and
+            // recovery composes it straight back. The destination for this
+            // check is what the caller holds across the call, so the escrow
+            // belongs in it; without it the candidate semantics would admit
+            // exactly the overlap the legacy residual catches.
+            let destination = caller_resources_after_requirements
+                .clone()
+                .unchecked_with_facts(escrowed_owners.iter().cloned());
+            produced_composite_frontier_conflict(
+                &destination,
+                &ensured_resources,
+                interface.composite_resource_definitions(),
+                post_state.memory(),
+                assumptions,
+            )
+        },
+    ) {
+        return Ok(Err(error));
+    }
     let ensured_views = ensured_resources
         .facts()
         .iter()
@@ -10920,6 +10981,143 @@ fn evaluate_contract_return_resources(
             );
     }
     Ok(Ok((return_resources, ensured_views)))
+}
+
+/// Checks every produced or ensured composite's body against the context it
+/// is about to be composed into.
+///
+/// A valid resource context denotes a partition: every owned fact is disjoint
+/// from every other fact in it, composites included. Inside one component the
+/// kernel keeps that by construction, because unfolding consumes the head and
+/// folding consumes the pieces. A callee's output crosses that boundary as a
+/// folded head whose body was never compared with what the destination holds,
+/// so without this check `produces box(p)` beside a caller that still owns
+/// `p[0..1]` leaves two owners over the same byte.
+///
+/// Only the one-level checked frontier is compared. A nested composite child
+/// is itself a fact here, not a body to reason inside; that is the same
+/// "no reasoning inside composites" rule the composite lend follows.
+fn produced_composite_frontier_conflict(
+    destination: &ResourceContext,
+    ensured: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &PureFactContext,
+) -> Option<CRuntimeError> {
+    for produced in ensured.facts() {
+        let CResource::Composite { name, .. } = produced.resource() else {
+            continue;
+        };
+        if !produced.is_own() {
+            continue;
+        }
+        // A counted population's body is population-wide, not per unit: it is
+        // installed once when the population becomes nonempty and retired
+        // when it empties, by the counted-population transition. Its units
+        // carry nothing of their own, and the ensured context adds the units
+        // a contract returns as a borrow to the ones it produces, so a
+        // quantity above one is ordinary here. The body is checked where it
+        // is actually installed, in `activate_population_body_resources`.
+        if definitions
+            .iter()
+            .any(|definition| definition.name() == name && definition.is_counted_population())
+        {
+            continue;
+        }
+        let singleton = ResourceContext::new().unchecked_with_fact(produced.clone());
+        // An opaque head — no definition, an instance schema, a matched arm,
+        // or a guard this path has not decided — exposes no frontier to
+        // compare, and expansion is the only thing that could name one.
+        let Some((_, frontier, _)) = expand_composite_resource_fact_with_children(
+            &singleton,
+            produced,
+            definitions,
+            memory,
+            assumptions,
+        ) else {
+            continue;
+        };
+        // A token-only body holds no memory, instance, or nested composite a
+        // destination fact could overlap: token units are a count, and counts
+        // add rather than collide.
+        if !frontier.iter().any(|piece| {
+            piece.is_own()
+                && matches!(
+                    piece.resource(),
+                    CResource::Memory(_) | CResource::Instance(_) | CResource::Composite { .. }
+                )
+        }) {
+            continue;
+        }
+        // The frontier was evaluated for one unit, and an ordinary composite
+        // has no population-wide body to install instead: every unit owns the
+        // same bytes this one does. Two such units are already two owners of
+        // one range, and a symbolic count is not a quantity the check below
+        // could compare against the destination at all. Refuse rather than
+        // check one unit and call the rest checked.
+        if produced
+            .owned_quantity_term()
+            .and_then(Bitvector32Term::as_const)
+            != Some(1)
+        {
+            return Some(CRuntimeError::FunctionContract(format!(
+                "a produced quantity of `{name}` other than one owns memory in its \
+                 body, so its units would own the same range more than once"
+            )));
+        }
+        // The pieces are a checked composition, so they are already disjoint
+        // from one another: one validity check over the whole frontier
+        // decides the composite, and only a refusal pays to name the piece.
+        let Some(error) = destination
+            .clone()
+            .unchecked_with_facts(frontier.iter().cloned())
+            .validity_error(assumptions)
+        else {
+            continue;
+        };
+        let piece = frontier
+            .iter()
+            .find(|piece| {
+                destination
+                    .clone()
+                    .unchecked_with_fact((*piece).clone())
+                    .validity_error(assumptions)
+                    .is_some()
+            })
+            .unwrap_or(produced);
+        let held =
+            conflicting_destination_fact(destination, &error).unwrap_or_else(|| piece.clone());
+        return Some(CRuntimeError::ProducedCompositeOverlapsHeldResource {
+            produced: Box::new(produced.clone()),
+            piece: Box::new(piece.clone()),
+            held: Box::new(held),
+        });
+    }
+    None
+}
+
+/// Names the destination fact a frontier piece collides with, so the refusal
+/// can point at both sides rather than at a bare range.
+fn conflicting_destination_fact(
+    destination: &ResourceContext,
+    error: &ResourceContextValidityError,
+) -> Option<CResourceFact> {
+    match error {
+        ResourceContextValidityError::InvalidInstanceAccess(fact)
+        | ResourceContextValidityError::DuplicateOwnedResourceFact(fact) => Some(fact.clone()),
+        // The two overlapping ranges are reported in index order, so the
+        // destination's own range may be either side.
+        ResourceContextValidityError::OverlappingOwnedMemoryResources { left, right } => {
+            destination
+                .facts()
+                .iter()
+                .find(|held| {
+                    held.memory_own_range()
+                        .is_some_and(|range| range == left || range == right)
+                })
+                .cloned()
+        }
+    }
 }
 
 fn counted_population_quantities(
@@ -11143,16 +11341,28 @@ fn apply_counted_population_transition_resources(
 fn activate_population_body_resources(
     mut resources: ResourceContext,
     transition: &CCountedPopulationTransition,
-) -> ResourceContext {
+    assumptions: &PureFactContext,
+) -> Result<ResourceContext, CRuntimeError> {
     for resource in &transition.activated_body_resources {
         if !resources.facts().contains(resource) {
             // The folded units and this body are two parts of one declared
             // population representation. The body is installed once when
             // that population becomes nonempty; it is not another unit.
-            resources = resources.unchecked_with_fact(resource.clone());
+            //
+            // This is the one place a counted population's body enters a
+            // destination context, and it is where that body is checked
+            // against what the destination already holds. A population whose
+            // body covers bytes the caller still owns would otherwise leave
+            // two owners of one range, exactly as a produced composite head
+            // would.
+            let installed = resources.clone().unchecked_with_fact(resource.clone());
+            if let Some(error) = installed.validity_error(assumptions) {
+                return Err(resource_context_runtime_error(error));
+            }
+            resources = installed;
         }
     }
-    resources
+    Ok(resources)
 }
 
 fn apply_counted_population_transitions(
@@ -16827,6 +17037,7 @@ fn function_outcome_from_body_with_resource_transfer(
         || {
             evaluate_function_return_resources(
                 &caller_resources_after_requirements,
+                escrowed_owners(&transfer),
                 &entry_resource_state,
                 &output_resource_state,
                 function,
@@ -17852,6 +18063,80 @@ mod candidate_stable_view_call_tests {
             ),
         );
         assert!(plan_composite_lend(&counted).is_err());
+    }
+
+    /// A callee that views `p[0..1]` and, in the same contract, produces a
+    /// composite whose body is that same range. Whatever the caller lent, it
+    /// gets back: composing the produced head beside it would leave the caller
+    /// owning `p[0..1]` twice, once directly and once inside `zz_box3(p)`.
+    fn view_and_produce_reader(name: &str) -> CFunction {
+        let segment = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        let produced = CResourceSpec::declared(
+            ResourceFamily::Composite,
+            CResourceAccessMode::Own,
+            "zz_box3".into(),
+            vec![c_variable("p")],
+            vec![CType::Int32Pointer],
+            CResourceTransferRole::Produce,
+            CResourceSnapshot::Post,
+        )
+        .unwrap();
+        let definition = CCompositeResourceDefinition::new(
+            "zz_box3",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            None,
+            false,
+            vec![CResourceSpec::owned_memory(segment.clone())],
+            Vec::new(),
+        );
+        c_function(
+            CType::Int32,
+            name,
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(c_load(c_variable("p"))),
+        )
+        .with_resource_summary(vec![CResourceSpec::viewed_memory(segment)], vec![produced])
+        .with_composite_resource_definitions(vec![definition])
+    }
+
+    #[test]
+    fn produced_composite_over_a_viewed_owner_is_refused_in_both_modes() {
+        for candidate in [false, true] {
+            let pointer = pointer();
+            let function = view_and_produce_reader("candidate_view_and_produce");
+            let mut environment =
+                CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
+                    function: function.clone(),
+                });
+            if candidate {
+                environment = environment.with_candidate_stable_view_semantics();
+            }
+            let paths = execute_c_function_call_paths(
+                &caller(&pointer),
+                &function,
+                &[c_pointer_value(pointer)],
+                &PureFactContext::new(),
+                &environment,
+                CExecutionSemantics::APPLY_VERIFIED_RULES,
+                &mut ExecutionBudget::new(),
+            )
+            .expect("the call should execute");
+            assert!(
+                paths.iter().all(|path| matches!(
+                    &path.outcome,
+                    CFunctionOutcome::RuntimeError(error) if produced_composite_overlap(error)
+                )),
+                "candidate = {candidate}: {:?}",
+                paths.iter().map(|path| &path.outcome).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    fn produced_composite_overlap(error: &CRuntimeError) -> bool {
+        matches!(
+            error,
+            CRuntimeError::ProducedCompositeOverlapsHeldResource { .. }
+        )
     }
 
     #[test]

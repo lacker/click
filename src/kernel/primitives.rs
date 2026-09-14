@@ -2729,6 +2729,15 @@ pub enum CRuntimeError {
         left: Box<CMemoryRange>,
         right: Box<CMemoryRange>,
     },
+    /// A callee's produced or ensured composite carries a body that overlaps
+    /// a resource the destination context already holds. Composing the head
+    /// would leave two owners over the same bytes, so the context would stop
+    /// denoting a partition.
+    ProducedCompositeOverlapsHeldResource {
+        produced: Box<CResourceFact>,
+        piece: Box<CResourceFact>,
+        held: Box<CResourceFact>,
+    },
     LoanRefusal(crate::kernel::LoanRefusalDiagnostic),
 }
 

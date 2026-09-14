@@ -1183,6 +1183,9 @@ pub(in crate::kernel) fn describe_certification_runtime_error(error: &CRuntimeEr
         CRuntimeError::OverlappingOwnedMemoryResources { .. } => {
             "two owned memory resource clauses overlap".to_string()
         }
+        CRuntimeError::ProducedCompositeOverlapsHeldResource { .. } => {
+            "a produced composite's body overlaps a resource the caller already holds".to_string()
+        }
         CRuntimeError::LoanRefusal(diagnostic) => format_loan_refusal_diagnostic(diagnostic),
     }
 }

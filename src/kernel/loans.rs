@@ -1133,6 +1133,11 @@ pub(crate) struct StableViewTransferPlan {
     caller: LoanParticipantId,
     callee: LoanParticipantId,
     loan_roots: Vec<(LoanScopeId, LoanId, LoanShareId, ResourceOccurrenceId, bool)>,
+    /// The owned facts this plan escrowed and will hand back at recovery.
+    /// A lend empties them out of the caller residual, so a check that reads
+    /// the residual alone would not see what the caller still holds across
+    /// the call.
+    escrowed_owners: Vec<CResourceFact>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1727,6 +1732,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
     }
 
     let mut loan_roots = Vec::new();
+    let mut escrowed_owners = Vec::new();
     let mut planned_ledger = ledger.clone();
     let mut entry_transitions = Vec::new();
     let mut grouped = BTreeMap::<ResourceOccurrenceId, Vec<(usize, CCheckedResourceFact)>>::new();
@@ -1848,6 +1854,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                 support,
                 true,
             ));
+            escrowed_owners.push(selected.clone());
             let mut owner_occurrences = BTreeMap::<LoanViewBinding, ResourceOccurrenceId>::new();
             for (index, requirement) in cluster {
                 let description = planned_ledger
@@ -2053,6 +2060,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
                 support,
                 true,
             ));
+            escrowed_owners.push(selected.clone());
             let mut owner_occurrences = BTreeMap::<LoanViewBinding, ResourceOccurrenceId>::new();
             for (index, requirement) in cluster {
                 let description = planned_ledger
@@ -2183,6 +2191,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
         caller,
         callee,
         loan_roots,
+        escrowed_owners,
     })
 }
 
@@ -2205,6 +2214,13 @@ impl StableViewTransferPlan {
 
     pub(crate) fn stable_views(&self) -> &[PlannedStableView] {
         &self.stable_views
+    }
+
+    /// The owned facts a lend escrowed out of the caller residual. Recovery
+    /// composes each one back, so a caller-side check on the residual has to
+    /// read them too or it will treat lent ownership as gone.
+    pub(crate) fn escrowed_owners(&self) -> &[CResourceFact] {
+        &self.escrowed_owners
     }
 
     pub(crate) fn callee_view_bindings(&self) -> &LoanViewBindings {

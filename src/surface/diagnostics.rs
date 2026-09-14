@@ -739,6 +739,17 @@ pub(super) fn describe_runtime_error(
             describe_memory_range(left, parameters, arguments),
             describe_memory_range(right, parameters, arguments)
         ),
+        crate::kernel::CRuntimeError::ProducedCompositeOverlapsHeldResource {
+            produced,
+            piece,
+            held,
+        } => format!(
+            "produced composite `{}` overlaps a resource the caller already holds: \
+             its body `{}` overlaps `{}`",
+            describe_c_resource(produced.resource(), parameters, arguments),
+            describe_resource_fact(piece, parameters, arguments),
+            describe_resource_fact(held, parameters, arguments)
+        ),
         crate::kernel::CRuntimeError::LoanRefusal(diagnostic) => {
             describe_loan_refusal(diagnostic, parameters, arguments)
         }
