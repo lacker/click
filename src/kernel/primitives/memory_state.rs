@@ -1833,7 +1833,9 @@ impl CMemory {
             preserved_blocks.contains(&pointer.block)
                 || ledger.is_some_and(|ledger| {
                     if byte_width == 0 {
-                        return true;
+                        // Nothing proved this cell stable; keeping its value
+                        // would be a fail-open promise (F9 in fix-views).
+                        return false;
                     }
                     ledger
                         .permits_memory_access(&CMemoryRange::new_with_element_width(
@@ -2023,7 +2025,9 @@ impl CMemory {
             preserved_blocks.contains(&pointer.block)
                 || ledger.is_some_and(|ledger| {
                     if byte_width == 0 {
-                        return true;
+                        // Nothing proved this cell stable; keeping its value
+                        // would be a fail-open promise (F9 in fix-views).
+                        return false;
                     }
                     ledger
                         .permits_memory_access(&CMemoryRange::new_with_element_width(

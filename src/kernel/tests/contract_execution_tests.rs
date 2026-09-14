@@ -172,6 +172,93 @@ fn borrowed_contract_input_rejects_derived_or_ambiguous_views() {
     assert_eq!(refusal.category(), LoanRefusalCategory::Missing);
 }
 
+/// The aggregate-copy path is the same shape at a wider width: the copy's
+/// target is owned, its source is readable, and the lent range inside the
+/// target refuses the whole-struct write at the ledger (R01 aggregate case;
+/// F12 in fix-views).
+#[test]
+fn owner_authorized_aggregate_copy_into_a_lent_range_is_refused() {
+    let target = Pointer {
+        block: "target".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let source = Pointer {
+        block: "source".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let owned_target = own_memory_fact(target.clone(), 0, 2);
+    let owned_source = own_memory_fact(source.clone(), 0, 2);
+    let viewed = view_memory_fact(target.clone(), 1, 2);
+    let resources =
+        ResourceContext::new().unchecked_with_facts([owned_target, owned_source, viewed.clone()]);
+    let support = resources.occurrences_for_fact(&viewed)[0];
+    let ledger = crate::kernel::loans::LoanLedger::new();
+    let participant = ledger.fresh_participant().expect("a fresh participant");
+    let opening = ledger
+        .borrowed_contract_input(participant, support, viewed.clone(), None)
+        .expect("a checked contract input root");
+    let ledger = ledger
+        .apply(&opening.transition)
+        .expect("the input root applies");
+    let bindings = crate::kernel::loans::LoanViewBindings::default().with_inserted(
+        support,
+        crate::kernel::loans::LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed,
+        },
+    );
+    let state = CState::new()
+        .with_resource_context(resources)
+        .with_loan_ledger(Some(ledger))
+        .with_loan_participant(Some(participant))
+        .with_loan_view_bindings(bindings);
+    let layout = CAggregateLayout::new(
+        8,
+        4,
+        vec![
+            CAggregateField::new("a", 0, CType::Int32),
+            CAggregateField::new("b", 4, CType::Int32),
+        ],
+    );
+    let function = c_function(
+        CType::Void,
+        "copy_struct_over_lent_field",
+        vec![
+            c_parameter("s", CType::Int32Pointer),
+            c_parameter("t", CType::Int32Pointer),
+        ],
+        c_copy_aggregate(c_variable("s"), c_variable("t"), layout),
+    );
+    let arguments = vec![c_pointer_value(target.clone()), c_pointer_value(source)];
+    let theorem = prove_symbolic_c_function_execution_with_environment(
+        state,
+        function,
+        arguments,
+        PureFactContext::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .expect("an owner-authorized aggregate copy over a lent field has a checked outcome");
+    let Proposition::CFunctionExecutes { outcome, .. } = theorem.proposition() else {
+        panic!("expected a function execution proposition");
+    };
+    let CFunctionOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)) = outcome else {
+        panic!("expected a loan refusal, got {outcome:?}");
+    };
+    assert_eq!(diagnostic.category(), LoanRefusalCategory::ActiveDependency);
+    assert_eq!(
+        diagnostic.operation(),
+        crate::kernel::LoanRefusalOperation::MemoryAccess
+    );
+    assert_eq!(
+        diagnostic.subject().conflicting_resource_fact(),
+        Some(&view_memory_fact(target, 1, 2))
+    );
+}
+
 /// The loan barrier exists for exactly one shape: a write the ordinary
 /// owned-authority check already accepted, landing inside a concretely lent
 /// range. An unowned write never reaches it, because the missing-ownership

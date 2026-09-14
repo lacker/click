@@ -148,6 +148,56 @@ fn abstract_join_rejects_divergent_loan_roots_without_scanning_ledgers() {
     assert!(error.contains("stable-view loan state"));
 }
 
+/// R22: one arm returns its access and recovers the owner, the other keeps
+/// its share. These are alternative states, not pieces to add together, so
+/// the join refuses rather than handing the continuation unconditional
+/// ownership. Both arms holding the same recovered ledger join normally.
+#[test]
+fn abstract_join_rejects_a_loan_ended_on_only_one_arm() {
+    let (ledger, owner, reader) = ledger_with_participants();
+    let (fact, support) = token_with_support("lent");
+    let opening = ledger.lend(owner, reader, support, fact).expect("loan");
+    let lent = ledger.apply(&opening.transition).expect("lent successor");
+    let transfer = lent
+        .transfer(opening.root_share, reader, owner)
+        .expect("the reader returns its share");
+    let returned = lent.apply(&transfer).expect("returned successor");
+    let end = returned
+        .end(opening.scope, owner)
+        .expect("the owner closes");
+    let ended = returned.apply(&end).expect("ended successor");
+    let (recover, _, _) = ended
+        .recover(opening.loan, owner)
+        .expect("the owner recovers");
+    let recovered = ended.apply(&recover).expect("recovered successor");
+
+    let kept = CState::new().with_loan_ledger(Some(lent.clone()));
+    let closed = CState::new().with_loan_ledger(Some(recovered.clone()));
+    let error = abstract_c_state_for_join_across(
+        &closed,
+        &[&closed, &kept],
+        &std::collections::BTreeMap::new(),
+    )
+    .expect_err("a loan ended on one arm only must not join into ownership");
+    assert!(error.contains("stable-view loan state"), "{error}");
+    let error = abstract_c_state_for_join_across(
+        &kept,
+        &[&kept, &closed],
+        &std::collections::BTreeMap::new(),
+    )
+    .expect_err("arm order does not matter");
+    assert!(error.contains("stable-view loan state"), "{error}");
+
+    let closed_too = CState::new().with_loan_ledger(Some(recovered.clone()));
+    let joined = abstract_c_state_for_join_across(
+        &closed,
+        &[&closed, &closed_too],
+        &std::collections::BTreeMap::new(),
+    )
+    .expect("both arms recovered the same way");
+    assert_eq!(joined.loan_ledger(), closed.loan_ledger());
+}
+
 /// One arm state holding a checked view of `name`, rooted in a fresh loan
 /// taken from `ledger`. The state keeps `ledger` itself, so two arms built
 /// this way differ only in their occurrence bindings.

@@ -3531,7 +3531,9 @@ impl LoanLedger {
                         true,
                     )?;
                 }
-                if !parent_loan.memory_backing.is_empty() {
+                // Counted by the same predicate `End` decrements with, so a
+                // reborrow of a byte-less composite loan is conserved.
+                if loan_protects_memory(&parent_loan.memory_backing, &parent_loan.permitted) {
                     data.active_memory_loans = data
                         .active_memory_loans
                         .checked_add(1)
@@ -3882,6 +3884,21 @@ impl LoanLedger {
             }
         }
         if expected_unindexed != actual_unindexed {
+            return false;
+        }
+        // The fail-closed barrier counter is exactly the number of live loans
+        // that protect memory, whether or not they enumerated any bytes.
+        let expected_active_memory_loans = data
+            .loans
+            .iter()
+            .filter(|(_, loan)| {
+                data.scopes
+                    .get(&loan.scope)
+                    .is_some_and(|scope| scope.active)
+                    && loan_protects_memory(&loan.memory_backing, &loan.permitted)
+            })
+            .count();
+        if data.active_memory_loans != expected_active_memory_loans {
             return false;
         }
         for (loan_id, loan) in data.loans.iter() {
@@ -4299,6 +4316,55 @@ mod tests {
             ended.project(owner, opening.loan, &nested_view, deep),
             Err(LoanRefusal::ScopeEnded)
         );
+    }
+
+    /// A reborrow of a byte-less composite loan is counted and uncounted by
+    /// the same predicate, so ending the child leaves the parent's
+    /// contribution to the fail-closed barrier in place (F2 in fix-views).
+    #[test]
+    fn ending_a_reborrow_of_a_byteless_composite_loan_keeps_the_barrier_armed() {
+        let (ledger, owner, reader) = participants();
+        let head = CResourceFact::own(CResource::Composite {
+            name: "box".to_string(),
+            arguments: Vec::new().into(),
+        });
+        let piece = owned("box_token");
+        let support = backing(&head);
+        let backing =
+            CompositeLoanBacking::from_checked_expansion(support, head.clone(), vec![piece])
+                .expect("a token-only frontier is a checked expansion");
+        let opening = ledger
+            .lend_composite(owner, reader, support, head.clone(), backing)
+            .expect("composite lend");
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        assert!(ledger.has_active_memory_loans());
+        assert!(ledger.invariant_holds());
+        let parent = LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed: CResourceFact::view_composite("box".to_string(), Vec::new()),
+        };
+        let child = ledger.reborrow(parent, reader, owner).unwrap();
+        let ledger = ledger.apply(&child.transition).unwrap();
+        assert!(ledger.has_active_memory_loans());
+        assert!(ledger.invariant_holds());
+        let transfer = ledger.transfer(child.root_share, owner, reader).unwrap();
+        let ledger = ledger.apply(&transfer).unwrap();
+        let end = ledger.end(child.scope, reader).unwrap();
+        let ledger = ledger.apply(&end).unwrap();
+        assert!(
+            ledger.has_active_memory_loans(),
+            "the parent composite loan is still live"
+        );
+        assert!(ledger.invariant_holds());
+        let transfer = ledger.transfer(opening.root_share, reader, owner).unwrap();
+        let ledger = ledger.apply(&transfer).unwrap();
+        let end = ledger.end(opening.scope, owner).unwrap();
+        let ledger = ledger.apply(&end).unwrap();
+        assert!(!ledger.has_active_memory_loans());
+        assert!(ledger.invariant_holds());
     }
 
     /// A composite loan is a memory loan whether or not its one-level

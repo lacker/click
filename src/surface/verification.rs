@@ -6431,8 +6431,12 @@ int32 reader(int32 p[]) {
         verify_in_stable_mode(click, source).expect("both claims certify at one shared root");
     }
 
-    /// A whole-struct assignment through a rooted view is a write into the
-    /// lent range; the aggregate-copy path consults the ledger too.
+    /// A whole-struct assignment through a rooted view has no owner behind
+    /// it (the entry root refuses an owner beside a viewed input), so the
+    /// write-authority check that precedes the ledger names the missing
+    /// owner exactly. The ledger-level aggregate witness, an owner-authorized
+    /// copy over a lent field, is
+    /// `owner_authorized_aggregate_copy_into_a_lent_range_is_refused`.
     #[test]
     fn stable_mode_root_view_refuses_an_aggregate_copy_into_it() {
         let click = r#"
@@ -6451,8 +6455,50 @@ int32 copy_pair(struct pair* s, struct pair* t) {
         let error = verify_in_stable_mode(click, source)
             .expect_err("an aggregate copy into a contract input view must be refused");
         assert!(
-            error.message().contains("active loan")
-                || error.message().contains("missing resource fact"),
+            error
+                .message()
+                .contains("missing resource fact `owns s[0..1]`"),
+            "{}",
+            error.message()
+        );
+    }
+
+    /// A callee whose contract leaves allocation continuity undecided may
+    /// deallocate; retiring the allocation must consult the ledger that
+    /// carries this call's own loans, because lending has removed the owner
+    /// from the preserved residual (F1 in fix-views).
+    #[test]
+    fn stable_mode_undecided_continuity_retire_refuses_a_lent_allocation() {
+        let click = r#"
+verifying "reader.c";
+
+extern uint8* external_alloc(int32 bytes) {
+    requires 0 < bytes;
+    ensures result != 0;
+    produces allocation(result, bytes);
+    produces result[0..bytes];
+}
+
+extern void realloc_like(uint8* p, int32 n) {
+    views p[0..4];
+    consumes allocation(p, 4);
+    produces allocation(p, n);
+}
+
+extern void drop_alloc(uint8* p, int32 n) {
+    consumes allocation(p, n);
+    consumes p[0..4];
+}
+
+int32 f(int32 n) {
+    ensures result == 7;
+}
+"#;
+        let source = "uint8* external_alloc(int32 bytes);\nvoid realloc_like(uint8* p, int32 n);\nvoid drop_alloc(uint8* p, int32 n);\nint32 f(int32 n) { uint8* data; int32 value; data = external_alloc(4); data[0] = 7; realloc_like(data, n); value = data[0]; drop_alloc(data, n); return value; }";
+        let error = verify_in_stable_mode(click, source)
+            .expect_err("a call that may deallocate a lent allocation must be refused");
+        assert!(
+            error.message().contains("active loan"),
             "{}",
             error.message()
         );

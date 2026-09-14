@@ -7493,6 +7493,39 @@ mod allocation_continuity_tests {
     }
 }
 
+/// A callee that retires an allocation identity, by a definite free or by a
+/// contract that leaves continuity undecided, gives up every byte of it; a
+/// live loan over any of those bytes forbids that exactly as a direct `free`
+/// would (D6, D10). Every retire path consults the ledger that carries this
+/// call's own loans, because lending has already removed the owner from the
+/// preserved caller residual.
+fn refuse_retiring_a_lent_allocation(
+    ledger: Option<&LoanLedger>,
+    base: &Pointer,
+    bytes: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> Result<(), VerifiedAllocationDeltaError> {
+    let Some(ledger) = ledger else {
+        return Ok(());
+    };
+    let whole_allocation = CMemoryRange::new_with_element_width(
+        base.clone(),
+        Bitvector32Term::Constant(0),
+        bytes.clone(),
+        1,
+    );
+    match ledger.memory_access_refusal(
+        &whole_allocation,
+        assumptions,
+        LoanRefusalOperation::MemoryAccess,
+    ) {
+        Some(diagnostic) => Err(VerifiedAllocationDeltaError::Runtime(
+            CRuntimeError::LoanRefusal(diagnostic),
+        )),
+        None => Ok(()),
+    }
+}
+
 fn apply_verified_heap_allocation_delta(
     mut memory: CMemory,
     input_resources: &ResourceContext,
@@ -7619,6 +7652,10 @@ fn apply_verified_heap_allocation_delta(
                         },
                     ));
                 }
+                // Lending removed the owner from the preserved residual, so
+                // the scan above cannot see a view the caller still holds
+                // over these bytes; the ledger can (F1 in fix-views).
+                refuse_retiring_a_lent_allocation(ledger, &base, &bytes, &allocation_assumptions)?;
                 memory = memory.retire_contract_heap_allocation_claim(&base);
                 continue;
             }
@@ -7642,26 +7679,7 @@ fn apply_verified_heap_allocation_delta(
                 },
             ));
         }
-        // A callee that retires an allocation frees every byte of it; a live
-        // loan over any of those bytes forbids that exactly as a direct
-        // `free` would (D6, D10).
-        if let Some(ledger) = ledger {
-            let whole_allocation = CMemoryRange::new_with_element_width(
-                base.clone(),
-                Bitvector32Term::Constant(0),
-                bytes.clone(),
-                1,
-            );
-            if let Some(diagnostic) = ledger.memory_access_refusal(
-                &whole_allocation,
-                &allocation_assumptions,
-                LoanRefusalOperation::MemoryAccess,
-            ) {
-                return Err(VerifiedAllocationDeltaError::Runtime(
-                    CRuntimeError::LoanRefusal(diagnostic),
-                ));
-            }
-        }
+        refuse_retiring_a_lent_allocation(ledger, &base, &bytes, &allocation_assumptions)?;
         let before_free = memory.clone();
         if memory.live_heap_block_size(&base).is_none() {
             memory = memory
