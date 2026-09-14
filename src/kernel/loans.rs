@@ -1581,28 +1581,32 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
     let mut entry_transitions = Vec::new();
     let mut grouped = BTreeMap::<ResourceOccurrenceId, Vec<(usize, CCheckedResourceFact)>>::new();
     let mut rebound = BTreeMap::<LoanViewBinding, Vec<(usize, CCheckedResourceFact)>>::new();
+    // Owner occurrences that must back a view whose byte bounds are not
+    // concrete.  The concrete sweep below cannot order such a range, so the
+    // covering owner itself becomes the single lent backing for everything
+    // grouped under it.  See `symbolic_covering_owner`.
+    let mut symbolic_covering_owner = BTreeMap::<ResourceOccurrenceId, CResourceFact>::new();
     for (index, requirement) in requirements.iter().enumerate() {
         if !requirement.fact.is_view() {
             continue;
         }
-        if let Some(range) = requirement.fact.memory_range()
-            && (range.start().as_const().is_none() || range.end().as_const().is_none())
-        {
-            // The ordered sweep below is intentionally concrete-only.  A
-            // symbolic family needs an explicit separation/overlap proof;
-            // treating its ordering as an index decision would manufacture
-            // a loan union without checked byte bounds.
-            return Err(StableViewPlanError::UnsupportedPartition);
-        }
         let view_occurrences =
             caller_resources.view_occurrences_for_fact(&requirement.fact, assumptions);
-        if !view_occurrences.is_empty() {
-            let Some(binding) = view_occurrences
-                .iter()
-                .find_map(|occurrence| parent_view_bindings.get(occurrence).cloned())
-            else {
-                return Err(StableViewPlanError::Loan(LoanRefusal::MissingLoanBinding));
-            };
+        let binding = view_occurrences
+            .iter()
+            .find_map(|occurrence| parent_view_bindings.get(occurrence).cloned());
+        if binding.is_none()
+            && !view_occurrences.is_empty()
+            && caller_resources
+                .directly_supporting_owned_entry(&requirement.fact, assumptions)
+                .is_none()
+        {
+            // A view description with no live loan binding carries no
+            // authority (law 4), so it can neither be reborrowed nor stand in
+            // for backing that the caller does not hold.
+            return Err(StableViewPlanError::Loan(LoanRefusal::MissingLoanBinding));
+        }
+        if let Some(binding) = binding {
             ledger.validate_view_binding(binding.clone(), caller)?;
             if !ResourceContext::new()
                 .unchecked_with_fact(binding.viewed.clone())
@@ -1638,6 +1642,21 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
             }
             CResource::Memory(_) | CResource::Token { .. } => {}
         }
+        if requirement.fact.memory_range().is_some_and(|range| {
+            range.start().as_const().is_none() || range.end().as_const().is_none()
+        }) {
+            // A symbolic view range is plannable exactly when one owned
+            // occurrence already covers it: the entailment above is the
+            // checked coverage witness, and the whole covering owner becomes
+            // the loan backing.  Law 8 forbids inferring anything else here,
+            // so no residual split and no separation from a sibling
+            // requirement is assumed; every requirement grouped under this
+            // owner shares the one loan.
+            let CResource::Memory(_) = owned.resource() else {
+                return Err(StableViewPlanError::UnsupportedPartition);
+            };
+            symbolic_covering_owner.insert(support, owned.clone());
+        }
         grouped
             .entry(support)
             .or_default()
@@ -1645,7 +1664,85 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
     }
 
     let mut planned_views = Vec::<(usize, PlannedStableView)>::new();
-    for (_origin_support, group) in grouped {
+    for (origin_support, group) in grouped {
+        // A group that must serve a symbolic range is lent whole: one loan
+        // for the covering owner, one cluster holding every requirement it
+        // supports.  Clustering by proven overlap is unavailable here, and
+        // guessing that two symbolic ranges are separate would create two
+        // escrows for bytes that unknown aliasing can share (law 8).  The
+        // owner's authority is fully suspended, so nothing is left writable.
+        if let Some(covering) = symbolic_covering_owner.get(&origin_support) {
+            let cluster = group;
+            let selected = covering.clone();
+            let (support, owned) = residual
+                .clone()
+                .directly_supporting_owned_entry(&selected, assumptions)
+                .map(|(support, owned)| (support, owned.clone()))
+                .ok_or_else(|| StableViewPlanError::ConflictingRequirement(selected.clone()))?;
+            if support != origin_support {
+                // The exclusive reservations above already took this owner,
+                // or an equal-looking occurrence would be lent instead of the
+                // one the coverage was checked against.
+                return Err(StableViewPlanError::ConflictingRequirement(selected));
+            }
+            let opening = planned_ledger.lend(caller, callee, support, selected.clone())?;
+            entry_transitions.push(opening.transition.clone());
+            planned_ledger = planned_ledger.apply(&opening.transition)?;
+            residual = residual
+                .without_fact_incrementally(&selected, assumptions)
+                .ok_or_else(|| StableViewPlanError::MissingResource(owned.clone()))?;
+            loan_roots.push((
+                opening.scope,
+                opening.loan,
+                opening.root_share,
+                support,
+                true,
+            ));
+            let mut owner_occurrences = BTreeMap::<LoanViewBinding, ResourceOccurrenceId>::new();
+            for (index, requirement) in cluster {
+                let description = planned_ledger
+                    .describe_view(opening.loan, requirement.fact.clone(), assumptions)
+                    .map_err(|_| {
+                        StableViewPlanError::ConflictingRequirement(requirement.fact.clone())
+                    })?;
+                let binding = LoanViewBinding {
+                    loan: opening.loan,
+                    scope: opening.scope,
+                    share: opening.root_share,
+                    support,
+                    viewed: requirement.fact.clone(),
+                };
+                let (next_resources, occurrence) = callee_resources
+                    .try_compose_with_fact_with_occurrence(requirement.fact.clone(), assumptions)
+                    .map_err(|_| StableViewPlanError::InvalidResidual)?;
+                let occurrence = occurrence
+                    .or_else(|| owner_occurrences.get(&binding).copied())
+                    .or_else(|| {
+                        next_resources
+                            .view_occurrences_for_fact(&requirement.fact, assumptions)
+                            .into_iter()
+                            .find(|occurrence| {
+                                callee_view_bindings.get(occurrence) == Some(&binding)
+                            })
+                    })
+                    .ok_or(StableViewPlanError::InvalidResidual)?;
+                callee_resources = next_resources;
+                owner_occurrences.insert(binding.clone(), occurrence);
+                callee_view_bindings = callee_view_bindings.with_inserted(occurrence, binding);
+                planned_views.push((
+                    index,
+                    PlannedStableView {
+                        requirement,
+                        support,
+                        loan: opening.loan,
+                        scope: opening.scope,
+                        share: opening.root_share,
+                        description,
+                    },
+                ));
+            }
+            continue;
+        }
         let mut clusters: Vec<Vec<(usize, CCheckedResourceFact)>> = Vec::new();
         // Keep the union beside each memory cluster.  Recomputing it by
         // walking the whole cluster on every merge made a chain of
@@ -5102,7 +5199,7 @@ mod tests {
     }
 
     #[test]
-    fn joint_planner_refuses_symbolic_partition_without_consuming_state() {
+    fn joint_planner_refuses_an_uncovered_symbolic_view_without_consuming_state() {
         let assumptions = PureFactContext::new();
         let owner = memory(0, 8, true);
         let caller_resources = ResourceContext::new().unchecked_with_fact(owner.clone());
@@ -5113,18 +5210,119 @@ mod tests {
             Bitvector32Term::Constant(4),
             false,
         );
+        // Nothing bounds the symbolic start, so the concrete owner does not
+        // entail the requested range and there is no backing to select.
         assert_eq!(
             plan_stable_view_transfer(
                 &caller_resources,
-                &[checked(symbolic)],
+                &[checked(symbolic.clone())],
                 &assumptions,
                 &ledger,
                 caller,
                 callee,
             ),
-            Err(StableViewPlanError::UnsupportedPartition)
+            Err(StableViewPlanError::MissingResource(symbolic))
         );
         assert!(ledger.shares_storage_with(&before));
+    }
+
+    #[test]
+    fn joint_planner_backs_a_covered_symbolic_view_with_its_whole_owner() {
+        let assumptions = PureFactContext::new();
+        let end = Bitvector32Term::Variable(Variable(71_002));
+        let owner = symbolic_memory(Bitvector32Term::Constant(0), end.clone(), true);
+        let caller_resources = ResourceContext::new().unchecked_with_fact(owner.clone());
+        let (ledger, caller, callee) = participants();
+        let view = symbolic_memory(Bitvector32Term::Constant(0), end, false);
+        let plan = plan_stable_view_transfer(
+            &caller_resources,
+            &[checked(view.clone())],
+            &assumptions,
+            &ledger,
+            caller,
+            callee,
+        )
+        .expect("a covering owner backs a symbolic view range");
+        assert_eq!(plan.stable_views.len(), 1);
+        assert_eq!(plan.stable_views[0].requirement.fact, view);
+        // The whole covering owner is escrowed: the algebra cannot split a
+        // symbolic range, so no writable remainder may be left behind.
+        assert!(
+            plan.caller_resources_after_requirements
+                .facts()
+                .iter()
+                .all(|fact| *fact != owner)
+        );
+        assert!(plan.callee_resources.satisfies_fact(&view, &assumptions));
+        let recovery = plan.recover_stable_views(&assumptions).unwrap();
+        assert_eq!(recovery.ledger, ledger);
+        assert!(recovery.resources.satisfies_fact(&owner, &assumptions));
+    }
+
+    #[test]
+    fn joint_planner_shares_one_loan_between_two_covered_symbolic_views() {
+        let assumptions = PureFactContext::new();
+        let end = Bitvector32Term::Variable(Variable(71_003));
+        let owner = symbolic_memory(Bitvector32Term::Constant(0), end.clone(), true);
+        let caller_resources = ResourceContext::new().unchecked_with_fact(owner);
+        let (ledger, caller, callee) = participants();
+        let first = symbolic_memory(Bitvector32Term::Constant(0), end.clone(), false);
+        let second = symbolic_memory(Bitvector32Term::Constant(0), end, false);
+        let plan = plan_stable_view_transfer(
+            &caller_resources,
+            &[checked(first), checked(second)],
+            &assumptions,
+            &ledger,
+            caller,
+            callee,
+        )
+        .expect("two covered symbolic views share the covering owner");
+        // Law 8: unknown aliasing between the two requested ranges may not be
+        // resolved into two escrows of the same bytes.
+        assert_eq!(plan.entry_transitions.len(), 1);
+        assert_eq!(plan.stable_views.len(), 2);
+        assert_eq!(plan.stable_views[0].loan, plan.stable_views[1].loan);
+    }
+
+    #[test]
+    fn joint_planner_refuses_an_unbound_view_the_caller_does_not_own() {
+        let assumptions = PureFactContext::new();
+        let caller_resources = ResourceContext::new().unchecked_with_fact(memory(0, 8, false));
+        let (ledger, caller, callee) = participants();
+        // A view description with no loan binding is not authority, and no
+        // owner covers the requirement either.
+        assert_eq!(
+            plan_stable_view_transfer(
+                &caller_resources,
+                &[checked(memory(0, 4, false))],
+                &assumptions,
+                &ledger,
+                caller,
+                callee,
+            ),
+            Err(StableViewPlanError::Loan(LoanRefusal::MissingLoanBinding))
+        );
+    }
+
+    #[test]
+    fn joint_planner_lends_from_the_owner_beside_an_unbound_view_description() {
+        let assumptions = PureFactContext::new();
+        let owner = memory(0, 8, true);
+        let caller_resources = ResourceContext::new()
+            .unchecked_with_fact(owner)
+            .unchecked_with_fact(memory(0, 8, false));
+        let (ledger, caller, callee) = participants();
+        let plan = plan_stable_view_transfer(
+            &caller_resources,
+            &[checked(memory(0, 4, false))],
+            &assumptions,
+            &ledger,
+            caller,
+            callee,
+        )
+        .expect("the owner backs the view that the stale description cannot");
+        assert_eq!(plan.stable_views.len(), 1);
+        assert_eq!(plan.entry_transitions.len(), 1);
     }
 
     #[test]
