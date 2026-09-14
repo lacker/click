@@ -1854,7 +1854,12 @@ fn execute_verified_function_applications(
             &argument_values,
             &effective_assumptions,
             true,
-            true,
+            // Never install an ordinary composite's body as owned authority
+            // beside its produced head: the body lives inside the head, and
+            // exposing it let a caller write it and still use the head's
+            // facts (a verified false theorem, 2026-09-13). Only a counted
+            // population has a population-wide body.
+            false,
             budget,
         )? {
             Ok(transition) => transition,
