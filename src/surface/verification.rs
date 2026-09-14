@@ -7,70 +7,6 @@ use sha2::{Digest, Sha256};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
-
-/// Selects the resource interpretation used when producing proof artifacts.
-/// Stable-loan routing is intentionally staged behind the existing legacy
-/// wrappers until the later cutover card; carrying the mode here ensures that
-/// staged artifacts cannot be reused across the cutover boundary.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub enum ViewSemanticsMode {
-    /// The retiring weak-view interpretation, selectable only through
-    /// `CLICK_VIEW_SEMANTICS=legacy` until it is removed.
-    Legacy,
-    #[default]
-    StableLoans,
-}
-
-/// The mode used by the entry points that do not take one explicitly, as a
-/// `ViewSemanticsMode` discriminant. `StableLoans` until a front end installs
-/// another selection.
-static PROCESS_VIEW_SEMANTICS: AtomicU8 = AtomicU8::new(ViewSemanticsMode::STABLE_LOANS_CODE);
-
-impl ViewSemanticsMode {
-    const LEGACY_CODE: u8 = 0;
-    const STABLE_LOANS_CODE: u8 = 1;
-
-    fn code(self) -> u8 {
-        match self {
-            Self::Legacy => Self::LEGACY_CODE,
-            Self::StableLoans => Self::STABLE_LOANS_CODE,
-        }
-    }
-
-    fn from_code(code: u8) -> Self {
-        match code {
-            Self::LEGACY_CODE => Self::Legacy,
-            _ => Self::StableLoans,
-        }
-    }
-
-    /// The selection used by the entry points that take no explicit mode.
-    ///
-    /// This is rollout scaffolding for `issues/fix-views.md`: the fixture
-    /// harnesses name a mode per fixture through the `_in_mode` entry points,
-    /// while the command-line front end has one selection for the whole
-    /// process and installs it once, before any verification starts. It
-    /// leaves with the `Legacy` variant.
-    pub fn process_default() -> Self {
-        Self::from_code(PROCESS_VIEW_SEMANTICS.load(Ordering::Relaxed))
-    }
-
-    /// Installs the process-wide selection. Call once from a front end before
-    /// verification begins; every later default-mode entry point observes it.
-    pub fn set_process_default(mode: Self) {
-        PROCESS_VIEW_SEMANTICS.store(mode.code(), Ordering::Relaxed);
-    }
-
-    /// The documented spelling of this mode, as `CLICK_VIEW_SEMANTICS` takes
-    /// it and as the artifact identity frames it.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Legacy => "legacy",
-            Self::StableLoans => "stable-loans",
-        }
-    }
-}
 
 /// Fixed-size identity attached to a checked C proof artifact.
 ///
@@ -81,7 +17,6 @@ impl ViewSemanticsMode {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct CProofArtifactIdentity {
     digest: [u8; 32],
-    pub view_semantics: ViewSemanticsMode,
     pub resource_semantics_version: u32,
 }
 
@@ -90,25 +25,17 @@ impl CProofArtifactIdentity {
         &self.digest
     }
 
-    fn for_components(
-        input_digest: [u8; 32],
-        click_digest: [u8; 32],
-        target: &str,
-        view_semantics: ViewSemanticsMode,
-    ) -> Self {
-        let mode = view_semantics.name().as_bytes();
+    fn for_components(input_digest: [u8; 32], click_digest: [u8; 32], target: &str) -> Self {
         let version = crate::kernel::RESOURCE_SEMANTICS_VERSION.to_be_bytes();
         let digest = digest_framed_parts([
             b"click-c-proof-artifact-v2".as_slice(),
             &input_digest,
             &click_digest,
             target.as_bytes(),
-            mode,
             &version,
         ]);
         Self {
             digest,
-            view_semantics,
             resource_semantics_version: crate::kernel::RESOURCE_SEMANTICS_VERSION,
         }
     }
@@ -124,11 +51,8 @@ fn digest_framed_parts<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> [u8; 32
 }
 
 /// Typed input boundary for C verification. The bundle variant preserves the
-/// legacy source map while leaving room for compiler-prepared inputs without
-/// ambient or global state. The one exception is the view-semantics rollout
-/// selector: [`CSourceContext::bundle`] and [`CSourceContext::prepared`] take
-/// the process default, and the `_with_mode` constructors name it explicitly.
-/// That selector leaves with the `Legacy` variant at the cutover.
+/// plain source map while leaving room for compiler-prepared inputs without
+/// ambient or global state.
 pub(in crate::surface) struct CSourceContext<'a> {
     bundle: Option<BTreeMap<&'a str, &'a str>>,
     imports: Option<&'a [PreparedCImport]>,
@@ -138,7 +62,6 @@ pub(in crate::surface) struct CSourceContext<'a> {
     prepared_project_identity: Option<String>,
     input_digest: [u8; 32],
     specification_digest: Option<[u8; 32]>,
-    view_semantics: ViewSemanticsMode,
     prepared_duplicates: bool,
     parsed_units: RefCell<BTreeMap<String, Arc<syntax::C0TranslationUnit>>>,
     #[cfg(test)]
@@ -147,13 +70,6 @@ pub(in crate::surface) struct CSourceContext<'a> {
 
 impl<'a> CSourceContext<'a> {
     pub(in crate::surface) fn bundle(sources: &[(&'a str, &'a str)]) -> Self {
-        Self::bundle_with_mode(sources, ViewSemanticsMode::process_default())
-    }
-
-    pub(in crate::surface) fn bundle_with_mode(
-        sources: &[(&'a str, &'a str)],
-        view_semantics: ViewSemanticsMode,
-    ) -> Self {
         let bundle = sources.iter().copied().collect::<BTreeMap<_, _>>();
         let mut parts = Vec::with_capacity(bundle.len() * 2 + 1);
         parts.push(b"click-c-source-bundle-v1".as_slice());
@@ -170,7 +86,6 @@ impl<'a> CSourceContext<'a> {
             prepared_project_identity: None,
             input_digest: digest_framed_parts(parts),
             specification_digest: None,
-            view_semantics,
             prepared_duplicates: false,
             parsed_units: RefCell::new(BTreeMap::new()),
             #[cfg(test)]
@@ -179,13 +94,6 @@ impl<'a> CSourceContext<'a> {
     }
 
     pub(in crate::surface) fn prepared(imports: &'a [PreparedCImport]) -> Self {
-        Self::prepared_with_mode(imports, ViewSemanticsMode::process_default())
-    }
-
-    pub(in crate::surface) fn prepared_with_mode(
-        imports: &'a [PreparedCImport],
-        view_semantics: ViewSemanticsMode,
-    ) -> Self {
         let mut identities = imports
             .iter()
             .map(|import| import.identity().to_string())
@@ -240,7 +148,6 @@ impl<'a> CSourceContext<'a> {
             prepared_project_identity: Some(project_identity),
             input_digest: digest_framed_parts(identity_parts),
             specification_digest: None,
-            view_semantics,
             prepared_duplicates: duplicate_logical_source,
             parsed_units: RefCell::new(BTreeMap::new()),
             #[cfg(test)]
@@ -249,13 +156,6 @@ impl<'a> CSourceContext<'a> {
     }
 
     pub(in crate::surface) fn cpp(import: &'a PreparedCppImport) -> Result<Self, ClickError> {
-        Self::cpp_with_mode(import, ViewSemanticsMode::process_default())
-    }
-
-    fn cpp_with_mode(
-        import: &'a PreparedCppImport,
-        view_semantics: ViewSemanticsMode,
-    ) -> Result<Self, ClickError> {
         let lowered = lower_import(import).map_err(|error| {
             ClickError::new(format!(
                 "failed to lower compiler-prepared C++ source `{}`: {error}",
@@ -275,7 +175,6 @@ impl<'a> CSourceContext<'a> {
                 import.identity().as_bytes(),
             ]),
             specification_digest: None,
-            view_semantics,
             prepared_duplicates: false,
             parsed_units: RefCell::new(BTreeMap::new()),
             #[cfg(test)]
@@ -288,7 +187,6 @@ impl<'a> CSourceContext<'a> {
             self.input_digest,
             self.specification_digest.unwrap_or([0; 32]),
             crate::languages::c::target::CTarget::SUPPORTED.name(),
-            self.view_semantics,
         )
     }
 
@@ -306,7 +204,6 @@ impl<'a> CSourceContext<'a> {
             self.input_digest,
             click_digest,
             crate::languages::c::target::CTarget::SUPPORTED.name(),
-            self.view_semantics,
         )
     }
 
@@ -335,10 +232,6 @@ impl<'a> CSourceContext<'a> {
         }
         self.specification_digest = Some(hasher.finalize().into());
         self
-    }
-
-    pub(in crate::surface) fn view_semantics(&self) -> ViewSemanticsMode {
-        self.view_semantics
     }
 
     fn bundle_sources(&self) -> Result<&BTreeMap<&'a str, &'a str>, ClickError> {
@@ -670,7 +563,6 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
         &predicate_environment,
         &click_function_environment,
         &resource_environment,
-        sources.view_semantics() == ViewSemanticsMode::StableLoans,
     )?;
     let refinement_targets = file
         .theorem_definitions()
@@ -742,7 +634,6 @@ fn verify_click_project_theorem_context(
         &predicate_environment,
         &click_function_environment,
         &resource_environment,
-        false,
     )?;
     for target in contract_refinement_targets(&file, theorem_name) {
         let Some(function) = function_environment.get_function(&target).cloned() else {
@@ -877,11 +768,15 @@ pub fn verify_c0_sources(
     click_source: &str,
     c_sources: &[(&str, &str)],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    verify_c0_sources_in_mode(
-        click_source,
-        c_sources,
-        ViewSemanticsMode::process_default(),
-    )
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::bundle(c_sources);
+        let result = verify_c0_sources_with_context(click_source, &sources, None, None, None, None)
+            .map(|(verified, _)| verified);
+        if let Err(error) = &result {
+            error.emit_timing_failure();
+        }
+        result
+    })
 }
 
 pub(in crate::surface) fn resolve_click_project_context(
@@ -921,22 +816,6 @@ pub fn verify_c0_project(
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     instrumentation::with_default_tactic_limits(|| {
         let sources = CSourceContext::bundle(c_sources).with_click_project(project);
-        let file = resolve_click_project_context(project, &sources)?;
-        let source = project.entry_source().expect("resolved entry source");
-        verify_c0_sources_with_context(source, &sources, None, None, None, Some(file))
-            .map(|(verified, _)| verified)
-    })
-}
-
-/// Verifies an imported project under an explicit view-semantics mode.
-pub fn verify_c0_project_in_mode(
-    project: &ClickProject,
-    c_sources: &[(&str, &str)],
-    view_semantics: ViewSemanticsMode,
-) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    instrumentation::with_default_tactic_limits(|| {
-        let sources =
-            CSourceContext::bundle_with_mode(c_sources, view_semantics).with_click_project(project);
         let file = resolve_click_project_context(project, &sources)?;
         let source = project.entry_source().expect("resolved entry source");
         let result = verify_c0_sources_with_context(source, &sources, None, None, None, Some(file))
@@ -1078,29 +957,6 @@ pub fn verify_c0_prepared_project_functions(
             Some(file),
         )
         .map(|(verified, _)| verified)
-    })
-}
-
-/// Verifies a source bundle under an explicit view-semantics mode.
-///
-/// The fixture harnesses use this to run a whole corpus under the candidate
-/// `StableLoans` interpretation while `Legacy` stays the default. The mode is
-/// part of every artifact identity, so a result from one mode cannot certify
-/// a claim in the other. This is rollout scaffolding for the stable-view
-/// cutover (`issues/fix-views.md`) and leaves with the `Legacy` variant.
-pub fn verify_c0_sources_in_mode(
-    click_source: &str,
-    c_sources: &[(&str, &str)],
-    view_semantics: ViewSemanticsMode,
-) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    instrumentation::with_default_tactic_limits(|| {
-        let sources = CSourceContext::bundle_with_mode(c_sources, view_semantics);
-        let result = verify_c0_sources_with_context(click_source, &sources, None, None, None, None)
-            .map(|(verified, _)| verified);
-        if let Err(error) = &result {
-            error.emit_timing_failure();
-        }
-        result
     })
 }
 
@@ -1556,24 +1412,7 @@ impl C0VerificationSession {
         c_sources: &[(&str, &str)],
     ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
         instrumentation::with_default_tactic_limits(|| {
-            Self::new_with_mode(
-                click_source,
-                c_sources,
-                ViewSemanticsMode::process_default(),
-            )
-        })
-    }
-
-    /// Starts a session with an explicit staged resource semantics identity.
-    /// The stable-loan mode is metadata-only here; the later cutover will wire
-    /// it to the kernel selector after all routes share this identity.
-    pub(crate) fn new_with_mode(
-        click_source: &str,
-        c_sources: &[(&str, &str)],
-        view_semantics: ViewSemanticsMode,
-    ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
-        instrumentation::with_default_tactic_limits(|| {
-            Self::new_with_limits(click_source, c_sources, view_semantics)
+            Self::new_with_limits(click_source, c_sources)
         })
     }
 
@@ -1584,11 +1423,22 @@ impl C0VerificationSession {
         imports: &[PreparedCImport],
     ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
         instrumentation::with_default_tactic_limits(|| {
-            Self::new_prepared_with_mode(
-                click_source,
-                imports,
-                ViewSemanticsMode::process_default(),
-            )
+            let sources = CSourceContext::prepared(imports);
+            let (verified, verified_function_environment) =
+                verify_c0_sources_with_context(click_source, &sources, None, None, None, None)?;
+            let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
+            Ok((
+                Self {
+                    c_sources: Vec::new(),
+                    click_project: None,
+                    prepared_imports: Some(imports.to_vec()),
+                    prepared_cpp_import: None,
+                    baseline_file,
+                    verified_function_environment,
+                    environment_identity: sources.environment_identity(),
+                },
+                verified,
+            ))
         })
     }
 
@@ -1610,33 +1460,6 @@ impl C0VerificationSession {
                     baseline_file,
                     verified_function_environment,
                     environment_identity: sources.environment_identity(),
-                    view_semantics: sources.view_semantics(),
-                },
-                verified,
-            ))
-        })
-    }
-
-    pub(crate) fn new_prepared_with_mode(
-        click_source: &str,
-        imports: &[PreparedCImport],
-        view_semantics: ViewSemanticsMode,
-    ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
-        instrumentation::with_default_tactic_limits(|| {
-            let sources = CSourceContext::prepared_with_mode(imports, view_semantics);
-            let (verified, verified_function_environment) =
-                verify_c0_sources_with_context(click_source, &sources, None, None, None, None)?;
-            let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
-            Ok((
-                Self {
-                    c_sources: Vec::new(),
-                    click_project: None,
-                    prepared_imports: Some(imports.to_vec()),
-                    prepared_cpp_import: None,
-                    baseline_file,
-                    verified_function_environment,
-                    environment_identity: sources.environment_identity(),
-                    view_semantics: sources.view_semantics(),
                 },
                 verified,
             ))
@@ -1646,9 +1469,8 @@ impl C0VerificationSession {
     fn new_with_limits(
         click_source: &str,
         c_sources: &[(&str, &str)],
-        view_semantics: ViewSemanticsMode,
     ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
-        let sources = CSourceContext::bundle_with_mode(c_sources, view_semantics);
+        let sources = CSourceContext::bundle(c_sources);
         let (verified, verified_function_environment) =
             verify_c0_sources_with_context(click_source, &sources, None, None, None, None)?;
         let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
@@ -1664,7 +1486,6 @@ impl C0VerificationSession {
                 baseline_file,
                 verified_function_environment,
                 environment_identity: sources.environment_identity(),
-                view_semantics: sources.view_semantics(),
             },
             verified,
         ))
@@ -1698,7 +1519,6 @@ impl C0VerificationSession {
                     baseline_file,
                     verified_function_environment,
                     environment_identity: sources.environment_identity(),
-                    view_semantics: sources.view_semantics(),
                 },
                 verified,
             ))
@@ -1729,7 +1549,6 @@ impl C0VerificationSession {
                     baseline_file,
                     verified_function_environment,
                     environment_identity: sources.environment_identity(),
-                    view_semantics: sources.view_semantics(),
                 },
                 verified,
             ))
@@ -1760,7 +1579,6 @@ impl C0VerificationSession {
                     baseline_file,
                     verified_function_environment,
                     environment_identity: sources.environment_identity(),
-                    view_semantics: sources.view_semantics(),
                 },
                 verified,
             ))
@@ -1810,14 +1628,11 @@ impl C0VerificationSession {
                 .map(|(name, source)| (name.as_str(), source.as_str()))
                 .collect::<Vec<_>>();
             let sources = if let Some(import) = self.prepared_cpp_import.as_ref() {
-                CSourceContext::cpp_with_mode(import, self.view_semantics)?
-                    .with_click_project(&project)
+                CSourceContext::cpp(import)?.with_click_project(&project)
             } else if let Some(imports) = self.prepared_imports.as_ref() {
-                CSourceContext::prepared_with_mode(imports, self.view_semantics)
-                    .with_click_project(&project)
+                CSourceContext::prepared(imports).with_click_project(&project)
             } else {
-                CSourceContext::bundle_with_mode(&c_sources, self.view_semantics)
-                    .with_click_project(&project)
+                CSourceContext::bundle(&c_sources).with_click_project(&project)
             };
             let rewritten_file = resolve_click_project_context(&project, &sources)?;
             let target = expansion::verification_target_at_file(
@@ -1877,9 +1692,9 @@ impl C0VerificationSession {
     ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
         instrumentation::with_default_tactic_limits(|| {
             let sources = if let Some(import) = self.prepared_cpp_import.as_ref() {
-                CSourceContext::cpp_with_mode(import, self.view_semantics)?
+                CSourceContext::cpp(import)?
             } else if let Some(imports) = self.prepared_imports.as_ref() {
-                CSourceContext::prepared_with_mode(imports, self.view_semantics)
+                CSourceContext::prepared(imports)
             } else {
                 return Err(ClickError::new(
                     "verification session does not contain prepared imports",
@@ -1945,7 +1760,7 @@ impl C0VerificationSession {
             .iter()
             .map(|(name, source)| (name.as_str(), source.as_str()))
             .collect::<Vec<_>>();
-        let sources = CSourceContext::bundle_with_mode(&c_sources, self.view_semantics);
+        let sources = CSourceContext::bundle(&c_sources);
         ensure_environment_identity(&self.environment_identity, &sources)?;
         let target = verification_target_at_context(click_source, &sources, line, column)?;
         let target_exists_in_baseline = match &target {
@@ -2231,7 +2046,6 @@ fn verify_c0_sources_with_context(
             &predicate_environment,
             &click_function_environment,
             &resource_environment,
-            c_sources.view_semantics() == ViewSemanticsMode::StableLoans,
         )?;
         let mut function_environment =
             initial_function_environment.unwrap_or(built_function_environment);
@@ -2560,10 +2374,9 @@ fn verify_c0_sources_with_context(
         // certification so resource occurrence IDs and loan ledger roots are
         // shared by proof and certification; rebuilding it independently
         // would create an equivalent-looking but unauthorized authority.
-        if c_sources.view_semantics() == ViewSemanticsMode::StableLoans
-            && let Some(entry) = function_verified
-                .iter()
-                .find_map(|verified| verified.checked_execution.caller_state())
+        if let Some(entry) = function_verified
+            .iter()
+            .find_map(|verified| verified.checked_execution.caller_state())
         {
             certification_state = entry.clone();
         }
@@ -4625,7 +4438,6 @@ pub(in crate::surface) fn parse_verified_sources(
             ),
         ),
         specification_digest: None,
-        view_semantics: ViewSemanticsMode::process_default(),
         prepared_duplicates: false,
         parsed_units: RefCell::new(BTreeMap::new()),
         #[cfg(test)]
@@ -5389,12 +5201,8 @@ pub(in crate::surface) fn build_function_environment(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
-    candidate_stable_view_semantics: bool,
 ) -> Result<CExecutionEnvironment, ClickError> {
     let mut environment = CExecutionEnvironment::new();
-    if candidate_stable_view_semantics {
-        environment = environment.with_candidate_stable_view_semantics();
-    }
     for definition in contract_definitions {
         let function_block = definition.function_block();
         let parsed_function = external_c0_function(function_block);
@@ -6524,10 +6332,6 @@ int32 answer() {
         assert_eq!(direct.len(), targeted.len());
         assert_eq!(direct[0].artifact_identity, targeted[0].artifact_identity);
         assert_eq!(
-            direct[0].artifact_identity.unwrap().view_semantics,
-            ViewSemanticsMode::StableLoans
-        );
-        assert_eq!(
             direct[0]
                 .artifact_identity
                 .unwrap()
@@ -6555,17 +6359,17 @@ int32 answer() {
     }
 
     #[test]
-    fn session_rejects_a_cross_mode_or_stale_identity_before_reverification() {
+    fn session_rejects_a_stale_identity_before_reverification() {
         let sources = [("answer.c", C_SOURCE)];
         let (mut session, _) =
             C0VerificationSession::new(CLICK, &sources).expect("baseline verification");
         let (line, column) = position(CLICK, "execute();");
         session.environment_identity =
-            CSourceContext::bundle_with_mode(&sources, ViewSemanticsMode::Legacy)
+            CSourceContext::bundle(&[("answer.c", "int answer(void) { return 2; }")])
                 .environment_identity();
         let error = session
             .verify_at(CLICK, line, column)
-            .expect_err("cross-mode session reuse must be refused");
+            .expect_err("a session identity from other inputs must be refused");
         assert!(error.message().contains("identity mismatch"), "{error:?}");
     }
 
@@ -6591,37 +6395,23 @@ int32 answer() {
 
         let c_digest = [1; 32];
         let click_digest = [2; 32];
-        let first_target = CProofArtifactIdentity::for_components(
-            c_digest,
-            click_digest,
-            "x86_64-linux-kernel",
-            ViewSemanticsMode::Legacy,
-        );
-        let second_target = CProofArtifactIdentity::for_components(
-            c_digest,
-            click_digest,
-            "other-target-profile",
-            ViewSemanticsMode::Legacy,
-        );
+        let first_target =
+            CProofArtifactIdentity::for_components(c_digest, click_digest, "x86_64-linux-kernel");
+        let second_target =
+            CProofArtifactIdentity::for_components(c_digest, click_digest, "other-target-profile");
         assert_ne!(first_target, second_target);
     }
 
     #[test]
-    fn stable_mode_rejects_an_absent_legacy_artifact_identity() {
-        let context = CSourceContext::bundle_with_mode(
-            &[("answer.c", C_SOURCE)],
-            ViewSemanticsMode::StableLoans,
-        );
-        let stable_identity = context.artifact_identity(CLICK);
-        let absent_legacy_identity: Option<CProofArtifactIdentity> = None;
-        assert_ne!(absent_legacy_identity, Some(stable_identity));
+    fn rejects_an_absent_artifact_identity() {
+        let context = CSourceContext::bundle(&[("answer.c", C_SOURCE)]);
+        let identity = context.artifact_identity(CLICK);
+        let absent_identity: Option<CProofArtifactIdentity> = None;
+        assert_ne!(absent_identity, Some(identity));
     }
 
-    fn verify_in_stable_mode(click: &str, source: &str) -> Result<(), ClickError> {
-        let sources = CSourceContext::bundle_with_mode(
-            &[("reader.c", source)],
-            ViewSemanticsMode::StableLoans,
-        );
+    fn verify_sources(click: &str, source: &str) -> Result<(), ClickError> {
+        let sources = CSourceContext::bundle(&[("reader.c", source)]);
         verify_c0_sources_with_context(click, &sources, None, None, None, None).map(|_| ())
     }
 
@@ -6629,7 +6419,7 @@ int32 answer() {
     /// may write memory it owns beside it, and reads through the view stay
     /// stable across that write.
     #[test]
-    fn stable_mode_root_view_permits_an_owned_write_beside_it() {
+    fn root_view_permits_an_owned_write_beside_it() {
         let click = r#"
 verifying "reader.c";
 
@@ -6644,16 +6434,16 @@ int32 reader(int32 p[], int32 q[]) {
 }
 "#;
         let source = "int reader(int *p, int *q) { q[0] = 1; return p[0]; }";
-        verify_in_stable_mode(click, source).expect("an owned write beside a rooted view");
+        verify_sources(click, source).expect("an owned write beside a rooted view");
     }
 
     /// The viewed pointer itself carries no write authority. A pure view
     /// holds no owner for the store, so the ordinary owned-authority check
-    /// refuses it first and the historical missing-ownership diagnostic is
-    /// what the candidate mode reports, exactly as legacy does. The loan
-    /// barrier is reserved for an owner-authorized write.
+    /// refuses it first and the missing-ownership diagnostic is what the
+    /// verifier reports. The loan barrier is reserved for an
+    /// owner-authorized write.
     #[test]
-    fn stable_mode_root_view_reports_missing_ownership_for_an_unowned_write() {
+    fn root_view_reports_missing_ownership_for_an_unowned_write() {
         let click = r#"
 verifying "reader.c";
 
@@ -6666,7 +6456,7 @@ int32 reader(int32 p[]) {
 }
 "#;
         let source = "int reader(int *p) { p[0] = 1; return p[0]; }";
-        let error = verify_in_stable_mode(click, source)
+        let error = verify_sources(click, source)
             .expect_err("a store through a contract input view must be refused");
         assert!(
             error.message().contains("missing resource fact `owns p"),
@@ -6679,7 +6469,7 @@ int32 reader(int32 p[]) {
     /// any caller can supply: the view would be a projection of the owner,
     /// so no external root is installed and the proof stops at entry.
     #[test]
-    fn stable_mode_root_view_refuses_an_owned_alias_of_the_viewed_range() {
+    fn root_view_refuses_an_owned_alias_of_the_viewed_range() {
         let click = r#"
 verifying "reader.c";
 
@@ -6694,7 +6484,7 @@ int32 reader(int32 p[], int32 q[]) {
 }
 "#;
         let source = "int reader(int *p, int *q) { q[0] = 1; return p[0]; }";
-        let error = verify_in_stable_mode(click, source)
+        let error = verify_sources(click, source)
             .expect_err("an owned alias of a contract input view must be refused at entry");
         assert!(
             error
@@ -6730,7 +6520,7 @@ int read_retargeted(struct buffer *owner, int *other) {\n\
     /// R11's positive half: a contract input view over a pointer field's
     /// pointee is authority for reading that pointee.
     #[test]
-    fn stable_mode_field_derived_view_reads_the_entry_footprint() {
+    fn field_derived_view_reads_the_entry_footprint() {
         let click = r#"
 verifying "reader.c";
 
@@ -6743,7 +6533,7 @@ int32 read_entry(struct buffer* owner, int32* other) {
     simp();
 }
 "#;
-        verify_in_stable_mode(click, RETARGET_SOURCE)
+        verify_sources(click, RETARGET_SOURCE)
             .expect("a field-derived contract input view reads its own footprint");
     }
 
@@ -6754,7 +6544,7 @@ int32 read_entry(struct buffer* owner, int32* other) {
     /// of its own, and the entry view does not follow the field
     /// (F11 in fix-views).
     #[test]
-    fn stable_mode_field_derived_view_does_not_retarget_after_a_pointer_write() {
+    fn field_derived_view_does_not_retarget_after_a_pointer_write() {
         let click = r#"
 verifying "reader.c";
 
@@ -6767,7 +6557,7 @@ int32 read_retargeted(struct buffer* owner, int32* other) {
     simp();
 }
 "#;
-        let error = verify_in_stable_mode(click, RETARGET_SOURCE)
+        let error = verify_sources(click, RETARGET_SOURCE)
             .expect_err("the entry view must not follow a rewritten pointer field");
         assert!(
             error.message().contains("missing resource fact `views "),
@@ -6789,7 +6579,7 @@ int32 read_retargeted(struct buffer* owner, int32* other) {
     /// view across its return without a binding for it, and the caller can
     /// still read the table afterwards.
     #[test]
-    fn stable_mode_carries_a_file_static_const_view_across_a_call() {
+    fn carries_a_file_static_const_view_across_a_call() {
         let click = r#"
 verifying "reader.c";
 
@@ -6814,19 +6604,16 @@ int32 run(int32 q[]) {
         let source = "static const int32 table[2] = {5, 7};\n\
 int32 peek(const int32 *values, int32 *q) { return q[0]; }\n\
 int32 run(int32 *q) { int32 seen = peek(table, q); return table[1]; }\n";
-        verify_in_stable_mode(click, source)
+        verify_sources(click, source)
             .expect("a const table view survives a call that lends an ordinary view");
     }
 
-    fn verify_in_stable_mode_with_header(
+    fn verify_sources_with_header(
         click: &str,
         header: &str,
         source: &str,
     ) -> Result<(), ClickError> {
-        let sources = CSourceContext::bundle_with_mode(
-            &[("include/h.h", header), ("t.c", source)],
-            ViewSemanticsMode::StableLoans,
-        );
+        let sources = CSourceContext::bundle(&[("include/h.h", header), ("t.c", source)]);
         verify_c0_sources_with_context(click, &sources, None, None, None, None).map(|_| ())
     }
 
@@ -6838,7 +6625,7 @@ static inline int set0(int *p) { p[0] = 9; return 0; }\n\
     /// An inline helper is call-site code: it reads through the caller's
     /// contract input view without lending, and the view stays bound.
     #[test]
-    fn stable_mode_inline_helper_reads_through_the_callers_rooted_view() {
+    fn inline_helper_reads_through_the_callers_rooted_view() {
         let click = r#"
 verifying "t.c";
 
@@ -6851,7 +6638,7 @@ int32 run(int32 p[]) {
 }
 "#;
         let source = "#include \"include/h.h\"\nint run(int *p) { return get0(p); }";
-        verify_in_stable_mode_with_header(click, INLINE_HELPERS, source)
+        verify_sources_with_header(click, INLINE_HELPERS, source)
             .expect("an inline reader beside a rooted view");
     }
 
@@ -6859,7 +6646,7 @@ int32 run(int32 p[]) {
     /// caller's resources, which hold no owner for the store, so the store is
     /// refused inside the body with the ordinary missing-ownership message.
     #[test]
-    fn stable_mode_inline_helper_cannot_write_through_the_callers_rooted_view() {
+    fn inline_helper_cannot_write_through_the_callers_rooted_view() {
         let click = r#"
 verifying "t.c";
 
@@ -6872,7 +6659,7 @@ int32 run(int32 p[]) {
 }
 "#;
         let source = "#include \"include/h.h\"\nint run(int *p) { return set0(p); }";
-        let error = verify_in_stable_mode_with_header(click, INLINE_HELPERS, source)
+        let error = verify_sources_with_header(click, INLINE_HELPERS, source)
             .expect_err("an inline store through a rooted view must be refused");
         assert!(
             error.message().contains("missing resource fact `owns p"),
@@ -6885,7 +6672,7 @@ int32 run(int32 p[]) {
     /// root; with a fresh root per claim the second claim's completion is
     /// at a different authority than the certified entry and is refused.
     #[test]
-    fn stable_mode_per_claim_proofs_share_one_borrowed_input_root() {
+    fn per_claim_proofs_share_one_borrowed_input_root() {
         let click = r#"
 verifying "reader.c";
 
@@ -6896,7 +6683,7 @@ int32 reader(int32 p[]) {
 }
 "#;
         let source = "int reader(int *p) { return p[0]; }";
-        verify_in_stable_mode(click, source).expect("both claims certify at one shared root");
+        verify_sources(click, source).expect("both claims certify at one shared root");
     }
 
     /// A whole-struct assignment through a rooted view has no owner behind
@@ -6906,7 +6693,7 @@ int32 reader(int32 p[]) {
     /// copy over a lent field, is
     /// `owner_authorized_aggregate_copy_into_a_lent_range_is_refused`.
     #[test]
-    fn stable_mode_root_view_refuses_an_aggregate_copy_into_it() {
+    fn root_view_refuses_an_aggregate_copy_into_it() {
         let click = r#"
 verifying "reader.c";
 
@@ -6920,7 +6707,7 @@ int32 copy_pair(struct pair* s, struct pair* t) {
 }
 "#;
         let source = "struct pair { int a; int b; };\nint copy_pair(struct pair *s, struct pair *t) { *s = *t; return 0; }";
-        let error = verify_in_stable_mode(click, source)
+        let error = verify_sources(click, source)
             .expect_err("an aggregate copy into a contract input view must be refused");
         assert!(
             error
@@ -6964,7 +6751,7 @@ extern void drop_box(struct s* p) {
     /// write authority over the array while the box describes it (the
     /// write-authority check runs before the ledger, as in step 3).
     #[test]
-    fn stable_mode_escaping_borrow_refuses_a_write_while_the_composite_lives() {
+    fn escaping_borrow_refuses_a_write_while_the_composite_lives() {
         let click = format!(
             "{BORROWING_BOX_PRELUDE}
 int32 f(struct s* p, int32 d[], int32 n) {{
@@ -6978,7 +6765,7 @@ int32 f(struct s* p, int32 d[], int32 n) {{
         let source = format!(
             "{BORROWING_BOX_HEADER}int32 f(struct s* p, int32 d[], int32 n) {{ setup(p, d, n); d[0] = 1; drop_box(p); return 0; }}"
         );
-        let error = verify_in_stable_mode(&click, &source)
+        let error = verify_sources(&click, &source)
             .expect_err("a write into memory a live borrowing composite views must be refused");
         assert!(
             error.message().contains("missing resource fact `owns "),
@@ -6990,7 +6777,7 @@ int32 f(struct s* p, int32 d[], int32 n) {{
     /// Consuming the composite releases its hold: the loan ends, the owner
     /// is recovered, and the same write is accepted afterwards.
     #[test]
-    fn stable_mode_consuming_the_composite_recovers_the_owner() {
+    fn consuming_the_composite_recovers_the_owner() {
         let click = format!(
             "{BORROWING_BOX_PRELUDE}
 int32 f(struct s* p, int32 d[], int32 n) {{
@@ -7004,15 +6791,14 @@ int32 f(struct s* p, int32 d[], int32 n) {{
         let source = format!(
             "{BORROWING_BOX_HEADER}int32 f(struct s* p, int32 d[], int32 n) {{ setup(p, d, n); drop_box(p); d[0] = 1; return 0; }}"
         );
-        verify_in_stable_mode(&click, &source)
-            .expect("after the composite is consumed the owner is back");
+        verify_sources(&click, &source).expect("after the composite is consumed the owner is back");
     }
 
     /// Unfolding a held composite hands the hold to the restored piece, and
     /// folding it back reuses that hold: the write stays refused while the
     /// piece is out, and one consumption still releases everything.
     #[test]
-    fn stable_mode_unfold_keeps_the_escaped_borrow_held() {
+    fn unfold_keeps_the_escaped_borrow_held() {
         let refused = format!(
             "{BORROWING_BOX_PRELUDE}
 int32 f(struct s* p, int32 d[], int32 n) {{
@@ -7033,8 +6819,8 @@ int32 f(struct s* p, int32 d[], int32 n) {{
         let source = format!(
             "{BORROWING_BOX_HEADER}int32 f(struct s* p, int32 d[], int32 n) {{ setup(p, d, n); d[0] = 1; drop_box(p); return 0; }}"
         );
-        let error = verify_in_stable_mode(&refused, &source)
-            .expect_err("the unfolded piece still holds the loan");
+        let error =
+            verify_sources(&refused, &source).expect_err("the unfolded piece still holds the loan");
         assert!(
             error.message().contains("missing resource fact `owns "),
             "{}",
@@ -7062,14 +6848,14 @@ int32 f(struct s* p, int32 d[], int32 n) {{
         let source = format!(
             "{BORROWING_BOX_HEADER}int32 f(struct s* p, int32 d[], int32 n) {{ setup(p, d, n); drop_box(p); d[0] = 1; return 0; }}"
         );
-        verify_in_stable_mode(&accepted, &source)
+        verify_sources(&accepted, &source)
             .expect("a refold reuses the hold, so one consumption releases it");
     }
 
     /// A produced composite whose viewed piece no viewed input of the call
     /// backs describes memory nothing stabilizes; the call is refused.
     #[test]
-    fn stable_mode_produced_borrowing_composite_without_a_backing_input_is_refused() {
+    fn produced_borrowing_composite_without_a_backing_input_is_refused() {
         let click = r#"
 verifying "reader.c";
 
@@ -7096,8 +6882,8 @@ int32 f(struct s* p, int32 n) {
 }
 "#;
         let source = "struct s { int32 a; int32 b; int32* d; };\nint32 conjure(struct s* p, int32 n);\nint32 f(struct s* p, int32 n) { conjure(p, n); return 0; }";
-        let error = verify_in_stable_mode(click, source)
-            .expect_err("a borrow with no source cannot be produced");
+        let error =
+            verify_sources(click, source).expect_err("a borrow with no source cannot be produced");
         assert!(
             error
                 .message()
@@ -7112,7 +6898,7 @@ int32 f(struct s* p, int32 n) {
     /// carries this call's own loans, because lending has removed the owner
     /// from the preserved residual (F1 in fix-views).
     #[test]
-    fn stable_mode_undecided_continuity_retire_refuses_a_lent_allocation() {
+    fn undecided_continuity_retire_refuses_a_lent_allocation() {
         let click = r#"
 verifying "reader.c";
 
@@ -7139,7 +6925,7 @@ int32 f(int32 n) {
 }
 "#;
         let source = "uint8* external_alloc(int32 bytes);\nvoid realloc_like(uint8* p, int32 n);\nvoid drop_alloc(uint8* p, int32 n);\nint32 f(int32 n) { uint8* data; int32 value; data = external_alloc(4); data[0] = 7; realloc_like(data, n); value = data[0]; drop_alloc(data, n); return value; }";
-        let error = verify_in_stable_mode(click, source)
+        let error = verify_sources(click, source)
             .expect_err("a call that may deallocate a lent allocation must be refused");
         assert!(
             error.message().contains("active loan"),
@@ -7149,7 +6935,7 @@ int32 f(int32 n) {
     }
 
     #[test]
-    fn stable_mode_routes_a_surface_proof_through_candidate_kernel_semantics() {
+    fn a_surface_proof_carries_the_current_resource_semantics_version() {
         let click = r#"
 verifying "reader.c";
 
@@ -7162,16 +6948,16 @@ int32 reader(int32 p[]) {
 }
 "#;
         let source = "int reader(int *p) { return p[0]; }";
-        let sources = CSourceContext::bundle_with_mode(
-            &[("reader.c", source)],
-            ViewSemanticsMode::StableLoans,
-        );
+        let sources = CSourceContext::bundle(&[("reader.c", source)]);
         let verified = verify_c0_sources_with_context(click, &sources, None, None, None, None)
-            .expect("stable surface route should use candidate kernel semantics");
+            .expect("the surface route should use the kernel's stable view semantics");
         assert!(!verified.0.is_empty());
         assert_eq!(
-            verified.0[0].artifact_identity.unwrap().view_semantics,
-            ViewSemanticsMode::StableLoans
+            verified.0[0]
+                .artifact_identity
+                .unwrap()
+                .resource_semantics_version,
+            crate::kernel::RESOURCE_SEMANTICS_VERSION
         );
     }
 
@@ -7207,19 +6993,16 @@ int read_view(const int *(*f)(const int *), const int *p) {{
         "int read_view(const int *(*f)(const int *), const int *p) { return f(p)[0]; }";
 
     #[test]
-    fn stable_mode_certifies_a_one_call_execution_theorem_from_its_proof_entry_state() {
+    fn certifies_a_one_call_execution_theorem_from_its_proof_entry_state() {
         let click = one_call_execution_theorem_source("Readable");
-        let sources = CSourceContext::bundle_with_mode(
-            &[("main.c", ONE_CALL_THEOREM_C_SOURCE)],
-            ViewSemanticsMode::StableLoans,
-        );
+        let sources = CSourceContext::bundle(&[("main.c", ONE_CALL_THEOREM_C_SOURCE)]);
         let verified = verify_c0_sources_with_context(&click, &sources, None, None, None, None)
             .expect("the one-call proof's own entry state certifies the theorem");
         assert!(!verified.0.is_empty());
     }
 
     #[test]
-    fn stable_mode_one_call_execution_theorem_still_needs_its_target_obligation() {
+    fn one_call_execution_theorem_still_needs_its_target_obligation() {
         // Reusing the proof's entry state must not discharge an obligation the
         // one-call proof never established: this target promises a value the
         // `Exact` step does not prove.
@@ -7227,10 +7010,7 @@ int read_view(const int *(*f)(const int *), const int *p) {{
             "ensures result == p;\n}\ntheorem",
             "ensures result == p + 1;\n}\ntheorem",
         );
-        let sources = CSourceContext::bundle_with_mode(
-            &[("main.c", ONE_CALL_THEOREM_C_SOURCE)],
-            ViewSemanticsMode::StableLoans,
-        );
+        let sources = CSourceContext::bundle(&[("main.c", ONE_CALL_THEOREM_C_SOURCE)]);
         let error = verify_c0_sources_with_context(&click, &sources, None, None, None, None)
             .expect_err("an unproved target obligation must still be refused");
         assert!(

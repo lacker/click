@@ -60,7 +60,6 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
         println!("{USAGE}");
         return Ok(());
     }
-    click::cli::install_view_semantics_from_environment()?;
     let arguments = parse_arguments(raw)?;
     click::instrumentation::with_deadline(arguments.time_limit, || {
         let expanded = run_bounded(&arguments)?;

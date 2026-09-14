@@ -2403,10 +2403,6 @@ pub struct CCallBinderTransport {
 pub struct CExecutionEnvironment {
     // A proof-local rule choice. This is not installed in the project environment.
     pub(crate) selected_call_contract: Option<std::sync::Arc<str>>,
-    /// Internal candidate semantics gate. The stable-view call planner is
-    /// deliberately opt-in until its direct-call path is complete; ordinary
-    /// verification therefore retains the established resource transition.
-    pub(crate) candidate_stable_view_semantics: bool,
     pub(crate) selected_call_resource_arguments: Option<std::sync::Arc<[Variable]>>,
     /// A proof-local binder map for one ordinary C call: the callee named by
     /// the step, and one caller instance per instance binder the callee
@@ -2428,10 +2424,6 @@ impl std::fmt::Debug for CExecutionEnvironment {
             .debug_struct("CExecutionEnvironment")
             .field("selected_call_contract", &self.selected_call_contract)
             .field(
-                "candidate_stable_view_semantics",
-                &self.candidate_stable_view_semantics,
-            )
-            .field(
                 "selected_call_resource_arguments",
                 &self.selected_call_resource_arguments,
             )
@@ -2452,7 +2444,6 @@ impl std::fmt::Debug for CExecutionEnvironment {
 impl PartialEq for CExecutionEnvironment {
     fn eq(&self, other: &Self) -> bool {
         self.selected_call_contract == other.selected_call_contract
-            && self.candidate_stable_view_semantics == other.candidate_stable_view_semantics
             && self.selected_call_resource_arguments == other.selected_call_resource_arguments
             && self.selected_call_binders == other.selected_call_binders
             && self.functions == other.functions

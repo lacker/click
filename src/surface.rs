@@ -145,8 +145,8 @@ use validation::{
 pub(in crate::surface) use verification::CSourceContext;
 pub(in crate::surface) use verification::*;
 pub use verification::{
-    C0IncrementalSelection, CProofArtifactIdentity, ViewSemanticsMode, c0_external_dependencies,
-    c0_function_names, c0_incremental_selection, c0_prepared_external_dependencies,
+    C0IncrementalSelection, CProofArtifactIdentity, c0_external_dependencies, c0_function_names,
+    c0_incremental_selection, c0_prepared_external_dependencies,
     c0_prepared_project_external_dependencies, c0_prepared_project_selected_proof_count,
     c0_prepared_project_selected_proof_names, c0_project_external_dependencies,
     c0_project_function_names, c0_project_selected_proof_count, c0_project_selected_proof_names,
@@ -154,9 +154,9 @@ pub use verification::{
     verify_c0_prepared_project, verify_c0_prepared_project_at,
     verify_c0_prepared_project_functions, verify_c0_prepared_sources,
     verify_c0_prepared_sources_at, verify_c0_prepared_sources_functions, verify_c0_project,
-    verify_c0_project_at, verify_c0_project_functions, verify_c0_project_in_mode,
-    verify_c0_sources, verify_c0_sources_at, verify_c0_sources_functions,
-    verify_c0_sources_in_mode, verify_click_theorems, verify_cpp_prepared_project,
+    verify_c0_project_at, verify_c0_project_functions, verify_c0_sources,
+    verify_c0_sources_at, verify_c0_sources_functions, verify_click_theorems,
+    verify_cpp_prepared_project,
     verify_cpp_prepared_project_at, verify_cpp_prepared_sources_at, verify_standard_library,
 };
 
@@ -5140,7 +5140,6 @@ pub struct C0VerificationSession {
     baseline_file: ClickFile,
     verified_function_environment: CExecutionEnvironment,
     environment_identity: verification::CProofArtifactIdentity,
-    view_semantics: verification::ViewSemanticsMode,
 }
 
 impl ClickFile {

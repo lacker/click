@@ -136,6 +136,7 @@ fn resource_transition_retains_borrow_role_for_owned_entry_fact() {
         &PureFactContext::new(),
         &mut ExecutionBudget::default(),
         false,
+        false,
     )
     .unwrap()
     .unwrap();
@@ -700,6 +701,7 @@ fn pure_callback_preparation_does_not_enumerate_the_resource_frame() {
             &PureFactContext::new(),
             &mut ExecutionBudget::default(),
             false,
+            false,
         )
         .unwrap()
         .unwrap();
@@ -861,6 +863,7 @@ fn checked_transition_projection_ignores_unrelated_caller_frame() {
                 &PureFactContext::new(),
                 &mut ExecutionBudget::default(),
                 false,
+                false,
             )
             .unwrap()
             .unwrap();
@@ -943,6 +946,7 @@ fn checked_wrapper_projection_scales_with_used_members() {
                 function.contract_interface(),
                 &PureFactContext::new(),
                 &mut ExecutionBudget::default(),
+                false,
                 false,
             )
             .unwrap()

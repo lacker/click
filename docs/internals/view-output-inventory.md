@@ -99,7 +99,7 @@ relevant shape: `stable_view_ordinary_reader`, `stable_view_nested_reader`,
 `stable_view_partial_borrow`, `stable_view_fact_workflow`, and
 `stable_view_returned_pointer`. `examples/input-cursor` is the escaping-borrow
 project. The kernel transitions are covered by
-`candidate_stable_view_call_tests` in `src/kernel/functions.rs` and the loan
+`stable_view_call_tests` in `src/kernel/functions.rs` and the loan
 tests in `src/kernel/loans.rs`.
 
 Rerun the extraction when contracts change. A changed count requires a

@@ -24,7 +24,6 @@ pub const PUBLIC_ENVIRONMENT_VARIABLES: &[&str] = &[
     "CLICK_EXAMPLE",
     "CLICK_RUN_QUARANTINED",
     "CLICK_DISABLE_TACTIC_BUDGETS",
-    "CLICK_VIEW_SEMANTICS",
 ];
 
 /// Stable identifiers for documented command targets, selection rules,
@@ -91,7 +90,7 @@ use crate::languages::c::compiler_import::PreparedCImport;
 use crate::languages::c::source as c_source;
 use crate::languages::cpp::PreparedCppImport;
 use crate::surface::verifying_source_paths;
-use crate::surface::{ClickModuleSource, ClickProject, ViewSemanticsMode, click_import_sites};
+use crate::surface::{ClickModuleSource, ClickProject, click_import_sites};
 
 /// Parses a one-based `PATH:LINE:COLUMN` source location.
 ///
@@ -219,55 +218,6 @@ fn duration_from_optional_os(
         .to_str()
         .ok_or_else(|| format!("{variable} must be valid UTF-8"))?;
     parse_duration(source).map_err(|message| format!("{variable}: {message}"))
-}
-
-/// The environment variable that selects the view-semantics interpretation.
-pub const VIEW_SEMANTICS_VARIABLE: &str = "CLICK_VIEW_SEMANTICS";
-
-/// Parses a `CLICK_VIEW_SEMANTICS` value. Unset, empty, and `stable-loans`
-/// all select the stable-view interpretation, which is the default; `legacy`
-/// selects the retiring weak-view interpretation. Any other value is a
-/// configuration error, so a misspelled selection cannot quietly verify under
-/// the wrong semantics.
-///
-/// This is the one parser for the variable: the command-line front end and
-/// both fixture harnesses call it. Rollout scaffolding for
-/// `issues/fix-views.md`; it leaves with the switch.
-pub fn parse_view_semantics(value: Option<&str>) -> Result<ViewSemanticsMode, String> {
-    match value {
-        None | Some("") | Some("stable-loans") => Ok(ViewSemanticsMode::StableLoans),
-        Some("legacy") => Ok(ViewSemanticsMode::Legacy),
-        Some(other) => Err(format!(
-            "{VIEW_SEMANTICS_VARIABLE} must be `legacy` or `stable-loans`, got `{other}`"
-        )),
-    }
-}
-
-/// Reads `CLICK_VIEW_SEMANTICS` from the process environment.
-pub fn view_semantics_from_environment() -> Result<ViewSemanticsMode, String> {
-    let value = std::env::var_os(VIEW_SEMANTICS_VARIABLE);
-    let value = match value.as_deref() {
-        None => None,
-        Some(value) => Some(
-            value
-                .to_str()
-                .ok_or_else(|| format!("{VIEW_SEMANTICS_VARIABLE} must be valid UTF-8"))?,
-        ),
-    };
-    parse_view_semantics(value)
-}
-
-/// Resolves `CLICK_VIEW_SEMANTICS` and installs it as this process's default
-/// view-semantics mode, so every verification, expansion, profile, and audit
-/// the command performs runs under the selected interpretation.
-///
-/// Each subcommand entry point calls this before it does any work: the
-/// binaries are separate processes, and a rejected value must be reported as
-/// a command error rather than surfacing later as a proof difference.
-pub fn install_view_semantics_from_environment() -> Result<ViewSemanticsMode, String> {
-    let mode = view_semantics_from_environment()?;
-    ViewSemanticsMode::set_process_default(mode);
-    Ok(mode)
 }
 
 /// Per-class tactic time thresholds (owner ruling 2026-07-31): a slow SIMPLE

@@ -1799,7 +1799,7 @@ pub(super) fn instantiate_contract_predicate_unfolding_with_obligations(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
+pub(super) fn prove_symbolic_c_function_verification_paths(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,

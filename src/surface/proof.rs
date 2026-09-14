@@ -3075,12 +3075,8 @@ fn install_borrowed_contract_inputs(
     arguments: &[CExpression],
     pure_facts: &[Proposition],
     parameters: &[syntax::C0Parameter],
-    function_environment: &CExecutionEnvironment,
     proof_label: &str,
 ) -> Result<CState, ClickError> {
-    if !function_environment.candidate_stable_view_semantics {
-        return Ok(state);
-    }
     crate::kernel::c_state_with_borrowed_contract_inputs(
         state,
         function,

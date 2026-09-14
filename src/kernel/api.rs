@@ -58,8 +58,7 @@ use contract_certification::{
     c_function_contract_certification_assumptions,
     certification_proves_condition_from_verified_pure_implication,
     certification_proves_context_free_forall, certification_proves_proposition,
-    contract_resource_condition_cases,
-    prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode,
+    contract_resource_condition_cases, prove_symbolic_c_function_verification_paths,
     resources_certify_loadability,
 };
 
@@ -3182,7 +3181,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
     execution_semantics: CExecutionSemantics,
     budget: ExecutionBudget,
 ) -> SymbolicCExecution {
-    prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
+    prove_symbolic_c_function_execution_paths_with_contract_resources(
         state,
         function,
         arguments,
@@ -3195,7 +3194,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
+fn prove_symbolic_c_function_execution_paths_with_contract_resources(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
@@ -3292,7 +3291,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
     execution_semantics: CExecutionSemantics,
     budget: ExecutionBudget,
 ) -> SymbolicCExecution {
-    prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
+    prove_symbolic_c_function_verification_paths(
         state,
         function,
         arguments,
@@ -3318,7 +3317,7 @@ pub fn prove_symbolic_c_function_contract_verification_paths_with_environment(
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
     let budget = ExecutionBudget::for_c_function_verification(&function, &arguments);
-    prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
+    prove_symbolic_c_function_verification_paths(
         state,
         function,
         arguments,
@@ -3345,7 +3344,7 @@ pub fn prove_checked_c_function_execution_with_environment(
     record_checked_function_body_execution();
     let execution = match mode {
         CFunctionContractExecutionMode::VerifyLoops => {
-            prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
+            prove_symbolic_c_function_verification_paths(
                 state.clone(),
                 function.clone(),
                 arguments.clone(),
@@ -3357,7 +3356,7 @@ pub fn prove_checked_c_function_execution_with_environment(
             )
         }
         CFunctionContractExecutionMode::ExecuteLoops => {
-            prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
+            prove_symbolic_c_function_execution_paths_with_contract_resources(
                 state.clone(),
                 function.clone(),
                 arguments.clone(),
@@ -4188,9 +4187,6 @@ fn checked_loan_evidence_is_valid(
     checked: &CCheckedFunctionExecution,
     function: &CFunction,
 ) -> bool {
-    if !checked.environment.candidate_stable_view_semantics {
-        return true;
-    }
     if !function
         .resource_requires()
         .iter()
@@ -4264,7 +4260,7 @@ fn checked_loan_evidence_is_valid(
 }
 
 #[cfg(test)]
-mod candidate_loan_authorization_tests {
+mod loan_authorization_tests {
     use super::*;
 
     #[test]

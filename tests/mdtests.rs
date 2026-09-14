@@ -1,12 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use click::cli::{
-    MdTestExpectation, read_click_project, read_mdtest, run_parallel,
-    view_semantics_from_environment,
-};
+use click::cli::{MdTestExpectation, read_click_project, read_mdtest, run_parallel};
 use click::instrumentation::{self, ContractFallback};
-use click::surface::{ViewSemanticsMode, verify_c0_project_in_mode, verify_c0_sources_in_mode};
+use click::surface::{verify_c0_project, verify_c0_sources};
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
@@ -22,14 +19,6 @@ const QUARANTINED: &[(&str, &str)] = &[];
 /// executed a function body because a contract guard declined,
 /// by reason. A count may only fall; lower its pin when it does.
 const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[];
-
-/// The view-semantics mode the corpus runs under: stable views unless
-/// `CLICK_VIEW_SEMANTICS=legacy` selects the retiring interpretation.
-/// Rollout scaffolding for `issues/fix-views.md`; it leaves with the
-/// `Legacy` variant.
-fn view_semantics() -> ViewSemanticsMode {
-    view_semantics_from_environment().unwrap_or_else(|message| panic!("{message}"))
-}
 
 #[test]
 fn mdtests() {
@@ -83,20 +72,12 @@ fn mdtests() {
     // available to each file, so concurrency cannot change a verdict. Peak
     // memory stays small: on 2026-09-11 the whole corpus peaked at 171 MB
     // serially and 291 MB on 8 workers.
-    let view_semantics = view_semantics();
-    if view_semantics != ViewSemanticsMode::StableLoans {
-        println!(
-            "running {} mdtests under {view_semantics:?} view semantics",
-            paths.len()
-        );
-    }
     let _ = instrumentation::take_body_rerun_census();
     let workers = std::thread::available_parallelism().map_or(1, usize::from);
     let failures = run_parallel(&paths, workers, |path| run_mdtest_in_thread(path));
     let census = instrumentation::take_body_rerun_census();
     if failures.is_empty() {
         if !filtered
-            && view_semantics == ViewSemanticsMode::StableLoans
             && std::env::var_os(RUN_QUARANTINED).is_none()
             && let Some(mismatch) =
                 instrumentation::body_rerun_census_mismatch(&census, CONTRACT_FALLBACK_BASELINE)
@@ -180,9 +161,9 @@ fn run_mdtest(path: &Path) -> Result<(), String> {
 
     let result = if click_source.contains("import \"") {
         let project = read_click_project(path, click_source)?;
-        verify_c0_project_in_mode(&project, &c_sources, view_semantics())
+        verify_c0_project(&project, &c_sources)
     } else {
-        verify_c0_sources_in_mode(click_source, &c_sources, view_semantics())
+        verify_c0_sources(click_source, &c_sources)
     };
     match (expectation, result) {
         (MdTestExpectation::Pass, Ok(_)) => {}

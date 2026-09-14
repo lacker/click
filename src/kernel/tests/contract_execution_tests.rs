@@ -2097,7 +2097,7 @@ fn checked_view_certificate_initializes_a_pristine_loan_authority() {
                 .store(base.clone(), int32(7)),
         )
         .with_resource_context(own_memory_context(base.clone(), 0, 1));
-    let environment = CExecutionEnvironment::new().with_candidate_stable_view_semantics();
+    let environment = CExecutionEnvironment::new();
     let arguments = vec![c_pointer_value(base)];
     let checked = prove_checked_c_function_execution_with_environment(
         state.clone(),

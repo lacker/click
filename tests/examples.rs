@@ -4,10 +4,9 @@ use std::path::{Component, Path, PathBuf};
 
 use click::cli::{
     files_with_extension, read_click_project, read_verifying_sources, run_parallel, source_refs,
-    view_semantics_from_environment,
 };
 use click::instrumentation::{self, ContractFallback};
-use click::surface::{ViewSemanticsMode, verify_c0_sources_in_mode};
+use click::surface::verify_c0_sources;
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const SOURCE_MANIFEST: &str = "SOURCE.sha256";
@@ -25,14 +24,6 @@ const QUARANTINED: &[(&str, &str)] = &[(
 /// The body-rerun ratchet (`docs/internals/testing.md`) over every example
 /// project; see `tests/mdtests.rs` for the rule.
 const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[];
-
-/// The view-semantics mode the corpus runs under: stable views unless
-/// `CLICK_VIEW_SEMANTICS=legacy` selects the retiring interpretation.
-/// Rollout scaffolding for `issues/fix-views.md`; it leaves with the
-/// `Legacy` variant.
-fn view_semantics() -> ViewSemanticsMode {
-    view_semantics_from_environment().unwrap_or_else(|message| panic!("{message}"))
-}
 
 #[test]
 fn example_projects() {
@@ -121,7 +112,6 @@ fn example_projects() {
     let census = instrumentation::take_body_rerun_census();
     if requested.is_none()
         && !run_quarantined
-        && view_semantics() == ViewSemanticsMode::StableLoans
         && let Some(mismatch) =
             instrumentation::body_rerun_census_mismatch(&census, CONTRACT_FALLBACK_BASELINE)
     {
@@ -206,11 +196,7 @@ fn run_example_project(project: &Path) -> Result<(), String> {
         match source_status {
             Some(SourceFixtureStatus::ParserOnly) => {
                 match if click_project.modules().len() == 1 {
-                    verify_c0_sources_in_mode(
-                        &click_source,
-                        &source_refs(&c_sources),
-                        view_semantics(),
-                    )
+                    verify_c0_sources(&click_source, &source_refs(&c_sources))
                 } else {
                     click::surface::verify_c0_project(&click_project, &source_refs(&c_sources))
                 } {
@@ -242,11 +228,7 @@ fn run_example_project(project: &Path) -> Result<(), String> {
             }
             Some(SourceFixtureStatus::Verified) | None => {
                 if click_project.modules().len() == 1 {
-                    verify_c0_sources_in_mode(
-                        &click_source,
-                        &source_refs(&c_sources),
-                        view_semantics(),
-                    )
+                    verify_c0_sources(&click_source, &source_refs(&c_sources))
                 } else {
                     click::surface::verify_c0_project(&click_project, &source_refs(&c_sources))
                 }

@@ -1788,10 +1788,6 @@ id = "cli.env.CLICK_DISABLE_TACTIC_BUDGETS"
 path = "reference/cli/environment.md#click_disable_tactic_budgets"
 
 [[item]]
-id = "cli.env.CLICK_VIEW_SEMANTICS"
-path = "reference/cli/environment.md#click_view_semantics"
-
-[[item]]
 id = "cli.behavior.shared.duration-syntax"
 path = "reference/cli/index.md#duration-syntax"
 

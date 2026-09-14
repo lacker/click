@@ -203,7 +203,6 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
         println!("{USAGE}");
         return Ok(());
     }
-    click::cli::install_view_semantics_from_environment()?;
     run_audit(parse_arguments(raw)?)
 }
 

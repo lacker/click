@@ -331,7 +331,6 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
         println!("{USAGE}");
         return Ok(());
     }
-    click::cli::install_view_semantics_from_environment()?;
     let arguments = parse_arguments(raw_arguments)?;
     let targets = profile_targets(&arguments.path)?;
     let mut profiles = Vec::new();

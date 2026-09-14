@@ -240,14 +240,9 @@ struct CFunctionResourceTransfer {
     /// composite packages, which the caller side binds to exactly one loan of
     /// this call (step 7).
     produced_borrowing_pieces: Vec<(CResourceFact, CResourceFact)>,
-    /// Whether the call was prepared under the candidate semantics at all. A
-    /// call with no view requirement and no caller ledger takes the legacy
-    /// planning route and has no plan, but a borrow it produces still has
-    /// to be backed by a loan of this call, which such a call cannot supply.
-    candidate_semantics: bool,
-    /// Candidate stable-view transition, when this call was prepared through
-    /// the opt-in planner. The plan owns the checked successor ledger and is
-    /// consumed only after postconditions have been evaluated.
+    /// Stable-view transition, when this call was prepared through the
+    /// planner. The plan owns the checked successor ledger and is consumed
+    /// only after postconditions have been evaluated.
     stable_view_plan: Option<StableViewTransferPlan>,
     /// The bytes of this call's checked view frontier that a planned stable
     /// view does not name directly: a composite view's checked one-level
@@ -299,9 +294,7 @@ fn recover_candidate_stable_view_resources(
     CRuntimeError,
 > {
     let Some(plan) = &transfer.stable_view_plan else {
-        if transfer.candidate_semantics
-            && let Some((head, piece)) = transfer.produced_borrowing_pieces.first()
-        {
+        if let Some((head, piece)) = transfer.produced_borrowing_pieces.first() {
             return Err(CRuntimeError::FunctionContract(format!(
                 "produced borrowing composite {head:?} packages a view {piece:?} that no viewed input of this call backs"
             )));
@@ -960,6 +953,14 @@ pub(super) fn execute_c_function_paths(
     )
 }
 
+/// Executes a called function's body across its paths.
+///
+/// `prepare_contract_resources` says whether the body runs from the contract's
+/// own entry resources. A whole-function judgment over a bare caller frame
+/// executes the body in that frame; the contract routes cross the resource
+/// boundary, so the views the contract declares become loans of this
+/// application and recovery returns them.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn execute_c_function_paths_with_contract_resources(
     state: &CState,
     function: &CFunction,
@@ -970,13 +971,6 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
     budget: &mut ExecutionBudget,
     prepare_contract_resources: bool,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
-    // Candidate stable-view calls must cross the resource boundary even when
-    // the ordinary body-execution caller did not request contract resources.
-    // Keeping this opt-in preserves the historical default while preventing a
-    // candidate-enabled direct call from silently running with unsuspended
-    // caller resources.
-    let prepare_contract_resources =
-        prepare_contract_resources || environment.candidate_stable_view_semantics;
     budget.consume_function_call()?;
     if arguments.len() != function.parameters().len() {
         return Ok(vec![CFunctionPath {
@@ -1048,6 +1042,12 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             &argument_obligations,
         );
         let (callee_state, resource_transfer) = if prepare_contract_resources {
+            // The contract boundary of a whole-function judgment: the body
+            // runs from the resources the contract declares, consumed
+            // definitionally. Lending is the call site's job (the planner in
+            // `execute_c_function_call_paths`) and the proof's entry
+            // construction (`c_state_with_borrowed_contract_inputs`); a
+            // judgment over a body that already happened must not lend again.
             let resource_transfer = match prepare_function_resource_transfer(
                 state,
                 &callee_state,
@@ -1055,7 +1055,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                 &body_assumptions,
                 budget,
                 true,
-                environment.candidate_stable_view_semantics,
+                false,
             )? {
                 Ok(resource_transfer) => resource_transfer,
                 Err(error) => {
@@ -1189,14 +1189,6 @@ pub(super) fn execute_c_function_verification_paths(
     variables: &mut KernelVariableGenerator,
     prepare_contract_resources: bool,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
-    // Candidate stable-view semantics are a boundary property, not an
-    // optional detail of the independent verifier. The public verification
-    // APIs historically pass `false` here because ordinary certification does
-    // not need resource canonicalization; once the candidate is enabled,
-    // bypassing the transfer would execute the body with caller authority and
-    // emit a theorem with no checked recovery.
-    let prepare_contract_resources =
-        prepare_contract_resources || environment.candidate_stable_view_semantics;
     budget.consume_function_call()?;
     if arguments.len() != function.parameters().len() {
         return Ok(vec![CFunctionPath {
@@ -1271,6 +1263,12 @@ pub(super) fn execute_c_function_verification_paths(
             &argument_obligations,
         );
         let (callee_state, resource_transfer) = if prepare_contract_resources {
+            // The contract boundary of a whole-function judgment: the body
+            // runs from the resources the contract declares, consumed
+            // definitionally. Lending is the call site's job (the planner in
+            // `execute_c_function_call_paths`) and the proof's entry
+            // construction (`c_state_with_borrowed_contract_inputs`); a
+            // judgment over a body that already happened must not lend again.
             let resource_transfer = match prepare_function_resource_transfer(
                 state,
                 &callee_state,
@@ -1278,7 +1276,7 @@ pub(super) fn execute_c_function_verification_paths(
                 &body_assumptions,
                 budget,
                 true,
-                environment.candidate_stable_view_semantics,
+                false,
             )? {
                 Ok(resource_transfer) => resource_transfer,
                 Err(error) => {
@@ -1631,7 +1629,7 @@ pub(super) fn execute_c_function_call_paths(
             &body_assumptions,
             budget,
             false,
-            environment.candidate_stable_view_semantics,
+            true,
         )? {
             Ok(resource_transfer) => resource_transfer,
             Err(error) => {
@@ -2718,7 +2716,7 @@ fn prepare_verified_function_call<'a>(
         "verified function rule application",
         "verified call resource transfer preparation",
         || {
-            prepare_contract_resource_transfer_with_candidate(
+            prepare_contract_resource_transfer(
                 caller_state,
                 &entry_state,
                 application.name,
@@ -2726,7 +2724,7 @@ fn prepare_verified_function_call<'a>(
                 &path_assumptions,
                 budget,
                 false,
-                environment.candidate_stable_view_semantics,
+                true,
             )
         },
     )? {
@@ -3294,22 +3292,12 @@ fn function_contract_requirement_is_proven(
                 return Ok(false);
             }
             if let Some(rule) = environment.get_verified_function_rule(target) {
-                return function_refines_named_contract(
-                    contract,
-                    &rule.function,
-                    environment.candidate_stable_view_semantics,
-                    budget,
-                );
+                return function_refines_named_contract(contract, &rule.function, budget);
             }
             let Some(rule) = environment.get_external_function_rule(target) else {
                 return Ok(false);
             };
-            function_refines_named_contract(
-                contract,
-                &rule.function,
-                environment.candidate_stable_view_semantics,
-                budget,
-            )
+            function_refines_named_contract(contract, &rule.function, budget)
         }
         _ => Ok(false),
     }
@@ -3505,7 +3493,6 @@ fn c_parameter_type_spelling(parameter: &CParameter) -> String {
 fn function_refines_named_contract(
     contract: &CFunctionContract,
     function: &CFunction,
-    candidate_stable_view_semantics: bool,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<bool> {
     if contract.exactly_matches(function) {
@@ -3518,14 +3505,7 @@ fn function_refines_named_contract(
     else {
         return Ok(false);
     };
-    function_refines_named_contract_in_case(
-        &context,
-        &[],
-        &BTreeSet::new(),
-        false,
-        candidate_stable_view_semantics,
-        budget,
-    )
+    function_refines_named_contract_in_case(&context, &[], &BTreeSet::new(), false, budget)
 }
 
 pub(super) fn prepare_function_contract_refinement_context(
@@ -4015,7 +3995,6 @@ fn function_refines_named_contract_in_case(
     case_assumptions: &[Proposition],
     unfolded_predicates: &BTreeSet<String>,
     explicit_case: bool,
-    candidate_stable_view_semantics: bool,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<bool> {
     let contract = &context.contract;
@@ -4167,19 +4146,15 @@ fn function_refines_named_contract_in_case(
         set_contract_result(&mut contract_post, contract_interface, result.clone());
         set_contract_result(&mut function_post, function_interface, result);
     }
-    let access_adapter = if candidate_stable_view_semantics {
-        checked_access_mode_refinement_adapter(
-            contract_interface,
-            function_interface,
-            &contract_entry,
-            &function_entry,
-            &function_post,
-            &preconditions,
-            budget,
-        )?
-    } else {
-        None
-    };
+    let access_adapter = checked_access_mode_refinement_adapter(
+        contract_interface,
+        function_interface,
+        &contract_entry,
+        &function_entry,
+        &function_post,
+        &preconditions,
+        budget,
+    )?;
     if access_adapter == Some(false) {
         return Ok(false);
     }
@@ -4919,7 +4894,7 @@ fn checked_access_mode_refinement_adapter(
     let callee = function_entry
         .clone()
         .with_resource_context(function_resources.clone());
-    let mut transfer = match prepare_contract_resource_transfer_with_candidate(
+    let mut transfer = match prepare_contract_resource_transfer(
         &caller,
         &callee,
         "refinement",
@@ -10320,9 +10295,9 @@ fn prepare_function_resource_transfer(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     preserve_explicit_representation: bool,
-    candidate_stable_view_semantics: bool,
+    plan_stable_views: bool,
 ) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
-    prepare_contract_resource_transfer_with_candidate(
+    prepare_contract_resource_transfer(
         caller_state,
         callee_state,
         function.name(),
@@ -10330,37 +10305,16 @@ fn prepare_function_resource_transfer(
         assumptions,
         budget,
         preserve_explicit_representation,
-        candidate_stable_view_semantics,
-    )
-}
-
-fn prepare_contract_resource_transfer(
-    caller_state: &CState,
-    callee_state: &CState,
-    interface_name: &str,
-    interface: &CFunctionContractInterface,
-    assumptions: &PureFactContext,
-    budget: &mut ExecutionBudget,
-    preserve_explicit_representation: bool,
-) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
-    prepare_contract_resource_transfer_with_candidate(
-        caller_state,
-        callee_state,
-        interface_name,
-        interface,
-        assumptions,
-        budget,
-        preserve_explicit_representation,
-        false,
+        plan_stable_views,
     )
 }
 
 /// Unfolds exactly the folded composite owners a call's own requirements
 /// need, and nothing else.
 ///
-/// The legacy transfer consumes each requirement with
+/// The definitional transfer consumes each requirement with
 /// [`consume_resource_fact_definitionally`], which unfolds a caller composite
-/// on demand. The candidate planner instead selects concrete backing before
+/// on demand. The stable-view planner instead selects concrete backing before
 /// it lends anything, so it needs the same frontier present as facts. Only a
 /// composite whose expansion actually supplies an unsupported requirement is
 /// opened, so an unrelated folded resource keeps its packaging and stays
@@ -10686,7 +10640,14 @@ fn composite_definition_facts_hold(
     Ok(true)
 }
 
-fn prepare_contract_resource_transfer_with_candidate(
+/// Prepares the resource transition of one contract application.
+///
+/// `plan_stable_views` says whether this transition is a call that lends the
+/// caller's authority: a call site plans, so the views it passes become loans
+/// the callee holds and recovery returns. The entry- and exit-state routes
+/// rebuild a state around an application that already happened and must not
+/// lend again, so they consume their requirements definitionally.
+fn prepare_contract_resource_transfer(
     caller_state: &CState,
     callee_state: &CState,
     _interface_name: &str,
@@ -10694,9 +10655,9 @@ fn prepare_contract_resource_transfer_with_candidate(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     preserve_explicit_representation: bool,
-    candidate_stable_view_semantics: bool,
+    plan_stable_views: bool,
 ) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
-    if candidate_stable_view_semantics
+    if plan_stable_views
         && caller_state.loan_ledger().is_some() != caller_state.loan_participant().is_some()
     {
         return Ok(Err(CRuntimeError::LoanRefusal(
@@ -10715,7 +10676,6 @@ fn prepare_contract_resource_transfer_with_candidate(
             post_outputs: None,
             candidate_output_views: Vec::new(),
             produced_borrowing_pieces: Vec::new(),
-            candidate_semantics: false,
             stable_view_plan: None,
             checked_view_frontier: Vec::new(),
         }));
@@ -10795,10 +10755,9 @@ fn prepare_contract_resource_transfer_with_candidate(
     // loan could suspend (D6: an empty permission grants no dereference).
     // Demanding backing for it would turn the empty witness of a partial
     // recursive resource into a missing-backing refusal and hide the
-    // structural validation that is the real verdict on such a call.
-    // Legacy discharges such a requirement by definitional expansion and is
-    // left exactly as it was.
-    let empty_composite_views = if candidate_stable_view_semantics {
+    // structural validation that is the real verdict on such a call. Such a
+    // requirement is discharged by definitional expansion instead.
+    let empty_composite_views = if plan_stable_views {
         checked_required_resources
             .iter()
             .filter(|requirement| {
@@ -10830,7 +10789,7 @@ fn prepare_contract_resource_transfer_with_candidate(
     // Neither group is backed by an owned occurrence of the caller's
     // partition, so neither carries a support and both stay on the
     // arithmetic comparison.
-    let mut checked_view_frontier = if candidate_stable_view_semantics {
+    let mut checked_view_frontier = if plan_stable_views {
         intrinsic_read_views
             .iter()
             .chain(empty_composite_views.iter())
@@ -10847,10 +10806,10 @@ fn prepare_contract_resource_transfer_with_candidate(
     // planner's exclusive reservation asks for one owned entry that directly
     // entails the whole requirement, which no representative can supply for a
     // symbolic or non-unit constant quantity, so such a requirement takes the
-    // route legacy takes. A token population protects no memory, so the
+    // definitional route. A token population protects no memory, so the
     // ledger has nothing to say about it; a population whose body owns memory
     // is still checked against the active loans after planning.
-    let population_quantity_requirements = if candidate_stable_view_semantics {
+    let population_quantity_requirements = if plan_stable_views {
         checked_required_resources
             .iter()
             .filter(|requirement| requirement_is_population_quantity(requirement))
@@ -10868,8 +10827,8 @@ fn prepare_contract_resource_transfer_with_candidate(
     // only a decided guard collapses the body, and an undecided guard leaves
     // the composite folded, so the expansion is not empty and the requirement
     // keeps its entry. The caller residual is still consumed definitionally
-    // below, exactly as legacy consumes it.
-    let definitionally_empty_owned = if candidate_stable_view_semantics {
+    // below.
+    let definitionally_empty_owned = if plan_stable_views {
         checked_required_resources
             .iter()
             .filter(|requirement| {
@@ -10898,8 +10857,7 @@ fn prepare_contract_resource_transfer_with_candidate(
         })
         .cloned()
         .collect::<Vec<_>>();
-    let candidate_semantics = candidate_stable_view_semantics;
-    let mut planning_resources = if candidate_stable_view_semantics {
+    let mut planning_resources = if plan_stable_views {
         candidate_planning_resources(
             caller_state.resources(),
             &stable_requirements,
@@ -10910,7 +10868,7 @@ fn prepare_contract_resource_transfer_with_candidate(
     } else {
         caller_state.resources().clone()
     };
-    let stable_view_plan = if candidate_stable_view_semantics {
+    let stable_view_plan = if plan_stable_views {
         let (ledger, caller) = match (
             caller_state.loan_ledger().cloned(),
             caller_state.loan_participant(),
@@ -11318,8 +11276,8 @@ fn prepare_contract_resource_transfer_with_candidate(
         .map(|plan| plan.caller_resources_after_requirements.clone())
         .unwrap_or_else(|| caller_state.resources().clone());
     // The requirements the plan did not reserve are consumed here, off the
-    // residual the plan published, by the same definitional route legacy
-    // uses. Everything else the plan already removed.
+    // residual the plan published, by the definitional route. Everything else
+    // the plan already removed.
     let population_quantity_resources = population_quantity_requirements
         .iter()
         .map(|requirement| requirement.fact.resource().clone())
@@ -11420,7 +11378,6 @@ fn prepare_contract_resource_transfer_with_candidate(
         post_outputs: None,
         candidate_output_views: Vec::new(),
         produced_borrowing_pieces: Vec::new(),
-        candidate_semantics,
         stable_view_plan,
         checked_view_frontier,
     }))
@@ -11502,7 +11459,7 @@ fn evaluate_contract_return_resource_context(
     Ok(Ok(context))
 }
 
-/// The owned facts a candidate call's lend escrowed. They are not in the
+/// The owned facts a call's lend escrowed. They are not in the
 /// caller residual for the duration of the call, but recovery composes each
 /// one back, so a check on what the caller will hold has to read them.
 fn escrowed_owners(transfer: &CFunctionResourceTransfer) -> &[CResourceFact] {
@@ -11576,8 +11533,8 @@ fn evaluate_contract_return_resources(
             // A lend empties the escrowed owner out of the residual, and
             // recovery composes it straight back. The destination for this
             // check is what the caller holds across the call, so the escrow
-            // belongs in it; without it the candidate semantics would admit
-            // exactly the overlap the legacy residual catches.
+            // belongs in it; without it the stable-view transition would
+            // admit exactly the overlap the definitional residual catches.
             let destination = caller_resources_after_requirements
                 .clone()
                 .unchecked_with_facts(escrowed_owners.iter().cloned());
@@ -12545,6 +12502,7 @@ pub(super) fn prepare_function_contract_entry_state_with_values(
                 assumptions,
                 budget,
                 true,
+                false,
             )
         },
     )? {
@@ -17817,7 +17775,7 @@ pub(super) fn contract_exit_outcome(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-    candidate_stable_view_semantics: bool,
+    plan_stable_views: bool,
 ) -> ExecutionResult<
     Result<
         (
@@ -17877,7 +17835,7 @@ pub(super) fn contract_exit_outcome(
         assumptions,
         budget,
         true,
-        candidate_stable_view_semantics,
+        plan_stable_views,
     )? {
         Ok(transfer) => transfer,
         Err(error) => return Ok(Err(error)),
@@ -18331,7 +18289,7 @@ mod integer_parameter_read_tests {
 }
 
 #[cfg(test)]
-mod candidate_stable_view_call_tests {
+mod stable_view_call_tests {
     use super::*;
     use crate::kernel::loans::LoanRefusal;
 
@@ -18520,15 +18478,13 @@ mod candidate_stable_view_call_tests {
     }
 
     fn environment(function: &CFunction) -> CExecutionEnvironment {
-        CExecutionEnvironment::new()
-            .with_candidate_stable_view_semantics()
-            .with_verified_function_rule(CVerifiedFunctionRule {
-                function: function.clone(),
-            })
+        CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
+            function: function.clone(),
+        })
     }
 
     #[test]
-    fn candidate_independent_verification_uses_the_call_transfer_boundary() {
+    fn independent_verification_uses_the_call_transfer_boundary() {
         let pointer = pointer();
         let function = reader_for_input("candidate_verified_reader", 1);
         let state = caller(&pointer);
@@ -18543,9 +18499,9 @@ mod candidate_stable_view_call_tests {
             CExecutionSemantics::EXECUTE_BODIES,
             &mut budget,
             &mut variables,
-            false,
+            true,
         )
-        .expect("candidate verification should execute through the transfer boundary");
+        .expect("verification should execute through the transfer boundary");
         assert!(matches!(
             paths.as_slice(),
             [CFunctionPath {
@@ -19106,36 +19062,31 @@ mod candidate_stable_view_call_tests {
     }
 
     #[test]
-    fn produced_composite_over_a_viewed_owner_is_refused_in_both_modes() {
-        for candidate in [false, true] {
-            let pointer = pointer();
-            let function = view_and_produce_reader("candidate_view_and_produce");
-            let mut environment =
-                CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
-                    function: function.clone(),
-                });
-            if candidate {
-                environment = environment.with_candidate_stable_view_semantics();
-            }
-            let paths = execute_c_function_call_paths(
-                &caller(&pointer),
-                &function,
-                &[c_pointer_value(pointer)],
-                &PureFactContext::new(),
-                &environment,
-                CExecutionSemantics::APPLY_VERIFIED_RULES,
-                &mut ExecutionBudget::new(),
-            )
-            .expect("the call should execute");
-            assert!(
-                paths.iter().all(|path| matches!(
-                    &path.outcome,
-                    CFunctionOutcome::RuntimeError(error) if produced_composite_overlap(error)
-                )),
-                "candidate = {candidate}: {:?}",
-                paths.iter().map(|path| &path.outcome).collect::<Vec<_>>()
-            );
-        }
+    fn produced_composite_over_a_viewed_owner_is_refused() {
+        let pointer = pointer();
+        let function = view_and_produce_reader("view_and_produce");
+        let environment =
+            CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
+                function: function.clone(),
+            });
+        let paths = execute_c_function_call_paths(
+            &caller(&pointer),
+            &function,
+            &[c_pointer_value(pointer)],
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("the call should execute");
+        assert!(
+            paths.iter().all(|path| matches!(
+                &path.outcome,
+                CFunctionOutcome::RuntimeError(error) if produced_composite_overlap(error)
+            )),
+            "{:?}",
+            paths.iter().map(|path| &path.outcome).collect::<Vec<_>>()
+        );
     }
 
     fn produced_composite_overlap(error: &CRuntimeError) -> bool {
@@ -19876,7 +19827,6 @@ mod candidate_stable_view_call_tests {
         )
         .with_resource_summary(vec![CResourceSpec::viewed_memory(segment)], Vec::new());
         let environment = CExecutionEnvironment::new()
-            .with_candidate_stable_view_semantics()
             .with_function(inner.clone())
             .with_verified_function_rule(CVerifiedFunctionRule { function: inner });
 
@@ -20188,16 +20138,16 @@ mod candidate_stable_view_call_tests {
     fn candidate_direct_call_rejects_new_output_view() {
         let pointer = pointer();
         let function = reader_with_output("candidate_direct_new_output", 2, 3);
-        let paths = execute_c_function_paths(
+        let paths = execute_c_function_call_paths(
             &caller_with_owned_end(&pointer, 3, 12),
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
             &environment(&function),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
             &mut ExecutionBudget::new(),
         )
-        .expect("candidate direct output call should execute to a diagnostic path");
+        .expect("a direct output call should execute to a diagnostic path");
         assert!(matches!(
             paths.as_slice(),
             [CFunctionPath {
@@ -20915,10 +20865,9 @@ mod candidate_stable_view_call_tests {
     }
 
     /// The count itself is still checked, by the counted-population
-    /// transition rather than by the planner, and it refuses in the candidate
-    /// mode exactly as it refuses in the legacy one.
+    /// transition rather than by the planner.
     #[test]
-    fn candidate_token_population_consume_without_a_known_count_is_refused_like_legacy() {
+    fn token_population_consume_without_a_known_count_is_refused() {
         let pointer = pointer();
         let function = token_population_reader("candidate_uncounted_population_reader", "slot");
         let caller = caller(&pointer);
@@ -20926,14 +20875,11 @@ mod candidate_stable_view_call_tests {
             CExpression::Value(CValue::pointer(pointer.clone())),
             CExpression::Value(CValue::Int32(Bitvector32Term::Variable(Variable(4242)))),
         ];
-        let refusal = |candidate: bool| {
-            let mut environment =
+        let refusal = || {
+            let environment =
                 CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
                     function: function.clone(),
                 });
-            if candidate {
-                environment = environment.with_candidate_stable_view_semantics();
-            }
             let paths = execute_c_function_call_paths(
                 &caller,
                 &function,
@@ -20955,12 +20901,11 @@ mod candidate_stable_view_call_tests {
             };
             error.clone()
         };
-        let candidate = refusal(true);
-        assert_eq!(candidate, refusal(false));
+        let refusal = refusal();
         assert!(
-            matches!(&candidate, CRuntimeError::FunctionContract(message)
+            matches!(&refusal, CRuntimeError::FunctionContract(message)
                 if message.contains("counted population `slot` is not initialized")),
-            "{candidate:?}"
+            "{refusal:?}"
         );
     }
 }

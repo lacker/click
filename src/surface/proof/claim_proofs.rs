@@ -333,7 +333,6 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         &arguments,
         &pure_facts,
         parsed_function.parameters(),
-        function_environment,
         claim_label,
     )?;
     let function_entry_state =
@@ -543,7 +542,6 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         &arguments,
         &pure_facts,
         parsed_function.parameters(),
-        function_environment,
         &proof_label,
     )?;
     let function_entry_state =

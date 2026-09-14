@@ -321,10 +321,9 @@ pub(super) fn verify_execution_theorem(
     // independently built entry state would compare two equivalent-looking
     // but distinct authorities and reject every artifact. This is the same
     // reuse the ordinary contract-certification path performs.
-    if environment.candidate_stable_view_semantics
-        && let Some(entry) = verified
-            .iter()
-            .find_map(|verified| verified.checked_execution.caller_state())
+    if let Some(entry) = verified
+        .iter()
+        .find_map(|verified| verified.checked_execution.caller_state())
     {
         state = entry.clone();
     }

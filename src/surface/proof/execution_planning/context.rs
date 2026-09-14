@@ -50,7 +50,6 @@ pub(in crate::surface) fn verify_loop_execution_proofs(
         &arguments,
         &requirement_facts,
         parsed_function.parameters(),
-        function_environment,
         &label,
     )?;
 
