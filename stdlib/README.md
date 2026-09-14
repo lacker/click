@@ -13,8 +13,10 @@ only with kernel authority from a checked proof, so a C proof that cites one of
 the few library theorems that certification consumes checks that cited theorem
 once during its verification.
 
-Keep the public declarations here until Click supports specification imports.
-The module/import work is tracked in
+Click now supports local specification imports for algebraic types, pure
+functions, predicates, theorems, and resources. The prelude remains one
+implicitly loaded file until its P2 split adopts that module mechanism; that
+follow-up is tracked in
 [`issues/specification-imports.md`](../issues/specification-imports.md).
 
 For a library addition:

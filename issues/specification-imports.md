@@ -1,11 +1,11 @@
 # Add modules and imports for Click specifications
 
-P1: an MVR dependency. The rbtree insert fixture copies the roughly 5000-line
-`examples/rbtree-model` library because a sidecar cannot import it. The copy
-buries the proof, is re-verified on each local run, and sits outside the
-library's ordinary audit coverage. This issue provides a shared source of
-truth and makes partial verification useful without recursively running all
-imported proofs.
+P2: the former P1/MVR import slice is complete. The rbtree insert fixture now
+uses `examples/rbtree-model` as its shared source of truth, and imports no
+longer recursively run library proofs. The remaining work—imported named
+contracts and external C specifications, splitting the standard library, and
+precise incremental selection—is useful after launch but does not block the
+current rbtree plan.
 
 ## Accepted design, 2026-09-13
 
@@ -256,17 +256,17 @@ source C inputs, tooling consistency, artifact invalidation, the conservative
 incremental fallback, and deterministic chain/diamond/shared-library/proof-body
 scaling.
 
-Concrete handoff: retain this issue for the three requirements below. Extend
-the same resolved graph and selection metadata to named contracts and external
-C specifications first; then split `stdlib/prelude.click`; finally replace the
-conservative imported-entry fallback with precise import-aware change
-selection. Do not create a parallel include mechanism or proof cache.
+Concrete P2 handoff: retain this issue for the three requirements below.
+Extend the same resolved graph and selection metadata to named contracts and
+external C specifications first; then split `stdlib/prelude.click`; finally
+replace the conservative imported-entry fallback with precise import-aware
+change selection. Do not create a parallel include mechanism or proof cache.
 
 ## Follow-up scope retained by this issue
 
 The first delivery is a coherent milestone, not completion of all module work.
-Keep this issue open until the retained requirements are implemented or the
-user explicitly reschedules them:
+All work retained here is P2. Keep this issue open until the retained
+requirements are implemented or the user explicitly reschedules them:
 
 - Import shared named contracts and supported external C specifications without
   changing their checked semantics or silently selecting executable targets.
@@ -274,6 +274,12 @@ user explicitly reschedules them:
   a separate unchecked Rust-only include convention.
 - Complete precise import-aware incremental and `--changed-since` selection,
   so unrelated targets are not rebuilt unnecessarily.
+
+None of these items blocks rbtree C3 or C5. C6 currently depends on the
+callback packaging in `memory-vs-resources.md`, not on broader import support.
+Promote the first item back to P1 only if the eventual C6 design genuinely
+requires a named callback contract to cross a module boundary; do not promote
+it merely to reorganize declarations.
 
 Aliases, qualified surface names, visibility controls, package management,
 named CLI selectors, and persistent proof caching are not required to close

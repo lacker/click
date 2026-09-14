@@ -22,8 +22,10 @@ Fix what slows the work before completing the example:
 
 1. **Imports first: delivered.** `examples/rbtree-insert` now imports the
    shared `examples/rbtree-model/rbtree_model.click`; its C is unchanged and
-   the unfinished proof remains an explicit negative frontier. The retained
-   import follow-ups do not block C3.
+   the unfinished proof remains an explicit negative frontier. I1 was the P1
+   dependency; all retained import follow-ups are P2 and block neither C3 nor
+   C5. C6 depends on callback packaging, not broader imports, unless its final
+   design requires a named callback contract to cross a module boundary.
 2. **Diagnostics that point the wrong way** (package T9 below), since
    several resumptions lost their budget to them.
 3. **Efficiency next, if it stays on pace to be a problem.** `click verify`
@@ -456,7 +458,8 @@ package creates issues. A package that hits a tooling failure listed in
 selects proof obligations and `verifying` sources. The insert fixture is now
 `examples/rbtree-insert`, imports `examples/rbtree-model`, and retains the
 unfinished proof as an explicit negative frontier. The duplicated mdtest was
-deleted.
+deleted. I1 has no remaining P1 work; the imports issue now retains only P2
+follow-ups.
 
 **E1. Per-frame duplication and verify time.** Restate the fixup body's
 per-frame proofs as one theorem per case (D10 shape) so each path is
