@@ -175,7 +175,7 @@ fn borrowed_contract_input_rejects_derived_or_ambiguous_views() {
 /// The aggregate-copy path is the same shape at a wider width: the copy's
 /// target is owned, its source is readable, and the lent range inside the
 /// target refuses the whole-struct write at the ledger (R01 aggregate case;
-/// F12 in fix-views).
+/// docs/internals/stable-views.md).
 #[test]
 fn owner_authorized_aggregate_copy_into_a_lent_range_is_refused() {
     let target = Pointer {
@@ -349,7 +349,7 @@ fn owner_authorized_write_into_a_lent_range_is_refused() {
 /// different one. The cell is pre-populated with the stored value, so the
 /// only difference from
 /// `owner_authorized_write_into_a_lent_range_is_refused` is that the write
-/// would change nothing (R01's same-value negative; F11 in fix-views).
+/// would change nothing (R01's same-value negative; docs/internals/stable-views.md).
 #[test]
 fn owner_authorized_same_value_store_into_a_lent_range_is_refused() {
     let pointer = Pointer {

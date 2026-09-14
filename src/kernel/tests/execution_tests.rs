@@ -1651,7 +1651,7 @@ fn prerequisite_loop_rule_fixture() -> (CStatement, CVerifiedLoopRule) {
 /// occurrence instead of carrying the head's. The resource context, the
 /// support occurrence, the viewed term, and the occurrence bindings are
 /// identical in every state below; only ledger identity separates them
-/// (D2 laws 4 and 5; F11 in fix-views).
+/// (laws 4 and 5; docs/internals/stable-views.md).
 #[test]
 fn loop_back_edge_refuses_a_dropped_share_or_a_regenerated_root() {
     let pointer = Pointer {

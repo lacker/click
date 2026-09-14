@@ -171,7 +171,7 @@ Additional focused regressions:
   user-written C goto; this issue does not depend on completing arbitrary
   labels, backward edges, or exception unwinding. Do not encode cleanup with
   proof-only variables or edits to the C++ source.
-- Integrate the stable-view rules from [fix-views.md](fix-views.md). A
+- Integrate the stable-view rules from [the stable-views record](../docs/internals/stable-views.md). A
   destructor must have permission for each write and cannot invalidate an
   outstanding view. Distinguish object lifetime, scope cleanup, and loan
   expiration; they are not interchangeable events.
@@ -210,7 +210,7 @@ Additional focused regressions:
 - Existing C fixtures and `scripts/check.sh` pass. Delete this issue and its
   list entry when the implementation, regressions, and documentation land.
 
-Dependencies: stable borrowing from [fix-views.md](fix-views.md), the existing
+Dependencies: stable borrowing from [the stable-views record](../docs/internals/stable-views.md), the existing
 shared call/resource transition machinery, and only the edge/scope support
 actually needed for normal cleanup. The general multi-target, goto, and Rust
 projects do not need to finish to deliver this slice.

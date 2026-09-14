@@ -6550,7 +6550,7 @@ int32 read_entry(struct buffer* owner, int32* other) {
     /// pointer field does not move that authority to the new pointee, so the
     /// load after the write has nothing behind it: `other` carries no clause
     /// of its own, and the entry view does not follow the field
-    /// (F11 in fix-views).
+    /// (docs/internals/stable-views.md).
     #[test]
     fn field_derived_view_does_not_retarget_after_a_pointer_write() {
         let click = r#"
@@ -6904,7 +6904,7 @@ int32 f(struct s* p, int32 n) {
     /// A callee whose contract leaves allocation continuity undecided may
     /// deallocate; retiring the allocation must consult the ledger that
     /// carries this call's own loans, because lending has removed the owner
-    /// from the preserved residual (F1 in fix-views).
+    /// from the preserved residual (docs/internals/stable-views.md).
     #[test]
     fn undecided_continuity_retire_refuses_a_lent_allocation() {
         let click = r#"

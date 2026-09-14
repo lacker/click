@@ -5,7 +5,7 @@ file-scope objects, statics, and basic string-literal milestone is delivered.
 This issue retains broader initializer/literal coverage; it no longer stands
 for implementing global storage from scratch. The remaining const callback
 suite integration is P1 under [rbtree C6](rbtree-example.md),
-[stable views](fix-views.md), and [resource/callback transport](memory-vs-resources.md).
+[stable views](../docs/internals/stable-views.md), and [resource/callback transport](memory-vs-resources.md).
 It is not closed by this audit or demoted with the language-coverage remainder.
 
 ## Delivered scope

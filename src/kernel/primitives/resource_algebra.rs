@@ -4185,7 +4185,7 @@ fn consume_memory_resource_fact(
 ) -> Option<ResourceFactConsumption> {
     if let Some(required) = required.memory_view_range() {
         // `Preserve` here is the owner-observation rule in consumption form
-        // (fix-views D7, and see `owner_observation_core`): a viewed clause is
+        // (the owner-observation rule in docs/internals/stable-views.md, and see `owner_observation_core`): a viewed clause is
         // discharged by read authority the consuming context already holds,
         // and the holding is left untouched, whether it is a view or the
         // ownership the view is read off.
@@ -4415,7 +4415,7 @@ fn consume_exact_resource_fact(
 }
 
 /// Normalization for the exact families, including the owner-absorbs-view
-/// case (fix-views D7, D2 law 4).
+/// case (the owner-observation rule and law 4 in docs/internals/stable-views.md).
 ///
 /// An owner absorbing an equal viewed description drops a *description*, not
 /// authority: the owner keeps every capability the pair had, and a view read
@@ -4454,7 +4454,7 @@ fn combine_exact_resource_facts(
     }
 }
 
-/// The owner-observation rule (fix-views D7).
+/// The owner-observation rule (the owner-observation rule in docs/internals/stable-views.md).
 ///
 /// An owner may read what it owns and inspect its composite without issuing a
 /// stable loan to itself, so a positive owned fact exposes a viewed
@@ -4541,7 +4541,7 @@ impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
 
     /// Two owners of overlapping bytes are a partition violation. An owner
     /// overlapping a *view* is decided by the view's binding, which this
-    /// check cannot see (fix-views D7).
+    /// check cannot see (the owner-observation rule in docs/internals/stable-views.md).
     ///
     /// A **bound** view — one carrying a live `loan_dependency` — beside a
     /// usable owner of the same bytes is invalid: lending escrows the owner
@@ -5563,7 +5563,7 @@ impl CResourceFact {
 ///
 /// That case is the owner-observation rule again: the view is a description
 /// of ownership this context holds, and dropping a description changes no
-/// live access share (fix-views D7, D2 law 4). It is sound only because a
+/// live access share (the owner-observation rule and law 4 in docs/internals/stable-views.md). It is sound only because a
 /// *bound* view never reaches here — `ResourceContext::normalized` skips any
 /// entry with a live `loan_dependency` and detaches supported projections
 /// first. See [`combine_exact_resource_facts`] for the full argument; the

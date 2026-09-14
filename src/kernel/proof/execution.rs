@@ -8377,7 +8377,7 @@ mod tests {
 }
 
 /// Deterministic four-size curves for the loan machinery an interface join
-/// and a loop-head havoc run (R32; fix-views step 6 finding F10). Both axes
+/// and a loop-head havoc run (R32; docs/internals/stable-views.md). Both axes
 /// grow with proof length rather than with the selected contract: the binding
 /// count grows by one per exposed child per unfold or observe, and the cell
 /// and symbolic-loan counts grow with the memory a proof has named. Neither

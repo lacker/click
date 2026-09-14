@@ -8,7 +8,7 @@ contains executable evidence, compiler versions, and reproduction commands.
 No C++ or Rust verification frontend is implemented by this document.
 
 The implementation backlogs are the P1
-[stable views issue](../issues/fix-views.md) and P1
+[stable views](../docs/internals/stable-views.md) and P1
 [basic C++ support issue](../issues/basic-cpp-support.md). They own current
 acceptance criteria. This document owns the cross-language rationale and
 future investigations, so those decisions survive the eventual issue closures.
@@ -28,7 +28,7 @@ usable path from original `.cpp` source through normal Click sidecars.
 | Small meaningful feature | References and a simple constructor/destructor across two return paths. | Shared/exclusive references and reborrows across calls. |
 | Existing overlap | Much of the scalar, pointer, memory, and call machinery can be reused after checking C++ semantics. | Memory/call machinery can be reused, but reference validity and borrow provenance need additional interpretation. |
 | Main design question tested | Can a second frontend preserve source identity, object lifetime, and implicit cleanup in the shared checker? | Can the borrow protocol and compiler extraction agree on active references and recovered authority? |
-| Work already being done without a frontend | C++ cleanup still needs an end-to-end source witness. | `fix-views` already requires small checked borrowing and concurrency models. |
+| Work already being done without a frontend | C++ cleanup still needs an end-to-end source witness. | The stable-view rules already require small checked borrowing and concurrency models. |
 
 This is a sequencing judgment, not a measured claim that a Clang exporter is
 cheap. Today Click's compiler import captures preprocessed C text; it does
@@ -135,7 +135,7 @@ shared representation.
 ## Shared resources and Rust borrowing
 
 Stable shared borrowing for ordinary memory shipped from the P1
-[views issue](../issues/fix-views.md), superseding the original
+[stable views record](../docs/internals/stable-views.md), superseding the original
 investigation's advice to preserve weak C views. The observations below
 describe the shipped semantics.
 
@@ -399,7 +399,7 @@ and execute the remainder as C.
 Defer returned references, general generics/traits, enums with complex validity,
 trait objects, closures, async, unsafe code, interior-mutability libraries,
 standard-library verification, and threading to later slices. Returned field
-borrows remain an early design model requirement in `fix-views`; actual Rust
+borrows remain an early design model requirement in the stable-views design record; actual Rust
 surface support follows when contracts can bind the escaping lifetime and
 connect the final borrowed value to the recovered owner. No separate Rust
 implementation issue is filed until that milestone is requested.

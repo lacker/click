@@ -4,7 +4,7 @@ Synthetic, standalone probes for the
 [supporting more languages design](../supporting-more-languages.md).
 These are synthetic examples, not a supported Rust/C++ verification path.
 The language probes inform frontend planning; the two C
-contract-migration probes also support the P1 `fix-views` investigation. The
+contract-migration probes also support the stable-views investigation. The
 Rust rejection probes are intentionally invalid programs; successful
 reproduction requires their compilation to fail.
 
@@ -34,7 +34,7 @@ incorrect unchanged-value postcondition is rejected. That is complementary
 negative evidence to the positive C alias probe.
 
 The two contract-migration probes were added for the P1
-[fix-views investigation](../../issues/fix-views.md) at base `79411f40` and
+[stable-views investigation](../../docs/internals/stable-views.md) at base `79411f40` and
 also passed ordinary bounded verification. `field-split.c` is copied unchanged
 from `mdtests/composite_piece_caller_frames_viewed_field.md`; its sidecar views
 only the unchanged field. These probes validate migration options under the

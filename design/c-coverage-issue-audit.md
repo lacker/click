@@ -94,7 +94,7 @@ than treating stale rejection criteria as new implementation tasks.
 | Full configured Linux preprocessing and retained GNU/header forms | Keep with `issues/kernel-scale-preprocessing.md` and `issues/linux-rbtree-inline-helpers.md`, under their existing priority and approved scope. Closing the bounded importer issue does not prove the pinned Linux translation unit works. |
 | Other compiler profiles, packing, bitfields and ABI-dependent layout | Already owned by `issues/multiple-compilers.md` (P2). |
 | Static aggregate initialization extensions, static object contracts and callback-table resource packaging | Already owned by `issues/global-variables.md` and the specific static-state/resource issues. Do not duplicate them under structs. |
-| Borrow stability, resource transport and abstract callback ownership | Remain with `issues/fix-views.md`, `issues/memory-vs-resources.md`, and their active work. Aggregate-shape coverage does not certify the stable-view implementation. |
+| Borrow stability, resource transport and abstract callback ownership | Borrow stability landed (`docs/internals/stable-views.md`); resource transport and abstract callback ownership remain with `issues/memory-vs-resources.md` and its active work. Aggregate-shape coverage does not certify the stable-view implementation. |
 | General union writes, standalone union values and broader initializer shapes | Retain the explicit unsupported-subset documentation. The audited issues supply no independent failing launch regression requiring a new issue. |
 | Complete rbtree algorithm proofs | Still owned by `issues/rbtree-example.md`. The frontend milestones do not establish its functional correctness or termination. |
 

@@ -1834,7 +1834,7 @@ impl CMemory {
                 || ledger.is_some_and(|ledger| {
                     if byte_width == 0 {
                         // Nothing proved this cell stable; keeping its value
-                        // would be a fail-open promise (F9 in fix-views).
+                        // would be a fail-open promise (docs/internals/stable-views.md).
                         return false;
                     }
                     ledger
@@ -2026,7 +2026,7 @@ impl CMemory {
                 || ledger.is_some_and(|ledger| {
                     if byte_width == 0 {
                         // Nothing proved this cell stable; keeping its value
-                        // would be a fail-open promise (F9 in fix-views).
+                        // would be a fail-open promise (docs/internals/stable-views.md).
                         return false;
                     }
                     ledger

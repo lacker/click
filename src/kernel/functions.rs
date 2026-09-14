@@ -509,7 +509,7 @@ fn recover_candidate_stable_view_resources(
         // already decides it with this exact block test, in
         // `install_borrowed_contract_inputs` (such a contract input view
         // gets no borrowed root) and in `intrinsic_read_views` (such a
-        // requirement is supplied without a ledger transition, fix-views
+        // requirement is supplied without a ledger transition, docs/internals/stable-views.md
         // D10 and 6.3's F14(b)). The return route has to admit it on the
         // same terms, or a call that merely carries one across its
         // boundary would be refused for having no binding that was never
@@ -7947,7 +7947,7 @@ fn apply_verified_heap_allocation_delta(
                 }
                 // Lending removed the owner from the preserved residual, so
                 // the scan above cannot see a view the caller still holds
-                // over these bytes; the ledger can (F1 in fix-views).
+                // over these bytes; the ledger can (docs/internals/stable-views.md).
                 refuse_retiring_a_lent_allocation(ledger, &base, &bytes, &allocation_assumptions)?;
                 memory = memory.retire_contract_heap_allocation_claim(&base);
                 continue;
@@ -10385,7 +10385,7 @@ fn candidate_planning_resources(
 }
 
 /// One checked owned-interface-to-viewed-implementation adapter for a
-/// composite view (fix-views step 8a).
+/// composite view (docs/internals/stable-views.md).
 struct CompositeViewAdapter {
     /// The planning resources this adapter works from. Unchanged in the
     /// owned-composite form; in the materialized form the caller's covering
@@ -10720,8 +10720,8 @@ fn prepare_contract_resource_transfer(
     // itself lent, is ordinary loan-backed memory and goes through the
     // planner, which also refuses a view whose binding has gone stale.
     //
-    // This is D10's implicit local authority as an explicit rule (fix-views
-    // 6.3, F14): while the caller is suspended nothing else can reach its
+    // This is the implicit local authority rule (see
+    // docs/internals/stable-views.md): while the caller is suspended nothing else can reach its
     // unowned local storage, a callee cannot write through a view, and a
     // view returned from the call still has to pass the provenance routes,
     // so the read is authorized for the call without a ledger transition.
@@ -10900,7 +10900,7 @@ fn prepare_contract_resource_transfer(
             }) {
                 // Prefer the caller's own owner for this very composite.
                 // Only when there is none does the adapter look for another
-                // owned description of the same authority (fix-views 8a).
+                // owned description of the same authority (docs/internals/stable-views.md).
                 let mut adapted = Vec::new();
                 let mut restored = Vec::new();
                 let mut selected = requirement.fact.clone();
@@ -11558,7 +11558,7 @@ fn evaluate_contract_return_resources(
     // Every ensured view is composed into the caller and then classified by
     // where its live authority comes from. The blanket deduplication that
     // used to drop an ensured view the caller already satisfied is gone
-    // (fix-views D8: "blanket deduplication against a caller owner is no
+    // (docs/internals/stable-views.md: "blanket deduplication against a caller owner is no
     // longer a valid way to discharge obligations", closed as step 6's
     // F14(c)). It was a filter against `satisfies_fact`, so an owner the
     // caller happened to hold silently answered a returned view; the
@@ -11942,7 +11942,7 @@ fn counted_population_quantities(
 ///
 /// An ordinary composite's body lives inside its head: installing it as owned
 /// authority beside the produced head let a caller write the body and still
-/// use the head's facts, which verified a false theorem (fix-views step 5,
+/// use the head's facts, which verified a false theorem (docs/internals/stable-views.md,
 /// 2026-09-13). The predicate that also admitted an unconditional,
 /// non-recursive composite with a snapshot-independent footprint was retired
 /// with the `track_ordinary_populations` parameter at step 8c; every caller
@@ -12043,7 +12043,7 @@ fn apply_counted_population_transition_resources(
 ///
 /// Nothing fills `activated_body_resources` today. Its only writer was the
 /// ordinary-population activation behind the `track_ordinary_populations`
-/// parameter, which every caller had passed as `false` since fix-views step 5
+/// parameter, which every caller had passed as `false` since docs/internals/stable-views.md
 /// and which step 8c deleted; a counted population's body reaches a context
 /// through the call-entry evaluation and through surface `fold`/`observe`
 /// instead. The check is kept as written so a future activation route lands
@@ -18745,7 +18745,7 @@ mod stable_view_call_tests {
         assert!(plan_composite_lend(&counted).is_err());
     }
 
-    // The owned-interface-to-viewed-implementation adapter (fix-views 8a):
+    // The owned-interface-to-viewed-implementation adapter (docs/internals/stable-views.md):
     // the callee's clause names one composite, the caller owns another whose
     // checked frontier covers it.
 

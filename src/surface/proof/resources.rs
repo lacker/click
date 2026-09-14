@@ -3970,7 +3970,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                 &value,
             )?;
             // An owned composite that packages a loan-backed view is a
-            // borrowing composite (step 7 in fix-views). Its head keeps the
+            // borrowing composite (escaping borrows in docs/internals/stable-views.md). Its head keeps the
             // loan's scope open through a hold, so the owner behind the view
             // cannot be recovered and written while the composite still
             // describes it. A piece that already carries a hold (restored by

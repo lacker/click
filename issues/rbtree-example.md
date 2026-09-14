@@ -511,7 +511,7 @@ audit adds `mdtests/rb_augment_callbacks_const_suite.md`: the unchanged const
 callback-table caller and a package with read-only fields pass under ordinary
 semantics, but candidate stable loans refuse the helper call with `an exclusive
 instance inside a composite view is unsupported`. This final-semantics
-integration remains P1 here and in [fix-views.md](fix-views.md), even though the
+integration remains P1 here and in [the stable views record](../docs/internals/stable-views.md), even though the
 broader [global initializer issue](global-variables.md) is now P2. Keep the table
 const and preserve the callback guarantees; the no-op fixture is not evidence
 for the complete mutation-capable augmentation proof.

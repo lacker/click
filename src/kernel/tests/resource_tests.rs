@@ -3384,7 +3384,7 @@ fn installing_a_certified_resource_group_still_checks_the_existing_frame() {
     );
 }
 
-/// fix-views D7 / D2 law 4, the owner-absorbs-view normalization kept at
+/// the owner-observation rule and law 4 in docs/internals/stable-views.md, the owner-absorbs-view normalization kept at
 /// step 8c. An unbound viewed description beside its owner is an observation
 /// of that ownership: dropping it changes no live access share, so
 /// normalization may merge the pair into the owner alone.
@@ -3417,7 +3417,7 @@ fn an_unbound_view_beside_its_owner_normalizes_into_the_owner() {
 /// loan dependency is never absorbed. The merged fact is a new authority with
 /// no occurrence, so absorbing a bound view would drop the binding that
 /// authorizes reading it and retire the loan by normalization — exactly what
-/// fix-views D7 forbids ("Combining an owner and a live borrowed description
+/// the owner-observation rule in docs/internals/stable-views.md forbids ("Combining an owner and a live borrowed description
 /// cannot absorb the loan"). `ResourceContext::normalized`'s `loan_bound`
 /// guard, not the family algebra, is what draws the line: `normalize_pair`
 /// sees two bare facts and cannot tell the two cases apart.

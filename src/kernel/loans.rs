@@ -351,7 +351,7 @@ fn loan_protects_memory(memory_backing: &[CMemoryRange], permitted: &[CResourceF
 /// The authority a reborrow inherits from its parent loan. One description,
 /// `viewed`, authorized the transition, so the child loan permits that
 /// description alone and protects only the parent backing that lies within
-/// it (F5 in fix-views):
+/// it (docs/internals/stable-views.md):
 ///
 /// - a memory view narrows to the viewed range itself, which the parent
 ///   already protects through a backing piece or through the escrowed head
@@ -1140,7 +1140,7 @@ impl CompositeLoanBacking {
         Self::from_checked_adapter(support, head, pieces, Vec::new(), Vec::new())
     }
 
-    /// The adapter form (fix-views step 8a). `adapted` are the viewed
+    /// The adapter form (docs/internals/stable-views.md). `adapted` are the viewed
     /// composite descriptions this loan permits beside its own head, and
     /// `restored` are the owned facts recovery hands back in place of the
     /// head. Both are empty for an ordinary same-composite lend, which is
@@ -1235,7 +1235,7 @@ pub(crate) struct StableViewTransferPlan {
     pub(crate) rebound_parents: BTreeMap<LoanId, LoanViewBinding>,
     /// For an adapter lend whose escrowed head was materialized for the call
     /// out of owned facts the caller already held: exactly those facts, which
-    /// recovery hands back in place of the head (fix-views step 8a). The
+    /// recovery hands back in place of the head (docs/internals/stable-views.md). The
     /// escrow stays the head in the ledger, so the loan still protects the
     /// whole frontier; only what the caller gets back differs.
     adapter_restorations: BTreeMap<LoanId, Vec<CResourceFact>>,
@@ -1931,7 +1931,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
     let mut grouped = BTreeMap::<ResourceOccurrenceId, Vec<(usize, CCheckedResourceFact)>>::new();
     let mut rebound = BTreeMap::<LoanViewBinding, Vec<(usize, CCheckedResourceFact)>>::new();
     // The checked adapter entry that permits a viewed composite beside a
-    // different escrowed head (fix-views step 8a). Only a backing the caller
+    // different escrowed head (docs/internals/stable-views.md). Only a backing the caller
     // built at the kernel's expansion boundary can answer here, and only for
     // the exact description it was checked against, so this is one indexed
     // lookup over this call's own backings rather than a search.
@@ -3541,7 +3541,7 @@ impl LoanLedger {
             // it once per surviving cell. With no concrete range registered
             // the walk can only return the empty set, and both index maps are
             // written and erased together for the same ranges, so an empty
-            // node index means an empty subtree index too (F10 in fix-views).
+            // node index means an empty subtree index too (docs/internals/stable-views.md).
             let indexed_ranges_exist = !self.storage.data.active_memory_index.is_empty()
                 || !self.storage.data.active_memory_subtree.is_empty();
             if indexed_ranges_exist && !self.active_memory_overlaps(range)?.is_empty() {
@@ -4883,7 +4883,7 @@ mod tests {
     /// holds a width-4 loan over bytes 0..4 and a width-1 loan over byte 5;
     /// byte 4 is the gap between them, and it separates the accepted
     /// mismatched-width queries from the refused ones (R08's width-crossing
-    /// case; F11 in fix-views).
+    /// case; docs/internals/stable-views.md).
     #[test]
     fn bytewise_overlap_is_decided_across_mismatched_element_widths() {
         let (ledger, owner, reader) = participants();
@@ -5046,7 +5046,7 @@ mod tests {
             Err(LoanRefusal::UnsupportedResource)
         );
         // The evidence must expand the very parent the loan permits, and the
-        // child must be one that expansion contains (F4 in fix-views).
+        // child must be one that expansion contains (docs/internals/stable-views.md).
         assert_eq!(
             projected.project(
                 reader,
@@ -5168,7 +5168,7 @@ mod tests {
 
     /// A reborrow is authorized by one description, so the child loan
     /// permits that description alone: it cannot describe the parent's head
-    /// or a sibling child of it (F5 in fix-views).
+    /// or a sibling child of it (docs/internals/stable-views.md).
     #[test]
     fn a_reborrow_narrows_to_the_description_that_authorized_it() {
         let (ledger, owner, reader) = participants();
@@ -5363,7 +5363,7 @@ mod tests {
 
     /// A reborrow of a byte-less composite loan is counted and uncounted by
     /// the same predicate, so ending the child leaves the parent's
-    /// contribution to the fail-closed barrier in place (F2 in fix-views).
+    /// contribution to the fail-closed barrier in place (docs/internals/stable-views.md).
     #[test]
     fn ending_a_reborrow_of_a_byteless_composite_loan_keeps_the_barrier_armed() {
         let (ledger, owner, reader) = participants();
@@ -5414,7 +5414,7 @@ mod tests {
     /// A hold placed by a folded borrowing composite keeps the loan's scope
     /// from ending, and therefore the owner from being recovered, until it is
     /// released by the participant that placed it. It keeps the ledger
-    /// identity and mints nothing (step 7 in fix-views).
+    /// identity and mints nothing (escaping borrows in docs/internals/stable-views.md).
     #[test]
     fn a_hold_blocks_ending_the_scope_until_released_and_keeps_identity() {
         let (ledger, owner, reader) = participants();
@@ -5651,7 +5651,7 @@ mod tests {
     /// participant lends to itself throughout, so the old binding's share is
     /// never handed away: only scope and loan identity separate the two, and
     /// the old description, binding, and reborrow are all refused while the
-    /// new ones are accepted (R04's fresh-scope case; F11 in fix-views).
+    /// new ones are accepted (R04's fresh-scope case; docs/internals/stable-views.md).
     #[test]
     fn an_old_descriptor_is_refused_after_a_fresh_scope_over_the_same_resource() {
         let (ledger, owner, reader) = participants();

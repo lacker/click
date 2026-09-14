@@ -8,7 +8,7 @@ unless they become rbtree or tooling blockers.
 
 - **Fractional and persistent read permissions.** Stable memory views and
   their shared-borrow protocol are now owned by the P1
-  [fix-views.md](fix-views.md) issue. Coordinate any fractional substrate there;
+  [stable views record](../docs/internals/stable-views.md). Coordinate any fractional substrate there;
   this issue retains the remaining general algebra extensions and persistent
   token work.
 - **Mutual recursion between composites.** Only guarded direct self-recursion
@@ -32,7 +32,7 @@ not have to spell out.
 ## Intended regression
 
 The shared-reader/recovery regressions are specified in
-[fix-views.md](fix-views.md). Remaining regressions: a duplicable persistent
+[the stable views record](../docs/internals/stable-views.md). Remaining regressions: a duplicable persistent
 token with no accidental ownership of mutable memory; a parent/child pair
 of composite resources referencing each other; `consumes n of slot(p)` with
 symbolic `n` over memory-backed units; a proof closed by `auto` that needs

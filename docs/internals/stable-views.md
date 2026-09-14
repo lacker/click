@@ -237,14 +237,14 @@ production reborrows, and thread APIs stay outside the kernel.
 | Shares and scopes | `splitting_and_joining_require_exact_linear_siblings`, `nested_reborrow_must_rejoin_each_parent_before_scope_end`, `an_old_descriptor_is_refused_after_a_fresh_scope_over_the_same_resource`, `checked_call_evidence_rejects_stale_or_swapped_recovery` |
 | Aliased views and nested readers | `candidate_joint_planner_reuses_one_escrow_for_two_aliases`, `candidate_rejects_new_output_view`, `mdtests/stable_view_nested_reader.md` |
 | Partial borrows and widths | `mdtests/stable_view_partial_borrow.md`, `bytewise_overlap_is_decided_across_mismatched_element_widths`, `memory_entailment_relates_two_spellings_of_one_byte_footprint` |
-| Free and realloc under a loan | `active_stable_loan_rejects_overlapping_heap_free_and_realloc`, `stable_mode_undecided_continuity_retire_refuses_a_lent_allocation` |
+| Free and realloc under a loan | `active_stable_loan_rejects_overlapping_heap_free_and_realloc`, `undecided_continuity_retire_refuses_a_lent_allocation` |
 | Locals and empty views | `active_stable_loan_rejects_direct_local_assignment_and_alias_store`, `candidate_local_array_view_out_of_bounds_is_refused`, `mdtests/empty_view_authorizes_nothing.md` |
-| Entry footprint | `stable_mode_field_derived_view_does_not_retarget_after_a_pointer_write` |
+| Entry footprint | `field_derived_view_does_not_retarget_after_a_pointer_write` |
 | Composites | `composite_loan_protects_primitive_frontier_and_restores_head_once`, `projection_extends_permitted_descriptions_without_a_transition`, `candidate_composite_with_unstable_facts_is_refused`, `candidate_composite_view_is_backed_by_a_covering_owned_composite`, `mdtests/produced_composite_body_overlapping_a_held_owner.md` |
-| Escaping borrows | `a_hold_blocks_ending_the_scope_until_released_and_keeps_identity`, `escaping_borrow_keeps_the_loan_open_until_the_composite_is_consumed`, `stable_mode_consuming_the_composite_recovers_the_owner`, `mdtests/borrowing_composite_survives_an_owning_call.md`, `examples/input-cursor` |
+| Escaping borrows | `a_hold_blocks_ending_the_scope_until_released_and_keeps_identity`, `escaping_borrow_keeps_the_loan_open_until_the_composite_is_consumed`, `consuming_the_composite_recovers_the_owner`, `mdtests/borrowing_composite_survives_an_owning_call.md`, `examples/input-cursor` |
 | Effects | `candidate_rejects_mutable_effect_overlapping_a_composite_view_piece`, `candidate_allows_a_mutable_effect_reserved_from_another_owned_occurrence` |
 | Callbacks and refinement | `stable_view_refinement_uses_checked_variance_for_subranges`, `mdtests/rb_augment_callbacks_helper_owns_rejects_unseparated.md` |
 | Loops and branches | `loop_havoc_requires_a_checked_set_disjoint_from_active_loans`, `loop_back_edge_refuses_a_dropped_share_or_a_regenerated_root`, `abstract_join_rejects_a_loan_ended_on_only_one_arm` |
-| Evidence | `hostile_transition_payload_is_rechecked`, `transitions_are_bound_to_their_exact_predecessor`, `session_rejects_a_cross_mode_or_stale_identity_before_reverification` |
+| Evidence | `hostile_transition_payload_is_rechecked`, `transitions_are_bound_to_their_exact_predecessor`, `session_rejects_a_stale_identity_before_reverification` |
 | Scaling | the four-size curves in `src/kernel/loans.rs`, `interface_binding_inheritance_is_near_linear_in_the_binding_count`, `loop_head_havoc_work_over_cells_and_symbolic_loans` |
 | Model | the `r27_`, `r28_`, `r29_`, and `r30_` tests in `loan_model_tests.rs` |

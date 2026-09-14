@@ -68,7 +68,6 @@ Program import and execution:
 Specification and proof:
 
 - [Unify memory and other resources across contracts and callbacks](memory-vs-resources.md)
-- [Give views stable borrowing semantics for concurrency and future Rust support](fix-views.md)
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
 
 ## P2: after launch (26)
