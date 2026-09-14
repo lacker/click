@@ -1784,6 +1784,46 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
     let mut stable_views = Vec::new();
     let mut callee_view_bindings = LoanViewBindings::default();
     let mut memory_effects = Vec::new();
+    // Several clauses naming one token or composite are a single demand for
+    // their combined count. Reservation stays clause by clause -- one entry
+    // must directly entail each -- but a refusal has to name the whole
+    // demand, the way the definitional route does when it consumes the
+    // normalized requirement context: `consume_two(cb, cb)` needs quantity
+    // two of `can_complete(cb)`, and reporting the second unit alone would
+    // name a fact the caller does hold. Only constant counts add up; anything
+    // else reports its own clause.
+    let mut demanded_own_quantities = BTreeMap::<CResource, Option<u32>>::new();
+    for requirement in requirements
+        .iter()
+        .filter(|requirement| requirement.fact.is_own())
+    {
+        let clause = match requirement.fact.owned_quantity_term() {
+            Some(Bitvector32Term::Constant(quantity)) => Some(*quantity),
+            _ => None,
+        };
+        let total = demanded_own_quantities
+            .entry(requirement.fact.resource().clone())
+            .or_insert(Some(0));
+        *total = match (*total, clause) {
+            (Some(total), Some(clause)) => total.checked_add(clause),
+            _ => None,
+        };
+    }
+    let missing_own_requirement = |fact: &CResourceFact| {
+        let demanded = demanded_own_quantities
+            .get(fact.resource())
+            .copied()
+            .flatten();
+        match (demanded, fact.owned_quantity_term()) {
+            (Some(demanded), Some(Bitvector32Term::Constant(clause))) if demanded > *clause => {
+                StableViewPlanError::MissingResource(CResourceFact::Own(
+                    fact.resource().clone(),
+                    Box::new(Bitvector32Term::Constant(demanded)),
+                ))
+            }
+            _ => StableViewPlanError::MissingResource(fact.clone()),
+        }
+    };
     // Reserve exclusive requirements first. This makes the partition stable
     // under source reordering and prevents a view from hiding a later write.
     for requirement in requirements
@@ -1794,9 +1834,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
             .directly_supporting_owned_entry(&requirement.fact, assumptions)
             .is_none()
         {
-            return Err(StableViewPlanError::MissingResource(
-                requirement.fact.clone(),
-            ));
+            return Err(missing_own_requirement(&requirement.fact));
         }
         if let Some((occurrence, _)) =
             residual.directly_supporting_owned_entry(&requirement.fact, assumptions)
@@ -1807,7 +1845,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
         }
         residual = residual
             .without_fact_incrementally(&requirement.fact, assumptions)
-            .ok_or_else(|| StableViewPlanError::MissingResource(requirement.fact.clone()))?;
+            .ok_or_else(|| missing_own_requirement(&requirement.fact))?;
         callee_resources = callee_resources
             .try_compose_with_fact(requirement.fact.clone(), assumptions)
             .map_err(|_| StableViewPlanError::InvalidResidual)?;

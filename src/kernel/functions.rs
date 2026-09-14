@@ -10482,21 +10482,46 @@ fn prepare_contract_resource_transfer_with_candidate(
     } else {
         Vec::new()
     };
+    // A conditional composite whose guard the assumptions decide false has an
+    // empty body on this path: it names no bytes, holds no token, and is
+    // entailed by the empty context. That is why the definitional route
+    // discharges `owns owned_item(null)` under `if item != 0` with nothing at
+    // all, while the planner's exclusive reservation would demand a direct
+    // owned entry for it and refuse. This is not weaker than the reservation:
+    // only a decided guard collapses the body, and an undecided guard leaves
+    // the composite folded, so the expansion is not empty and the requirement
+    // keeps its entry. The caller residual is still consumed definitionally
+    // below, exactly as legacy consumes it.
+    let definitionally_empty_owned = if candidate_stable_view_semantics {
+        checked_required_resources
+            .iter()
+            .filter(|requirement| {
+                requirement.fact.is_own()
+                    && matches!(requirement.fact.resource(), CResource::Composite { .. })
+                    && expand_all_composite_resource_facts(
+                        &ResourceContext::new().unchecked_with_fact(requirement.fact.clone()),
+                        interface.composite_resource_definitions(),
+                        callee_state.memory(),
+                        assumptions,
+                    )
+                    .is_some_and(|expanded| expanded.facts().is_empty())
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     let stable_requirements = checked_required_resources
         .iter()
         .filter(|requirement| {
             !intrinsic_read_views.contains(requirement)
                 && !empty_composite_views.contains(requirement)
                 && !population_quantity_requirements.contains(requirement)
+                && !definitionally_empty_owned.contains(requirement)
         })
         .cloned()
         .collect::<Vec<_>>();
     let candidate_semantics = candidate_stable_view_semantics;
-    let candidate_stable_view_semantics = candidate_stable_view_semantics
-        && (caller_state.loan_ledger().is_some()
-            || stable_requirements
-                .iter()
-                .any(|requirement| requirement.fact.is_view()));
     let planning_resources = if candidate_stable_view_semantics {
         candidate_planning_resources(
             caller_state.resources(),
@@ -10801,13 +10826,25 @@ fn prepare_contract_resource_transfer_with_candidate(
         }
     }
     for intrinsic_view in &intrinsic_read_views {
-        let in_bounds = matches!(
+        // The activation-local bounds rule, decided before any read is
+        // attempted. Implicit local authority covers the storage the block
+        // has and nothing past it, so a view running off the end is a
+        // resource the caller cannot supply, whoever planned the call.
+        // Merely withholding the view would let the verdict become the
+        // callee's first read of the cells beyond the block, which names the
+        // wrong invariant: the call is refused because the view is not
+        // backed, not because the storage happens to be uninitialized.
+        if matches!(
             intrinsic_view.fact.resource(),
             CResource::Memory(range)
-                if !range.base().block.starts_with("local:")
-                    || local_view_range_within_block(range, callee_state.memory())
-        );
-        if in_bounds && !callee_resources.satisfies_fact(&intrinsic_view.fact, assumptions) {
+                if range.base().block.starts_with("local:")
+                    && !local_view_range_within_block(range, callee_state.memory())
+        ) {
+            return Ok(Err(CRuntimeError::MissingResource {
+                resource: intrinsic_view.fact.clone(),
+            }));
+        }
+        if !callee_resources.satisfies_fact(&intrinsic_view.fact, assumptions) {
             callee_resources = match callee_resources
                 .try_compose_with_fact(intrinsic_view.fact.clone(), assumptions)
             {
@@ -10870,9 +10907,15 @@ fn prepare_contract_resource_transfer_with_candidate(
         .iter()
         .map(|requirement| requirement.fact.resource().clone())
         .collect::<BTreeSet<_>>();
+    let definitionally_empty_owned_resources = definitionally_empty_owned
+        .iter()
+        .map(|requirement| requirement.fact.resource().clone())
+        .collect::<BTreeSet<_>>();
     for resource in required_resource_list.iter().filter(|resource| {
         stable_view_plan.is_none()
-            || (resource.is_own() && population_quantity_resources.contains(resource.resource()))
+            || (resource.is_own()
+                && (population_quantity_resources.contains(resource.resource())
+                    || definitionally_empty_owned_resources.contains(resource.resource())))
     }) {
         // A borrowed view of the caller's own stack object needs no resource
         // from the caller, but it still has to name storage that object has.
@@ -18168,6 +18211,45 @@ mod candidate_stable_view_call_tests {
         .with_resource_summary(vec![CResourceSpec::viewed_memory(segment)], Vec::new())
     }
 
+    /// `resource guarded_item(item) { if item != 0 { owns item[0..1]; } }`
+    /// consumed by a function whose body reads nothing.
+    fn conditional_owner(name: &str) -> (CFunction, CExecutionEnvironment) {
+        let definition = CCompositeResourceDefinition::new(
+            "guarded_item",
+            vec![c_parameter("item", CType::Int32Pointer)],
+            Some(SpecProposition::Comparison {
+                left: SpecExpression::CExpression(c_variable("item")),
+                operator: CComparisonOperator::NotEqual,
+                right: SpecExpression::Value(CValue::pointer(Pointer::null())),
+            }),
+            false,
+            vec![CResourceSpec::owned_memory(CMemorySegment::new(
+                c_variable("item"),
+                c_int32_literal(0),
+                c_int32_literal(1),
+            ))],
+            Vec::new(),
+        );
+        let function = c_function(
+            CType::Int32,
+            name,
+            vec![c_parameter("item", CType::Int32Pointer)],
+            c_return(c_int32_literal(0)),
+        )
+        .with_resource_summary(
+            vec![CResourceSpec::composite(
+                CResourceAccessMode::Own,
+                "guarded_item".to_string(),
+                vec![c_variable("item")],
+                vec![CType::Int32Pointer],
+            )],
+            Vec::new(),
+        )
+        .with_composite_resource_definitions(vec![definition]);
+        let environment = environment(&function);
+        (function, environment)
+    }
+
     fn environment(function: &CFunction) -> CExecutionEnvironment {
         CExecutionEnvironment::new()
             .with_candidate_stable_view_semantics()
@@ -18773,8 +18855,11 @@ mod candidate_stable_view_call_tests {
         ));
     }
 
-    /// The bounds rule still applies: a local view past the end of its
-    /// block is not composed, so the callee cannot read through it.
+    /// The activation-local bounds rule still applies, and it decides the
+    /// call before the callee reads anything: a local view past the end of
+    /// its block names storage the block does not have, so the call is
+    /// refused for the missing resource rather than for a read of whatever
+    /// lies beyond the block.
     #[test]
     fn candidate_local_array_view_out_of_bounds_is_refused() {
         let pointer = pointer();
@@ -18794,13 +18879,139 @@ mod candidate_stable_view_call_tests {
             &mut ExecutionBudget::new(),
         )
         .expect("candidate out-of-bounds local view should execute to a diagnostic");
-        assert!(matches!(
-            paths.as_slice(),
-            [CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(_),
-                ..
-            }]
-        ));
+        assert!(
+            matches!(
+                paths.as_slice(),
+                [CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::MissingResource {
+                        resource
+                    }),
+                    ..
+                }] if resource.is_view()
+            ),
+            "the bounds rule names the unbacked view, not a later read: {paths:?}"
+        );
+    }
+
+    /// A conditional composite whose guard the assumptions decide false has
+    /// an empty body, so the empty context satisfies it: the planner must
+    /// discharge `owns guarded_item(null)` definitionally instead of
+    /// demanding an owned entry the caller was never meant to hold.
+    #[test]
+    fn candidate_conditional_composite_with_a_false_guard_needs_no_owned_entry() {
+        let (function, environment) = conditional_owner("candidate_guarded_free");
+        let paths = execute_c_function_call_paths(
+            &CState::new(),
+            &function,
+            &[c_pointer_value(Pointer::null())],
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("a false composite guard should execute");
+        assert!(
+            matches!(
+                paths.as_slice(),
+                [CFunctionPath {
+                    outcome: CFunctionOutcome::Return { .. },
+                    ..
+                }]
+            ),
+            "an empty body is satisfied by the empty context: {paths:?}"
+        );
+    }
+
+    /// The same requirement with an undecided guard keeps its entry: only a
+    /// guard the assumptions decide collapses the body, so a symbolic
+    /// argument still needs the caller to supply the composite.
+    #[test]
+    fn candidate_conditional_composite_with_an_undecided_guard_still_needs_its_entry() {
+        let (function, environment) = conditional_owner("candidate_guarded_symbolic_free");
+        let symbolic = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(910_101)), 4),
+        };
+        let paths = execute_c_function_call_paths(
+            &CState::new(),
+            &function,
+            &[c_pointer_value(symbolic)],
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("an undecided composite guard should execute to a diagnostic");
+        assert!(
+            matches!(
+                paths.as_slice(),
+                [CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::MissingResource {
+                        resource
+                    }),
+                    ..
+                }] if matches!(
+                    resource.resource(),
+                    CResource::Composite { name, .. } if name == "guarded_item"
+                )
+            ),
+            "an undecided guard is not an empty body: {paths:?}"
+        );
+    }
+
+    /// Two clauses naming one token are a single demand for their combined
+    /// count. The caller holds one unit, so the refusal has to name quantity
+    /// two: naming one unit would name a fact the caller does hold.
+    #[test]
+    fn candidate_repeated_token_requirement_reports_the_demanded_quantity() {
+        let requirement = |parameter| {
+            CResourceSpec::token(
+                CResourceAccessMode::Own,
+                "can_complete".to_string(),
+                vec![c_variable(parameter)],
+                vec![CType::Int32],
+            )
+        };
+        let function = c_function(
+            CType::Int32,
+            "candidate_consume_two",
+            vec![
+                c_parameter("first", CType::Int32),
+                c_parameter("second", CType::Int32),
+            ],
+            c_return(c_int32_literal(0)),
+        )
+        .with_resource_summary(
+            vec![requirement("first"), requirement("second")],
+            Vec::new(),
+        );
+        let token = CValue::Int32(Bitvector32Term::Constant(5));
+        let caller =
+            CState::new().with_resource_context(ResourceContext::new().unchecked_with_fact(
+                CResourceFact::own_token("can_complete".to_string(), vec![token.clone()]),
+            ));
+        let paths = execute_c_function_call_paths(
+            &caller,
+            &function,
+            &[CExpression::Value(token.clone()), CExpression::Value(token)],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("a doubled token requirement should execute to a diagnostic");
+        assert!(
+            matches!(
+                paths.as_slice(),
+                [CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::MissingResource {
+                        resource
+                    }),
+                    ..
+                }] if resource.owned_quantity_term() == Some(&Bitvector32Term::Constant(2))
+            ),
+            "the refusal names the whole demand: {paths:?}"
+        );
     }
 
     #[test]
