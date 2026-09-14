@@ -5772,4 +5772,71 @@ int32 reader(int32 p[]) {
             ViewSemanticsMode::StableLoans
         );
     }
+
+    /// A one-call execution theorem whose conclusion is `goal`, proved from
+    /// `Exact` by one step.  Only the target contract varies between the
+    /// positive and negative cases.
+    fn one_call_execution_theorem_source(goal: &str) -> String {
+        format!(
+            r#"
+contract const int *Exact(const int *p) {{
+    views p[0..1];
+    ensures result == p;
+}}
+contract const int *{goal}(const int *p) {{
+    views p[0..1];
+    ensures result == p;
+}}
+theorem lift(callback: const int* (*)(const int*)) executes callback(const int* p) {{
+    requires Exact(callback);
+    ensures {goal}(callback) by {{ step(Exact); simp(); }}
+}}
+verifying "main.c";
+int read_view(const int *(*f)(const int *), const int *p) {{
+    requires Exact(f);
+    views p[0..1];
+    ensures result == p[0];
+}} by {{ apply(lift(f)); step({goal}); execute(); simp(); }}
+"#
+        )
+    }
+
+    const ONE_CALL_THEOREM_C_SOURCE: &str =
+        "int read_view(const int *(*f)(const int *), const int *p) { return f(p)[0]; }";
+
+    #[test]
+    fn stable_mode_certifies_a_one_call_execution_theorem_from_its_proof_entry_state() {
+        let click = one_call_execution_theorem_source("Readable");
+        let sources = CSourceContext::bundle_with_mode(
+            &[("main.c", ONE_CALL_THEOREM_C_SOURCE)],
+            ViewSemanticsMode::StableLoans,
+        );
+        let verified = verify_c0_sources_with_context(&click, &sources, None, None, None)
+            .expect("the one-call proof's own entry state certifies the theorem");
+        assert!(!verified.0.is_empty());
+    }
+
+    #[test]
+    fn stable_mode_one_call_execution_theorem_still_needs_its_target_obligation() {
+        // Reusing the proof's entry state must not discharge an obligation the
+        // one-call proof never established: this target promises a value the
+        // `Exact` step does not prove.
+        let click = one_call_execution_theorem_source("Readable").replace(
+            "ensures result == p;\n}\ntheorem",
+            "ensures result == p + 1;\n}\ntheorem",
+        );
+        let sources = CSourceContext::bundle_with_mode(
+            &[("main.c", ONE_CALL_THEOREM_C_SOURCE)],
+            ViewSemanticsMode::StableLoans,
+        );
+        let error = verify_c0_sources_with_context(&click, &sources, None, None, None)
+            .expect_err("an unproved target obligation must still be refused");
+        assert!(
+            error
+                .message()
+                .contains("did not retain a complete proof for `lift.ensures_0`"),
+            "unexpected diagnostic: {}",
+            error.message()
+        );
+    }
 }

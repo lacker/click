@@ -307,7 +307,7 @@ pub(super) fn verify_execution_theorem(
         function_source_registry,
         tactics,
     )?;
-    let (state, arguments, facts, _) = initial_claim_context(
+    let (mut state, arguments, facts, _) = initial_claim_context(
         &block,
         &parsed,
         resources,
@@ -315,6 +315,19 @@ pub(super) fn verify_execution_theorem(
         functions,
         theorem.name(),
     )?;
+    // A stable-view proof artifact carries the exact caller state the checked
+    // function-entry boundary accepted, including its loan ledger roots and
+    // resource occurrence IDs. Certifying the one-call proof against an
+    // independently built entry state would compare two equivalent-looking
+    // but distinct authorities and reject every artifact. This is the same
+    // reuse the ordinary contract-certification path performs.
+    if environment.candidate_stable_view_semantics
+        && let Some(entry) = verified
+            .iter()
+            .find_map(|verified| verified.checked_execution.caller_state())
+    {
+        state = entry.clone();
+    }
     let function = annotated_function_with_assumptions(
         &block,
         &parsed,
