@@ -14,15 +14,17 @@ use std::sync::atomic::{AtomicU8, Ordering};
 /// staged artifacts cannot be reused across the cutover boundary.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum ViewSemanticsMode {
-    #[default]
+    /// The retiring weak-view interpretation, selectable only through
+    /// `CLICK_VIEW_SEMANTICS=legacy` until it is removed.
     Legacy,
+    #[default]
     StableLoans,
 }
 
 /// The mode used by the entry points that do not take one explicitly, as a
-/// `ViewSemanticsMode` discriminant. `Legacy` until a front end installs
+/// `ViewSemanticsMode` discriminant. `StableLoans` until a front end installs
 /// another selection.
-static PROCESS_VIEW_SEMANTICS: AtomicU8 = AtomicU8::new(ViewSemanticsMode::LEGACY_CODE);
+static PROCESS_VIEW_SEMANTICS: AtomicU8 = AtomicU8::new(ViewSemanticsMode::STABLE_LOANS_CODE);
 
 impl ViewSemanticsMode {
     const LEGACY_CODE: u8 = 0;
@@ -37,8 +39,8 @@ impl ViewSemanticsMode {
 
     fn from_code(code: u8) -> Self {
         match code {
-            Self::STABLE_LOANS_CODE => Self::StableLoans,
-            _ => Self::Legacy,
+            Self::LEGACY_CODE => Self::Legacy,
+            _ => Self::StableLoans,
         }
     }
 
@@ -48,7 +50,7 @@ impl ViewSemanticsMode {
     /// harnesses name a mode per fixture through the `_in_mode` entry points,
     /// while the command-line front end has one selection for the whole
     /// process and installs it once, before any verification starts. It
-    /// leaves with the `Legacy` variant at the cutover.
+    /// leaves with the `Legacy` variant.
     pub fn process_default() -> Self {
         Self::from_code(PROCESS_VIEW_SEMANTICS.load(Ordering::Relaxed))
     }
@@ -6218,7 +6220,7 @@ int32 answer() {
         assert_eq!(direct[0].artifact_identity, targeted[0].artifact_identity);
         assert_eq!(
             direct[0].artifact_identity.unwrap().view_semantics,
-            ViewSemanticsMode::Legacy
+            ViewSemanticsMode::StableLoans
         );
         assert_eq!(
             direct[0]
@@ -6254,7 +6256,7 @@ int32 answer() {
             C0VerificationSession::new(CLICK, &sources).expect("baseline verification");
         let (line, column) = position(CLICK, "execute();");
         session.environment_identity =
-            CSourceContext::bundle_with_mode(&sources, ViewSemanticsMode::StableLoans)
+            CSourceContext::bundle_with_mode(&sources, ViewSemanticsMode::Legacy)
                 .environment_identity();
         let error = session
             .verify_at(CLICK, line, column)

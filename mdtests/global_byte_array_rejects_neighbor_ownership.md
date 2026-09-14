@@ -15,5 +15,5 @@ void set_second() {
 ```
 
 ```expect
-fail: outside the owned footprint
+fail: memory access conflicts with an active loan
 ```

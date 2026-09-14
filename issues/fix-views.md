@@ -816,6 +816,9 @@ or partial recovery; error and diverging return paths.
   - After 6.3: 8 of 1,517 mdtests and 0 of 27 examples.
   - After 8a: 2 of 1,517 mdtests (the two global-storage expectation
     flips) and 0 of 27 examples, with the planner running for every call.
+  - After 8b: stable views are the default; the gate corpus (1,518
+    mdtests, 27 examples) is green under it. `CLICK_VIEW_SEMANTICS=legacy`
+    fails only the two flipped fixtures.
 - **6.3, decisions (2026-09-14):**
   - **F13, metadata-write fixture: migrated, not quarantined.** The fixture
     was the legacy idiom of an owned piece inside a viewed composite whose
@@ -1084,7 +1087,7 @@ returned-open case (root recovery, join duplication, loan leakage out of a
 call) is a review item for the step 8 pre-check rather than something this
 landing re-ran.
 
-### 8. Cut over, document, and close (in progress: 8a landed 2026-09-14)
+### 8. Cut over, document, and close (in progress: 8a and 8b landed 2026-09-14)
 
 **Read:** the step 6 verdict/removal list and final acceptance below.
 **Depends on:** step 6.
@@ -1205,6 +1208,39 @@ gated as one tip:
 Candidate corpus after 8a: 2 of 1,517 mdtests (`global_store_requires_owned_cell`,
 `global_byte_array_rejects_neighbor_ownership`, the two flips) and 0 of 27
 examples. Legacy corpus and gate green.
+
+**8b landed 2026-09-14: stable views are the default.** One commit ("Make
+stable views the default view semantics"):
+
+- `ViewSemanticsMode::StableLoans` is the `Default`, the process default,
+  and what an unset or `stable-loans` `CLICK_VIEW_SEMANTICS` selects;
+  `legacy` selects the retiring interpretation for an A/B run until 8c
+  deletes it. The fixture harnesses run the gate corpus under the default
+  and skip the body-rerun ratchet only under `legacy`; the pinned baselines
+  (empty in both harnesses) hold under the default.
+- The two global-storage negatives flip to the loan conflict, with the
+  prose of `global_store_requires_owned_cell.md` rewritten: a view of a
+  file-scope cell is a borrow for the call, and a store into it is a
+  conflict with that loan, not a missing footprint.
+- `memory_ranges_proven_overlapping` decides bytewise across element
+  widths, so the memory family's validity check refuses two owners of the
+  same bytes at different widths. `resource_witness_fold_infers_origin.md`
+  held `consumes object(node)` beside `owns node->word` over the same bytes;
+  its `owns node->word` is gone (the consumed object already authorizes the
+  store).
+- An owned composite requirement is supplied by opening a held owned
+  composite that contains it one level down, exactly as the definitional
+  route consumed it (`candidate_planning_resources` skipped every composite
+  requirement; only a viewed composite is lent folded). The one surface
+  test that relied on this (`grouped_mutable_composite_calls_continue_on_proof_after_preparatory_scope`)
+  passes unchanged.
+- Three mode tests flip with the default: the artifact identity carries
+  `StableLoans`, the cross-mode session test names `Legacy` as the other
+  mode, and the CLI switch test checks the unset run against the loan
+  message and `legacy` against the footprint message.
+
+Gate corpus under the default: 1,518 mdtests and 27 examples green; unit
+suite green; gate green. Legacy A/B corpus recorded for the removal step.
 
 
 ## Decision and violated invariant

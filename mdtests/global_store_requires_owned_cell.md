@@ -1,9 +1,10 @@
 # A view of file-scope storage does not authorize a store into it
 
-A contract that declares resources but no effect clause frames caller memory
-through the resource transition at each store. File-scope and static storage is
-not external memory, so its writes are framed by the owned footprint instead:
-a function that only views a global cell must not store into it.
+A `views` clause over a file-scope cell is a borrow of that cell for the
+call: the cell stays readable and unchanged while the function runs. A
+function that only views a global cell therefore must not store into it,
+and the store is refused as a conflict with the active loan of the viewed
+cell rather than as a missing footprint.
 
 ```c filename=viewed_global.c
 int32 words[2];
@@ -19,5 +20,5 @@ void set_second() {
 ```
 
 ```expect
-fail: outside the owned footprint
+fail: memory access conflicts with an active loan
 ```

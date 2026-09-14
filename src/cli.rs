@@ -223,18 +223,19 @@ fn duration_from_optional_os(
 /// The environment variable that selects the view-semantics interpretation.
 pub const VIEW_SEMANTICS_VARIABLE: &str = "CLICK_VIEW_SEMANTICS";
 
-/// Parses a `CLICK_VIEW_SEMANTICS` value. Unset, empty, and `legacy` all
-/// select the default interpretation; `stable-loans` selects the candidate
-/// stable-view interpretation. Any other value is a configuration error, so a
-/// misspelled selection cannot quietly verify under the wrong semantics.
+/// Parses a `CLICK_VIEW_SEMANTICS` value. Unset, empty, and `stable-loans`
+/// all select the stable-view interpretation, which is the default; `legacy`
+/// selects the retiring weak-view interpretation. Any other value is a
+/// configuration error, so a misspelled selection cannot quietly verify under
+/// the wrong semantics.
 ///
 /// This is the one parser for the variable: the command-line front end and
 /// both fixture harnesses call it. Rollout scaffolding for
-/// `issues/fix-views.md`; it leaves with the switch at the cutover.
+/// `issues/fix-views.md`; it leaves with the switch.
 pub fn parse_view_semantics(value: Option<&str>) -> Result<ViewSemanticsMode, String> {
     match value {
-        None | Some("") | Some("legacy") => Ok(ViewSemanticsMode::Legacy),
-        Some("stable-loans") => Ok(ViewSemanticsMode::StableLoans),
+        None | Some("") | Some("stable-loans") => Ok(ViewSemanticsMode::StableLoans),
+        Some("legacy") => Ok(ViewSemanticsMode::Legacy),
         Some(other) => Err(format!(
             "{VIEW_SEMANTICS_VARIABLE} must be `legacy` or `stable-loans`, got `{other}`"
         )),

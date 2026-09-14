@@ -26,10 +26,10 @@ const QUARANTINED: &[(&str, &str)] = &[(
 /// project; see `tests/mdtests.rs` for the rule.
 const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[];
 
-/// The view-semantics mode the corpus runs under. `CLICK_VIEW_SEMANTICS=stable-loans`
-/// selects the candidate stable-view interpretation for every project; unset
-/// or `legacy` is the ordinary gate. Rollout scaffolding for
-/// `issues/fix-views.md`; it leaves with the `Legacy` variant at the cutover.
+/// The view-semantics mode the corpus runs under: stable views unless
+/// `CLICK_VIEW_SEMANTICS=legacy` selects the retiring interpretation.
+/// Rollout scaffolding for `issues/fix-views.md`; it leaves with the
+/// `Legacy` variant.
 fn view_semantics() -> ViewSemanticsMode {
     view_semantics_from_environment().unwrap_or_else(|message| panic!("{message}"))
 }
@@ -121,7 +121,7 @@ fn example_projects() {
     let census = instrumentation::take_body_rerun_census();
     if requested.is_none()
         && !run_quarantined
-        && view_semantics() == ViewSemanticsMode::Legacy
+        && view_semantics() == ViewSemanticsMode::StableLoans
         && let Some(mismatch) =
             instrumentation::body_rerun_census_mismatch(&census, CONTRACT_FALLBACK_BASELINE)
     {

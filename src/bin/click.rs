@@ -105,9 +105,9 @@ mod tests {
         // environment while these two calls change it, and no verification
         // thread has been started yet at either call.
         unsafe { env::remove_var(click::cli::VIEW_SEMANTICS_VARIABLE) };
-        let legacy = run();
-        unsafe { env::set_var(click::cli::VIEW_SEMANTICS_VARIABLE, "stable-loans") };
         let stable = run();
+        unsafe { env::set_var(click::cli::VIEW_SEMANTICS_VARIABLE, "legacy") };
+        let legacy = run();
         unsafe { env::remove_var(click::cli::VIEW_SEMANTICS_VARIABLE) };
 
         assert!(legacy.contains("outside the owned footprint"), "{legacy}");

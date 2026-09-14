@@ -10389,10 +10389,14 @@ fn candidate_planning_resources(
     };
     let mut resources = caller_resources.clone();
     for requirement in requirements {
-        // A composite requirement is lent folded, through the checked
+        // A viewed composite requirement is lent folded, through the checked
         // composite backing, so opening it here would destroy the head that
-        // is the restoration recipe.
-        if matches!(requirement.fact.resource(), CResource::Composite { .. })
+        // is the restoration recipe. An owned composite requirement is
+        // transferred, not lent: a held composite that contains it one level
+        // down is opened to supply it, exactly as the definitional route
+        // consumes it (the caller keeps the other pieces and refolds).
+        if (requirement.fact.is_view()
+            && matches!(requirement.fact.resource(), CResource::Composite { .. }))
             || supported(&resources, requirement)
         {
             continue;

@@ -266,7 +266,7 @@ artifact that used to be reused no longer is, and that change must not
 land. A count that fell means a rerun cause was removed; lower the pin in
 the same change so the count cannot rise back. A filtered run
 (`MDTEST_FILTER`, `CLICK_EXAMPLE`), a run with `CLICK_RUN_QUARANTINED=1`, or
-a candidate-semantics run (`CLICK_VIEW_SEMANTICS=stable-loans`) skips the
+a legacy-semantics run (`CLICK_VIEW_SEMANTICS=legacy`) skips the
 comparison.
 
 ## Quarantine

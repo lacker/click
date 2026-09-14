@@ -28,7 +28,6 @@ void link(struct node* node, struct node* tail) {
     requires aligned(tail, 8);
     consumes object(node);
     produces packed(node);
-    owns node->word;
 } by {
     execute();
     fold(packed(node));

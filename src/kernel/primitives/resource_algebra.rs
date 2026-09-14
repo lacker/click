@@ -5159,15 +5159,15 @@ pub(crate) fn memory_ranges_proven_overlapping(
     if left.base().blocks_proven_distinct(right.base()) {
         return false;
     }
-    // Overlap keeps its own polarity and its own width rule: it answers
-    // "proven to overlap", so widening it is not the same move as widening
-    // coverage, and the memory family's validity check reads it directly.
-    // Two spellings of one footprint therefore still do not prove an overlap
-    // here. The loan oracle, whose question really is bytewise, rewrites both
-    // sides to width-1 footprints before asking
+    // Footprints are bytes (D6): two spellings of overlapping bytes at
+    // different element widths overlap, so the memory family's validity check
+    // refuses two owners of them. Rewrite both sides to width-1 footprints
+    // before deciding, exactly as the loan oracle does
     // (`protected_range_proven_overlapping`).
     if left.element_width() != right.element_width() {
-        return false;
+        let left = byte_normalized_memory_range(left);
+        let right = byte_normalized_memory_range(right);
+        return memory_ranges_proven_overlapping(&left, &right, assumptions);
     }
     if assumptions
         .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(left, right)

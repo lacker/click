@@ -23,10 +23,10 @@ const QUARANTINED: &[(&str, &str)] = &[];
 /// by reason. A count may only fall; lower its pin when it does.
 const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[];
 
-/// The view-semantics mode the corpus runs under. `CLICK_VIEW_SEMANTICS=stable-loans`
-/// selects the candidate stable-view interpretation for every fixture; unset
-/// or `legacy` is the ordinary gate. Rollout scaffolding for
-/// `issues/fix-views.md`; it leaves with the `Legacy` variant at the cutover.
+/// The view-semantics mode the corpus runs under: stable views unless
+/// `CLICK_VIEW_SEMANTICS=legacy` selects the retiring interpretation.
+/// Rollout scaffolding for `issues/fix-views.md`; it leaves with the
+/// `Legacy` variant.
 fn view_semantics() -> ViewSemanticsMode {
     view_semantics_from_environment().unwrap_or_else(|message| panic!("{message}"))
 }
@@ -84,7 +84,7 @@ fn mdtests() {
     // memory stays small: on 2026-09-11 the whole corpus peaked at 171 MB
     // serially and 291 MB on 8 workers.
     let view_semantics = view_semantics();
-    if view_semantics != ViewSemanticsMode::Legacy {
+    if view_semantics != ViewSemanticsMode::StableLoans {
         println!(
             "running {} mdtests under {view_semantics:?} view semantics",
             paths.len()
@@ -96,7 +96,7 @@ fn mdtests() {
     let census = instrumentation::take_body_rerun_census();
     if failures.is_empty() {
         if !filtered
-            && view_semantics == ViewSemanticsMode::Legacy
+            && view_semantics == ViewSemanticsMode::StableLoans
             && std::env::var_os(RUN_QUARANTINED).is_none()
             && let Some(mismatch) =
                 instrumentation::body_rerun_census_mismatch(&census, CONTRACT_FALLBACK_BASELINE)
