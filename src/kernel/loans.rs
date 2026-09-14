@@ -1149,6 +1149,16 @@ pub(crate) struct StableViewTransferPlan {
     pub(crate) transferred_ownership: Vec<CCheckedResourceFact>,
     pub(crate) stable_views: Vec<PlannedStableView>,
     pub(crate) memory_effects: Vec<CMemoryRange>,
+    /// The owned occurrence each reserved requirement in
+    /// `transferred_ownership` was taken out of. This is the provenance the
+    /// call-site effect check reads: a valid resource context is a partition,
+    /// so an effect reserved from one owned occurrence and a view lent from a
+    /// different one are bytewise disjoint by construction, and only an
+    /// effect and a view drawn from the same occurrence still need an
+    /// arithmetic separation proof (step 4, D8). A composite requirement is
+    /// recorded here too, since the effects projected from it are the bytes
+    /// of that one occurrence.
+    pub(crate) reserved_ownership_supports: Vec<(CResourceFact, ResourceOccurrenceId)>,
     pub(crate) ledger: LoanLedger,
     pub(crate) entry_transitions: Vec<CheckedLoanTransition>,
     callee_view_bindings: LoanViewBindings,
@@ -1824,21 +1834,23 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
             _ => StableViewPlanError::MissingResource(fact.clone()),
         }
     };
+    let mut reserved_ownership_supports = Vec::new();
     // Reserve exclusive requirements first. This makes the partition stable
     // under source reordering and prevents a view from hiding a later write.
     for requirement in requirements
         .iter()
         .filter(|requirement| requirement.fact.is_own())
     {
-        if residual
-            .directly_supporting_owned_entry(&requirement.fact, assumptions)
-            .is_none()
-        {
-            return Err(missing_own_requirement(&requirement.fact));
-        }
-        if let Some((occurrence, _)) =
+        // The occurrence this reservation is taken out of, read before the
+        // removal below: the transferred hold and the effect provenance both
+        // name the residual entry that actually supplied the requirement, not
+        // an equal-looking owner elsewhere in the caller's partition.
+        let Some((occurrence, _)) =
             residual.directly_supporting_owned_entry(&requirement.fact, assumptions)
-            && let Some(binding) = parent_view_bindings.get(&occurrence)
+        else {
+            return Err(missing_own_requirement(&requirement.fact));
+        };
+        if let Some(binding) = parent_view_bindings.get(&occurrence)
             && binding.hold.is_some()
         {
             transferred_holds.push((requirement.fact.clone(), binding.clone()));
@@ -1852,6 +1864,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
         if let Some(range) = requirement.fact.memory_own_range() {
             memory_effects.push(range.clone());
         }
+        reserved_ownership_supports.push((requirement.fact.clone(), occurrence));
         transferred_ownership.push(requirement.clone());
     }
 
@@ -2335,6 +2348,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
         transferred_ownership,
         stable_views,
         memory_effects,
+        reserved_ownership_supports,
         ledger: planned_ledger,
         entry_transitions,
         callee_view_bindings,

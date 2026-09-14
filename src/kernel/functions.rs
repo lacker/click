@@ -253,8 +253,12 @@ struct CFunctionResourceTransfer {
     /// pieces, and the intrinsic and empty-composite views, which never reach
     /// the planner at all. The declared mutable effects are compared against
     /// these as well, because an effect may not widen the authority the call
-    /// actually received (D9).
-    checked_view_frontier: Vec<CMemoryRange>,
+    /// actually received (D9). Each piece carries the owned occurrence behind
+    /// it, for the same partition read the planned views get: a composite
+    /// view's pieces carry that composite's support, while an intrinsic or
+    /// empty-composite view has no owner in the caller's context and carries
+    /// none, so its bytes are always compared arithmetically.
+    checked_view_frontier: Vec<(CMemoryRange, Option<ResourceOccurrenceId>)>,
 }
 
 fn callee_state_with_resource_transfer(
@@ -608,6 +612,12 @@ pub(crate) struct CCheckedResourceFact {
 pub(crate) struct CFunctionMemoryEffectProjection {
     ranges: Vec<CMemoryRange>,
     evidence_facts: Vec<ExecutionPureFact>,
+    /// The owned requirement each projected range came out of, for the ranges
+    /// a checked resource transition produced. An explicit effect segment
+    /// names no requirement and appears here not at all; the call site reads
+    /// this only to recover an effect's caller-side provenance and never to
+    /// widen or narrow the ranges themselves.
+    range_sources: Vec<(CMemoryRange, CResourceFact)>,
 }
 
 impl CFunctionMemoryEffectProjection {
@@ -663,6 +673,69 @@ fn candidate_memory_ranges_proven_separate(
             )) == Some(true)
     };
     separate_in_frame(left, right) || separate_in_frame(right, left)
+}
+
+/// Index the projected effect ranges by the owned occurrence each was
+/// reserved out of: the projection says which requirement produced a range,
+/// and the plan says which caller occurrence supplied that requirement.
+/// Two sources claiming one range, or one requirement reserved from two
+/// occurrences, would not be a partition; such a key records no provenance
+/// rather than picking a support, which leaves that effect on the arithmetic
+/// comparison.
+fn reserved_effect_support_index(
+    range_sources: &[(CMemoryRange, CResourceFact)],
+    reserved_ownership_supports: &[(CResourceFact, ResourceOccurrenceId)],
+) -> BTreeMap<CMemoryRange, Option<ResourceOccurrenceId>> {
+    let mut by_requirement = BTreeMap::<&CResourceFact, Option<ResourceOccurrenceId>>::new();
+    for (fact, support) in reserved_ownership_supports {
+        by_requirement
+            .entry(fact)
+            .and_modify(|known| {
+                if *known != Some(*support) {
+                    *known = None;
+                }
+            })
+            .or_insert(Some(*support));
+    }
+    let mut index = BTreeMap::<CMemoryRange, Option<ResourceOccurrenceId>>::new();
+    for (range, source) in range_sources {
+        let support = by_requirement.get(source).copied().flatten();
+        index
+            .entry(canonical_memory_range(range.clone()))
+            .and_modify(|known| {
+                if *known != support {
+                    *known = None;
+                }
+            })
+            .or_insert(support);
+    }
+    index
+}
+
+/// The partition read at a call: a mutable effect reserved out of one owned
+/// occurrence and a view lent from a different owned occurrence are bytewise
+/// disjoint by the resource context's partition invariant (step 4), so the
+/// relation is settled by provenance and the arithmetic oracle is not
+/// consulted. This never decides a pair the other way: an effect with no
+/// reservation behind it (an explicit `mutable` segment, or a range a
+/// composite expansion produced) and a view with no owner behind it (an
+/// intrinsic or empty-composite view) carry no provenance, and an effect and
+/// a view from the same occurrence -- a partial borrow of one owner, D8 --
+/// still need the arithmetic proof.
+fn effect_is_disjoint_from_view_by_provenance(
+    reserved_effect_supports: &BTreeMap<CMemoryRange, Option<ResourceOccurrenceId>>,
+    effect: &CMemoryRange,
+    viewed_support: Option<ResourceOccurrenceId>,
+) -> bool {
+    let Some(viewed_support) = viewed_support else {
+        return false;
+    };
+    let Some(Some(effect_support)) =
+        reserved_effect_supports.get(&canonical_memory_range(effect.clone()))
+    else {
+        return false;
+    };
+    *effect_support != viewed_support
 }
 
 fn candidate_memory_ranges_relation(
@@ -2950,23 +3023,61 @@ fn prepare_verified_function_call<'a>(
     // rejecting all mutation would also reject the supported viewed-field /
     // owned-field partition.
     let mutable_ranges = projection.ranges;
+    let projection_range_sources = projection.range_sources;
     {
         // Compare the effects against the complete checked view frontier, not
         // just the views whose requirement is a plain memory range. A
         // composite view's bytes are its checked one-level pieces, and the
         // intrinsic and empty-composite views never reach the planner at
         // all; the transfer carries both groups for exactly this check.
+        //
+        // The pair is read by provenance first. A valid resource context is a
+        // partition, so an effect reserved out of one owned occurrence and a
+        // view lent from a different one are bytewise disjoint by
+        // construction; asking the arithmetic oracle about two symbolic
+        // ranges it cannot order would refuse what the caller's own partition
+        // already settles. Only an effect and a view drawn from the *same*
+        // occurrence -- a partial borrow of one owner (D8) -- still need the
+        // arithmetic proof, and a range with no provenance on either side
+        // always does.
+        let reserved_effect_supports = transfer
+            .stable_view_plan
+            .as_ref()
+            .map(|plan| {
+                reserved_effect_support_index(
+                    &projection_range_sources,
+                    &plan.reserved_ownership_supports,
+                )
+            })
+            .unwrap_or_default();
         let viewed_ranges = transfer
             .stable_view_plan
             .as_ref()
             .map(StableViewTransferPlan::stable_views)
             .unwrap_or_default()
             .iter()
-            .filter_map(|stable_view| stable_view.requirement.fact.memory_range())
-            .chain(transfer.checked_view_frontier.iter());
-        for viewed_range in viewed_ranges {
+            .filter_map(|stable_view| {
+                Some((
+                    stable_view.requirement.fact.memory_range()?,
+                    Some(stable_view.support),
+                ))
+            })
+            .chain(
+                transfer
+                    .checked_view_frontier
+                    .iter()
+                    .map(|(range, support)| (range, *support)),
+            );
+        for (viewed_range, viewed_support) in viewed_ranges {
             if let Some((mutable_range, relation)) = mutable_ranges
                 .iter()
+                .filter(|mutable_range| {
+                    !effect_is_disjoint_from_view_by_provenance(
+                        &reserved_effect_supports,
+                        mutable_range,
+                        viewed_support,
+                    )
+                })
                 .map(|mutable_range| {
                     (
                         mutable_range,
@@ -4356,6 +4467,7 @@ pub(crate) fn project_contract_memory_effects_with_guard_policy(
     // keeps duplicate wrapper members from triggering a quadratic scan.
     let mut ranges = BTreeSet::new();
     let mut evidence_facts = Vec::new();
+    let mut range_sources = Vec::new();
     if interface.resource_derived_mutable_frame()
         && let Some(resources) = transition_resources
     {
@@ -4381,6 +4493,10 @@ pub(crate) fn project_contract_memory_effects_with_guard_policy(
                 let range = fact.memory_own_range()?;
                 Some(canonical_memory_range(range.clone()))
             }) {
+                // Every byte of the expansion belongs to this one requirement,
+                // whatever depth it came from, so the requirement is the
+                // provenance recorded for each of its ranges.
+                range_sources.push((range.clone(), checked.fact.clone()));
                 ranges.insert(range);
             }
         }
@@ -4410,6 +4526,7 @@ pub(crate) fn project_contract_memory_effects_with_guard_policy(
     Ok(Ok(CFunctionMemoryEffectProjection {
         ranges: ranges.into_iter().collect(),
         evidence_facts,
+        range_sources,
     }))
 }
 
@@ -5358,6 +5475,8 @@ fn project_refinement_effects(
         return Ok(Ok(CFunctionMemoryEffectProjection {
             ranges,
             evidence_facts,
+            // Explicit segments carry no requirement provenance.
+            range_sources: Vec::new(),
         }));
     }
     project_contract_memory_effects_with_guard_policy(
@@ -10453,11 +10572,14 @@ fn prepare_contract_resource_transfer_with_candidate(
     // empty composite view has an empty checked body and protects no bytes,
     // which is exactly why it needs no backing. The composite views that do
     // reach the planner add their checked frontier pieces below.
+    // Neither group is backed by an owned occurrence of the caller's
+    // partition, so neither carries a support and both stay on the
+    // arithmetic comparison.
     let mut checked_view_frontier = if candidate_stable_view_semantics {
         intrinsic_read_views
             .iter()
             .chain(empty_composite_views.iter())
-            .filter_map(|requirement| requirement.fact.memory_range().cloned())
+            .filter_map(|requirement| Some((requirement.fact.memory_range().cloned()?, None)))
             .collect::<Vec<_>>()
     } else {
         Vec::new()
@@ -10600,10 +10722,14 @@ fn prepare_contract_resource_transfer_with_candidate(
                 // The folded head names no bytes of its own, so these checked
                 // pieces are the frontier a declared mutable effect has to
                 // stay out of. They are recorded before the backing consumes
-                // them and only kept once the backing is accepted below.
+                // them and only kept once the backing is accepted below. Each
+                // piece carries the head's own support: the pieces are that
+                // one owned occurrence's bytes, so an effect reserved from a
+                // different occurrence is disjoint from them by the partition
+                // invariant, exactly as it is from the head.
                 let frontier_pieces = expanded_children
                     .iter()
-                    .filter_map(|piece| piece.memory_range().cloned())
+                    .filter_map(|piece| Some((piece.memory_range().cloned()?, Some(support))))
                     .collect::<Vec<_>>();
                 let Some(definition) =
                     interface
@@ -19845,6 +19971,134 @@ mod candidate_stable_view_call_tests {
                 ..
             }] if diagnostic.category() == crate::kernel::LoanRefusalCategory::SeparationUnproved
                 && diagnostic.overlap() == crate::kernel::LoanOverlapStatus::SeparationUnproved
+        ));
+    }
+
+    /// A contract that views one parameter and owns another, with the whole
+    /// write footprint derived from that ownership. Each requirement is
+    /// served by a different owned occurrence of the caller's partition.
+    fn viewer_and_writer(name: &str) -> CFunction {
+        let viewed = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        let owned = CMemorySegment::new(c_variable("q"), c_int32_literal(0), c_int32_literal(1));
+        c_function(
+            CType::Int32,
+            name,
+            vec![
+                c_parameter("p", CType::Int32Pointer),
+                c_parameter("q", CType::Int32Pointer),
+            ],
+            c_return(c_load(c_variable("p"))),
+        )
+        .with_resource_summary(
+            vec![
+                CResourceSpec::viewed_memory(viewed),
+                CResourceSpec::owned_memory(owned),
+            ],
+            Vec::new(),
+        )
+        .with_resource_derived_mutable_frame()
+    }
+
+    /// The partition read at a call. The effect is reserved out of one owned
+    /// occurrence and the view is lent from another, and the two symbolic
+    /// ranges share a block with an unknown offset relation, so the
+    /// arithmetic oracle can order neither. A valid resource context is a
+    /// partition, so distinct owned occurrences are bytewise disjoint by
+    /// construction and the call is accepted on that provenance alone. This
+    /// is the `augment_rotate_callback_child_read` shape in miniature.
+    #[test]
+    fn candidate_allows_a_mutable_effect_reserved_from_another_owned_occurrence() {
+        let viewed = Pointer {
+            block: PointerBlock::Concrete("local:candidate_view:data".to_string()),
+            offset: PointerOffsetTerm::Variable(Variable(700)),
+        };
+        let mutated = Pointer {
+            block: PointerBlock::Concrete("local:candidate_view:data".to_string()),
+            offset: PointerOffsetTerm::Variable(Variable(701)),
+        };
+        let owned_range = |pointer: &Pointer| {
+            CResourceFact::own(CResource::Memory(CMemoryRange::new(
+                pointer.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )))
+        };
+        let caller = CState::new()
+            .with_memory(
+                CMemory::new()
+                    .with_block(viewed.block.clone(), 8)
+                    .store(viewed.clone(), int32(7)),
+            )
+            .with_resource_context(
+                ResourceContext::new()
+                    .unchecked_with_fact(owned_range(&viewed))
+                    .unchecked_with_fact(owned_range(&mutated)),
+            );
+        let function = viewer_and_writer("candidate_separate_occurrence_effect");
+        let paths = execute_c_function_call_paths(
+            &caller,
+            &function,
+            &[
+                CExpression::Value(CValue::pointer(viewed)),
+                CExpression::Value(CValue::pointer(mutated)),
+            ],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate separate-occurrence effect call should execute");
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::Return { .. },
+                ..
+            }]
+        ));
+    }
+
+    /// The same-occurrence case is not weakened. Here one caller occurrence
+    /// has to serve both requirements: the exclusive reservation takes the
+    /// owned bytes out of it first, and the overlapping view it would also
+    /// have to back is no longer there. Provenance settles nothing, because
+    /// the effect and the view would be the same partition element, and the
+    /// call is refused rather than accepted on a support comparison.
+    #[test]
+    fn candidate_rejects_a_mutable_effect_overlapping_a_view_from_its_own_occurrence() {
+        let pointer = pointer();
+        let viewed = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(2));
+        let owned = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        let function = c_function(
+            CType::Int32,
+            "candidate_same_occurrence_overlap_effect",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(c_load(c_variable("p"))),
+        )
+        .with_resource_summary(
+            vec![
+                CResourceSpec::viewed_memory(viewed),
+                CResourceSpec::owned_memory(owned),
+            ],
+            Vec::new(),
+        )
+        .with_resource_derived_mutable_frame();
+        let paths = execute_c_function_call_paths(
+            &caller_with_owned_end(&pointer, 2, 8),
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate same-occurrence overlap should execute to a diagnostic path");
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)),
+                ..
+            }] if diagnostic.category() == crate::kernel::LoanRefusalCategory::ProvenOverlap
+                && diagnostic.overlap() == crate::kernel::LoanOverlapStatus::ProvenOverlap
         ));
     }
 
