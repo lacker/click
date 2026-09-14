@@ -106,8 +106,9 @@ query is refused outright while any concrete loan is indexed.
 
 Eight steps, numbered stably; steps 1-5 landed on 2026-09-13; 6, 7, and 8
 remain. Steps 1-5 recover and finish the V18 implementation from the parked
-experiment; step 6 is the V18 adversarial review; step 7 is escaping
-borrows (required, decided 2026-09-14); step 8 is the V19 cutover. Each step follows the working agreements
+experiment; step 6 is the V18 adversarial review (6.1 and 6.2 landed;
+6.3 decisions open); step 7 is escaping borrows (landed 2026-09-14); step 8
+is the V19 cutover. Each step follows the working agreements
 below: an isolated worktree from master, focused positive and negative tests,
 the unfiltered gate, and a handoff. No C source edits, and no change to
 `Legacy` behavior before step 8.
@@ -810,6 +811,8 @@ or partial recovery; error and diverging return paths.
     sources and sidecar unchanged.
   - Candidate corpus after 6.2: 8 of 1,514 mdtests (the step 4 list) and
     1 of 27 examples (input-cursor, step 7). Legacy corpus and gate green.
+  - After step 7: 9 of 1,516 mdtests (the step 4 list plus the globals
+    audit's `rb_augment_callbacks_const_suite.md`) and 0 of 27 examples.
 - **6.3, decisions before step 8:** the
   `field_derived_precise_effect_after_metadata_write.md` case in F13, F14
   (classify or remove the three ungated paths), F15 (make the CLI honor the
@@ -818,7 +821,7 @@ or partial recovery; error and diverging return paths.
   F10.
 - **Step 7, escaping borrows,** after 6.1 and 6.2 and before the cutover.
 
-### 7. Escaping borrows (required, decided 2026-09-14)
+### 7. Escaping borrows (required, decided 2026-09-14; landed 2026-09-14)
 
 **Read:** D1, D2, D5, D6, D8, D10, R14-R16, R24, the step 4 plan, and the
 step 6 record.
@@ -899,6 +902,95 @@ input-cursor verifies under the candidate semantics, the step 6 reviewers'
 attack list (root recovery, join duplication, loan leakage out of a call)
 is re-run against the returned-open case, and the record here names the
 commit.
+
+**Landed 2026-09-14** ("Land escaping borrows: a folded composite holds
+the loan it packages"). What the rules above became in code:
+
+- **Hold.** `LoanHoldId`; `LoanScopeRecord::holds`; `LoanLedger::hold(binding,
+  holder)` and `release(hold, holder)`; `End` refuses `ActiveDependency`
+  while a scope is held; `invariant_holds` checks the hold index against
+  the scopes. A hold keeps the ledger identity, the same rule as `project`:
+  it only adds a restriction and mints no share, scope, or recovery right.
+  `LoanViewBinding` gained `hold: Option<LoanHoldId>` (also an F7 key), so
+  the composite's occurrence carries the hold and every join and recovery
+  compares it.
+- **Fold and unfold.** `fold` of an owned composite whose body piece is
+  bound to a loan places the hold (or reuses the one the piece already
+  carries) and binds the head with the piece's description; `unfold` hands
+  the binding, hold included, to the restored piece, so a refold places no
+  second hold.
+- **Call boundary (elision).** `evaluate_contract_return_resources` reports
+  the viewed pieces in the one-level frontier of each ensured owned
+  composite (`produced_borrowing_pieces`). Recovery backs each piece by
+  exactly one loan of the call, matched with `c_resources_directly_match`
+  under the certified output facts: a view lent here (the loan is returned
+  open; an escrowed owner stays escrowed, a child of the caller's own view
+  ends and the parent binding is held), or the hold binding an owned input
+  brought in (re-attached to the returned head); none or more than one is
+  refused, and a call with no plan at all refuses a produced borrow under
+  the candidate semantics. A consumed composite (an owned requirement whose
+  occurrence carried a hold and that the callee did not return) releases
+  its hold; a root the caller can then close is ended and its owner
+  recovered inside the recovery, so the evidence covers it. The evidence
+  records the releases and rechecks apply them before the transitions; the
+  recovered ledger may now be the rechecked terminal ledger rather than the
+  predecessor. Composite lends admit viewed pieces (no byte backing), and an
+  escrowed borrowing composite keeps its hold binding across the call.
+- **Two incidental fixes.** Recovery composes the recovered escrows into
+  the return residual instead of rebuilding the residual fact by fact, so
+  the projection support a return publishes survives a later call (the
+  pipeline's second call failed provenance without it). The "exclusive
+  instance inside a composite view" refusal was also firing on any viewed
+  piece; it now fires on instances only.
+
+**Deviations from the card, decided while landing:**
+
+- `input_cursor_take`'s contract is migrated from `views input_cursor(owner);
+  owns owner->pos` to `owns input_cursor(owner)`, with an unfold/fold proof.
+  The legacy idiom is an owned piece inside a viewed frontier, which 6.2
+  refuses as a proven overlap, and the composite's facts (`pos <= len`)
+  depend on the piece, so no stable loan could keep them. The C is
+  unchanged. The pipeline proof transports `left->len == length` in single
+  hops: the transport machinery bridges an origins-unchanged hop or an
+  ensures-equality hop, not both in one step (a precision limit, noted for
+  6.3, not a step 7 gap).
+- **Counted populations are exempt** from the produced-borrow rule, as they
+  are from the F3 frontier check: a population unit whose body views an
+  object the caller owns and keeps (`mdtests/load_origin_first_seen_per_function.md`)
+  is not a struct holding a borrow, and its body enters the caller where
+  the population is activated. Population bodies with viewed pieces
+  therefore keep the observation reading; a hold for populations is future
+  work and is recorded under the step 8 pre-check.
+- The ambiguity refusal is implemented but has no surface witness: two
+  memory-view inputs can only both back a piece when they are proven equal,
+  which the entry partition refuses first. It is exercised by the kernel
+  matching only.
+- In candidate mode a fold of an owned composite over an *unbound* view
+  piece is still admitted (the unbound view can come only from the legacy
+  owner-to-view projection, F14, or from unfolding an owned composite whose
+  hold lives at a caller); the caller-side rule catches the produced case.
+
+**Regressions:** kernel `a_hold_blocks_ending_the_scope_until_released_and_keeps_identity`,
+`a_hold_needs_a_live_binding_and_may_rest_on_a_contract_input_root`,
+`escaping_borrow_keeps_the_loan_open_until_the_composite_is_consumed`
+(both recovery halves); surface
+`stable_mode_escaping_borrow_refuses_a_write_while_the_composite_lives`
+(the owner stays escrowed, so the write-authority check refuses first),
+`stable_mode_consuming_the_composite_recovers_the_owner`,
+`stable_mode_unfold_keeps_the_escaped_borrow_held`,
+`stable_mode_produced_borrowing_composite_without_a_backing_input_is_refused`;
+mdtest `borrowing_composite_survives_an_owning_call.md` (both modes);
+`examples/input-cursor` verifies under the candidate semantics. Candidate
+corpus after step 7: 9 of 1,516 mdtests and 0 of 27 examples: the step 4
+list plus `rb_augment_callbacks_const_suite.md`, which arrived with the
+globals audit while step 7 was gating and fails under the candidate
+semantics at that base as well (a call returns a view of file-static
+storage that no provenance route accepts; tracked with
+`issues/global-variables.md` and the 6.3 coverage items, not a step 7
+regression). Legacy corpus and gate green. The step 6 attack list against the
+returned-open case (root recovery, join duplication, loan leakage out of a
+call) is a review item for the step 8 pre-check rather than something this
+landing re-ran.
 
 ### 8. Cut over, document, and close
 
