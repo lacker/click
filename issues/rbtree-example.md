@@ -519,10 +519,14 @@ for the complete mutation-capable augmentation proof.
 **C4b. Traversals.** `rb_first`, `rb_last`, `rb_next`, `rb_prev` on the
 verbatim bodies. The assignment-expression parser/lowering prerequisite is
 delivered for simple scalar variable targets, including the unchanged
-`rb_next` guard. Remaining: prove the complete `rb_next`/`rb_prev` descent and
-ascent on the node-keyed model. The unchanged regression currently stops at
-the first descent branch because `rb_at(node)` is folded and no view of
-`node->rb_right` has yet been published.
+`rb_next` guard. `mdtests/rb_first_last.md` now proves both structural results
+and their positions in the entry tree's in-order sequence: for a non-empty
+tree, `rb_first` is the first element and `rb_last` is the last; both guarded
+contracts preserve the existing null result and structural ownership on an
+empty tree. Remaining: prove the complete `rb_next`/`rb_prev` descent and ascent
+on the node-keyed model. The unchanged regression currently stops at the first
+descent branch because `rb_at(node)` is folded and no view of `node->rb_right`
+has yet been published.
 
 **D1. Attach the Phase C sidecars to the imported pinned translation
 unit** and replace the verbatim-copy fixtures with the pinned regression.
