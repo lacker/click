@@ -814,6 +814,8 @@ or partial recovery; error and diverging return paths.
   - After step 7: 9 of 1,516 mdtests (the step 4 list plus the globals
     audit's `rb_augment_callbacks_const_suite.md`) and 0 of 27 examples.
   - After 6.3: 8 of 1,517 mdtests and 0 of 27 examples.
+  - After 8a: 2 of 1,517 mdtests (the two global-storage expectation
+    flips) and 0 of 27 examples, with the planner running for every call.
 - **6.3, decisions (2026-09-14):**
   - **F13, metadata-write fixture: migrated, not quarantined.** The fixture
     was the legacy idiom of an owned piece inside a viewed composite whose
@@ -1082,7 +1084,7 @@ returned-open case (root recovery, join duplication, loan leakage out of a
 call) is a review item for the step 8 pre-check rather than something this
 landing re-ran.
 
-### 8. Cut over, document, and close
+### 8. Cut over, document, and close (in progress: 8a landed 2026-09-14)
 
 **Read:** the step 6 verdict/removal list and final acceptance below.
 **Depends on:** step 6.
@@ -1118,6 +1120,91 @@ supported C verifier, the rollout path is gone, the docs describe shipped
 behavior, the full gate passes, and the rbtree launch remains the roadmap.
 If this step requires a new semantic fix, return it to the relevant step and rerun
 the affected review; do not improvise it inside the final documentation step.
+
+**8a landed 2026-09-14: the candidate corpus is green except the two
+expectation flips, with the planner running for every call.** Six commits,
+five from parallel agents and one contract migration, cherry-picked and
+gated as one tip:
+
+- **Composite view backed by the caller's own authority** ("Back a viewed
+  composite by an owned description of the same authority"). A viewed
+  composite `C` the caller does not own is backed when `C`'s kernel
+  one-level expansion is covered piecewise by owned authority the caller
+  holds and `C`'s definition facts already hold at the call (lowered at a
+  state binding the definition's parameters and discharged by the exact
+  routes, never assumed). Two forms: an owned composite `D` whose frontier
+  covers `C`'s (D's head is escrowed and `views C` joins the loan's
+  permitted descriptions, `CompositeLoanBacking::adapted`), and the
+  caller's owned frontier itself (`owns C` is materialized from exactly
+  those facts, escrowed, and recovery restores exactly them,
+  `CompositeLoanBacking::restored` / `adapter_restorations`). The two
+  snapshot fixtures needed the second form: their twelfth call happens
+  after `unfold(buffer_storage(owner))`, so the caller holds the frontier as
+  primitives. Refused: uncovered frontier, unestablished fact, counted
+  population, recursive definition, loan-unstable facts, a borrowing
+  composite (its fold needs a hold), and a view the caller already holds.
+  A same-composite owner is always preferred. Four `candidate_composite_view_*`
+  tests.
+- **Bytewise memory coverage** ("Decide memory coverage and subtraction
+  bytewise"). `memory_range_covers`, `split_memory_range`,
+  `merge_memory_ranges`, and the normalization index re-spell a pair into
+  one element width (or compare byte footprints when the bounds do not
+  divide); `memory_range_covers_for_read` is gone. Typed loads and stores
+  are untouched. `struct_aggregate_helper_view.md` passes under both modes;
+  the one pre-existing test that asserted the old width refusal is
+  rewritten. **Found, not closed:** `memory_ranges_proven_overlapping`
+  still refuses on a width mismatch, so the memory family's
+  `pair_validity_error` admits two owners over overlapping bytes at
+  different widths; byte-normalizing it makes
+  `mdtests/resource_witness_fold_infers_origin.md` fail under legacy,
+  because that contract holds `consumes object(node)` beside
+  `owns node->word` over the same bytes. That is a partition violation the
+  corpus relies on and is fixed in 8b (oracle normalized, fixture contract
+  migrated).
+- **Effect versus view by provenance** ("Decide a call's effect/view
+  separation by occurrence provenance"). The plan records the caller
+  occurrence each reserved owned requirement came from, the projection
+  records which requirement produced each effect range, planned and
+  frontier views carry their support, and an effect and a view from
+  distinct occurrences are disjoint by the partition invariant without the
+  arithmetic oracle; equal supports, missing provenance, or an ambiguous key
+  fall through to the arithmetic check and its two refusals unchanged.
+  `augment_rotate_callback_child_read.md` verifies (faster than legacy).
+  Tests `candidate_allows_a_mutable_effect_reserved_from_another_owned_occurrence`,
+  `candidate_rejects_a_mutable_effect_overlapping_a_view_from_its_own_occurrence`.
+- **Returned view of read-only storage** ("Accept a carried view of
+  read-only storage at a stable-view return"). The refused view was the
+  caller's own three contract-input views of a `static const` table merged
+  into one fact; entry treats a read-only block as intrinsic read authority
+  with no ledger root, and the return provenance had no matching route. It
+  now accepts a carried view whose block is read-only, the same block test
+  as both entry sites; a returned view of mutable storage the caller did
+  not lend is still refused. Tests `candidate_accepts_a_carried_view_of_read_only_storage`,
+  `candidate_rejects_a_carried_view_of_mutable_storage`,
+  `stable_mode_carries_a_file_static_const_view_across_a_call`. Noted: the
+  return site asks the caller's memory and the entry site the callee's for
+  the same block property; no reachable block differs today.
+- **Planner shortcut removed** ("Run the candidate call planner for every
+  call"). The three blockers closed: an owned composite requirement whose
+  expansion is empty (a false guard) is consumed definitionally, as
+  `empty_composite_views` already are (an undecided guard keeps its entry);
+  the reservation reports the whole constant demand of a repeated token
+  (`owns can_complete(cb) (quantity 2)`); the activation-local bounds rule
+  refuses an out-of-bounds intrinsic view as a missing resource before any
+  read. The twelve negatives 6.3 measured keep their messages. Tests
+  `candidate_conditional_composite_with_a_false_guard_needs_no_owned_entry`,
+  `candidate_conditional_composite_with_an_undecided_guard_still_needs_its_entry`,
+  `candidate_repeated_token_requirement_reports_the_demanded_quantity`,
+  `candidate_local_array_view_out_of_bounds_is_refused` (tightened).
+- **`call_havoc_symbolic_write_set.md` migrated.** The positive caller owns
+  the loaded cell outright and still cannot keep `old(p[0])` across the
+  call; a view cannot overlap an owner, so the two callers no longer share
+  a contract shape, and the fixture's prose says it no longer pins the
+  identical-shape case.
+
+Candidate corpus after 8a: 2 of 1,517 mdtests (`global_store_requires_owned_cell`,
+`global_byte_array_rejects_neighbor_ownership`, the two flips) and 0 of 27
+examples. Legacy corpus and gate green.
 
 
 ## Decision and violated invariant
