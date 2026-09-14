@@ -49,14 +49,15 @@ owns dst[0..n];
 `owns` says a region is allowed to change. It is a write bound, not a
 postcondition about the final values.
 
-A narrow write inside a wider range is a view of the whole plus ownership of
-the piece:
+A narrow write inside a composite the function owns is stated as ownership
+of the whole plus a promise about the cells the function leaves alone; a
+caller that only views the composite cannot see which of its cells the callee
+wrote, so the promise is what frames them:
 
 <!-- verified-example: mdtests/field_derived_precise_effect_after_metadata_write.md -->
 ```click
-views owned_buffer(owner);
-owns owner[0..1];
-owns (owner->data + owner->len)[0..2];
+owns owned_buffer(owner);
+ensures owner->data[0] == old(owner->data[0]);
 ```
 
 Function-level ranges are fixed at function entry. For a push operation,

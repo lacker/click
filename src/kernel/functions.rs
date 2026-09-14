@@ -10367,6 +10367,12 @@ fn prepare_contract_resource_transfer_with_candidate(
     // holds as a resource fact, whether an explicit owner or a view it was
     // itself lent, is ordinary loan-backed memory and goes through the
     // planner, which also refuses a view whose binding has gone stale.
+    //
+    // This is D10's implicit local authority as an explicit rule (fix-views
+    // 6.3, F14): while the caller is suspended nothing else can reach its
+    // unowned local storage, a callee cannot write through a view, and a
+    // view returned from the call still has to pass the provenance routes,
+    // so the read is authorized for the call without a ledger transition.
     let intrinsic_read_views = checked_required_resources
         .iter()
         .filter(|requirement| {
@@ -10614,6 +10620,17 @@ fn prepare_contract_resource_transfer_with_candidate(
                 Some(plan)
             }
             Err(error) => {
+                // An owned requirement the caller cannot supply is a missing
+                // owner, whatever planned it: name the fact, as the ordinary
+                // resource transfer does, rather than a loan the call never
+                // asked for. A view the planner cannot back is a loan matter.
+                if let super::loans::StableViewPlanError::MissingResource(resource) = &error
+                    && resource.is_own()
+                {
+                    return Ok(Err(CRuntimeError::MissingResource {
+                        resource: resource.clone(),
+                    }));
+                }
                 if let Some(diagnostic) = error.loan_diagnostic(LoanRefusalOperation::Plan) {
                     return Ok(Err(CRuntimeError::LoanRefusal(diagnostic)));
                 }

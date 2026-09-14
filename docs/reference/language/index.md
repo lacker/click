@@ -2119,14 +2119,15 @@ old two-cell tail after `owner->len` changes. Footprint matching uses proven
 pointer equalities, including unchanged field loads across a finite chain of
 certified memory effects.
 
-A narrow write inside a wider range is spelled as a view of the whole plus
-ownership of the piece:
+A narrow write inside a composite the function owns is spelled as ownership
+of the whole plus a promise about the cells it leaves alone; an owned piece
+inside a viewed composite is not a footprint, because the composite's facts
+may depend on that piece:
 
 <!-- verified-example: mdtests/field_derived_precise_effect_after_metadata_write.md -->
 ```click
-views owned_buffer(owner);
-owns owner[0..1];
-owns (owner->data + owner->len)[0..2];
+owns owned_buffer(owner);
+ensures owner->data[0] == old(owner->data[0]);
 ```
 
 Callers then frame the viewed remainder with no clause and no tactic. A

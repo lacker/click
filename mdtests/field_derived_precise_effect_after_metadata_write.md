@@ -1,10 +1,11 @@
 # Field-derived precise ownership survives metadata writes
 
-This checks that an owned window evaluated at function entry remains usable
-after the function updates neighboring metadata. `buffer_push` writes only the
-old end cell, its successor, and `owner->len`. The modular caller therefore
-proves that the earlier `data[0]` cell is unchanged when the old length is
-positive.
+`buffer_push` owns the whole buffer composite, writes only the old end cell,
+its successor, and `owner->len`, and promises that the first cell is unchanged
+when the old length is positive. The modular caller relies on that promise,
+not on the callee's write footprint, to prove that `data[0]` survives the
+call: a caller that only views a composite cannot see which of its cells a
+callee owned.
 
 ```c filename=field_derived_buffer_push.c
 struct buffer {
@@ -59,111 +60,26 @@ resource owned_buffer(owner: struct buffer*) {
 }
 
 int32 buffer_push(struct buffer* owner, int32 value) {
+    requires 1 <= owner->len;
     requires owner->len + 1 < owner->cap;
-    views owned_buffer(owner);
-    owns owner[0..1];
-    owns (owner->data + owner->len)[0..2];
+    owns owned_buffer(owner);
 
     ensures result == old(owner->len) + 1;
     ensures owner->cap == old(owner->cap);
     ensures owner->data == old(owner->data);
+    ensures owner->data[0] == old(owner->data[0]);
 } by {
-    observe(owned_buffer(owner));
+    unfold(owned_buffer(owner));
     execute();
-    have 0 <= owner->len by simp;
+    have 0 <= owner->len by {
+        simp();
+    }
     have owner->len < owner->cap by {
-        transport(
-            at(statement(4).entry, (index + 1)) <
-                at(statement(4).entry, owner->cap),
-            owner->len < owner->cap
-        ) using {
-            at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
-            at(statement(5).entry, separate(memory(owner->len), memory(owner->cap)));
-            at(statement(5).entry, separate(memory(owner->len), memory(owner->data)));
-            at(statement(5).entry, separate(memory(owner->cap), memory(owner->data)));
-            at(statement(5).entry, loadable(old(owner->len)));
-            at(statement(5).entry, loadable(old(owner->cap)));
-            at(statement(5).entry, loadable(old(owner->data)));
-            at(statement(5).entry, loadable(old(owner->data[0..owner->cap])));
-            at(statement(5).entry, 0) <= at(statement(5).entry, index);
-            at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
-            at(statement(4).entry, separate(memory(owner[0..4]), memory(owner->data[0..owner->cap])));
-            contains(owned_buffer(owner), memory(owner->len));
-            contains(owned_buffer(owner), memory(owner->cap));
-            contains(owned_buffer(owner), memory(owner->data));
-            0 <= owner->len;
+        simp() using {
+            old(owner->len) + 1 < old(owner->cap);
         }
     }
-    have separate(memory(owner[0..4]), memory(owner->data[0..owner->cap])) by {
-        transport(
-            at(statement(4).entry, separate(
-                memory(owner[0..4]),
-                memory(owner->data[0..owner->cap])
-            )),
-            separate(memory(owner[0..4]), memory(owner->data[0..owner->cap]))
-        ) using {
-            at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
-            at(statement(5).entry, separate(memory(owner->len), memory(owner->cap)));
-            at(statement(5).entry, separate(memory(owner->len), memory(owner->data)));
-            at(statement(5).entry, separate(memory(owner->cap), memory(owner->data)));
-            at(statement(5).entry, loadable(old(owner->len)));
-            at(statement(5).entry, loadable(old(owner->cap)));
-            at(statement(5).entry, loadable(old(owner->data)));
-            at(statement(5).entry, loadable(old(owner->data[0..owner->cap])));
-            at(statement(5).entry, 0) <= at(statement(5).entry, index);
-            at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
-            at(statement(4).entry, separate(memory(owner[0..4]), memory(owner->data[0..owner->cap])));
-            contains(owned_buffer(owner), memory(owner->len));
-            contains(owned_buffer(owner), memory(owner->cap));
-            contains(owned_buffer(owner), memory(owner->data));
-            0 <= owner->len;
-            owner->len < owner->cap;
-        }
-    }
-    have owner->cap == old(owner->cap) by {
-        have at(statement(4).entry, owner->cap) == old(owner->cap) by {
-            normalize();
-        }
-        transport(
-            at(statement(4).entry, owner->cap) == old(owner->cap),
-            owner->cap == old(owner->cap)
-        ) using {
-            at(statement(4).entry, owner->cap) == old(owner->cap);
-            at(statement(4).entry, (index + 1)) <
-                at(statement(4).entry, owner->cap);
-            separate(
-                memory(owner[0..4]),
-                memory(owner->data[0..owner->cap])
-            );
-        }
-    }
-    have owner->data == old(owner->data) by {
-        have at(statement(4).entry, owner->data) == old(owner->data) by {
-            normalize();
-        }
-        transport(
-            at(statement(4).entry, owner->data) == old(owner->data),
-            owner->data == old(owner->data)
-        ) using {
-            at(statement(4).entry, owner->data) == old(owner->data);
-            separate(memory(owner->len), memory(owner->cap));
-            separate(memory(owner->len), memory(owner->data));
-            separate(memory(owner->cap), memory(owner->data));
-            contains(owned_buffer(owner), memory(owner->len));
-            contains(owned_buffer(owner), memory(owner->cap));
-            contains(owned_buffer(owner), memory(owner->data));
-            0 <= owner->len;
-            owner->len < owner->cap;
-            separate(memory(owner[0..4]), memory(owner->data[0..owner->cap]));
-            owner->cap == old(owner->cap);
-        }
-    }
-    have result == (old(owner->len) + 1) by {
-        normalize();
-    }
-    assumption();
-    assumption();
-    assumption();
+    fold(owned_buffer(owner));
     simp();
 }
 
@@ -175,37 +91,11 @@ int32 buffer_push_preserves_first(
     requires 1 <= owner->len;
     requires owner->len + 1 < owner->cap;
     requires owner->data == data;
-    views owned_buffer(owner);
-    owns owner[0..1];
-    owns (owner->data + owner->len)[0..2];
+    owns owned_buffer(owner);
 
     ensures data[0] == old(data[0]);
 } by {
     execute();
-    have at(statement(1).entry, data[0]) == old(data[0]) by {
-        normalize();
-    }
-    have data[0] == old(data[0]) by {
-        transport(
-            at(statement(1).entry, data[0]) == old(data[0]),
-            data[0] == old(data[0])
-        ) using {
-            at(statement(1).entry, data[0]) == old(data[0]);
-            at(statement(1).entry, 1) <=
-                at(statement(1).entry, owner->len);
-            at(statement(1).entry, owner->data) ==
-                at(statement(1).entry, data);
-            at(statement(1).entry, (owner->len + 1)) < at(statement(1).entry, owner->cap);
-            at(statement(2).entry, loadable(old(owner->len)));
-            at(statement(2).entry, loadable(old(owner->cap)));
-            at(statement(2).entry, loadable(old(owner->data)));
-            at(statement(2).entry, loadable(old(owner->data[0..owner->cap])));
-            at(statement(1).entry, 0) <= at(statement(1).entry, owner->len);
-            at(statement(1).entry, owner->len) < at(statement(1).entry, owner->cap);
-            0 <= owner->len;
-        }
-    }
-    assumption();
     simp();
 }
 ```
