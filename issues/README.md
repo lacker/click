@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (7)
+## P1: before launch (6)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -70,7 +70,6 @@ Specification and proof:
 - [Unify memory and other resources across contracts and callbacks](memory-vs-resources.md)
 - [Give views stable borrowing semantics for concurrency and future Rust support](fix-views.md)
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
-- [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
 ## P2: after launch (26)
 

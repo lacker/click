@@ -532,7 +532,11 @@ is `mdtests/rb_first_last.md`.
 Unlike the numeric components, the structural descent is not a member of the
 back-edge invariant bundle. The back edge decides it directly and names the
 binder when it does not descend, as in
-`mdtests/loop_decreases_rejects_same_instance.md`.
+`mdtests/loop_decreases_rejects_same_instance.md`. Unfolding a layer and
+refolding the same model under a fresh instance name is also insufficient:
+progress is strict descent in the finite model, not a change of resource
+identity. `mdtests/loop_decreases_rejects_rebuilt_layer.md` reaches this refusal
+after successfully rebuilding the layer.
 
 ### Opening a binder's model inside the body
 

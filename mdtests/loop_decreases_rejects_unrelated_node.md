@@ -1,7 +1,7 @@
 # a structural loop measure refuses a back edge that leaves the tree
 
 `decreases sub;` on a loop names the loop's own resource binder, so the
-instance the binder ends holding must be a direct contained child, in the
+instance the binder ends holding must be a strict contained descendant, in the
 exact resource definition, of the instance it held at the loop head. This body
 moves the cursor to a node of an unrelated tree the contract also owns. The
 other tree is not one of the loop's own resources, so the body never holds it:

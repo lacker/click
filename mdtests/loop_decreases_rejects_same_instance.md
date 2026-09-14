@@ -1,7 +1,7 @@
 # a structural loop measure refuses a back edge that stays put
 
 `decreases c;` on a loop names the loop's own resource binder, so the back
-edge must hand back a direct contained child, in the exact resource
+edge must hand back a strict contained descendant, in the exact resource
 definition, of the instance `c` held at the loop head. This body keeps the
 same instance, so the descent is refused by name.
 

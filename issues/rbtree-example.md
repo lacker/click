@@ -533,6 +533,63 @@ unit** and replace the verbatim-copy fixtures with the pinned regression.
 Depends on C3c, C5, C6, C4b, and
 [kernel-scale-preprocessing.md](kernel-scale-preprocessing.md).
 
+## Structural termination audit, 2026-09-14
+
+Audited at `61a3ce92`. The separate `structural-loop-termination` issue is
+retired: its missing-language-feature diagnosis predates A4 and the subsequent
+loop work. The remaining algorithm proofs stay P1 in C3, C4b, and C5 here;
+retiring the duplicate issue does not establish termination of unfinished
+insertion, erase, or successor/predecessor proofs.
+
+The implemented spelling is `decreases sub;` for a loop resource binder and
+`decreases list(node);` for a function resource measure. The back-edge rule is
+**strict contained descent**, including multiple exposed child layers, rather
+than only one direct child. It compares the finite inductive model carried by
+the rebound instance with submodels named by the exact resource definitions
+and the selected constructor premises. A fresh instance name does not by
+itself prove progress. Kernel `loop_structural_descent_failure` in
+`src/kernel/loops.rs` supplies the check for loop execution and the proof-object
+loop join in `src/surface/proof/proof_object/execution_statements.rs`.
+
+| Original requirement | Current evidence and remaining scope |
+| --- | --- |
+| Descend through children without a C counter | `mdtests/rb_first_last.md` and `examples/modeled-binary-tree` carry a subtree measure. |
+| Ascend through a recursive context | `mdtests/loop_ascending_walk_to_root.md`, `rb_ascending_walk_to_root.md`, and `rb_ascending_walk_in_entry_match.md` carry a context measure while rebuilding the focused tree. |
+| Continue after consuming context layers | `mdtests/loop_body_continue_structural_measure.md` checks the explicit `continue` join; `loop_decreases_strict_descendant.md` checks one- and two-layer descent. These are component regressions, not completed rebalancing proofs. |
+| Reject staying put | `mdtests/loop_decreases_rejects_same_instance.md` reaches the descent refusal. |
+| Reject an unrelated node | `mdtests/loop_decreases_rejects_unrelated_node.md` rejects the missing owned instance at the rebound cursor; it is an ownership/binder regression, not an isolated test of the ancestry comparison. |
+| Reject recreating a consumed layer | The audit adds `mdtests/loop_decreases_rejects_rebuilt_layer.md`: unfold the recursive layer, refold it under a fresh name with the same model, then close the back edge. Folding succeeds and descent is refused. Removing only the decreases clause verifies the same proof, isolating the ranking failure. |
+
+The remaining integration acceptance is unchanged C with a checked measure on
+**every continuing back edge** of the required algorithms. In C3a the
+recolouring `continue` must return `up.up` with all invariants; C3b's rotation
+`break` paths must establish their exit guarantees and do not need descent
+across an edge that exits. C4b must finish the actual `rb_next`/`rb_prev`
+descent/ascent paths, and C5 must cover erase/rebalancing, including any
+rotation followed by a continuing edge in the unchanged source. The synthetic
+component tests do not substitute for those algorithm proofs. Do not add a C
+counter, bounded unrolling, a heap-size assumption, or a rewritten control-flow
+path to satisfy termination.
+
+There is no separately demonstrated missing structural-ranking operation to
+implement next. Resume the corresponding rbtree proof package and reduce any
+new kernel obstruction it exposes. Preserve the same-instance, unrelated-node,
+and rebuilt-layer negatives. Concurrent-reader termination, general recursion
+extensions, and broader well-founded resource families remain outside this
+sequential MVR obligation; see [recursion.md](recursion.md).
+
+Audit validation: all four `loop_decreases` fixtures pass under ordinary and
+candidate stable-loan semantics. Ordinary `click audit` checks all five smart
+sites in `loop_decreases_strict_descendant.md` and all four in
+`loop_body_continue_structural_measure.md`. The rebuilt-layer negative reaches
+the descent refusal; its control without the measure verifies. The full unpiped
+`scripts/check.sh` passes, including the existing traversal/ascent fixtures and
+the new negative. This is an evidence audit of the stated milestone, not an
+exhaustive soundness or scaling audit of the resource kernel.
+
+The maintained language explanation is
+[structural loop measures](../docs/concepts/loops-and-invariants.md#structural-loop-measures).
+
 ## Acceptance criteria
 
 - Preserve the implemented ownership-backed resource fields and compositional
@@ -551,8 +608,8 @@ Depends on C3c, C5, C6, C4b, and
   describe the correct sequence change, not equality with the input sequence.
 - Models express parent/child consistency, acyclicity, red-black color and
   black-height invariants, and correct traversal results. Required algorithms
-  establish their respective guarantees. Loop termination is coordinated with
-  [structural-loop-termination.md](structural-loop-termination.md).
+  establish their respective guarantees, including structural termination on
+  all continuing back edges as recorded in the audit above.
 - Small positive and negative rotation and insert/erase regressions (synthetic
   or on the pinned source), required MVR model proofs, and
   `scripts/check.sh` pass.

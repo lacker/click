@@ -9,7 +9,7 @@ with `does not descend: ... is not a direct contained child`.
 Every rbtree fixup loop moves that way. `__rb_insert`'s uncle-red case
 recolours the parent and the uncle black, sets `node = gparent`, and goes round
 again, so the frame the next iteration starts at is two above the one this
-iteration started at ([`rb_insert_color.md`](rb_insert_color.md)). Ranking such
+iteration started at ([the insert project](../examples/rbtree-insert/rbtree_insert.click)). Ranking such
 a loop by a counter would be a different claim; the structure it walks is the
 true measure.
 
