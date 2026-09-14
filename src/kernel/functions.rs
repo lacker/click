@@ -237,6 +237,13 @@ struct CFunctionResourceTransfer {
     /// the opt-in planner. The plan owns the checked successor ledger and is
     /// consumed only after postconditions have been evaluated.
     stable_view_plan: Option<StableViewTransferPlan>,
+    /// The bytes of this call's checked view frontier that a planned stable
+    /// view does not name directly: a composite view's checked one-level
+    /// pieces, and the intrinsic and empty-composite views, which never reach
+    /// the planner at all. The declared mutable effects are compared against
+    /// these as well, because an effect may not widen the authority the call
+    /// actually received (D9).
+    checked_view_frontier: Vec<CMemoryRange>,
 }
 
 fn callee_state_with_resource_transfer(
@@ -2762,12 +2769,21 @@ fn prepare_verified_function_call<'a>(
     // rejecting all mutation would also reject the supported viewed-field /
     // owned-field partition.
     let mutable_ranges = projection.ranges;
-    if let Some(plan) = transfer.stable_view_plan.as_ref() {
-        for viewed_range in plan
-            .stable_views()
+    {
+        // Compare the effects against the complete checked view frontier, not
+        // just the views whose requirement is a plain memory range. A
+        // composite view's bytes are its checked one-level pieces, and the
+        // intrinsic and empty-composite views never reach the planner at
+        // all; the transfer carries both groups for exactly this check.
+        let viewed_ranges = transfer
+            .stable_view_plan
+            .as_ref()
+            .map(StableViewTransferPlan::stable_views)
+            .unwrap_or_default()
             .iter()
             .filter_map(|stable_view| stable_view.requirement.fact.memory_range())
-        {
+            .chain(transfer.checked_view_frontier.iter());
+        for viewed_range in viewed_ranges {
             if let Some((mutable_range, relation)) = mutable_ranges
                 .iter()
                 .map(|mutable_range| {
@@ -10137,6 +10153,7 @@ fn prepare_contract_resource_transfer_with_candidate(
             post_outputs: None,
             candidate_output_views: Vec::new(),
             stable_view_plan: None,
+            checked_view_frontier: Vec::new(),
         }));
     }
     let preserve_explicit_representation = preserve_explicit_representation
@@ -10230,6 +10247,25 @@ fn prepare_contract_resource_transfer_with_candidate(
     } else {
         Vec::new()
     };
+    // D9: a declared mutable effect is a consequence of the authority the
+    // call received and cannot widen it, so the call site compares each
+    // effect against every byte this call keeps as a checked view. A planned
+    // stable view carries its own range, but neither group above is planned
+    // at all -- both are filtered out of `stable_requirements` below -- so
+    // their bytes are recorded on the transfer instead. An intrinsic read
+    // view is always a plain memory range by the filter that selects it; an
+    // empty composite view has an empty checked body and protects no bytes,
+    // which is exactly why it needs no backing. The composite views that do
+    // reach the planner add their checked frontier pieces below.
+    let mut checked_view_frontier = if candidate_stable_view_semantics {
+        intrinsic_read_views
+            .iter()
+            .chain(empty_composite_views.iter())
+            .filter_map(|requirement| requirement.fact.memory_range().cloned())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     let stable_requirements = checked_required_resources
         .iter()
         .filter(|requirement| {
@@ -10314,6 +10350,14 @@ fn prepare_contract_resource_transfer_with_candidate(
                         "an exclusive instance inside a composite view is unsupported".to_string(),
                     )));
                 }
+                // The folded head names no bytes of its own, so these checked
+                // pieces are the frontier a declared mutable effect has to
+                // stay out of. They are recorded before the backing consumes
+                // them and only kept once the backing is accepted below.
+                let frontier_pieces = expanded_children
+                    .iter()
+                    .filter_map(|piece| piece.memory_range().cloned())
+                    .collect::<Vec<_>>();
                 let Some(definition) =
                     interface
                         .composite_resource_definitions()
@@ -10346,6 +10390,7 @@ fn prepare_contract_resource_transfer_with_candidate(
                         "composite loan frontier is not a checked expansion".to_string(),
                     )));
                 };
+                checked_view_frontier.extend(frontier_pieces);
                 backings.insert(support, backing);
             }
             backings
@@ -10601,6 +10646,7 @@ fn prepare_contract_resource_transfer_with_candidate(
         post_outputs: None,
         candidate_output_views: Vec::new(),
         stable_view_plan,
+        checked_view_frontier,
     }))
 }
 
@@ -18826,6 +18872,147 @@ mod candidate_stable_view_call_tests {
                 outcome: CFunctionOutcome::Return { .. },
                 ..
             }]
+        ));
+    }
+
+    /// A composite reader whose contract also declares a mutable footprint.
+    /// The requirement is `views cell(p)`, which carries no memory range of
+    /// its own; the bytes it protects are the definition's checked frontier.
+    fn composite_reader_with_mutable_range(
+        name: &str,
+        mutable_start: u32,
+        mutable_end: u32,
+    ) -> CFunction {
+        let segment = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
+        let required = CResourceSpec::declared(
+            ResourceFamily::Composite,
+            CResourceAccessMode::View,
+            "cell".into(),
+            vec![c_variable("p")],
+            vec![CType::Int32Pointer],
+            CResourceTransferRole::Borrow,
+            CResourceSnapshot::Entry,
+        )
+        .unwrap();
+        let definition = CCompositeResourceDefinition::new(
+            "cell",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            None,
+            false,
+            vec![CResourceSpec::owned_memory(segment)],
+            Vec::new(),
+        );
+        c_function(
+            CType::Int32,
+            name,
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(c_load(c_variable("p"))),
+        )
+        .with_resource_summary(vec![required], Vec::new())
+        .with_composite_resource_definitions(vec![definition])
+        .with_contract(
+            Vec::new(),
+            Vec::new(),
+            vec![CMemorySegment::new(
+                c_variable("p"),
+                c_int32_literal(mutable_start),
+                c_int32_literal(mutable_end),
+            )],
+            Vec::new(),
+            true,
+        )
+    }
+
+    fn composite_mutable_effect_paths(
+        mutable_start: u32,
+        mutable_end: u32,
+        name: &str,
+    ) -> Vec<CFunctionPath> {
+        let pointer = pointer();
+        let head =
+            CResourceFact::own_composite("cell".into(), vec![CValue::pointer(pointer.clone())]);
+        let caller = CState::new()
+            .with_memory(
+                CMemory::new()
+                    .with_block(pointer.block.clone(), 8)
+                    .store(pointer.clone(), int32(7)),
+            )
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(head));
+        let function = composite_reader_with_mutable_range(name, mutable_start, mutable_end);
+        execute_c_function_call_paths(
+            &caller,
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate composite mutable call should execute")
+    }
+
+    /// F6. The head of a composite view has no memory range, so comparing the
+    /// declared effects against requirement ranges alone saw nothing here.
+    /// The checked one-level frontier is what the loan protects, and an
+    /// effect over one of its pieces is a proven overlap.
+    #[test]
+    fn candidate_rejects_mutable_effect_overlapping_a_composite_view_piece() {
+        let paths = composite_mutable_effect_paths(0, 1, "candidate_composite_overlap_effect");
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)),
+                ..
+            }] if diagnostic.category() == crate::kernel::LoanRefusalCategory::ProvenOverlap
+                && diagnostic.overlap() == crate::kernel::LoanOverlapStatus::ProvenOverlap
+                && diagnostic.subject().memory_range().is_some()
+        ));
+    }
+
+    /// The same frontier keeps the supported partition usable: a composite
+    /// body of `p[0..1]` beside an effect on `p[1..2]` is provably disjoint.
+    #[test]
+    fn candidate_allows_a_mutable_effect_disjoint_from_a_composite_view_piece() {
+        let paths = composite_mutable_effect_paths(1, 2, "candidate_composite_disjoint_effect");
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::Return { .. },
+                ..
+            }]
+        ));
+    }
+
+    /// F6. An intrinsic local view is filtered out before planning, so no
+    /// plan records it and the effect check could not see it either. The
+    /// transfer carries its range, and an effect over the same bytes is
+    /// refused exactly as it is for a lent view.
+    #[test]
+    fn candidate_rejects_mutable_effect_overlapping_an_intrinsic_local_view() {
+        let pointer = pointer();
+        let function = reader_with_mutable_range("candidate_intrinsic_overlap_effect", 0, 1);
+        let caller = CState::new().with_memory(
+            CMemory::new()
+                .with_block(pointer.block.clone(), 8)
+                .store(pointer.clone(), int32(7)),
+        );
+        let paths = execute_c_function_call_paths(
+            &caller,
+            &function,
+            &[CExpression::Value(CValue::pointer(pointer))],
+            &PureFactContext::new(),
+            &environment(&function),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("candidate intrinsic view effect call should execute");
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)),
+                ..
+            }] if diagnostic.category() == crate::kernel::LoanRefusalCategory::ProvenOverlap
+                && diagnostic.overlap() == crate::kernel::LoanOverlapStatus::ProvenOverlap
         ));
     }
 

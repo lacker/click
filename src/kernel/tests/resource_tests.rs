@@ -5797,6 +5797,91 @@ fn v11_duplicate_bound_and_unbound_views_are_not_authority_candidates() {
     );
 }
 
+/// Build the same one-dependency context every time, in a fresh ledger.
+/// `view_the_support` changes only the binding's viewed fact, so two contexts
+/// that disagree on it still hold the same facts and the same support graph.
+fn context_with_one_loan_dependency(view_the_support: bool) -> ResourceContext {
+    let support = CResourceFact::own_token("f7_dependency_support".into(), Vec::new());
+    let child = CResourceFact::view_token("f7_dependency_child".into(), Vec::new());
+    let context = ResourceContext::new().unchecked_with_facts([support.clone(), child.clone()]);
+    let child_occurrence = context.occurrences_for_fact(&child)[0];
+    let support_occurrence = context.owned_occurrences_for_fact(&support)[0];
+    let ledger = LoanLedger::new();
+    let owner = ledger.fresh_participant().unwrap();
+    let reader = ledger.fresh_participant().unwrap();
+    let opening = ledger
+        .lend(owner, reader, support_occurrence, support.clone())
+        .unwrap();
+    context.with_loan_dependency(
+        child_occurrence,
+        LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support: support_occurrence,
+            viewed: if view_the_support { support } else { child },
+        },
+    )
+}
+
+fn resource_context_hash(context: &ResourceContext) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    context.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// F7. A binding names its loan, scope, share, and support with fresh arena
+/// counters, so two contexts built identically in different ledgers carry
+/// different raw identities. Comparing those counters reported such contexts
+/// unequal, which costs loop fixpoints and interning; the comparison and the
+/// hash both use structure-derived keys instead.
+#[test]
+fn loan_dependencies_from_different_ledgers_compare_equal_and_hash_alike() {
+    let left = context_with_one_loan_dependency(false);
+    let right = context_with_one_loan_dependency(false);
+    let left_binding = left
+        .live_loan_dependencies()
+        .next()
+        .expect("the left context should carry a live dependency")
+        .1
+        .clone();
+    let right_binding = right
+        .live_loan_dependencies()
+        .next()
+        .expect("the right context should carry a live dependency")
+        .1
+        .clone();
+    // Without different raw identities the assertions below would be vacuous.
+    assert_ne!(left_binding.loan, right_binding.loan);
+    assert_ne!(left_binding.scope, right_binding.scope);
+    assert_ne!(left_binding.share, right_binding.share);
+    assert_ne!(left_binding.support, right_binding.support);
+    assert_eq!(left_binding.viewed, right_binding.viewed);
+
+    assert_eq!(left, right);
+    assert_eq!(left.cmp(&right), std::cmp::Ordering::Equal);
+    assert_eq!(resource_context_hash(&left), resource_context_hash(&right));
+}
+
+/// Two contexts whose dependencies differ only in the viewed fact must still
+/// order, and order the same way each time they are rebuilt in a new arena.
+#[test]
+fn loan_dependencies_differing_in_the_viewed_fact_order_deterministically() {
+    let viewing_child = context_with_one_loan_dependency(false);
+    let viewing_support = context_with_one_loan_dependency(true);
+    assert_eq!(viewing_child.facts(), viewing_support.facts());
+    assert_ne!(viewing_child, viewing_support);
+
+    let ordering = viewing_child.cmp(&viewing_support);
+    assert_ne!(ordering, std::cmp::Ordering::Equal);
+    assert_eq!(viewing_support.cmp(&viewing_child), ordering.reverse());
+    assert_eq!(
+        context_with_one_loan_dependency(false).cmp(&context_with_one_loan_dependency(true)),
+        ordering
+    );
+}
+
 #[test]
 fn v11_unbound_owner_observation_composite_still_expands() {
     let definition = CCompositeResourceDefinition::new(

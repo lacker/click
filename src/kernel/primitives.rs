@@ -3954,9 +3954,10 @@ impl std::hash::Hash for ResourceContext {
                 entry.hash(state);
             }
         }
-        for (occurrence, binding) in self.live_loan_dependencies() {
-            occurrence.hash(state);
-            binding.hash(state);
+        // Hash the same structure-derived keys `compare_loan_dependencies`
+        // orders by, so two contexts that compare equal never hash apart.
+        for dependency in stable_loan_dependencies(self) {
+            dependency.hash(state);
         }
     }
 }
@@ -4000,12 +4001,97 @@ fn compare_cached_expansions(
     }
 }
 
+/// One live loan dependency, reduced to keys that do not name a process-local
+/// counter.
+///
+/// `ResourceOccurrenceId`, `LoanId`, `LoanScopeId`, and `LoanShareId` are all
+/// fresh arena/ordinal pairs. Comparing them directly makes two structurally
+/// identical contexts unequal whenever their bindings came from different
+/// ledgers or were allocated in a different order, which silently costs loop
+/// fixpoints, interning, and cross-run artifact reuse. The occurrence and the
+/// dependency's support become the stable entry ordinals `compare_support_graph`
+/// already uses; the loan, scope, and share become the position of their first
+/// appearance in that stable order, which preserves exactly which dependencies
+/// share a loan, scope, or share without naming any of them.
+///
+/// This changes only how dependencies compare. Their meaning, and every
+/// authority check that reads `loan_dependency`, still uses the exact
+/// identities.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+struct StableLoanDependency<'a> {
+    entry: ResourceEntryId,
+    viewed: &'a CResourceFact,
+    support: StableLoanSupport,
+    loan: usize,
+    scope: usize,
+    share: usize,
+}
+
+/// Where a dependency's supporting occurrence lives, without naming its arena.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+enum StableLoanSupport {
+    /// The support is an entry of this context; its stable ordinal names it.
+    Entry(ResourceEntryId),
+    /// The support is not an entry here, so only the position of its first
+    /// appearance among the dependencies is available.
+    Position(usize),
+}
+
+/// The position at which `key` was first seen, assigning the next one if it is
+/// new. Callers must visit their keys in a stable order.
+fn first_appearance<K: Ord>(seen: &mut std::collections::BTreeMap<K, usize>, key: K) -> usize {
+    let next = seen.len();
+    *seen.entry(key).or_insert(next)
+}
+
+/// The context's live loan dependencies in a canonical, structure-derived
+/// order. Ordering by the stable entry ordinal is a total order because
+/// `entry_by_occurrence` maps distinct occurrences to distinct entries.
+fn stable_loan_dependencies(context: &ResourceContext) -> Vec<StableLoanDependency<'_>> {
+    let mut ordered = context
+        .live_loan_dependencies()
+        .filter_map(|(occurrence, binding)| {
+            context
+                .storage
+                .entry_by_occurrence
+                .get(&occurrence)
+                .map(|entry| (*entry, binding))
+        })
+        .collect::<Vec<_>>();
+    ordered.sort_unstable_by_key(|(entry, _)| *entry);
+    let mut loans = std::collections::BTreeMap::new();
+    let mut scopes = std::collections::BTreeMap::new();
+    let mut shares = std::collections::BTreeMap::new();
+    let mut supports = std::collections::BTreeMap::new();
+    ordered
+        .into_iter()
+        .map(|(entry, binding)| {
+            let loan = first_appearance(&mut loans, binding.loan);
+            let scope = first_appearance(&mut scopes, binding.scope);
+            let share = first_appearance(&mut shares, binding.share);
+            let support = match context.storage.entry_by_occurrence.get(&binding.support) {
+                Some(entry) => StableLoanSupport::Entry(*entry),
+                None => {
+                    StableLoanSupport::Position(first_appearance(&mut supports, binding.support))
+                }
+            };
+            StableLoanDependency {
+                entry,
+                viewed: &binding.viewed,
+                support,
+                loan,
+                scope,
+                share,
+            }
+        })
+        .collect()
+}
+
 fn compare_loan_dependencies(
     left: &ResourceContext,
     right: &ResourceContext,
 ) -> std::cmp::Ordering {
-    left.live_loan_dependencies()
-        .cmp(right.live_loan_dependencies())
+    stable_loan_dependencies(left).cmp(&stable_loan_dependencies(right))
 }
 
 impl PartialOrd for ResourceContext {
