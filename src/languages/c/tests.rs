@@ -3577,6 +3577,104 @@ fn c0_call_lowering_diagnostics_preserve_original_call_positions() {
 }
 
 #[test]
+fn c0_call_lowering_rejects_potentially_aliased_operand_and_argument_reads() {
+    let cases = [
+        (
+            "x + set(&x)",
+            "an expression call and a potentially aliased operand read are not supported",
+        ),
+        (
+            "set(&x) + x",
+            "an expression call and a potentially aliased operand read are not supported",
+        ),
+        (
+            "*p + set(p)",
+            "an expression call and a potentially aliased operand read are not supported",
+        ),
+        (
+            "set(p) + *p",
+            "an expression call and a potentially aliased operand read are not supported",
+        ),
+        (
+            "combine(x, set(&x))",
+            "an expression call and a potentially aliased read in separate function arguments are not supported",
+        ),
+        (
+            "combine(set(&x), x)",
+            "an expression call and a potentially aliased read in separate function arguments are not supported",
+        ),
+        (
+            "combine(*p, set(p))",
+            "an expression call and a potentially aliased read in separate function arguments are not supported",
+        ),
+        (
+            "combine(set(p), *p)",
+            "an expression call and a potentially aliased read in separate function arguments are not supported",
+        ),
+    ];
+
+    for (expression, expected_message) in cases {
+        let source = format!(
+            "int set(int *p);\nint combine(int left, int right);\nint probe(int *p) {{ int x = 1; return {expression}; }}\n"
+        );
+        let call_offset = source
+            .rfind("set(")
+            .expect("each rejected expression contains the mutating call");
+        let before_call = &source[..call_offset];
+        let expected_position = crate::source::SourcePosition::new(
+            before_call
+                .chars()
+                .filter(|character| *character == '\n')
+                .count()
+                + 1,
+            before_call
+                .rsplit_once('\n')
+                .map_or(before_call.chars().count() + 1, |(_, line)| {
+                    line.chars().count() + 1
+                }),
+        );
+
+        let error = syntax::parse_functions(&source)
+            .expect_err("an unsequenced call/read interaction should be rejected");
+        assert_eq!(
+            error.message(),
+            expected_message,
+            "expression: {expression}"
+        );
+        assert_eq!(
+            error.position(),
+            Some(expected_position),
+            "expression: {expression}"
+        );
+    }
+}
+
+#[test]
+fn c0_call_lowering_rejects_a_call_that_can_change_a_function_designator() {
+    let source = r#"
+struct callbacks { int (*apply)(int); };
+int replacement(int value) { return value; }
+int change(struct callbacks *table) {
+    table->apply = &replacement;
+    return 0;
+}
+int probe(struct callbacks *table) {
+    return table->apply(change(table));
+}
+"#;
+    let error = syntax::parse_functions(source)
+        .expect_err("the argument call can change the loaded function designator");
+    assert_eq!(
+        error.message(),
+        "an expression call and a potentially aliased function-designator read are not supported"
+    );
+    assert_eq!(
+        error.position(),
+        Some(crate::source::SourcePosition::new(9, 25))
+    );
+}
+
+#[test]
 fn imported_call_lowering_diagnostics_use_original_header_line() {
     let (source, map) = provenance::CSourceMap::decode(
         "# 1 \"include/alloc.h\" 1\nint32 caller() { return malloc(1); }\n",

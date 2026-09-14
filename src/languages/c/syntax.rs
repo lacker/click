@@ -5289,6 +5289,10 @@ struct Parser {
     /// object names for later validation, so this records only the specific
     /// out-of-scope declarations that must not be treated as such names.
     out_of_scope_names: BTreeSet<String>,
+    /// Mutable scalar locals whose address is formed anywhere in the current
+    /// function. A call can only change an automatic scalar through such an
+    /// escaped address; static-storage scalars are handled separately.
+    address_taken_variables: BTreeSet<String>,
     next_scoped_name: u32,
     next_synthesized_call: u32,
     next_synthesized_aggregate: u32,
@@ -5478,6 +5482,7 @@ impl Parser {
             unions: BTreeMap::new(),
             scopes: Vec::new(),
             out_of_scope_names: BTreeSet::new(),
+            address_taken_variables: BTreeSet::new(),
             next_scoped_name: 0,
             next_synthesized_call: 0,
             next_synthesized_aggregate: 0,
@@ -6511,6 +6516,7 @@ impl Parser {
             &mut self.current_return_pointee_constant,
             header.return_pointee_constant,
         );
+        let previous_address_taken_variables = std::mem::take(&mut self.address_taken_variables);
         let body_result = self.parse_block_statement();
         self.current_function_source_name = previous_function_source_name;
         self.next_field_source_ordinal = previous_field_source_ordinal;
@@ -6518,6 +6524,7 @@ impl Parser {
         self.current_return_pointer_struct_name = previous_return_pointer_struct_name;
         self.current_return_type = previous_return_type;
         self.current_return_pointee_constant = previous_return_pointee_constant;
+        self.address_taken_variables = previous_address_taken_variables;
         let mut body = body_result?;
         self.pop_scope();
         self.out_of_scope_names.clear();
@@ -12697,6 +12704,143 @@ impl Parser {
         false
     }
 
+    /// Whether evaluating `expression` outside one of its embedded calls reads
+    /// mutable runtime state. Call bodies can change any mutable scalar or
+    /// memory cell visible through aliases, so such a read cannot safely stay
+    /// behind a hoisted call when C leaves their relative order unspecified.
+    ///
+    /// This deliberately recognizes only the small, demonstrably stable
+    /// boundary needed by call lowering. It does not attempt per-call effect
+    /// analysis: constants, fixed object addresses, array decay, and automatic
+    /// scalar cells whose address is never formed are stable; memory loads,
+    /// static-storage scalars, and address-exposed automatic scalars are not.
+    fn expression_reads_potentially_changed_value(&self, expression: &C0Expression) -> bool {
+        match expression {
+            C0Expression::Void
+            | C0Expression::Call { .. }
+            | C0Expression::IndirectCall { .. }
+            | C0Expression::FunctionAddress(_)
+            | C0Expression::StatementExpression { .. }
+            | C0Expression::Int32Literal(_)
+            | C0Expression::UInt8Literal(_)
+            | C0Expression::UInt32Literal(_)
+            | C0Expression::Int64Literal(_)
+            | C0Expression::UInt64Literal(_)
+            | C0Expression::Float32Literal(_)
+            | C0Expression::Float64Literal(_)
+            | C0Expression::SizeOfStruct { .. }
+            | C0Expression::SizeOfUnion { .. }
+            | C0Expression::SizeOfType { .. } => false,
+            C0Expression::Variable(name) => {
+                if self.variable_is_constant(name) {
+                    return false;
+                }
+                if self.variable_struct_values.contains_key(name) {
+                    return true;
+                }
+                let is_array = matches!(
+                    self.variable_types.get(name),
+                    Some(
+                        C0Type::Int16Array(_)
+                            | C0Type::Int32Array(_)
+                            | C0Type::CharArray(_)
+                            | C0Type::UInt8Array(_)
+                            | C0Type::UInt16Array(_)
+                            | C0Type::UInt32Array(_)
+                            | C0Type::Int64Array(_)
+                            | C0Type::UInt64Array(_)
+                            | C0Type::Float32Array(_)
+                            | C0Type::Float64Array(_)
+                    )
+                );
+                !is_array
+                    && (self.address_taken_variables.contains(name)
+                        || self.variable_has_static_storage(name))
+            }
+            C0Expression::AddressOf(target) => {
+                self.lvalue_address_reads_potentially_changed_value(target)
+            }
+            C0Expression::Load(_)
+            | C0Expression::SequentialRead { .. }
+            | C0Expression::SequentialWrite { .. }
+            | C0Expression::Field { .. }
+            | C0Expression::UnionField { .. }
+            | C0Expression::AggregateAddress { .. }
+            | C0Expression::UnionAddress { .. }
+            | C0Expression::Index(_, _) => true,
+            C0Expression::Cast { expression, .. }
+            | C0Expression::FloatNegate(expression)
+            | C0Expression::FloatClassification { expression, .. }
+            | C0Expression::PointerOffsetBytes {
+                pointer: expression,
+                ..
+            }
+            | C0Expression::Not(expression)
+            | C0Expression::BitwiseNot(expression)
+            | C0Expression::CheckedArrayIndex {
+                index: expression, ..
+            } => self.expression_reads_potentially_changed_value(expression),
+            C0Expression::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.expression_reads_potentially_changed_value(condition)
+                    || self.expression_reads_potentially_changed_value(then_branch)
+                    || self.expression_reads_potentially_changed_value(else_branch)
+            }
+            C0Expression::LessThan(left, right)
+            | C0Expression::LessEqual(left, right)
+            | C0Expression::GreaterThan(left, right)
+            | C0Expression::GreaterEqual(left, right)
+            | C0Expression::Equal(left, right)
+            | C0Expression::NotEqual(left, right)
+            | C0Expression::And(left, right)
+            | C0Expression::Or(left, right)
+            | C0Expression::Add(left, right)
+            | C0Expression::Subtract(left, right)
+            | C0Expression::Multiply(left, right)
+            | C0Expression::Divide(left, right)
+            | C0Expression::Remainder(left, right)
+            | C0Expression::ShiftLeft(left, right)
+            | C0Expression::ShiftRight(left, right)
+            | C0Expression::BitwiseAnd(left, right)
+            | C0Expression::BitwiseOr(left, right)
+            | C0Expression::BitwiseXor(left, right) => {
+                self.expression_reads_potentially_changed_value(left)
+                    || self.expression_reads_potentially_changed_value(right)
+            }
+        }
+    }
+
+    /// Address formation does not read the designated object, but it can read
+    /// mutable pointer and index values used to find that object.
+    fn lvalue_address_reads_potentially_changed_value(&self, expression: &C0Expression) -> bool {
+        match expression {
+            C0Expression::Variable(_) => false,
+            C0Expression::Load(pointer) => self.expression_reads_potentially_changed_value(pointer),
+            C0Expression::Index(base, index) => {
+                self.expression_reads_potentially_changed_value(base)
+                    || self.expression_reads_potentially_changed_value(index)
+            }
+            C0Expression::Field { pointer, .. }
+            | C0Expression::UnionField { pointer, .. }
+            | C0Expression::AggregateAddress { pointer, .. }
+            | C0Expression::UnionAddress { pointer, .. } => {
+                self.expression_reads_potentially_changed_value(pointer)
+            }
+            expression => self.expression_reads_potentially_changed_value(expression),
+        }
+    }
+
+    fn variable_has_static_storage(&self, name: &str) -> bool {
+        self.static_locals.contains_key(name)
+            || self
+                .globals
+                .values()
+                .any(|global| global.kernel_name() == name)
+    }
+
     fn lower_statement_calls(
         &mut self,
         statement: C0Statement,
@@ -12755,6 +12899,7 @@ impl Parser {
                 arguments,
                 position,
             } => {
+                self.validate_function_designator_argument_order(&function, &arguments)?;
                 let (mut prefix, function) = self.lower_expression_calls(function)?;
                 let (argument_prefix, arguments) = self.lower_call_arguments(arguments)?;
                 if prefix_has_non_assertion(&prefix) && prefix_has_non_assertion(&argument_prefix) {
@@ -13008,19 +13153,66 @@ impl Parser {
     ) -> Result<(Vec<C0Statement>, Vec<C0Expression>), C0SyntaxError> {
         let mut prefix = Vec::new();
         let mut lowered_arguments = Vec::with_capacity(arguments.len());
+        let mut earlier_call_position = None;
+        let mut earlier_argument_reads = false;
         for argument in arguments {
             let argument_position = first_embedded_call_position(&argument);
+            let argument_reads = self.expression_reads_potentially_changed_value(&argument);
             let (argument_prefix, argument) = self.lower_expression_calls(argument)?;
             if prefix_has_non_assertion(&prefix) && prefix_has_non_assertion(&argument_prefix) {
                 return Err(self.error_at_position(
-                    argument_position,
+                    argument_position.clone(),
                     "multiple unsequenced calls in one expression are not supported",
+                ));
+            }
+            if argument_reads && let Some(position) = earlier_call_position.clone() {
+                return Err(self.error_at_position(
+                    Some(position),
+                    "an expression call and a potentially aliased read in separate function arguments are not supported",
+                ));
+            }
+            if earlier_argument_reads && argument_position.is_some() {
+                return Err(self.error_at_position(
+                    argument_position.clone(),
+                    "an expression call and a potentially aliased read in separate function arguments are not supported",
                 ));
             }
             prefix.extend(argument_prefix);
             lowered_arguments.push(argument);
+            earlier_argument_reads |= argument_reads;
+            if earlier_call_position.is_none() {
+                earlier_call_position = argument_position;
+            }
         }
         Ok((prefix, lowered_arguments))
+    }
+
+    fn validate_function_designator_argument_order(
+        &self,
+        function: &C0Expression,
+        arguments: &[C0Expression],
+    ) -> Result<(), C0SyntaxError> {
+        let argument_call_position = arguments.iter().find_map(first_embedded_call_position);
+        if self.expression_reads_potentially_changed_value(function)
+            && argument_call_position.is_some()
+        {
+            return Err(self.error_at_position(
+                argument_call_position,
+                "an expression call and a potentially aliased function-designator read are not supported",
+            ));
+        }
+        let function_call_position = first_embedded_call_position(function);
+        if function_call_position.is_some()
+            && arguments
+                .iter()
+                .any(|argument| self.expression_reads_potentially_changed_value(argument))
+        {
+            return Err(self.error_at_position(
+                function_call_position,
+                "an expression call and a potentially aliased argument read are not supported",
+            ));
+        }
+        Ok(())
     }
 
     fn lower_expression_pair(
@@ -13028,13 +13220,28 @@ impl Parser {
         left: C0Expression,
         right: C0Expression,
     ) -> Result<(Vec<C0Statement>, C0Expression, C0Expression), C0SyntaxError> {
+        let left_position = first_embedded_call_position(&left);
         let right_position = first_embedded_call_position(&right);
+        let left_reads = self.expression_reads_potentially_changed_value(&left);
+        let right_reads = self.expression_reads_potentially_changed_value(&right);
         let (left_prefix, left) = self.lower_expression_calls(left)?;
         let (right_prefix, right) = self.lower_expression_calls(right)?;
         if prefix_has_non_assertion(&left_prefix) && prefix_has_non_assertion(&right_prefix) {
             return Err(self.error_at_position(
-                right_position,
+                right_position.clone(),
                 "multiple unsequenced calls in one expression are not supported",
+            ));
+        }
+        if right_reads && left_position.is_some() {
+            return Err(self.error_at_position(
+                left_position,
+                "an expression call and a potentially aliased operand read are not supported",
+            ));
+        }
+        if left_reads && right_position.is_some() {
+            return Err(self.error_at_position(
+                right_position,
+                "an expression call and a potentially aliased operand read are not supported",
             ));
         }
         let mut prefix = left_prefix;
@@ -13493,6 +13700,7 @@ impl Parser {
         arguments: Vec<C0Expression>,
         position: Option<SourcePosition>,
     ) -> Result<(Vec<C0Statement>, C0Expression), C0SyntaxError> {
+        self.validate_function_designator_argument_order(&function, &arguments)?;
         let (mut prefix, function) = self.lower_expression_calls(function)?;
         let (argument_prefix, arguments) = self.lower_call_arguments(arguments)?;
         if prefix_has_non_assertion(&prefix) && prefix_has_non_assertion(&argument_prefix) {
@@ -14184,6 +14392,9 @@ impl Parser {
                 ));
             }
             let target = self.parse_unary()?;
+            if let C0Expression::Variable(name) = &target {
+                self.address_taken_variables.insert(name.clone());
+            }
             return Ok(C0Expression::AddressOf(Box::new(target)));
         }
 

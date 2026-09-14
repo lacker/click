@@ -59,7 +59,6 @@ check the architecture before launch while rbtree remains the key demo.
 Soundness and kernel shape:
 
 - [Preserve object provenance across pointer-parameter boundaries](external-pointer-object-provenance.md)
-- [Preserve ordinary operand reads around expression calls](c-expression-call-evaluation-order.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
 Program import and execution:
