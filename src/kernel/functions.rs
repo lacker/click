@@ -461,7 +461,62 @@ enum CandidateMemoryRangeRelation {
     SeparationUnproved,
 }
 
+/// Whether the kernel's arithmetic proves two ranges separate under the
+/// current path assumptions.  This is the separation counterpart of
+/// `memory_ranges_proven_overlapping` and follows it exactly: equal element
+/// widths, one base frame reached by a syntactic base delta, and the same
+/// decision procedure asked for the ordering `end <= start`.  The frame
+/// change is directional, so both orders are tried.  An undecided ordering
+/// stays undecided, so an unknown alias is still reported as unproved
+/// separation rather than as disjointness.
+fn candidate_memory_ranges_proven_separate(
+    left: &CMemoryRange,
+    right: &CMemoryRange,
+    assumptions: &PureFactContext,
+) -> bool {
+    if left.element_width() != right.element_width() {
+        return false;
+    }
+    let separate_in_frame = |anchor: &CMemoryRange, other: &CMemoryRange| {
+        crate::instrumentation::record_deterministic_work(1);
+        let Some(base_delta) = other
+            .base()
+            .element_index_from_base_with_width(anchor.base(), anchor.element_width())
+        else {
+            return false;
+        };
+        let other_start = Bitvector32Term::add(base_delta.clone(), other.start().clone());
+        let other_end = Bitvector32Term::add(base_delta, other.end().clone());
+        assumptions.decide(&ConditionTerm::signed_less_equal(
+            anchor.end().clone(),
+            other_start,
+        )) == Some(true)
+            || assumptions.decide(&ConditionTerm::signed_less_equal(
+                other_end,
+                anchor.start().clone(),
+            )) == Some(true)
+    };
+    separate_in_frame(left, right) || separate_in_frame(right, left)
+}
+
 fn candidate_memory_ranges_relation(
+    left: &CMemoryRange,
+    right: &CMemoryRange,
+    assumptions: &PureFactContext,
+) -> CandidateMemoryRangeRelation {
+    let relation = candidate_memory_ranges_relation_by_bounds(left, right, assumptions);
+    // Only an undecided pair reaches the arithmetic oracle, so a proven
+    // overlap can never be reinterpreted as separation and the concrete
+    // comparison keeps deciding the common case without a query.
+    if relation == CandidateMemoryRangeRelation::SeparationUnproved
+        && candidate_memory_ranges_proven_separate(left, right, assumptions)
+    {
+        return CandidateMemoryRangeRelation::Disjoint;
+    }
+    relation
+}
+
+fn candidate_memory_ranges_relation_by_bounds(
     left: &CMemoryRange,
     right: &CMemoryRange,
     assumptions: &PureFactContext,
@@ -9900,6 +9955,77 @@ fn prepare_contract_resource_transfer(
     )
 }
 
+/// Unfolds exactly the folded composite owners a call's own requirements
+/// need, and nothing else.
+///
+/// The legacy transfer consumes each requirement with
+/// [`consume_resource_fact_definitionally`], which unfolds a caller composite
+/// on demand. The candidate planner instead selects concrete backing before
+/// it lends anything, so it needs the same frontier present as facts. Only a
+/// composite whose expansion actually supplies an unsupported requirement is
+/// opened, so an unrelated folded resource keeps its packaging and stays
+/// re-foldable in the residual, and only non-recursive definitions are
+/// opened, which keeps a recursive frontier an explicit refusal.
+fn candidate_planning_resources(
+    caller_resources: &ResourceContext,
+    requirements: &[CCheckedResourceFact],
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &PureFactContext,
+) -> ResourceContext {
+    let supported = |resources: &ResourceContext, requirement: &CCheckedResourceFact| {
+        resources
+            .directly_supporting_owned_entry(&requirement.fact, assumptions)
+            .is_some()
+            || (requirement.fact.is_view()
+                && !resources
+                    .view_occurrences_for_fact(&requirement.fact, assumptions)
+                    .is_empty())
+    };
+    let mut resources = caller_resources.clone();
+    for requirement in requirements {
+        // A composite requirement is lent folded, through the checked
+        // composite backing, so opening it here would destroy the head that
+        // is the restoration recipe.
+        if matches!(requirement.fact.resource(), CResource::Composite { .. })
+            || supported(&resources, requirement)
+        {
+            continue;
+        }
+        // Exactly one level, and only the composite that actually answers
+        // this requirement: an expansion that does not supply it is not a
+        // reason to destroy its packaging.
+        let opened = resources
+            .facts()
+            .iter()
+            .filter(|fact| {
+                fact.is_own()
+                    && matches!(fact.resource(), CResource::Composite { name, .. }
+                    if definitions.iter().any(|definition| {
+                        definition.name() == name && !definition.is_recursive()
+                    }))
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .find_map(|composite| {
+                crate::instrumentation::record_deterministic_work(1);
+                expand_composite_resource_fact(
+                    &resources,
+                    &composite,
+                    definitions,
+                    memory,
+                    assumptions,
+                )
+                .filter(|expanded| supported(expanded, requirement))
+            });
+        if let Some(opened) = opened {
+            resources = opened;
+        }
+    }
+    resources
+}
+
 fn prepare_contract_resource_transfer_with_candidate(
     caller_state: &CState,
     callee_state: &CState,
@@ -10005,6 +10131,17 @@ fn prepare_contract_resource_transfer_with_candidate(
             || stable_requirements
                 .iter()
                 .any(|requirement| requirement.fact.is_view()));
+    let planning_resources = if candidate_stable_view_semantics {
+        candidate_planning_resources(
+            caller_state.resources(),
+            &stable_requirements,
+            interface.composite_resource_definitions(),
+            caller_state.memory(),
+            assumptions,
+        )
+    } else {
+        caller_state.resources().clone()
+    };
     let stable_view_plan = if candidate_stable_view_semantics {
         let (ledger, caller) = match (
             caller_state.loan_ledger().cloned(),
@@ -10035,8 +10172,7 @@ fn prepare_contract_resource_transfer_with_candidate(
                 requirement.fact.is_view()
                     && matches!(requirement.fact.resource(), CResource::Composite { .. })
             }) {
-                let Some((support, owned)) = caller_state
-                    .resources()
+                let Some((support, owned)) = planning_resources
                     .directly_supporting_owned_entry(&requirement.fact, assumptions)
                 else {
                     continue;
@@ -10097,7 +10233,7 @@ fn prepare_contract_resource_transfer_with_candidate(
             BTreeMap::new()
         };
         match plan_stable_view_transfer_with_bindings_and_composites(
-            caller_state.resources(),
+            &planning_resources,
             &stable_requirements,
             assumptions,
             &ledger,
@@ -18193,6 +18329,76 @@ mod candidate_stable_view_call_tests {
                 ..
             }] if message.contains("without a checked input child")
         ));
+    }
+
+    fn symbolic_bounded_range(
+        start: Bitvector32Term,
+        end: Bitvector32Term,
+        element_width: u32,
+    ) -> CMemoryRange {
+        CMemoryRange::new_with_element_width(
+            Pointer {
+                block: PointerBlock::Concrete("candidate:separation".to_string()),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            start,
+            end,
+            element_width,
+        )
+    }
+
+    /// `p[0..n - 1]` and `p[n - 1..n]` are separate for every `n`, and the
+    /// kernel's own arithmetic decides it. Nothing about the endpoints is
+    /// concrete, so the bounds comparison alone reports unproved separation.
+    #[test]
+    fn candidate_proves_adjacent_symbolic_ranges_separate() {
+        let count = Bitvector32Term::Variable(Variable(910));
+        let boundary = Bitvector32Term::add(count.clone(), Bitvector32Term::Constant(u32::MAX));
+        let viewed = symbolic_bounded_range(Bitvector32Term::Constant(0), boundary.clone(), 4);
+        let mutable = symbolic_bounded_range(boundary, count, 4);
+        assert_eq!(
+            candidate_memory_ranges_relation_by_bounds(&mutable, &viewed, &PureFactContext::new()),
+            CandidateMemoryRangeRelation::SeparationUnproved
+        );
+        assert_eq!(
+            candidate_memory_ranges_relation(&mutable, &viewed, &PureFactContext::new()),
+            CandidateMemoryRangeRelation::Disjoint
+        );
+    }
+
+    /// The arithmetic oracle decides separation, it does not assume it: two
+    /// unrelated symbolic ranges in one block stay unproved, and a proven
+    /// overlap is never reinterpreted.
+    #[test]
+    fn candidate_leaves_unrelated_symbolic_ranges_unproved() {
+        let left = symbolic_bounded_range(
+            Bitvector32Term::Variable(Variable(911)),
+            Bitvector32Term::Variable(Variable(912)),
+            4,
+        );
+        let right = symbolic_bounded_range(
+            Bitvector32Term::Variable(Variable(913)),
+            Bitvector32Term::Variable(Variable(914)),
+            4,
+        );
+        assert_eq!(
+            candidate_memory_ranges_relation(&left, &right, &PureFactContext::new()),
+            CandidateMemoryRangeRelation::SeparationUnproved
+        );
+        let overlapping = symbolic_bounded_range(
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(4),
+            4,
+        );
+        let inner = symbolic_bounded_range(
+            Bitvector32Term::Constant(1),
+            Bitvector32Term::Constant(2),
+            4,
+        );
+        assert_eq!(
+            candidate_memory_ranges_relation(&overlapping, &inner, &PureFactContext::new()),
+            CandidateMemoryRangeRelation::Overlap
+        );
     }
 
     fn assert_mutable_view_effect_result(
