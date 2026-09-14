@@ -2269,23 +2269,6 @@ fn execute_verified_function_applications(
         transfer.candidate_output_views = returned_views;
         transfer.produced_borrowing_pieces = produced_borrowing_pieces;
         drop(return_resource_timing);
-        let return_resources = match activate_population_body_resources(
-            return_resources,
-            &population_transition,
-            &effective_assumptions,
-        ) {
-            Ok(resources) => resources,
-            Err(error) => {
-                paths.push(CFunctionPath {
-                    outcome: CFunctionOutcome::RuntimeError(error),
-                    facts,
-                    obligations,
-
-                    loan_evidence: empty_checked_loan_evidence_sequence(),
-                });
-                continue;
-            }
-        };
         transfer.post_outputs = Some(return_resources);
         let return_resources = transfer
             .post_outputs
@@ -11669,9 +11652,10 @@ fn evaluate_contract_return_resources(
         // Only the one-level frontier names the borrows this composite
         // packages; a nested composite's own body is that composite's
         // business (the 4b rule). A counted population is not a struct
-        // holding a borrow: its body is population-wide and enters the
-        // caller where the population is activated, so its viewed pieces
-        // keep the observation reading there rather than an escaping loan.
+        // holding a borrow: its body is population-wide, folded into the
+        // family by whoever produces a unit (a verified producer cannot mint
+        // one without the body), so its viewed pieces keep the observation
+        // reading rather than an escaping loan.
         let is_population = match support.resource() {
             CResource::Composite { name, .. } => {
                 support.owned_quantity_term() != Some(&Bitvector32Term::Constant(1))
@@ -11768,13 +11752,16 @@ fn produced_composite_frontier_conflict(
         if !produced.is_own() {
             continue;
         }
-        // A counted population's body is population-wide, not per unit: it is
-        // installed once when the population becomes nonempty and retired
-        // when it empties, by the counted-population transition. Its units
-        // carry nothing of their own, and the ensured context adds the units
-        // a contract returns as a borrow to the ones it produces, so a
-        // quantity above one is ordinary here. The body is checked where it
-        // is actually installed, in `activate_population_body_resources`.
+        // A counted population's body is population-wide, not per unit. Its
+        // units carry nothing of their own, and the ensured context adds the
+        // units a contract returns as a borrow to the ones it produces, so a
+        // quantity above one is ordinary here. The body cannot collide with
+        // what the caller holds: a unit is produced only by a fold that
+        // consumes the body out of the producer's context (a verified
+        // producer cannot mint one without it, see
+        // `mdtests/population_unit_needs_its_body.md`), and a caller reaches
+        // the body afterwards only as an observation. An extern contract that
+        // claims otherwise is its own trust assumption.
         if definitions
             .iter()
             .any(|definition| definition.name() == name && definition.is_counted_population())
@@ -12008,7 +11995,6 @@ fn population_body_requires_positive_witness(definition: &CCompositeResourceDefi
 
 #[derive(Default)]
 struct CCountedPopulationTransition {
-    activated_body_resources: Vec<CResourceFact>,
     finalized_body_resources: Vec<CResourceFact>,
     population_facts: Vec<Proposition>,
     postcondition_obligations: Vec<ProofObligation>,
@@ -12034,43 +12020,6 @@ fn apply_counted_population_transition_resources(
                         "an exact finalized population-body representation should be removable",
                     );
             }
-        }
-    }
-    Ok(resources)
-}
-
-/// Installs the population-wide body a counted-population transition
-/// activated, checking it against what the destination already holds.
-///
-/// Nothing fills `activated_body_resources` today. Its only writer was the
-/// ordinary-population activation behind the `track_ordinary_populations`
-/// parameter, which every caller had passed as `false` since that fix and
-/// which the stable-views cutover deleted; a counted population's body reaches a context
-/// through the call-entry evaluation and through surface `fold`/`observe`
-/// instead. The check is kept as written so a future activation route lands
-/// on a barrier rather than on an unchecked composition.
-fn activate_population_body_resources(
-    mut resources: ResourceContext,
-    transition: &CCountedPopulationTransition,
-    assumptions: &PureFactContext,
-) -> Result<ResourceContext, CRuntimeError> {
-    for resource in &transition.activated_body_resources {
-        if !resources.facts().contains(resource) {
-            // The folded units and this body are two parts of one declared
-            // population representation. The body is installed once when
-            // that population becomes nonempty; it is not another unit.
-            //
-            // This is the one place a counted population's body enters a
-            // destination context, and it is where that body is checked
-            // against what the destination already holds. A population whose
-            // body covers bytes the caller still owns would otherwise leave
-            // two owners of one range, exactly as a produced composite head
-            // would.
-            let installed = resources.clone().unchecked_with_fact(resource.clone());
-            if let Some(error) = installed.validity_error(assumptions) {
-                return Err(resource_context_runtime_error(error));
-            }
-            resources = installed;
         }
     }
     Ok(resources)

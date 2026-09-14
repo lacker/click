@@ -4385,6 +4385,16 @@ fn consume_exact_resource_fact(
     if !exact_resource_fact_entails(available, required, assumptions) {
         return None;
     }
+    // `Preserve` for a viewed token or composite is the owner-observation
+    // rule in consumption form, exactly as for memory
+    // (`consume_memory_resource_fact`; docs/internals/stable-views.md): a
+    // viewed clause is discharged by authority the consuming context already
+    // holds, whether a view or the ownership the view is read off, and the
+    // holding is left untouched. It serves the fold, unfold, and observe
+    // discharge of a body's viewed clause. It is not how a call's `views`
+    // requirement is met: the planner reserves and lends before any
+    // requirement reaches the definitional route, which afterwards receives
+    // only owned, population-quantity, and definitionally-empty facts.
     Some(if required.is_view() {
         ResourceFactConsumption::Preserve
     } else {
