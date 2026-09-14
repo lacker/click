@@ -1936,6 +1936,45 @@ impl ResourceContext {
             })
     }
 
+    /// The exact owned support recorded for a projected representation of
+    /// `fact`, when that support occurrence is still held here.
+    ///
+    /// A supported projection is not an independent capability. It is an
+    /// observation published from one exact owned occurrence, indexed under
+    /// it, and dropped when that occurrence is consumed or its memory support
+    /// is invalidated. Provenance decisions therefore use this record instead
+    /// of asking whether some owner in the frame happens to satisfy the fact:
+    /// an equal owner is not the owner a projection came from, and a view
+    /// justified by equality alone would survive that owner's consumption.
+    pub(crate) fn exact_projection_support(
+        &self,
+        fact: &CResourceFact,
+    ) -> Option<(ResourceOccurrenceId, &CResourceFact)> {
+        self.storage
+            .index
+            .exact
+            .get(fact)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .find_map(|entry| {
+                let support = self.storage.supported_by.get(entry)?;
+                let support_occurrence = self
+                    .storage
+                    .support_occurrence_by_projection
+                    .get(entry)
+                    .copied()?;
+                (support.is_own()
+                    && self
+                        .storage
+                        .entry_by_occurrence
+                        .get(&support_occurrence)
+                        .is_some_and(|support_entry| {
+                            self.storage.facts.get(support_entry) == Some(support)
+                        }))
+                .then_some((support_occurrence, support))
+            })
+    }
+
     /// Validate every projection indexed under one exact support occurrence.
     /// The reverse index bounds this check by the affected support rather than
     /// scanning unrelated resources in the frame.
@@ -3809,18 +3848,35 @@ impl ResourceContext {
         for (position, (_, fact)) in retained.iter().enumerate() {
             index.insert(position, fact);
         }
+        // A merged fact is a new authority with no occurrence, so merging a
+        // loan-bound view would silently discard the dependency that
+        // authorizes reading it. Under stable-loan semantics the split
+        // representation is the checked one; keep it. The map is empty under
+        // legacy semantics, so this costs nothing and changes nothing there.
+        let loan_bound = |occurrence: &Option<ResourceOccurrenceId>| {
+            !self.loan_dependencies.map.is_empty()
+                && occurrence
+                    .is_some_and(|occurrence| self.loan_dependencies.map.get(&occurrence).is_some())
+        };
         let mut i = 0;
         while i < slots.len() {
-            let Some((_, fact)) = slots[i].clone() else {
+            let Some((occurrence, fact)) = slots[i].clone() else {
                 i += 1;
                 continue;
             };
+            if loan_bound(&occurrence) {
+                i += 1;
+                continue;
+            }
             let mut changed = false;
             for j in index.candidates_after(i, &fact) {
                 crate::instrumentation::record_deterministic_work(1);
-                let Some((_, right)) = slots[j].as_ref() else {
+                let Some((right_occurrence, right)) = slots[j].as_ref() else {
                     continue;
                 };
+                if loan_bound(right_occurrence) {
+                    continue;
+                }
                 if let Some(merged) = normalize_resource_fact_pair(&fact, right, assumptions) {
                     changed_facts.insert(fact.clone());
                     changed_facts.insert(right.clone());

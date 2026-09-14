@@ -344,11 +344,13 @@ fn recover_candidate_stable_view_resources(
     let mut recovered_resources = recovery.resources;
     let mut residual = return_resources;
     // A return view can only survive the call scope when it is one of the
-    // checked child views that entered the call, or when the caller already
-    // held a checked outer view that entails it.  In particular, an owned
-    // input must not let a callee mint an unrelated view whose binding would
-    // otherwise be composed into the recovered caller frame after the child
-    // scope closes.
+    // checked child views that entered the call, when the caller already held
+    // a checked outer view that entails it, or when the return published it as
+    // a supported projection of an exact owned occurrence the caller still
+    // holds.  In particular, an owned input must not let a callee mint an
+    // unrelated view whose binding would otherwise be composed into the
+    // recovered caller frame after the child scope closes, and a view is never
+    // accepted merely because some equal owner happens to satisfy it.
     let mut checked_return_views = std::collections::BTreeSet::new();
     for fact in residual
         .facts()
@@ -380,11 +382,21 @@ fn recover_candidate_stable_view_resources(
                                 .satisfies_fact(fact, assumptions)
                     })
             });
-        if !returned_input && !preserved_outer {
-            return Err(CRuntimeError::FunctionContract(
-                "stable-view call returned a view without a checked input child or preserved outer binding"
-                    .to_string(),
-            ));
+        // A duplicable core published from an exact returned owned occurrence
+        // is an observation of that ownership, not a second live capability:
+        // the reverse index drops it when the occurrence is consumed or its
+        // memory support is invalidated.  Requiring the recorded occurrence
+        // keeps this distinct from fact equality against an ambient owner.
+        let projected_from_owner =
+            residual
+                .exact_projection_support(fact)
+                .is_some_and(|(support_occurrence, support)| {
+                    residual.support_occurrence_is_live(support_occurrence, support)
+                });
+        if !returned_input && !preserved_outer && !projected_from_owner {
+            return Err(CRuntimeError::FunctionContract(format!(
+                "stable-view call returned a view without a checked input child or preserved outer binding: {fact:?}"
+            )));
         }
     }
     for stable_view in plan.stable_views() {
@@ -18074,6 +18086,90 @@ mod candidate_stable_view_call_tests {
     #[test]
     fn candidate_rejects_wider_output_without_outer_binding() {
         assert_unbacked_output_rejected(0, 2, "candidate_wider_output");
+    }
+
+    /// Build a call whose return context carries `returned` as an extra view
+    /// beside the caller's retained owner, either as a checked projection of
+    /// that exact owned occurrence or as a bare equal fact.
+    fn recover_with_extra_returned_view(
+        projected_from_owner: bool,
+    ) -> Result<ResourceContext, CRuntimeError> {
+        let pointer = pointer();
+        let function = reader("candidate_returned_projection", false);
+        let caller = caller_with_owned_end(&pointer, 3, 12);
+        let callee_template =
+            bind_c_function_arguments(&caller, &function, &[CValue::pointer(pointer.clone())])
+                .expect("reader argument should bind");
+        let transfer = prepare_function_resource_transfer(
+            &caller,
+            &callee_template,
+            &function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("candidate transfer should run")
+        .expect("candidate transfer should be accepted");
+        let owner = CResourceFact::own_memory(CMemoryRange::new(
+            pointer.clone(),
+            Bitvector32Term::Constant(1),
+            Bitvector32Term::Constant(3),
+        ));
+        let returned = CResourceFact::view_memory(CMemoryRange::new(
+            pointer,
+            Bitvector32Term::Constant(1),
+            Bitvector32Term::Constant(3),
+        ));
+        let base = ResourceContext::new().unchecked_with_fact(owner.clone());
+        let (support_occurrence, _) = base
+            .unique_owned_occurrence_for_fact(&owner)
+            .expect("the retained owner has one occurrence");
+        let return_resources = if projected_from_owner {
+            base.unchecked_with_supported_facts_from_occurrence_with_memory(
+                support_occurrence,
+                &owner,
+                vec![returned],
+                caller.memory(),
+            )
+        } else {
+            base.unchecked_with_fact(returned)
+        };
+        recover_candidate_stable_view_resources(
+            &caller,
+            &callee_state_with_resource_transfer(callee_template, &transfer),
+            &transfer,
+            return_resources,
+            &PureFactContext::new(),
+            &[],
+        )
+        .map(|(resources, ..)| resources)
+    }
+
+    #[test]
+    fn candidate_accepts_a_returned_view_projected_from_a_returned_owner() {
+        let resources = recover_with_extra_returned_view(true)
+            .expect("a checked projection of the returned owner has provenance");
+        let projected = CResourceFact::view_memory(CMemoryRange::new(
+            pointer(),
+            Bitvector32Term::Constant(1),
+            Bitvector32Term::Constant(3),
+        ));
+        assert!(resources.satisfies_fact(&projected, &PureFactContext::new()));
+    }
+
+    #[test]
+    fn candidate_rejects_a_returned_view_that_only_an_equal_owner_satisfies() {
+        let error = recover_with_extra_returned_view(false)
+            .expect_err("fact equality against an owner is not provenance");
+        assert!(
+            matches!(
+                &error,
+                CRuntimeError::FunctionContract(message)
+                    if message.contains("without a checked input child")
+            ),
+            "unexpected refusal: {error:?}"
+        );
     }
 
     #[test]
