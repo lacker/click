@@ -350,263 +350,82 @@ Latent items surfaced, to settle before step 6:
   bytes) and `augment_rotate_callback_child_read` (separation only provable
   through a folded recursive owner) also wait there.
 
-### 4. Recursive and nested composite views (design revised 2026-09-13)
+### 4. Composite views at any depth (plan, 2026-09-13)
 
-**Problem.** `views R(x)` where `R`'s body contains another composite
-(`contains list(node->next)`, `contains shape(node->left)`) is refused at
-contract entry ("this resource shape is outside stable-view support") and at
-calls ("nested or undecidable composite loan backing is unsupported").
-Today a composite loan escrows the exact head fact and reduces the body one
-level to primitive memory and token pieces, which populate the write index
-and the loan's `permitted` set. A nested child is not primitive, and for a
-recursive definition the primitive footprint is not enumerable at all.
+Two adversarial reviews on 2026-09-13 broke two earlier designs for this
+step (their findings are in this file's git history at commits "Design
+steps 4 and 5" and "Record the second design review"). The plan below is
+what survived: the first design's mechanism with its invariant stated
+honestly, the reviews folded in as hardening, and no new reasoning about
+what a composite contains.
 
-**First design and its review.** The first design argued that the escrow
-of the head protects every byte under it at any depth, because the only
-route to that memory is unfolding the head. An adversarial review on
-2026-09-13 broke that in two places, both confirmed against the code:
+**The invariant.** A valid resource context is a partition: every owned
+fact is disjoint from every other fact in it, composites included, at
+every depth. That is what the star means, and the kernel maintains it by
+construction: unfolding consumes the head, folding consumes the pieces,
+calls transfer authority. It is the same invariant step 1 relies on for
+memory views. A write needs an owner, and an owner in the same context is
+disjoint from every view there, so nothing reasons inside a composite.
 
-- A contract input view has no escrow at all (`LoanOrigin::BorrowedContractInput`
-  carries none); the callee's protection against its own writes is the
-  write barrier, which the design stopped populating below depth one. So
-  `views list(n); owns q[0..1]` could store through `q` with a caller
-  passing `q == &n->next->val`, and the view's stability would frame the
-  read.
-- Context validity never compares a folded composite against a memory
-  owner (`pair_validity_error` compares memory owners only), an external
-  contract's `produces` clause is not checked against the frame, and
-  memory-versus-memory validity ignores element widths. A context can
-  therefore hold `owns list(n)` beside an owner of memory inside the list;
-  today the depth-one index catches that at lend time, and the ledger's
-  bytewise check covers the width gap, both only at depth one.
+**Consequences for composite views, at any depth.**
 
-The review also found that a `Project` transition computed from current
-memory but bound only to the ledger predecessor could be applied after the
-pointer it depends on changed, and that a permitted child would never
-expire. The principle that survives: an exact footprint gets an exact
-check; an opaque footprint gets "prove separation or refuse", never
-"separate unless proven overlapping".
+- A lend escrows the exact head and indexes its direct primitive children,
+  as today. Nested composite children become read-only descriptions under
+  the same loan with no byte backing; the escrow protects them.
+- A contract input view installs the same backing without an escrow; the
+  contract's partition is the precondition.
+- Reading deeper is projection: `unfold`, `observe`, and `open` of a viewed
+  composite issue a `Project` transition (D5) that adds the child
+  description to the loan's `permitted` set, with the kernel expansion as
+  evidence bound to the ledger predecessor. Read-only, so it needs no
+  barrier. Instance children stay refused (D12).
+- No new write rule, no separation premises, no footprints.
 
-**Corrected design.**
+**Hardening, where the kernel does not yet enforce the invariant.** These
+are the reviews' confirmed findings; each is a bug for memory views too.
 
-1. A composite view whose body contains a nested composite is an opaque
-   capability. Primitive children of the head still enter the write index;
-   nested children enter the loan's `permitted` set as descriptions with no
-   memory backing. Instance children stay refused (D12); viewed children in
-   a body are step 5b; an undecided guard leaves the head opaque, as the
-   expansion already does.
-2. **Fail-closed store rule.** While any opaque composite loan is active,
-   every store, free, realloc, aggregate copy, loop havoc, and call effect
-   is refused unless its range is proven separate from every such loan's
-   footprint. This is the opposite polarity from memory views, and it is
-   what the unenumerable footprint requires. A refusal names the loan and
-   the range, as D13 asks.
-3. **Separation premises.** "Proven separate from a composite" comes only
-   from explicit evidence: (a) at root installation and at call planning,
-   each owned clause is recorded as separate from each viewed composite
-   clause of the same contract, which is exactly what the contract's
-   partition supplies; (b) a fresh heap block is separate from a footprint
-   rooted in another block kind; (c) a subrange of a separate range is
-   separate; (d) unfolding an owned composite that is separate from the
-   view passes that separation to each of its pieces, and folding them back
-   restores it; (e) a piece obtained by projecting the viewed composite
-   itself is never a write target. Failure to prove overlap is never
-   evidence. These premises are ordinary assumptions carried by the path,
-   indexed by the composite occurrence they name; a store consults only
-   the premises for the loans active on its path.
-4. **Projection.** The `Project` transition (D5) extends a loan's
-   `permitted` set by one checked child projection of an already-permitted
-   composite description, issued by the surface `unfold`, `observe`, and
-   `open` of a viewed composite with the kernel expansion as evidence. The
-   evidence binds the ledger predecessor and the memory snapshot identity
-   and support generation the expansion was computed at, and is refused
-   when either is stale. A projection grants read authority only; the
-   subtree it reads is stable by rule 2, so `permitted` may grow without
-   the barrier growing. Recovery is unchanged: the exact head returns.
-5. **Root.** `c_state_with_borrowed_contract_inputs` uses the same backing
-   rule and records the premises of rule 3(a).
-6. The separation rule "pieces of one unfolded body are separate" from the
-   first design is withdrawn; it concluded separation from a fold that only
-   failed to prove overlap. `augment_rotate_callback_child_read` must be
-   re-examined under rule 3 once implemented.
+- Refuse at entry and at call planning a contract whose owned clause
+  provably overlaps a viewed composite clause's direct frontier. A deeper
+  self-contradiction is unsatisfiable by any valid caller; a proof under it
+  is vacuous and harmless.
+- Keep refusing a lend of a population whose body is exposed beside its
+  head; that is the one kernel mechanism that breaks the partition on
+  purpose.
+- External contracts stay explicit trust assumptions, as today.
+- Route the write paths that bypass the ledger through it: a `free`
+  reached through a verified call's allocation delta, call memory havoc,
+  loop-exit havoc, and the aggregate copy in call assignment; make the
+  loop-head havoc preserve loaned cells instead of erasing them with no
+  ledger; count an active loan as active whether or not it has byte
+  backing.
 
-**Second review (2026-09-13) and its verdict.** A second adversarial
-review attacked the corrected rules and found the design not implementable
-as written. Its load-bearing findings, all traced against the code:
+**Deferred, with a clear refusal, to be added as syntax later if wanted:**
+a composite whose body packages a borrowed view (input-cursor), and a
+counted population with a symbolic quantity (bounded-pool).
 
-- Rule 3(a) is an axiom, not a derivation. Composite facts take no part in
-  context validity, in the memory indexes, in `CResourceComposition`
-  separation, or in the separation oracle, so nothing maintains the
-  partition the rule records. `views list(a); owns list(a->next)` (or
-  `owns a->next->value`) is accepted at entry today, 3(a) would record the
-  two as separate, 3(d) would pass that to the unfolded pieces, and the
-  store would be admitted while the view frames the read. The first
-  review's counterexample, re-admitted by its own repair.
-- Rule 3(d) launders separation: `expand_composite_resource_fact_with_children`
-  lets an unrelated ambient owner stand in for a body child it covers, so
-  "each of its pieces" can include an owner that was never checked.
-- Rule 2's barriers key on `active_memory_loans`, which an opaque loan
-  with no memory backing never increments; every fail-closed check would
-  report no active loans.
-- Rule 2 has no choke point. `CState::set_memory` consults no ledger and
-  has about a hundred call sites; the ledger is consulted from eight
-  hand-placed ones. Unguarded today: `free_heap_block` reached through a
-  verified call's allocation delta (a `free` under a lent composite that
-  no path can refuse), `with_call_memory_havoc` (no ledger parameter),
-  `abstract_loop_exit_memory`, and the aggregate copy in
-  `execute_c_call_assign_paths`. The loop-head havoc validates the owned
-  footprint and erases the loaned cells with `ledger: None`.
-- Rule 4 binds identities that do not exist (there is no support
-  generation and no transition stores a memory snapshot), and the guard it
-  depends on is a resource-context function, not a memory function.
-- 5a's gate does not see what 5a wants to exclude: `dynamic_body_fact_dependency`
-  returns no dependency for separation, containment, composition,
-  counts, liveness, and the pointer of a `CMemoryLoads` proposition. A
-  body `fact separate(p, q)` restored by `Recover` would carry a
-  separation premise out of the context it was proved in, and under rule 3
-  a separation premise is a write license.
-- 5b(v) guards the return context only; a packaged head can leave by
-  `consumes` with the share inside it. 5b(iv)'s rebase keys on the scope,
-  not on the backing entry the packaged description came from.
-- 3(b) as written refuses heap-versus-heap, which the list and arena
-  examples need; restate it as "a block allocated after the loan was
-  installed is separate from the loan's footprint", sound because rule 2
-  forbids the frees and pointer rewrites that could move the footprint.
+**Order.** 4a: the hardening list above and step 5's facts (small, no
+dependency on the rest). 4b: nested backing in `CompositeLoanBacking` and
+`BorrowedContractInputBacking`, the `Project` transition, and the
+projection calls in the surface. Regressions for 4b: R14 and R16 with a
+two-level list and a recursive shape (read through a child after two
+projections; `open` exposes no ownership; recovery restores the head);
+negatives: a projection of a child the definition does not contain, a
+projection after scope end, one whose evidence names another loan or
+predecessor, an instance child, and the entry refusal for an owned clause
+inside the viewed frontier.
 
-Things it tried and could not break: retargeting a premise by rewriting
-the pointer its base was loaded from (fails closed at fact transport),
-smuggling a premise through a branch join, projecting a child from an
-equal ambient occurrence on the viewed path, minting a child binding from
-the head alone, turning a projection into a write target, and reading
-through a projection after scope end.
+### 5. Facts in lent bodies (plan, 2026-09-13)
 
-**Consequence: reordered plan.** Step 4 has two prerequisites that are
-larger than step 4 itself, and both fix holes that exist today at depth
-one, not only under the new design:
-
-- **4.0a One checked memory-delta transition.** Every store, havoc, free,
-  realloc, and aggregate copy, including those applied through verified
-  call rules, loop heads and exits, and branch abstraction, passes through
-  one ledger-consulting validator, and the ledger keeps an opaque-loan
-  count independent of `memory_backing`. The eight hand-placed checks
-  become one. This is step-6-grade soundness work and should land first.
-- **4.0b Composite footprints in the resource algebra.** A folded
-  composite participates in context validity (one-level footprint against
-  memory owners, refusing the `owns list(a); owns a->next->value` context)
-  and in composition-derived separation, so that a partition between an
-  owned clause and a viewed composite clause can be derived at call
-  planning and only assumed at the borrowed-input root. This subsumes the
-  "latent resource-algebra items" below.
-
-With those in place the corrected rules stand, amended by the review: 3(a)
-derived at planning and assumed only at the root; 3(b) as install-time
-freshness; 3(d) restricted to occurrences the expansion produced, keyed by
-occurrence; rule 4 binding the resource-context identity the guard and
-witnesses were resolved in, once such an identity exists; 5b accounting
-dependencies at transfer time and rebasing per backing entry.
-
-**Regressions.** R14 and R16 with a two-level list and a recursive shape:
-read through a nested viewed child after two projections; `open` of a
-viewed body exposes no ownership; recovery after return restores the head;
-a store through an owned parameter separate by 3(a) succeeds; a store
-through an owner produced by an external contract with no separation
-premise is refused; a store through a piece of an unfolded owned composite
-separate by 3(d) succeeds; a `Project` applied again after the pointer cell it
-depends on changed is refused (the write that changed it is itself refused
-under rule 2, so this needs a hostile-evidence test); a projection after
-the scope ended, one naming another loan, an instance child, and a lend
-whose caller context exposes a body piece beside the head are refused.
-Unblocks the `augment_rotate_callback*` fixtures, `c_decreases_resource_*`,
-`recursive_c_resources`, `recursive_conditional_resource`, and the
-linked-list, binary-tree, arena, ring-buffer, marked-linked-list,
-recursive-zero-list, and allocated-linked-list examples, subject to their
-other steps.
-
-**Latent resource-algebra items the review surfaced, independent of views:**
-composite-versus-memory overlap is not a validity error; external
-`produces` clauses compose unchecked against the frame; memory-versus-memory
-validity ignores element widths; `resource_context_contains_exact_owned_fact`
-lets an ambient owner cover a body cell silently during expansion; and
-population bodies are merged into the caller's post-call context with
-unchecked composition. Settle these before step 6.
-
-### 5. Fact-bearing bodies and composites that package views (design revised 2026-09-13)
-
-**5a. Facts in a lent body.** The planner refuses any composite whose
-definition has `fact` clauses. The refusal can be lifted per fact, not per
-definition kind: recovery restores the exact escrowed head, not a re-fold,
-so a fact is re-asserted precisely as folded, and that is sound for every
-fact whose every dependency is stable for the whole loan. The review
-established what definition validation actually constrains: only memory
-reads, which must lie in the body's own `owns` or `views` segments. A fact
-may therefore also mention a resource count, a `loadable` or null-ness
-claim about a pointer, or memory covered by a body `views` clause, none of
-which the escrow and index stabilize. Design, narrowed by the
-second review: a new admission predicate, not a reuse of
-`dynamic_body_fact_dependency`, with an explicit refusal list. A fact is
-admitted only if every proposition it lowers to is a memory load or an
-arithmetic or equality claim over loads whose ranges lie in a depth-one
-piece this loan escrows and indexes; it is refused if it mentions a
-resource count, `loadable` or any allocation-liveness claim, a `separate`
-or `contains` or composition claim, the pointer of a `CMemoryLoads`
-proposition outside the indexed pieces, viewed-body memory, or a pure
-function over pointers (already a hard error in the load collector).
-Facts on nested children wait for step 4's barrier. The diagnostic names
-the offending dependency.
-On the borrower's side `observe` and `unfold` publish admitted facts as
-observations carrying the loan dependency, and a published fact is a
-proposition about the snapshot it was read at, so after the loan it is
-historical. Regressions: R15 positive (a fact over the body's own cells),
-negatives for a count fact, a `loadable` fact, a viewed-body fact, and a
-current-memory reuse after scope end. Unblocks `composite_resource_view_then_mutate`,
-`composite_unfold_many_snapshots`, `frame_many_irrelevant_snapshots`,
-`opaque_calls_preserve_public_store_fact`, and the borrowed-slice,
-detachable-buffer, owned-string, owned-vector, owned-split-buffer, and
-owned-segmented-buffer examples, whose facts are all over their own cells.
-
-**5b. Composites whose body contains a view.** `input_cursor(owner)` owns
-its fields and `views readable_input(owner->data, owner->len)`. Folding it
-while that view is loan-bound is refused ("cannot package a loan-backed
-viewed body as an owned composite"); D7 asks for the opposite: the fold
-captures the dependency bundle. Design: (i) a fold whose body contains a
-bound view produces an owned head whose occurrence carries that binding,
-and unfolding returns the binding to the child; the review found the fold
-keys on bound views only and lets a body whose views are all unbound
-(intrinsic local or read-only views, empty composite descriptions) fold
-into a plain owned head, so every body view, bound or not, is recorded on
-the head as a dependency or an intrinsic marker, and a head with either is
-not independent authority; (ii) such a head cannot be lent as an escrow
-head, and a call that requires a view of it reborrows the underlying loan;
-(iii) the packaged head's binding names the composite as `viewed`, which no
-primitive `permitted` entry satisfies, so packaging issues a `Project` of
-the head under the parent loan rather than silently reusing the child's
-binding; (iv) at call return, a produced or returned resource carrying a
-dependency on the call's child scope is rebased to the caller's outer
-binding when the view was a reborrow of the caller's view, and refused as
-an escaping loan when the view was lent from the caller's owner (D8's
-output row); (v) `End` cannot see resource occurrences, so the planner, the
-only issuer of `End` for call scopes, refuses to issue it while any
-occurrence in the return context, including a folded head's dependency,
-binds into the scope; branch joins and loop backedges compare dependencies
-and cannot drop one silently. Regressions: fold and unfold round trip, the
-unbound-view fold, the rebase at return, the escaping refusal with a
-concrete caller, and `End` refused with a hidden share. Unblocks the
-input-cursor example.
-
-**5c. Counted populations.** Two items stay open for decision:
-`owns pool_slot(pool)` with a symbolic quantity is refused by the planner
-(bounded-pool), and `resource_population_split_body_survives_view` holds a
-population body beside its folded population by design. The review showed
-that exposure reaches the caller's durable post-call context, not only a
-plan. Proposal: lending a population whose body is exposed lends the
-exposed pieces under the same loan, so there is one route; the alternative
-is to keep the refusal and migrate the fixture.
-
-**Order and ownership.** 5a in its narrowed form first (smallest change,
-largest corpus effect, no dependency on step 4); then 4.0a and 4.0b as
-prerequisites, each gated and reviewed on its own; then step 4's rules;
-then 5b and 5c. Two reviews have now attacked this design; step 6
-re-reviews the implementation.
+Allowed. Recovery restores the exact escrowed head, not a re-fold, so a
+fact is re-asserted precisely as folded, and the body is stable for the
+whole loan. Refused: a fact that mentions a resource count or an
+allocation-liveness claim, the two things the body does not stabilize
+(D12). On the borrower's side `observe` and `unfold` publish the facts as
+observations carrying the loan dependency; a published fact is a
+proposition about the snapshot it was read at and is historical after the
+loan ends. Regressions: R15 positive (view a fact-bearing composite,
+recover, mutate, refold with the fact re-proved), a count fact refused, a
+liveness fact refused, and a current-memory reuse after scope end refused.
 
 ### 6. Review the complete change adversarially
 
