@@ -1811,12 +1811,24 @@ impl CheckedExecutionBranch {
         if abstract_then != abstract_else {
             return Err("the interface arms do not have one deterministic abstraction");
         }
+        // The successor and the arm abstraction reach an empty resource
+        // context by different routes, so compare the shape with the context
+        // dropped the same way on both sides, then check the successor's loan
+        // authority explicitly. The shape comparison still covers the ledger
+        // and the participant, because dropping a resource context does not
+        // touch either.
         if joined_state
             .clone()
             .with_resource_context(ResourceContext::new())
             != abstract_then
         {
             return Err("the interface successor is not the checked arm abstraction");
+        }
+        // D2 law 9: a join keeps the arms' authority, it never sums it. Every
+        // loan dependency the successor's interface carries must be one an arm
+        // already held; a changed or invented root is not admitted here.
+        if !interface_successor_loans_are_inherited(joined_state, sibling_states) {
+            return Err("the interface successor claims a loan dependency no arm held");
         }
         let mut arm_interface_resources = [Vec::new(), Vec::new()];
         let mut successor_interface_resources = Vec::new();
@@ -2110,6 +2122,27 @@ impl CheckedExecutionBranch {
                         .is_some_and(|facts| lowerings[2].facts.shares_premises_with(facts))
             })
     }
+}
+
+/// Whether every stable-view loan dependency the interface successor carries
+/// was already held by a concrete arm.
+///
+/// A `branch ensuring` interface rebuilds its resource context from the
+/// declared clauses, so its occurrences are fresh and cannot be compared by
+/// identity with the arms'. The checked quantity is the binding itself -- the
+/// loan, scope, share, support occurrence, and viewed fact -- which names the
+/// exact authority that licenses reading the exported view. Requiring each of
+/// those to appear in some arm keeps the join from minting authority that no
+/// alternative execution actually reached (D2 law 9). Cost is the successor's
+/// own bindings against the arms', both interface-sized.
+fn interface_successor_loans_are_inherited(successor: &CState, arms: [&CState; 2]) -> bool {
+    successor.loan_view_bindings().iter().all(|(_, binding)| {
+        arms.iter().any(|arm| {
+            arm.loan_view_bindings()
+                .iter()
+                .any(|(_, held)| held == binding)
+        })
+    })
 }
 
 /// Collapses two alternative, kernel-issued arm effect chains into the one
@@ -5601,6 +5634,79 @@ mod tests {
         PointerOffsetTerm, SpecExpression, c_function, int32,
     };
     use crate::surface::planning::proposition_search::PropositionSearch;
+
+    /// One arm state holding a checked view rooted in a fresh loan.
+    fn arm_holding_a_view(name: &str) -> (CState, crate::kernel::loans::LoanViewBinding) {
+        let support_fact = CResourceFact::own_token(format!("{name}_support"), Vec::new());
+        let viewed = CResourceFact::view_token(format!("{name}_view"), Vec::new());
+        let resources = crate::kernel::ResourceContext::new()
+            .unchecked_with_facts([support_fact.clone(), viewed.clone()]);
+        let support = resources.owned_occurrences_for_fact(&support_fact)[0];
+        let occurrence = resources.occurrences_for_fact(&viewed)[0];
+        let ledger = crate::kernel::loans::LoanLedger::new();
+        let owner = ledger.fresh_participant().expect("owner identity");
+        let reader = ledger.fresh_participant().expect("reader identity");
+        let opening = ledger
+            .lend(owner, reader, support, support_fact)
+            .expect("the arm's view is backed by a fresh loan");
+        let binding = crate::kernel::loans::LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed,
+        };
+        let state = CState::new()
+            .with_loan_ledger(Some(ledger))
+            .with_loan_participant(Some(reader))
+            .with_resource_context_and_loan_dependencies(
+                resources,
+                [(occurrence, binding.clone())],
+            );
+        (state, binding)
+    }
+
+    fn successor_carrying(binding: &crate::kernel::loans::LoanViewBinding) -> CState {
+        let resources =
+            crate::kernel::ResourceContext::new().unchecked_with_facts([binding.viewed.clone()]);
+        let occurrence = resources.occurrences_for_fact(&binding.viewed)[0];
+        // A fresh interface context: the occurrence is new, so only the
+        // binding's own content can connect it to an arm's authority.
+        CState::new()
+            .with_resource_context_and_loan_dependencies(resources, [(occurrence, binding.clone())])
+    }
+
+    #[test]
+    fn an_interface_successor_may_only_carry_a_loan_an_arm_held() {
+        let (left, left_binding) = arm_holding_a_view("left");
+        let (right, right_binding) = arm_holding_a_view("right");
+
+        // No claimed authority at all is always inherited.
+        assert!(interface_successor_loans_are_inherited(
+            &CState::new(),
+            [&left, &right]
+        ));
+        // Either arm's own root is, whichever arm held it.
+        assert!(interface_successor_loans_are_inherited(
+            &successor_carrying(&left_binding),
+            [&left, &right]
+        ));
+        assert!(interface_successor_loans_are_inherited(
+            &successor_carrying(&right_binding),
+            [&left, &right]
+        ));
+        // A root neither arm reached is not admitted by the join.
+        let (_, outside) = arm_holding_a_view("outside");
+        assert!(!interface_successor_loans_are_inherited(
+            &successor_carrying(&outside),
+            [&left, &right]
+        ));
+        // Nor is one arm's root once that arm is not part of the join.
+        assert!(!interface_successor_loans_are_inherited(
+            &successor_carrying(&right_binding),
+            [&left, &left]
+        ));
+    }
 
     fn constructor_partition_fixture(
         width: usize,

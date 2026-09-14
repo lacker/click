@@ -917,8 +917,15 @@ fn abstract_c_state_for_join_across_with_policy(
         sync_stack_local(&mut abstract_state, &name, &value);
         abstract_state.locals.set_typed(name, value, c_type);
     }
-    abstract_state.resources = ResourceContext::new();
-    Ok(abstract_state)
+    // Drop the resource context through the rebasing setter, not by writing
+    // the field. The occurrence-to-loan sidecar is keyed by the occurrences of
+    // the context being discarded, so a direct assignment would leave the
+    // abstraction advertising loan dependencies for occurrences it no longer
+    // has -- and would disagree with every other path that reaches an empty
+    // context through `with_resource_context`. The ledger and participant are
+    // untouched: the arms' authority survives the abstraction, only the
+    // per-occurrence bookkeeping of the discarded context goes away.
+    Ok(abstract_state.with_resource_context(ResourceContext::new()))
 }
 
 fn validate_branch_memory_delta_against_loans(

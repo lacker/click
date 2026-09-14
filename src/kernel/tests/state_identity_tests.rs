@@ -148,6 +148,112 @@ fn abstract_join_rejects_divergent_loan_roots_without_scanning_ledgers() {
     assert!(error.contains("stable-view loan state"));
 }
 
+/// One arm state holding a checked view of `name`, rooted in a fresh loan
+/// taken from `ledger`. The state keeps `ledger` itself, so two arms built
+/// this way differ only in their occurrence bindings.
+fn arm_with_view_binding(
+    ledger: &LoanLedger,
+    owner: crate::kernel::loans::LoanParticipantId,
+    reader: crate::kernel::loans::LoanParticipantId,
+    name: &str,
+) -> (CState, crate::kernel::loans::LoanViewBinding) {
+    let (support_fact, _) = token_with_support(&format!("{name}_support"));
+    let viewed = CResourceFact::view_token(format!("{name}_view"), Vec::new());
+    let resources =
+        ResourceContext::new().unchecked_with_facts([support_fact.clone(), viewed.clone()]);
+    let support = resources.owned_occurrences_for_fact(&support_fact)[0];
+    let occurrence = resources.occurrences_for_fact(&viewed)[0];
+    let opening = ledger
+        .lend(owner, reader, support, support_fact)
+        .expect("the arm's view is backed by a fresh loan");
+    let binding = crate::kernel::loans::LoanViewBinding {
+        loan: opening.loan,
+        scope: opening.scope,
+        share: opening.root_share,
+        support,
+        viewed,
+    };
+    let state = CState::new()
+        .with_loan_ledger(Some(ledger.clone()))
+        .with_loan_participant(Some(reader))
+        .with_resource_context_and_loan_dependencies(resources, [(occurrence, binding.clone())]);
+    (state, binding)
+}
+
+#[test]
+fn abstract_join_keeps_one_shared_view_root_and_drops_its_occurrence_sidecar() {
+    let (ledger, owner, reader) = ledger_with_participants();
+    let (arm, binding) = arm_with_view_binding(&ledger, owner, reader, "shared");
+    let sibling = arm.clone();
+
+    let abstraction = abstract_c_state_for_interface_join_across(
+        &arm,
+        &[&arm, &sibling],
+        &std::collections::BTreeMap::new(),
+    )
+    .expect("arms holding the same root have one deterministic abstraction");
+
+    // The root survives the join; the bookkeeping of the discarded resource
+    // context does not, so the abstraction agrees with every other path that
+    // reaches an empty context through `with_resource_context`.
+    assert_eq!(abstraction.loan_ledger(), arm.loan_ledger());
+    assert_eq!(abstraction.loan_participant(), Some(reader));
+    assert!(abstraction.resources().facts().is_empty());
+    assert_eq!(abstraction.loan_view_bindings().iter().count(), 0);
+    assert_eq!(
+        abstraction,
+        abstraction
+            .clone()
+            .with_resource_context(ResourceContext::new())
+    );
+    assert!(
+        arm.loan_view_bindings()
+            .iter()
+            .any(|(_, held)| held == &binding)
+    );
+}
+
+#[test]
+fn abstract_join_rejects_a_changed_view_root_on_one_ledger() {
+    let (ledger, owner, reader) = ledger_with_participants();
+    let (arm, _) = arm_with_view_binding(&ledger, owner, reader, "left");
+    let (sibling, _) = arm_with_view_binding(&ledger, owner, reader, "right");
+
+    // Same ledger root and same holder: only the checked occurrence binding
+    // moved, and a join must not pick one arm's authority for the successor.
+    assert_eq!(arm.loan_ledger(), sibling.loan_ledger());
+    let error = abstract_c_state_for_interface_join_across(
+        &arm,
+        &[&arm, &sibling],
+        &std::collections::BTreeMap::new(),
+    )
+    .expect_err("a changed view root must not be silently selected");
+    assert!(error.contains("stable-view occurrence bindings"));
+}
+
+#[test]
+fn abstract_join_rejects_an_arm_that_dropped_its_view_root() {
+    let (ledger, owner, reader) = ledger_with_participants();
+    let (arm, _) = arm_with_view_binding(&ledger, owner, reader, "kept");
+    let dropped = CState::new()
+        .with_loan_ledger(Some(ledger))
+        .with_loan_participant(Some(reader))
+        // The same visible facts, but no recorded dependency on the loan that
+        // authorized reading them.
+        .with_resource_context(
+            ResourceContext::new().unchecked_with_facts(arm.resources().facts().iter().cloned()),
+        );
+
+    assert_eq!(dropped.loan_view_bindings().iter().count(), 0);
+    let error = abstract_c_state_for_interface_join_across(
+        &arm,
+        &[&arm, &dropped],
+        &std::collections::BTreeMap::new(),
+    )
+    .expect_err("an arm that dropped its root must not inherit the other arm's");
+    assert!(error.contains("stable-view occurrence bindings"));
+}
+
 #[test]
 fn abstract_join_rejects_divergent_holders_on_one_ledger_root() {
     let (ledger, owner, reader) = ledger_with_participants();
