@@ -1009,14 +1009,14 @@ impl BorrowedContractInputBacking {
         head: CResourceFact,
         pieces: Vec<CResourceFact>,
     ) -> Option<Self> {
+        // A nested composite child is a read-only description under the
+        // same loan with no byte backing of its own: the head's escrow, or
+        // the contract's partition at a root, protects everything under it.
+        // An exclusive instance cannot be viewed (D12).
         (head.is_view()
             && matches!(head.resource(), CResource::Composite { .. })
             && pieces.iter().all(|piece| {
-                piece.is_view()
-                    && matches!(
-                        piece.resource(),
-                        CResource::Memory(_) | CResource::Token { .. }
-                    )
+                piece.is_view() && !matches!(piece.resource(), CResource::Instance(_))
             }))
         .then_some(Self {
             support,
@@ -1032,15 +1032,14 @@ impl CompositeLoanBacking {
         head: CResourceFact,
         pieces: Vec<CResourceFact>,
     ) -> Option<Self> {
+        // A nested composite child stays folded inside the escrowed head; it
+        // enters the loan as a permitted description with no byte backing.
+        // An exclusive instance cannot be viewed (D12).
         (head.is_own()
             && matches!(head.resource(), CResource::Composite { .. })
-            && pieces.iter().all(|piece| {
-                piece.is_own()
-                    && matches!(
-                        piece.resource(),
-                        CResource::Memory(_) | CResource::Token { .. }
-                    )
-            }))
+            && pieces
+                .iter()
+                .all(|piece| piece.is_own() && !matches!(piece.resource(), CResource::Instance(_))))
         .then_some(Self {
             support,
             head,
@@ -2434,13 +2433,11 @@ impl LoanLedger {
         {
             return Err(LoanRefusal::UnsupportedResource);
         }
-        if backing.pieces.iter().any(|fact| {
-            !fact.is_own()
-                || matches!(
-                    fact.resource(),
-                    CResource::Composite { .. } | CResource::Instance(_)
-                )
-        }) {
+        if backing
+            .pieces
+            .iter()
+            .any(|fact| !fact.is_own() || matches!(fact.resource(), CResource::Instance(_)))
+        {
             return Err(LoanRefusal::UnsupportedResource);
         }
         let scope = LoanScopeId {
@@ -2476,6 +2473,75 @@ impl LoanLedger {
                 viewed: CResourceFact::View(escrow.resource().clone()),
             },
             transition: self.issue(evidence)?,
+        })
+    }
+
+    /// Extend a loan's permitted descriptions by one checked child
+    /// projection of a composite description it already permits.
+    ///
+    /// The child comes from the kernel's expansion of `parent` in the
+    /// current state, performed by the checked `unfold`, `observe`, or
+    /// `open` that calls this. A projection is derived, read-only authority
+    /// over memory the loan already protects, so it is not a transition:
+    /// the ledger keeps its state identity, which tracks authority-changing
+    /// operations only, and a certificate that re-runs the same checked
+    /// rewrites re-derives the same projections.
+    pub(crate) fn project(
+        &self,
+        holder: LoanParticipantId,
+        loan: LoanId,
+        parent: &CResourceFact,
+        child: CResourceFact,
+    ) -> Result<Self, LoanRefusal> {
+        self.require_arena(loan.arena)?;
+        self.require_participant(holder)?;
+        let record = self
+            .storage
+            .data
+            .loans
+            .get(&loan)
+            .cloned()
+            .ok_or(LoanRefusal::MissingLoan)?;
+        let scope = self
+            .storage
+            .data
+            .scopes
+            .get(&record.scope)
+            .ok_or(LoanRefusal::MissingScope)?;
+        if !scope.active || record.recovered {
+            return Err(LoanRefusal::ScopeEnded);
+        }
+        if !parent.is_view()
+            || !matches!(parent.resource(), CResource::Composite { .. })
+            || !record.permitted.iter().any(|permitted| {
+                ResourceContext::new()
+                    .unchecked_with_fact(permitted.clone())
+                    .satisfies_fact(parent, &PureFactContext::default())
+            })
+        {
+            return Err(LoanRefusal::MissingLoanBinding);
+        }
+        if !child.is_view() || matches!(child.resource(), CResource::Instance(_)) {
+            return Err(LoanRefusal::UnsupportedResource);
+        }
+        if record.permitted.contains(&child) {
+            return Ok(self.clone());
+        }
+        let mut permitted = record.permitted;
+        permitted.push(child);
+        let mut data = self.storage.data.clone();
+        data.loans = data.loans.with_inserted(
+            loan,
+            LoanRecord {
+                permitted,
+                ..record
+            },
+        );
+        Ok(Self {
+            storage: Arc::new(LoanLedgerStorage {
+                state: self.storage.state,
+                data,
+            }),
         })
     }
 
@@ -3131,13 +3197,10 @@ impl LoanLedger {
                 }
                 self.require_participant(*lender)?;
                 self.require_participant(*borrower)?;
-                if backing.iter().any(|fact| {
-                    !fact.is_own()
-                        || matches!(
-                            fact.resource(),
-                            CResource::Composite { .. } | CResource::Instance(_)
-                        )
-                }) {
+                if backing
+                    .iter()
+                    .any(|fact| !fact.is_own() || matches!(fact.resource(), CResource::Instance(_)))
+                {
                     return Err(LoanRefusal::UnsupportedResource);
                 }
                 if scope.arena != data.arena
@@ -3250,11 +3313,7 @@ impl LoanLedger {
                 let valid_backing = match viewed.resource() {
                     CResource::Memory(_) | CResource::Token { .. } => backing.is_empty(),
                     CResource::Composite { .. } => backing.iter().all(|piece| {
-                        piece.is_view()
-                            && matches!(
-                                piece.resource(),
-                                CResource::Memory(_) | CResource::Token { .. }
-                            )
+                        piece.is_view() && !matches!(piece.resource(), CResource::Instance(_))
                     }),
                     _ => false,
                 };
@@ -4165,6 +4224,80 @@ mod tests {
             ledger
                 .permits_memory_access_with_assumptions(&parameter_range(9, 0, 1, 4), &assumptions),
             Err(LoanRefusal::ActiveDependency)
+        );
+    }
+
+    /// Projection extends a composite loan's permitted descriptions by a
+    /// checked child without changing the ledger's identity; it needs a
+    /// permitted composite parent and a live scope, and never admits an
+    /// exclusive instance.
+    #[test]
+    fn projection_extends_permitted_descriptions_without_a_transition() {
+        let (ledger, owner, reader) = participants();
+        let head = composite("cell", true);
+        let support = backing(&head);
+        let nested = composite("nested", true);
+        let backing_pieces =
+            CompositeLoanBacking::from_checked_expansion(support, head.clone(), vec![nested])
+                .unwrap();
+        let opening = ledger
+            .lend_composite(owner, reader, support, head, backing_pieces)
+            .unwrap();
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        let assumptions = PureFactContext::new();
+        let nested_view = composite("nested", false);
+        let deep = CResourceFact::view_memory(memory(0, 1, true).memory_range().unwrap().clone());
+        let describe = |viewed: CResourceFact| StableViewDescription {
+            loan: opening.loan,
+            support,
+            viewed,
+        };
+        assert!(ledger.permits_view(
+            reader,
+            &describe(nested_view.clone()),
+            opening.root_share,
+            &assumptions
+        ));
+        assert!(!ledger.permits_view(
+            reader,
+            &describe(deep.clone()),
+            opening.root_share,
+            &assumptions
+        ));
+        let projected = ledger
+            .project(reader, opening.loan, &nested_view, deep.clone())
+            .expect("a child of a permitted composite view projects");
+        assert_eq!(projected, ledger, "projection keeps the ledger identity");
+        assert!(projected.permits_view(
+            reader,
+            &describe(deep.clone()),
+            opening.root_share,
+            &assumptions
+        ));
+        assert!(projected.invariant_holds());
+        // Not a permitted parent, an owned child, and an ended scope.
+        assert_eq!(
+            projected.project(
+                reader,
+                opening.loan,
+                &composite("other", false),
+                deep.clone()
+            ),
+            Err(LoanRefusal::MissingLoanBinding)
+        );
+        assert_eq!(
+            projected.project(reader, opening.loan, &nested_view, memory(0, 1, true)),
+            Err(LoanRefusal::UnsupportedResource)
+        );
+        let transfer = projected
+            .transfer(opening.root_share, reader, owner)
+            .unwrap();
+        let projected = projected.apply(&transfer).unwrap();
+        let end = projected.end(opening.scope, owner).unwrap();
+        let ended = projected.apply(&end).unwrap();
+        assert_eq!(
+            ended.project(owner, opening.loan, &nested_view, deep),
+            Err(LoanRefusal::ScopeEnded)
         );
     }
 
@@ -5211,14 +5344,25 @@ mod tests {
     }
 
     #[test]
-    fn composite_backing_tamper_and_nested_frontier_are_refused() {
+    fn composite_backing_tamper_and_instance_frontier_are_refused() {
         let (ledger, owner, reader) = participants();
         let head = composite("cell", true);
         let support = backing(&head);
+        // A nested composite child is admitted as a permitted description;
+        // a viewed piece is not a checked expansion of an owned head.
         let nested = composite("nested", true);
-        let nested =
-            CompositeLoanBacking::from_checked_expansion(support, head.clone(), vec![nested]);
-        assert!(nested.is_none());
+        assert!(
+            CompositeLoanBacking::from_checked_expansion(support, head.clone(), vec![nested])
+                .is_some()
+        );
+        assert!(
+            CompositeLoanBacking::from_checked_expansion(
+                support,
+                head.clone(),
+                vec![composite("nested", false)]
+            )
+            .is_none()
+        );
         let tampered = CompositeLoanBacking {
             support,
             head,

@@ -197,6 +197,33 @@ fn unique_borrowed_resource_dependency(
     Ok(selected)
 }
 
+/// Record the children a checked rewrite exposed from a viewed composite as
+/// permitted descriptions of the parent's loan. The rewrite has already
+/// derived them from the definition in the current state; the ledger only
+/// checks that the parent is a permitted composite view of a live loan.
+fn project_children_into_ledger(
+    state: CState,
+    binding: &crate::kernel::LoanViewBinding,
+    children: impl IntoIterator<Item = CResourceFact>,
+    context_label: &str,
+) -> Result<CState, ClickError> {
+    let (Some(ledger), Some(holder)) = (state.loan_ledger().cloned(), state.loan_participant())
+    else {
+        return Ok(state);
+    };
+    let mut ledger = ledger;
+    for child in children {
+        ledger = ledger
+            .project(holder, binding.loan, &binding.viewed, child)
+            .map_err(|refusal| {
+                ClickError::new(format!(
+                    "{context_label} cannot project a child of the viewed composite: {refusal:?}"
+                ))
+            })?;
+    }
+    Ok(state.with_loan_ledger(Some(ledger)))
+}
+
 fn same_loan_authority(
     left: &crate::kernel::LoanViewBinding,
     right: &crate::kernel::LoanViewBinding,
@@ -1688,6 +1715,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             .unchecked_with_facts_and_occurrences(viewed_contained_resources.clone())
     };
     let mut dependency_bindings = Vec::new();
+    let mut state = state;
     if let Some(binding) = borrowed_parent_binding {
         for (child, occurrence) in inserted {
             dependency_bindings.push((
@@ -1698,6 +1726,14 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
                 },
             ));
         }
+        state = project_children_into_ledger(
+            state,
+            &binding,
+            dependency_bindings
+                .iter()
+                .map(|(_, child)| child.viewed.clone()),
+            &format!("`{claim_label}` tactic {tactic_index}: `observe`"),
+        )?;
     }
     Ok((
         state
@@ -3249,6 +3285,12 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 )));
             }
         }
+        state = project_children_into_ledger(
+            state,
+            &binding,
+            dependencies.iter().map(|(_, child)| child.viewed.clone()),
+            &format!("`{claim_label}` tactic {tactic_index}: `unfold`"),
+        )?;
         let resources = state.resources().clone();
         state = state.with_resource_context_and_loan_dependencies(resources, dependencies);
     }

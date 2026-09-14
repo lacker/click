@@ -10271,25 +10271,29 @@ fn prepare_contract_resource_transfer_with_candidate(
                 else {
                     continue;
                 };
+                // One checked level: primitive children enter the write
+                // index, nested composite children become permitted
+                // descriptions that projection can open later. The head's
+                // escrow protects everything under it, so nothing deeper
+                // needs enumerating.
                 let singleton = ResourceContext::new().unchecked_with_fact(owned.clone());
-                let Some(expanded) = expand_all_composite_resource_facts(
+                let Some((_, expanded_children, _)) = expand_composite_resource_fact_with_children(
                     &singleton,
+                    owned,
                     interface.composite_resource_definitions(),
                     caller_state.memory(),
                     assumptions,
                 ) else {
                     return Ok(Err(CRuntimeError::FunctionContract(
-                        "could not check the primitive frontier of a composite view".to_string(),
+                        "could not check the frontier of a composite view".to_string(),
                     )));
                 };
-                if expanded.facts().iter().any(|fact| {
-                    matches!(
-                        fact.resource(),
-                        CResource::Composite { .. } | CResource::Instance(_)
-                    ) || !fact.is_own()
-                }) {
+                if expanded_children
+                    .iter()
+                    .any(|fact| matches!(fact.resource(), CResource::Instance(_)) || !fact.is_own())
+                {
                     return Ok(Err(CRuntimeError::FunctionContract(
-                        "nested or undecidable composite loan backing is unsupported".to_string(),
+                        "an exclusive instance inside a composite view is unsupported".to_string(),
                     )));
                 }
                 let Some(definition) =
@@ -10315,12 +10319,13 @@ fn prepare_contract_resource_transfer_with_candidate(
                         "composite body facts depend on a resource count or an allocation-liveness claim, which a stable loan does not stabilize".to_string(),
                     )));
                 }
-                let pieces = expanded.facts().to_vec();
-                let Some(backing) =
-                    CompositeLoanBacking::from_checked_expansion(support, owned.clone(), pieces)
-                else {
+                let Some(backing) = CompositeLoanBacking::from_checked_expansion(
+                    support,
+                    owned.clone(),
+                    expanded_children,
+                ) else {
                     return Ok(Err(CRuntimeError::FunctionContract(
-                        "composite loan frontier is not primitive".to_string(),
+                        "composite loan frontier is not a checked expansion".to_string(),
                     )));
                 };
                 backings.insert(support, backing);
@@ -17060,12 +17065,14 @@ pub(super) fn function_outcome_from_body(
                 // before the caller resumes evaluating its next statement.
                 let memory = caller_state.memory.clone();
                 caller_state.sync_scalar_locals_from_memory(&memory);
-                // The body ran on the caller's ledger; keep whatever its own
-                // calls left there rather than the pre-call snapshot.
-                caller_state = caller_state
-                    .with_loan_ledger(state.loan_ledger().cloned())
-                    .with_loan_participant(state.loan_participant());
             }
+            // The body ran on its entry ledger and may have projected viewed
+            // composite children into it (or, for an inline body, made calls
+            // on the caller's ledger); the return state carries the body's
+            // ledger. A modular call's recovery replaces it afterwards.
+            caller_state = caller_state
+                .with_loan_ledger(state.loan_ledger().cloned())
+                .with_loan_participant(state.loan_participant());
             if return_resources.is_none() {
                 caller_state.instance_field_scope = state.instance_field_scope;
             }
