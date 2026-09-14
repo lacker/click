@@ -3383,7 +3383,14 @@ impl LoanLedger {
             return Ok(());
         }
         if memory_interval_nodes(range).is_some() {
-            if !self.active_memory_overlaps(range)?.is_empty() {
+            // The dyadic walk is logarithmic, but a loop or branch havoc pays
+            // it once per surviving cell. With no concrete range registered
+            // the walk can only return the empty set, and both index maps are
+            // written and erased together for the same ranges, so an empty
+            // node index means an empty subtree index too (F10 in fix-views).
+            let indexed_ranges_exist = !self.storage.data.active_memory_index.is_empty()
+                || !self.storage.data.active_memory_subtree.is_empty();
+            if indexed_ranges_exist && !self.active_memory_overlaps(range)?.is_empty() {
                 return Err(LoanRefusal::ActiveDependency);
             }
         } else if !self.storage.data.active_memory_index.is_empty() {

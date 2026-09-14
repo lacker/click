@@ -2127,21 +2127,32 @@ impl CheckedExecutionBranch {
 /// Whether every stable-view loan dependency the interface successor carries
 /// was already held by a concrete arm.
 ///
-/// A `branch ensuring` interface rebuilds its resource context from the
-/// declared clauses, so its occurrences are fresh and cannot be compared by
-/// identity with the arms'. The checked quantity is the binding itself -- the
+/// The checked quantity is the binding itself -- the
 /// loan, scope, share, support occurrence, and viewed fact -- which names the
 /// exact authority that licenses reading the exported view. Requiring each of
 /// those to appear in some arm keeps the join from minting authority that no
-/// alternative execution actually reached (D2 law 9). Cost is the successor's
-/// own bindings against the arms', both interface-sized.
+/// alternative execution actually reached (D2 law 9).
+///
+/// The binding count follows the proof -- one binding per exposed child per
+/// unfold or observe -- while the loans themselves follow the contract, so
+/// comparing the two sides pairwise would be quadratic in proof length. The
+/// arms' binding *values* are folded into one membership index first and each
+/// successor binding is then one lookup. That is the same predicate: a binding
+/// is inherited exactly when some arm holds an equal one, at whatever
+/// occurrence. The occurrence keys cannot serve as that index, because a
+/// `branch ensuring` interface rebuilds its resource context from the declared
+/// clauses and its occurrences are fresh.
 fn interface_successor_loans_are_inherited(successor: &CState, arms: [&CState; 2]) -> bool {
+    let mut held = std::collections::HashSet::new();
+    for arm in arms {
+        for (_, binding) in arm.loan_view_bindings().iter() {
+            crate::instrumentation::record_deterministic_work(1);
+            held.insert(binding);
+        }
+    }
     successor.loan_view_bindings().iter().all(|(_, binding)| {
-        arms.iter().any(|arm| {
-            arm.loan_view_bindings()
-                .iter()
-                .any(|(_, held)| held == binding)
-        })
+        crate::instrumentation::record_deterministic_work(1);
+        held.contains(binding)
     })
 }
 
@@ -8362,5 +8373,224 @@ mod tests {
             .is_err(),
             "a resource absent from both arms must not gain interface authority"
         );
+    }
+}
+
+/// Deterministic four-size curves for the loan machinery an interface join
+/// and a loop-head havoc run (R32; fix-views step 6 finding F10). Both axes
+/// grow with proof length rather than with the selected contract: the binding
+/// count grows by one per exposed child per unfold or observe, and the cell
+/// and symbolic-loan counts grow with the memory a proof has named. Neither
+/// is output the checker must produce, so a quadratic curve here is a scaling
+/// defect rather than output-sensitive work. Work is counted with the
+/// deterministic counter; host time never decides these tests.
+#[cfg(test)]
+mod loan_scaling_tests {
+    use super::*;
+    use crate::kernel::loans::{LoanLedger, LoanViewBinding};
+    use crate::kernel::{PointerBlock, PointerOffsetTerm, int32};
+    use std::collections::BTreeSet;
+
+    /// The two largest adjacent ratios of a doubling series, the same
+    /// near-linear rule `src/surface/tests/scaling_tests.rs` applies.
+    fn assert_near_linear(axis: &str, samples: &[(usize, usize)]) {
+        assert!(
+            samples[0].1 > 0,
+            "{axis}: nothing was measured: {samples:?}"
+        );
+        for pair in samples.windows(2) {
+            assert_eq!(pair[1].0, pair[0].0 * 2, "{axis}: {samples:?}");
+        }
+        for pair in samples.windows(2).skip(samples.len().saturating_sub(3)) {
+            assert!(
+                pair[1].1 <= pair[0].1.saturating_mul(3),
+                "{axis}: deterministic work grows faster than the simple-verification contract: {samples:?}"
+            );
+        }
+    }
+
+    /// One arm state and one interface successor that both carry `count`
+    /// occurrence-keyed bindings of a single shared loan. This is the shape a
+    /// proof reaches by exposing one child per unfold or observe: the binding
+    /// count follows the proof, while the loan and its ledger follow the
+    /// contract. The successor's resource context is rebuilt from the
+    /// declared clauses, so its occurrences are fresh and only the binding
+    /// content can connect it to the arm.
+    fn interface_join_states(count: usize) -> (CState, CState) {
+        let support_fact = CResourceFact::own_token("shared_support".to_string(), Vec::new());
+        let viewed = (0..count)
+            .map(|index| CResourceFact::view_token(format!("child_{index}"), Vec::new()))
+            .collect::<Vec<_>>();
+        let resources = ResourceContext::new().unchecked_with_facts(
+            std::iter::once(support_fact.clone()).chain(viewed.iter().cloned()),
+        );
+        let support = resources.owned_occurrences_for_fact(&support_fact)[0];
+        let ledger = LoanLedger::new();
+        let owner = ledger.fresh_participant().expect("owner identity");
+        let reader = ledger.fresh_participant().expect("reader identity");
+        let opening = ledger
+            .lend(owner, reader, support, support_fact)
+            .expect("one shared loan backs every exposed child");
+        let bindings = viewed
+            .iter()
+            .map(|fact| LoanViewBinding {
+                loan: opening.loan,
+                scope: opening.scope,
+                share: opening.root_share,
+                support,
+                viewed: fact.clone(),
+                hold: None,
+            })
+            .collect::<Vec<_>>();
+        let arm_dependencies = viewed
+            .iter()
+            .zip(&bindings)
+            .map(|(fact, binding)| (resources.occurrences_for_fact(fact)[0], binding.clone()))
+            .collect::<Vec<_>>();
+        let arm = CState::new()
+            .with_loan_ledger(Some(ledger))
+            .with_loan_participant(Some(reader))
+            .with_resource_context_and_loan_dependencies(resources, arm_dependencies);
+
+        let successor_resources =
+            ResourceContext::new().unchecked_with_facts(viewed.iter().cloned());
+        let successor_dependencies = viewed
+            .iter()
+            .zip(&bindings)
+            .map(|(fact, binding)| {
+                (
+                    successor_resources.occurrences_for_fact(fact)[0],
+                    binding.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let successor = CState::new().with_resource_context_and_loan_dependencies(
+            successor_resources,
+            successor_dependencies,
+        );
+        (arm, successor)
+    }
+
+    #[test]
+    fn interface_binding_inheritance_is_near_linear_in_the_binding_count() {
+        let mut samples = Vec::new();
+        for count in [8, 16, 32, 64] {
+            let (arm, successor) = interface_join_states(count);
+            let (inherited, work) = crate::instrumentation::measure_deterministic_work(|| {
+                interface_successor_loans_are_inherited(&successor, [&arm, &arm])
+            });
+            assert!(
+                inherited,
+                "every successor binding is one the arm held, so the join is admitted"
+            );
+            samples.push((count, work));
+        }
+        // 36, 136, 528, 2080 before the membership index; 24, 48, 96, 192
+        // after it (both arms folded in, then one lookup per successor
+        // binding). The second assertion pins the linear shape itself, so a
+        // reintroduced pairwise scan fails here and not only at eight times
+        // the size.
+        assert_near_linear("interface join binding count", &samples);
+        for (count, work) in &samples {
+            assert!(
+                *work <= 6 * count + 16,
+                "interface join binding inheritance stopped being one pass per binding: {samples:?}"
+            );
+        }
+    }
+
+    /// A contract-input view over parameter memory: symbolic base offset, so
+    /// it never enters the concrete dyadic index and stays in its block's
+    /// unindexed bucket.
+    fn parameter_view(variable: u64) -> CResourceFact {
+        CResourceFact::view_memory(CMemoryRange::new_with_element_width(
+            Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Variable(Variable(variable)),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+            4,
+        ))
+    }
+
+    /// `count` live symbolic contract-input loans, all in one block.
+    fn symbolic_contract_input_ledger(count: usize) -> LoanLedger {
+        let viewed = (0..count as u64).map(parameter_view).collect::<Vec<_>>();
+        let resources = ResourceContext::new().unchecked_with_facts(viewed.iter().cloned());
+        let mut ledger = LoanLedger::new();
+        let holder = ledger.fresh_participant().expect("holder identity");
+        for fact in &viewed {
+            let support = resources.occurrences_for_fact(fact)[0];
+            let opening = ledger
+                .borrowed_contract_input(holder, support, fact.clone(), None)
+                .expect("a checked symbolic contract input");
+            ledger = ledger
+                .apply(&opening.transition)
+                .expect("the input root applies");
+        }
+        assert!(ledger.has_active_memory_loans());
+        ledger
+    }
+
+    /// `count` concrete cells in the same block those loans protect.
+    fn cells_in_the_symbolic_block(count: usize) -> CMemory {
+        let mut memory = CMemory::new();
+        for index in 0..count {
+            memory = memory.store(
+                Pointer {
+                    block: PointerBlock::ExternalArgument,
+                    offset: PointerOffsetTerm::Constant(4 * index as i64),
+                },
+                int32(0),
+            );
+        }
+        memory
+    }
+
+    #[test]
+    fn loop_head_havoc_work_over_cells_and_symbolic_loans() {
+        let mut samples = Vec::new();
+        for count in [8, 16, 32, 64] {
+            let ledger = symbolic_contract_input_ledger(count);
+            let memory = cells_in_the_symbolic_block(count);
+            let (havoced, work) = crate::instrumentation::measure_deterministic_work(|| {
+                memory.with_loop_memory_havoc_preserving_loans(
+                    Variable(7),
+                    &BTreeSet::new(),
+                    None,
+                    Some(&ledger),
+                )
+            });
+            // Validity: no cell was proven protected, so the havoc paid the
+            // complete query for each one. An early refusal would short the
+            // scan and make the curve look better than the checker is.
+            for index in 0..count {
+                assert!(
+                    !havoced.has_known_cell_at(&Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: PointerOffsetTerm::Constant(4 * index as i64),
+                    }),
+                    "a cell no loan protects must not survive the havoc"
+                );
+            }
+            samples.push((count, work));
+        }
+        // Measured, not aspirational: 65, 257, 1025, 4097 -- one query per
+        // cell, each walking every symbolic protected range in the block, so
+        // the curve is cells x symbolic loans and doubling costs four times
+        // as much. Nothing local fixes it: a symbolic base offset cannot
+        // enter the dyadic index, the block bucket already holds only the
+        // genuinely symbolic entries, and a cell's answer depends on the
+        // cell, so per-block hoisting cannot share it. This bound is recorded
+        // as a known violation in `docs/internals/verification-efficiency.md`;
+        // the assertion pins it from above so no further factor creeps in and
+        // so a later indexing change that makes it linear still passes.
+        for (count, work) in &samples {
+            assert!(
+                *work <= count * count + 4 * count + 16,
+                "loop-head havoc cells x symbolic loans exceeded its known quadratic bound: {samples:?}"
+            );
+        }
     }
 }
