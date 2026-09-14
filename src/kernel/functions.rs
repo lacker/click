@@ -504,7 +504,25 @@ fn recover_candidate_stable_view_resources(
                 .is_some_and(|(support_occurrence, support)| {
                     residual.support_occurrence_is_live(support_occurrence, support)
                 });
-        if !returned_input && !preserved_outer && !projected_from_owner {
+        // A view of read-only storage is intrinsic read authority rather
+        // than a capability this call lent, minted, or must recover: no
+        // path may write those bytes, so nothing has to stabilize them,
+        // and the caller held the same authority before the call. Entry
+        // already decides it with this exact block test, in
+        // `install_borrowed_contract_inputs` (such a contract input view
+        // gets no borrowed root) and in `intrinsic_read_views` (such a
+        // requirement is supplied without a ledger transition, fix-views
+        // D10 and 6.3's F14(b)). The return route has to admit it on the
+        // same terms, or a call that merely carries one across its
+        // boundary would be refused for having no binding that was never
+        // created. Ordinary mutable storage, file-static globals included,
+        // is not read-only and still needs one of the three routes above.
+        let intrinsic_read_only = matches!(
+            fact.resource(),
+            CResource::Memory(range)
+                if caller_state.memory().is_read_only_block(&range.base().block)
+        );
+        if !returned_input && !preserved_outer && !projected_from_owner && !intrinsic_read_only {
             return Err(CRuntimeError::FunctionContract(format!(
                 "stable-view call returned a view without a checked input child or preserved outer binding: {fact:?}"
             )));
@@ -19306,6 +19324,94 @@ mod candidate_stable_view_call_tests {
     fn candidate_rejects_a_returned_view_that_only_an_equal_owner_satisfies() {
         let error = recover_with_extra_returned_view(false)
             .expect_err("fact equality against an owner is not provenance");
+        assert!(
+            matches!(
+                &error,
+                CRuntimeError::FunctionContract(message)
+                    if message.contains("without a checked input child")
+            ),
+            "unexpected refusal: {error:?}"
+        );
+    }
+
+    /// A view of read-only storage is intrinsic read authority rather than a
+    /// lent capability: `install_borrowed_contract_inputs` gives such a
+    /// contract input view no borrowed root and `intrinsic_read_views`
+    /// supplies such a requirement with no ledger transition, both by this
+    /// block test, so a call that merely carries one across its boundary has
+    /// provenance for it. Everything else about the two calls below is the
+    /// same; only the carried block's mutability differs.
+    fn recover_with_a_carried_view_of_another_block(
+        read_only: bool,
+    ) -> Result<ResourceContext, CRuntimeError> {
+        let pointer = pointer();
+        let other = Pointer {
+            block: PointerBlock::Concrete("global:candidate_table#file-static:t.c".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let function = reader("candidate_carried_view", false);
+        let owned_caller = caller_with_owned_end(&pointer, 3, 12);
+        let caller = owned_caller.clone().with_memory(
+            owned_caller.memory().clone().with_block_or_read_only(
+                other.block.clone(),
+                8,
+                read_only,
+            ),
+        );
+        let callee_template =
+            bind_c_function_arguments(&caller, &function, &[CValue::pointer(pointer)])
+                .expect("reader argument should bind");
+        let transfer = prepare_function_resource_transfer(
+            &caller,
+            &callee_template,
+            &function,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::new(),
+            true,
+            true,
+        )
+        .expect("candidate transfer should run")
+        .expect("candidate transfer should be accepted");
+        let carried = CResourceFact::view_memory(CMemoryRange::new(
+            other,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(2),
+        ));
+        let return_resources = transfer
+            .caller_resources_after_requirements
+            .clone()
+            .unchecked_with_fact(carried);
+        recover_candidate_stable_view_resources(
+            &caller,
+            &callee_state_with_resource_transfer(callee_template, &transfer),
+            &transfer,
+            return_resources,
+            &PureFactContext::new(),
+            &PureFactContext::new(),
+            &[],
+        )
+        .map(|(resources, ..)| resources)
+    }
+
+    #[test]
+    fn candidate_accepts_a_carried_view_of_read_only_storage() {
+        let resources = recover_with_a_carried_view_of_another_block(true)
+            .expect("a view of read-only storage is intrinsic read authority");
+        let carried = CResourceFact::view_memory(CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::Concrete("global:candidate_table#file-static:t.c".to_string()),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(2),
+        ));
+        assert!(resources.satisfies_fact(&carried, &PureFactContext::new()));
+    }
+
+    #[test]
+    fn candidate_rejects_a_carried_view_of_mutable_storage() {
+        let error = recover_with_a_carried_view_of_another_block(false)
+            .expect_err("a view of mutable storage the caller never lent has no provenance");
         assert!(
             matches!(
                 &error,

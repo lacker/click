@@ -6476,6 +6476,41 @@ int32 read_retargeted(struct buffer* owner, int32* other) {
         );
     }
 
+    /// A view of read-only storage is intrinsic read authority, so it needs
+    /// no borrowed root at entry and no loan at a call. A call that lends an
+    /// ordinary view therefore has to carry the caller's file-static const
+    /// view across its return without a binding for it, and the caller can
+    /// still read the table afterwards.
+    #[test]
+    fn stable_mode_carries_a_file_static_const_view_across_a_call() {
+        let click = r#"
+verifying "reader.c";
+
+int32 peek(const int32 values[], int32 q[]) {
+    views values[0..2];
+    views q[0..1];
+    ensures result == q[0];
+} by {
+    execute();
+    simp();
+}
+
+int32 run(int32 q[]) {
+    views table[0..2];
+    views q[0..1];
+    ensures result == table[1];
+} by {
+    execute();
+    simp();
+}
+"#;
+        let source = "static const int32 table[2] = {5, 7};\n\
+int32 peek(const int32 *values, int32 *q) { return q[0]; }\n\
+int32 run(int32 *q) { int32 seen = peek(table, q); return table[1]; }\n";
+        verify_in_stable_mode(click, source)
+            .expect("a const table view survives a call that lends an ordinary view");
+    }
+
     fn verify_in_stable_mode_with_header(
         click: &str,
         header: &str,
