@@ -24,17 +24,17 @@ use crate::kernel::{
     PureFactContext, ResourceArguments, ResourceContext, ResourceContextValidityError,
     ResourceFamily, Sort, SpecAlgebraicExpression, SpecExpression, SpecMemory,
     SpecPredicateArgument, SpecProposition, SpecResource, SymbolicCExecution, Term, Theorem,
-    Variable, abstract_c_state_for_join, c_checked_function_proposition,
-    c_condition_fact_has_memory, c_condition_fact_memories, c_contract_refinement_context,
-    c_do_while_preservation_contexts, c_do_while_with_invariant_and_effect_checks, c_function,
-    c_function_contract_entry_state, c_function_contract_refinement_arguments,
-    c_function_contract_refinement_context, c_function_entry_state,
-    c_function_execution_candidates_from_outcomes, c_function_outcome_from_statement_outcome,
-    c_function_specification, c_function_termination_plan, c_if,
-    c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_entry,
-    c_loop_preservation_contexts, c_pointer_offsets_proven_equal_for_effect,
-    c_resources_directly_match, c_seq, c_typed_pointer_value,
-    c_unverified_function_contract_claims_with_checked_propositions,
+    Variable, abstract_c_state_for_join, assume_universally_quantified_pure_implication,
+    c_checked_function_proposition, c_condition_fact_has_memory, c_condition_fact_memories,
+    c_contract_refinement_context, c_do_while_preservation_contexts,
+    c_do_while_with_invariant_and_effect_checks, c_function, c_function_contract_entry_state,
+    c_function_contract_refinement_arguments, c_function_contract_refinement_context,
+    c_function_entry_state, c_function_execution_candidates_from_outcomes,
+    c_function_outcome_from_statement_outcome, c_function_specification,
+    c_function_termination_plan, c_if, c_loop_invariant_obligations_at_entry,
+    c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
+    c_pointer_offsets_proven_equal_for_effect, c_resources_directly_match, c_seq,
+    c_typed_pointer_value, c_unverified_function_contract_claims_with_checked_propositions,
     c_verified_function_contract_claims_with_checked_propositions, c_verified_function_rule,
     c_verified_function_termination_rules, c_while_with_invariant_and_effect_checks,
     certify_int32_above_one_predecessor_is_at_least_one,
@@ -93,6 +93,7 @@ mod expansion;
 mod generics;
 mod integer_conversions;
 mod lowering;
+mod modules;
 mod parser;
 pub(crate) mod planning;
 pub(crate) mod proof_diagnostics;
@@ -105,10 +106,15 @@ mod verification;
 
 use checking::*;
 pub use expansion::{
-    CProofClaim, SmartTacticSourceSite, SourcePosition, c0_prepared_smart_tactic_source_sites,
-    c0_prepared_tactic_source_position, c0_smart_tactic_source_sites, c0_tactic_source_position,
+    CProofClaim, ClickImportSite, SmartTacticSourceSite, SourcePosition,
+    c0_prepared_project_smart_tactic_source_sites, c0_prepared_project_tactic_source_position,
+    c0_prepared_smart_tactic_source_sites, c0_prepared_tactic_source_position,
+    c0_project_smart_tactic_source_sites, c0_project_tactic_source_position,
+    c0_smart_tactic_source_sites, c0_tactic_source_position, click_import_sites,
     expand_c0_claim_source, expand_c0_claim_source_by_label,
-    expand_c0_prepared_claim_source_by_label, expand_c0_prepared_tactic_source_at,
+    expand_c0_prepared_claim_source_by_label, expand_c0_prepared_project_claim_source_by_label,
+    expand_c0_prepared_project_tactic_source_at, expand_c0_prepared_tactic_source_at,
+    expand_c0_project_claim_source_by_label, expand_c0_project_tactic_source_at,
     expand_c0_tactic_source_at, verifying_source_paths,
 };
 use expansion::{
@@ -116,6 +122,7 @@ use expansion::{
     verification_target_at_context,
 };
 use lowering::*;
+pub use modules::resolve_click_project;
 use parser::ContractLetBinding;
 pub use printing::{format_proof_certificate, format_proof_tactics};
 use proof::*;
@@ -133,11 +140,16 @@ pub(in crate::surface) use verification::CSourceContext;
 pub(in crate::surface) use verification::*;
 pub use verification::{
     C0IncrementalSelection, CProofArtifactIdentity, ViewSemanticsMode, c0_external_dependencies,
-    c0_function_names, c0_incremental_selection, c0_prepared_external_dependencies, parse,
-    verify_c0_prepared_sources, verify_c0_prepared_sources_at,
-    verify_c0_prepared_sources_functions, verify_c0_sources, verify_c0_sources_at,
-    verify_c0_sources_functions, verify_c0_sources_in_mode, verify_click_theorems,
-    verify_standard_library,
+    c0_function_names, c0_incremental_selection, c0_prepared_external_dependencies,
+    c0_prepared_project_external_dependencies, c0_prepared_project_selected_proof_count,
+    c0_prepared_project_selected_proof_names, c0_project_external_dependencies,
+    c0_project_function_names, c0_project_selected_proof_count, c0_project_selected_proof_names,
+    parse, verify_c0_prepared_project, verify_c0_prepared_project_at,
+    verify_c0_prepared_project_functions, verify_c0_prepared_sources,
+    verify_c0_prepared_sources_at, verify_c0_prepared_sources_functions, verify_c0_project,
+    verify_c0_project_at, verify_c0_project_functions, verify_c0_project_in_mode,
+    verify_c0_sources, verify_c0_sources_at, verify_c0_sources_functions,
+    verify_c0_sources_in_mode, verify_click_theorems, verify_standard_library,
 };
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
@@ -214,6 +226,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "function",
     "have",
     "if",
+    "import",
     "implies",
     "arithmetic_certificate",
     "signed_int32",
@@ -309,6 +322,7 @@ pub const SURFACE_CLICK_FORMS: &[&str] = &[
     "forall",
     "function",
     "if-expression",
+    "import",
     "implies",
     "let-where",
     "loadable",
@@ -401,6 +415,7 @@ fn check_verification_deadline() -> Result<(), ClickError> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClickFile {
+    imports: Vec<ImportDeclaration>,
     verifying_sources: Vec<String>,
     algebraic_type_definitions: Vec<AlgebraicTypeDefinition>,
     predicate_definitions: Vec<PredicateDefinition>,
@@ -409,6 +424,114 @@ pub struct ClickFile {
     theorem_definitions: Vec<TheoremDefinition>,
     contract_definitions: Vec<ContractDefinition>,
     function_blocks: Vec<FunctionBlock>,
+    /// Canonical project-relative owner of every declaration in this resolved
+    /// file. Surface names are intentionally unqualified in the first module
+    /// delivery; the owner keeps the internal identity qualified without
+    /// changing the language spelling.
+    declaration_owners: BTreeMap<DeclarationIdentity, String>,
+    /// The module whose proofs this resolved file selects. Imported modules
+    /// contribute declarations, never executable proof targets.
+    entry_module: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImportDeclaration {
+    path: String,
+    position: crate::source::SourcePosition,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum DeclarationIdentity {
+    AlgebraicType(String),
+    Predicate(String),
+    Function(String),
+    Resource(String),
+    Theorem(String),
+    Contract(String),
+    CFunction(String),
+}
+
+/// One canonical source file in a resolved local specification graph.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClickModuleSource {
+    identity: String,
+    source: String,
+    imports: Vec<String>,
+}
+
+impl ClickModuleSource {
+    pub fn new(
+        identity: impl Into<String>,
+        source: impl Into<String>,
+        imports: impl IntoIterator<Item = String>,
+    ) -> Self {
+        Self {
+            identity: identity.into(),
+            source: source.into(),
+            imports: imports.into_iter().collect(),
+        }
+    }
+
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub fn imports(&self) -> &[String] {
+        &self.imports
+    }
+}
+
+/// Immutable, canonical specification inputs for one entry module.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClickProject {
+    entry: String,
+    modules: Vec<ClickModuleSource>,
+}
+
+impl ClickProject {
+    pub fn new(
+        entry: impl Into<String>,
+        modules: impl IntoIterator<Item = ClickModuleSource>,
+    ) -> Self {
+        Self {
+            entry: entry.into(),
+            modules: modules.into_iter().collect(),
+        }
+    }
+
+    pub fn entry(&self) -> &str {
+        &self.entry
+    }
+
+    pub fn modules(&self) -> &[ClickModuleSource] {
+        &self.modules
+    }
+
+    pub fn entry_source(&self) -> Option<&str> {
+        self.modules
+            .iter()
+            .find(|module| module.identity == self.entry)
+            .map(|module| module.source.as_str())
+    }
+
+    /// Returns the same loaded graph with only the entry module text replaced.
+    /// Rewrite tools use this to re-check an expansion against unchanged imports.
+    pub fn with_entry_source(&self, source: impl Into<String>) -> Self {
+        let source = source.into();
+        let mut rewritten = self.clone();
+        if let Some(entry) = rewritten
+            .modules
+            .iter_mut()
+            .find(|module| module.identity == rewritten.entry)
+        {
+            entry.source = source;
+        }
+        rewritten
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4890,6 +5013,8 @@ pub struct VerifiedCTheorem {
     /// denotes a theorem assembled by a legacy internal path that has not yet
     /// crossed the shared verification boundary.
     pub artifact_identity: Option<verification::CProofArtifactIdentity>,
+    /// The CLI proof boundary under which this artifact was produced.
+    pub selection: Option<CProofSelection>,
     pub function_block: FunctionBlock,
     pub claim: VerifiedClaim,
     pub proof_kind: ProofKind,
@@ -4906,6 +5031,14 @@ pub struct VerifiedCTheorem {
     pub(crate) checked_proposition: Option<CCheckedFunctionProposition>,
     pub(crate) frontier_loop_clauses: Vec<StructuralClause>,
     pub(crate) frontier_loop_rules: Vec<CVerifiedLoopRule>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CProofSelection {
+    pub entry_module: Option<String>,
+    pub selected_proofs: Vec<String>,
+    pub assumed_theorems: Vec<String>,
+    pub assumed_functions: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4993,6 +5126,7 @@ fn current_timing_tactic() -> Option<TimingTacticContext> {
 #[derive(Clone)]
 pub struct C0VerificationSession {
     c_sources: Vec<(String, String)>,
+    click_project: Option<ClickProject>,
     pub(crate) prepared_imports: Option<Vec<crate::languages::c::compiler_import::PreparedCImport>>,
     baseline_file: ClickFile,
     verified_function_environment: CExecutionEnvironment,
@@ -5001,6 +5135,14 @@ pub struct C0VerificationSession {
 }
 
 impl ClickFile {
+    pub fn imports(&self) -> &[ImportDeclaration] {
+        &self.imports
+    }
+
+    pub(crate) fn entry_module(&self) -> Option<&str> {
+        self.entry_module.as_deref()
+    }
+
     pub fn verifying_sources(&self) -> &[String] {
         &self.verifying_sources
     }
@@ -5031,6 +5173,30 @@ impl ClickFile {
 
     pub fn function_blocks(&self) -> &[FunctionBlock] {
         &self.function_blocks
+    }
+
+    fn declaration_owner(&self, identity: &DeclarationIdentity) -> Option<&str> {
+        self.declaration_owners.get(identity).map(String::as_str)
+    }
+
+    fn theorem_is_selected(&self, name: &str) -> bool {
+        match &self.entry_module {
+            None => true,
+            Some(entry) => {
+                self.declaration_owner(&DeclarationIdentity::Theorem(name.to_string()))
+                    == Some(entry.as_str())
+            }
+        }
+    }
+}
+
+impl ImportDeclaration {
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn position(&self) -> &crate::source::SourcePosition {
+        &self.position
     }
 }
 

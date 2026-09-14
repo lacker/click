@@ -1123,6 +1123,84 @@ pub(super) fn pure_theorem_context(
     })
 }
 
+/// Lowers imported or otherwise unselected theorem statements into scoped
+/// certification assumptions. Proof bodies are intentionally ignored.
+pub(in crate::surface) fn assumed_theorem_certification_authorities(
+    theorems: &[TheoremDefinition],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<(String, Proposition, CVerifiedPureTheorem)>, ClickError> {
+    let mut assumptions = Vec::new();
+    for theorem in theorems {
+        if !theorem.type_parameters().is_empty()
+            || !theorem
+                .parameters()
+                .iter()
+                .all(|parameter| parameter.click_type() == &ClickType::C(C0Type::Int32))
+        {
+            continue;
+        }
+        let context =
+            pure_theorem_context(theorem, predicate_environment, click_function_environment)?;
+        let variables = theorem
+            .parameters()
+            .iter()
+            .map(|parameter| match context.values.get(parameter.name()) {
+                Some(CValue::Int32(Bitvector32Term::Variable(variable))) => Some(*variable),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+            .expect("the int32 parameter filter creates int32 variables");
+        for ensure in theorem.ensures() {
+            let Ensure::Proposition(surface_goal) = ensure.ensure() else {
+                continue;
+            };
+            let lowering_assumptions = assumptions_from_propositions(&context.requires);
+            let (conclusion, _) = lower_pure_theorem_proposition_recording_introductions(
+                theorem.name(),
+                surface_goal,
+                &lowering_assumptions,
+                &context.values,
+                &context.array_refs,
+                &BTreeMap::new(),
+                &context.integer_values,
+                &context.memory,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "could not lower assumed theorem `{}` conclusion: {message}",
+                    theorem.name()
+                ))
+            })?;
+            let Some(authority) = assume_universally_quantified_pure_implication(
+                context.requires.clone(),
+                conclusion.clone(),
+                variables.clone(),
+            ) else {
+                continue;
+            };
+            let fact = variables.iter().rev().fold(
+                context
+                    .requires
+                    .iter()
+                    .rev()
+                    .fold(conclusion, |body, requirement| {
+                        Proposition::Implies(Box::new(requirement.clone()), Box::new(body))
+                    }),
+                |body, variable| Proposition::ForAll {
+                    var: *variable,
+                    sort: Sort::CInt32,
+                    body: Box::new(body),
+                },
+            );
+            assumptions.push((theorem.name().to_string(), fact, authority));
+        }
+    }
+    Ok(assumptions)
+}
+
 fn pure_theorem_parameter_integer_values(
     parameters: &[FunctionParameter],
 ) -> crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression> {

@@ -62,6 +62,49 @@ pub(super) fn parse_file_items(source: &str) -> Result<ClickFile, ClickError> {
     parser.parse_file_items()
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn parse_file_items_for_module(
+    source: &str,
+    identity: &str,
+    imported_algebraic_types: &[AlgebraicTypeDefinition],
+    struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
+    union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
+    aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
+    aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
+    global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, GlobalArrayShape>>,
+    qualified_objects: BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>,
+    local_struct_pointers_by_function: BTreeMap<String, BTreeMap<String, String>>,
+) -> Result<ClickFile, ClickError> {
+    let mut parser = Parser::new_with_layouts_and_aggregate_objects(
+        source,
+        struct_layouts,
+        union_layouts,
+        aggregate_objects_by_function,
+        aggregate_array_objects_by_function,
+        global_array_shapes_by_function,
+    )?;
+    let filename: std::sync::Arc<str> = std::sync::Arc::from(identity);
+    for position in &mut parser.positions {
+        *position = crate::source::SourcePosition::with_origin(
+            position.line,
+            position.column,
+            filename.clone(),
+            position.line,
+        );
+    }
+    for definition in imported_algebraic_types {
+        for variant in definition.variants() {
+            parser.algebraic_variant_fields.insert(
+                (definition.name().to_string(), variant.name().to_string()),
+                variant.fields().to_vec(),
+            );
+        }
+    }
+    parser.qualified_objects = Some(qualified_objects);
+    parser.local_struct_pointers_by_function = local_struct_pointers_by_function;
+    parser.parse_file_items()
+}
+
 fn is_tactic_name(name: &str) -> bool {
     matches!(name, "auto" | "simp")
 }
@@ -574,6 +617,7 @@ impl Parser {
 
     fn parse_file_items(&mut self) -> Result<ClickFile, ClickError> {
         self.index_algebraic_variant_fields();
+        let mut imports = Vec::new();
         let mut verifying_sources = Vec::new();
         let mut algebraic_type_definitions = Vec::new();
         let mut predicate_definitions = Vec::new();
@@ -585,7 +629,9 @@ impl Parser {
         let mut function_blocks = Vec::new();
 
         while self.peek().is_some() {
-            if self.peek_ident() == Some("verifying") {
+            if self.peek_ident() == Some("import") {
+                imports.push(self.parse_import()?);
+            } else if self.peek_ident() == Some("verifying") {
                 verifying_sources.push(self.parse_verifying_source()?);
             } else if self.peek_ident() == Some("spec") {
                 algebraic_type_definitions.push(self.parse_algebraic_type_definition()?);
@@ -648,6 +694,7 @@ impl Parser {
         }
         self.position = end;
         let file = ClickFile {
+            imports,
             verifying_sources,
             algebraic_type_definitions,
             predicate_definitions,
@@ -656,8 +703,20 @@ impl Parser {
             theorem_definitions,
             contract_definitions,
             function_blocks,
+            declaration_owners: BTreeMap::new(),
+            entry_module: None,
         };
         Ok(file)
+    }
+
+    fn parse_import(&mut self) -> Result<ImportDeclaration, ClickError> {
+        let position = self
+            .here()
+            .unwrap_or_else(|| crate::source::SourcePosition::new(1, 1));
+        self.expect_ident_spelling("import")?;
+        let path = self.expect_string("Click module path")?;
+        self.expect(Token::Semicolon)?;
+        Ok(ImportDeclaration { path, position })
     }
 
     fn parse_contract_definition(&mut self) -> Result<ContractDefinition, ClickError> {

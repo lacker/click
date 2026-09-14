@@ -81,6 +81,7 @@ pub(in crate::surface) struct CSourceContext<'a> {
     prepared_by_source: Option<BTreeMap<&'a str, &'a PreparedCImport>>,
     prepared_project_identity: Option<String>,
     input_digest: [u8; 32],
+    specification_digest: Option<[u8; 32]>,
     view_semantics: ViewSemanticsMode,
     prepared_duplicates: bool,
     parsed_units: RefCell<BTreeMap<String, Arc<syntax::C0TranslationUnit>>>,
@@ -110,6 +111,7 @@ impl<'a> CSourceContext<'a> {
             prepared_by_source: None,
             prepared_project_identity: None,
             input_digest: digest_framed_parts(parts),
+            specification_digest: None,
             view_semantics,
             prepared_duplicates: false,
             parsed_units: RefCell::new(BTreeMap::new()),
@@ -177,6 +179,7 @@ impl<'a> CSourceContext<'a> {
             ),
             prepared_project_identity: Some(project_identity),
             input_digest: digest_framed_parts(identity_parts),
+            specification_digest: None,
             view_semantics,
             prepared_duplicates: duplicate_logical_source,
             parsed_units: RefCell::new(BTreeMap::new()),
@@ -188,7 +191,7 @@ impl<'a> CSourceContext<'a> {
     pub(in crate::surface) fn environment_identity(&self) -> CProofArtifactIdentity {
         CProofArtifactIdentity::for_components(
             self.input_digest,
-            [0; 32],
+            self.specification_digest.unwrap_or([0; 32]),
             crate::languages::c::target::CTarget::SUPPORTED.name(),
             self.view_semantics,
         )
@@ -198,16 +201,45 @@ impl<'a> CSourceContext<'a> {
         &self,
         click_source: &str,
     ) -> CProofArtifactIdentity {
-        let click_digest = digest_framed_parts([
-            b"click-sidecar-source-v1".as_slice(),
-            click_source.as_bytes(),
-        ]);
+        let click_digest = self.specification_digest.unwrap_or_else(|| {
+            digest_framed_parts([
+                b"click-sidecar-source-v1".as_slice(),
+                click_source.as_bytes(),
+            ])
+        });
         CProofArtifactIdentity::for_components(
             self.input_digest,
             click_digest,
             crate::languages::c::target::CTarget::SUPPORTED.name(),
             self.view_semantics,
         )
+    }
+
+    pub(in crate::surface) fn with_click_project(mut self, project: &ClickProject) -> Self {
+        let mut modules = project.modules().iter().collect::<Vec<_>>();
+        modules.sort_by_key(|module| module.identity());
+        let mut hasher = Sha256::new();
+        for part in [
+            b"click-specification-project-v1".as_slice(),
+            project.entry().as_bytes(),
+        ] {
+            hasher.update((part.len() as u64).to_be_bytes());
+            hasher.update(part);
+        }
+        for module in modules {
+            for part in [module.identity().as_bytes(), module.source().as_bytes()] {
+                hasher.update((part.len() as u64).to_be_bytes());
+                hasher.update(part);
+            }
+            let mut imports = module.imports().to_vec();
+            imports.sort();
+            for imported in imports {
+                hasher.update((imported.len() as u64).to_be_bytes());
+                hasher.update(imported.as_bytes());
+            }
+        }
+        self.specification_digest = Some(hasher.finalize().into());
+        self
     }
 
     pub(in crate::surface) fn view_semantics(&self) -> ViewSemanticsMode {
@@ -288,7 +320,10 @@ fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String
     }
 }
 
-fn collect_applied_theorems_from_proof(proof: &SourceProof, names: &mut BTreeSet<String>) {
+pub(in crate::surface) fn collect_applied_theorems_from_proof(
+    proof: &SourceProof,
+    names: &mut BTreeSet<String>,
+) {
     if let SourceProof::Script(tactics) = proof {
         collect_applied_theorems(tactics, names);
     }
@@ -380,51 +415,39 @@ fn record_theorem_certification_authority(
     }
 }
 
-/// The file's own theorems that this verification must prove: all of them, or
-/// for a targeted verification the dependency closure of the selected
-/// functions and theorem. Standard-library theorems are dependencies and are
-/// never selected.
+fn record_assumed_theorem_certification_authority(
+    assumed: Vec<(String, Proposition, CVerifiedPureTheorem)>,
+    facts: &mut BTreeMap<String, Vec<Proposition>>,
+    authorities: &mut BTreeMap<String, Vec<CVerifiedPureTheorem>>,
+) {
+    for (name, fact, authority) in assumed {
+        facts.entry(name.clone()).or_default().push(fact);
+        authorities.entry(name).or_default().push(authority);
+    }
+}
+
+/// The entry module's theorem proofs selected by the CLI scope. Imported
+/// theorem statements and unselected local statements are interfaces; using
+/// one does not recursively select its proof body.
 fn selected_theorem_definitions(
     file: &ClickFile,
     selected_functions: Option<&BTreeSet<String>>,
     verification_target: Option<&VerificationTarget>,
 ) -> Vec<TheoremDefinition> {
-    let definitions = file.theorem_definitions();
-    let Some(selected_functions) = selected_functions else {
-        return definitions.to_vec();
-    };
-    let mut required = BTreeSet::new();
-    for function in file.function_blocks() {
-        if selected_functions.contains(function.signature().name()) {
-            collect_function_theorem_dependencies(function, &mut required);
-        }
-    }
     if let Some(VerificationTarget::Theorem(name)) = verification_target {
-        required.insert(name.clone());
+        return file
+            .theorem_definitions()
+            .iter()
+            .filter(|definition| definition.name() == name && file.theorem_is_selected(name))
+            .cloned()
+            .collect();
     }
-
-    let definitions_by_name = definitions
-        .iter()
-        .map(|definition| (definition.name(), definition))
-        .collect::<BTreeMap<_, _>>();
-    let mut frontier = required.iter().cloned().collect::<Vec<_>>();
-    while let Some(name) = frontier.pop() {
-        let Some(definition) = definitions_by_name.get(name.as_str()) else {
-            continue;
-        };
-        let mut dependencies = BTreeSet::new();
-        for ensure in definition.ensures() {
-            collect_applied_theorems_from_proof(&ensure.proof, &mut dependencies);
-        }
-        for dependency in dependencies {
-            if required.insert(dependency.clone()) {
-                frontier.push(dependency);
-            }
-        }
+    if selected_functions.is_some() {
+        return Vec::new();
     }
-    definitions
+    file.theorem_definitions()
         .iter()
-        .filter(|definition| required.contains(definition.name()))
+        .filter(|definition| file.theorem_is_selected(definition.name()))
         .cloned()
         .collect()
 }
@@ -571,6 +594,86 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
     verify_click_file_theorems_with_environment(&file, Some(&function_environment))
 }
 
+pub(in crate::surface) fn verify_click_project_theorem(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+    theorem_name: &str,
+) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
+    let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+    verify_click_project_theorem_context(project, &sources, theorem_name)
+}
+
+pub(in crate::surface) fn verify_click_prepared_project_theorem(
+    project: &ClickProject,
+    imports: &[PreparedCImport],
+    theorem_name: &str,
+) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
+    let sources = CSourceContext::prepared(imports).with_click_project(project);
+    verify_click_project_theorem_context(project, &sources, theorem_name)
+}
+
+fn verify_click_project_theorem_context(
+    project: &ClickProject,
+    sources: &CSourceContext<'_>,
+    theorem_name: &str,
+) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
+    let file = resolve_click_project_context(project, sources)?;
+    if !file.theorem_is_selected(theorem_name) {
+        return Err(ClickError::new(format!(
+            "theorem `{theorem_name}` is declared by an imported module, not the selected entry module"
+        )));
+    }
+    let theorem = file
+        .theorem_definitions()
+        .iter()
+        .find(|definition| definition.name() == theorem_name)
+        .ok_or_else(|| ClickError::new(format!("unknown theorem `{theorem_name}`")))?;
+    let parsed_sources = parse_verified_sources_context(&file, sources)?;
+    let predicate_definitions = combined_predicate_definitions(&file)?;
+    let click_function_definitions = combined_click_function_definitions(&file)?;
+    let resource_definitions = combined_resource_definitions(&file)?;
+    let predicate_environment = PredicateEnvironment::new(&predicate_definitions)
+        .with_contracts(file.contract_definitions());
+    let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
+        &click_function_definitions,
+        &combined_algebraic_type_definitions(&file)?,
+    );
+    let resource_environment = ResourceEnvironment::new(&resource_definitions);
+    let external_and_user_function_blocks = combined_external_function_blocks(&file)?;
+    let mut function_environment = build_function_environment(
+        &parsed_sources,
+        &external_and_user_function_blocks,
+        file.contract_definitions(),
+        &predicate_environment,
+        &click_function_environment,
+        &resource_environment,
+        false,
+    )?;
+    for target in contract_refinement_targets(&file, theorem_name) {
+        let Some(function) = function_environment.get_function(&target).cloned() else {
+            continue;
+        };
+        if let Some(hypothesis) = crate::kernel::c_recursive_function_contract_hypothesis(function)
+        {
+            function_environment = function_environment.with_verified_function_rule(hypothesis);
+        }
+    }
+    let theorem_environment = TheoremEnvironment::new(
+        &standard_library_theorem_definitions()?
+            .iter()
+            .cloned()
+            .chain(file.theorem_definitions().iter().cloned())
+            .collect::<Vec<_>>(),
+    );
+    verify_concrete_theorem_definition(
+        theorem,
+        &predicate_environment,
+        &click_function_environment,
+        &theorem_environment,
+        Some(&function_environment),
+    )
+}
+
 fn contract_refinement_targets(file: &ClickFile, theorem_name: &str) -> BTreeSet<String> {
     let contract_names = file
         .contract_definitions()
@@ -682,6 +785,165 @@ pub fn verify_c0_sources(
     verify_c0_sources_in_mode(click_source, c_sources, ViewSemanticsMode::Legacy)
 }
 
+pub(in crate::surface) fn resolve_click_project_context(
+    project: &ClickProject,
+    sources: &CSourceContext<'_>,
+) -> Result<ClickFile, ClickError> {
+    let click_source = project
+        .entry_source()
+        .ok_or_else(|| ClickError::new(format!("missing entry module `{}`", project.entry())))?;
+    let (
+        struct_layouts,
+        union_layouts,
+        aggregate_objects,
+        aggregate_array_objects,
+        global_array_shapes,
+        qualified_objects,
+        local_struct_pointers,
+    ) = parse_c_layouts(click_source, sources)?;
+    modules::resolve_click_project_with_layouts(
+        project,
+        struct_layouts,
+        union_layouts,
+        aggregate_objects,
+        aggregate_array_objects,
+        global_array_shapes,
+        qualified_objects,
+        local_struct_pointers,
+    )
+}
+
+/// Verifies exactly the proofs owned by a loaded entry module. Imported
+/// theorem statements and declarations are available as conditional
+/// interfaces, but their proof bodies are not executed.
+pub fn verify_c0_project(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+        let file = resolve_click_project_context(project, &sources)?;
+        let source = project.entry_source().expect("resolved entry source");
+        verify_c0_sources_with_context(source, &sources, None, None, None, Some(file))
+            .map(|(verified, _)| verified)
+    })
+}
+
+/// Verifies an imported project under an explicit view-semantics mode.
+pub fn verify_c0_project_in_mode(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+    view_semantics: ViewSemanticsMode,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        let sources =
+            CSourceContext::bundle_with_mode(c_sources, view_semantics).with_click_project(project);
+        let file = resolve_click_project_context(project, &sources)?;
+        let source = project.entry_source().expect("resolved entry source");
+        let result = verify_c0_sources_with_context(source, &sources, None, None, None, Some(file))
+            .map(|(verified, _)| verified);
+        if let Err(error) = &result {
+            error.emit_timing_failure();
+        }
+        result
+    })
+}
+
+/// Verifies only the proof unit at an entry-module source location.
+pub fn verify_c0_project_at(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+    line: usize,
+    column: usize,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+        let file = resolve_click_project_context(project, &sources)?;
+        let source = project.entry_source().expect("resolved entry source");
+        let target = expansion::verification_target_at_file(source, &file, line, column)?;
+        verify_c0_sources_with_context(source, &sources, Some(target), None, None, Some(file))
+            .map(|(verified, _)| verified)
+    })
+}
+
+pub fn verify_c0_project_functions(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+    functions: impl IntoIterator<Item = String>,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let functions = functions.into_iter().collect::<BTreeSet<_>>();
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+        let file = resolve_click_project_context(project, &sources)?;
+        let source = project.entry_source().expect("resolved entry source");
+        verify_c0_sources_with_context(
+            source,
+            &sources,
+            Some(VerificationTarget::Functions(functions)),
+            None,
+            None,
+            Some(file),
+        )
+        .map(|(verified, _)| verified)
+    })
+}
+
+pub fn verify_c0_prepared_project(
+    project: &ClickProject,
+    imports: &[PreparedCImport],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::prepared(imports).with_click_project(project);
+        let file = resolve_click_project_context(project, &sources)?;
+        verify_c0_sources_with_context(
+            project.entry_source().expect("resolved entry source"),
+            &sources,
+            None,
+            None,
+            None,
+            Some(file),
+        )
+        .map(|(verified, _)| verified)
+    })
+}
+
+pub fn verify_c0_prepared_project_at(
+    project: &ClickProject,
+    imports: &[PreparedCImport],
+    line: usize,
+    column: usize,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::prepared(imports).with_click_project(project);
+        let file = resolve_click_project_context(project, &sources)?;
+        let source = project.entry_source().expect("resolved entry source");
+        let target = expansion::verification_target_at_file(source, &file, line, column)?;
+        verify_c0_sources_with_context(source, &sources, Some(target), None, None, Some(file))
+            .map(|(verified, _)| verified)
+    })
+}
+
+pub fn verify_c0_prepared_project_functions(
+    project: &ClickProject,
+    imports: &[PreparedCImport],
+    functions: impl IntoIterator<Item = String>,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let functions = functions.into_iter().collect::<BTreeSet<_>>();
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::prepared(imports).with_click_project(project);
+        let file = resolve_click_project_context(project, &sources)?;
+        verify_c0_sources_with_context(
+            project.entry_source().expect("resolved entry source"),
+            &sources,
+            Some(VerificationTarget::Functions(functions)),
+            None,
+            None,
+            Some(file),
+        )
+        .map(|(verified, _)| verified)
+    })
+}
+
 /// Verifies a source bundle under an explicit view-semantics mode.
 ///
 /// The fixture harnesses use this to run a whole corpus under the candidate
@@ -696,7 +958,7 @@ pub fn verify_c0_sources_in_mode(
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     instrumentation::with_default_tactic_limits(|| {
         let sources = CSourceContext::bundle_with_mode(c_sources, view_semantics);
-        let result = verify_c0_sources_with_context(click_source, &sources, None, None, None)
+        let result = verify_c0_sources_with_context(click_source, &sources, None, None, None, None)
             .map(|(verified, _)| verified);
         if let Err(error) = &result {
             error.emit_timing_failure();
@@ -713,7 +975,7 @@ pub fn verify_c0_prepared_sources(
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     instrumentation::with_default_tactic_limits(|| {
         let sources = CSourceContext::prepared(imports);
-        verify_c0_sources_with_context(click_source, &sources, None, None, None)
+        verify_c0_sources_with_context(click_source, &sources, None, None, None, None)
             .map(|(verified, _)| verified)
     })
 }
@@ -744,8 +1006,55 @@ pub(in crate::surface) fn verify_c0_sources_with_expansion_capture_context(
     expansion_capture: &mut ExpansionCapture,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     instrumentation::with_default_tactic_limits(|| {
-        verify_c0_sources_with_context(click_source, c_sources, None, None, Some(expansion_capture))
-            .map(|(verified, _)| verified)
+        verify_c0_sources_with_context(
+            click_source,
+            c_sources,
+            None,
+            None,
+            Some(expansion_capture),
+            None,
+        )
+        .map(|(verified, _)| verified)
+    })
+}
+
+pub(in crate::surface) fn verify_c0_project_with_expansion_capture(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+    expansion_capture: &mut ExpansionCapture,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+        let file = resolve_click_project_context(project, &sources)?;
+        verify_c0_sources_with_context(
+            project.entry_source().expect("resolved entry source"),
+            &sources,
+            None,
+            None,
+            Some(expansion_capture),
+            Some(file),
+        )
+        .map(|(verified, _)| verified)
+    })
+}
+
+pub(in crate::surface) fn verify_c0_prepared_project_with_expansion_capture(
+    project: &ClickProject,
+    imports: &[PreparedCImport],
+    expansion_capture: &mut ExpansionCapture,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::prepared(imports).with_click_project(project);
+        let file = resolve_click_project_context(project, &sources)?;
+        verify_c0_sources_with_context(
+            project.entry_source().expect("resolved entry source"),
+            &sources,
+            None,
+            None,
+            Some(expansion_capture),
+            Some(file),
+        )
+        .map(|(verified, _)| verified)
     })
 }
 
@@ -766,6 +1075,77 @@ pub fn c0_function_names(
         .iter()
         .map(|function| function.signature().name().to_string())
         .collect())
+}
+
+pub fn c0_project_function_names(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+) -> Result<Vec<String>, ClickError> {
+    let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+    Ok(resolve_click_project_context(project, &sources)?
+        .function_blocks()
+        .iter()
+        .map(|function| function.signature().name().to_string())
+        .collect())
+}
+
+pub fn c0_project_selected_proof_count(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+) -> Result<usize, ClickError> {
+    let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    Ok(file.function_blocks().len()
+        + file
+            .theorem_definitions()
+            .iter()
+            .filter(|theorem| file.theorem_is_selected(theorem.name()))
+            .count())
+}
+
+pub fn c0_project_selected_proof_names(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+) -> Result<Vec<String>, ClickError> {
+    let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    Ok(selected_entry_proof_names(&file))
+}
+
+pub fn c0_prepared_project_selected_proof_count(
+    project: &ClickProject,
+    imports: &[PreparedCImport],
+) -> Result<usize, ClickError> {
+    let sources = CSourceContext::prepared(imports).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    Ok(file.function_blocks().len()
+        + file
+            .theorem_definitions()
+            .iter()
+            .filter(|theorem| file.theorem_is_selected(theorem.name()))
+            .count())
+}
+
+pub fn c0_prepared_project_selected_proof_names(
+    project: &ClickProject,
+    imports: &[PreparedCImport],
+) -> Result<Vec<String>, ClickError> {
+    let sources = CSourceContext::prepared(imports).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    Ok(selected_entry_proof_names(&file))
+}
+
+fn selected_entry_proof_names(file: &ClickFile) -> Vec<String> {
+    file.theorem_definitions()
+        .iter()
+        .filter(|theorem| file.theorem_is_selected(theorem.name()))
+        .map(|theorem| format!("theorem:{}", theorem.name()))
+        .chain(
+            file.function_blocks()
+                .iter()
+                .map(|function| format!("function:{}", function.signature().name())),
+        )
+        .collect()
 }
 
 fn c0_imported_headers(
@@ -947,8 +1327,9 @@ pub fn c0_incremental_selection(
     })
 }
 
-/// Verifies a selected function set and its transitive callees in one native
-/// verifier transaction.
+/// Verifies exactly a selected function set in one native verifier
+/// transaction. Called-function contracts are scoped assumptions; their
+/// implementation proofs are not added to the selection.
 pub fn verify_c0_sources_functions(
     click_source: &str,
     c_sources: &[(&str, &str)],
@@ -976,6 +1357,7 @@ pub fn verify_c0_prepared_sources_functions(
             click_source,
             &sources,
             Some(VerificationTarget::Functions(functions)),
+            None,
             None,
             None,
         )
@@ -1039,11 +1421,12 @@ impl C0VerificationSession {
         instrumentation::with_default_tactic_limits(|| {
             let sources = CSourceContext::prepared_with_mode(imports, view_semantics);
             let (verified, verified_function_environment) =
-                verify_c0_sources_with_context(click_source, &sources, None, None, None)?;
+                verify_c0_sources_with_context(click_source, &sources, None, None, None, None)?;
             let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
             Ok((
                 Self {
                     c_sources: Vec::new(),
+                    click_project: None,
                     prepared_imports: Some(imports.to_vec()),
                     baseline_file,
                     verified_function_environment,
@@ -1062,7 +1445,7 @@ impl C0VerificationSession {
     ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
         let sources = CSourceContext::bundle_with_mode(c_sources, view_semantics);
         let (verified, verified_function_environment) =
-            verify_c0_sources_with_context(click_source, &sources, None, None, None)?;
+            verify_c0_sources_with_context(click_source, &sources, None, None, None, None)?;
         let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
         Ok((
             Self {
@@ -1070,6 +1453,7 @@ impl C0VerificationSession {
                     .iter()
                     .map(|(name, source)| ((*name).to_string(), (*source).to_string()))
                     .collect(),
+                click_project: None,
                 prepared_imports: None,
                 baseline_file,
                 verified_function_environment,
@@ -1078,6 +1462,70 @@ impl C0VerificationSession {
             },
             verified,
         ))
+    }
+
+    /// Starts a reusable verification session over a loaded Click module graph.
+    pub fn new_project(
+        project: &ClickProject,
+        c_sources: &[(&str, &str)],
+    ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
+        instrumentation::with_default_tactic_limits(|| {
+            let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+            let baseline_file = resolve_click_project_context(project, &sources)?;
+            let (verified, verified_function_environment) = verify_c0_sources_with_context(
+                project.entry_source().expect("resolved entry source"),
+                &sources,
+                None,
+                None,
+                None,
+                Some(baseline_file.clone()),
+            )?;
+            Ok((
+                Self {
+                    c_sources: c_sources
+                        .iter()
+                        .map(|(name, source)| ((*name).to_string(), (*source).to_string()))
+                        .collect(),
+                    click_project: Some(project.clone()),
+                    prepared_imports: None,
+                    baseline_file,
+                    verified_function_environment,
+                    environment_identity: sources.environment_identity(),
+                    view_semantics: sources.view_semantics(),
+                },
+                verified,
+            ))
+        })
+    }
+
+    pub fn new_prepared_project(
+        project: &ClickProject,
+        imports: &[PreparedCImport],
+    ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
+        instrumentation::with_default_tactic_limits(|| {
+            let sources = CSourceContext::prepared(imports).with_click_project(project);
+            let baseline_file = resolve_click_project_context(project, &sources)?;
+            let (verified, verified_function_environment) = verify_c0_sources_with_context(
+                project.entry_source().expect("resolved entry source"),
+                &sources,
+                None,
+                None,
+                None,
+                Some(baseline_file.clone()),
+            )?;
+            Ok((
+                Self {
+                    c_sources: Vec::new(),
+                    click_project: Some(project.clone()),
+                    prepared_imports: Some(imports.to_vec()),
+                    baseline_file,
+                    verified_function_environment,
+                    environment_identity: sources.environment_identity(),
+                    view_semantics: sources.view_semantics(),
+                },
+                verified,
+            ))
+        })
     }
 
     /// Reports whether the kernel produced separate termination evidence for
@@ -1102,6 +1550,78 @@ impl C0VerificationSession {
     ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
         instrumentation::with_default_tactic_limits(|| {
             self.verify_at_with_limits(click_source, line, column)
+        })
+    }
+
+    /// Checks an entry-module rewrite against this session's unchanged imports.
+    pub fn verify_at_project(
+        &self,
+        click_source: &str,
+        line: usize,
+        column: usize,
+    ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+        let baseline_project = self.click_project.as_ref().ok_or_else(|| {
+            ClickError::new("verification session does not contain a Click module graph")
+        })?;
+        instrumentation::with_default_tactic_limits(|| {
+            let project = baseline_project.with_entry_source(click_source.to_string());
+            let c_sources = self
+                .c_sources
+                .iter()
+                .map(|(name, source)| (name.as_str(), source.as_str()))
+                .collect::<Vec<_>>();
+            let sources = if let Some(imports) = self.prepared_imports.as_ref() {
+                CSourceContext::prepared_with_mode(imports, self.view_semantics)
+                    .with_click_project(&project)
+            } else {
+                CSourceContext::bundle_with_mode(&c_sources, self.view_semantics)
+                    .with_click_project(&project)
+            };
+            let rewritten_file = resolve_click_project_context(&project, &sources)?;
+            let target = expansion::verification_target_at_file(
+                click_source,
+                &rewritten_file,
+                line,
+                column,
+            )?;
+            let target_exists_in_baseline = match &target {
+                VerificationTarget::Function(name) => self
+                    .baseline_file
+                    .function_blocks()
+                    .iter()
+                    .any(|function| function.signature().name() == name),
+                VerificationTarget::Theorem(name) => self.baseline_file.theorem_is_selected(name),
+                VerificationTarget::Functions(_) => false,
+            };
+            if !target_exists_in_baseline {
+                return Err(ClickError::new(
+                    "rewritten source location resolves to a proof unit absent from the baseline",
+                ));
+            }
+            if proof_unit_erased_click_file(rewritten_file.clone(), &target)
+                != proof_unit_erased_click_file(self.baseline_file.clone(), &target)
+            {
+                return Err(ClickError::new(
+                    "rewritten sidecar changed source outside the selected proof unit",
+                ));
+            }
+            let initial_environment = match &target {
+                VerificationTarget::Function(function_name) => Some(
+                    self.verified_function_environment
+                        .clone()
+                        .without_verified_function_rule(function_name),
+                ),
+                VerificationTarget::Theorem(_) | VerificationTarget::Functions(_) => None,
+            };
+            verify_c0_sources_with_context(
+                click_source,
+                &sources,
+                Some(target),
+                initial_environment,
+                None,
+                Some(rewritten_file),
+            )
+            .map(|(verified, _)| verified)
         })
     }
 
@@ -1160,6 +1680,7 @@ impl C0VerificationSession {
                 &sources,
                 Some(target),
                 initial_environment,
+                None,
                 None,
             )
             .map(|(verified, _)| verified)
@@ -1221,6 +1742,7 @@ impl C0VerificationSession {
             Some(target),
             initial_environment,
             None,
+            None,
         )
         .map(|(verified, _)| verified)
     }
@@ -1249,7 +1771,7 @@ pub fn verify_c0_prepared_sources_at(
     instrumentation::with_default_tactic_limits(|| {
         let sources = CSourceContext::prepared(imports);
         let target = verification_target_at_context(click_source, &sources, line, column)?;
-        verify_c0_sources_with_context(click_source, &sources, Some(target), None, None)
+        verify_c0_sources_with_context(click_source, &sources, Some(target), None, None, None)
             .map(|(verified, _)| verified)
     })
 }
@@ -1277,6 +1799,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
         verification_target,
         initial_function_environment,
         expansion_capture,
+        None,
     )
 }
 
@@ -1286,6 +1809,7 @@ fn verify_c0_sources_with_context(
     verification_target: Option<VerificationTarget>,
     initial_function_environment: Option<CExecutionEnvironment>,
     mut expansion_capture: Option<&mut ExpansionCapture>,
+    resolved_file: Option<ClickFile>,
 ) -> Result<(Vec<VerifiedCTheorem>, CExecutionEnvironment), ClickError> {
     check_verification_deadline()?;
     // A verification that continues from an earlier one's environment shares
@@ -1309,16 +1833,20 @@ fn verify_c0_sources_with_context(
             local_struct_pointers,
         ) = parse_c_layouts(click_source, c_sources)?;
         let resource_struct_layouts = struct_layouts.clone();
-        let file = parser::parse_with_layouts_and_aggregate_objects(
-            click_source,
-            struct_layouts,
-            union_layouts,
-            aggregate_objects,
-            aggregate_array_objects,
-            global_array_shapes,
-            qualified_objects,
-            local_struct_pointers,
-        )?;
+        let file = match resolved_file {
+            Some(file) => file,
+            None => parser::parse_with_layouts_and_aggregate_objects(
+                click_source,
+                struct_layouts,
+                union_layouts,
+                aggregate_objects,
+                aggregate_array_objects,
+                global_array_shapes,
+                qualified_objects,
+                local_struct_pointers,
+            )?,
+        };
+        modules::reject_theorem_justification_cycles(&file)?;
         let parsed_sources = parse_verified_sources_context(&file, c_sources)?;
         let expansion_functions = expansion_capture
             .as_deref()
@@ -1335,37 +1863,20 @@ fn verify_c0_sources_with_context(
         } else {
             match verification_target.as_ref() {
                 Some(VerificationTarget::Function(function_name)) => {
-                    if initial_function_environment.is_some() {
-                        Some(BTreeSet::from([function_name.clone()]))
-                    } else {
-                        Some(verification_required_functions(
-                            &file,
-                            &parsed_sources,
-                            function_name,
-                        )?)
-                    }
+                    verification_required_functions(&file, &parsed_sources, function_name)?;
+                    Some(BTreeSet::from([function_name.clone()]))
                 }
                 Some(VerificationTarget::Functions(function_names)) => {
-                    let mut required = BTreeSet::new();
                     for function_name in function_names {
-                        required.extend(verification_required_functions(
-                            &file,
-                            &parsed_sources,
-                            function_name,
-                        )?);
+                        verification_required_functions(&file, &parsed_sources, function_name)?;
                     }
-                    Some(required)
+                    Some(function_names.clone())
                 }
                 Some(VerificationTarget::Theorem(theorem_name)) => {
-                    let mut required = BTreeSet::new();
                     for function_name in contract_refinement_targets(&file, theorem_name) {
-                        required.extend(verification_required_functions(
-                            &file,
-                            &parsed_sources,
-                            &function_name,
-                        )?);
+                        verification_required_functions(&file, &parsed_sources, &function_name)?;
                     }
-                    Some(required)
+                    Some(BTreeSet::new())
                 }
                 None => None,
             }
@@ -1414,6 +1925,18 @@ fn verify_c0_sources_with_context(
             selected_functions.as_ref(),
             verification_target.as_ref(),
         );
+        let selected_theorem_names = theorem_definitions
+            .iter()
+            .map(|theorem| theorem.name())
+            .collect::<BTreeSet<_>>();
+        let unselected_theorem_definitions = file
+            .theorem_definitions()
+            .iter()
+            .filter(|theorem| !selected_theorem_names.contains(theorem.name()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut theorem_dependencies = standard_library_theorems.to_vec();
+        theorem_dependencies.extend(unselected_theorem_definitions.iter().cloned());
         let predicate_environment = PredicateEnvironment::new(&predicate_definitions)
             .with_contracts(file.contract_definitions());
         let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
@@ -1451,38 +1974,47 @@ fn verify_c0_sources_with_context(
         )?;
         let mut function_environment =
             initial_function_environment.unwrap_or(built_function_environment);
-        // Verify the selected call-graph closure as one transaction. These
-        // crate-private rules are partial-contract hypotheses, not published
-        // results: every selected function below must still pass exact kernel
-        // certification before this function can return an environment.
+        // Contracts are declaration interfaces. A selected function receives
+        // every well-formed callee contract as a scoped assumption, while its
+        // own contract hypothesis supports the existing checked-recursion
+        // rule. Only rules for proofs completed below escape the transaction.
         for function_block in file.function_blocks() {
-            if selected_functions
-                .as_ref()
-                .is_some_and(|selected| !selected.contains(function_block.signature().name()))
-            {
-                continue;
-            }
             let Some(function) = function_environment
                 .get_function(function_block.signature().name())
                 .cloned()
             else {
                 continue;
             };
-            if let Some(hypothesis) =
-                crate::kernel::c_recursive_function_contract_hypothesis(function)
+            let selected = selected_functions
+                .as_ref()
+                .is_none_or(|selected| selected.contains(function_block.signature().name()));
+            if selected {
+                if let Some(hypothesis) =
+                    crate::kernel::c_recursive_function_contract_hypothesis(function)
+                {
+                    function_environment =
+                        function_environment.with_verified_function_rule(hypothesis);
+                }
+            } else if let Some(assumption) =
+                crate::kernel::c_unselected_function_contract_assumption(function)
             {
-                function_environment = function_environment.with_verified_function_rule(hypothesis);
+                function_environment = function_environment.with_external_function_rule(assumption);
             }
         }
         let verified_theorems = verify_theorem_definitions(
-            standard_library_theorems,
+            &theorem_dependencies,
             &theorem_definitions,
             &predicate_environment,
             &click_function_environment,
             Some(&function_environment),
             &resource_environment,
             function_source_registry.clone(),
-        )?;
+        )
+        .map_err(|error| {
+            file.entry_module().map_or(error.clone(), |identity| {
+                ClickError::new(format!("{identity}: {}", error.message()))
+            })
+        })?;
         let mut theorem_certification_facts = BTreeMap::<String, Vec<Proposition>>::new();
         let mut theorem_certification_authorities =
             BTreeMap::<String, Vec<CVerifiedPureTheorem>>::new();
@@ -1491,10 +2023,19 @@ fn verify_c0_sources_with_context(
             &mut theorem_certification_facts,
             &mut theorem_certification_authorities,
         );
+        record_assumed_theorem_certification_authority(
+            assumed_theorem_certification_authorities(
+                &unselected_theorem_definitions,
+                &predicate_environment,
+                &click_function_environment,
+            )?,
+            &mut theorem_certification_facts,
+            &mut theorem_certification_authorities,
+        );
         let theorem_environment = TheoremEnvironment::new(
             &standard_library_theorems
                 .iter()
-                .chain(&theorem_definitions)
+                .chain(file.theorem_definitions())
                 .cloned()
                 .collect::<Vec<_>>(),
         );
@@ -1530,6 +2071,30 @@ fn verify_c0_sources_with_context(
     // Standard-library theorems already checked for their certification
     // authority during this verification; see the certification loop below.
     let mut checked_standard_library_theorems = BTreeSet::<String>::new();
+    let unselected_function_names = selected_functions.as_ref().map(|selected| {
+        file.function_blocks()
+            .iter()
+            .filter(|function| !selected.contains(function.signature().name()))
+            .map(|function| function.signature().name().to_string())
+            .collect::<Vec<_>>()
+    });
+    let entry_module = file.entry_module().map(str::to_string);
+    let entry_theorem_names = file
+        .theorem_definitions()
+        .iter()
+        .filter(|theorem| file.theorem_is_selected(theorem.name()))
+        .map(|theorem| theorem.name().to_string())
+        .collect::<Vec<_>>();
+    let all_theorem_names = file
+        .theorem_definitions()
+        .iter()
+        .map(|theorem| theorem.name().to_string())
+        .collect::<Vec<_>>();
+    let all_function_names = file
+        .function_blocks()
+        .iter()
+        .map(|function| function.signature().name().to_string())
+        .collect::<Vec<_>>();
 
     for function_block in file.function_blocks {
         check_verification_deadline()?;
@@ -2288,6 +2853,13 @@ fn verify_c0_sources_with_context(
         check_verification_deadline()?;
     }
 
+    if let Some(unselected) = unselected_function_names {
+        for function_name in unselected {
+            function_environment = function_environment
+                .without_verified_function_rule(&function_name)
+                .without_external_function_rule(&function_name);
+        }
+    }
     let partial_rules = function_environment.verified_function_rules();
     let inline_bodies = function_environment.inline_body_functions();
     let termination_rules = c_verified_function_termination_rules(
@@ -2317,8 +2889,54 @@ fn verify_c0_sources_with_context(
         }
     }
     let artifact_identity = c_sources.artifact_identity(click_source);
+    let selected_proofs = match verification_target.as_ref() {
+        Some(VerificationTarget::Theorem(name)) => vec![format!("theorem:{name}")],
+        Some(VerificationTarget::Function(name)) => vec![format!("function:{name}")],
+        Some(VerificationTarget::Functions(names)) => names
+            .iter()
+            .map(|name| format!("function:{name}"))
+            .collect(),
+        None if expansion_capture.is_some() => selected_functions
+            .as_ref()
+            .into_iter()
+            .flatten()
+            .map(|name| format!("function:{name}"))
+            .collect(),
+        None => entry_theorem_names
+            .iter()
+            .map(|name| format!("theorem:{name}"))
+            .chain(
+                all_function_names
+                    .iter()
+                    .map(|name| format!("function:{name}")),
+            )
+            .collect(),
+    };
+    let selected_theorems = selected_proofs
+        .iter()
+        .filter_map(|proof| proof.strip_prefix("theorem:").map(str::to_string))
+        .collect::<BTreeSet<_>>();
+    let selected_function_names = selected_proofs
+        .iter()
+        .filter_map(|proof| proof.strip_prefix("function:").map(str::to_string))
+        .collect::<BTreeSet<_>>();
+    let selection = CProofSelection {
+        entry_module,
+        selected_proofs: selected_proofs.clone(),
+        assumed_theorems: all_theorem_names
+            .iter()
+            .filter(|name| !selected_theorems.contains(*name))
+            .cloned()
+            .collect(),
+        assumed_functions: all_function_names
+            .iter()
+            .filter(|name| !selected_function_names.contains(*name))
+            .cloned()
+            .collect(),
+    };
     for theorem in &mut verified {
         theorem.artifact_identity = Some(artifact_identity);
+        theorem.selection = Some(selection.clone());
     }
     Ok((verified, function_environment))
 }
@@ -2371,21 +2989,9 @@ pub(in crate::surface) fn tactic_expansion_required_functions(
         )));
     };
     let mut required = BTreeSet::new();
-    // Expansion is defined only for an already-correct complete proof unit.
-    // Capturing some post-execution tactics also legitimately continues past
-    // their source location before the surface certificate is complete. Load
-    // every callee of the selected function so capture and final rewritten
-    // verification use the same dependency closure. Unrelated functions are
-    // still excluded by this targeted traversal.
-    let mut pending = vec![kernel_name.clone()];
-    while let Some(dependency) = pending.pop() {
-        if !required.insert(dependency.clone()) {
-            continue;
-        }
-        if let Some((_, parsed)) = parsed_sources.get(&dependency) {
-            pending.extend(c0_statement_calls(parsed).into_iter().flatten());
-        }
-    }
+    // Expansion checks exactly the selected proof unit. Called-function
+    // contracts are interfaces and do not select their implementations.
+    required.insert(kernel_name.clone());
     required.insert(function_name);
     Ok(required)
 }
@@ -2517,6 +3123,24 @@ pub fn c0_external_dependencies(
     c0_external_dependencies_context(click_source, &sources)
 }
 
+pub fn c0_project_external_dependencies(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+) -> Result<BTreeMap<String, Vec<String>>, ClickError> {
+    let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    c0_external_dependencies_file(&file, &sources)
+}
+
+pub fn c0_prepared_project_external_dependencies(
+    project: &ClickProject,
+    imports: &[PreparedCImport],
+) -> Result<BTreeMap<String, Vec<String>>, ClickError> {
+    let sources = CSourceContext::prepared(imports).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    c0_external_dependencies_file(&file, &sources)
+}
+
 /// Reports the same explicit external-contract assumptions for compiler imports.
 pub fn c0_prepared_external_dependencies(
     click_source: &str,
@@ -2549,8 +3173,15 @@ fn c0_external_dependencies_context(
         qualified_objects,
         local_struct_pointers,
     )?;
-    let parsed_sources = parse_verified_sources_context(&file, sources)?;
-    let function_blocks = combined_external_function_blocks(&file)?;
+    c0_external_dependencies_file(&file, sources)
+}
+
+fn c0_external_dependencies_file(
+    file: &ClickFile,
+    sources: &CSourceContext<'_>,
+) -> Result<BTreeMap<String, Vec<String>>, ClickError> {
+    let parsed_sources = parse_verified_sources_context(file, sources)?;
+    let function_blocks = combined_external_function_blocks(file)?;
     let external_names = function_blocks
         .iter()
         .filter(|function| function.is_external())
@@ -3698,6 +4329,7 @@ pub(in crate::surface) fn parse_verified_sources(
                     .flat_map(|(path, source)| [path.as_bytes(), source.as_bytes()]),
             ),
         ),
+        specification_digest: None,
         view_semantics: ViewSemanticsMode::Legacy,
         prepared_duplicates: false,
         parsed_units: RefCell::new(BTreeMap::new()),
@@ -5600,7 +6232,7 @@ int32 answer() {
             &[("reader.c", source)],
             ViewSemanticsMode::StableLoans,
         );
-        verify_c0_sources_with_context(click, &sources, None, None, None).map(|_| ())
+        verify_c0_sources_with_context(click, &sources, None, None, None, None).map(|_| ())
     }
 
     /// A contract input view is caller-supplied shared authority: the body
@@ -5707,7 +6339,7 @@ int32 reader(int32 p[], int32 q[]) {
             &[("include/h.h", header), ("t.c", source)],
             ViewSemanticsMode::StableLoans,
         );
-        verify_c0_sources_with_context(click, &sources, None, None, None).map(|_| ())
+        verify_c0_sources_with_context(click, &sources, None, None, None, None).map(|_| ())
     }
 
     const INLINE_HELPERS: &str = "#ifndef H_H\n#define H_H\n\
@@ -5797,7 +6429,7 @@ int32 reader(int32 p[]) {
             &[("reader.c", source)],
             ViewSemanticsMode::StableLoans,
         );
-        let verified = verify_c0_sources_with_context(click, &sources, None, None, None)
+        let verified = verify_c0_sources_with_context(click, &sources, None, None, None, None)
             .expect("stable surface route should use candidate kernel semantics");
         assert!(!verified.0.is_empty());
         assert_eq!(
@@ -5844,7 +6476,7 @@ int read_view(const int *(*f)(const int *), const int *p) {{
             &[("main.c", ONE_CALL_THEOREM_C_SOURCE)],
             ViewSemanticsMode::StableLoans,
         );
-        let verified = verify_c0_sources_with_context(&click, &sources, None, None, None)
+        let verified = verify_c0_sources_with_context(&click, &sources, None, None, None, None)
             .expect("the one-call proof's own entry state certifies the theorem");
         assert!(!verified.0.is_empty());
     }
@@ -5862,7 +6494,7 @@ int read_view(const int *(*f)(const int *), const int *p) {{
             &[("main.c", ONE_CALL_THEOREM_C_SOURCE)],
             ViewSemanticsMode::StableLoans,
         );
-        let error = verify_c0_sources_with_context(&click, &sources, None, None, None)
+        let error = verify_c0_sources_with_context(&click, &sources, None, None, None, None)
             .expect_err("an unproved target obligation must still be refused");
         assert!(
             error

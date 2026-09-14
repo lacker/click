@@ -20,12 +20,10 @@ tree and produces another cannot state that without an abstract model.
 
 Fix what slows the work before completing the example:
 
-1. **Imports first.** The insert fixture is 6100 lines because a fixture
-   cannot import, so the whole pure library is copied in, re-verified on
-   every run, and outside audit's coverage. This issue depends on
-   [specification-imports.md](specification-imports.md), whose "not an MVR
-   dependency" note is withdrawn. C3 resumes only after the example can be
-   written as an `examples/` project that imports `examples/rbtree-model`.
+1. **Imports first: delivered.** `examples/rbtree-insert` now imports the
+   shared `examples/rbtree-model/rbtree_model.click`; its C is unchanged and
+   the unfinished proof remains an explicit negative frontier. The retained
+   import follow-ups do not block C3.
 2. **Diagnostics that point the wrong way** (package T9 below), since
    several resumptions lost their budget to them.
 3. **Efficiency next, if it stays on pace to be a problem.** `click verify`
@@ -38,8 +36,13 @@ Fix what slows the work before completing the example:
 
 ## State, 2026-09-13
 
-**The insert fixture**, `mdtests/rb_insert_color.md`: verbatim Linux
-`__rb_insert` and `rb_insert_color`, C untouched. The loop carries
+**The insert fixture**, `examples/rbtree-insert`: `rbtree.h` and
+`rb_insert_color.c` retain the verbatim Linux `__rb_insert` and
+`rb_insert_color` C formerly embedded in `mdtests/rb_insert_color.md`.
+`rbtree_insert.click` is a green import/load entry and does not claim the
+insert proof is complete. `rbtree_insert.frontier` imports the shared model
+and retains the complete contract and unfinished proof; a dedicated regression
+requires its bounded failure at statement 23. The loop carries
 `owns c: ctx_at(node, root); owns t: rb_at(node); decreases c;` with nine
 invariants in the frame-level form the C2c case theorems use:
 `is_rb(t.model) == 1` and `ctx_almost_rb_insert(c.model,
@@ -55,9 +58,10 @@ frontier report at statement 23 (`tmp = parent->rb_right`, red uncle
 skipped): "still ahead on this path: the body's end and 1 `break`. Already
 complete: 2 at a `break`". Remaining: the two recolour `continue`s, the two
 rotation `break`s, the body's end, the post-loop `simp()`, and
-`rb_insert_color`. `click verify` takes 5.8s wall; about 0.9s is the
-copied library, the rest is the body written once per frame combination.
-The fifth resumption's uncommitted draft (the red-uncle `Top` frame,
+`rb_insert_color`. The focused imported-frontier regression currently reaches
+the expected diagnostic in about 1.3s on a warm debug build; that timing is
+supporting evidence, not a new gate, and E1 still owns the per-frame proof
+duplication. The fifth resumption's branch draft (the red-uncle `Top` frame,
 reading `gparent->__rb_parent_color` after `gparent == cgp`) stopped on
 gap 72, a kernel read-permission bug; with it fixed the draft reaches
 statement 42, `augment_rotate(gparent, parent)`, in case 2.
@@ -100,14 +104,14 @@ kernel-scale-preprocessing). Uniform scoping: bb142e1c (theorem arguments,
 `instantiate`, `extract`), ad5c2307 (loop clauses), 2d96d5d7 (phase
 bodies), 99a07d5c (`using` premises in a `have` body).
 
-**Where to pick this up.** Paused 2026-09-13 with master at 08c78194.
-The fifth resumption's unfinished proof draft of the red-uncle path is
-committed, not green, on branch `claude/rsm-c3-insert-fixup-7`
-(388cb043); with gap 72 fixed it reaches statement 42, `augment_rotate` in
+**Where to pick this up.** I1 is complete as of 2026-09-13. The next C3 work
+starts from the imported frontier in `examples/rbtree-insert`, incorporating
+the useful proof progress from branch `claude/rsm-c3-insert-fixup-7`
+(388cb043) only after restoring a green checkpoint. That branch's unfinished
+red-uncle draft reaches statement 42, `augment_rotate` in
 case 2, so the next C3 resumption starts from that branch rather than from
-the fixture on master. The order of work is the priorities above: I1
-(imports) first, then E1 (per-frame duplication and verify time), then
-C3a through C3c. Each resumption so far was one Opus agent per package
+the old fixture. The order of work is now E1 (per-frame duplication and verify
+time), then C3a through C3c. Each resumption so far was one Opus agent per package
 with the orchestrator integrating; doing the packages directly works the
 same way, the packages below are written to be self-contained either way.
 
@@ -446,13 +450,13 @@ into contracts, lemmas, resources, tactics, lowering, or the kernel. No
 package creates issues. A package that hits a tooling failure listed in
 `AGENTS.md` stops and reports.
 
-**I1. Imports, first slice** (in
-[specification-imports.md](specification-imports.md)). One-level
-`import "path.click";` of pure declarations from a local file, loaded once;
-the importing sidecar alone selects `verifying` sources. Then convert the
-insert fixture into `examples/rbtree-insert` importing
-`examples/rbtree-model`, keeping `mdtests/rb_insert_color.md` only as a
-pointer or deleting it. Depends on nothing; C3a through C3c depend on it.
+**I1. Imports, first slice — complete 2026-09-13** (in
+[specification-imports.md](specification-imports.md)). Transitive
+`import "path.click";` declarations are loaded once; the importing entry alone
+selects proof obligations and `verifying` sources. The insert fixture is now
+`examples/rbtree-insert`, imports `examples/rbtree-model`, and retains the
+unfinished proof as an explicit negative frontier. The duplicated mdtest was
+deleted.
 
 **E1. Per-frame duplication and verify time.** Restate the fixup body's
 per-frame proofs as one theorem per case (D10 shape) so each path is
@@ -530,4 +534,3 @@ issue. Related: [algebraic-data-types.md](algebraic-data-types.md),
 [resource-algebra-extensions.md](resource-algebra-extensions.md),
 [memory-vs-resources.md](memory-vs-resources.md), and
 [recursion.md](recursion.md).
-

@@ -30,6 +30,7 @@ documentation inventory keep the following accepted words synchronized.
 
 | Words | Context and status |
 | --- | --- |
+| `import` | Loads declarations from a local Click module without selecting that module's proofs. |
 | `verifying` | C-source declaration. |
 | `predicate`, `function`, `theorem`, `contract` | Top-level logic and behavioral-interface declarations; `function` also starts a C contract. |
 | `executes` | Gives a contract-refinement theorem an explicit one-call execution frontier, over the theorem's callback parameter or a named project function. |
@@ -87,7 +88,8 @@ language-reference page:
 
 ```text
 click-file       := item*
-item             := verifying-declaration
+item             := import-declaration
+                  | verifying-declaration
                   | algebraic-declaration
                   | predicate-declaration
                   | function-declaration
@@ -96,6 +98,7 @@ item             := verifying-declaration
                   | named-contract-declaration
                   | c-function-contract
 verifying-declaration := "verifying" string-literal ";"
+import-declaration    := "import" string-literal ";"
 algebraic-declaration := "spec" "enum" identifier type-parameters?
                          "{" variant ("," variant)* ","? "}"
 type-parameters       := "<" identifier ("," identifier)* ">"

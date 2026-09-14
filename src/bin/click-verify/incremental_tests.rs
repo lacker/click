@@ -237,7 +237,7 @@ fn attestation_uses_verified_header_snapshot_after_files_change() {
     let project = header_project(true);
     project.commit();
     project.write("cap.h", "#define CAP 1\n");
-    let (click_source, inputs) = load_sidecar_inputs(&project.sidecar()).unwrap();
+    let (click_source, _, inputs) = load_sidecar_inputs(&project.sidecar()).unwrap();
     let CInput::Bundle(sources) = inputs else {
         panic!("test uses ordinary C inputs")
     };

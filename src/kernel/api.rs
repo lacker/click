@@ -5703,6 +5703,18 @@ pub(crate) fn prove_universally_quantified_pure_implication(
         .then(|| universally_close_pure_implication(requirements, conclusion, variables))?
 }
 
+/// Creates conditional authority for a theorem declaration supplied by an
+/// imported module. This is deliberately crate-private: it records an input
+/// assumption for contract certification and is never returned as a proved
+/// theorem artifact.
+pub(crate) fn assume_universally_quantified_pure_implication(
+    requirements: Vec<Proposition>,
+    conclusion: Proposition,
+    variables: Vec<Variable>,
+) -> Option<CVerifiedPureTheorem> {
+    universally_close_pure_implication(requirements, conclusion, variables)
+}
+
 /// Whether one completed proof is exactly a proof of `conclusion` from
 /// `requirements`.
 ///

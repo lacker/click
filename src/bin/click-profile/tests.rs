@@ -574,6 +574,17 @@ fn targets_prefer_example_projects_over_stray_markdown() {
         mdtests.iter().all(|path| looks_like_mdtest(path)),
         "{mdtests:?}"
     );
+    let imported_mdtest = mdtests
+        .iter()
+        .find(|path| path.ends_with("mdtests/specification_imports.md"))
+        .expect("import-backed markdown remains a profile target");
+    let imported_profile = profile_target(
+        imported_mdtest,
+        Thresholds::default(),
+        Duration::from_secs(30),
+    )
+    .expect("an import-backed mdtest should profile through the module graph");
+    assert_eq!(imported_profile.verification_failure, None);
 
     let sidecar = manifest.join("examples/input-cursor/input_cursor.click");
     assert_eq!(

@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use click::cli::{MdTestExpectation, read_mdtest, run_parallel};
+use click::cli::{MdTestExpectation, read_click_project, read_mdtest, run_parallel};
 use click::instrumentation::{self, ContractFallback};
-use click::surface::{ViewSemanticsMode, verify_c0_sources_in_mode};
+use click::surface::{ViewSemanticsMode, verify_c0_project_in_mode, verify_c0_sources_in_mode};
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const VIEW_SEMANTICS: &str = "CLICK_VIEW_SEMANTICS";
@@ -180,7 +180,12 @@ fn run_mdtest(path: &Path) -> Result<(), String> {
         .as_ref()
         .ok_or_else(|| format!("`{}` is missing a ```expect block", path.display()))?;
 
-    let result = verify_c0_sources_in_mode(click_source, &c_sources, view_semantics());
+    let result = if click_source.contains("import \"") {
+        let project = read_click_project(path, click_source)?;
+        verify_c0_project_in_mode(&project, &c_sources, view_semantics())
+    } else {
+        verify_c0_sources_in_mode(click_source, &c_sources, view_semantics())
+    };
     match (expectation, result) {
         (MdTestExpectation::Pass, Ok(_)) => {}
         (MdTestExpectation::Pass, Err(error)) => {

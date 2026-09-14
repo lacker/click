@@ -8,13 +8,18 @@ use std::time::{Duration, Instant};
 
 use click::cli::{
     self, CInput, MdTestExpectation, files_with_extension, find_mdtests, find_projects,
-    format_duration, looks_like_mdtest, parse_duration, read_c_inputs, shell_quote, source_refs,
+    format_duration, looks_like_mdtest, parse_duration, read_c_inputs, read_click_project,
+    shell_quote, source_refs,
 };
 use click::surface::{
-    C0VerificationSession, SourcePosition, c0_incremental_selection,
+    C0VerificationSession, ClickProject, SourcePosition, c0_incremental_selection,
+    c0_prepared_project_smart_tactic_source_sites, c0_prepared_project_tactic_source_position,
     c0_prepared_smart_tactic_source_sites, c0_prepared_tactic_source_position,
-    c0_smart_tactic_source_sites, c0_tactic_source_position, expand_c0_prepared_tactic_source_at,
-    expand_c0_tactic_source_at, verify_c0_prepared_sources_at, verify_c0_sources_at,
+    c0_project_smart_tactic_source_sites, c0_project_tactic_source_position,
+    c0_smart_tactic_source_sites, c0_tactic_source_position, click_import_sites,
+    expand_c0_prepared_project_tactic_source_at, expand_c0_prepared_tactic_source_at,
+    expand_c0_project_tactic_source_at, expand_c0_tactic_source_at, verify_c0_prepared_project_at,
+    verify_c0_prepared_sources_at, verify_c0_project_at, verify_c0_sources_at,
     verifying_source_paths,
 };
 
@@ -123,12 +128,14 @@ impl AuditSessionWorker {
         let started = Instant::now();
         let source = load_audit_source(click_path)?;
         let (session, _) = click::instrumentation::with_deadline(limit, || match &source.inputs {
-            CInput::Bundle(sources) => {
-                C0VerificationSession::new(&source.click_source, &source_refs(sources))
-            }
-            CInput::Prepared(imports) => {
-                C0VerificationSession::new_prepared(&source.click_source, imports)
-            }
+            CInput::Bundle(sources) => match &source.project {
+                Some(project) => C0VerificationSession::new_project(project, &source_refs(sources)),
+                None => C0VerificationSession::new(&source.click_source, &source_refs(sources)),
+            },
+            CInput::Prepared(imports) => match &source.project {
+                Some(project) => C0VerificationSession::new_prepared_project(project, imports),
+                None => C0VerificationSession::new_prepared(&source.click_source, imports),
+            },
         })
         .map_err(|error| error.message().to_string())?;
         ensure_phase_limit(
@@ -147,14 +154,25 @@ impl AuditSessionWorker {
     ) -> Result<Duration, String> {
         let start = Instant::now();
         click::instrumentation::with_deadline(limit, || match &self.source.inputs {
-            CInput::Bundle(_) => {
-                self.session
-                    .verify_at(click_source, position.line, position.column)
-            }
-            CInput::Prepared(_) => {
-                self.session
-                    .verify_at_prepared(click_source, position.line, position.column)
-            }
+            CInput::Bundle(_) => match &self.source.project {
+                Some(_) => {
+                    self.session
+                        .verify_at_project(click_source, position.line, position.column)
+                }
+                None => self
+                    .session
+                    .verify_at(click_source, position.line, position.column),
+            },
+            CInput::Prepared(_) => match &self.source.project {
+                Some(_) => {
+                    self.session
+                        .verify_at_project(click_source, position.line, position.column)
+                }
+                None => {
+                    self.session
+                        .verify_at_prepared(click_source, position.line, position.column)
+                }
+            },
         })
         .map_err(|error| error.message().to_string())?;
         let elapsed = start.elapsed();
@@ -604,10 +622,13 @@ fn audit_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
     let mdtests = path.join("mdtests");
     if examples.is_dir() && mdtests.is_dir() {
         let mut sources = audit_targets(&examples)?;
-        sources.extend(audit_targets(&mdtests)?);
+        sources.extend(find_mdtests(&mdtests)?);
         sources.sort();
         sources.dedup();
         return Ok(sources);
+    }
+    if path.is_dir() && directory_contains_mdtests(path)? {
+        return find_mdtests(path);
     }
     match find_projects(path) {
         Ok(projects) => {
@@ -635,11 +656,33 @@ fn audit_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
     }
 }
 
+fn directory_contains_mdtests(path: &Path) -> Result<bool, String> {
+    for markdown in files_with_extension(path, "md")? {
+        let source = fs::read_to_string(&markdown)
+            .map_err(|error| format!("failed to read `{}`: {error}", markdown.display()))?;
+        match cli::parse_mdtest(&markdown, &source) {
+            Ok(mdtest) if mdtest.click_source.is_some() && mdtest.expectation.is_some() => {
+                return Ok(true);
+            }
+            // Preserve the old behavior of surfacing malformed mdtests from
+            // an otherwise recognizable collection instead of silently
+            // reclassifying a directory as a Click project merely because it
+            // also contains imported `.click` support modules.
+            Err(_) if source.contains("```click") && source.contains("```expect") => {
+                return Ok(true);
+            }
+            Ok(_) | Err(_) => {}
+        }
+    }
+    Ok(false)
+}
+
 struct AuditSource {
     container_source: String,
     click_source: String,
     c_sources: Vec<(String, String)>,
     inputs: CInput,
+    project: Option<ClickProject>,
     line_offset: usize,
     mdtest: Option<cli::MdTest>,
 }
@@ -660,16 +703,32 @@ fn load_audit_source_from_text(
             .click_source
             .clone()
             .ok_or_else(|| format!("mdtest `{}` has no ```click block", path.display()))?;
+        let has_imports = !click_import_sites(&click_source)
+            .map_err(|error| {
+                format!(
+                    "could not read imports in mdtest `{}`: {}",
+                    path.display(),
+                    error.message()
+                )
+            })?
+            .is_empty();
+        let project = if !has_imports {
+            None
+        } else {
+            Some(read_click_project(path, &click_source)?)
+        };
         return Ok(AuditSource {
             container_source,
             click_source,
             c_sources: mdtest.c_sources.clone(),
             inputs: CInput::Bundle(mdtest.c_sources.clone()),
+            project,
             line_offset: mdtest.click_start_line.saturating_sub(1),
             mdtest: Some(mdtest),
         });
     }
     let inputs = read_c_inputs(path, &container_source)?;
+    let project = read_click_project(path, &container_source)?;
     let c_sources = match &inputs {
         CInput::Bundle(sources) => sources.clone(),
         CInput::Prepared(_) => Vec::new(),
@@ -679,6 +738,7 @@ fn load_audit_source_from_text(
         container_source,
         c_sources,
         inputs,
+        project: Some(project),
         line_offset: 0,
         mdtest: None,
     })
@@ -703,16 +763,21 @@ fn inventory_sites(sources: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
             click_source,
             c_sources: _,
             inputs,
+            project,
             line_offset,
             ..
         } = source;
         let syntactic_sites = match &inputs {
-            CInput::Bundle(sources) => {
-                c0_smart_tactic_source_sites(&click_source, &source_refs(sources))
-            }
-            CInput::Prepared(imports) => {
-                c0_prepared_smart_tactic_source_sites(&click_source, imports)
-            }
+            CInput::Bundle(sources) => match &project {
+                Some(project) => {
+                    c0_project_smart_tactic_source_sites(project, &source_refs(sources))
+                }
+                None => c0_smart_tactic_source_sites(&click_source, &source_refs(sources)),
+            },
+            CInput::Prepared(imports) => match &project {
+                Some(project) => c0_prepared_project_smart_tactic_source_sites(project, imports),
+                None => c0_prepared_smart_tactic_source_sites(&click_source, imports),
+            },
         }
         .map_err(|error| {
             format!(
@@ -723,18 +788,34 @@ fn inventory_sites(sources: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
         })?;
         for syntactic in syntactic_sites {
             let position = match &inputs {
-                CInput::Bundle(sources) => c0_tactic_source_position(
-                    &click_source,
-                    &source_refs(sources),
-                    &syntactic.claim_label,
-                    syntactic.source_index,
-                ),
-                CInput::Prepared(imports) => c0_prepared_tactic_source_position(
-                    &click_source,
-                    imports,
-                    &syntactic.claim_label,
-                    syntactic.source_index,
-                ),
+                CInput::Bundle(sources) => match &project {
+                    Some(project) => c0_project_tactic_source_position(
+                        project,
+                        &source_refs(sources),
+                        &syntactic.claim_label,
+                        syntactic.source_index,
+                    ),
+                    None => c0_tactic_source_position(
+                        &click_source,
+                        &source_refs(sources),
+                        &syntactic.claim_label,
+                        syntactic.source_index,
+                    ),
+                },
+                CInput::Prepared(imports) => match &project {
+                    Some(project) => c0_prepared_project_tactic_source_position(
+                        project,
+                        imports,
+                        &syntactic.claim_label,
+                        syntactic.source_index,
+                    ),
+                    None => c0_prepared_tactic_source_position(
+                        &click_source,
+                        imports,
+                        &syntactic.claim_label,
+                        syntactic.source_index,
+                    ),
+                },
             }
             .map_err(|error| {
                 format!(
@@ -1005,6 +1086,14 @@ fn load_baseline_audit_source(
     if looks_like_mdtest(path) {
         return load_audit_source_from_text(path, container_source).map(Some);
     }
+    if !click_import_sites(&container_source)
+        .map_err(|error| error.message().to_string())?
+        .is_empty()
+    {
+        // Historical graph loading needs every imported file at the selected
+        // revision. Falling back to the ordinary full audit is safe.
+        return Ok(None);
+    }
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let mut c_sources = Vec::new();
     for name in verifying_source_paths(&container_source).map_err(|error| {
@@ -1024,6 +1113,7 @@ fn load_baseline_audit_source(
         click_source: container_source.clone(),
         container_source,
         inputs: CInput::Bundle(c_sources.clone()),
+        project: None,
         c_sources,
         line_offset: 0,
         mdtest: None,
@@ -1188,11 +1278,8 @@ fn audit_site(
     }
     let expanded_click_source = rewritten_click_source(&worker.source, &expanded)
         .map_err(|error| format!("expanded proof container did not parse: {error}"))?;
-    let expanded_position = claim_source_position_for_inputs(
-        &expanded_click_source,
-        &worker.source.inputs,
-        &site.claim,
-    )?;
+    let expanded_position =
+        claim_source_position_for_source(&worker.source, &expanded_click_source, &site.claim)?;
 
     // Expansion can insert or remove lines at the selected tactic.  Resolve
     // the proof unit again by claim instead of sending its now-stale source
@@ -1370,15 +1457,31 @@ fn expand_location_with_source_parts(
         ));
     };
     let expanded_click = match &source.inputs {
-        CInput::Bundle(sources) => expand_c0_tactic_source_at(
-            &source.click_source,
-            &source_refs(sources),
-            click_line,
-            column,
-        ),
-        CInput::Prepared(imports) => {
-            expand_c0_prepared_tactic_source_at(&source.click_source, imports, click_line, column)
-        }
+        CInput::Bundle(sources) => match &source.project {
+            Some(project) => expand_c0_project_tactic_source_at(
+                project,
+                &source_refs(sources),
+                click_line,
+                column,
+            ),
+            None => expand_c0_tactic_source_at(
+                &source.click_source,
+                &source_refs(sources),
+                click_line,
+                column,
+            ),
+        },
+        CInput::Prepared(imports) => match &source.project {
+            Some(project) => {
+                expand_c0_prepared_project_tactic_source_at(project, imports, click_line, column)
+            }
+            None => expand_c0_prepared_tactic_source_at(
+                &source.click_source,
+                imports,
+                click_line,
+                column,
+            ),
+        },
     }
     .map_err(|error| error.message().to_string())?;
     if looks_like_mdtest(click_path) {
@@ -1402,21 +1505,36 @@ fn verify_rewritten_with_inputs(
     claim_label: &str,
     rewritten_click_source: &str,
 ) -> Result<(), String> {
-    let position =
-        claim_source_position_for_inputs(rewritten_click_source, &source.inputs, claim_label)?;
+    let position = claim_source_position_for_source(source, rewritten_click_source, claim_label)?;
     match &source.inputs {
-        CInput::Bundle(sources) => verify_c0_sources_at(
-            rewritten_click_source,
-            &source_refs(sources),
-            position.line,
-            position.column,
-        ),
-        CInput::Prepared(imports) => verify_c0_prepared_sources_at(
-            rewritten_click_source,
-            imports,
-            position.line,
-            position.column,
-        ),
+        CInput::Bundle(sources) => match &source.project {
+            Some(project) => verify_c0_project_at(
+                &project.with_entry_source(rewritten_click_source.to_string()),
+                &source_refs(sources),
+                position.line,
+                position.column,
+            ),
+            None => verify_c0_sources_at(
+                rewritten_click_source,
+                &source_refs(sources),
+                position.line,
+                position.column,
+            ),
+        },
+        CInput::Prepared(imports) => match &source.project {
+            Some(project) => verify_c0_prepared_project_at(
+                &project.with_entry_source(rewritten_click_source.to_string()),
+                imports,
+                position.line,
+                position.column,
+            ),
+            None => verify_c0_prepared_sources_at(
+                rewritten_click_source,
+                imports,
+                position.line,
+                position.column,
+            ),
+        },
     }
     .map(|_| ())
     .map_err(|error| error.message().to_string())
@@ -1427,7 +1545,35 @@ fn claim_source_position(
     source: &AuditSource,
     claim_label: &str,
 ) -> Result<SourcePosition, String> {
-    claim_source_position_for_inputs(&source.click_source, &source.inputs, claim_label)
+    claim_source_position_for_source(source, &source.click_source, claim_label)
+}
+
+fn claim_source_position_for_source(
+    source: &AuditSource,
+    click_source: &str,
+    claim_label: &str,
+) -> Result<SourcePosition, String> {
+    let position = match (&source.inputs, &source.project) {
+        (CInput::Bundle(sources), Some(project)) => c0_project_tactic_source_position(
+            &project.with_entry_source(click_source.to_string()),
+            &source_refs(sources),
+            claim_label,
+            0,
+        ),
+        (CInput::Prepared(imports), Some(project)) => c0_prepared_project_tactic_source_position(
+            &project.with_entry_source(click_source.to_string()),
+            imports,
+            claim_label,
+            0,
+        ),
+        _ => return claim_source_position_for_inputs(click_source, &source.inputs, claim_label),
+    };
+    position.map_err(|error| {
+        format!(
+            "could not locate `{claim_label}` in the rewritten sidecar: {}",
+            error.message()
+        )
+    })
 }
 
 fn claim_source_position_for_inputs(
@@ -1489,10 +1635,22 @@ fn reexpand_source_with_inputs(
     rewritten_click_source: &str,
     rewritten_container: &str,
 ) -> Result<String, String> {
-    let claim_sites = |source: &str, inputs: &CInput| {
+    let claim_sites = |source: &str, inputs: &CInput, project: Option<&ClickProject>| {
         let sites = match inputs {
-            CInput::Bundle(sources) => c0_smart_tactic_source_sites(source, &source_refs(sources)),
-            CInput::Prepared(imports) => c0_prepared_smart_tactic_source_sites(source, imports),
+            CInput::Bundle(sources) => match project {
+                Some(project) => c0_project_smart_tactic_source_sites(
+                    &project.with_entry_source(source.to_string()),
+                    &source_refs(sources),
+                ),
+                None => c0_smart_tactic_source_sites(source, &source_refs(sources)),
+            },
+            CInput::Prepared(imports) => match project {
+                Some(project) => c0_prepared_project_smart_tactic_source_sites(
+                    &project.with_entry_source(source.to_string()),
+                    imports,
+                ),
+                None => c0_prepared_smart_tactic_source_sites(source, imports),
+            },
         };
         sites
             .map(|sites| {
@@ -1509,8 +1667,16 @@ fn reexpand_source_with_inputs(
                 )
             })
     };
-    let original_sites = claim_sites(&original.click_source, &original.inputs)?;
-    let rewritten_sites = claim_sites(rewritten_click_source, &original.inputs)?;
+    let original_sites = claim_sites(
+        &original.click_source,
+        &original.inputs,
+        original.project.as_ref(),
+    )?;
+    let rewritten_sites = claim_sites(
+        rewritten_click_source,
+        &original.inputs,
+        original.project.as_ref(),
+    )?;
     let mut unmatched_original = original_sites.clone();
     let introduced = rewritten_sites.iter().find(|rewritten| {
         let Some(index) = unmatched_original

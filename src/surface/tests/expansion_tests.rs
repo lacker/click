@@ -199,13 +199,33 @@ fn assert_static_array_call_requirement_expands_and_deletion(fixture: &str, have
         .map(|offset| have_start + offset)
         .expect("the retained static Have should precede the call step");
     assert!(have_start < step_start, "{expanded}");
-    verify_c0_sources(&expanded, &c_sources)
-        .expect("expanded static-array proof should cold reverify");
+    let function_start = expanded
+        .find("int32 call_twice")
+        .expect("expanded source should retain the selected function");
+    let selected = expansion::position_at_offset(
+        &expanded,
+        function_start
+            + expanded[function_start..]
+                .find("step();")
+                .expect("expanded selected function should contain a tactic"),
+    );
+    verify_c0_sources_at(&expanded, &c_sources, selected.line, selected.column)
+        .expect("expanded static-array proof should cold reverify at the same selection");
 
     let mut without_have = expanded.clone();
     without_have.replace_range(have_start..step_start, "");
-    let error = verify_c0_sources(&without_have, &c_sources)
-        .expect_err("deleting the retained static Have must reject the call precondition");
+    let function_start = without_have
+        .find("int32 call_twice")
+        .expect("edited source should retain the selected function");
+    let selected = expansion::position_at_offset(
+        &without_have,
+        function_start
+            + without_have[function_start..]
+                .find("step();")
+                .expect("edited selected function should contain a tactic"),
+    );
+    let error = verify_c0_sources_at(&without_have, &c_sources, selected.line, selected.column)
+        .expect_err("deleting the retained static Have must reject the selected call precondition");
     assert!(
         error.unresolved_requirement().is_some(),
         "deleted static Have should expose the structured call requirement: {}",

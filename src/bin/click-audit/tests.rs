@@ -379,6 +379,7 @@ int32 example() {
         click_source: expanded,
         c_sources: vec![("example.c".to_string(), c_source.to_string())],
         inputs: CInput::Bundle(vec![("example.c".to_string(), c_source.to_string())]),
+        project: None,
         line_offset: 0,
         mdtest: None,
     };
@@ -457,6 +458,21 @@ fn repository_root_targets_examples_and_passing_mdtests() {
             .iter()
             .any(|path| path.ends_with("mdtests/scalar.md")),
         "passing mdtests must be included"
+    );
+    let imported_mdtest = targets
+        .iter()
+        .find(|path| path.ends_with("mdtests/specification_imports.md"))
+        .expect("import-backed mdtests must remain audit targets");
+    let direct_mdtest_targets =
+        audit_targets(&root.join("mdtests")).expect("the mdtest directory should stay selectable");
+    assert!(direct_mdtest_targets.contains(imported_mdtest));
+    let imported_sites = inventory_sites(std::slice::from_ref(imported_mdtest))
+        .expect("audit should resolve an mdtest's imported Click modules");
+    assert!(
+        imported_sites.iter().any(|site| {
+            site.claim.contains("imported_function_is_available") && site.tactic_name == "auto"
+        }),
+        "{imported_sites:?}"
     );
 }
 

@@ -22,9 +22,12 @@ Replace the following:
 
 ## Target selection
 
-A sidecar target verifies every claim in that sidecar and the C files named by
-its `verifying` declarations. A `PATH:LINE:COLUMN` target verifies only the
-proof unit containing that location and the C functions it calls.
+A sidecar target verifies every proof owned by that sidecar. A
+`PATH:LINE:COLUMN` target verifies only the proof unit containing that
+location. Imported declarations are available, but importing does not select
+their proof bodies; similarly, an unselected called C function contributes its
+well-formed contract without recursively selecting its implementation proof.
+The retained proof artifact records this selected/assumed boundary.
 
 For a directory, Click first treats the directory itself as a project when it
 contains sidecars. Otherwise, it discovers projects in immediate
@@ -51,6 +54,12 @@ only when the commit's sidecar, declared C sources, and transitively included
 local headers exactly match the inputs that were verified. An uncommitted
 header change cannot attest the original commit. Files changed after
 verification do not change which input snapshot the marker records.
+
+For a sidecar with Click imports, `--changed-since` currently uses the safe
+fallback: it rebuilds the selected entry scope whenever it runs and does not
+record a reusable incremental marker. Imported inputs are included in ordinary
+proof artifact identities. This conservative fallback never executes imported
+proof bodies merely because their declarations changed.
 
 A full rebuild checks theorem-only sidecars too, even though their selected
 C function count is zero. Once a baseline is attested, unchanged theorem-only
@@ -92,6 +101,15 @@ Verify one project and then all example projects:
 ```sh
 click verify examples/input-cursor
 click verify examples
+```
+
+The rbtree examples make the full scope explicit: the model is selected as its
+own theorem-only project, while the insert entry imports it without selecting
+it a second time.
+
+```sh
+click verify examples/rbtree-model
+click verify examples/rbtree-insert
 ```
 
 Explain incremental selection from the previous commit:

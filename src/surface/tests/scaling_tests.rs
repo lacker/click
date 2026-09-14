@@ -177,6 +177,123 @@ fn parametric_theorem_declarations_have_near_linear_checking_work() {
     assert_near_linear_scaling("parametric declarations", &samples);
 }
 
+#[test]
+fn transitive_module_chains_prepare_with_near_linear_deterministic_work() {
+    let mut samples = Vec::new();
+    for size in [4, 8, 16, 32] {
+        let mut modules = Vec::new();
+        modules.push(ClickModuleSource::new(
+            "module_0.click",
+            "function value_0(x: int32) -> int32 { x }",
+            [],
+        ));
+        for index in 1..size {
+            modules.push(ClickModuleSource::new(
+                format!("module_{index}.click"),
+                format!(
+                    "import \"module_{}.click\"; function value_{index}(x: int32) -> int32 {{ value_{}(x) }}",
+                    index - 1,
+                    index - 1
+                ),
+                [format!("module_{}.click", index - 1)],
+            ));
+        }
+        modules.push(ClickModuleSource::new(
+            "entry.click",
+            format!("import \"module_{}.click\";", size - 1),
+            [format!("module_{}.click", size - 1)],
+        ));
+        let project = ClickProject::new("entry.click", modules);
+        let (resolved, sample) = scaling_sample(size, || resolve_click_project(&project, &[]));
+        assert_eq!(
+            resolved
+                .expect("the module chain should resolve")
+                .click_function_definitions()
+                .len(),
+            size
+        );
+        samples.push(sample);
+    }
+    assert_near_linear_scaling("transitive Click module chains", &samples);
+}
+
+#[test]
+fn module_diamonds_prepare_shared_interfaces_once_per_selected_graph() {
+    let mut samples = Vec::new();
+    for width in [4, 8, 16, 32] {
+        let mut modules = vec![ClickModuleSource::new(
+            "shared.click",
+            "spec enum SharedValue { Value(int32), }",
+            [],
+        )];
+        let mut entry_imports = Vec::new();
+        let mut entry_source = String::new();
+        for index in 0..width {
+            let identity = format!("branch_{index}.click");
+            entry_source.push_str(&format!("import \"{identity}\";\n"));
+            entry_imports.push(identity.clone());
+            modules.push(ClickModuleSource::new(
+                identity,
+                format!(
+                    "import \"shared.click\"; function branch_{index}(x: SharedValue) -> SharedValue {{ x }}"
+                ),
+                ["shared.click".to_string()],
+            ));
+        }
+        modules.push(ClickModuleSource::new(
+            "entry.click",
+            entry_source,
+            entry_imports,
+        ));
+        let project = ClickProject::new("entry.click", modules);
+        let (resolved, sample) = scaling_sample(width, || resolve_click_project(&project, &[]));
+        let resolved = resolved.expect("the module diamond should resolve");
+        assert_eq!(resolved.algebraic_type_definitions().len(), 1);
+        assert_eq!(resolved.click_function_definitions().len(), width);
+        samples.push(sample);
+    }
+    assert_near_linear_scaling("Click module diamonds", &samples);
+}
+
+#[test]
+fn shared_imported_proof_bodies_stay_unselected_across_entry_scaling() {
+    let mut samples = Vec::new();
+    for entries in [2, 4, 8, 16] {
+        let (results, sample) = scaling_sample(entries, || {
+            super::super::proof::PROVED_THEOREMS.with(|proved| proved.borrow_mut().clear());
+            for index in 0..entries {
+                let project = ClickProject::new(
+                    format!("entry_{index}.click"),
+                    [
+                        ClickModuleSource::new(
+                            "shared.click",
+                            "theorem shared_false(x: int32) { ensures x == x + 1 by simp; }",
+                            [],
+                        ),
+                        ClickModuleSource::new(
+                            format!("entry_{index}.click"),
+                            format!(
+                                "import \"shared.click\"; theorem local_{index}(x: int32) {{ ensures x == x + 1 by {{ apply(shared_false(x)); assumption(); }} }}"
+                            ),
+                            ["shared.click".to_string()],
+                        ),
+                    ],
+                );
+                verify_c0_project(&project, &[])?;
+            }
+            Ok::<_, ClickError>(())
+        });
+        results.expect("every selected entry should assume the shared theorem statement");
+        super::super::proof::PROVED_THEOREMS.with(|proved| {
+            let proved = proved.borrow();
+            assert_eq!(proved.len(), entries);
+            assert!(proved.iter().all(|name| name.starts_with("local_")));
+        });
+        samples.push(sample);
+    }
+    assert_near_linear_scaling("shared imported theorem across selected entries", &samples);
+}
+
 #[derive(Clone, Debug)]
 struct ScalingSample {
     size: usize,

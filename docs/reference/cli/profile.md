@@ -18,6 +18,11 @@ the same extraction used by the mdtest gate. Profiling ignores quarantine so a
 specific quarantined fixture can be diagnosed. Each selected project receives
 its own deadline and report.
 
+For a sidecar with local Click imports, profiling loads the same transitive
+module graph as verification but executes and attributes only proof units
+owned by the selected entry. Profile the library file itself to measure its
+proofs.
+
 ## Options and defaults
 
 | Option | Default | Meaning |

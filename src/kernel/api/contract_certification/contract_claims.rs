@@ -2176,6 +2176,22 @@ pub(crate) fn c_recursive_function_contract_hypothesis(
     .then_some(CVerifiedFunctionRule { function })
 }
 
+/// Creates a scoped body-independent assumption for a concrete function whose
+/// proof is outside the current CLI selection. The interface is checked for
+/// complete, representable claims exactly like an `extern` declaration, but
+/// the caller must remove this rule before publishing the selected result's
+/// environment. This is the kernel boundary for conditional partial
+/// verification; it never certifies the unselected body.
+pub(crate) fn c_unselected_function_contract_assumption(
+    function: CFunction,
+) -> Option<CExternalFunctionRule> {
+    (!function.is_program_entry()
+        && function.opaque_contract_supported()
+        && !function.contract_claims().is_empty()
+        && function_contract_claims_are_complete(&function))
+    .then_some(CExternalFunctionRule { function })
+}
+
 /// Structural contract coverage is part of the rule boundary, not merely a
 /// convention of the surface lowering. A body-safety claim cannot stand in
 /// for an omitted postcondition. An explicitly declared mutable frame needs

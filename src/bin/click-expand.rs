@@ -7,13 +7,18 @@ use std::time::Duration;
 
 use click::cli::{
     CInput, DEFAULT_EXPANSION_TIME_LIMIT, looks_like_mdtest, parse_duration, parse_source_location,
-    read_c_inputs, read_mdtest, source_refs,
+    read_c_inputs, read_click_project, read_mdtest, source_refs,
 };
 use click::surface::{
-    c0_prepared_smart_tactic_source_sites, c0_prepared_tactic_source_position,
-    c0_smart_tactic_source_sites, c0_tactic_source_position, expand_c0_claim_source_by_label,
-    expand_c0_prepared_claim_source_by_label, expand_c0_prepared_tactic_source_at,
-    expand_c0_tactic_source_at, verify_c0_prepared_sources_at, verify_c0_sources_at,
+    ClickProject, c0_prepared_project_smart_tactic_source_sites,
+    c0_prepared_project_tactic_source_position, c0_prepared_smart_tactic_source_sites,
+    c0_prepared_tactic_source_position, c0_project_smart_tactic_source_sites,
+    c0_project_tactic_source_position, c0_smart_tactic_source_sites, c0_tactic_source_position,
+    expand_c0_claim_source_by_label, expand_c0_prepared_claim_source_by_label,
+    expand_c0_prepared_project_claim_source_by_label, expand_c0_prepared_project_tactic_source_at,
+    expand_c0_prepared_tactic_source_at, expand_c0_project_claim_source_by_label,
+    expand_c0_project_tactic_source_at, expand_c0_tactic_source_at, verify_c0_prepared_project_at,
+    verify_c0_prepared_sources_at, verify_c0_project_at, verify_c0_sources_at,
 };
 
 const USAGE: &str = "usage: click expand [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>:<line>:<column>\n       click expand --claim <LABEL> [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>\n\nExpansion is checked before output. With --in-place, the original is atomically replaced only after targeted verification succeeds.";
@@ -148,10 +153,17 @@ fn run_bounded(arguments: &Arguments) -> Result<String, String> {
         )
     })?;
     let inputs = read_c_inputs(&arguments.click_path, &click_source)?;
+    let project = read_click_project(&arguments.click_path, &click_source)?;
     let (claim, expanded) = generate_expansion(arguments.time_limit, || {
-        expand_selection(&click_source, &inputs, &arguments.selection)
+        expand_selection(Some(&project), &click_source, &inputs, &arguments.selection)
     })?;
-    verify_expansion(&expanded, &inputs, &claim, arguments.time_limit)?;
+    verify_expansion(
+        Some(&project),
+        &expanded,
+        &inputs,
+        &claim,
+        arguments.time_limit,
+    )?;
     Ok(expanded)
 }
 
@@ -182,39 +194,66 @@ fn run_mdtest(arguments: &Arguments) -> Result<String, String> {
             },
             Selection::Claim(claim) => Selection::Claim(claim.clone()),
         };
-        expand_selection(click_source, &inputs, &selection)
+        expand_selection(None, click_source, &inputs, &selection)
     })?;
-    verify_expansion(&expanded, &inputs, &claim, arguments.time_limit)?;
+    verify_expansion(None, &expanded, &inputs, &claim, arguments.time_limit)?;
     mdtest.replace_click_source(&markdown, &expanded)
 }
 
 fn expand_selection(
+    project: Option<&ClickProject>,
     click_source: &str,
     inputs: &CInput,
     selection: &Selection,
 ) -> Result<(String, String), String> {
     match selection {
         Selection::Tactic { line, column } => {
-            let claim = selected_claim(click_source, inputs, *line, *column)?;
+            let claim = selected_claim(project, click_source, inputs, *line, *column)?;
             let expanded = match inputs {
-                CInput::Bundle(sources) => {
-                    expand_c0_tactic_source_at(click_source, &source_refs(sources), *line, *column)
-                }
-                CInput::Prepared(imports) => {
-                    expand_c0_prepared_tactic_source_at(click_source, imports, *line, *column)
-                }
+                CInput::Bundle(sources) => match project {
+                    Some(project) => expand_c0_project_tactic_source_at(
+                        project,
+                        &source_refs(sources),
+                        *line,
+                        *column,
+                    ),
+                    None => expand_c0_tactic_source_at(
+                        click_source,
+                        &source_refs(sources),
+                        *line,
+                        *column,
+                    ),
+                },
+                CInput::Prepared(imports) => match project {
+                    Some(project) => expand_c0_prepared_project_tactic_source_at(
+                        project, imports, *line, *column,
+                    ),
+                    None => {
+                        expand_c0_prepared_tactic_source_at(click_source, imports, *line, *column)
+                    }
+                },
             }
             .map_err(|error| error.message().to_string())?;
             Ok((claim, expanded))
         }
         Selection::Claim(claim) => {
             let expanded = match inputs {
-                CInput::Bundle(sources) => {
-                    expand_c0_claim_source_by_label(click_source, &source_refs(sources), claim)
-                }
-                CInput::Prepared(imports) => {
-                    expand_c0_prepared_claim_source_by_label(click_source, imports, claim)
-                }
+                CInput::Bundle(sources) => match project {
+                    Some(project) => expand_c0_project_claim_source_by_label(
+                        project,
+                        &source_refs(sources),
+                        claim,
+                    ),
+                    None => {
+                        expand_c0_claim_source_by_label(click_source, &source_refs(sources), claim)
+                    }
+                },
+                CInput::Prepared(imports) => match project {
+                    Some(project) => {
+                        expand_c0_prepared_project_claim_source_by_label(project, imports, claim)
+                    }
+                    None => expand_c0_prepared_claim_source_by_label(click_source, imports, claim),
+                },
             }
             .map_err(|error| error.message().to_string())?;
             Ok((claim.clone(), expanded))
@@ -285,34 +324,55 @@ fn expansion_deadline_error(
 }
 
 fn selected_claim(
+    project: Option<&ClickProject>,
     click_source: &str,
     inputs: &CInput,
     line: usize,
     column: usize,
 ) -> Result<String, String> {
     let sites = match inputs {
-        CInput::Bundle(sources) => {
-            c0_smart_tactic_source_sites(click_source, &source_refs(sources))
-        }
-        CInput::Prepared(imports) => c0_prepared_smart_tactic_source_sites(click_source, imports),
+        CInput::Bundle(sources) => match project {
+            Some(project) => c0_project_smart_tactic_source_sites(project, &source_refs(sources)),
+            None => c0_smart_tactic_source_sites(click_source, &source_refs(sources)),
+        },
+        CInput::Prepared(imports) => match project {
+            Some(project) => c0_prepared_project_smart_tactic_source_sites(project, imports),
+            None => c0_prepared_smart_tactic_source_sites(click_source, imports),
+        },
     }
     .map_err(|error| error.message().to_string())?;
     sites
         .into_iter()
         .find_map(|site| {
             let position = match inputs {
-                CInput::Bundle(sources) => c0_tactic_source_position(
-                    click_source,
-                    &source_refs(sources),
-                    &site.claim_label,
-                    site.source_index,
-                ),
-                CInput::Prepared(imports) => c0_prepared_tactic_source_position(
-                    click_source,
-                    imports,
-                    &site.claim_label,
-                    site.source_index,
-                ),
+                CInput::Bundle(sources) => match project {
+                    Some(project) => c0_project_tactic_source_position(
+                        project,
+                        &source_refs(sources),
+                        &site.claim_label,
+                        site.source_index,
+                    ),
+                    None => c0_tactic_source_position(
+                        click_source,
+                        &source_refs(sources),
+                        &site.claim_label,
+                        site.source_index,
+                    ),
+                },
+                CInput::Prepared(imports) => match project {
+                    Some(project) => c0_prepared_project_tactic_source_position(
+                        project,
+                        imports,
+                        &site.claim_label,
+                        site.source_index,
+                    ),
+                    None => c0_prepared_tactic_source_position(
+                        click_source,
+                        imports,
+                        &site.claim_label,
+                        site.source_index,
+                    ),
+                },
             }
             .ok()?;
             (position.line == line && position.column == column).then_some(site.claim_label)
@@ -321,6 +381,7 @@ fn selected_claim(
 }
 
 fn verify_expansion(
+    project: Option<&ClickProject>,
     expanded: &str,
     inputs: &CInput,
     claim: &str,
@@ -334,27 +395,60 @@ fn verify_expansion(
             },
             || {
                 let position = match inputs {
-                    CInput::Bundle(sources) => {
-                        c0_tactic_source_position(expanded, &source_refs(sources), claim, 0)
-                    }
-                    CInput::Prepared(imports) => {
-                        c0_prepared_tactic_source_position(expanded, imports, claim, 0)
-                    }
+                    CInput::Bundle(sources) => match project {
+                        Some(project) => {
+                            let rewritten = project.with_entry_source(expanded.to_string());
+                            c0_project_tactic_source_position(
+                                &rewritten,
+                                &source_refs(sources),
+                                claim,
+                                0,
+                            )
+                        }
+                        None => {
+                            c0_tactic_source_position(expanded, &source_refs(sources), claim, 0)
+                        }
+                    },
+                    CInput::Prepared(imports) => match project {
+                        Some(project) => c0_prepared_project_tactic_source_position(
+                            &project.with_entry_source(expanded.to_string()),
+                            imports,
+                            claim,
+                            0,
+                        ),
+                        None => c0_prepared_tactic_source_position(expanded, imports, claim, 0),
+                    },
                 }
                 .map_err(|error| error.message().to_string())?;
                 let result = match inputs {
-                    CInput::Bundle(sources) => verify_c0_sources_at(
-                        expanded,
-                        &source_refs(sources),
-                        position.line,
-                        position.column,
-                    ),
-                    CInput::Prepared(imports) => verify_c0_prepared_sources_at(
-                        expanded,
-                        imports,
-                        position.line,
-                        position.column,
-                    ),
+                    CInput::Bundle(sources) => match project {
+                        Some(project) => verify_c0_project_at(
+                            &project.with_entry_source(expanded.to_string()),
+                            &source_refs(sources),
+                            position.line,
+                            position.column,
+                        ),
+                        None => verify_c0_sources_at(
+                            expanded,
+                            &source_refs(sources),
+                            position.line,
+                            position.column,
+                        ),
+                    },
+                    CInput::Prepared(imports) => match project {
+                        Some(project) => verify_c0_prepared_project_at(
+                            &project.with_entry_source(expanded.to_string()),
+                            imports,
+                            position.line,
+                            position.column,
+                        ),
+                        None => verify_c0_prepared_sources_at(
+                            expanded,
+                            imports,
+                            position.line,
+                            position.column,
+                        ),
+                    },
                 };
                 result
                     .map(|_| ())
@@ -751,6 +845,7 @@ int32 identity(int32 x) {
             || {
                 let inputs = CInput::Bundle(vec![("identity.c".to_string(), c_source.to_string())]);
                 verify_expansion(
+                    None,
                     click_source,
                     &inputs,
                     "identity.ensures_0",

@@ -23,6 +23,31 @@ pub fn verifying_source_paths(click_source: &str) -> Result<Vec<String>, ClickEr
     Ok(paths)
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClickImportSite {
+    pub path: String,
+    pub position: SourcePosition,
+}
+
+/// Finds top-level import declarations for the filesystem graph loader. Full
+/// syntax and interface validation still happens in the shared parser.
+pub fn click_import_sites(click_source: &str) -> Result<Vec<ClickImportSite>, ClickError> {
+    let tokens = scan_source_tokens(click_source)?;
+    let mut sites = Vec::new();
+    for window in tokens.windows(2) {
+        if window[0].text == "import"
+            && window[1].text.starts_with('"')
+            && window[1].text.ends_with('"')
+        {
+            sites.push(ClickImportSite {
+                path: window[1].text[1..window[1].text.len() - 1].to_string(),
+                position: position_at_offset(click_source, window[0].span.start),
+            });
+        }
+    }
+    Ok(sites)
+}
+
 /// Expands one claim and returns the rewritten source.
 ///
 /// The caller is responsible for verifying the returned sidecar.
@@ -64,6 +89,102 @@ pub fn expand_c0_claim_source(
         ProofSourceEdit::OmittedLoopPhase { .. } => {
             unreachable!("function claim edits are never loop phases")
         }
+    };
+    let mut expanded =
+        String::with_capacity(click_source.len() - (span.end - span.start) + replacement.len());
+    expanded.push_str(&click_source[..span.start]);
+    expanded.push_str(&replacement);
+    expanded.push_str(&click_source[span.end..]);
+    Ok(expanded)
+}
+
+fn expand_c0_project_claim_source(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+    function_name: &str,
+    claim: CProofClaim,
+) -> Result<String, ClickError> {
+    let click_source = project
+        .entry_source()
+        .ok_or_else(|| ClickError::new(format!("missing entry module `{}`", project.entry())))?;
+    let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    let tokens = scan_source_tokens(click_source)?;
+    let function = find_function(&tokens, function_name)?;
+    let function_block = file
+        .function_blocks()
+        .iter()
+        .find(|function| function.signature().name() == function_name)
+        .ok_or_else(|| ClickError::new(format!("unknown function `{function_name}`")))?;
+    let edit = if function_block.grouped_proof().is_some() || claim == CProofClaim::Grouped {
+        ProofSourceEdit::Explicit(find_grouped_proof_span(&tokens, &function)?)
+    } else {
+        find_claim_proof_edit(&tokens, &function, claim)?
+    };
+    let target = position_at_offset(click_source, edit.selector());
+    let verified = verify_c0_project_at(project, c_sources, target.line, target.column)?;
+    let theorem = select_expansion_theorem(&verified, function_name, claim)?;
+    let replacement = theorem.expanded_proof_source()?;
+    let span = edit.span();
+    let replacement = indent_replacement(click_source, span.start, &replacement);
+    let replacement = match edit {
+        ProofSourceEdit::Explicit(_) => replacement,
+        ProofSourceEdit::DefaultTerminator { .. } => {
+            let separator = click_source[..span.start]
+                .chars()
+                .next_back()
+                .is_some_and(|character| !character.is_whitespace());
+            format!("{}{replacement}", if separator { " " } else { "" })
+        }
+        ProofSourceEdit::OmittedLoopPhase { .. } => unreachable!(),
+    };
+    let mut expanded =
+        String::with_capacity(click_source.len() - (span.end - span.start) + replacement.len());
+    expanded.push_str(&click_source[..span.start]);
+    expanded.push_str(&replacement);
+    expanded.push_str(&click_source[span.end..]);
+    Ok(expanded)
+}
+
+fn expand_c0_prepared_project_claim_source(
+    project: &ClickProject,
+    imports: &[crate::languages::c::compiler_import::PreparedCImport],
+    function_name: &str,
+    claim: CProofClaim,
+) -> Result<String, ClickError> {
+    let click_source = project
+        .entry_source()
+        .ok_or_else(|| ClickError::new(format!("missing entry module `{}`", project.entry())))?;
+    let sources = CSourceContext::prepared(imports).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    let tokens = scan_source_tokens(click_source)?;
+    let function = find_function(&tokens, function_name)?;
+    let function_block = file
+        .function_blocks()
+        .iter()
+        .find(|function| function.signature().name() == function_name)
+        .ok_or_else(|| ClickError::new(format!("unknown function `{function_name}`")))?;
+    let edit = if function_block.grouped_proof().is_some() || claim == CProofClaim::Grouped {
+        ProofSourceEdit::Explicit(find_grouped_proof_span(&tokens, &function)?)
+    } else {
+        find_claim_proof_edit(&tokens, &function, claim)?
+    };
+    let target = position_at_offset(click_source, edit.selector());
+    let verified = verify_c0_prepared_project_at(project, imports, target.line, target.column)?;
+    let theorem = select_expansion_theorem(&verified, function_name, claim)?;
+    let replacement = theorem.expanded_proof_source()?;
+    let span = edit.span();
+    let replacement = indent_replacement(click_source, span.start, &replacement);
+    let replacement = match edit {
+        ProofSourceEdit::Explicit(_) => replacement,
+        ProofSourceEdit::DefaultTerminator { .. } => {
+            let separator = click_source[..span.start]
+                .chars()
+                .next_back()
+                .is_some_and(|character| !character.is_whitespace());
+            format!("{}{replacement}", if separator { " " } else { "" })
+        }
+        ProofSourceEdit::OmittedLoopPhase { .. } => unreachable!(),
     };
     let mut expanded =
         String::with_capacity(click_source.len() - (span.end - span.start) + replacement.len());
@@ -170,6 +291,66 @@ pub fn expand_c0_claim_source_by_label(
     )))
 }
 
+pub fn expand_c0_project_claim_source_by_label(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+    claim_label: &str,
+) -> Result<String, ClickError> {
+    project
+        .entry_source()
+        .ok_or_else(|| ClickError::new(format!("missing entry module `{}`", project.entry())))?;
+    let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    for theorem in file.theorem_definitions() {
+        if !file.theorem_is_selected(theorem.name()) {
+            continue;
+        }
+        for (index, ensure) in theorem.ensures().iter().enumerate() {
+            let label = ensure.name().map_or_else(
+                || format!("{}.ensures_{index}", theorem.name()),
+                |name| format!("{}.{name}", theorem.name()),
+            );
+            if label == claim_label {
+                return expand_project_pure_theorem_source(
+                    project,
+                    c_sources,
+                    theorem.name(),
+                    index,
+                );
+            }
+        }
+    }
+    for function in file.function_blocks() {
+        let function_name = function.signature().name();
+        if claim_label == format!("{function_name}.contract") && function.grouped_proof().is_some()
+        {
+            return expand_c0_project_claim_source(
+                project,
+                c_sources,
+                function_name,
+                CProofClaim::Grouped,
+            );
+        }
+        for (index, ensure) in function.ensures().iter().enumerate() {
+            let label = ensure.name().map_or_else(
+                || format!("{function_name}.ensures_{index}"),
+                |name| format!("{function_name}.{name}"),
+            );
+            if label == claim_label {
+                return expand_c0_project_claim_source(
+                    project,
+                    c_sources,
+                    function_name,
+                    CProofClaim::Ensure(index),
+                );
+            }
+        }
+    }
+    Err(ClickError::new(format!(
+        "could not locate function claim `{claim_label}`"
+    )))
+}
+
 pub fn expand_c0_prepared_claim_source_by_label(
     click_source: &str,
     imports: &[crate::languages::c::compiler_import::PreparedCImport],
@@ -224,6 +405,63 @@ pub fn expand_c0_prepared_claim_source_by_label(
     )))
 }
 
+pub fn expand_c0_prepared_project_claim_source_by_label(
+    project: &ClickProject,
+    imports: &[crate::languages::c::compiler_import::PreparedCImport],
+    claim_label: &str,
+) -> Result<String, ClickError> {
+    let sources = CSourceContext::prepared(imports).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    for theorem in file.theorem_definitions() {
+        if !file.theorem_is_selected(theorem.name()) {
+            continue;
+        }
+        for (index, ensure) in theorem.ensures().iter().enumerate() {
+            let label = ensure.name().map_or_else(
+                || format!("{}.ensures_{index}", theorem.name()),
+                |name| format!("{}.{name}", theorem.name()),
+            );
+            if label == claim_label {
+                return expand_prepared_project_pure_theorem_source(
+                    project,
+                    imports,
+                    theorem.name(),
+                    index,
+                );
+            }
+        }
+    }
+    for function in file.function_blocks() {
+        let function_name = function.signature().name();
+        if claim_label == format!("{function_name}.contract") && function.grouped_proof().is_some()
+        {
+            return expand_c0_prepared_project_claim_source(
+                project,
+                imports,
+                function_name,
+                CProofClaim::Grouped,
+            );
+        }
+        for (index, ensure) in function.ensures().iter().enumerate() {
+            let label = ensure.name().map_or_else(
+                || format!("{function_name}.ensures_{index}"),
+                |name| format!("{function_name}.{name}"),
+            );
+            if label == claim_label {
+                return expand_c0_prepared_project_claim_source(
+                    project,
+                    imports,
+                    function_name,
+                    CProofClaim::Ensure(index),
+                );
+            }
+        }
+    }
+    Err(ClickError::new(format!(
+        "could not locate function claim `{claim_label}`"
+    )))
+}
+
 pub use crate::source::SourcePosition;
 
 /// One source-selectable smart tactic in a parsed `.click` sidecar.
@@ -255,13 +493,40 @@ pub fn c0_prepared_smart_tactic_source_sites(
     c0_smart_tactic_source_sites_context(click_source, &sources)
 }
 
+pub fn c0_project_smart_tactic_source_sites(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+) -> Result<Vec<SmartTacticSourceSite>, ClickError> {
+    let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    c0_smart_tactic_source_sites_file(&file)
+}
+
+pub fn c0_prepared_project_smart_tactic_source_sites(
+    project: &ClickProject,
+    imports: &[crate::languages::c::compiler_import::PreparedCImport],
+) -> Result<Vec<SmartTacticSourceSite>, ClickError> {
+    let sources = CSourceContext::prepared(imports).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    c0_smart_tactic_source_sites_file(&file)
+}
+
 fn c0_smart_tactic_source_sites_context(
     click_source: &str,
     sources: &CSourceContext<'_>,
 ) -> Result<Vec<SmartTacticSourceSite>, ClickError> {
     let file = parse_source_with_c_layouts_context(click_source, sources)?;
+    c0_smart_tactic_source_sites_file(&file)
+}
+
+fn c0_smart_tactic_source_sites_file(
+    file: &ClickFile,
+) -> Result<Vec<SmartTacticSourceSite>, ClickError> {
     let mut sites = Vec::new();
     for theorem in file.theorem_definitions() {
+        if !file.theorem_is_selected(theorem.name()) {
+            continue;
+        }
         // These declarations are checked against kernel axioms, not expanded
         // by an implicit auto tactic. Keep genuine callback refinement proofs
         // (which run before the arithmetic-axiom branch) in the inventory.
@@ -488,10 +753,22 @@ pub(super) fn verification_target_at_context(
     line: usize,
     column: usize,
 ) -> Result<VerificationTarget, ClickError> {
+    let file = parse_source_with_c_layouts_context(click_source, c_sources)?;
+    verification_target_at_file(click_source, &file, line, column)
+}
+
+pub(in crate::surface) fn verification_target_at_file(
+    click_source: &str,
+    file: &ClickFile,
+    line: usize,
+    column: usize,
+) -> Result<VerificationTarget, ClickError> {
     let wanted = offset_at_position(click_source, line, column)?;
     let tokens = scan_source_tokens(click_source)?;
-    let file = parse_source_with_c_layouts_context(click_source, c_sources)?;
     for theorem in file.theorem_definitions() {
+        if !file.theorem_is_selected(theorem.name()) {
+            continue;
+        }
         let source = find_theorem(&tokens, theorem.name())?;
         if tokens[source.body_open].span.start <= wanted
             && wanted <= tokens[source.body_close].span.end
@@ -539,6 +816,15 @@ fn unparseable_expansion_error(
     replacement: &str,
     parse_error: ClickError,
 ) -> ClickError {
+    let file = parse_source_with_c_layouts_context(click_source, sources).ok();
+    unparseable_expansion_error_for_file(replacement, parse_error, file.as_ref())
+}
+
+fn unparseable_expansion_error_for_file(
+    replacement: &str,
+    parse_error: ClickError,
+    file: Option<&ClickFile>,
+) -> ClickError {
     if !UNSPELLABLE_POINTER_FORMS
         .iter()
         .any(|form| replacement.contains(form))
@@ -548,7 +834,7 @@ fn unparseable_expansion_error(
             parse_error.message()
         ));
     }
-    let witnesses = parse_source_with_c_layouts_context(click_source, sources)
+    let witnesses = file
         .map(|file| {
             file.resource_definitions()
                 .iter()
@@ -607,13 +893,45 @@ pub fn expand_c0_tactic_source_at(
     line: usize,
     column: usize,
 ) -> Result<String, ClickError> {
-    let selected = locate_source_tactic(click_source, c_sources, line, column)?;
+    expand_c0_tactic_source_at_context(None, click_source, c_sources, line, column)
+}
+
+pub fn expand_c0_project_tactic_source_at(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+    line: usize,
+    column: usize,
+) -> Result<String, ClickError> {
+    let click_source = project
+        .entry_source()
+        .ok_or_else(|| ClickError::new(format!("missing entry module `{}`", project.entry())))?;
+    expand_c0_tactic_source_at_context(Some(project), click_source, c_sources, line, column)
+}
+
+fn expand_c0_tactic_source_at_context(
+    project: Option<&ClickProject>,
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    line: usize,
+    column: usize,
+) -> Result<String, ClickError> {
+    let selected = if let Some(project) = project {
+        let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+        let file = resolve_click_project_context(project, &sources)?;
+        locate_source_tactic_file(click_source, &file, line, column)?
+    } else {
+        locate_source_tactic(click_source, c_sources, line, column)?
+    };
     if let ProofSite::TheoremEnsure {
         theorem_name,
         ensure_index,
     } = &selected.site
     {
-        return expand_pure_theorem_source(click_source, c_sources, theorem_name, *ensure_index);
+        return if let Some(project) = project {
+            expand_project_pure_theorem_source(project, c_sources, theorem_name, *ensure_index)
+        } else {
+            expand_pure_theorem_source(click_source, c_sources, theorem_name, *ensure_index)
+        };
     }
     if let (
         ProofSite::FunctionClaim {
@@ -623,22 +941,45 @@ pub fn expand_c0_tactic_source_at(
         TacticSourceEdit::WholeProof(_),
     ) = (&selected.site, &selected.edit)
     {
-        return expand_c0_claim_source(click_source, c_sources, function_name, *claim);
+        return if let Some(project) = project {
+            expand_c0_project_claim_source(project, c_sources, function_name, *claim)
+        } else {
+            expand_c0_claim_source(click_source, c_sources, function_name, *claim)
+        };
     }
     let replacement_tactics = match &selected.edit {
         TacticSourceEdit::Partial(_) | TacticSourceEdit::PartialProofClause(_) => {
-            super::proof::capture_c0_tactic_expansion(
-                click_source,
-                c_sources,
-                selected.site.clone(),
-                selected.source_index,
-            )?
+            if let Some(project) = project {
+                super::proof::capture_c0_project_tactic_expansion(
+                    project,
+                    c_sources,
+                    selected.site.clone(),
+                    selected.source_index,
+                )?
+            } else {
+                super::proof::capture_c0_tactic_expansion(
+                    click_source,
+                    c_sources,
+                    selected.site.clone(),
+                    selected.source_index,
+                )?
+            }
         }
-        TacticSourceEdit::WholeProof(_) => super::proof::capture_c0_proof_site_expansion(
-            click_source,
-            c_sources,
-            selected.site.clone(),
-        )?,
+        TacticSourceEdit::WholeProof(_) => {
+            if let Some(project) = project {
+                super::proof::capture_c0_project_proof_site_expansion(
+                    project,
+                    c_sources,
+                    selected.site.clone(),
+                )?
+            } else {
+                super::proof::capture_c0_proof_site_expansion(
+                    click_source,
+                    c_sources,
+                    selected.site.clone(),
+                )?
+            }
+        }
     };
     let (span, replacement) = match selected.edit {
         TacticSourceEdit::Partial(span) => (
@@ -708,12 +1049,30 @@ pub fn expand_c0_tactic_source_at(
     expanded.push_str(&click_source[..span.start]);
     expanded.push_str(&replacement);
     expanded.push_str(&click_source[span.end..]);
-    checked_expanded_source(
-        click_source,
-        &CSourceContext::bundle(c_sources),
-        &replacement,
-        expanded,
-    )
+    if let Some(project) = project {
+        let rewritten = project.with_entry_source(expanded.clone());
+        let sources = CSourceContext::bundle(c_sources).with_click_project(&rewritten);
+        match resolve_click_project_context(&rewritten, &sources) {
+            Ok(_) => Ok(expanded),
+            Err(error) => {
+                let original_sources =
+                    CSourceContext::bundle(c_sources).with_click_project(project);
+                let original = resolve_click_project_context(project, &original_sources).ok();
+                Err(unparseable_expansion_error_for_file(
+                    &replacement,
+                    error,
+                    original.as_ref(),
+                ))
+            }
+        }
+    } else {
+        checked_expanded_source(
+            click_source,
+            &CSourceContext::bundle(c_sources),
+            &replacement,
+            expanded,
+        )
+    }
 }
 
 /// Expands one tactic using compiler-prepared translation units throughout
@@ -724,19 +1083,51 @@ pub fn expand_c0_prepared_tactic_source_at(
     line: usize,
     column: usize,
 ) -> Result<String, ClickError> {
+    expand_c0_prepared_tactic_source_at_context(None, click_source, imports, line, column)
+}
+
+pub fn expand_c0_prepared_project_tactic_source_at(
+    project: &ClickProject,
+    imports: &[crate::languages::c::compiler_import::PreparedCImport],
+    line: usize,
+    column: usize,
+) -> Result<String, ClickError> {
+    let click_source = project
+        .entry_source()
+        .ok_or_else(|| ClickError::new(format!("missing entry module `{}`", project.entry())))?;
+    expand_c0_prepared_tactic_source_at_context(Some(project), click_source, imports, line, column)
+}
+
+fn expand_c0_prepared_tactic_source_at_context(
+    project: Option<&ClickProject>,
+    click_source: &str,
+    imports: &[crate::languages::c::compiler_import::PreparedCImport],
+    line: usize,
+    column: usize,
+) -> Result<String, ClickError> {
     let sources = CSourceContext::prepared(imports);
-    let selected = locate_source_tactic_context(click_source, &sources, line, column)?;
+    let selected = if let Some(project) = project {
+        let project_sources = CSourceContext::prepared(imports).with_click_project(project);
+        let file = resolve_click_project_context(project, &project_sources)?;
+        locate_source_tactic_file(click_source, &file, line, column)?
+    } else {
+        locate_source_tactic_context(click_source, &sources, line, column)?
+    };
     if let ProofSite::TheoremEnsure {
         theorem_name,
         ensure_index,
     } = &selected.site
     {
-        return expand_pure_theorem_source_context(
-            click_source,
-            &sources,
-            theorem_name,
-            *ensure_index,
-        );
+        return if let Some(project) = project {
+            expand_prepared_project_pure_theorem_source(
+                project,
+                imports,
+                theorem_name,
+                *ensure_index,
+            )
+        } else {
+            expand_pure_theorem_source_context(click_source, &sources, theorem_name, *ensure_index)
+        };
     }
     if let (
         ProofSite::FunctionClaim {
@@ -746,22 +1137,45 @@ pub fn expand_c0_prepared_tactic_source_at(
         TacticSourceEdit::WholeProof(_),
     ) = (&selected.site, &selected.edit)
     {
-        return expand_c0_prepared_claim_source(click_source, imports, function_name, *claim);
+        return if let Some(project) = project {
+            expand_c0_prepared_project_claim_source(project, imports, function_name, *claim)
+        } else {
+            expand_c0_prepared_claim_source(click_source, imports, function_name, *claim)
+        };
     }
     let replacement_tactics = match &selected.edit {
         TacticSourceEdit::Partial(_) | TacticSourceEdit::PartialProofClause(_) => {
-            super::proof::capture_c0_prepared_tactic_expansion(
-                click_source,
-                imports,
-                selected.site.clone(),
-                selected.source_index,
-            )?
+            if let Some(project) = project {
+                super::proof::capture_c0_prepared_project_tactic_expansion(
+                    project,
+                    imports,
+                    selected.site.clone(),
+                    selected.source_index,
+                )?
+            } else {
+                super::proof::capture_c0_prepared_tactic_expansion(
+                    click_source,
+                    imports,
+                    selected.site.clone(),
+                    selected.source_index,
+                )?
+            }
         }
-        TacticSourceEdit::WholeProof(_) => super::proof::capture_c0_prepared_proof_site_expansion(
-            click_source,
-            imports,
-            selected.site.clone(),
-        )?,
+        TacticSourceEdit::WholeProof(_) => {
+            if let Some(project) = project {
+                super::proof::capture_c0_prepared_project_proof_site_expansion(
+                    project,
+                    imports,
+                    selected.site.clone(),
+                )?
+            } else {
+                super::proof::capture_c0_prepared_proof_site_expansion(
+                    click_source,
+                    imports,
+                    selected.site.clone(),
+                )?
+            }
+        }
     };
     let (span, replacement) = match selected.edit {
         TacticSourceEdit::Partial(span) => (
@@ -810,7 +1224,25 @@ pub fn expand_c0_prepared_tactic_source_at(
     expanded.push_str(&click_source[..span.start]);
     expanded.push_str(&replacement);
     expanded.push_str(&click_source[span.end..]);
-    checked_expanded_source(click_source, &sources, &replacement, expanded)
+    if let Some(project) = project {
+        let rewritten = project.with_entry_source(expanded.clone());
+        let project_sources = CSourceContext::prepared(imports).with_click_project(&rewritten);
+        match resolve_click_project_context(&rewritten, &project_sources) {
+            Ok(_) => Ok(expanded),
+            Err(error) => {
+                let original_sources =
+                    CSourceContext::prepared(imports).with_click_project(project);
+                let original = resolve_click_project_context(project, &original_sources).ok();
+                Err(unparseable_expansion_error_for_file(
+                    &replacement,
+                    error,
+                    original.as_ref(),
+                ))
+            }
+        }
+    } else {
+        checked_expanded_source(click_source, &sources, &replacement, expanded)
+    }
 }
 
 fn expand_pure_theorem_source(
@@ -823,6 +1255,32 @@ fn expand_pure_theorem_source(
     expand_pure_theorem_source_context(click_source, &sources, theorem_name, ensure_index)
 }
 
+fn expand_project_pure_theorem_source(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+    theorem_name: &str,
+    ensure_index: usize,
+) -> Result<String, ClickError> {
+    let click_source = project
+        .entry_source()
+        .ok_or_else(|| ClickError::new(format!("missing entry module `{}`", project.entry())))?;
+    let verified = verify_click_project_theorem(project, c_sources, theorem_name)?;
+    rewrite_verified_pure_theorem(click_source, &verified, theorem_name, ensure_index)
+}
+
+fn expand_prepared_project_pure_theorem_source(
+    project: &ClickProject,
+    imports: &[crate::languages::c::compiler_import::PreparedCImport],
+    theorem_name: &str,
+    ensure_index: usize,
+) -> Result<String, ClickError> {
+    let click_source = project
+        .entry_source()
+        .ok_or_else(|| ClickError::new(format!("missing entry module `{}`", project.entry())))?;
+    let verified = verify_click_prepared_project_theorem(project, imports, theorem_name)?;
+    rewrite_verified_pure_theorem(click_source, &verified, theorem_name, ensure_index)
+}
+
 fn expand_pure_theorem_source_context(
     click_source: &str,
     sources: &CSourceContext<'_>,
@@ -830,6 +1288,15 @@ fn expand_pure_theorem_source_context(
     ensure_index: usize,
 ) -> Result<String, ClickError> {
     let verified = verify_click_theorems_with_context(click_source, sources)?;
+    rewrite_verified_pure_theorem(click_source, &verified, theorem_name, ensure_index)
+}
+
+fn rewrite_verified_pure_theorem(
+    click_source: &str,
+    verified: &[VerifiedPureTheorem],
+    theorem_name: &str,
+    ensure_index: usize,
+) -> Result<String, ClickError> {
     let tokens = scan_source_tokens(click_source)?;
     let theorem = verified
         .iter()
@@ -1292,10 +1759,22 @@ fn locate_source_tactic_context(
     line: usize,
     column: usize,
 ) -> Result<LocatedSourceTactic, ClickError> {
+    let file = parse_source_with_c_layouts_context(click_source, c_sources)?;
+    locate_source_tactic_file(click_source, &file, line, column)
+}
+
+fn locate_source_tactic_file(
+    click_source: &str,
+    file: &ClickFile,
+    line: usize,
+    column: usize,
+) -> Result<LocatedSourceTactic, ClickError> {
     let wanted = offset_at_position(click_source, line, column)?;
     let tokens = scan_source_tokens(click_source)?;
-    let file = parse_source_with_c_layouts_context(click_source, c_sources)?;
     for theorem in file.theorem_definitions() {
+        if !file.theorem_is_selected(theorem.name()) {
+            continue;
+        }
         let source = find_theorem(&tokens, theorem.name())?;
         for (ensure_index, ensure) in theorem.ensures().iter().enumerate() {
             let edit =
@@ -1493,15 +1972,59 @@ pub fn c0_prepared_tactic_source_position(
     c0_tactic_source_position_context(&sources, click_source, claim_label, source_index)
 }
 
+pub fn c0_project_tactic_source_position(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+    claim_label: &str,
+    source_index: usize,
+) -> Result<SourcePosition, ClickError> {
+    let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    c0_tactic_source_position_file(
+        &file,
+        project.entry_source().expect("resolved entry source"),
+        claim_label,
+        source_index,
+    )
+}
+
+pub fn c0_prepared_project_tactic_source_position(
+    project: &ClickProject,
+    imports: &[crate::languages::c::compiler_import::PreparedCImport],
+    claim_label: &str,
+    source_index: usize,
+) -> Result<SourcePosition, ClickError> {
+    let sources = CSourceContext::prepared(imports).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    c0_tactic_source_position_file(
+        &file,
+        project.entry_source().expect("resolved entry source"),
+        claim_label,
+        source_index,
+    )
+}
+
 fn c0_tactic_source_position_context(
     c_sources: &CSourceContext<'_>,
     click_source: &str,
     claim_label: &str,
     source_index: usize,
 ) -> Result<SourcePosition, ClickError> {
-    let tokens = scan_source_tokens(click_source)?;
     let file = parse_source_with_c_layouts_context(click_source, c_sources)?;
+    c0_tactic_source_position_file(&file, click_source, claim_label, source_index)
+}
+
+fn c0_tactic_source_position_file(
+    file: &ClickFile,
+    click_source: &str,
+    claim_label: &str,
+    source_index: usize,
+) -> Result<SourcePosition, ClickError> {
+    let tokens = scan_source_tokens(click_source)?;
     for theorem in file.theorem_definitions() {
+        if !file.theorem_is_selected(theorem.name()) {
+            continue;
+        }
         let source = find_theorem(&tokens, theorem.name())?;
         for (ensure_index, ensure) in theorem.ensures().iter().enumerate() {
             let label = ensure.name().map_or_else(

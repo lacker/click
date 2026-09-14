@@ -6,6 +6,7 @@
 //! durations, structured tactic budgets, project discovery, and a bounded
 //! worker pool.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -89,6 +90,7 @@ use crate::instrumentation::{TacticEvent, VerificationEvent};
 use crate::languages::c::compiler_import::PreparedCImport;
 use crate::languages::c::source as c_source;
 use crate::surface::verifying_source_paths;
+use crate::surface::{ClickModuleSource, ClickProject, click_import_sites};
 
 /// Parses a one-based `PATH:LINE:COLUMN` source location.
 ///
@@ -427,6 +429,191 @@ pub fn read_c_inputs(sidecar: &Path, click_source: &str) -> Result<CInput, Strin
         sidecar,
         click_source,
     )?))
+}
+
+/// Loads the entry sidecar and its transitive local Click imports once.
+///
+/// The nearest Git worktree root is the project root; outside Git, the entry
+/// file's directory is the root. This keeps ordinary single-directory uses
+/// configuration-free while allowing sibling example projects to share a
+/// module. Canonical paths enforce the boundary and deduplicate diamonds;
+/// project-relative identities keep diagnostics and artifacts deterministic
+/// across worktree locations.
+pub fn read_click_project(sidecar: &Path, click_source: &str) -> Result<ClickProject, String> {
+    let entry = fs::canonicalize(sidecar)
+        .map_err(|error| format!("failed to resolve `{}`: {error}", sidecar.display()))?;
+    let root = click_project_root(&entry)?;
+    let mut sources = BTreeMap::<PathBuf, String>::new();
+    sources.insert(entry.clone(), click_source.to_string());
+    let mut resolved_imports = BTreeMap::<PathBuf, Vec<PathBuf>>::new();
+    let mut state = BTreeMap::<PathBuf, u8>::new();
+    let mut stack = Vec::new();
+    load_click_module(
+        &entry,
+        &root,
+        &mut sources,
+        &mut resolved_imports,
+        &mut state,
+        &mut stack,
+    )?;
+    let identity = |path: &Path| -> Result<String, String> {
+        path.strip_prefix(&root)
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .map_err(|_| {
+                format!(
+                    "Click module `{}` is outside project root `{}`",
+                    path.display(),
+                    root.display()
+                )
+            })
+    };
+    let mut modules = Vec::with_capacity(sources.len());
+    for (path, source) in &sources {
+        let imports = resolved_imports
+            .get(path)
+            .into_iter()
+            .flatten()
+            .map(|imported| identity(imported))
+            .collect::<Result<Vec<_>, _>>()?;
+        modules.push(ClickModuleSource::new(
+            identity(path)?,
+            source.clone(),
+            imports,
+        ));
+    }
+    modules.sort_by(|left, right| left.identity().cmp(right.identity()));
+    Ok(ClickProject::new(identity(&entry)?, modules))
+}
+
+fn click_project_root(entry: &Path) -> Result<PathBuf, String> {
+    let parent = entry.parent().unwrap_or_else(|| Path::new("."));
+    for ancestor in parent.ancestors() {
+        if ancestor.join(".git").exists() {
+            return fs::canonicalize(ancestor).map_err(|error| {
+                format!(
+                    "failed to resolve Click project root `{}`: {error}",
+                    ancestor.display()
+                )
+            });
+        }
+    }
+    fs::canonicalize(parent).map_err(|error| {
+        format!(
+            "failed to resolve Click project root `{}`: {error}",
+            parent.display()
+        )
+    })
+}
+
+fn load_click_module(
+    path: &Path,
+    root: &Path,
+    sources: &mut BTreeMap<PathBuf, String>,
+    resolved_imports: &mut BTreeMap<PathBuf, Vec<PathBuf>>,
+    state: &mut BTreeMap<PathBuf, u8>,
+    stack: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    match state.get(path).copied() {
+        Some(2) => return Ok(()),
+        Some(1) => {
+            let start = stack
+                .iter()
+                .position(|candidate| candidate == path)
+                .unwrap_or(0);
+            let mut cycle = stack[start..]
+                .iter()
+                .map(|item| {
+                    item.strip_prefix(root)
+                        .unwrap_or(item)
+                        .display()
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            cycle.push(
+                path.strip_prefix(root)
+                    .unwrap_or(path)
+                    .display()
+                    .to_string(),
+            );
+            cycle.truncate(13);
+            return Err(format!("Click import cycle: {}", cycle.join(" -> ")));
+        }
+        _ => {}
+    }
+    if stack.len() >= 256 {
+        return Err(format!(
+            "Click import chain exceeds 256 modules while loading `{}`",
+            path.display()
+        ));
+    }
+    state.insert(path.to_path_buf(), 1);
+    stack.push(path.to_path_buf());
+    let source = sources
+        .get(path)
+        .cloned()
+        .ok_or_else(|| format!("Click module `{}` was not loaded", path.display()))?;
+    let sites = click_import_sites(&source).map_err(|error| {
+        format!(
+            "failed to scan imports in `{}`: {}",
+            path.display(),
+            error.message()
+        )
+    })?;
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut imports = Vec::with_capacity(sites.len());
+    for site in sites {
+        let candidate = parent.join(&site.path);
+        let imported = fs::canonicalize(&candidate).map_err(|error| {
+            format!(
+                "{}:{}:{}: failed to resolve import `{}` from `{}`: {error}",
+                path.display(),
+                site.position.line,
+                site.position.column,
+                site.path,
+                path.display()
+            )
+        })?;
+        if !imported.starts_with(root) {
+            return Err(format!(
+                "{}:{}:{}: import `{}` resolves outside project root `{}`",
+                path.display(),
+                site.position.line,
+                site.position.column,
+                site.path,
+                root.display()
+            ));
+        }
+        if imported
+            .extension()
+            .is_none_or(|extension| extension != "click")
+        {
+            return Err(format!(
+                "{}:{}:{}: import `{}` is not a `.click` module",
+                path.display(),
+                site.position.line,
+                site.position.column,
+                site.path
+            ));
+        }
+        if !sources.contains_key(&imported) {
+            let imported_source = fs::read_to_string(&imported).map_err(|error| {
+                format!(
+                    "failed to read imported module `{}`: {error}",
+                    imported.display()
+                )
+            })?;
+            sources.insert(imported.clone(), imported_source);
+        }
+        imports.push(imported.clone());
+        load_click_module(&imported, root, sources, resolved_imports, state, stack)?;
+    }
+    // Keep source order so the resolver can relate every canonical edge back
+    // to its exact import declaration. Graph traversal and artifact hashing
+    // sort their own copies where order must not affect meaning.
+    resolved_imports.insert(path.to_path_buf(), imports);
+    stack.pop();
+    state.insert(path.to_path_buf(), 2);
+    Ok(())
 }
 
 /// Borrows owned `(name, source)` pairs as the `&str` pairs the verification
@@ -1116,6 +1303,84 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["main.c", "include/types.h", "include/common.h"]
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn click_modules_load_transitively_with_stable_relative_identities() {
+        let root = std::env::temp_dir().join(format!(
+            "click-module-loading-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        fs::create_dir_all(root.join("models")).unwrap();
+        fs::write(
+            root.join("models/base.click"),
+            "function base(x: int32) -> int32 { x }",
+        )
+        .unwrap();
+        fs::write(
+            root.join("models/mid.click"),
+            "import \"base.click\"; function mid(x: int32) -> int32 { base(x) }",
+        )
+        .unwrap();
+        let entry = root.join("entry.click");
+        let source = "import \"models/mid.click\"; theorem ok() { ensures mid(0) == 0 by { unfold(mid(0)); unfold(base(0)); normalize(); } }";
+        fs::write(&entry, source).unwrap();
+        let project = read_click_project(&entry, source).unwrap();
+        assert_eq!(project.entry(), "entry.click");
+        assert_eq!(
+            project
+                .modules()
+                .iter()
+                .map(|module| module.identity())
+                .collect::<Vec<_>>(),
+            ["entry.click", "models/base.click", "models/mid.click"]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn click_module_loader_reports_missing_and_escaping_import_sites() {
+        let root = std::env::temp_dir().join(format!(
+            "click-module-errors-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let project_dir = root.join("project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let entry = project_dir.join("entry.click");
+        let missing = "\nimport \"missing.click\";";
+        fs::write(&entry, missing).unwrap();
+        let error = read_click_project(&entry, missing).unwrap_err();
+        assert!(error.contains("entry.click:2:1"), "{error}");
+        assert!(error.contains("missing.click"), "{error}");
+
+        fs::write(
+            root.join("outside.click"),
+            "theorem outside() { ensures 0 == 0 by simp; }",
+        )
+        .unwrap();
+        let escape = "import \"../outside.click\";";
+        fs::write(&entry, escape).unwrap();
+        let error = read_click_project(&entry, escape).unwrap_err();
+        assert!(error.contains("outside project root"), "{error}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn click_module_loader_rejects_cycles_before_parsing_proofs() {
+        let root = std::env::temp_dir().join(format!(
+            "click-module-cycle-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let a = root.join("a.click");
+        fs::write(&a, "import \"b.click\";").unwrap();
+        fs::write(root.join("b.click"), "import \"a.click\";").unwrap();
+        let error = read_click_project(&a, "import \"b.click\";").unwrap_err();
+        assert!(error.contains("a.click -> b.click -> a.click"), "{error}");
         fs::remove_dir_all(root).unwrap();
     }
 

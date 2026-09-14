@@ -9,14 +9,19 @@ use std::time::Duration;
 
 use click::cli::{
     CInput, DEFAULT_VERIFY_TIME_LIMIT, files_with_extension, find_projects, format_duration,
-    looks_like_source_location, parse_duration, parse_source_location, read_c_inputs, source_refs,
+    looks_like_source_location, parse_duration, parse_source_location, read_c_inputs,
+    read_click_project, source_refs,
 };
 use click::languages::c::source as c_source;
 use click::languages::c::target::CTarget;
+#[cfg(test)]
+use click::surface::verify_c0_sources;
 use click::surface::{
-    VerifiedCTheorem, c0_external_dependencies, c0_function_names, c0_incremental_selection,
-    c0_prepared_external_dependencies, verify_c0_prepared_sources, verify_c0_prepared_sources_at,
-    verify_c0_sources, verify_c0_sources_at, verify_c0_sources_functions, verifying_source_paths,
+    ClickProject, VerifiedCTheorem, c0_incremental_selection,
+    c0_prepared_project_external_dependencies, c0_prepared_project_selected_proof_count,
+    c0_project_external_dependencies, c0_project_selected_proof_count,
+    c0_project_selected_proof_names, verify_c0_prepared_project, verify_c0_prepared_project_at,
+    verify_c0_project, verify_c0_project_at, verify_c0_project_functions, verifying_source_paths,
 };
 
 const USAGE: &str = "\
@@ -24,9 +29,10 @@ usage: click verify [--time-limit <DURATION>] <sidecar.click>[:<line>:<column>]
        click verify [--time-limit <DURATION>] <project-directory|examples-directory>
        click verify --changed-since <REVISION> [--explain] <sidecar.click|directory>
 
-Verifies the whole sidecar, or, when a one-based :LINE:COLUMN suffix is
-supplied, only the proof unit containing that source location and the C
-functions it calls.
+Verifies proofs owned by the selected sidecar, or, when a one-based
+:LINE:COLUMN suffix is supplied, only the proof unit containing that source
+location. Imported declarations and unselected C function contracts are
+assumptions; their proof bodies are not recursively selected.
 
 Given a directory, verifies every sidecar in it: either the project directory
 itself when it holds sidecars, or each immediate subdirectory that does. This
@@ -183,7 +189,7 @@ fn verify_changed(
     for sidecar in sidecars {
         let sidecar = fs::canonicalize(&sidecar)
             .map_err(|error| format!("failed to resolve `{}`: {error}", sidecar.display()))?;
-        let (click_source, inputs) = load_sidecar_inputs(&sidecar)?;
+        let (click_source, project, inputs) = load_sidecar_inputs(&sidecar)?;
         if inputs.is_prepared() {
             return Err(
                 "`--changed-since` is not supported for compiler-prepared projects".to_string(),
@@ -203,9 +209,13 @@ fn verify_changed(
         } else {
             Vec::new()
         };
+        if let Some(reason) = imported_project_rebuild_reason(&project) {
+            full_rebuild = true;
+            reasons = vec![reason.to_string()];
+        }
         let (selected, reused) = if full_rebuild {
             (
-                c0_function_names(&click_source, &refs).map_err(click_message)?,
+                c0_project_selected_proof_names(&project, &refs).map_err(click_message)?,
                 Vec::new(),
             )
         } else if let Some((baseline_click, baseline_sources)) =
@@ -224,7 +234,7 @@ fn verify_changed(
                 "sidecar or one of its declared C sources is absent at the baseline".to_string(),
             );
             (
-                c0_function_names(&click_source, &refs).map_err(click_message)?,
+                c0_project_selected_proof_names(&project, &refs).map_err(click_message)?,
                 Vec::new(),
             )
         };
@@ -244,12 +254,13 @@ fn verify_changed(
             skipped += 1;
             continue;
         }
-        let dependencies = c0_external_dependencies(&click_source, &refs).map_err(click_message)?;
+        let dependencies =
+            c0_project_external_dependencies(&project, &refs).map_err(click_message)?;
         let verified_theorems = click::instrumentation::with_deadline(time_limit, || {
             if full_rebuild {
-                verify_c0_sources(&click_source, &refs)
+                verify_c0_project(&project, &refs)
             } else {
-                verify_c0_sources_functions(&click_source, &refs, selected.clone())
+                verify_c0_project_functions(&project, &refs, selected.clone())
             }
             .map_err(|error| {
                 format!(
@@ -262,6 +273,7 @@ fn verify_changed(
         })?;
         print_external_dependencies(&dependencies, &verified_theorems);
         if full_rebuild
+            && project.modules().len() == 1
             && let Err(message) = record_full_verification(
                 &sidecar,
                 &click_source,
@@ -282,6 +294,12 @@ fn verify_changed(
         );
     }
     Ok(())
+}
+
+fn imported_project_rebuild_reason(project: &ClickProject) -> Option<&'static str> {
+    (project.modules().len() > 1).then_some(
+        "the sidecar has Click imports; conservative import-aware rebuild of the selected entry scope",
+    )
 }
 
 fn click_message(error: click::surface::ClickError) -> String {
@@ -620,19 +638,20 @@ fn plural(count: usize) -> &'static str {
 }
 
 fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
-    let (click_source, inputs) = load_sidecar_inputs(click_path)?;
+    let (click_source, project, inputs) = load_sidecar_inputs(click_path)?;
     let dependencies = match &inputs {
         CInput::Bundle(sources) => {
-            c0_external_dependencies(&click_source, &source_refs(sources)).map_err(click_message)?
+            c0_project_external_dependencies(&project, &source_refs(sources))
+                .map_err(click_message)?
         }
         CInput::Prepared(imports) => {
-            c0_prepared_external_dependencies(&click_source, imports).map_err(click_message)?
+            c0_prepared_project_external_dependencies(&project, imports).map_err(click_message)?
         }
     };
     let verified = click::instrumentation::with_deadline(time_limit, || {
         let result = match &inputs {
-            CInput::Bundle(sources) => verify_c0_sources(&click_source, &source_refs(sources)),
-            CInput::Prepared(imports) => verify_c0_prepared_sources(&click_source, imports),
+            CInput::Bundle(sources) => verify_c0_project(&project, &source_refs(sources)),
+            CInput::Prepared(imports) => verify_c0_prepared_project(&project, imports),
         };
         result.map_err(|error| {
             format!(
@@ -644,7 +663,16 @@ fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
         })
     })?;
     print_external_dependencies(&dependencies, &verified);
+    let selected = match &inputs {
+        CInput::Bundle(sources) => c0_project_selected_proof_count(&project, &source_refs(sources))
+            .map_err(click_message)?,
+        CInput::Prepared(imports) => {
+            c0_prepared_project_selected_proof_count(&project, imports).map_err(click_message)?
+        }
+    };
+    println!("{selected} selected proof{} verified", plural(selected));
     if let CInput::Bundle(sources) = &inputs
+        && project.modules().len() == 1
         && let Err(message) = record_full_verification(click_path, &click_source, sources, &[])
     {
         eprintln!("click-verify: warning: could not record incremental baseline: {message}");
@@ -658,22 +686,23 @@ fn verify_location(
     column: usize,
     time_limit: Duration,
 ) -> Result<(), String> {
-    let (click_source, inputs) = load_sidecar_inputs(click_path)?;
+    let (_click_source, project, inputs) = load_sidecar_inputs(click_path)?;
     let dependencies = match &inputs {
         CInput::Bundle(sources) => {
-            c0_external_dependencies(&click_source, &source_refs(sources)).map_err(click_message)?
+            c0_project_external_dependencies(&project, &source_refs(sources))
+                .map_err(click_message)?
         }
         CInput::Prepared(imports) => {
-            c0_prepared_external_dependencies(&click_source, imports).map_err(click_message)?
+            c0_prepared_project_external_dependencies(&project, imports).map_err(click_message)?
         }
     };
     let verified = click::instrumentation::with_deadline(time_limit, || {
         let result = match &inputs {
             CInput::Bundle(sources) => {
-                verify_c0_sources_at(&click_source, &source_refs(sources), line, column)
+                verify_c0_project_at(&project, &source_refs(sources), line, column)
             }
             CInput::Prepared(imports) => {
-                verify_c0_prepared_sources_at(&click_source, imports, line, column)
+                verify_c0_prepared_project_at(&project, imports, line, column)
             }
         };
         result.map_err(|error| {
@@ -686,6 +715,7 @@ fn verify_location(
         })
     })?;
     print_external_dependencies(&dependencies, &verified);
+    println!("1 selected proof verified");
     Ok(())
 }
 
@@ -707,11 +737,12 @@ fn print_external_dependencies(
     }
 }
 
-fn load_sidecar_inputs(click_path: &Path) -> Result<(String, CInput), String> {
+fn load_sidecar_inputs(click_path: &Path) -> Result<(String, ClickProject, CInput), String> {
     let click_source = fs::read_to_string(click_path)
         .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
     let inputs = read_c_inputs(click_path, &click_source)?;
-    Ok((click_source, inputs))
+    let project = read_click_project(click_path, &click_source)?;
+    Ok((click_source, project, inputs))
 }
 
 #[cfg(test)]
@@ -766,6 +797,37 @@ mod tests {
                 changed_since: Some("HEAD~1".to_string()),
                 explain: true,
             })
+        );
+    }
+
+    #[test]
+    fn imported_projects_force_the_documented_selected_scope_rebuild() {
+        let project = ClickProject::new(
+            "entry.click",
+            [
+                click::surface::ClickModuleSource::new("library.click", "", []),
+                click::surface::ClickModuleSource::new(
+                    "entry.click",
+                    "import \"library.click\";",
+                    ["library.click".to_string()],
+                ),
+            ],
+        );
+        assert!(
+            imported_project_rebuild_reason(&project)
+                .unwrap()
+                .contains("selected entry scope")
+        );
+        assert!(
+            imported_project_rebuild_reason(&ClickProject::new(
+                "entry.click",
+                [click::surface::ClickModuleSource::new(
+                    "entry.click",
+                    "",
+                    []
+                )]
+            ))
+            .is_none()
         );
     }
 

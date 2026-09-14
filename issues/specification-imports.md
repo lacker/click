@@ -213,6 +213,55 @@ selection creates unconditional theorem authority for an unproved assumption.
   and full-gate coverage. C remains unchanged. Focused tests, documentation
   checks, and the full unpiped `scripts/check.sh` pass.
 
+## First implementation delivered, 2026-09-13
+
+The first delivery is implemented on the module graph used by `verify`,
+`profile`, `expand`/reverify, `audit`, and the example harness. The CLI chooses
+the nearest Git worktree root (or the entry directory outside Git), resolves
+and canonicalizes transitive local imports once, and uses stable
+project-relative module identities. It preserves source ownership, rejects
+cycles, escapes, missing modules, collisions, importer capture, imported C
+selection/specifications, and circular theorem justification before proof
+selection.
+
+File verification selects proof units owned by the entry file; location
+verification selects exactly one such unit. Imported and otherwise unselected
+theorem statements and called-function contracts are scoped assumptions, not
+recursively executed proof obligations. Retained C proof results record the
+entry, selected units, and assumed theorem/function interfaces, and their
+artifact identity covers every reachable Click source and import edge. Full
+directory discovery selects each `.click` entry independently, so theorem-only
+libraries are checked directly while importing sidecars do not re-run them.
+Existing checked recursion remains on selected functions, while unselected
+callees receive only their contracts.
+
+`--changed-since` uses the documented safe first-delivery fallback: an entry
+with imports is rebuilt as its selected scope, with no incremental success
+marker reused. It never treats an imported proof as selected. Precise
+dependency-level invalidation remains follow-up work.
+
+The former copied `mdtests/rb_insert_color.md` fixture is now
+`examples/rbtree-insert`. Its unchanged C and current proof attempt are in
+`rb_insert_color.c` and `rbtree_insert.frontier`; both use the single shared
+`examples/rbtree-model/rbtree_model.click`. The normal entry intentionally
+selects no insert claim, and a dedicated negative regression requires the
+frontier to continue failing at statement 23, so this conversion does not
+misstate C3 as complete.
+
+Regressions cover transitive generic algebraic/function/theorem/predicate/
+resource imports, imported-theorem and callee-contract assumptions, explicit
+library selection failure, exact file/location selection, proof cycles,
+import cycles and diagnostics, ownership/collisions/capture, prepared and
+source C inputs, tooling consistency, artifact invalidation, the conservative
+incremental fallback, and deterministic chain/diamond/shared-library/proof-body
+scaling.
+
+Concrete handoff: retain this issue for the three requirements below. Extend
+the same resolved graph and selection metadata to named contracts and external
+C specifications first; then split `stdlib/prelude.click`; finally replace the
+conservative imported-entry fallback with precise import-aware change
+selection. Do not create a parallel include mechanism or proof cache.
+
 ## Follow-up scope retained by this issue
 
 The first delivery is a coherent milestone, not completion of all module work.

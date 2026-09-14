@@ -1897,6 +1897,12 @@ impl CExecutionEnvironment {
         self
     }
 
+    pub(crate) fn without_external_function_rule(mut self, name: &str) -> Self {
+        std::sync::Arc::make_mut(&mut self.external_function_rules).remove(name);
+        self.variable_index = CExecutionEnvironmentVariableIndex::default();
+        self
+    }
+
     pub fn get_function(&self, name: &str) -> Option<&CFunction> {
         self.functions.get(name)
     }

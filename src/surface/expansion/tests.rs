@@ -1111,7 +1111,7 @@ int32 caller() {
 }
 
 #[test]
-fn selected_tactic_requires_the_complete_function_dependency_closure() {
+fn selected_tactic_uses_an_unselected_callee_contract_without_proving_its_body() {
     let zero_c = "int32 zero() { return 1; }";
     let caller_c = "int32 caller() { int32 value; value = zero(); return value; }";
     let click_source = r#"
@@ -1135,9 +1135,12 @@ int32 caller() {
 "#;
     let sources = [("zero.c", zero_c), ("caller.c", caller_c)];
 
-    let error =
+    let expanded =
         expand_top_level_tactic_for_test(click_source, &sources, "caller", CProofClaim::Grouped, 0)
-            .expect_err("capture must reject an invalid callee used later in the proof unit");
+            .expect("capture should use the well-formed unselected callee contract");
+    assert!(expanded.contains("step();"));
+    let error = verify_c0_sources(&expanded, &sources)
+        .expect_err("whole-file verification must still reject the callee implementation proof");
     assert!(error.message().contains("zero.ensures_0"));
     assert!(error.message().contains("unclosed goal:"));
 }
@@ -1879,29 +1882,32 @@ int32 bad(int32 x) {
 }
 
 #[test]
-fn tactic_expansion_reports_required_dependency_path() {
-    let callee_c = "int32 callee(int32 x) { return x; }";
+fn tactic_expansion_does_not_select_a_broken_callee_implementation() {
+    let callee_c = "int32 callee(int32 x) { return x + 1; }";
     let caller_c = "int32 caller(int32 x) { int32 result; result = callee(x); return result; }";
     let click_source = r#"verifying "callee.c";
 verifying "caller.c";
 int32 callee(int32 x) {
-    ensures result == x + 1 by { execute(); simp(); }
-}
+    ensures result == x;
+} by { execute(); simp(); }
 int32 caller(int32 x) {
-    ensures result == x by { execute(); simp(); }
-}
+    ensures result == x;
+} by { execute(); simp(); }
 "#;
     let sources = [("callee.c", callee_c), ("caller.c", caller_c)];
     let selected = position_at_offset(click_source, click_source.rfind("execute();").unwrap());
+    verify_c0_sources_at(click_source, &sources, selected.line, selected.column)
+        .expect("the selected caller should verify under the callee interface");
 
-    let error = expand_c0_tactic_source_at(click_source, &sources, selected.line, selected.column)
-        .expect_err("a broken required dependency must block expansion");
-
-    assert!(
-        error.message().contains("caller -> callee"),
-        "{}",
-        error.message()
-    );
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, selected.line, selected.column)
+            .expect("the selected caller expansion should assume the callee contract");
+    let relocated = c0_tactic_source_position(&expanded, &sources, "caller.ensures_0", 0).unwrap();
+    verify_c0_sources_at(&expanded, &sources, relocated.line, relocated.column)
+        .expect("the expanded caller should verify under the callee interface");
+    let error = verify_c0_sources(&expanded, &sources)
+        .expect_err("whole-file verification must still reject the callee proof");
+    assert!(error.message().contains("callee.contract"));
 }
 
 #[test]

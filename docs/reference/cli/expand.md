@@ -34,8 +34,10 @@ claim form expands every smart tactic in one named function claim and is useful
 when aggregate smart work matters even though no individual site is slow.
 
 The selected proof unit must verify before rewriting. Click verifies the
-complete rewritten proof unit and the transitive contracts it calls before any
-output is written. Unselected source text is preserved byte for byte.
+complete rewritten proof unit before any output is written. Imported theorem
+statements and unselected called-function contracts remain interface
+assumptions; their proof bodies are not executed. Only the selected entry
+module is rewritten, and imported source text is preserved byte for byte.
 
 Generic theorem bodies are checked with rigid arbitrary type parameters.
 Their proofs can be expanded and rechecked without a concrete client or a

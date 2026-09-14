@@ -2,6 +2,12 @@
 
 Click files are sidecar specifications for C0 sources.
 
+They may begin with local specification imports such as
+`import "../models/common.click";`. Imports contribute declarations but do not
+select the imported file's theorem proofs. See
+[Files and sidecars](../../concepts/sidecars.md#local-specification-imports)
+for the module and selection rules.
+
 Terminology:
 
 - **Surface Click** is the user-written `.click` language described here.

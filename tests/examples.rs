@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use click::cli::{files_with_extension, read_verifying_sources, run_parallel, source_refs};
+use click::cli::{
+    files_with_extension, read_click_project, read_verifying_sources, run_parallel, source_refs,
+};
 use click::instrumentation::{self, ContractFallback};
 use click::surface::{ViewSemanticsMode, verify_c0_sources_in_mode};
 
@@ -131,6 +133,41 @@ fn example_projects() {
     }
 }
 
+#[test]
+fn rbtree_insert_frontier_remains_explicit_and_uses_the_shared_model() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for (relative, expected) in [
+        (
+            "examples/rbtree-insert/rbtree.h",
+            "69fc7419118e4a37fb46a2469b981646a733b1a7c247094d0b48aa643575cee3",
+        ),
+        (
+            "examples/rbtree-insert/rb_insert_color.c",
+            "b20d68f309682bdcebcf2176d655b92b582f2c88bcc0f4645a7384c0760df111",
+        ),
+    ] {
+        let bytes = fs::read(root.join(relative)).expect("the unchanged insert C input exists");
+        assert_eq!(hex_digest(sha256(&bytes)), expected, "changed {relative}");
+    }
+    let path = root.join("examples/rbtree-insert/rbtree_insert.frontier");
+    let source = fs::read_to_string(&path).expect("the insert frontier sidecar should exist");
+    assert!(source.contains("import \"../rbtree-model/rbtree_model.click\";"));
+    assert!(!source.contains("spec enum RbTree"));
+    let c_sources =
+        read_verifying_sources(&path, &source).expect("the unchanged insert C bundle should load");
+    let project = read_click_project(&path, &source)
+        .expect("the insert frontier should resolve the shared model");
+    let error = click::surface::verify_c0_project(&project, &source_refs(&c_sources))
+        .expect_err("the insert proof frontier is deliberately unfinished");
+    assert!(
+        error.message().contains(
+            "the frontier is at statement 23, `tmp = load_int32_pointer(byte_offset(parent, 8))`"
+        ),
+        "unexpected insert frontier: {}",
+        error.message()
+    );
+}
+
 fn run_example_in_thread(project: &Path) -> Result<(), String> {
     let project = project.to_path_buf();
     std::thread::Builder::new()
@@ -169,13 +206,18 @@ fn run_example_project(project: &Path) -> Result<(), String> {
         let click_source = fs::read_to_string(&click_path)
             .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
         let c_sources = read_verifying_sources(&click_path, &click_source)?;
+        let click_project = read_click_project(&click_path, &click_source)?;
         match source_status {
             Some(SourceFixtureStatus::ParserOnly) => {
-                match verify_c0_sources_in_mode(
-                    &click_source,
-                    &source_refs(&c_sources),
-                    view_semantics(),
-                ) {
+                match if click_project.modules().len() == 1 {
+                    verify_c0_sources_in_mode(
+                        &click_source,
+                        &source_refs(&c_sources),
+                        view_semantics(),
+                    )
+                } else {
+                    click::surface::verify_c0_project(&click_project, &source_refs(&c_sources))
+                } {
                     Err(error)
                         if error.message().starts_with("failed to parse C source")
                             || error.message().starts_with("failed to parse C header")
@@ -203,11 +245,15 @@ fn run_example_project(project: &Path) -> Result<(), String> {
                 }
             }
             Some(SourceFixtureStatus::Verified) | None => {
-                verify_c0_sources_in_mode(
-                    &click_source,
-                    &source_refs(&c_sources),
-                    view_semantics(),
-                )
+                if click_project.modules().len() == 1 {
+                    verify_c0_sources_in_mode(
+                        &click_source,
+                        &source_refs(&c_sources),
+                        view_semantics(),
+                    )
+                } else {
+                    click::surface::verify_c0_project(&click_project, &source_refs(&c_sources))
+                }
                 .map_err(|error| {
                     format!(
                         "sidecar `{}` failed: {}",

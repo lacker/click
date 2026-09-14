@@ -1214,6 +1214,7 @@ pub(super) fn execute_c_function_call_paths(
                 name: rule.function.name(),
                 interface_name: rule.function.name(),
                 interface: rule.function.contract_interface(),
+                storage: Some(&rule.function),
                 evidence: None,
             }],
             None,
@@ -1475,6 +1476,7 @@ fn execute_verified_function_rule(
             name: rule.function.name(),
             interface_name: rule.function.name(),
             interface: rule.function.contract_interface(),
+            storage: Some(&rule.function),
             evidence: Some(&rule.function),
         }],
         None,
@@ -1515,10 +1517,12 @@ fn selected_call_binder_application(
 }
 
 /// One candidate contract application. The interface is the complete input
-/// to callback preparation; optional concrete evidence is consulted only by
-/// verified direct calls for body-specific safety checks and loadable literal
-/// facts. Named callbacks and external assumptions carry no `CFunction` here,
-/// so arbitrary template bodies/storage cannot affect their behavior.
+/// to callback preparation. Optional concrete storage supplies only the
+/// declaration identity needed to lower a direct function's global and
+/// static names. Optional concrete evidence is consulted only by verified
+/// direct calls for body-specific safety checks and loadable literal facts.
+/// Named callbacks carry neither; external assumptions carry storage but no
+/// proof evidence.
 #[derive(Clone, Copy)]
 struct CFunctionContractApplication<'a> {
     /// Concrete callee name used for diagnostics and call provenance.
@@ -1527,6 +1531,7 @@ struct CFunctionContractApplication<'a> {
     /// requirement metadata.
     interface_name: &'a str,
     interface: &'a CFunctionContractInterface,
+    storage: Option<&'a CFunction>,
     evidence: Option<&'a CFunction>,
 }
 
@@ -1706,6 +1711,7 @@ fn execute_verified_function_applications(
         let PreparedVerifiedFunctionCall {
             name,
             interface_name: _interface_name,
+            storage,
             evidence,
             interface,
             argument_values,
@@ -1843,7 +1849,7 @@ fn execute_verified_function_applications(
         let population_transition = match apply_counted_population_transitions_with_interface(
             caller_state,
             &mut transition_state,
-            evidence,
+            storage,
             interface,
             &argument_values,
             &effective_assumptions,
@@ -2186,6 +2192,9 @@ struct PreparedVerifiedFunctionCall<'a> {
     /// a source-body handle for named callbacks.
     name: &'a str,
     interface_name: &'a str,
+    /// Concrete declaration identity for global and static storage lowering.
+    /// This is not evidence that the function body was checked.
+    storage: Option<&'a CFunction>,
     /// Concrete evidence is present only for a verified direct rule. Named
     /// contracts and external assumptions deliberately carry none.
     evidence: Option<&'a CFunction>,
@@ -2382,13 +2391,12 @@ fn prepare_verified_function_call<'a>(
             loan_evidence: empty_checked_loan_evidence_sequence(),
         }));
     };
-    let Some(mut entry_state) = application
-        .evidence
-        .map(|function| bind_c_function_arguments(caller_state, function, &argument_values))
-        .unwrap_or_else(|| {
-            bind_c_contract_arguments(caller_state, contract_interface, &argument_values)
-        })
-    else {
+    let Some(mut entry_state) = bind_c_contract_arguments(
+        caller_state,
+        contract_interface,
+        &argument_values,
+        application.storage,
+    ) else {
         return Ok(Err(CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
                 contract_argument_binding_error(
@@ -2800,6 +2808,7 @@ fn prepare_verified_function_call<'a>(
     Ok(Ok(PreparedVerifiedFunctionCall {
         name: application.name,
         interface_name: application.interface_name,
+        storage: application.storage,
         evidence: application.evidence,
         interface: contract_interface,
         argument_values,
@@ -2889,6 +2898,7 @@ pub(super) fn execute_c_function_contracts_paths(
             name: contract.callee_name(),
             interface_name: contract.name(),
             interface: contract.interface(),
+            storage: None,
             evidence: None,
         })
         .collect::<Vec<_>>();
@@ -8457,14 +8467,16 @@ pub(super) fn bind_c_function_arguments(
 }
 
 /// Binds only the locals needed to instantiate a body-independent contract
-/// interface. This intentionally does not inspect a statement body, collect
-/// address-taken locals, initialize globals, or allocate static storage. It is
-/// the binding path for named callbacks and external assumptions, whose
-/// applications have no concrete body evidence.
+/// interface. This intentionally does not inspect a statement body or collect
+/// address-taken locals. A direct application can additionally supply its
+/// concrete declaration identity so global and static names in the interface
+/// resolve to the program's stable storage; that identity is not body-proof
+/// evidence. Named callbacks supply no concrete storage.
 fn bind_c_contract_arguments(
     caller_state: &CState,
     interface: &CFunctionContractInterface,
     values: &[CValue],
+    storage: Option<&CFunction>,
 ) -> Option<CState> {
     if values.len() != interface.parameters().len() {
         return None;
@@ -8487,6 +8499,9 @@ fn bind_c_contract_arguments(
     callee_state.loan_ledger = caller_state.loan_ledger.clone();
     callee_state.loan_participant = caller_state.loan_participant;
     callee_state.loan_view_bindings = caller_state.loan_view_bindings.clone();
+    if let Some(function) = storage {
+        callee_state = initialize_c_function_globals(&callee_state, function);
+    }
     for (parameter, value) in interface.parameters().iter().zip(values) {
         if let Some(layout) = parameter.aggregate_layout() {
             let CValue::Pointer(pointer) = value else {
@@ -11044,7 +11059,7 @@ fn apply_counted_population_transitions(
 fn apply_counted_population_transitions_with_interface(
     caller_state: &CState,
     post_state: &mut CState,
-    evidence: Option<&CFunction>,
+    storage: Option<&CFunction>,
     interface: &CFunctionContractInterface,
     argument_values: &[CValue],
     assumptions: &PureFactContext,
@@ -11052,9 +11067,8 @@ fn apply_counted_population_transitions_with_interface(
     track_ordinary_populations: bool,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CCountedPopulationTransition, CRuntimeError>> {
-    let Some(mut entry_state) = evidence
-        .map(|function| bind_c_function_arguments(caller_state, function, argument_values))
-        .unwrap_or_else(|| bind_c_contract_arguments(caller_state, interface, argument_values))
+    let Some(mut entry_state) =
+        bind_c_contract_arguments(caller_state, interface, argument_values, storage)
     else {
         return Ok(Err(CRuntimeError::TypeMismatch));
     };

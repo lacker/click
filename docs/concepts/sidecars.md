@@ -47,6 +47,34 @@ verifying "file.c";
 This tells Click which C source files are part of the verification unit. Larger
 sidecars can name multiple C files when a proof depends on helper functions.
 
+## Local specification imports
+
+A sidecar can reuse logical declarations from another local Click file:
+
+<!-- verified-example: mdtests/specification_imports.md -->
+```click
+import "../models/list.click";
+```
+
+Imports are relative to the importing file, transitive, and confined to the
+project root. Paths are canonicalized to stable project-relative module
+identities; cycles, missing files, escaping paths, and ambiguous unqualified
+declarations are errors. For CLI inputs, the project root is the nearest Git
+worktree root; outside a Git worktree it is the entry file's directory. This
+requires no new manifest while permitting sibling directories in an existing
+project to share specifications. In the first import delivery, libraries may export
+algebraic types, predicates, pure functions, resources, and theorem
+statements. Imported `verifying` declarations, named contracts, and C function
+specifications are rejected.
+
+An import provides declarations, not a request to run proofs. Verifying an
+entry sidecar checks only theorem and C proof units owned by that entry. It may
+assume imported theorem statements and the well-formed contracts of unselected
+called C functions. Select a library file itself—or a directory scope that
+contains it—to check the library's proofs. Circular theorem justification and
+the existing checked-recursion rules are enforced independently of this
+selection boundary.
+
 ## Contracts are per function
 
 Each function block in a sidecar describes one C function:

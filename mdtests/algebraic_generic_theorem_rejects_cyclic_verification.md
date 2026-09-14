@@ -17,5 +17,5 @@ theorem expose(value: int32) {
 ```
 
 ```expect
-fail: unknown theorem `circular`
+fail: circular theorem justification: circular -> circular
 ```

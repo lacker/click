@@ -193,10 +193,10 @@ int32 count_to(int32 n) {
 }
 
 #[test]
-fn location_verification_checks_called_function_dependencies() {
+fn location_verification_assumes_unselected_callee_contracts() {
     let callee_c = r#"
 int32 callee(int32 x) {
-    return x;
+    return x + 1;
 }
 "#;
     let caller_c = r#"
@@ -211,14 +211,14 @@ verifying "callee.c";
 verifying "caller.c";
 
 int32 callee(int32 x) {
-    ensures result == x + 1;
+    ensures result == x;
 } by {
     execute();
     simp();
 }
 
 int32 caller(int32 x) {
-    ensures result == x + 1;
+    ensures result == x;
 } by {
     execute();
     simp();
@@ -228,9 +228,15 @@ int32 caller(int32 x) {
     let caller_proof = click_source.rfind("execute()").unwrap();
     let position = expansion::position_at_offset(click_source, caller_proof);
 
-    let error = verify_c0_sources_at(click_source, &sources, position.line, position.column)
-        .expect_err("targeted caller verification must check its callee dependency");
-    assert!(error.message().contains("callee"), "{}", error.message());
+    let verified = verify_c0_sources_at(click_source, &sources, position.line, position.column)
+        .expect("targeted caller verification should assume its callee contract");
+    assert!(
+        verified
+            .iter()
+            .all(|theorem| { theorem.function_block.signature().name() == "caller" })
+    );
+    verify_c0_sources(click_source, &sources)
+        .expect_err("file selection must execute and reject the callee's failing proof");
 }
 
 #[test]
@@ -280,7 +286,7 @@ int32 caller(int32 x) {
 }
 
 #[test]
-fn location_verification_rejects_abstract_function_pointer_without_contract() {
+fn location_verification_does_not_inspect_an_unselected_abstract_callee_body() {
     let compare_c = r#"
 int32 compare(int32 left, int32 right) {
     return left;
@@ -325,8 +331,20 @@ int32 caller() {
     let caller_proof = click_source.rfind("ensures result == 40;").unwrap();
     let position = expansion::position_at_offset(click_source, caller_proof);
 
-    let error = verify_c0_sources_at(click_source, &sources, position.line, position.column)
-        .expect_err("an abstract callback call must require a declared contract");
+    let verified = verify_c0_sources_at(click_source, &sources, position.line, position.column)
+        .expect("the caller selection should assume the unselected helper contract");
+    assert_eq!(verified.len(), 1);
+    assert_eq!(
+        verified[0]
+            .selection
+            .as_ref()
+            .expect("partial verification should record its assumption boundary")
+            .assumed_functions,
+        &["compare".to_string(), "apply".to_string()]
+    );
+
+    let error = verify_c0_sources(click_source, &sources)
+        .expect_err("whole-project verification must still inspect the helper callback body");
     assert!(
         error.message().contains(
             "cannot verify call through function pointer `callback`: no matching named contract is available for this value"
@@ -337,7 +355,7 @@ int32 caller() {
 }
 
 #[test]
-fn tactic_expansion_loads_callees_after_the_selected_source_tactic() {
+fn tactic_expansion_selects_only_the_containing_function_before_later_calls() {
     let sources = [
         ("first.c", "int32 first(int32 x) { return x; }"),
         ("later.c", "int32 later(int32 x) { return x; }"),
@@ -376,14 +394,7 @@ int32 caller(int32 x) { ensures result == x + x; } by {
     )
     .unwrap();
 
-    assert_eq!(
-        required,
-        BTreeSet::from([
-            "caller".to_string(),
-            "first".to_string(),
-            "later".to_string(),
-        ])
-    );
+    assert_eq!(required, BTreeSet::from(["caller".to_string()]));
 }
 
 #[test]

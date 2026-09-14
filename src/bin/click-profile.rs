@@ -7,14 +7,16 @@ use std::time::{Duration, Instant};
 use click::cli::{
     CInput, DEFAULT_EXPANSION_TIME_LIMIT, DEFAULT_SIMPLE_TACTIC_LIMIT, DEFAULT_SMART_TACTIC_LIMIT,
     MdTestExpectation, files_with_extension, find_mdtests, find_projects, format_duration,
-    format_fractional_duration, looks_like_mdtest, parse_duration, read_c_inputs, read_mdtest,
-    shell_quote, source_refs,
+    format_fractional_duration, looks_like_mdtest, parse_duration, read_c_inputs,
+    read_click_project, read_mdtest, shell_quote, source_refs,
 };
 use click::instrumentation::{self, ActiveVerificationWork, TacticEvent, VerificationEvent};
 use click::surface::{
-    SourcePosition, c0_prepared_smart_tactic_source_sites, c0_prepared_tactic_source_position,
-    c0_smart_tactic_source_sites, c0_tactic_source_position, verify_c0_prepared_sources,
-    verify_c0_sources,
+    ClickProject, SourcePosition, c0_prepared_project_smart_tactic_source_sites,
+    c0_prepared_project_tactic_source_position, c0_prepared_smart_tactic_source_sites,
+    c0_prepared_tactic_source_position, c0_project_smart_tactic_source_sites,
+    c0_project_tactic_source_position, c0_smart_tactic_source_sites, c0_tactic_source_position,
+    click_import_sites, verify_c0_prepared_project, verify_c0_project, verify_c0_sources,
 };
 
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(30);
@@ -452,8 +454,9 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
 ///
 /// Told apart by shape, not by a flag. A `.md` argument names one mdtest.
 /// Otherwise example projects win, because they carry `README.md` files that
-/// must not be mistaken for mdtests; only a directory with no Click sidecar
-/// anywhere under it is read as a directory of mdtests.
+/// must not be mistaken for mdtests. A directory containing real mdtest
+/// containers remains a mdtest collection even when it also contains local
+/// `.click` modules imported by those containers.
 fn profile_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
     if looks_like_mdtest(path) {
         return find_mdtests(path);
@@ -463,6 +466,9 @@ fn profile_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
         .is_some_and(|extension| extension == "click")
     {
         return Ok(vec![path.to_path_buf()]);
+    }
+    if path.is_dir() && directory_contains_mdtests(path)? {
+        return find_mdtests(path);
     }
     match find_projects(path) {
         Ok(projects) => Ok(projects),
@@ -474,6 +480,23 @@ fn profile_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
             }
         }
     }
+}
+
+fn directory_contains_mdtests(path: &Path) -> Result<bool, String> {
+    for markdown in files_with_extension(path, "md")? {
+        let source = fs::read_to_string(&markdown)
+            .map_err(|error| format!("failed to read `{}`: {error}", markdown.display()))?;
+        match click::cli::parse_mdtest(&markdown, &source) {
+            Ok(mdtest) if mdtest.click_source.is_some() && mdtest.expectation.is_some() => {
+                return Ok(true);
+            }
+            Err(_) if source.contains("```click") && source.contains("```expect") => {
+                return Ok(true);
+            }
+            Ok(_) | Err(_) => {}
+        }
+    }
+    Ok(false)
 }
 
 fn profile_target(
@@ -536,12 +559,16 @@ fn count_smart_source_sites(events: &[VerificationEvent]) -> Result<usize, Strin
     paths.into_iter().try_fold(0usize, |total, path| {
         let source = load_profiled_source(&path)?;
         let sites = match &source.inputs {
-            CInput::Bundle(c_sources) => {
-                c0_smart_tactic_source_sites(&source.click_source, &source_refs(c_sources))
-            }
-            CInput::Prepared(imports) => {
-                c0_prepared_smart_tactic_source_sites(&source.click_source, imports)
-            }
+            CInput::Bundle(c_sources) => match &source.project {
+                Some(project) => {
+                    c0_project_smart_tactic_source_sites(project, &source_refs(c_sources))
+                }
+                None => c0_smart_tactic_source_sites(&source.click_source, &source_refs(c_sources)),
+            },
+            CInput::Prepared(imports) => match &source.project {
+                Some(project) => c0_prepared_project_smart_tactic_source_sites(project, imports),
+                None => c0_prepared_smart_tactic_source_sites(&source.click_source, imports),
+            },
         }
         .map_err(|error| {
             format!(
@@ -712,8 +739,8 @@ enum TimingEvent {
     FunctionTotal(String, Duration),
     /// One kernel certification phase of a function.
     Certification(String, Duration),
-    /// Parsing C/Click source, lowering declarations, and selecting the
-    /// verification dependency closure.
+    /// Parsing C/Click source, lowering declarations, and selecting the exact
+    /// requested proof scope.
     Frontend(Duration),
     /// Constructing definition/function environments and verifying pure
     /// theorem dependencies before function proofs run.
@@ -1331,6 +1358,7 @@ fn parse_step_key(rest: &str, source_path: &Path) -> Option<StepKey> {
 struct ProfiledSource {
     click_source: String,
     inputs: CInput,
+    project: Option<ClickProject>,
     /// Added to a one-based line inside the sidecar. Zero for a `.click`
     /// file; the offset of the ```click block for an mdtest, so reported
     /// locations point into the markdown the user actually edits.
@@ -1344,18 +1372,35 @@ fn load_profiled_source(path: &Path) -> Result<ProfiledSource, String> {
             .click_source
             .ok_or_else(|| format!("mdtest `{}` has no ```click block", path.display()))?;
         let c_sources = mdtest.c_sources;
+        let has_imports = !click_import_sites(&click_source)
+            .map_err(|error| {
+                format!(
+                    "could not read imports in mdtest `{}`: {}",
+                    path.display(),
+                    error.message()
+                )
+            })?
+            .is_empty();
+        let project = if has_imports {
+            Some(read_click_project(path, &click_source)?)
+        } else {
+            None
+        };
         return Ok(ProfiledSource {
             click_source,
             inputs: CInput::Bundle(c_sources),
+            project,
             line_offset: mdtest.click_start_line.saturating_sub(1),
         });
     }
     let click_source = fs::read_to_string(path)
         .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
     let inputs = read_c_inputs(path, &click_source)?;
+    let project = read_click_project(path, &click_source)?;
     Ok(ProfiledSource {
         click_source,
         inputs,
+        project: Some(project),
         line_offset: 0,
     })
 }
@@ -1391,18 +1436,34 @@ fn resolve_source_positions(profile: &mut ProjectProfile) -> Result<(), String> 
             }
         };
         let position = match &source.inputs {
-            CInput::Bundle(c_sources) => c0_tactic_source_position(
-                &source.click_source,
-                &source_refs(c_sources),
-                &key.claim,
-                key.source_index,
-            ),
-            CInput::Prepared(imports) => c0_prepared_tactic_source_position(
-                &source.click_source,
-                imports,
-                &key.claim,
-                key.source_index,
-            ),
+            CInput::Bundle(c_sources) => match &source.project {
+                Some(project) => c0_project_tactic_source_position(
+                    project,
+                    &source_refs(c_sources),
+                    &key.claim,
+                    key.source_index,
+                ),
+                None => c0_tactic_source_position(
+                    &source.click_source,
+                    &source_refs(c_sources),
+                    &key.claim,
+                    key.source_index,
+                ),
+            },
+            CInput::Prepared(imports) => match &source.project {
+                Some(project) => c0_prepared_project_tactic_source_position(
+                    project,
+                    imports,
+                    &key.claim,
+                    key.source_index,
+                ),
+                None => c0_prepared_tactic_source_position(
+                    &source.click_source,
+                    imports,
+                    &key.claim,
+                    key.source_index,
+                ),
+            },
         };
         match position {
             Ok(position) => {
@@ -1442,7 +1503,15 @@ fn verify_mdtest(path: &Path) -> Result<(), String> {
     if instrumentation::enabled() {
         instrumentation::emit(VerificationEvent::Source(path.to_path_buf()));
     }
-    let result = verify_c0_sources(click_source, &c_sources);
+    let result = if click_import_sites(click_source)
+        .map_err(|error| error.message().to_string())?
+        .is_empty()
+    {
+        verify_c0_sources(click_source, &c_sources)
+    } else {
+        let project = read_click_project(path, click_source)?;
+        verify_c0_project(&project, &c_sources)
+    };
     match (mdtest.expectation.as_ref(), result) {
         (Some(MdTestExpectation::FailContains(expected)), Err(error)) => {
             if error.message().contains(expected) {
@@ -1489,12 +1558,13 @@ fn verify_project(project: &Path) -> Result<(), String> {
         let click_source = fs::read_to_string(&click_path)
             .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
         let inputs = read_c_inputs(&click_path, &click_source)?;
+        let click_project = read_click_project(&click_path, &click_source)?;
         if instrumentation::enabled() {
             instrumentation::emit(VerificationEvent::Source(click_path.clone()));
         }
         let result = match &inputs {
-            CInput::Bundle(sources) => verify_c0_sources(&click_source, &source_refs(sources)),
-            CInput::Prepared(imports) => verify_c0_prepared_sources(&click_source, imports),
+            CInput::Bundle(sources) => verify_c0_project(&click_project, &source_refs(sources)),
+            CInput::Prepared(imports) => verify_c0_prepared_project(&click_project, imports),
         };
         result.map_err(|error| {
             format!(
