@@ -267,9 +267,29 @@ pub(in crate::surface::proof) fn merge_path_aligned_certificates(
     claim_label: &str,
     paths: Vec<PathCertificate>,
 ) -> Result<ProofCertificate, ClickError> {
+    merge_path_aligned_certificates_with_match_policy(claim_label, paths, false)
+}
+
+/// Merges paths produced wholly inside one proof phase. Unlike callers that
+/// carry an already-selected outer path into the phase, a constructor case
+/// introduced here must remain in the certificate even when every other
+/// constructor was proved impossible: its arm binders still scope the leaf.
+pub(in crate::surface::proof) fn merge_phase_path_aligned_certificates(
+    claim_label: &str,
+    paths: Vec<PathCertificate>,
+) -> Result<ProofCertificate, ClickError> {
+    merge_path_aligned_certificates_with_match_policy(claim_label, paths, true)
+}
+
+fn merge_path_aligned_certificates_with_match_policy(
+    claim_label: &str,
+    paths: Vec<PathCertificate>,
+    retain_common_match_cases: bool,
+) -> Result<ProofCertificate, ClickError> {
     pub(in crate::surface::proof) fn merge(
         claim_label: &str,
         mut paths: Vec<PathCertificate>,
+        retain_common_match_cases: bool,
     ) -> Result<ProofCertificate, ClickError> {
         let first = paths.first().ok_or_else(|| {
             ClickError::new(format!(
@@ -280,9 +300,15 @@ pub(in crate::surface::proof) fn merge_path_aligned_certificates(
         // `step()` at a C `if` reads the same on both sides of a case split
         // and is valid only inside its case, so distinct cases keep their
         // `if` even when their steps coincide.
-        if paths
-            .iter()
-            .all(|path| path.certificate == first.certificate && path.case_path == first.case_path)
+        let leading_common_match = retain_common_match_cases
+            && first
+                .case_path
+                .first()
+                .is_some_and(|choice| choice.match_arm.is_some());
+        if !leading_common_match
+            && paths.iter().all(|path| {
+                path.certificate == first.certificate && path.case_path == first.case_path
+            })
         {
             return Ok(first.certificate.clone());
         }
@@ -291,6 +317,7 @@ pub(in crate::surface::proof) fn merge_path_aligned_certificates(
         }) && paths
             .first()
             .is_some_and(|first| !first.case_path.is_empty())
+            && !(retain_common_match_cases && paths[0].case_path[0].match_arm.is_some())
         {
             for path in &mut paths {
                 path.case_path.remove(0);
@@ -401,7 +428,9 @@ pub(in crate::surface::proof) fn merge_path_aligned_certificates(
                 if paths.is_empty() {
                     continue;
                 }
-                arm.tactics = merge(claim_label, paths)?.to_proof_tactics().to_vec();
+                arm.tactics = merge(claim_label, paths, retain_common_match_cases)?
+                    .to_proof_tactics()
+                    .to_vec();
             }
             prefix.push(ProofTactic::Match(Box::new(rebuilt)));
             return ProofCertificate::from_proof_tactics(&prefix).map_err(|error| {
@@ -431,8 +460,8 @@ pub(in crate::surface::proof) fn merge_path_aligned_certificates(
                 describe_click_proposition(&condition)
             )));
         }
-        let then_certificate = merge(claim_label, then_paths)?;
-        let else_certificate = merge(claim_label, else_paths)?;
+        let then_certificate = merge(claim_label, then_paths, retain_common_match_cases)?;
+        let else_certificate = merge(claim_label, else_paths, retain_common_match_cases)?;
         prefix.push(ProofTactic::If(ProofIf {
             condition,
             then_tactics: then_certificate.to_proof_tactics().to_vec(),
@@ -460,7 +489,7 @@ pub(in crate::surface::proof) fn merge_path_aligned_certificates(
             unique.push(path);
         }
     }
-    merge(claim_label, unique)
+    merge(claim_label, unique, retain_common_match_cases)
 }
 
 /// The certificate offsets at which a path took its proof-level cases, as the

@@ -1398,6 +1398,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
     owning_source_index: usize,
     claim_label: &str,
     leaves: &mut Vec<Proof<'a>>,
+    refuted_match_paths: &mut Vec<(ExecutionProofState, ProofCertificate)>,
     last_tactic: Option<(usize, &'static str)>,
 ) -> Result<Proof<'a>, ClickError> {
     check_verification_deadline()?;
@@ -1429,6 +1430,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 owning_source_index,
                 claim_label,
                 leaves,
+                refuted_match_paths,
                 0,
                 Some((*index, "match")),
             )
@@ -1463,6 +1465,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 owning_source_index,
                 claim_label,
                 leaves,
+                refuted_match_paths,
                 last_tactic,
             )
         }
@@ -1481,11 +1484,21 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 // edge and no exit, so it neither runs its continuation nor
                 // becomes a leaf.
                 if let ProofTactic::Contradiction(surface) = &indexed.tactic {
+                    let execution = proof.execution_view()?.execution.clone();
+                    let inside_match = execution
+                        .presentation
+                        .case_assumptions
+                        .iter()
+                        .any(|choice| choice.match_arm.is_some());
                     let proof = proof.start_source_tactic(indexed.source_index)?;
-                    return proof.apply_step_at(
+                    let proof = proof.apply_step_at(
                         ProofStep::Contradiction(surface.clone()),
                         indexed.source_index,
-                    );
+                    )?;
+                    if inside_match {
+                        refuted_match_paths.push((execution, proof.path_certificate()?));
+                    }
+                    return Ok(proof);
                 }
                 let handled_by_linear_driver = !matches!(
                     indexed.tactic,
@@ -1585,6 +1598,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 owning_source_index,
                 claim_label,
                 leaves,
+                refuted_match_paths,
                 last_tactic,
             )
         }
@@ -1616,6 +1630,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                     owning_source_index,
                     claim_label,
                     leaves,
+                    refuted_match_paths,
                     Some((*index, "if")),
                 )?;
             }
@@ -1661,6 +1676,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 owning_source_index,
                 claim_label,
                 leaves,
+                refuted_match_paths,
                 Some((*index, "branch")),
             )
         }
@@ -1695,6 +1711,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 owning_source_index,
                 claim_label,
                 leaves,
+                refuted_match_paths,
                 Some((*index, "open")),
             )
         }
@@ -1865,6 +1882,7 @@ fn advance_preservation_match_group<'a>(
     owning_source_index: usize,
     claim_label: &str,
     leaves: &mut Vec<Proof<'a>>,
+    refuted_match_paths: &mut Vec<(ExecutionProofState, ProofCertificate)>,
     split_depth: usize,
     last_tactic: Option<(usize, &'static str)>,
 ) -> Result<Proof<'a>, ClickError> {
@@ -1894,6 +1912,7 @@ fn advance_preservation_match_group<'a>(
                 owning_source_index,
                 claim_label,
                 leaves,
+                refuted_match_paths,
                 split_depth + 1,
                 last_tactic,
             )?;
@@ -1919,6 +1938,7 @@ fn advance_preservation_match_group<'a>(
         owning_source_index,
         claim_label,
         leaves,
+        refuted_match_paths,
         last_tactic,
     )
 }
@@ -2458,6 +2478,23 @@ fn advance_focused_execution_region<'a>(
             }
             let owner = proof.clone();
             let proof = proof.with_execution_tactic_index(*index)?;
+            if let Some((then_steps, else_steps)) =
+                expanded_execution_if_steps(then_branch, else_branch)
+                && proof.frontier_is_execution_branch(condition)?
+            {
+                let proof = proof
+                    .apply_expanded_execution_if(condition, &then_steps, &else_steps)?
+                    .restore_execution_tactic_attribution(&owner)?;
+                return advance_focused_execution_region(
+                    proof,
+                    enclosing_record,
+                    continuation,
+                    expansion_capture,
+                    proof_site,
+                    owning_source_index,
+                    depth + 1,
+                );
+            }
             let arm_steps = match (
                 execution_region_leading_tactic(then_branch),
                 execution_region_leading_tactic(else_branch),

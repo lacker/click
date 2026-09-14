@@ -3637,7 +3637,30 @@ impl Parser {
                     proposition: Box::new(proposition),
                 })
             });
-            if proposition_at_snapshot.is_ok() {
+            if proposition_at_snapshot.is_ok()
+                && !matches!(
+                    self.peek(),
+                    Some(
+                        Token::EqualEqual
+                            | Token::BangEqual
+                            | Token::LessThan
+                            | Token::LessEqual
+                            | Token::GreaterThan
+                            | Token::GreaterEqual
+                            | Token::Plus
+                            | Token::Minus
+                            | Token::Star
+                            | Token::Slash
+                            | Token::Percent
+                            | Token::ShiftLeft
+                            | Token::ShiftRight
+                            | Token::Amp
+                            | Token::Pipe
+                            | Token::Caret
+                            | Token::LBracket
+                    )
+                )
+            {
                 return proposition_at_snapshot;
             }
             self.position = start;
@@ -8323,5 +8346,22 @@ mod integer_quantifier_parser_tests {
             left,
             ContractExpression::CFragment(CExpression::Variable(name)) if name == "saved"
         ));
+    }
+
+    #[test]
+    fn snapshot_of_pure_call_can_continue_into_comparison() {
+        let source = r#"
+            function identity(x: int32) -> int32 { x }
+            theorem snapshot_call(x: int32) {
+                ensures x == x by {
+                    have at(saved, identity(x)) == at(saved, 1) by { assumption(); }
+                    assumption();
+                }
+            }
+        "#;
+        Parser::new(source)
+            .unwrap()
+            .parse_file_items()
+            .expect("an expression snapshot must not parse as a proposition snapshot");
     }
 }

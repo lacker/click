@@ -1074,7 +1074,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
             certificate,
         });
     }
-    merge_path_aligned_certificates(&claim_label, paths)
+    merge_phase_path_aligned_certificates(&claim_label, paths)
 }
 
 pub(in crate::surface::proof) struct LoopPreservationProofResult {
@@ -1280,6 +1280,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     )
     .with_surface_local_scope(&phase_proof_scope(environment));
     let mut leaves = Vec::new();
+    let mut refuted_match_paths = Vec::new();
     advance_preservation_region(
         root,
         &program,
@@ -1289,6 +1290,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         owning_source_index,
         &claim_label,
         &mut leaves,
+        &mut refuted_match_paths,
         None,
     )?;
     let invariant_surfaces = loop_invariant_surfaces(environment, loop_index, &claim_label)?;
@@ -1308,6 +1310,28 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     let mut final_exit_candidates = Vec::new();
     let mut break_exits = Vec::new();
     let mut nested_loop_rules = Vec::new();
+    for (execution, path_certificate) in refuted_match_paths {
+        let case_path = execution
+            .presentation
+            .case_assumptions
+            .iter()
+            .map(|choice| ProofCaseChoice {
+                condition: choice.condition.clone(),
+                value: choice.value,
+                match_arm: choice.match_arm.clone(),
+            })
+            .collect::<Vec<_>>();
+        let source_tactics = path_certificate.to_proof_tactics();
+        let (certificate, selected_offsets) =
+            certificate_leaf_for_case_path(&claim_label, &source_tactics, &case_path)?;
+        let case_offsets = selected_offsets
+            .or_else(|| recorded_case_offsets(&execution.presentation, case_path.len()));
+        certificate_paths.push(PathCertificate {
+            case_path,
+            case_offsets,
+            certificate,
+        });
+    }
     for leaf in leaves {
         let context_execution = leaf.execution_view()?.execution.clone();
         for rule in context_execution.core.frontier_loop_rules.iter() {
@@ -1591,7 +1615,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             certificate,
         });
     }
-    let certificate = merge_path_aligned_certificates(&claim_label, certificate_paths)?;
+    let certificate = merge_phase_path_aligned_certificates(&claim_label, certificate_paths)?;
     Ok(LoopPreservationProofResult {
         certificate,
         final_exit_candidates,

@@ -2146,3 +2146,81 @@ fn frontier_local_loop_exit_bound_weakens_to_a_looser_ensures() {
     verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
         .expect("the checked outcome simp should weaken the loop-exit bound to the looser ensures");
 }
+
+#[test]
+fn whole_claim_expansion_reconstructs_nested_decided_branch_and_loop_match() {
+    let c_source = r#"
+        int32 selected_then_loop(int32 x) {
+            if (x < 0) {
+                x = 1;
+            } else {
+                x = 2;
+            }
+            while (x == 1) {
+                x = 2;
+            }
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        spec enum Marker { Active, Inactive }
+        function marker() -> Marker { Marker::Active }
+
+        verifying "selected_then_loop.c";
+
+        int32 selected_then_loop(int32 x) {
+            requires x < 0;
+            ensures result >= 1;
+        } by {
+            have marker() != Marker::Inactive by {
+                unfold(marker());
+                normalize();
+            }
+            match marker() {
+                Marker::Active => {
+                    branch {
+                        then { step(); }
+                        else { step(); }
+                    }
+                    loop {
+                        invariant x >= 1;
+                        invariant x <= 2;
+                        initialize by simp;
+                        preserve by {
+                            have marker() != Marker::Inactive by {
+                                unfold(marker());
+                                normalize();
+                            }
+                            match marker() {
+                                Marker::Active => {
+                                    step();
+                                    close_invariants();
+                                },
+                                Marker::Inactive => {
+                                    contradiction(marker() == Marker::Inactive);
+                                },
+                            }
+                        }
+                    }
+                    step();
+                    simp();
+                },
+                Marker::Inactive => {
+                    contradiction(marker() == Marker::Inactive);
+                },
+            }
+        }
+    "#;
+    let sources = [("selected_then_loop.c", c_source)];
+
+    verify_c0_sources(click_source, &sources).expect("the reduced source proof should verify");
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "selected_then_loop",
+        CProofClaim::Ensure(0),
+    )
+    .expect("the reduced whole claim should expand");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the reduced whole-claim expansion should independently verify");
+}
