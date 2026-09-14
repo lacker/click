@@ -54,7 +54,7 @@ mutable globals from two translation units, starting at `main`.
 For const callback tables the distinction is read authority versus ownership.
 The unchanged C in `rb_augment_callbacks_table.md` already verifies using
 explicit named contracts on the table fields. A combined packaged caller and
-helper now verifies in the ordinary resource interpretation as
+helper now verifies as
 `rb_augment_callbacks_const_suite.md`:
 
 - `callback_suite` contains `views` of its three const callback cells, not
@@ -65,25 +65,17 @@ helper now verifies in the ordinary resource interpretation as
   node. This is conditional local verification under those premises, not a
   derivation of separation for arbitrary external pointers.
 
-That same fixture **fails in the candidate stable-loan interpretation**, with
-`an exclusive instance inside a composite view is unsupported` when applying
-`erase_augmented`. Reproduce through the ordinary fixture harness:
-
-```sh
-RUST_MIN_STACK=8388608 CLICK_VIEW_SEMANTICS=stable-loans \
-  MDTEST_FILTER=rb_augment_callbacks_const_suite \
-  cargo nextest run --test mdtests --no-capture
-```
-
-This is a bounded integration failure, not evidence that const initialization
-or the C table declaration is unsupported. Fix-views/C6 must settle the checked
-representation of this package under final borrowing semantics. Preserve the
+The same fixture now passes under the shipped stable-view semantics; the
+candidate-mode refusal it once hit (`an exclusive instance inside a composite
+view is unsupported`) was resolved before the cutover recorded in
+[the stable views record](../docs/internals/stable-views.md). Preserve the
 unchanged C, required callback guarantees and read-only table storage. Do not
-mint write authority for const cells, make the table writable, rely on legacy
-views after cutover, or require an artificial `main` in a library proof merely
-to manufacture the package. The final proof must also handle real mutation-capable
-augmentation callbacks and their effects; the no-op audit fixture does not
-complete that requirement.
+mint write authority for const cells, make the table writable, or require an
+artificial `main` in a library proof merely to manufacture the package. The
+final proof must also handle real mutation-capable augmentation callbacks and
+their effects, which is rbtree C6 work on
+[memory-vs-resources.md](memory-vs-resources.md); the no-op audit fixture does
+not complete that requirement.
 
 `object(&static_object)` still fails parsing with
 `object(...) currently expects a named C struct pointer parameter`. The parser
@@ -168,6 +160,5 @@ success and 26 expect rejection. The missing path has the ownership-based
 replacement noted above. The five incomplete caller fixtures were reproduced
 without changing their expectations. The focused callback fixture gate passes,
 and `click audit mdtests/rb_augment_callbacks_const_suite.md` checks all 16 smart
-tactic sites across eight claims successfully in ordinary mode. Candidate
-stable loans fail promptly as recorded above. The full unpiped
-`scripts/check.sh` exits successfully, including the new ordinary-mode fixture.
+tactic sites across eight claims successfully. The full unpiped
+`scripts/check.sh` exits successfully, including the new fixture.

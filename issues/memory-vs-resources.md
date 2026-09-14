@@ -9,667 +9,94 @@ must not break an otherwise expressible contract merely because different
 implementation paths evaluate its ownership, dependent addresses, or effects.
 Explicit fold/unfold steps may still be necessary to cross an abstraction.
 
-This is a language-preserving implementation project, requested on 2026-09-11.
-It covers the internal refactorings and existing-semantics bug fixes described
-below, not new resource capabilities. P1 is explicit: the dependent footprints
-and repeated augmentation callbacks overlap the MVR blockers in
-[function-contracts.md](function-contracts.md), G1 through G3.
+This is a language-preserving implementation project, requested on
+2026-09-11 and rebaselined on 2026-09-14 after the stable-views campaign
+([the stable views record](../docs/internals/stable-views.md)) shipped a
+different frame model from the one this plan's later chunks assumed. It
+covers internal refactorings and existing-semantics bug fixes, not new
+resource capabilities. The rbtree augmentation callbacks
+([rbtree-example.md](rbtree-example.md), C6) wait on it.
 
 Success means one checked account of a contract's resource transition, with
 memory-specific behavior supplied by the memory family and its effect
 projection. Merely renaming enums, adding a common wrapper around divergent
 implementations, or making one callback fixture pass is insufficient.
 
-## Evidence and current implementation map
+## Status at the rebaseline (origin/master `dc6bb690`, 2026-09-14)
 
-Planning inspection used base `fe1ef83a4ee0b6bd2541b94000459cde6d6676ea`.
-The G1-G3 failures below were documented by the existing callback issue; they
-were not independently reproduced while writing this plan. Worker W0 must
-check the current base before classifying them as still failing. Source
-locations are navigation hints; follow symbols if files have moved.
+The W0 to W5 chunk handoffs that used to fill this file are in the git
+history of this path; they are summarized here by outcome only.
 
-- `src/kernel/primitives.rs`: `CResourceFact` owns or views a `CResource`;
-  memory, composites, tokens, and exclusive instances share `ResourceContext`.
-  `ResourceFamilyAlgebra` supplies entailment, consumption, residuals,
-  normalization, and cores. Keep this real common boundary.
-- `src/kernel/primitives/resource_algebra.rs`: family implementations and
-  indexed resource storage, including supported projections. Memory has
-  specialized range entailment and read/write authority. Exclusive instances
-  have no viewed core; tokens/composites have different quantity rules.
-- `CResourceSpec` and surface `ResourceClause` use dedicated owned/viewed
-  memory variants, while declared-resource variants carry an access mode.
-  This duplicates generic clause handling above the family algebra.
-- `CFunction` retains concrete body/storage evidence alongside its contract
-  metadata. Named `CFunctionContract` values retain only the
-  body-independent interface (plus nominal/provenance names); their source
-  function is not a callback template or execution target.
-- `src/surface/lowering/annotations.rs`:
-  `collect_owned_resource_memory_segments` traverses resource definitions to
-  construct a separate memory footprint; `annotated_function` installs the
-  resource summary and contract summary through separate paths.
-- `src/surface/proof.rs`: `initial_claim_context` materializes/projects
-  resources and establishes entry facts. `src/surface/verification.rs`:
-  `build_function_environment` prepares named contracts through that path.
-- `src/kernel/functions.rs`: `execute_verified_function_applications`,
-  `prepare_function_resource_transfer`, `evaluate_function_resource_context`,
-  `evaluate_function_return_resource_context`, and refinement preparation
-  already share substantial machinery. Consolidate remaining differences;
-  do not build a second call engine.
-- Return evaluation intentionally distinguishes borrowed entry-selected
-  resources from exclusive instances with post-call fields. Binder transport
-  and contract substitution have their own adaptation paths.
-
-Existing positive witnesses include:
-
-- `mdtests/c_contract_executes_buffer.md`: unfold a `Buffer`, call through
-  `Raw`, and fold it to establish `Buffered` for the same callback.
-- `mdtests/c_named_function_contract_frames_folded_composite.md`: keep an
-  unrelated folded bundle in the callback frame.
-- `mdtests/c_named_function_contract_borrows_abstract_token.md`: borrow an
-  owned token through a callback and consume it afterward.
-- `mdtests/c_contract_executes_counter_forward.md`: transport a chosen
-  exclusive instance while preserving another instance in the frame.
-
-## W0 baseline and handoff (2026-09-11)
-
-W0 started from `188a594b` (`Plan P1 memory and resource contract
-unification`). The checkout was clean. No source, C, budget, quarantine, or
-unrelated changes were made. The positive witnesses on this base pass under
-the ordinary bounded mdtest runner:
-
-```text
-MDTEST_FILTER=rb_augment_callbacks_helper cargo nextest run --test mdtests --no-capture
-  PASS (1/1, 0.091s)
-MDTEST_FILTER=augment_rotate_callback.md cargo nextest run --test mdtests --no-capture
-  PASS (1/1, 1.231s)
-MDTEST_FILTER=augment_rotate_model_callback.md cargo nextest run --test mdtests --no-capture
-  PASS (1/1, 0.295s)
-```
-
-The following are fresh, temporary reductions in the W0 worktree; they were
-removed and are not tests or acceptance substitutes. They preserve the C
-source and use the normal `cargo nextest` deterministic-work bounds.
-
-- **G1:** changing the three callback contract footprints in
-  `rb_augment_callbacks_helper.md` from `views` to `owns` while leaving the
-  caller's `views parent->left/right` gives status 100 and
-  `step() produced runtime error: missing resource fact owns node[...]`.
-  Giving the caller `owns parent->left/right` makes the failure the callback
-  lookup itself: with `Propagate` still `views` and `Copy`/`Rotate` changed to
-  `owns`, the exact command
-  `MDTEST_FILTER=rb_augment_callbacks_helper cargo nextest run --test mdtests --no-capture`
-  gives status 100 at the second indirect call, through
-  ``__click_call_result2``: `no matching named contract is available for this
-  value`. Changing all three callbacks to `owns` fails earlier at
-  ``__click_call_result1``. Thus the current base confirms the G1 family, but
-  the exact failing call number depends on which footprints are made owned;
-  the issue's three-call target remains unimplemented.
-- **G2:** a temporary two-clause function with
-  `owns pair(node)` followed by `owns node->right->augmented` (where `pair`
-  owns `node->left` and `node->right`) was run with
-  `MDTEST_FILTER=_mvr_g2 cargo nextest run --test mdtests --no-capture`.
-  Status 100 was the certification diagnostic
-  `could not certify contract for f: could not evaluate the contract entry
-  resources: could not evaluate an owned memory resource segment (resource
-  clause 2 of 2)`. This is an independent reduction of the dependent-base
-  failure, not a claim that the existing rotation workaround passes the
-  natural contract.
-- **G3:** adding `requires old->left != 0; views old->left->augmented` to the
-  named `AugmentRotate` contract in the rotation fixture, then running
-  `MDTEST_FILTER=augment_rotate_callback.md cargo nextest run --test mdtests --no-capture`,
-  gave status 100 while preparing the contract:
-  `could not prepare named contract AugmentRotate: missing pure fact:
-  loadable(base=old, bytes=8)`, with no pure or resource facts available.
-
-During this investigation `origin/master` advanced through
-`16fe83e4` (`Name a retained cell's load by the value it already holds`),
-which directly fixes G1. Its three new real-footprint witnesses are green on
-the integrated latest checkout (`f4f76f5c`, which contains that commit and
-the subsequent G1 status update `4597941b`):
-
-```text
-MDTEST_FILTER=rb_augment_callbacks_helper_owns cargo nextest run --test mdtests --no-capture
-  PASS (1/1, 0.163s)
-```
-
-The paired cell-level separation witness also passes, while
-`rb_augment_callbacks_helper_owns_rejects_unseparated.md` still rejects the
-same proof at the second call. The commit's rationale identifies the changed
-load naming across call havoc: retained table cells now resolve to the value
-they already hold, so the opened callback fact remains tied to the reloaded
-pointer. Therefore G1 is **fixed upstream and must not be reimplemented**;
-W5 should preserve these witnesses and focus on R3's permitted-mutation and
-support-provenance cases. G2 and G3 were not touched by `16fe83e4` and remain
-open pending a recheck from the manager's latest integrated base.
-
-The starting-base G1 reductions showed a verified failure, not a performance
-or search-budget issue; the upstream fix is now independently green as noted
-above. G2 is a verified certification/evaluation failure. G3 is a verified
-named-contract lowering failure. No root cause beyond those observed
-boundaries is assumed here: in particular, callback-fact provenance loss is a
-W5 hypothesis until R3 is reduced with an actual permitted mutation.
-
-### W0 ownership map for R1-R6
-
-| Regression | Reusable positive witnesses and next minimal case | Paired rejection/preservation case | Owning chunk |
-| --- | --- | --- | --- |
-| R1 | Start from the existing folded-composite/frame witnesses. Add the smallest direct function whose `owns pair(node)` supplies a guarded link load for a separate `owns node->right->augmented`; then use the natural rotation only after this passes. | Omit the link-read authority or nonnull guard; overlapping owned pieces must not be accepted. | W3 |
-| R2 | Reuse `c_named_function_contract_*` callback fixtures, `c_contract_executes_*` theorem fixtures, and the direct R1 reduction. Run the same authorized dependent clause through named callback application, explicit execution, automatic formation, and certification. | Missing access/guard remains an obligation; automatic formation stays bounded and exact. | W3, with W2 interface coverage |
-| R3 | Begin with `rb_augment_callbacks_helper.md`: one scoped open, three callback fields, owned `node->left` footprints, and unchanged guarantees. Add one bounded helper where one callback performs an allowed mutation. | A changed supporting table cell or consumed support invalidates the old callback fact; unrelated framed support survives. | W5 |
-| R4 | `c_contract_executes_buffer.md` is the raw/one-layer `Buffer` unfold/call/fold witness. Frame an unrelated cell and token, then compare raw and wrapped checked effects. | Out-of-authority write and view-to-own conversion fail. | W4 |
-| R5 | Use the existing return-indexed and counter-forward fixtures for entry-selected borrowed ranges and exclusive identity. Add a pointer-field change with an owned range and a returned instance whose fields are constrained only by its guarantees. | No retargeting of an `owns` range, invented field preservation, or aliasing of two instance identities. | W4 (memory), W6 (instances/binders) |
-| R6 | `c_named_function_contract_borrows_abstract_token.md`, `c_named_function_contract_borrows_folded_composite.md`, and the frame theorem cover scoped callback borrows and unrelated frames. | Double token consumption fails; persistent aliases retain current deallocation restrictions and scoped views do not escape. | W5 |
-
-### W0 path trace and proposed internal boundaries
-
-The current implementation has one useful family boundary but several
-contract/transition entry paths around it. `ResourceFamilyAlgebra` in
-`src/kernel/primitives.rs` and `resource_algebra.rs` is the real common
-boundary: memory supplies range splitting/read authority, composites and
-tokens use exact quantities, and instances enforce identity/exclusivity.
-W1 should preserve that specialization while normalizing the surface
-specification above it.
-
-| Path | Current entry and duplicated preparation | Narrow boundary for W1-W6 |
+| Chunk | Outcome | Where it lives now |
 | --- | --- | --- |
-| Direct verified C call | `execute_c_function_call_paths` dispatches a verified rule or body; `prepare_verified_function_call` separately binds arguments, evaluates `resource_requires`, calls `prepare_function_resource_transfer`, lowers contract requirements, and later evaluates returns. | W2 supplies one body-independent contract interface; W3 supplies a dependency-aware clause elaboration result (term plus checked load/guard obligations); W4 consumes one transition record for transfer, effects, and return. |
-| Named callback call | `execute_c_function_contracts_paths` selects a `CFunctionContract`, optionally builds `ResourceCallApplication`, then applies a body-independent `CFunctionContractApplication` through `execute_verified_function_applications`; exact pointer `Contract(p)` facts are checked by `function_contract_requirement_is_proven`. | W1's normalized resource terms and W2's interface are shared with direct calls. The callback fact remains an exact-pointer evidence input; W5 owns support/provenance invalidation, not a global retention list. |
-| Explicit execution theorem | `surface/proof/pure_theorems/execution_theorems.rs::verify_execution_theorem` rewrites the target clauses and builds a one-call block, then uses grouped checked execution and `prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems`; concrete targets use ordinary C, abstract targets use source contracts. | W2/W6 provide the same contract/binder instantiation; W4 receives the same checked transition. The theorem's closed checked artifact remains distinct authority from a verified body or external assumption. |
-| Automatic formation | `function_refines_named_contract` calls `prepare_automatic_contract_refinement_context`, then `function_refines_named_contract_in_case`; concrete pointer formation is accepted only for a verified/external exact target and compatible vocabulary/effects. | W2 owns the body-independent relation; W3 supplies checked entry/post clause obligations; W6 supplies identity-based binder maps. Keep bounded candidate applicability and exact/forced pairing. |
-| Contract certification | `verification.rs::build_function_environment` prepares named contracts through `initial_claim_context` and `annotated_function`. Function certification constructs a fresh entry context, invokes checked artifacts through `prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems`, then claims are finalized in `kernel/api/contract_certification/contract_claims.rs`. | W1/W3 must make named and ordinary entry lowering agree. W4's transition/effect projection is the sole checked footprint source. Certification may reuse checked artifacts, but must not rerun a concrete body or turn pending obligations into authority. |
+| W0 baseline | Done. G1 fixed upstream (`16fe83e4`), G2 (`7e55fdc7`) and G3 (W3) fixed. | `rb_augment_callbacks_helper_owns*.md`, `contract_owns_through_composite_field*.md` |
+| W1 normalized resource specification | Done. `CResourceSpec` carries a `CResourceTerm` plus explicit access, quantity, transfer role, and snapshot; families validate their own combinations. | `src/kernel/primitives.rs`, `resource_lowering.rs` |
+| W2 body-independent contract interface | Done. `CFunctionContractInterface` serves verified functions, external assumptions, named callbacks, and execution theorems; evidence kinds stay distinct. | `src/kernel/primitives/contracts.rs`, `callback_contract_tests.rs` |
+| W3 dependent entry clauses | Done. One kernel evaluator for direct and named contracts, checked load/guard obligations, event-driven waiter worklist with interval and symbolic fallbacks. | `contract_*composite_argument*.md`, `contract_nested_*`, kernel worklist tests |
+| W4 authoritative effect projection | Done. One `CFunctionResourceTransfer` per application; `project_contract_memory_effects` feeds havoc, refinement, loops, storage checks, and certification. | `authoritative_memory_projection_*` tests |
+| W5 observation provenance | Partial. Support-occurrence provenance, memory-dependent projection footprints with load prerequisites, scoped-open and callback mutation regressions landed (checkpoints A to E1). The E2 "expanded leaf footprint index" design was investigated, rejected, and is now retired by this rebaseline (see D1). | `rb_augment_callbacks_helper_{mutates_body,rejects_changed_cell,consumes_suite}.md`, `resource_scope_*.md`, `invalidate_memory_support` |
+| W6 binder transport | Half done upstream. `570ac8a0` replaced the field-free `ResourceField` rename sentinel with `ContractSubstitutions` and `InstanceRename`; the parser-side call-binder registry was reviewed and kept, with the reason recorded in that commit. | `src/surface/lowering/contract_substitution.rs`, `CCallBinderTransport` |
+| W7 qualification and cleanup | Not started. | |
 
-The resource/effect duplication to remove or make read-only is now pinned:
-`function_contract_summary` in `annotations.rs` separately traverses owned
-resource definitions through `collect_owned_resource_memory_segments`, while
-the kernel separately evaluates `CResourceSpec` through
-`evaluate_function_resource_context` and computes transfer/return effects in
-`prepare_function_resource_transfer`, `evaluate_function_return_resource_context`,
-and `evaluate_contract_mutable_ranges`. `initial_claim_context` additionally
-materializes/project resources and facts before `annotated_function` installs
-the resource and contract summaries. W4 should make its transition projection
-authoritative and leave any retained surface traversal as a checked,
-read-only artifact consumer.
+### What the stable-views campaign changed under this plan
 
-Authority and obligations should cross the proposed boundaries as follows:
-W1 lowers syntax to a resource term plus explicit access/role/snapshot metadata
-and delegates family validity to the existing algebra; W2 instantiates one
-contract interface without conflating body evidence, external assumptions, or
-pointer-specific callback facts; W3 returns symbolic terms together with
-load/bounds/guard obligations and never assumes a contract's own postcondition
-at entry; W4 consumes those checked obligations to produce one transition
-record (borrowed entry resources, consumed residuals, frame, post outputs, and
-effect projection); W5 attaches observations to support/version/scope and
-invalidates them on support changes; W6 transports semantic instance identity
-separately from spelling and snapshot state. This keeps unresolved obligations
-as obligations at both ordinary and callback calls.
-
-W0 changed only this issue document. The resulting checkpoint is ready for
-manager integration; no old implementation path or adapter was removed.
-
-## W1 handoff (2026-09-11)
-
-W1 started from `345eb056` (`Reconcile memory resource issue with G1
-status`) in the isolated `codex/mvr-w1` worktree. The normalized resource
-specification is now a validated `CResourceSpec` carrying a `CResourceTerm`,
-explicit access, quantity, transfer role, and snapshot. Memory remains a
-range term; composite, token, and field-bearing instance terms retain their
-family-specific identity and validation. Surface resource lowering constructs
-this form at one metadata-aware boundary, and substitution, interface
-identity, termination, loop handling, proof execution, certification, and
-resource evaluation consume it without legacy variant matches or the removed
-borrowed-ensure index. No syntax, C source, budget, quarantine, or unrelated
-files changed.
-
-The focused normalized-resource tests cover memory/composite/token/instance
-families, valid view/own/count combinations, rejected memory quantities,
-rejected counted views, rejected instance views and non-composite instance
-bodies, and indexed lookup scaling at sizes 16, 32, 64, and 128. The
-deterministic-work ratio assertion passed. Existing resource, contract, heap,
-surface, callback, expansion, certification, and rejection tests retain their
-outcomes. The follow-up review makes the normalized carrier fields private;
-interface normalization and substitutions rebuild through `CResourceSpec::new`,
-while instance-inner reconstruction reports an explicit contract error if its
-validated invariant is ever violated. A focused regression checks substituted
-quantity/term metadata, instance-inner access/quantity/role/snapshot metadata,
-and public rejection of an invalid instance view.
-
-Checks in the W1 worktree all passed: `cargo check --all-targets` (0),
-`MDTEST_FILTER=resource cargo nextest run --test mdtests --no-capture` (0),
-`cargo nextest run --lib resource_tests contract_execution_tests heap_tests`
-(172/172), `cargo fmt --check` and `git diff --check` (0), and the unfiltered
-`scripts/check.sh` gate (0; 2556 tests plus the 14 fixture/example checks).
-The tested W1 implementation is committed as `69fdd385`; this follow-up
-review hardens its construction boundary and is recorded in the separate
-fixup commit following it. The manager should integrate both commits without
-merging or pushing from this worktree. No verified blockers remain; G2/G3 and
-later R1-R6 behavior remain assigned to later chunks.
-
-Final integration note (2026-09-11): this reviewed W1 pair was applied onto
-`42b8b6eb` after upstream's whole-contract resource supply and centralized
-unaddressable-clause diagnostics landed in `53948479` and `7e55fdc7`. The
-resulting commits are `ef44ad20` and `d8d1db47`. Their only merge conflict was
-resolved in favor of W1's normalized, validated `CResourceTerm`/`CResourceSpec`
-carrier while retaining upstream's dependency-aware whole-clause evaluation,
-current issue findings, and dedicated instance-rename representation. This
-integration does not duplicate or revert the upstream whole-contract algorithm;
-the branch remains unmerged and unpushed for manager integration.
-
-## W2 handoff (2026-09-11)
-
-W2 started from the green pushed master checkpoint `1add3707` in the isolated
-`codex/mvr-w2` worktree. The body-independent `CFunctionContractInterface` now
-owns typed result/parameter metadata, named proof binders, pure pre/post
-clauses, W1-normalized resource terms with access/role/snapshot, checked effect
-metadata, source requirement provenance, composite definitions, and predicate
-unfoldings. `CFunction` retains the concrete/source bodies and storage while
-delegating its contract accessors to this carrier; named contracts expose the
-same carrier through `interface()`. Verified rules, external assumptions,
-callback applications, refinement, and certification keep their distinct
-evidence types while consuming the shared interface judgments.
-
-Ordinary and callback preparation now share interface-based argument coercion,
-resource transfer, result/return-resource evaluation, population transitions,
-effect lowering, ensure facts, and refinement views. External calls use that
-same checked application engine without being repackaged as verified-body
-evidence. Exact pointer facts, entry-selected borrow snapshots, exclusive
-instance identity/binder maps, role/coercion checks, bounded applicability,
-checked artifacts, pending obligations, and no-body-rerun behavior remain
-unchanged. The independent legacy contract field set and external-to-verified
-adapter path were removed; remaining `CFunction` accessors are compatibility
-views over the one interface, not another evaluator.
-
-Files changed: `src/kernel/primitives.rs`,
-`src/kernel/primitives/contracts.rs`, `src/kernel/functions.rs`,
-`src/kernel/functions/callback_contract_tests.rs`,
-`src/kernel/api/contract_interface_identity.rs`,
-`src/kernel/reasoning/substitution.rs`, `src/kernel/api.rs`,
-`src/kernel/termination.rs`, and `src/kernel/tests/heap_tests.rs`.
-The direct/callback agreement regression covers memory, token, composite, and
-exclusive-instance transitions. Existing wrong-callback, unverified-target,
-invalid-refinement, source-provenance, and checked-artifact rejection tests
-remain active. Existing deterministic four-size callback scaling covers
-growing interface sets (`1, 8, 32, 128`) and unrelated function frames
-(`0, 16, 64, 256`); no new global scan or body rerun was introduced.
-
-Focused callback/contract/resource/heap tests pass (`191/191`), as do
-`cargo check --all-targets`, `cargo fmt --check`, and `git diff --check`.
-The unfiltered `scripts/check.sh` gate passes: `2573` tests plus all `14`
-fixture/example checks (with only the repository's existing quarantined
-example skipped). No known blockers remain. The semantic confirmation for
-this chunk is that direct and named-callback transitions agree on
-memory/token/composite state and on instance identity/schema/arguments, while
-callback instance fields remain fresh symbolic post-state values rather than
-an invented preservation guarantee. This worktree is committed but
-intentionally not merged or pushed; the manager should integrate its coherent
-commit.
-
-Review follow-up: `CFunctionContract` now stores only its nominal name, a
-source-name provenance string for diagnostics, and an owned
-`CFunctionContractInterface`; construction discards the source function's
-body, globals, and static storage. The shared application descriptor carries
-that interface plus optional concrete evidence, so named callbacks and
-external assumptions never scan or execute a template body, while verified
-direct calls retain their separate body-safety evidence. Interface variable
-collection is likewise body-independent. `constructs` remains a direct
-outcome-proof transition: named-contract formation rejects nonempty
-constructor clauses, and constructor lists participate in exact interface,
-refinement, and checked-source identity. The added regressions cover
-body/storage-independent named application identity and direct-only
-constructors; the focused gate is now 193/193.
-
-Integration reconciliation on `origin/master` `21586276` retained the
-upstream source-requirement capability and algebraic-equation simplification
-changes. The interface carries the source map used for that capability, so
-named callbacks remain body-independent. The integrated focused command now
-passes `195/195` (the upstream base adds two matching callback tests), the
-upstream callback/algebraic-equation filters pass, and the source-capability
-adapter is not a separate contract evaluator.
-
-## W3 handoff (2026-09-11)
-
-W3 started from the green pushed master checkpoint `2b7e9e32` in the isolated
-`/tmp/click-mvr-w3` worktree on `codex/mvr-w3`. The completed branch tip is
-intentionally unmerged and unpushed; the manager should cherry-pick the green
-commit reported with this handoff. No C source, Click syntax, budget,
-quarantine, or excluded semantics changed.
-
-Entry resource clauses now lower symbolically only as a provisional surface
-context, then the shared kernel `evaluate_function_resource_context` evaluates
-the complete clause set for both direct functions and body-independent named
-contracts. Pure loadability requirements become checked read views, while
-only entry instance identities are seeded; postconditions, arbitrary owned
-composite bodies, and concrete function bodies never become entry authority.
-Quantified nonnegative assumptions are supplied through the same entry setup.
-Successful composite clauses incrementally expose only their checked memory
-children to the bounded dependency worklist, so dependent arguments can be
-evaluated without a whole-context fixed-point rescan for every dependency
-depth. Named-contract refusals therefore reach the kernel evaluator; the
-surface segment check remains only a source-rich diagnostic fallback after a
-kernel refusal.
-
-Normalized specifications produced from a `MemoryAggregate` now carry source
-clause provenance on every leaf, and the kernel uses that provenance for the
-same one-based clause numbering as the surface. Provenance is deliberately
-ignored by resource equality, ordering, hashing, and contract identity.
-
-Files changed: `src/kernel/functions.rs`, `src/kernel/mod.rs`,
-`src/kernel/primitives.rs`, `src/kernel/tests/resource_tests.rs`,
-`src/surface/lowering/resource_lowering.rs`, `src/surface/proof.rs`,
-`src/surface/verification.rs`, this issue document, and the new
-`mdtests/contract_owns_composite_argument.md` plus
-`mdtests/contract_owns_composite_argument_rejects_missing_access.md`.
-
-The new direct and named-contract regression evaluates dependent composite
-arguments through three authorized dependency levels and independently keeps
-the missing-access variant rejected by the kernel. The source-position unit
-regression covers several normalized leaves from one aggregate and a second
-stalled source clause. Existing callback, explicit execution-theorem,
-automatic-formation, and certification fixtures continue to exercise their
-body-independent entry paths; their applicability and bounded candidate
-rules were not broadened. G2 is classified as already fixed upstream by
-`7e55fdc7` and retained by this work (`contract_owns_through_composite_field.md`).
-G3 is fixed here for named dependent/composite entry evaluation; the existing
-unheld-link rejection remains a rejection, with the kernel authoritative and
-the surface check diagnostic-only.
-
-The dependency work curve is deterministic over sizes `4, 8, 16, 32`, with
-observed work `70, 168, 412, 1092`; each node uses a distinct concrete block
-so the measurement charges dependency nodes/edges rather than same-block
-range normalization, and adjacent sizes satisfy the test's `4x + 256` bound.
-
-Checks passed: `cargo check --all-targets`, `cargo fmt --all -- --check`, and
-`git diff --check`; focused kernel tests `172/172`; the complete resource
-mdtest filter; the examples gate `3/3` including bounded-pool; and the
-unfiltered `scripts/check.sh` gate with `2584` tests and all `14` fixture /
-example checks passing (only the repository's existing quarantined example
-is skipped). No tooling-stop condition or stale verifier process was found.
-
-Removed paths are the old unconditional surface-only entry authority, the
-per-depth batch retry behavior, and the temporary composite reduction. The
-result preserves clause roles, snapshots, lexical scopes, local missing
-authority/guard/cycle diagnostics, no free unfolding, and no forward-language
-change. The manager should record the final commit hash when integrating; W3
-did not merge or push from this worktree.
-
-## W3 follow-up handoff (2026-09-11)
-
-The follow-up started at `09267e5a` (the W3 handoff above) and is committed as
-`8b260cc9` on `codex/mvr-w3`, still unmerged and unpushed. It was prompted by
-review reductions, not by a new language rule. The entry evaluator now takes
-an authority-only snapshot before folded composite cells and observable body
-facts are projected. It receives only explicit entry memory clauses and
-instance identities, plus pure facts from explicit `requires loadable(...)`
-clauses; projection-derived loadability, composite bodies, postconditions,
-and concrete function bodies cannot seed entry authority. Direct memory
-clauses remain available because they are themselves explicit authority (and
-are needed for checked quantities such as `pool->capacity of pool_slot(pool)`).
-
-The kernel evaluator remains the single acceptance path for direct and named
-contract clauses. The surface segment-base check runs only after a kernel
-refusal to retain source-rich diagnostics. Symbolic loadability ranges such
-as `node[0..n]` are represented as checked symbolic read views (including the
-`4*n` int32 footprint) without materializing fake cells. The three new
-regressions are `contract_dynamic_loadable_composite_argument.md`, its
-`_rejects_missing` negative, and
-`contract_owns_composite_argument_rejects_body_bootstrap.md`; together they
-cover the dynamic positive, missing-authority negative, and the body-bootstrap
-negative.
-
-The pending-clause implementation now captures checked `MissingResource`
-dependencies and indexes waiters by resource fact, memory base, and memory
-block. After the one initial source pass and one section-supply expansion,
-newly supplied facts enqueue only dependent clauses; the old repeated
-whole-pending fixed-point scans are gone. The adversarial dependency test
-uses sizes `4, 8, 16, 32`, observed deterministic work `70, 168, 412, 1092`,
-and exact clause-attempt counters `7, 15, 31, 63` (`2*n-1`). Independent
-clauses and multiple dependency depths remain covered by the existing focused
-resource tests.
-
-Files/interfaces changed in this follow-up are
-`src/surface/proof.rs`, `src/kernel/functions.rs`, `src/kernel/loops.rs`,
-`src/kernel/mod.rs`, `src/kernel/tests/resource_tests.rs`, and the three
-`mdtests/` files named above. Existing direct/callback, explicit execution
-theorem, automatic-formation, and certification paths remain covered by the
-same shared evaluator and their bounded applicability rules are unchanged.
-The earlier W3 classification still stands: G2 was already fixed upstream by
-`7e55fdc7`; G3 is fixed by W3, including named dependent/composite entry
-evaluation, with the kernel authoritative and surface diagnostics secondary.
-The MemoryAggregate source-position and surface/kernel numbering residual is
-also fixed by the preceding W3 commit and was not regressed here.
-
-Checks: `cargo check --all-targets`, `cargo fmt --check`, `cargo clippy
---all-targets -- -D warnings`, and `git diff --check` passed; focused
-`cargo nextest run --lib resource_tests contract_execution_tests
-callback_contract_tests` passed `172/172`; the composite and dynamic fixture
-filters passed; `cargo nextest run --test examples example_projects
---no-capture` passed; and unfiltered `scripts/check.sh` exited 0 with `2584`
-tests and all `14` fixture/example checks passing. Only the repository's
-pre-existing quarantined example is skipped. No tooling-stop condition or
-stale verifier process was observed.
-
-The replaced paths are projection-derived body facts as entry authority, the
-constant-only loadability-view shortcut, and whole-context pending-clause
-rescans. No blocker remains. No C source, Click syntax, budgets, quarantine,
-or excluded semantics changed; no free unfolding or forward-language change
-was introduced. W3 did not merge or push; the manager should cherry-pick
-`09267e5a` and then `8b260cc9` (or the coherent range) after checking the
-primary branch base.
-
-## W3 follow-up: accumulated supply and nested loadability (2026-09-11)
-
-This review follow-up started from `2538cdbf` (the preceding W3 entry
-evaluation documentation checkpoint) and is committed as `25711aa6`, still
-unmerged and unpushed. The event-driven clause queue now tests a
-newly supplied fact against the accumulated indexed section supply. A wide
-pending memory dependency can therefore wake after adjacent `[0..1]` and
-`[1..2]` supplies have been combined; candidate selection still uses the
-fact/base/block waiter index and does not rescan the section.
-
-Nested pure requirements now separate unconditional loadability atoms from
-their surrounding logic. Positive `loadable` atoms are extracted only under
-source conjunctions and lowered as checked standalone read authority. The
-entry evaluator strips only direct conjunctive `CMemoryLoadable` atoms from
-projection-derived facts, preserving unrelated conjuncts. `or`, implication,
-negation, quantifier, snapshot, range, and predicate bodies remain whole
-logical facts and cannot grant unconditional read authority. Composite bodies
-and projection observations still cannot bootstrap entry loads.
-
-The permanent regressions are
-`mdtests/contract_nested_dynamic_loadable_composite_argument.md` and
-`mdtests/contract_nested_loadable_branch_rejects_bootstrap.md`, plus the
-kernel `adjacent_supply_wakes_wide_memory_waiter` test. The dependency scaling
-fixture now reverses the dependent clause order to force one fixed-point round
-per dependency depth; sizes remain `4, 8, 16, 32`, with deterministic work
-`70, 168, 412, 1092` and attempts `7, 15, 31, 63` (`2*n-1`).
-
-Files changed in this follow-up are `src/surface/proof.rs`,
-`src/kernel/functions.rs`, `src/kernel/tests/resource_tests.rs`, the two
-new `mdtests/` files above, and this issue document. The replaced paths are
-the one-fact event wake check and the whole-proposition loadability filter;
-the old source-order dependency curve was replaced by adversarial reverse
-ordering. No new evaluator or surface authority path was added.
-
-Checks passed: `cargo check --all-targets`; `cargo fmt --all -- --check`;
-`cargo clippy --all-targets -- -D warnings`; `git diff --check`; focused
-`cargo nextest run --lib resource_tests contract_execution_tests callback_contract_tests --no-capture`
-(`172/172`); `MDTEST_FILTER=nested_ cargo nextest run --test mdtests --no-capture`;
-and `cargo nextest run --test examples example_projects --no-capture`.
-The unfiltered `scripts/check.sh` exited `0`: `2585/2585` tests and all
-`14/14` fixture/example checks passed (one existing quarantined example is
-skipped by the examples test). No tooling-stop condition or stale verifier
-process was observed. No C source, Click syntax, budget, quarantine, or
-excluded semantics changed; no free unfolding or forward-language change was
-introduced. W3 did not merge or push; the manager should cherry-pick this
-follow-up after checking the primary branch base.
-
-## W3 follow-up: interval-aware waiter index (2026-09-11)
-
-This follow-up started from `31b8f93a` and the implementation is committed as
-`ec820946` on `codex/mvr-w3`, still unmerged and unpushed. The pending-clause
-waiter index now normalizes concrete, comparable memory ranges to a fixed-depth
-sparse segment tree keyed by block and physical-byte interval nodes. Queries
-walk only the overlapping interval nodes and their boundary paths; they do not
-enumerate cells or rescan all pending clauses. Ranges with symbolic or
-un-normalizable bases/bounds retain the bounded fact/base/block fallback, so
-symbolic range wakeups remain conservative. Constant base offsets are folded
-into the block coordinate, preserving coverage across comparable bases.
-
-The `ResourceClauseWaiterIndex` interface is used by registration,
-unregistration, and event wakeup. Concrete dependencies retain an exact-fact
-key plus interval nodes; only non-concrete dependencies retain the coarse
-memory keys. Accumulated `section_supply` remains the readiness authority, so
-adjacent providers still wake a wide dependency only after their union covers
-it. The earlier `2*n-1` reverse-chain attempt curve remains unchanged at sizes
-`4, 8, 16, 32`, with deterministic work `70, 168, 412, 1092` and attempts
-`7, 15, 31, 63`. The new same-block disjoint-provider regression uses the same
-four sizes and records exact candidate visits `4, 8, 16, 32`; a coarse
-`MemoryBlock` index would visit every waiter for every provider instead.
-
-Files/interfaces changed in this follow-up are `src/kernel/functions.rs` and
-this issue document. The focused kernel worklist module now covers adjacent
-range union, constant-base and cross-width physical-byte comparability,
-same-block disjoint candidate counts, and symbolic fallback. The broader focused resource/callback/
-contract-execution gate passes `172/172`; nested mdtests and examples pass;
-and unfiltered `scripts/check.sh` passes with `2588/2588` tests and `14/14`
-fixture/example checks (one pre-existing quarantined example remains skipped).
-Formatting, clippy, and diff checks also pass.
-
-The replaced path is the coarse same-block `MemoryBlock` candidate fan-out
-for concrete ranges; symbolic fallback, clause provenance, accumulated supply,
-and the kernel's single authority are retained. No blocker remains. No C
-source, Click syntax, budget, quarantine, or excluded semantics changed; no
-free unfolding or forward-language change was introduced. W3 did not merge or
-push; the manager should cherry-pick `ec820946` and this documentation update
-after checking the primary branch base.
-
-## W3 follow-up: symbolic-event waiter fallback (2026-09-11)
-
-This follow-up starts from `4c82c4f6` and is implemented by `56958fa6` on
-`codex/mvr-w3`, still unmerged and unpushed. The interval index had one
-asymmetric boundary: a concrete dependency was registered in exact and
-interval nodes, but a symbolic or otherwise un-normalizable supplied range
-could query neither. Concrete dependencies now also register a block-local
-fallback waiter set keyed by `(clause, dependency)`. It is consulted only for
-such symbolic supplied memory events; concrete supplied events continue to
-use exact and interval lookup, preserving the same-block disjoint curve.
-Candidate clause ids are deduplicated, and unregister removes the same waiter
-from both indexes, including when one clause waits on multiple ranges in one
-block.
-
-The permanent functional regression is
-`symbolic_supplied_range_wakes_concrete_pending_dependency`: a first clause
-waits on a concrete loaded pointer, a later symbolic-range provider first
-waits on a seed cell, and a final seed clause unlocks the provider. With the
-assumption `1 <= n`, the provider's symbolic event then wakes the concrete
-pending clause and all three resources evaluate. The kernel worklist tests
-also cover fallback registration/removal and continue to cover adjacent-range
-union and physical-byte cross-width matching. The four-size same-block
-disjoint curve remains exact candidate visits `4, 8, 16, 32`; the reverse
-dependency curve remains deterministic work `70, 168, 412, 1092` and attempts
-`7, 15, 31, 63`.
-
-The fallback is intentionally conservative rather than a stronger asymptotic
-claim: one explicit symbolic supplied event may inspect all concrete waiters
-in its block, bounded by that event's block-local set. Concrete events do not
-pay this scan and remain interval-sensitive. No whole-pending or whole-section
-rescan was reintroduced.
-
-Files changed are `src/kernel/functions.rs`,
-`src/kernel/tests/resource_tests.rs`, and this issue document. Focused
-worklist/resource tests passed (6 and 90 respectively), the focused
-`resource_tests contract_execution_tests callback_contract_tests` nextest
-selection passed `173/173`, and `cargo clippy --all-targets -- -D warnings`,
-formatting, and diff checks passed. Unfiltered `scripts/check.sh` exited 0:
-`2591/2591` tests and all `14/14` fixture/example checks passed (the one
-pre-existing quarantined example remains skipped). No tooling-stop condition
-or stale verifier process was observed. No C source, Click syntax, budget,
-quarantine, excluded semantics, free unfolding, or forward-language change
-was introduced. W3 did not merge or push; the manager should cherry-pick
-`56958fa6` and this documentation commit after checking the primary branch
-base.
-
-## W4 handoff (2026-09-11)
-
-W4 starts from `fa86dd96` in the isolated `codex/mvr-w4` worktree. The
-verified application path now carries one checked `CFunctionResourceTransfer`
-record for its entry transition: role- and snapshot-preserving borrowed and
-consumed inputs, callee resources, the caller residual after requirements, and
-the canonical memory-effect projection. After return-resource evaluation the
-same record retains and consumes the post outputs for allocation/return state.
-The memory projection is produced by `project_contract_memory_effects`, which
-evaluates resource-derived owned memory only from those checked transition
-facts when the interface marks that frame, then evaluates explicit effect
-guards/dependent addresses and canonical physical ranges together with their
-checked evidence facts.
-
-Modular call havoc, `CMemoryEffectSummary`, callback transition ambiguity,
-automatic refinement containment, certification Effect claims, and
-storage-write footprint checking now consume that projection helper. The old
-inline mutable-range traversal in verified application preparation and the
-independent certification Effect evaluator were removed. Tokens and views
-contribute no write range; resource-derived owned memory, guarded/subrange
-ranges, read-only storage rejection, allocation continuity, recursive
-explicit representations, instance identity/fresh fields, and
-dynamic-population rejection remain on their existing specialized paths. A
-resource summary alone does not imply abstract havoc; only the checked
-resource-derived-frame marker permits its owned memory to enter the
-projection. Direct body execution still checks stores against the transferred
-resource context rather than applying abstract call havoc.
-
-Refinement compares target and implementation projections, including
-resource-derived ranges even when their retained surface metadata is empty;
-guarded explicit effects retain exact-route refusal and range candidates are
-indexed by memory family/width before endpoint containment. Resource-derived
-frame metadata is stored separately from startup/explicit segments, and
-marking a mixed interface is rejected; the checked evidence identity includes
-both the retained metadata and mixed-frame bit. Inherited loop frames carry a
-typed origin and are rewritten to canonical entry ranges before loop proof,
-so a pointer-field mutation cannot retarget a back edge. Before storage
-certification iterates paths, it constructs one checked entry transition from
-entry-only certification facts; path/body facts are used only for the later
-write-coverage check and cannot bootstrap that transition.
-
-Loop-frame setup adds only the existing entry-only nonnegativity assumptions
-for counted resource quantities, then evaluates the checked transition once;
-if that transition cannot be established, retained source-oriented metadata
-cannot authorize a frame. The post-setup loop check validates only the typed
-canonical carrier and does not re-evaluate resource expressions.
-
-The surface `collect_owned_resource_memory_segments` traversal remains as
-checked, source-oriented metadata for body diagnostics; it is not used as a
-modular call effect source or as loop/storage authority. The kernel projection
-is authoritative there. The explicit refinement guard-decision helper remains
-a conservative adapter for its unreachable explicit-case route, while
-automatic refinement and storage checks use the authoritative projection.
-
-The deterministic regressions use sizes `1, 4, 16, 64`: one checks explicit
-effect members with 256 unrelated memory frames, one runs actual transition
-preparation/projection with 256 unrelated token-frame facts, and one expands a
-one-layer wrapper containing the explicitly used members. They check that
-work is charged to selected members rather than unrelated frames. Existing
-callback, resource, guarded-refinement, read-only, deallocation, return-indexed,
-wrapper, certification, and expansion fixtures remain the behavioral
-regressions for R4 and the memory half of R5. No C source, Click syntax,
-budget, quarantine, excluded semantics, or new issue changed.
+- **The frame model is a partition, not an expansion.** A valid context is a
+  partition: distinct owned occurrences are bytewise disjoint at every depth,
+  composites included, and the kernel does not reason inside a folded
+  composite beyond its one-level frontier. `4b9debcd` decides a call's
+  effect/view separation by occurrence provenance first and consults
+  arithmetic only for a partial borrow of one occurrence. The E2 handoff's
+  required representation, a per-composition footprint of every recursively
+  expanded owned leaf posted into an interval index, contradicts that rule
+  and must not be built.
+- **Loans carry what W5 was reaching for.** Observations keep their loan
+  identity through projection, fold, unfold, `open`, `close`, normalization,
+  range splitting, and callback-fact extraction; produced composite bodies
+  are checked against what the caller holds across the call; every
+  allocation-retiring path consults the ledger; return validates
+  obligations before recovery. A fold whose fact-bearing body views memory
+  its own context owns is refused (`dc6bb690`).
+- **`views` is now a stable loan and escaping borrows exist.** A folded
+  composite may hold the loan it packages; the language-preservation
+  contract below is rewritten against that meaning.
+- **A second transition route appeared.** `prepare_contract_resource_transfer`
+  in `src/kernel/functions.rs` branches on `plan_stable_views`: a call site
+  plans loans, while the verified-body path executors, the contract
+  entry-state builder, and certification's transition applier consume their
+  requirements definitionally. The fix-views close-out flagged that route
+  for review; it is this issue's D2.
+- **The ambient composition expansion the E2 investigation blamed is still
+  present.** `frame_expanded_compositions` in
+  `src/kernel/assumptions/memory_reasoning.rs` expands every owned
+  composite of every composition (memoized by storage pointer) and is
+  consulted by the memory DAG's call-havoc, loop-havoc, and effect-frame
+  hops in `src/kernel/memory_provenance.rs` when direct evidence cannot
+  separate a loaded pointer from the havoc ranges. This is the path behind
+  the recorded `owned-vector` budget exhaustion. It is D1.
+- **Stale cross-references.** The old plan cited `function-contracts.md`,
+  deleted on 2026-09-11 when that campaign closed; its callback residue is
+  this issue. `rb_augment_callbacks_const_suite.md` now expects `pass`
+  under the default semantics.
 
 ## Language-preservation contract
 
 Every worker must preserve the following. A proposal that needs a different
-rule is outside this issue and must be reported to the manager/user, not
-silently included.
+rule is outside this issue and must be reported, not silently included.
 
 1. Keep existing Click syntax, resource declarations, tactic forms, and C
-   source unchanged. Fixing a verifier bug may make an existing, valid contract
-   verify; strengthening regression sidecars to exercise real footprints is
-   allowed. Do not rewrite C to accommodate the verifier.
-2. `views` remains read-only. Ownership may satisfy a view through a checked
-   core where that family supports it. A call-scoped borrow does not mint a
-   persistent caller view. Existing persistent views retain their current
-   lifetime/deallocation restrictions.
-3. `owns` returns the resource selected at entry. In particular, changing a
-   pointer field does not retarget a borrowed memory range at return.
-   Exclusive instances retain their identity and acquire post-call fields
-   constrained only by guarantees; ownership alone does not freeze fields.
+   source unchanged. Fixing a verifier bug may make an existing valid
+   contract verify; strengthening regression sidecars to exercise real
+   footprints is allowed. Do not rewrite C to accommodate the verifier.
+2. `views` is a stable, read-only loan for its scope, as defined in
+   [the stable views record](../docs/internals/stable-views.md). A call-scoped
+   view is lent and recovered; it does not mint a persistent caller view.
+   An escaping borrow is a folded composite holding the loan it packages,
+   released when the composite is consumed. Ownership is never recovered by
+   entailment, normalization, fold, or theorem.
+3. `owns` returns the resource selected at entry. Changing a pointer field
+   does not retarget a borrowed memory range at return. Exclusive instances
+   retain their identity and acquire post-call fields constrained only by
+   guarantees; ownership alone does not freeze fields.
 4. `consumes` transfers owned authority without an implicit return;
    `produces` describes returned authority at the appropriate post-state,
    including contracts indexed by `result`. Produced ownership is not proof
@@ -678,13 +105,14 @@ silently included.
    allocation authority, guarded recursion, and existing population rules
    remain distinct family semantics. A common representation does not make
    every operation valid for every family.
-6. Loads/stores still require appropriate authority, with existing local and
-   read-only storage rules. Owning a wrapper must not expose its body for
-   arbitrary proof steps without the currently required fold/unfold/open or
-   observation operation. Internal effect queries are not public unfolding.
+6. Loads and stores still require appropriate authority, with existing local
+   and read-only storage rules. Owning a wrapper must not expose its body
+   for arbitrary proof steps without the currently required fold, unfold,
+   `open`, or observation. Internal effect queries are not public unfolding.
 7. All finite writes stay within the checked effect footprint, even on paths
-   that do not return. Preserve memory outside the footprint only with checked
-   frame evidence, including address dependencies for dependent loads.
+   that do not return. Memory outside the footprint is preserved only with
+   checked frame evidence, including address dependencies for dependent
+   loads. Failure to prove overlap is not disjointness.
 8. Automatic callback formation remains bounded and exact; explicit execution
    theorems remain the escape hatch. Do not broaden smart search or weaken
    refinement checks to hide a representation problem.
@@ -693,843 +121,198 @@ silently included.
    obligations must never become successful authority through a cache.
 
 Explicitly excluded: views of field-bearing instances; new memory instance
-binders/proof parameters; a new `memory(...)` spelling; selectable resource
-capability syntax; fractional permissions; dynamic footprints for counted
-populations currently restricted to stable footprints; new recursion forms;
-more permissive binder inference; and unrelated prover completeness work.
-General snapshot and transition machinery may accommodate future extensions,
-but this issue must not enable them.
-
-## Findings from the function-contracts close-out (2026-09-11)
-
-- Resource clauses now read what the whole clause set supplies, including
-  cells inside a folded composite, for memory segment bases (`7e55fdc7`,
-  `mdtests/contract_owns_through_composite_field.md`). A composite
-  *argument* that needs a load is still refused on the surface before that
-  evaluation runs: `owns pair(node->left->left)` fails with ``could not lower
-  resource `pair` argument 0: missing pure fact: loadable(...)``. The same
-  whole-clause-set rule should apply to composite arguments.
-- The surface check that refuses an unaddressable clause and the kernel
-  evaluator now share one wording (`resource_clause_position_note` /
-  `resource_clause_stall_note`), but the surface counts surface clauses while
-  the kernel counts lowered `CResourceSpec`s. They agree on every fixture; a
-  `MemoryAggregate` clause that lowers to several specs could number them
-  differently. Unify the count when either side is next touched.
-- Named contracts never reach `evaluate_function_resource_context`, so the
-  surface check in `initial_claim_context` is the only thing refusing a named
-  contract's unheld link read (`mdtests/named_contract_rejects_unheld_link_read.md`).
-  Routing named-contract clauses through the kernel evaluator would make the
-  kernel the single source of truth.
-
-## Small intended regressions
-
-These are behavioral targets, not permission to commit failing default tests.
-Reduce against fixed C and use existing proof operations. The missing-access
-variants must actually lack access from every other resource in the context.
-
-| ID | Positive regression | Paired rejection/preservation check |
-| --- | --- | --- |
-| R1 | `owns pair(node)` supplies the link needed to evaluate a separate `owns node->right->augmented`, with a proved nonnull guard; verify the direct function and its opaque caller. | Without link-read authority or the required guard, fail locally; overlapping owned pieces cannot create double authority. |
-| R2 | The same dependent clause works in a named callback contract and explicit callback execution theorem, using the same authorized entry context. | An unproved access obligation or guard cannot authorize a callback or its effects. Automatic formation is tested only within its existing admitted fragment. |
-| R3 | Open one augmentation suite, invoke its three callback fields with owned footprints, and close it; preserve the suite's callback facts when their support is unaffected. | If a call can change the supporting table cell or consumes its support, the old loaded pointer's fact cannot justify a newly loaded callback value without proof. |
-| R4 | Raw memory and a one-layer `Buffer` wrapper have the same checked effects when connected by explicit unfold/call/fold. Frame an unrelated memory cell and token. | Writing outside the wrapper's authority, or converting a view into ownership, fails. |
-| R5 | An `owns` range based on a pointer field returns the entry-selected range after the field changes; a returned exclusive instance has the same identity and suitably fresh fields. | No implicit retargeting, no invented field preservation, no aliasing two instance identities through a binder map. |
-| R6 | A callback borrows an owned token or memory view without adding a persistent caller view; an unrelated framed resource survives. | Consuming the token twice fails; a real persistent alias still blocks deallocation as required today. |
-
-Start R3 from `mdtests/rb_augment_callbacks_helper.md` and G1: use
-`owns node->left` plus `ensures node->left == old(node->left)` for each
-callback as the smallest footprint regression. Also retain a bounded case
-with an actual permitted mutation so the fix does not rely on every write
-being described as unchanged. Use the rotation fixtures for R1/R2 only after
-the small cases pass; do not begin by expanding the full Linux proof.
-
-## Dispatch rules and dependency order
-
-The chunks below are work assignments inside this single issue. Do not create
-one issue file per chunk. One worker owns each chunk; the manager records its
-base commit, completion commit, gates, remaining blockers, and next assignment
-in the handoff. Read root `AGENTS.md` before dispatch.
-
-Default order is **W0 -> W1 -> W2 -> W3 -> W4 -> W5 -> W6 -> W7**.
-This intentionally serializes changes to `src/kernel/functions.rs`, the
-primitive types, and surface lowering. Do not give two implementation workers
-those shared files concurrently. W6 logically needs W2 and can move earlier
-only if the manager explicitly reschedules its exclusive file ownership.
-Read-only review or preparation of disjoint fixtures may run in parallel;
-do not merge tests asserting new success until their implementation is green.
-
-Each implementation worker uses a dedicated branch/worktree, begins from the
-latest integrated green predecessor, and delivers a coherent tested commit.
-No worker may integrate a failed prototype or overwrite another worker's
-changes. If a prerequisite exposes a tooling failure, reduce/fix it first or
-return a green checkpoint with a blocker report. Do not raise budgets or add
-quarantines to satisfy this plan.
-
-### W0 — Establish the baseline and freeze the compatibility matrix
-
-**Dependencies:** none. **Owner scope:** investigation, focused regression
-design, and status/links in this document; no architectural changes.
-
-Tasks:
-
-- Reproduce G1-G3 on the current base under ordinary bounded verification.
-  Record exact commands, fixture/reduction, diagnostic, and whether the gap
-  still exists. If already fixed, identify its passing regression and preserve
-  it; do not implement an obsolete diagnosis.
-- Trace direct call, named callback, explicit execution theorem, automatic
-  formation, and certification entry paths. Identify where resource terms,
-  access obligations, effects, and binder maps are constructed more than once.
-- For R1-R6, identify reusable positive and negative tests. Record which new
-  minimal cases each later worker must deliver. Pin the semantic distinctions
-  in the language-preservation contract above, especially return snapshots.
-- Propose narrow internal API boundaries for W1-W6, with caller migration
-  lists. Explain how authority and obligations pass each boundary.
-
-**Done:** a concrete baseline/handoff and regression ownership map exist;
-documented failures are distinguished from fresh observations. Any committed
-tests pass under their honest current expectation. A temporary expected-failure
-reproduction must be switched to success by its fixing chunk, not left as an
-acceptance substitute. No failing default fixture or speculative root-cause
-claim is committed.
-
-### W1 — Normalize resource specifications above the family algebra
-
-**Dependencies:** W0. **Primary files:** `src/kernel/primitives.rs`,
-`src/kernel/primitives/resource_algebra.rs`, surface resource lowering,
-resource spec evaluation and substitution callers.
-
-Tasks:
-
-- Introduce a normalized internal specification that separates the resource
-  term from access mode. Keep transfer role (borrow/consume/produce), quantity,
-  binder identity, and snapshot selection explicit rather than encoding them
-  through memory-only variants or incidental vector positions.
-- Keep a memory-range term and specialized memory-family implementation.
-  Validate quantities and permitted access by family; do not accept a memory
-  quantity or an instance view merely because the representation can hold it.
-- Lower existing syntax to this form at a single boundary. Migrate all
-  consumers of the replaced forms, including substitution, diagnostics,
-  formatting/expansion, equality/identity, and certification. Temporary
-  adapters must have a named removal owner, no independent semantic behavior,
-  and be removed before W7 completes.
-- Preserve indexed lookup and shallow/persistent identities. Do not replace
-  efficient memory indexes with a generic scan or a deep term comparison.
-
-**Tests/done:** existing resource and contract tests retain their outcomes;
-focused tests cover all supported families, accesses, and rejected quantity
-forms. Surface round-tripping/expansion stays unchanged. Add deterministic
-multi-size coverage for any changed hot representation in this chunk.
-
-### W2 — Extract one contract interface and share application preparation
-
-**Dependencies:** W1. **Primary files:** contract primitives and APIs,
-`src/kernel/functions.rs`, `src/kernel/api/contract_certification*`,
-`src/surface/verification.rs`, `src/surface/lowering/annotations.rs`.
-
-Tasks:
-
-- Represent the contract independently of a concrete C body: typed runtime
-  parameters/result, proof binders, pure pre/postconditions, resource clauses,
-  snapshot/return roles, and checked effect information. Preserve source
-  provenance for diagnostics. The precise Rust type name is not prescribed.
-- Have concrete verified functions, external assumptions, named callback
-  contracts, and execution theorems reference this representation. Keep their
-  evidence distinct: an external assumption is not a verified body, and a
-  callback fact is tied to its exact pointer value.
-- Share contract instantiation/preparation across ordinary and callback calls,
-  refinement, and certification where their judgments coincide. Do not merge
-  distinct soundness checks just to reduce code size.
-- Preserve snapshot meaning, contract identity, parameter coercion, binder
-  selection, bounded candidate applicability, and complete checked artifacts.
-  Avoid hidden execution of a concrete body when applying its summary.
-
-**Tests/done:** direct/callback versions of existing memory, token, composite,
-and instance contracts agree on resource transitions. Existing rejection
-tests for wrong callback values, unverified targets, and invalid refinements
-pass. No independent legacy contract evaluator remains behind the new type;
-any intentionally distinct rule is documented. Deterministic work tests cover
-repeated small calls with growing unrelated resources/functions.
-
-### W3 — Elaborate dependent clauses with checked access obligations
-
-**Dependencies:** W2. **Primary files:** entry-context preparation in
-`src/surface/proof.rs`, contract/resource lowering, contract evaluation,
-kernel resource evaluation, and corresponding certification preparation.
-
-Tasks:
-
-- Separate constructing a symbolic resource/address expression from proving
-  the loads, bounds, guards, and arithmetic that make it well-defined.
-  Share this preparation between direct and named contracts.
-- Establish the available entry resources and pure requirements through
-  explicit dependencies. An owned folded composite may support the checked
-  observation needed to evaluate a dependent clause without becoming free
-  mutable body authority in the user's proof state.
-- At function entry, distinguish assumed preconditions from the obligations a
-  caller must discharge. At a call, unresolved obligations remain obligations;
-  they cannot be mistaken for established applicability of another callback
-  candidate. Do not use the contract's own postcondition as entry evidence.
-- Use a bounded dependency worklist or equivalent incremental mechanism;
-  avoid repeated whole-context fixed-point scans. Preserve lexical binder
-  scope. This is not permission for forward references or a new contract
-  clause-ordering language rule.
-- Report unresolved/circular access dependencies with the source clause and
-  missing authority/guard. Do not manufacture loadability or dump raw states.
-
-**Tests/done:** R1 and R2 pass in direct verification, opaque calls, named
-contracts, execution theorems, and certification as applicable. Negative
-variants retain missing-authority/guard failures. Test several authorized
-dependency depths and independent clauses; charge work to the dependency
-nodes/edges, with four-size deterministic curves. Update G2/G3 status in the
-existing callback issue only after the regressions and gates pass.
-
-### W4 — Make resource transitions authoritative for memory effects
-
-**Dependencies:** W3. **Primary files:** call transfer/return evaluation,
-memory havoc/frame checks, footprint lowering, contract certification and
-refinement effect checks.
-
-Tasks:
-
-- Prepare one checked transition identifying borrowed inputs, consumed inputs,
-  caller residuals/frame, and post-state outputs. Tie each evaluated resource
-  to the correct snapshot and evidence; use that information consistently in
-  call application and return checking.
-- Derive the memory write footprint through a single authoritative projection
-  of that transition and the relevant resource definitions. Opaque tokens
-  contribute no memory authority; wrappers contribute only the authorized
-  body effects; instance body queries must respect their identity/state.
-- Route havoc, finite-write checks, refinement containment, and certification
-  through this projection. A stored footprint is allowed as a checked derived
-  artifact, not as a second independently reconstructed specification.
-- Preserve guarded/subrange behavior, read-only rejection, allocation lifetime,
-  and outside-footprint framing, including loads used to compute addresses.
-  Preserve existing supported recursive representations without eagerly
-  unfolding an unbounded resource. Keep dynamic population footprints rejected.
-- Remove duplicate surface/kernel footprint traversal when migration is done,
-  or identify the one remaining derivation and its read-only consumers. Do not
-  silently widen a footprint when exact projection is unavailable.
-
-**Tests/done:** R4 and the memory half of R5 pass, together with current
-guarded-footprint, overlap, read-only, deallocation, and return-indexed tests.
-An out-of-footprint store on a non-returning path remains rejected. Add
-four-size deterministic curves for fixed calls with growing unrelated frames
-and for growing explicitly used wrapper members. Certification and expansion
-agree with ordinary verification.
-
-### W5 — Preserve resource observations and scoped borrows by provenance
-
-**Dependencies:** W4. **Primary files:** supported resource projections,
-pure-fact/snapshot transport, scoped open/close and resource proof steps,
-callback-fact lookup, and call successor construction.
-
-Tasks:
-
-- Reproduce R3 and locate the actual loss or misuse of authority before choosing
-  a representation fix. Treat provenance loss as a hypothesis, not a proven
-  diagnosis from this plan.
-- Reuse/extend existing support records so an observation identifies its
-  supporting resource, relevant memory/instance version, and scope. Do this
-  consistently for memory observations, composite facts, and loaded callback
-  contract facts; do not add an unconditional callback-fact retention list.
-- Preserve observations whose support is framed through a call. Invalidate or
-  reestablish them when supporting ownership/state changes. An unchanged
-  support must not disappear merely because an unrelated owned range changes.
-- Ensure close restores the required representation once, without duplicating
-  authority or retaining an expired scoped view. Preserve current persistent
-  view behavior and kernel checking of proof-recorded resource operations.
-
-**Tests/done:** R3 and R6 pass, including actual permitted mutations, expired
-support, changed table cells, and unrelated frames. The three-call helper uses
-one scoped open with owned footprints and no artificial C changes. Add
-deterministic curves varying calls and unrelated supported facts independently.
-Update G1 status only after these tests and the full gate pass.
-
-#### W5 checkpoint A handoff (2026-09-12)
-
-The first W5 reduction confirmed that callback calls with owned footprints and
-an allowed mutation remain sound on the existing three-call, one-open helper;
-the concrete implementation gap was composite observation: `observe`
-published body view cores with `unchecked_with_facts`, unlike support-indexed
-projections returned by contract calls. Those views therefore had no reverse
-dependency on the folded owner. No unconditional callback-fact retention was
-added, and callback-cell provenance is not claimed here.
-
-Checkpoint A attaches observation projections to an opaque, thread-arena
-resource occurrence. Persistent entry-to-occurrence maps distinguish equal
-authorities across forks, replacement, and normalization; occurrence-keyed
-reverse indexes remove only the projections of the consumed authority, while
-observation evidence validates the affected support without scanning unrelated
-facts. Joins and cached expansions preserve support only when the same
-occurrence survives both descendants. The surface observer now uses the exact
-support occurrence, including when observing a view that is itself already
-supported. Explicit unsupported views remain explicit.
-Resource-context equality deliberately compares the observable support topology
-of a snapshot; provenance-sensitive transition and evidence checks use the
-opaque occurrence directly and never infer authority identity from equality.
-
-The checkpoint adds equal-occurrence removal, fork identity, normalization and
-join/cached-expansion preservation, stale-support evidence, and four-size
-unrelated-fact scaling regressions. It is a green partial W5 checkpoint; the
-observe-then-consume/replace C fixture and the remaining R3/R6 mutation and
-callback-cell regressions are outstanding for later W5 checkpoints.
-
-#### W5 checkpoint B1 handoff (2026-09-12)
-
-Checkpoint B1 carries memory-dependent observation provenance through checked
-state transitions. Each supported projection retains its supporting opaque
-resource occurrence, source memory identity, and per-projection footprint;
-concrete footprints use a fixed-depth dyadic interval index, while symbolic or
-ambiguous pointer blocks use a conservative alias bucket. Stores, aggregate
-copies, calls, loops, allocation/lifetime transitions, and initialization
-paths now replace memory through one invalidating state hook. Overlapping or
-unknown effects remove only affected projections (with cascading support
-cleanup); disjoint effects preserve framed observations, and an unknown loop
-effect invalidates all memory-dependent projections but not pure resources.
-For a non-ambiguous indexed event, each checked transition walks only its
-adjacent memory-derivation edges and queries affected interval candidates,
-giving O(edges + log U + k) work for U indexed ranges and k affected
-projections. Opaque or otherwise ambiguous events conservatively fall back to
-an O(U + k) scan of memory-dependent metadata because their block may alias
-any indexed block; an opaque barrier is likewise output-sized over the
-memory-dependent projections it invalidates.
-Normalization and exact joins preserve occurrence and footprint metadata only
-when the authority and dependency topology agree. Resource-context equality
-and hashing include the observable footprint topology but never raw snapshot
-identity.
-
-The checkpoint adds direct observe/store, nested-support removal, divergent
-join, same-block interval invalidation curves, repeated symbolic-alias cleanup,
-and wide-footprint/loop-barrier regressions, plus normalization,
-support-occurrence, and interval-index coverage. The invalidation curves use
-sizes 4, 16, 64, 256, and 1024, separately measuring concrete indexed
-queries, supported-projection insertion/removal, barriers, and opaque alias
-fallback. Focused `cargo test --lib kernel::tests::resource_tests` passed
-107/107;
-`cargo test --lib kernel::proof::execution::tests::` passed 35/35;
-`cargo clippy --all-targets -- -D warnings` passed; and unfiltered
-`scripts/check.sh` passed 2759/2759 tests and 14/14 fixture/example checks
-(the existing quarantined example remains skipped). This worktree is
-`codex/mvr-w5b` from `43f4a51`; the checkpoint commits are `0a1bd260`,
-`4b726370`, `cb6b2d5f`, and `4705b1f2` (latest before this prose update).
-This is a partial B1 checkpoint, not a complete W5 claim: remaining
-W5 C/D work includes the real three-call callback/table fixtures, scoped-open
-expiry coverage, and richer prerequisite-load footprints for composite
-observations. No C source, syntax, budgets, quarantine, or unrelated semantics
-changed.
-
-#### W5 checkpoint C handoff (2026-09-12)
-
-Checkpoint C first reproduced the smallest existing scoped resource cases on
-the reviewed B1 integration head: ordinary and counted population opens,
-nested branch scopes, callback borrows, post-close reallocation, and the
-kernel's transactional open-scope test. They were already green, so no new
-representation defect was observed and no scope workaround was added.
-
-The C regressions retain that behavior at the surface boundary. Two
-back-to-back opens execute a permitted body store in the first body and prove
-that close restores the owned marker exactly once; the helper then calls
-`preserve_spare`, whose checked contract consumes and produces the unrelated
-token after both closes. A second fixture executes one permitted store inside
-the open and rejects the comparable store after close, proving the opened body
-authority cannot escape. Existing `token_resource_consumed_by_call` continues
-to reject double consumption, while the kernel test checks rooted nested
-scopes, forged joins, transactional failure, and exactly one recorded `Open`
-certificate step.
-The added fixtures are `mdtests/resource_scope_preserves_unrelated.md` and
-`mdtests/resource_scope_does_not_escape_body.md`. This is a green partial C
-checkpoint, not a complete W5 claim; callback/table mutation and richer
-composite prerequisite-footprint work remain for D. No C source, syntax,
-budget, quarantine, or unrelated semantics changed.
-
-#### W5 checkpoint D handoff (2026-09-12)
-
-Checkpoint D first reran the existing R3 callback reductions on the approved C
-head: the views, owned-footprint, cell-separated, unseparated-rejection, table,
-and contract-mismatch fixtures all passed. The smallest permitted callback
-body mutation was then reduced without changing an existing C fixture. The
-first callback stores through its owned `node->left` footprint; the later
-`copy` and `rotate` callbacks remain checked, and an unrelated framed token is
-consumed and returned. This is covered by
-`mdtests/rb_augment_callbacks_helper_mutates_body.md`.
-
-Two negative reductions establish selective checking. Replacing
-`augment->copy` with the known `dummy_rotate` pointer through a checked helper
-allows the unaffected `rotate` callback but rejects the subsequent `Copy` call
-because the newly loaded pointer has no `Copy` fact. Consuming the folded
-`callback_suite` between callback calls also rejects the later call, because
-the body-declared callback fact and its supporting authority are gone. This is
-not retirement of an independently established pure theorem about an exact
-function-pointer value. These cases are covered by
-`mdtests/rb_augment_callbacks_helper_rejects_changed_cell.md` and
-`mdtests/rb_augment_callbacks_helper_consumes_suite.md`.
-
-No stale authorization of an independently established pure theorem was
-reproduced, so no FactProvenance sidecar, unconditional callback-fact
-retention list, or other representation change was added. Existing
-deterministic callback scaling remains a narrow lookup microcurve, and richer
-composite prerequisite-load footprints remain outside this checkpoint. This
-is a green partial D checkpoint, not a complete W5 claim. No existing C
-source, syntax, budget, quarantine, or unrelated semantics changed.
-
-#### W5 checkpoint E handoff (2026-09-12)
-
-Checkpoint E starts from the pushed D/master head; the E1 implementation and
-tests are at `49ed348b` on `codex/mvr-w5e` (building on `a5ec4580`). The
-callback evidence in this checkpoint is
-limited to the exact-pointer `PureFactContext` lookup curve; it is not an
-end-to-end callback application or invalidation test, and it does not close
-the full W5 callback claim. That curve varies calls `1, 2, 4, 8, 16`
-independently from unrelated supported facts `4, 16, 64, 256, 1024`, with
-zero lookup allocations and work flat in the unrelated axis. No callback
-provenance sidecar or unconditional predicate retention was added.
-
-The concrete composite reduction did expose a real gap: a memory projection
-whose base or bounds contain a lowered memory load survived a write to that
-prerequisite cell when only the final range was indexed. `a5ec4580` extends
-the typed exact footprint with recursively discovered scalar load cells in
-pointer offsets and range bounds, conservatively retaining `Unknown` for
-term forms whose load-bearing children are not exposed. The regression
-`observed_projection_tracks_loaded_address_prerequisite` and
-`observed_projection_tracks_loaded_base_and_start_prerequisites` prove that a
-selector write retires stale projections derived through the end, base, and
-start while preserving the owner and a disjoint supported sibling. A bounded
-deep-term and typed snapshot-width/mixed-snapshot regression keep the walk
-iterative/conservative and avoid assuming every load is four bytes; widths
-come from the checked source snapshot, while missing or mixed snapshots
-become `Unknown`. A temporary pre-fix reproduction failed at the stale
-projection assertion.
-Existing join, nested-observation, overlap/disjoint, barrier, alias, and
-interval curves remain covered by the focused resource tests.
-
-This is a green partial E checkpoint, not a complete W5 claim. Composite
-producers still do not expose a general checked load-evidence object for
-arbitrary declared predicate bodies or opaque nested composite cores; those
-remain conservative or require a later design. The callback/table and scope
-claims are not broadened beyond the reductions above. No existing C source,
-syntax, budget, quarantine, or unrelated semantics changed.
-
-#### W5 checkpoint E2 investigation (2026-09-12)
-
-E2 starts from the pushed E1/master head `29d7071e` and rechecks the callback
-reductions against the clarified fact semantics. Ordinary no-memory
-`Predicate` facts are pure exact-pointer theorems and are not retired merely
-because a resource occurrence changes; a known bad pointer still fails, while
-a value restored to the same independently established pointer remains
-eligible. A predicate declared inside a composite resource is instead
-supported by that resource body.
-
-The decisive non-vacuous probe could not be expressed at the surface boundary:
-`fact Copy(augment->copy)` requires owned coverage, and a function-pointer
-resource parameter cannot serve as an independently retained cell view. The
-earlier generic missing-view failure is therefore not evidence of stale
-callback authorization, and no FactProvenance sidecar or unconditional
-callback-fact retention was added. Existing changed-cell, consumed-suite,
-owned-footprint, table, and three-call helper fixtures remain green.
-
-The requested end-to-end callback-table/resource-context two-axis scaling
-matrix and nested declared-predicate alternative coverage remain open. This
-is an investigation checkpoint only, not a green or complete W5 claim. No C
-source, syntax, budget, quarantine, or unrelated semantics changed.
-
-### W6 — Unify existing binder transport and snapshot substitution
-
-**Dependencies:** W2 logically; default dispatch after W5 to avoid conflicts.
-**Primary files:** contract substitution/environment lowering, existing parser
-binder metadata, call binder selection, resource-instance return evaluation,
-and refinement parameter maps.
-
-Tasks:
-
-- Use one internal binder map for the already-supported direct-call,
-  named-contract, and execution-theorem forms. Keep binder spelling separate
-  from semantic identity, with declaration metadata as the authoritative source.
-- Replace the field-free `ResourceField` substitution trick for instance
-  renaming with a dedicated internal identity-substitution operation. Audit
-  capture avoidance, nested bindings, and entry/post-state projections.
-- Remove redundant parser-side semantic registries once all existing callers
-  use declaration metadata. Preserve supported source spelling and current
-  output-binder limits; adding new surface forms is not this assignment.
-- Preserve exact/forced automatic pairing and existing ambiguity refusals.
-  Do not make field values identify instances, infer new same-family pairings,
-  or preserve fields that the contract leaves unconstrained.
-
-**Tests/done:** R5's instance half passes; existing direct-call binder transport,
-`as` maps, nested resource paths, wrong-instance, ambiguous-pairing, and
-fresh-field tests keep their semantics. Equivalent direct/callback applications
-use the same internal map rules. Expansion spells the existing user binders
-and introduces no kernel identities. Test binder work across multiple sizes.
-
-### W7 — Qualify the combined abstraction and remove obsolete paths
-
-**Dependencies:** W1-W6 integrated green. **Owner scope:** final compatibility
-review, bounded end-to-end tests, cleanup of obsolete adapters, documentation,
-and issue reconciliation. Not a catch-all for new language features.
-
-Tasks:
-
-- Run the complete R1-R6 matrix on the integrated branch. Use explicit simple
-  proofs where practical so success does not depend on new search heuristics.
-  Keep each regression small; do not build one giant callback expansion test.
-- Exercise raw/wrapped memory, tokens, folded composites, and exclusive
-  instances through direct calls, callback calls, explicit refinement, and
-  existing automatic formation where supported. Preserve negative cases.
-- After ordinary verification succeeds, run representative expansion followed
-  by verification and the relevant audit/profile consistency checks. Use the
-  shared bounded verification engine, not recursive CLI/test subprocesses.
-- Review for duplicate evaluators, independent effect derivations, special-case
-  callback retention, obsolete binder registries, and whole-context scans.
-  List necessary memory-family specialization separately from deleted duplication.
-- Update `docs/concepts/resources.md`, `docs/concepts/contracts.md`,
-  `docs/internals/architecture.md`, and affected internals/reference text to
-  explain the shared model and retained semantic distinctions. Do not document
-  excluded extensions as implemented.
-- Reconcile the completed G1-G3 and binder cleanups in `function-contracts.md`;
-  retain unrelated G4-G7 work. Do not delete that issue unless all of its own
-  remaining acceptance criteria are actually met. Do not create new issues
-  for discoveries without explicit user authorization.
-
-**Done:** all criteria below are met on one integrated commit. Delete this
-issue and its index entry only when the implementation, regressions, and
-documentation have landed.
-
-## Gate and worker handoff requirements
-
-Every implementation chunk must run relevant focused tests and an unfiltered
-`scripts/check.sh` in its task worktree before integration. Judge the gate by
-its exit status, not piped output or `cargo test --lib`. Follow
-[testing.md](../docs/internals/testing.md) and
+binders or proof parameters; a new `memory(...)` spelling; selectable
+resource capability syntax; fractional permissions; dynamic footprints for
+counted populations; new recursion forms; more permissive binder inference;
+the loan-preserving havoc's known cells-times-symbolic-loans cost (pinned in
+the stable views record); and unrelated prover completeness work.
+
+## Design decisions to settle first
+
+Each decision lists a recommendation. Implementation of the affected chunk
+waits on the user's choice.
+
+**D1. Load framing across havoc for cells inside composites.** The memory
+DAG justifies a load surviving a call or loop havoc when the loaded pointer
+is proven disjoint from the havoc's mutable ranges. When the pointer's cell
+is owned only through a composite, the direct prover cannot see it, and the
+frame path expands every composition. Options:
+
+- *Provenance first (recommended).* Mirror `4b9debcd`: every havoc range
+  already records the owned occurrence it was reserved from. A pointer whose
+  authority comes from an occurrence the call did not reserve is disjoint
+  by the partition invariant; only the same-occurrence case needs arithmetic,
+  and that arithmetic works on the one-level frontier, not a recursive
+  expansion. Where the owning occurrence is unknown, the hop fails closed and
+  the user bridges it with `observe`/`unfold`, as law 8 of the stable views
+  record already requires elsewhere. Risk: corpus proofs that leaned on the
+  expansion; the corpus run in W5' measures this before any code moves.
+- *Bounded indexed expansion.* Keep the expansion but index it by the
+  composition that owns the pointer and bound its depth. This is the E2
+  direction in a smaller form; it still reasons below the one-level frontier
+  and needs the cold/warm matrix E2 specified.
+
+**D2. The definitional transition route.** The call-site route plans loans;
+the four reconstruction callers consume requirements definitionally so a
+state rebuilt around an application that already happened does not lend
+twice. Options:
+
+- *Rebuild from the record (recommended).* Where a checked
+  `CFunctionResourceTransfer` exists for the application (certification's
+  transition applier, the entry-state builder given a selected interface),
+  rebuild from that record instead of re-consuming; where none exists (a
+  function's own entry state), keep the definitional consumption as the
+  entry assumption and name it so with a typed purpose instead of a boolean.
+  Pin that the call-site and reconstruction routes produce the same
+  resource state for one interface.
+- *Keep both and document.* Accept two consumption semantics as two
+  purposes and only replace the boolean with a typed purpose. Cheaper, but
+  "one checked account" then has a documented exception.
+
+**D3. Binder transport versus instance renaming.** After `570ac8a0`, an
+execution theorem's `as` map is a rename of spellings applied while lowering
+clauses, and a call's `{ binder: instance }` map is an identity transport
+carried on the selected interface. W6 asked to keep spelling separate from
+semantic identity, which is what this split does. Recommendation: treat W6's
+remaining scope as an audit that the three forms (direct call, named
+contract, execution theorem) reach the same kernel identity map with the same
+ambiguity refusals, and add the missing agreement test; do not merge the two
+mechanisms.
+
+## Remaining work
+
+Default order is W5' then W6' then W7'. Each chunk is one worker in a
+dedicated worktree, delivering coherent green commits; the shared files
+(`src/kernel/functions.rs`, the primitive types, surface lowering) are never
+edited by two workers concurrently.
+
+### W5' — Rebaseline frame provenance on the partition invariant
+
+Depends on D1.
+
+- Measure first. Under ordinary bounded verification, find which corpus
+  proofs and which of the three `memory_provenance.rs` hops reach
+  `frame_expanded_compositions`, and confirm whether `examples/owned-vector`
+  verifies within the deterministic budget today. Record the commands and
+  the counts; do not raise budgets.
+- Implement D1's chosen option. Delete `frame_expanded_compositions` and its
+  memo if provenance-first is chosen; otherwise index and bound it. Either
+  way no hop may scan compositions unrelated to the queried pointer.
+- Classify each remaining W5 semantic case as covered by an existing
+  stable-view or callback regression, or add the one missing fixture:
+  a permitted callback mutation followed by scoped-open expiry (the
+  `mutates_body` and `resource_scope_*` fixtures cover the halves
+  separately); fresh ensures inserted after a pre-return invalidation of
+  old overlapping support, with disjoint observations surviving; nested and
+  opaque composite prerequisite footprints; and exact support preservation
+  and rejection on fold/unfold/open/close.
+- Keep pure exact-pointer theorems (`Copy(augment->copy)` as a no-memory
+  predicate) separate from composite-supported predicates; no callback-fact
+  retention list and no `FactProvenance` sidecar.
+- Scaling: a four-size deterministic curve for whatever query replaces the
+  expansion, charged to the queried occurrence's frontier and edges, and a
+  two-axis curve (calls versus unrelated compositions) only if an indexed
+  expansion survives.
+
+**Done:** R3 and R6 cases above are pinned; no memory-DAG hop scans the
+composition set; `scripts/check.sh` passes.
+
+### W6' — Binder audit
+
+Depends on D3 and W5'.
+
+- Audit that direct calls, named contracts, and execution theorems resolve
+  binders to one kernel identity map (`CCallBinderTransport`) with the same
+  exact/forced pairing and ambiguity refusals, and that expansion spells the
+  user's binders without kernel identities.
+- Add the agreement regression across the three forms for the counter and
+  instance fixtures (`c_contract_executes_counter_*`,
+  `c_named_contract_rejects_*`), and a multi-size binder curve if any lookup
+  changed.
+- Preserve fresh post fields, exclusive identity, and return snapshots.
+
+**Done:** R5's instance half is pinned across the three forms; no parser
+registry carries semantics the declaration metadata lacks, or the retained
+one is documented at its definition.
+
+### W7' — One account, cleanup, and documentation
+
+Depends on D2, W5', and W6'.
+
+- Implement D2. Replace the `plan_stable_views` boolean with a typed purpose;
+  rebuild from the transfer record where one exists; pin call-site and
+  reconstruction agreement.
+- Retire or demote the surface footprint traversal
+  (`collect_owned_resource_memory_segments` and its consumers in
+  `function_contract_summary`): either delete it or make it a read-only
+  consumer of the kernel projection, with a test that it cannot disagree.
+- Unify resource clause numbering: the surface stall diagnostic in
+  `resource_lowering.rs` counts surface clauses while the kernel counts
+  lowered specs; a `MemoryAggregate` clause that lowers to several specs
+  would number them differently.
+- Run the R1 to R6 matrix (table below) across direct calls, named
+  callbacks, explicit execution theorems, automatic formation where
+  admitted, and certification; then expansion followed by reverification
+  and the audit/profile agreement checks, through the shared engine.
+- Update `docs/concepts/resources.md`, `docs/concepts/contracts.md`, and
+  `docs/internals/architecture.md` to describe the shared interface, the
+  single transition record, and the retained family distinctions. Do not
+  document excluded extensions.
+- Reconcile [rbtree-example.md](rbtree-example.md) C6 and
+  [global-variables.md](global-variables.md) with the final callback
+  packaging behavior, then delete this issue and its index line.
+
+## Regression matrix
+
+Positive and paired negative cases. Rows marked "in corpus" name the
+fixtures believed to pin the behavior today; W7' confirms the full matrix
+rather than trusting this table.
+
+| ID | Behavior | In corpus | Still to add |
+| --- | --- | --- | --- |
+| R1 | `owns pair(node)` supplies the link for a separate `owns node->right->augmented`; missing authority or guard fails locally. | `contract_owns_composite_argument*.md`, `contract_owns_through_composite_field*.md`, `contract_dynamic_loadable_*`, `contract_nested_*` | none known |
+| R2 | The same dependent clause through named callback, execution theorem, automatic formation, and certification. | direct and named paths in the R1 fixtures; `named_contract_rejects_unheld_link_read.md` | execution-theorem and certification variants (W7') |
+| R3 | One scoped open, three owned-footprint callbacks, permitted mutation, changed cell and consumed support rejected. | `rb_augment_callbacks_helper_{owns,owns_cell_separate,owns_rejects_unseparated,mutates_body,rejects_changed_cell,consumes_suite}.md` | mutation followed by scoped-open expiry (W5') |
+| R4 | Raw and one-layer `Buffer` have the same checked effects; unrelated cell and token framed; out-of-authority write and view-to-own fail. | `c_contract_executes_buffer.md`, `c_named_function_contract_frames_*`, `c_named_function_contract_rejects_ownership_from_view.md` | none known |
+| R5 | Entry-selected `owns` range after a field change; returned instance with identity and fresh fields; no retargeting, invented preservation, or aliased identities. | `field_derived_view_does_not_retarget_after_a_pointer_write`, `c_contract_executes_counter_{forward,wrong_instance,unpromised_field}.md` | three-form agreement (W6') |
+| R6 | Callback borrows a token or view without a persistent caller view; double consumption fails; scoped views do not escape. | `c_named_function_contract_borrows_*`, `c_named_function_contract_rejects_consumed_*`, `resource_scope_*.md`, `borrowing_composite_survives_an_owning_call.md` | none known |
+
+## Gates and handoffs
+
+Every implementation chunk runs its focused tests and an unfiltered
+`scripts/check.sh` in its task worktree before integration; the verdict is
+the unpiped exit status, per [testing.md](../docs/internals/testing.md) and
 [verification-efficiency.md](../docs/internals/verification-efficiency.md).
-Changing a performance-sensitive representation requires deterministic curves
-over at least four sizes in the same chunk, not deferred until W7. This plan
-does not claim a measured current scaling defect; the curves protect the
-refactoring's required complexity.
+A changed hot representation needs deterministic curves over at least four
+sizes in the same chunk. Each handoff states the chunk, base and result
+commits, files and interfaces changed, tests added with R IDs, exact gate
+commands and exit statuses with scaling counters, removed paths or the
+adapter's removal owner, remaining blockers classified as verified or
+hypothesis, and confirmation that no language semantics, C source, budgets,
+quarantine, or unrelated files changed. After any interrupted verifier,
+confirm its process tree exited. Do not create new issues for discoveries
+without explicit user authorization.
 
-Each handoff must state:
+## Acceptance criteria
 
-1. Chunk ID, starting commit, resulting commit, and files/interfaces changed.
-2. Behavioral tests added/updated, including negative cases and R IDs covered.
-3. Exact focused/full-gate commands and exit statuses; scaling counter names,
-   input sizes, and observed work where applicable.
-4. Which old path was removed, or the adapter's named removal owner.
-5. Remaining blockers and whether they are verified failures or hypotheses.
-6. Confirmation that no language semantics, C source, budgets, quarantine, or
-   unrelated files changed to obtain success.
-
-Before integration, verify the primary checkout is clean and its base matches
-the tested predecessor; rebase/update and rerun affected gates if it moved.
-After an interrupted or timed-out verifier, confirm its process tree exited.
-Report unrelated tooling blockers rather than accepting a slow eventual pass.
-
-## Overall acceptance criteria
-
-- Existing syntax and the language-preservation contract above are intact.
-- R1-R6 are checked by bounded positive and negative regressions; documented
-  callback workarounds are removed only where the real behavior now verifies.
-- One normalized resource specification and shared contract interface serve
-  direct functions and callbacks, with distinct checked evidence where needed.
-- Contract clause evaluation does not lose available authority simply because
-  an address depends on memory inside a folded resource.
-- Resource transitions supply the authoritative checked memory effect
-  projection; no duplicated evaluator or footprint reconstruction remains as
-  an alternative source of truth.
-- Observations survive precisely when their support permits it, scoped views
-  do not escape, and callback facts remain tied to the correct pointer value.
-- Existing binder forms share internal identity/substitution rules while
-  preserving return snapshots, exclusive identity, and fresh fields.
-- Required deterministic scaling, ordinary verification, expansion/reverification,
-  certification, and relevant audit checks pass without weakened gates.
-- `scripts/check.sh` passes on the final integrated implementation, documentation
-  is current, and overlapping issue statuses accurately reflect completed work.
-
-## W5-E2 tooling-blocker handoff (2026-09-12)
-
-The W5 callback-invalidation investigation reached a semantic and
-representation boundary. A callback's checked memory projection must be
-invalidated when its supporting occurrence is consumed, replaced, or mutated,
-while disjoint observations and pure callback facts survive. The attempted
-anchor index was not sufficient: a composite whose declared pointer is based
-at offset 0 can expand to owned child ranges based at offsets 4 and 6. A query
-at offset 4 can therefore collide with an unrelated declaration at offset 4
-and omit the actual separating composition. Unioning the left and right
-declared-anchor buckets, or indexing only the first pointer argument, does not
-repair this counterexample; choosing the smaller bucket is merely conservative
-and cannot establish completeness.
-
-The required next representation is a checked per-composition
-`FrameFootprint` containing the definition epoch, memory snapshot identity,
-all recursively expanded owned leaf ranges, and an `Unknown`/alias marker when
-expansion is unavailable or symbolic. Each leaf range must be posted into a
-persistent same-block interval/containment index, with alias-wide and opaque
-fallback buckets. Frame range queries retrieve only overlapping postings and
-then exact-check the selected footprint witnesses; pointer queries use the
-corresponding unit range. A footprint from another definition epoch or memory
-snapshot is never reused. Support occurrence identity remains a separate
-datum, so equal persistent resource aliases do not conflate authority.
-
-External arguments must enter the alias-wide path and have a direct fallback
-regression. Acceptance requires non-vacuous derived-offset and nested/opaque
-fixtures plus deterministic cold and warm curves at U = 4, 16, 64, 256, and
-1024. Counters must include interval bucket visits, fallback/alias bucket
-visits, candidate-ID unions, and expansion work; a warm-cache result alone is
-not evidence, and a cold query must not scan unrelated compositions.
-
-The experimental source commits `9ac45778`, `9904b5cb`, and `d9ef0f4e` were
-reviewed and then reverted because they either retained ambient scans or used
-incomplete anchor selection. The clean rollback checkpoint preserves the
-earlier docs-only state and does not integrate those implementations. No C
-source, language semantics, budgets, quarantine, or unrelated files were
-changed to obtain this investigation result.
-
-## Consolidated status and resume handoff (2026-09-12)
-
-This section is the current handoff summary. Earlier W0-W5 entries remain as
-the detailed historical record; where an earlier entry says that a worker
-branch was unmerged, this section distinguishes the subsequently verified
-upstream integration from the temporary worktree commit.
-
-### Current phase status
-
-| Phase | Status at current upstream | Summary |
-| --- | --- | --- |
-| W0 | Complete | Baseline, G1-G3 investigation, ownership map, and internal-boundary plan recorded. G1 was fixed upstream; G2/G3 were later addressed by the integrated W3 path. |
-| W1 | Complete | Normalized resource specifications and family-specific validation are integrated. |
-| W2 | Complete | Body-independent contract interface and shared direct/callback preparation are integrated, with evidence kinds kept distinct. |
-| W3 | Complete | Whole-clause dependent entry evaluation, checked access obligations, event-driven waiter worklist, and interval/symbolic waiter handling are integrated. |
-| W4 | Complete | Checked resource transitions and the authoritative memory-effect projection are integrated across calls, havoc, refinement, loops, and certification. |
-| W5 | Partial / blocked | A, B1, C, D, and E1 provenance work is integrated, but E2 has not produced a sound complete callback-invalidation design. The remaining W5 claim is blocked on snapshot-qualified expanded composite footprints and end-to-end callback evidence. |
-| W6 | Not started | Binder transport and snapshot substitution remain planned work after W5. |
-| W7 | Not started | Final R1-R6 qualification, cleanup, documentation, and issue reconciliation are not complete. |
-
-### Verified integration and temporary-branch commit map
-
-The following was checked after fetching `origin/master` at
-`0dc5283951ff58056a66a24a9ccc41f678ba33bf` (`0dc52839`): a hash is called
-integrated/pushed below only when it is an ancestor of that remote ref.
-Temporary worktree hashes are listed separately and must not be inferred to be
-on master merely because they are described in an earlier handoff.
-
-| Phase | Integrated/pushed commits verified in `origin/master` | Temporary worktree commits or equivalent integrations |
-| --- | --- | --- |
-| W0 | `188a594b`, `16338efe`, `345eb056` | `49fda560` and `65b5a343` were planning/baseline worktree variants; the integrated plan/baseline is the pair above. |
-| W1 | `ef44ad20`, `d8d1db47`, `1add3707` | `69fdd385`, `aa691e0f`, `b8953041`, and `aed3a1dc` are temporary branch variants; their reviewed result is represented by the integrated pair `ef44ad20`/`d8d1db47` and reconciliation `1add3707`. |
-| W2 | `1e867e25`, `856221a1`, `2b7e9e32` | `70785c23` and `42ec4c46` are temporary branch hashes; the integrated contract-interface result is the three hashes at left. |
-| W3 | `2faebefc`, `b4661346`, `6193066c`, `dab51408`, `648654c0`, plus documentation commits `217c17cc`, `53ba9913`, `b621c561`, `9f6b83ca`, and `2f5e4f4d` | `09267e5a`, `8b260cc9`, `25711aa6`, `ec820946`, and `56958fa6` are temporary worker hashes. Their corresponding integrated implementations are the hashes at left, verified by subject and ancestry. |
-| W4 | `28aae600`, `9fd0fc56`, `a3112b70`, and integration merge `93f80505` | `e82f2946`, `27f8cca8`, `b7a764da`, and `05da2753` are temporary W4 variants; they are not remote ancestors. |
-| W5-A | `839aae90`, `4b2fed41`, `d3b7405e`, `9e66590b`, `c7e21ab1`, `2e5cbb8a` | These checkpoint-A hashes are integrated, but A is only partial W5 and not a completion claim. |
-| W5-B1 | Integration branch head `7947edc3`; component commits `d3ec5b26`, `0a1bd260`, `4b726370`, `cb6b2d5f`, `4705b1f2` | The branch head and component hashes are integrated; the documented opaque/barrier fallback and its O(U) limitation remain relevant. |
-| W5-C/D | C integration branch head `ed532b05`; D integration branch head `f03f28cd`; component commits `bc5ba4a5`, `a526c820`, `8460125c`, `a005ac28` | The branch heads and component hashes are integrated regression checkpoints, not proof that all W5 behavior is complete. |
-| W5-E1 | `a5ec4580`, `7dc0d6ba`, `49ed348b`, `b6fdd9ef`, and integration merge `29d7071e` | The E1 worktree hashes are integrated. E2 remains an investigation, not a landed implementation. |
-| W5-E2/docs | `f4ae6dd4`, `0b1953e4` | `f7d61b76` is a temporary docs-only hash; its net blocker text is represented by integrated `0b1953e4`. The rollback branch also contains local-only `4e6ca3bb`, `f270b748`, and `809812fd`; none is integrated. |
-
-This consolidated documentation handoff is not a claim that an experimental
-source implementation landed. The only intended change in that handoff is
-this existing issue document.
-
-### E2 semantic findings and evidence boundary
-
-The central distinction is between a pure exact-pointer theorem and a
-resource-supported predicate. An ordinary no-memory `Predicate` fact such as
-`Copy(augment->copy)` is a pure theorem about that exact pointer value. A
-resource occurrence changing does not by itself retire that theorem; a bad
-pointer still fails, while the same independently established pointer remains
-eligible. A predicate declared inside a composite resource is different: its
-authority is supported by the composite body and must follow that resource's
-occurrence, snapshot, and scope.
-
-The investigation reproduced memory-projection staleness through loaded
-address bases/bounds, and the E1 implementation now carries recursively
-discovered scalar load prerequisites conservatively. It also reproduced the
-permitted callback-body mutation, changed callback-table-cell rejection,
-consumed-suite rejection, scoped-open restoration, and disjoint framed-support
-preservation cases recorded in the preceding checkpoints. It did not reproduce
-retirement of an independently established pure exact-pointer theorem. At
-the surface boundary, `fact Copy(augment->copy)` needs owned coverage and a
-function-pointer resource parameter cannot act as an independently retained
-cell view; therefore the earlier generic missing-view failure is not evidence
-of stale pure-theorem authorization.
-
-No unconditional callback-fact retention list or `FactProvenance` sidecar was
-added. Existing support-indexed projections remain the authority. A supported
-observation must retain its exact support occurrence, relevant memory snapshot
-and version, footprint, and lexical scope. Equal persistent resource values
-may be aliases of the same authority or separate occurrences in different
-branches; value equality alone must not remove or preserve the wrong
-observation. Joins, normalization, cache rekeying, and close must preserve
-metadata only when the occurrence/topology and snapshot rules say that the
-support survived.
-
-### Experimental chronology and rejected designs
-
-The temporary source sequence was:
-
-1. `9ac45778` (`Fix callback resource invalidation and frame scaling`) carried
-   the callback invalidation repair and regression work. Review found that
-   post-state stale projections could be resurrected unless old overlapping
-   support was invalidated exactly once before return evaluation. Fresh
-   ensured projections must then be inserted after that invalidation and must
-   not be invalidated a second time. The `requires`-empty fast path also
-   dropped `ensures`-only or constructor-only contract information; it must be
-   guarded by all three lists being empty.
-2. `9904b5cb` (`Bound frame resource invalidation candidates`) attempted a
-   persistent composition/block/offset index and added curves. Review found
-   hidden cold scans, pointer-path scans, alias-bucket gaps, deep
-   `ResourceContext`/`Arc` identity concerns, and incomplete anchor semantics.
-3. `d9ef0f4e` (`Bound frame provenance queries by indexed anchors`) removed
-   more visible scans and passed its focused tests and full gate, but it still
-   selected declared anchors rather than derived expanded leaves. Its
-   min(left,right) bucket selection could omit the true composition when an
-   unrelated decoy occupied the queried anchor. Its candidate counter also
-   did not charge bucket iteration, BTree-set construction, fallback unions,
-   or all pointer-path work, so apparently flat post-materialization visits
-   were misleading.
-
-Those commits were preserved for audit but not integrated. They were reverted
-on the temporary branch by `4e6ca3bb`, `f270b748`, and `809812fd`, returning
-to the earlier green docs-only source state. The temporary docs commit
-`f7d61b76` likewise was not integrated as a hash; its blocker content was
-incorporated into the integrated docs commit `0b1953e4` and is consolidated
-here.
-
-The concrete performance failure was an `owned-vector` verification path
-exhausting the deterministic simple budget at `500001` units (the limit was
-`500000`), after unrelated compositions entered a wildcard path. A later
-targeted run passed after the experimental exclusion, but that did not prove
-semantic completeness. The interrupted diagnostic/timing worker was checked
-and exited; no stale `cargo`, `nextest`, `click-verify`, or gate worker was
-left running. The correct response was to preserve the green checkpoint and
-document the unresolved representation boundary, not raise a budget or add a
-quarantine.
-
-### Why the tempting indexes are insufficient
-
-An index by the composite's declared pointer, even when it indexes every
-argument and unions both query anchors, is not complete: recursive expansion
-can derive child bases at offsets unrelated to every declared argument. A
-composition rooted at offset 0 can own leaves at offsets 4 and 6, while a
-decoy rooted at offset 4 occupies the only selected bucket. Choosing the
-smaller left/right bucket is conservative for soundness only in the sense that
-it may refuse a proof; it is not complete for finding a separating witness.
-Restoring a whole-block fallback repairs completeness only by reintroducing
-O(U) scans and the owned-vector budget failure.
-
-An index by one supporting resource fact or one `support_occurrence_by_projection`
-entry is also insufficient for generic frame disjointness. The separating
-witness may be a different composition whose expanded leaf is disjoint from
-the queried write. Support-occurrence indexes are still necessary for exact
-invalidation of a known projection, but they cannot replace the generic frame
-witness index.
-
-### Required sound representation and lifecycle
-
-The next implementation should introduce a checked per-composition
-`FrameFootprint` (the concrete Rust name is not prescribed) containing:
-
-- a stable map-local composition/occurrence identity, never a deep
-  `ResourceContext` key and never an unqualified `Arc` address;
-- the composite-definition epoch and the source memory snapshot identity,
-  including widths used to interpret loaded offsets and bounds;
-- every recursively expanded owned leaf `CMemoryRange`, normalized to the
-  existing fixed-depth physical-byte interval/containment geometry; and
-- an explicit `Unknown`/alias-wide marker whenever expansion is unavailable,
-  symbolic, mixed-snapshot, opaque, or otherwise not checked.
-
-For each checked footprint, post leaf ranges into a persistent same-block
-interval/containment index. Keep alias-wide/opaque buckets for
-`ExternalArgument`, symbolic/function-symbolic blocks, and failed expansion.
-Generic frame range queries should retrieve overlapping postings and exact-check
-the selected footprint witnesses; pointer queries use a unit range. A support
-occurrence reverse index remains separate and drives exact removal of the
-projections it supports. No footprint from a different definition epoch or
-memory snapshot may be reused.
-
-Expansion must be iterative with a checked depth/work bound. A failed or
-partially expanded composition is `Unknown`, never a partially trusted
-footprint. Persistent updates on insert/remove, fork, join, normalization,
-scope close, snapshot replacement, and cache eviction must be symmetric. Equal
-persistent aliases must preserve the same occurrence only when the join proves
-that occurrence and its dependency topology are shared; otherwise retain
-distinct identities. Resetting a context must clear all postings and reverse
-indexes together. Expansion caches must be keyed by occurrence/composition,
-definition epoch, memory snapshot, and relevant assumptions, and must never
-turn a failed obligation into authority.
-
-### Staged next implementation and acceptance matrix
-
-Implement the next chunk in this order:
-
-1. Add a checked footprint carrier and stable map-local identity, with unit
-   tests for duplicate values, fork/join, normalization, replacement, reset,
-   and cache rekeying. Keep occurrence support metadata separate from value
-   equality and from the generic footprint index.
-2. Build the insertion/removal interval postings from all recursively
-   expanded leaves. Add the alias-wide and `ExternalArgument` fallback paths;
-   do not use an ambient composition scan or a whole-block fallback for a
-   concrete query.
-3. Route frame range and pointer queries through interval overlap plus exact
-   witness checking. Make unavailable or mismatched snapshots fail closed.
-   Preserve the existing conservative symbolic/barrier behavior.
-4. Restore the call/return invalidation ordering: one pre-return invalidation
-   of old overlapping support, followed by checked return/ensure insertion;
-   prove that fresh overlapping ensures survive and disjoint observations do
-   survive.
-5. Add non-vacuous derived-offset, nested composite, opaque, alias-wide, and
-   callback-table mutation fixtures before claiming W5 completion.
-
-Every performance-sensitive query must run a deterministic two-axis matrix
-with unrelated supported-fact sizes `U = 4, 16, 64, 256, 1024` and call or
-composition counts such as `C = 1, 2, 4, 8, 16`. Measure cold and warm
-queries separately. Counters must include interval-node/bucket visits,
-fallback and alias-bucket visits, candidate-ID unions and set construction,
-composition lookup/materialization, recursive expansion work, and affected
-output count. Cover different-block, same-block interval, derived-offset,
-pointer-unit, `ExternalArgument`, symbolic/opaque fallback, insert, remove,
-join, and barrier cases. A warm flat curve is insufficient if a cold query
-still scans all unrelated compositions; bounds must be output-sensitive in
-the selected leaves/edges and logarithmic in indexed universe where promised.
-
-### Remaining W5, then W6/W7
-
-After the tooling boundary is repaired, W5 still needs the real three-call
-callback-table/resource-context matrix, specifically the combined case where
-an actual permitted callback mutation is followed by scoped-open expiry; the
-generic open-body mutation and post-close rejection cases are already covered
-by W5-C. It also needs fresh ensures after overlapping invalidation, nested and
-opaque composite prerequisite footprints, and exact support-preservation and
-rejection cases. Pure exact-pointer theorem behavior must remain separate from
-composite-supported predicate invalidation. W5 is complete only when those
-semantic regressions and the cold/warm matrix pass on one integrated green
-commit.
-
-W6 then unifies existing binder transport and snapshot substitution without
-changing instance identity, fresh post fields, or return snapshots. W7 runs
-the full R1-R6 direct/callback/theorem/refinement/certification matrix,
-removes obsolete adapters, updates the related concept/internals docs, and
-deletes/reconciles this issue only after every acceptance criterion is true.
-
-### Fresh-agent resume point and gates
-
-Start from the then-current fetched `origin/master`, not from any temporary
-W5 branch. Read this entire issue and `AGENTS.md`, create a dedicated
-`codex/` worktree, and first run the current positive and negative callback,
-resource, execution, and scoped-open witnesses before editing. Keep source
-changes separate from documentation and do not modify C, budgets, quarantine,
-or unrelated issue files.
-
-The minimum gate sequence for an implementation checkpoint is:
-
-```text
-cargo fmt --all -- --check
-cargo test --lib kernel::functions::callback_contract_tests -- --nocapture
-cargo test --lib kernel::tests::resource_tests -- --nocapture
-cargo test --lib kernel::tests::contract_execution_tests -- --nocapture
-cargo clippy --all-targets -- -D warnings
-./scripts/check.sh
-```
-
-The final verdict is the unpiped exit status of `./scripts/check.sh`. After
-any timeout or interruption, confirm that the verifier process tree has
-exited before trusting a timing result. Before integration, verify the primary
-checkout is clean and its base is an ancestor of the tested branch; update and
-rerun affected gates if upstream moved. Do not claim experimental source code
-landed unless its exact hash is an ancestor of the current remote master.
+- Existing syntax and the language-preservation contract are intact.
+- R1 to R6 are checked by bounded positive and negative regressions across
+  the forms in the matrix.
+- One normalized resource specification and one contract interface serve
+  direct functions and callbacks, with distinct checked evidence where
+  needed, and one transition record is the account of every application
+  (D2 settled and implemented).
+- Clause evaluation does not lose available authority because an address
+  depends on memory inside a folded resource.
+- The transition projection is the sole memory-effect source; no surface
+  reconstruction can disagree with it.
+- No memory-DAG or frame query scans compositions unrelated to its subject
+  (D1 settled and implemented), with curves pinning the bound.
+- Observations survive exactly when their support permits; scoped views do
+  not escape except as held escaping borrows; callback facts stay tied to
+  the exact pointer value.
+- Binder forms share one identity map while preserving return snapshots,
+  exclusive identity, and fresh fields.
+- `scripts/check.sh` passes on the final integrated commit, the concept and
+  internals docs are current, and the rbtree and globals issues reflect the
+  landed behavior.

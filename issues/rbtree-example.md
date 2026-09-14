@@ -508,11 +508,11 @@ verifier gaps. Depends on C3c.
 abstract augmentation. Depends on C3c and C5 and on the callback packaging
 in [memory-vs-resources.md](memory-vs-resources.md). The 2026-09-14 globals
 audit adds `mdtests/rb_augment_callbacks_const_suite.md`: the unchanged const
-callback-table caller and a package with read-only fields pass under ordinary
-semantics, but candidate stable loans refuse the helper call with `an exclusive
-instance inside a composite view is unsupported`. This final-semantics
-integration remains P1 here and in [the stable views record](../docs/internals/stable-views.md), even though the
-broader [global initializer issue](global-variables.md) is now P2. Keep the table
+callback-table caller and a package with read-only fields. It passes under the
+shipped stable-view semantics (an earlier candidate-mode refusal was resolved
+before the cutover recorded in
+[the stable views record](../docs/internals/stable-views.md)), while the
+broader [global initializer issue](global-variables.md) is P2. Keep the table
 const and preserve the callback guarantees; the no-op fixture is not evidence
 for the complete mutation-capable augmentation proof.
 
