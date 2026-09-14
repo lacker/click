@@ -102,8 +102,8 @@ query is refused outright while any concrete loan is indexed.
 
 ## Remaining work
 
-Seven steps, numbered stably; steps 1-3, 4a, and 5 landed on 2026-09-13;
-4b, 6, and 7 remain. Steps 1-5 recover and finish the V18 implementation from the parked
+Seven steps, numbered stably; steps 1-5 landed on 2026-09-13; 6 and 7
+remain. Steps 1-5 recover and finish the V18 implementation from the parked
 experiment; step 6 is the V18 adversarial review; step 7 is the V19 cutover. Each step follows the working agreements
 below: an isolated worktree from master, focused positive and negative tests,
 the unfiltered gate, and a handoff. No C source edits, and no change to
@@ -157,6 +157,10 @@ is step 4b (nested composite input views: seven examples and most of the
 mdtests), the packaged view of input-cursor and the counted population of
 bounded-pool (deferred with a refusal), and the three unchanged
 expectations.
+After 4b (2026-09-13): 8 of 1,512 mdtests and 2 of 27 examples fail. The
+remaining items are listed under step 4; three are deliberately unchanged
+expectations, two are deferred syntax, and the rest are small mechanisms
+outside composite depth.
 
 Reclassify from a fresh run before each step rather than from these counts.
 
@@ -427,7 +431,41 @@ the debug form. Candidate corpus after 4a and 5: 20 of 1,512 mdtests and
 view, the packaged view of input-cursor, or the counted population of
 bounded-pool.
 
-**Order.** 4b next: nested backing in `CompositeLoanBacking` and
+**4b landed 2026-09-13** ("View composites at any depth through checked
+projection"): one checked level at lend and at the root, nested composite
+children as permitted descriptions, and projection by the checked `unfold`
+and `observe` (`LoanLedger::project`). A projection is derived read-only
+authority and keeps the ledger's identity, since loop backedges, branch
+joins, and call recovery compare ledgers by identity; the return state of
+a body carries the body's ledger so projections authorize its bindings.
+Candidate corpus after 4b: 8 of 1,512 mdtests and 2 of 27 examples fail.
+The recursive list, tree, and shape fixtures and the seven nested-composite
+examples verify. What remains, none of it a composite-depth question:
+
+- `augment_rotate_callback_child_read`: a callee's mutable effect versus a
+  lent view from a different caller occurrence; the effect projection
+  carries ranges without provenance, so the relation is decided by
+  arithmetic and refused as unproved. Needs occurrence provenance on the
+  projection, or the partition read at the call.
+- `composite_unfold_many_snapshots`, `frame_many_irrelevant_snapshots`: a
+  callee views `buffer_storage(owner)` while the caller owns
+  `allocated_buffer(owner)`, a different composite whose body covers it.
+  Legacy satisfies that by expansion entailment; a loan needs the owner
+  unfolded and the viewed composite folded from the pieces, which is the
+  V8 owned-interface-to-viewed-implementation adapter for composites.
+- `struct_aggregate_helper_view`: the planner selects an owner at element
+  width 1 while the residual owner is at width 4 over the same bytes and
+  `memory_range_covers` refuses width mismatches (resource algebra).
+- `field_derived_precise_effect_after_metadata_write`: needs a way to own a
+  composite while declaring a narrower checked write footprint.
+- `call_havoc_symbolic_write_set`, `global_store_requires_owned_cell`,
+  `global_byte_array_rejects_neighbor_ownership`: expectations deliberately
+  unchanged until the step 7 cutover (see step 3).
+- bounded-pool (counted population with a symbolic quantity) and
+  input-cursor (a composite packaging a borrowed view): deferred with a
+  refusal, to be added as syntax later if wanted.
+
+**Original 4b plan, for reference.** Nested backing in `CompositeLoanBacking` and
 `BorrowedContractInputBacking`, the `Project` transition, and the
 projection calls in the surface. Regressions for 4b: R14 and R16 with a
 two-level list and a recursive shape (read through a child after two
