@@ -2,16 +2,17 @@
 
 **Status (2026-09-13): the V0-V17 implementation is integrated on master
 behind an internal candidate selector. Ordinary contracts still use the
-legacy weak-view behavior. Seven steps remain: finish the top-level
+legacy weak-view behavior. Eight steps remain: finish the top-level
 borrowed-input root and the rest of the V18 implementation, get the
-candidate corpus green, review it adversarially, and cut over. Nothing in this issue is authorization to start agents;
+candidate corpus green, review it adversarially, land escaping borrows,
+and cut over. Nothing in this issue is authorization to start agents;
 the remaining cards are future assignments.**
 
 This file is the design and the implementation brief. It is organized as:
 
 - [Current state](#current-state): what is on master, how the candidate
   path is selected, and what is parked.
-- [Remaining work](#remaining-work): the seven remaining steps, with the
+- [Remaining work](#remaining-work): the eight remaining steps, with the
   parked experiment and failure classes they start from.
 - [Design](#decision-and-violated-invariant): the decision, the laws, the
   kernel/surface design D1-D14, and the regression catalogue R01-R32.
@@ -69,7 +70,7 @@ through `with_candidate_stable_view_semantics`; the mode is part of every
 artifact identity. `CLICK_VIEW_SEMANTICS=stable-loans` makes the mdtest and
 example harnesses verify every fixture under `StableLoans` through
 `verify_c0_sources_in_mode`; the ordinary gate stays `Legacy`. The switch is
-rollout scaffolding and is removed in step 7. The earlier codex corpus
+rollout scaffolding and is removed in step 8. The earlier codex corpus
 counts came from an uncommitted local change and are superseded by the
 baseline under remaining work.
 
@@ -103,12 +104,13 @@ query is refused outright while any concrete loan is indexed.
 
 ## Remaining work
 
-Seven steps, numbered stably; steps 1-5 landed on 2026-09-13; 6 and 7
+Eight steps, numbered stably; steps 1-5 landed on 2026-09-13; 6, 7, and 8
 remain. Steps 1-5 recover and finish the V18 implementation from the parked
-experiment; step 6 is the V18 adversarial review; step 7 is the V19 cutover. Each step follows the working agreements
+experiment; step 6 is the V18 adversarial review; step 7 is escaping
+borrows (required, decided 2026-09-14); step 8 is the V19 cutover. Each step follows the working agreements
 below: an isolated worktree from master, focused positive and negative tests,
 the unfiltered gate, and a handoff. No C source edits, and no change to
-`Legacy` behavior before step 7.
+`Legacy` behavior before step 8.
 
 Measure every step against the candidate corpus:
 
@@ -324,11 +326,11 @@ Decided, not changed:
   store-site ownership check (legacy's message comes from a post-execution
   footprint check), and gating the loan check on visible ownership would
   skip it for writes covered only through a folded composite. Their
-  expectations become the loan message at step 7.
+  expectations become the loan message at step 8.
 - `call_havoc_symbolic_write_set` keeps failing at entry: its contract's
   `views p[0..1]` overlaps its own `owns p[0..length]`, which no caller can
   supply. The entry refusal now names both clauses; the expectation flips
-  at step 7 because it is also checked under legacy.
+  at step 8 because it is also checked under legacy.
 - `field_derived_precise_effect_after_metadata_write` is not migrated:
   owning the composite widens the callee's mutable footprint to the whole
   body and breaks the caller's frame under legacy too. It needs a way to
@@ -410,9 +412,10 @@ are the reviews' confirmed findings; each is a bug for memory views too.
   ledger; count an active loan as active whether or not it has byte
   backing.
 
-**Deferred, with a clear refusal, to be added as syntax later if wanted:**
-a composite whose body packages a borrowed view (input-cursor), and a
-counted population with a symbolic quantity (bounded-pool).
+**Two cases were first deferred with a clear refusal and are now required
+(decided 2026-09-14):** a composite whose body packages a borrowed view and
+escapes a call (input-cursor) is step 7; consuming a symbolic quantity of a
+body-less token population (bounded-pool) is a planner gap, fixed in 6.2.
 
 **4a landed 2026-09-13** ("Harden the stable-loan barriers and admit body
 facts a loan stabilizes", with "Keep a produced composite's body inside
@@ -461,10 +464,14 @@ examples verify. What remains, none of it a composite-depth question:
   composite while declaring a narrower checked write footprint.
 - `call_havoc_symbolic_write_set`, `global_store_requires_owned_cell`,
   `global_byte_array_rejects_neighbor_ownership`: expectations deliberately
-  unchanged until the step 7 cutover (see step 3).
-- bounded-pool (counted population with a symbolic quantity) and
-  input-cursor (a composite packaging a borrowed view): deferred with a
-  refusal, to be added as syntax later if wanted.
+  unchanged until the step 8 cutover (see step 3).
+- bounded-pool: the planner's exclusive reservation demands a direct
+  supporting entry for `consumes pool->capacity of pool_slot(pool)` and has
+  no "N units of a population whose count is at least N" step; `pool_slot`
+  has an empty body, so the ledger is not involved. Fixed in 6.2.
+- input-cursor: `input_cursor_init` produces a composite that packages its
+  viewed contract input, so the output would outlive the input's loan.
+  This is an escaping borrow; step 7.
 
 **Original 4b plan, for reference.** Nested backing in `CompositeLoanBacking` and
 `BorrowedContractInputBacking`, the `Project` transition, and the
@@ -510,25 +517,25 @@ core loan rules. This card does not start such an agent now.
   Recheck R01-R32 coverage at its required layer.
 - Verify that the full candidate engine has no legacy fallback and that
   extension-model claims match implemented versus model-only operations.
-- Review scaling evidence and the planned step 7 removal list. Run the full
+- Review scaling evidence and the planned step 8 removal list. Run the full
   candidate gate on the exact reviewed commit.
 
 **Done when:** all required semantics have an enforcing path and meaningful
 regressions, every observed defect is fixed/rechecked, and the coordinator
 has an explicit cutover-ready verdict. Unresolved soundness or tooling
-concerns block step 7; an optimistic checklist does not replace evidence.
+concerns block step 8; an optimistic checklist does not replace evidence.
 
 **Review record (2026-09-13, at master d2a80734).** Three independent
 read-only reviewers, none of whom authored the loan rules: A attacked the
 ledger and authority core, B attacked the call boundary and write paths, C
 mapped R01-R32 to their witnesses, ran the candidate corpus, and walked the
-step 7 removal list. Corpus at the reviewed commit: 8 of 1,512 mdtests and 2
+step 8 removal list. Corpus at the reviewed commit: 8 of 1,512 mdtests and 2
 of 27 examples fail, exactly step 4's list, nothing unexplained. Findings are
 numbered F1-F16 and grouped by what they mean for the cutover.
 
 **Verdict: not cutover-ready.** Two confirmed defects (F1, F2), one confirmed
 legacy hole that the step 4 plan's premise depends on (F3), and one missing
-required regression (R22) block step 7. The rest is hardening, coverage, and
+required regression (R22) block step 8. The rest is hardening, coverage, and
 cutover logistics. What held up under direct attack is recorded at the end.
 
 *Confirmed defects.*
@@ -656,9 +663,12 @@ cutover logistics. What held up under direct attack is recorded at the end.
   (`docs/concepts/larger-examples.md`, `docs/reference/examples.md`,
   `docs/reference/cli/verify.md`, `docs/internals/testing.md`).
   `field_derived_precise_effect_after_metadata_write.md` is a
-  `verified-example` in three doc pages. Step 7 as written cannot absorb
-  this: the deferred syntax lands first, or these get quarantined and the
-  pages lose their worked examples. Decision needed.
+  `verified-example` in three doc pages. Decided 2026-09-14: neither example
+  is quarantined. input-cursor is an escaping borrow and step 7 is required
+  before the cutover; bounded-pool is a planner gap fixed in 6.2. The
+  `field_derived_precise_effect_after_metadata_write.md` case (own a
+  composite, declare a narrower checked write footprint) is still open and
+  is decided in 6.3.
 - **F14.** Three legacy paths are not behind the mode flag and survive a
   naive cutover: the planner disjunction at `functions.rs` ~10223
   (`candidate && (ledger.is_some() || any view requirement)`, which routes a
@@ -674,7 +684,7 @@ cutover logistics. What held up under direct attack is recorded at the end.
   acceptance criterion that ordinary verification, expansion, and audit agree
   is unmeasured, and expansion disagreeing with verification is a
   tooling-stability stop condition that is currently unobservable.
-- **F16.** Cutover bookkeeping the step 7 card omits: `verify_c0_project_in_mode`
+- **F16.** Cutover bookkeeping the step 8 card omits: `verify_c0_project_in_mode`
   and the `src/surface.rs` re-exports; `prepare_contract_resources` becomes
   always-true for the two body-execution paths once the `||` disappears
   (audit those callers); `call_havoc_symbolic_write_set.md` must migrate its
@@ -714,14 +724,101 @@ or partial recovery; error and diverging return paths.
   design.
 - **6.2, kernel hardening:** F3 (frontier check at produce/ensure
   composition, both modes), F4 (containment evidence for `project` and a
-  stated identity rule), F5, F6, F7. F3 is the one that changes the
-  argument; the others tighten it.
-- **6.3, decisions before step 7:** F13 (flagship examples), F14 (classify
-  or remove the three ungated paths), F15 (make the CLI honor the switch for
-  one measured expand/profile/audit pass, or accept the gap explicitly), then
-  the coverage list in F11 and the two scaling curves in F10.
+  stated identity rule), F5, F6, F7, and the bounded-pool planner gap
+  (counted-population requirements go through the existing population
+  transition, or the owned reservation learns the count arithmetic). F3 is
+  the one that changes the argument; the others tighten it.
+- **6.3, decisions before step 8:** the
+  `field_derived_precise_effect_after_metadata_write.md` case in F13, F14
+  (classify or remove the three ungated paths), F15 (make the CLI honor the
+  switch for one measured expand/profile/audit pass, or accept the gap
+  explicitly), then the coverage list in F11 and the two scaling curves in
+  F10.
+- **Step 7, escaping borrows,** after 6.1 and 6.2 and before the cutover.
 
-### 7. Cut over, document, and close
+### 7. Escaping borrows (required, decided 2026-09-14)
+
+**Read:** D1, D2, D5, D6, D8, D10, R14-R16, R24, the step 4 plan, and the
+step 6 record.
+**Depends on:** 6.1 and 6.2.
+
+**Boundary:** kernel loan rules for a composite that packages a view, the
+surface elision rule at call boundaries, `examples/input-cursor` verifying
+under the candidate semantics unchanged, regressions; no new annotation
+syntax beyond the refusal for the ambiguous case.
+
+**Why required.** A composite whose body contains a `views` clause is a
+struct that holds a borrow: in Rust terms `struct Cursor<'a> { data: &'a
+[i32], pos, len }`. Any C struct with a pointer into memory it does not own
+has this shape (iterators, cursors, parsers, string views, slices), and
+`examples/input-cursor` is the documented flagship instance. Its constructor
+takes `views readable_input(data, length)` and produces
+`input_cursor(owner)`; under the loan semantics the input view is a loan
+that ends at return, so the produced composite would outlive it and
+`fold(input_cursor(owner))` refuses to package a loan-backed viewed body as
+an owned composite. Refusing this shape is not an option for a view system
+meant for existing C.
+
+**Rules (the mechanism exists; the syntax is mostly elided):**
+
+- A composite whose definition body contains a `views` clause is a
+  *borrowing composite*. Folding one makes the folded head a dependency of
+  the loan behind each viewed body piece, exactly as a reborrow child is;
+  unfolding or consuming it releases the dependency. The ledger already
+  refuses ending a loan with a live dependency, so the viewed data's owner
+  cannot be recovered while a folded cursor over it is live. No new
+  transition kind: the head is a child scope of the backing loan.
+- At a call boundary, a produced borrowing composite whose viewed pieces are
+  backed by a viewed contract input keeps that input's loan open after
+  return, with the produced composite as its dependency. The caller keeps
+  the escrow and the close and recovery rights; it recovers its owner only
+  once it consumes or unfolds the composite. With exactly one viewed input
+  that can back the piece, the binding is unambiguous and nothing is
+  written (Rust's lifetime elision). More than one candidate input, or a
+  produced borrowing composite that no viewed input backs, is refused with
+  a diagnostic naming the composite and the candidate inputs; an explicit
+  form can be added later for that case only.
+- `views cursor(owner)` on a later function is a reborrow of the composite's
+  dependency, one level, as in 4b. `owns cursor(owner)` transfers the struct
+  together with its borrow: the callee receives the head as a dependency
+  holder, and returning it hands the dependency back. Neither needs syntax.
+- A borrowing composite is never an owner of its viewed pieces. Projection
+  (4b) of a viewed piece yields a view description; the partition invariant
+  is unchanged because the viewed piece is already disjoint from every owner
+  by the entry refusal.
+- Recovery at return (D8) gains one case: a loan whose only remaining
+  dependency is a produced composite is *returned open*, recorded in the
+  call plan as an escaping loan, and the caller's ledger carries it. Every
+  other outstanding dependency still refuses recovery, as now.
+
+**Regressions:**
+
+- `examples/input-cursor` verifies under `CLICK_VIEW_SEMANTICS=stable-loans`
+  with its C and sidecar unchanged.
+- Kernel: fold a borrowing composite over a lent range; ending the loan is
+  refused with `ActiveDependency` until the head is unfolded or consumed;
+  after unfold, recovery succeeds once.
+- Kernel: a call that produces a borrowing composite over its viewed input
+  returns with that loan open and the composite as its dependency; the
+  caller's write into the viewed range is refused while the composite is
+  held; consuming the composite, then writing, is accepted.
+- Kernel negative: a produced borrowing composite that two viewed inputs
+  could back is refused at planning with the ambiguity diagnostic; one that
+  no viewed input backs is refused.
+- Kernel negative: `owns cursor(owner)` passed to a callee that ends the
+  backing loan is refused; the dependency travels with the head.
+- mdtests: the cursor constructor, a two-reader over one cursor, and a
+  negative where the caller frees the viewed data while a cursor is live.
+- Candidate corpus green except the step 6 leftovers still open at the
+  time; legacy corpus unchanged.
+
+**Done when:** the rules above have kernel enforcement and regressions,
+input-cursor verifies under the candidate semantics, the step 6 reviewers'
+attack list (root recovery, join duplication, loan leakage out of a call)
+is re-run against the returned-open case, and the record here names the
+commit.
+
+### 8. Cut over, document, and close
 
 **Read:** the step 6 verdict/removal list and final acceptance below.
 **Depends on:** step 6.
@@ -965,10 +1062,12 @@ kernel counterparts. Passing their model tests does not mean Rust references,
 concurrent C, mutex implementations, or a C memory model are verified.
 
 Do not add explicit lifetime parameters to every ordinary C contract. Do not
-add an alternate user-visible weak-view mode. Explicit escaping resource-loan
-syntax is deferred; returning a C pointer value remains supported where its
-ordinary C lifetime and the caller's permissions permit it. Returning a pointer
-does not return a loan or extend the allocation's lifetime.
+add an alternate user-visible weak-view mode. Escaping resource loans (an
+output composite that packages a viewed input) are supported by the elision
+rule in step 7, with explicit syntax only for the ambiguous case; returning a
+C pointer value remains supported where its ordinary C lifetime and the
+caller's permissions permit it. Returning a pointer by itself does not return
+a loan or extend the allocation's lifetime.
 
 ### D2. Non-negotiable laws
 
@@ -1754,7 +1853,7 @@ several agents to edit `functions.rs` or `resource_algebra.rs` at once.
 | V16 | Deterministic complexity gates and local fixes | V10, V11, V15 |
 | V17 | Full corpus/rbtree contract migration and compatibility record | V13, V15, V16 |
 | V18 | Independent adversarial review and production-readiness gate (step 6 under remaining work) | V14, V17 |
-| V19 | Default semantics cutover, documentation, final cleanup (step 7 under remaining work) | V18 |
+| V19 | Default semantics cutover, documentation, final cleanup (step 8 under remaining work, after the step 7 escaping borrows) | V18 |
 
 Common completion checklist for every implementation card:
 
@@ -1839,7 +1938,7 @@ Keep the existing public behavior unchanged until the complete path and
 corpus are ready, and keep this issue open. The candidate path must cover
 ordinary verify/expand/profile/audit, not a hidden stand-alone checker.
 Step 6 requires the full corpus under the candidate interpretation with no
-uncovered fallback. Step 7 enables it by default and removes temporary selectors,
+uncovered fallback. Step 8 enables it by default and removes temporary selectors,
 legacy independent-memory-view construction, and obsolete tests/docs.
 No permanent dual semantics or public compatibility switch is part of P1.
 
@@ -1935,7 +2034,7 @@ borrow or fixing the proof with an unjustified separation assumption.
 
 Acceptance requires:
 
-- V0-V17 and the seven remaining steps have integrated handoffs, all D2 laws
+- V0-V17 and the eight remaining steps have integrated handoffs, all D2 laws
   have enforcing paths, and
   R01-R32 have the required positive/negative evidence at their stated
   layers. Preserve the result map in durable documentation before closure.
