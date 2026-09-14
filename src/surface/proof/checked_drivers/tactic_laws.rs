@@ -342,7 +342,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
             ))
         })?;
 
-    let source_layout = SourceExecutionLayout::new(parsed_function.body());
+    let source_layout = SourceExecutionLayout::for_function(parsed_function)?;
     let loop_certificates = std::cell::RefCell::new(LoopProofCertificates::default());
     let loop_source = FrontierLoopProofSource::new(
         loop_template,

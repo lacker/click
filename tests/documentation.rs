@@ -363,7 +363,7 @@ fn local_markdown_links_resolve() {
 }
 
 #[test]
-fn normative_technical_examples_are_backed_by_mdtests() {
+fn normative_technical_examples_are_backed_by_verification_fixtures() {
     let docs = root().join("docs");
     let mut pages = Vec::new();
     markdown_files(&docs, &mut pages);
@@ -394,9 +394,13 @@ fn normative_technical_examples_are_backed_by_mdtests() {
                 ));
                 continue;
             };
-            if !fixture.starts_with("mdtests/") || !fixture.ends_with(".md") {
+            let is_mdtest = fixture.starts_with("mdtests/") && fixture.ends_with(".md");
+            let is_cpp_integration_fixture = fixture
+                .starts_with("tests/fixtures/cpp-verification/")
+                && fixture.ends_with(".click");
+            if !is_mdtest && !is_cpp_integration_fixture {
                 failures.push(format!(
-                    "{}:{}: verified example must name an mdtests/*.md fixture: {fixture}",
+                    "{}:{}: verified example must name an mdtests/*.md or C++ integration fixture: {fixture}",
                     page.display(),
                     index + 1
                 ));
@@ -411,10 +415,32 @@ fn normative_technical_examples_are_backed_by_mdtests() {
                 ));
                 continue;
             };
-            assert!(
-                fixture_source.contains("```click") && fixture_source.contains("```expect"),
-                "{fixture}: documentation fixtures must contain Click source and an expected result"
-            );
+            if is_mdtest {
+                assert!(
+                    fixture_source.contains("```click") && fixture_source.contains("```expect"),
+                    "{fixture}: documentation fixtures must contain Click source and an expected result"
+                );
+            } else {
+                let fence_end = lines[index + 1..]
+                    .iter()
+                    .position(|line| *line == "```")
+                    .map(|offset| index + 1 + offset)
+                    .expect("technical code fence must close");
+                let documented_source = format!("{}\n", lines[index + 1..fence_end].join("\n"));
+                assert_eq!(
+                    documented_source, fixture_source,
+                    "{fixture}: documented C++ proof must exactly match its integration fixture"
+                );
+                let cpp_import_tests = fs::read_to_string(root().join("tests/cpp_import.rs"))
+                    .expect("read C++ integration tests");
+                let include_path = fixture
+                    .strip_prefix("tests/")
+                    .expect("C++ fixture lives below tests/");
+                assert!(
+                    cpp_import_tests.contains(include_path),
+                    "{fixture}: C++ integration fixture must be included by tests/cpp_import.rs"
+                );
+            }
             if *line == "```c" {
                 assert!(
                     fixture_source.contains("```c filename="),

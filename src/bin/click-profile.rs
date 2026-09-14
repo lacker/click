@@ -16,7 +16,10 @@ use click::surface::{
     c0_prepared_project_tactic_source_position, c0_prepared_smart_tactic_source_sites,
     c0_prepared_tactic_source_position, c0_project_smart_tactic_source_sites,
     c0_project_tactic_source_position, c0_smart_tactic_source_sites, c0_tactic_source_position,
-    click_import_sites, verify_c0_prepared_project, verify_c0_project, verify_c0_sources,
+    click_import_sites, cpp_prepared_project_smart_tactic_source_sites,
+    cpp_prepared_project_tactic_source_position, cpp_prepared_smart_tactic_source_sites,
+    cpp_prepared_tactic_source_position, verify_c0_prepared_project, verify_c0_project,
+    verify_c0_sources, verify_cpp_prepared_project,
 };
 
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(30);
@@ -569,6 +572,10 @@ fn count_smart_source_sites(events: &[VerificationEvent]) -> Result<usize, Strin
             CInput::Prepared(imports) => match &source.project {
                 Some(project) => c0_prepared_project_smart_tactic_source_sites(project, imports),
                 None => c0_prepared_smart_tactic_source_sites(&source.click_source, imports),
+            },
+            CInput::PreparedCpp(import) => match &source.project {
+                Some(project) => cpp_prepared_project_smart_tactic_source_sites(project, import),
+                None => cpp_prepared_smart_tactic_source_sites(&source.click_source, import),
             },
         }
         .map_err(|error| {
@@ -1465,6 +1472,20 @@ fn resolve_source_positions(profile: &mut ProjectProfile) -> Result<(), String> 
                     key.source_index,
                 ),
             },
+            CInput::PreparedCpp(import) => match &source.project {
+                Some(project) => cpp_prepared_project_tactic_source_position(
+                    project,
+                    import,
+                    &key.claim,
+                    key.source_index,
+                ),
+                None => cpp_prepared_tactic_source_position(
+                    &source.click_source,
+                    import,
+                    &key.claim,
+                    key.source_index,
+                ),
+            },
         };
         match position {
             Ok(position) => {
@@ -1566,6 +1587,7 @@ fn verify_project(project: &Path) -> Result<(), String> {
         let result = match &inputs {
             CInput::Bundle(sources) => verify_c0_project(&click_project, &source_refs(sources)),
             CInput::Prepared(imports) => verify_c0_prepared_project(&click_project, imports),
+            CInput::PreparedCpp(import) => verify_cpp_prepared_project(&click_project, import),
         };
         result.map_err(|error| {
             format!(

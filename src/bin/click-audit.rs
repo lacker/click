@@ -17,9 +17,13 @@ use click::surface::{
     c0_prepared_smart_tactic_source_sites, c0_prepared_tactic_source_position,
     c0_project_smart_tactic_source_sites, c0_project_tactic_source_position,
     c0_smart_tactic_source_sites, c0_tactic_source_position, click_import_sites,
+    cpp_prepared_project_smart_tactic_source_sites, cpp_prepared_project_tactic_source_position,
+    cpp_prepared_smart_tactic_source_sites, cpp_prepared_tactic_source_position,
     expand_c0_prepared_project_tactic_source_at, expand_c0_prepared_tactic_source_at,
-    expand_c0_project_tactic_source_at, expand_c0_tactic_source_at, verify_c0_prepared_project_at,
-    verify_c0_prepared_sources_at, verify_c0_project_at, verify_c0_sources_at,
+    expand_c0_project_tactic_source_at, expand_c0_tactic_source_at,
+    expand_cpp_prepared_project_tactic_source_at, expand_cpp_prepared_tactic_source_at,
+    verify_c0_prepared_project_at, verify_c0_prepared_sources_at, verify_c0_project_at,
+    verify_c0_sources_at, verify_cpp_prepared_project_at, verify_cpp_prepared_sources_at,
     verifying_source_paths,
 };
 
@@ -136,6 +140,10 @@ impl AuditSessionWorker {
                 Some(project) => C0VerificationSession::new_prepared_project(project, imports),
                 None => C0VerificationSession::new_prepared(&source.click_source, imports),
             },
+            CInput::PreparedCpp(import) => match &source.project {
+                Some(project) => C0VerificationSession::new_cpp_prepared_project(project, import),
+                None => C0VerificationSession::new_cpp_prepared(&source.click_source, import),
+            },
         })
         .map_err(|error| error.message().to_string())?;
         ensure_phase_limit(
@@ -163,7 +171,7 @@ impl AuditSessionWorker {
                     .session
                     .verify_at(click_source, position.line, position.column),
             },
-            CInput::Prepared(_) => match &self.source.project {
+            CInput::Prepared(_) | CInput::PreparedCpp(_) => match &self.source.project {
                 Some(_) => {
                     self.session
                         .verify_at_project(click_source, position.line, position.column)
@@ -732,7 +740,7 @@ fn load_audit_source_from_text(
     let project = read_click_project(path, &container_source)?;
     let c_sources = match &inputs {
         CInput::Bundle(sources) => sources.clone(),
-        CInput::Prepared(_) => Vec::new(),
+        CInput::Prepared(_) | CInput::PreparedCpp(_) => Vec::new(),
     };
     Ok(AuditSource {
         click_source: container_source.clone(),
@@ -779,6 +787,10 @@ fn inventory_sites(sources: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
                 Some(project) => c0_prepared_project_smart_tactic_source_sites(project, imports),
                 None => c0_prepared_smart_tactic_source_sites(&click_source, imports),
             },
+            CInput::PreparedCpp(import) => match &project {
+                Some(project) => cpp_prepared_project_smart_tactic_source_sites(project, import),
+                None => cpp_prepared_smart_tactic_source_sites(&click_source, import),
+            },
         }
         .map_err(|error| {
             format!(
@@ -813,6 +825,20 @@ fn inventory_sites(sources: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
                     None => c0_prepared_tactic_source_position(
                         &click_source,
                         imports,
+                        &syntactic.claim_label,
+                        syntactic.source_index,
+                    ),
+                },
+                CInput::PreparedCpp(import) => match &project {
+                    Some(project) => cpp_prepared_project_tactic_source_position(
+                        project,
+                        import,
+                        &syntactic.claim_label,
+                        syntactic.source_index,
+                    ),
+                    None => cpp_prepared_tactic_source_position(
+                        &click_source,
+                        import,
                         &syntactic.claim_label,
                         syntactic.source_index,
                     ),
@@ -1483,6 +1509,17 @@ fn expand_location_with_source_parts(
                 column,
             ),
         },
+        CInput::PreparedCpp(import) => match &source.project {
+            Some(project) => {
+                expand_cpp_prepared_project_tactic_source_at(project, import, click_line, column)
+            }
+            None => expand_cpp_prepared_tactic_source_at(
+                &source.click_source,
+                import,
+                click_line,
+                column,
+            ),
+        },
     }
     .map_err(|error| error.message().to_string())?;
     if looks_like_mdtest(click_path) {
@@ -1536,6 +1573,20 @@ fn verify_rewritten_with_inputs(
                 position.column,
             ),
         },
+        CInput::PreparedCpp(import) => match &source.project {
+            Some(project) => verify_cpp_prepared_project_at(
+                &project.with_entry_source(rewritten_click_source.to_string()),
+                import,
+                position.line,
+                position.column,
+            ),
+            None => verify_cpp_prepared_sources_at(
+                rewritten_click_source,
+                import,
+                position.line,
+                position.column,
+            ),
+        },
     }
     .map(|_| ())
     .map_err(|error| error.message().to_string())
@@ -1567,6 +1618,14 @@ fn claim_source_position_for_source(
             claim_label,
             0,
         ),
+        (CInput::PreparedCpp(import), Some(project)) => {
+            cpp_prepared_project_tactic_source_position(
+                &project.with_entry_source(click_source.to_string()),
+                import,
+                claim_label,
+                0,
+            )
+        }
         _ => return claim_source_position_for_inputs(click_source, &source.inputs, claim_label),
     };
     position.map_err(|error| {
@@ -1588,6 +1647,9 @@ fn claim_source_position_for_inputs(
         }
         CInput::Prepared(imports) => {
             c0_prepared_tactic_source_position(click_source, imports, claim_label, 0)
+        }
+        CInput::PreparedCpp(import) => {
+            cpp_prepared_tactic_source_position(click_source, import, claim_label, 0)
         }
     };
     position.map_err(|error| {
@@ -1651,6 +1713,13 @@ fn reexpand_source_with_inputs(
                     imports,
                 ),
                 None => c0_prepared_smart_tactic_source_sites(source, imports),
+            },
+            CInput::PreparedCpp(import) => match project {
+                Some(project) => cpp_prepared_project_smart_tactic_source_sites(
+                    &project.with_entry_source(source.to_string()),
+                    import,
+                ),
+                None => cpp_prepared_smart_tactic_source_sites(source, import),
             },
         };
         sites

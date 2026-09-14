@@ -14,11 +14,16 @@ use click::surface::{
     c0_prepared_project_tactic_source_position, c0_prepared_smart_tactic_source_sites,
     c0_prepared_tactic_source_position, c0_project_smart_tactic_source_sites,
     c0_project_tactic_source_position, c0_smart_tactic_source_sites, c0_tactic_source_position,
+    cpp_prepared_project_smart_tactic_source_sites, cpp_prepared_project_tactic_source_position,
+    cpp_prepared_smart_tactic_source_sites, cpp_prepared_tactic_source_position,
     expand_c0_claim_source_by_label, expand_c0_prepared_claim_source_by_label,
     expand_c0_prepared_project_claim_source_by_label, expand_c0_prepared_project_tactic_source_at,
     expand_c0_prepared_tactic_source_at, expand_c0_project_claim_source_by_label,
-    expand_c0_project_tactic_source_at, expand_c0_tactic_source_at, verify_c0_prepared_project_at,
-    verify_c0_prepared_sources_at, verify_c0_project_at, verify_c0_sources_at,
+    expand_c0_project_tactic_source_at, expand_c0_tactic_source_at,
+    expand_cpp_prepared_claim_source_by_label, expand_cpp_prepared_project_claim_source_by_label,
+    expand_cpp_prepared_project_tactic_source_at, expand_cpp_prepared_tactic_source_at,
+    verify_c0_prepared_project_at, verify_c0_prepared_sources_at, verify_c0_project_at,
+    verify_c0_sources_at, verify_cpp_prepared_project_at, verify_cpp_prepared_sources_at,
 };
 
 const USAGE: &str = "usage: click expand [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>:<line>:<column>\n       click expand --claim <LABEL> [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>\n\nExpansion is checked before output. With --in-place, the original is atomically replaced only after targeted verification succeeds.";
@@ -233,6 +238,14 @@ fn expand_selection(
                         expand_c0_prepared_tactic_source_at(click_source, imports, *line, *column)
                     }
                 },
+                CInput::PreparedCpp(import) => match project {
+                    Some(project) => expand_cpp_prepared_project_tactic_source_at(
+                        project, import, *line, *column,
+                    ),
+                    None => {
+                        expand_cpp_prepared_tactic_source_at(click_source, import, *line, *column)
+                    }
+                },
             }
             .map_err(|error| error.message().to_string())?;
             Ok((claim, expanded))
@@ -254,6 +267,12 @@ fn expand_selection(
                         expand_c0_prepared_project_claim_source_by_label(project, imports, claim)
                     }
                     None => expand_c0_prepared_claim_source_by_label(click_source, imports, claim),
+                },
+                CInput::PreparedCpp(import) => match project {
+                    Some(project) => {
+                        expand_cpp_prepared_project_claim_source_by_label(project, import, claim)
+                    }
+                    None => expand_cpp_prepared_claim_source_by_label(click_source, import, claim),
                 },
             }
             .map_err(|error| error.message().to_string())?;
@@ -340,6 +359,10 @@ fn selected_claim(
             Some(project) => c0_prepared_project_smart_tactic_source_sites(project, imports),
             None => c0_prepared_smart_tactic_source_sites(click_source, imports),
         },
+        CInput::PreparedCpp(import) => match project {
+            Some(project) => cpp_prepared_project_smart_tactic_source_sites(project, import),
+            None => cpp_prepared_smart_tactic_source_sites(click_source, import),
+        },
     }
     .map_err(|error| error.message().to_string())?;
     sites
@@ -370,6 +393,20 @@ fn selected_claim(
                     None => c0_prepared_tactic_source_position(
                         click_source,
                         imports,
+                        &site.claim_label,
+                        site.source_index,
+                    ),
+                },
+                CInput::PreparedCpp(import) => match project {
+                    Some(project) => cpp_prepared_project_tactic_source_position(
+                        project,
+                        import,
+                        &site.claim_label,
+                        site.source_index,
+                    ),
+                    None => cpp_prepared_tactic_source_position(
+                        click_source,
+                        import,
                         &site.claim_label,
                         site.source_index,
                     ),
@@ -419,6 +456,15 @@ fn verify_expansion(
                         ),
                         None => c0_prepared_tactic_source_position(expanded, imports, claim, 0),
                     },
+                    CInput::PreparedCpp(import) => match project {
+                        Some(project) => cpp_prepared_project_tactic_source_position(
+                            &project.with_entry_source(expanded.to_string()),
+                            import,
+                            claim,
+                            0,
+                        ),
+                        None => cpp_prepared_tactic_source_position(expanded, import, claim, 0),
+                    },
                 }
                 .map_err(|error| error.message().to_string())?;
                 let result = match inputs {
@@ -446,6 +492,20 @@ fn verify_expansion(
                         None => verify_c0_prepared_sources_at(
                             expanded,
                             imports,
+                            position.line,
+                            position.column,
+                        ),
+                    },
+                    CInput::PreparedCpp(import) => match project {
+                        Some(project) => verify_cpp_prepared_project_at(
+                            &project.with_entry_source(expanded.to_string()),
+                            import,
+                            position.line,
+                            position.column,
+                        ),
+                        None => verify_cpp_prepared_sources_at(
+                            expanded,
+                            import,
                             position.line,
                             position.column,
                         ),

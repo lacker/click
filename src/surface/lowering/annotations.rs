@@ -692,8 +692,12 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
         &mut lowerer,
     )?;
     lowerer.loop_resources = loop_resources;
-    let body = lowerer.lower_statement(parsed_function.body())?;
     let parsed_kernel_function = parsed_function.to_kernel_function();
+    let body = if parsed_function.prelowered_kernel_function().is_some() {
+        parsed_kernel_function.body().clone()
+    } else {
+        lowerer.lower_statement(parsed_function.body())?
+    };
     let source_body = parsed_kernel_function.body().clone();
     let mut function = c_function(
         if parsed_function.return_struct_name().is_some() {

@@ -7,11 +7,13 @@ pub mod c;
 pub(crate) mod compiler_process;
 pub mod cpp;
 
-/// Explicitly refresh the compiler-owned artifact selected by an import file.
-///
-/// Existing C configurations have no language field. The new typed C++
-/// boundary identifies itself explicitly and never falls back to C handling.
-pub fn refresh_compiler_import(config_path: &Path) -> Result<(), String> {
+#[derive(Clone, Debug)]
+pub enum PreparedCompilerImport {
+    C(Vec<c::compiler_import::PreparedCImport>),
+    Cpp(cpp::PreparedCppImport),
+}
+
+fn import_language(config_path: &Path) -> Result<Option<String>, String> {
     const MAX_CONFIG_BYTES: u64 = 1 << 20;
     let metadata = fs::symlink_metadata(config_path)
         .map_err(|error| format!("read import config `{}`: {error}", config_path.display()))?;
@@ -26,13 +28,28 @@ pub fn refresh_compiler_import(config_path: &Path) -> Result<(), String> {
     let value: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|error| format!("parse import config: {error}"))?;
     match value.get("language") {
-        Some(serde_json::Value::String(language)) if language == "c++" => {
-            cpp::refresh_import(config_path)
-        }
-        Some(serde_json::Value::String(language)) => {
-            Err(format!("unsupported compiler import language `{language}`"))
-        }
+        Some(serde_json::Value::String(language)) => Ok(Some(language.clone())),
         Some(_) => Err("compiler import language must be a string".into()),
+        None => Ok(None),
+    }
+}
+
+pub fn load_compiler_import(config_path: &Path) -> Result<PreparedCompilerImport, String> {
+    match import_language(config_path)?.as_deref() {
+        Some("c++") => cpp::load_import(config_path).map(PreparedCompilerImport::Cpp),
+        Some(language) => Err(format!("unsupported compiler import language `{language}`")),
+        None => c::compiler_import::load_imports(config_path).map(PreparedCompilerImport::C),
+    }
+}
+
+/// Explicitly refresh the compiler-owned artifact selected by an import file.
+///
+/// Existing C configurations have no language field. The new typed C++
+/// boundary identifies itself explicitly and never falls back to C handling.
+pub fn refresh_compiler_import(config_path: &Path) -> Result<(), String> {
+    match import_language(config_path)?.as_deref() {
+        Some("c++") => cpp::refresh_import(config_path),
+        Some(language) => Err(format!("unsupported compiler import language `{language}`")),
         None => c::compiler_import::create_lock(config_path),
     }
 }

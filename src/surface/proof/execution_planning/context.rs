@@ -61,7 +61,7 @@ pub(in crate::surface) fn verify_loop_execution_proofs(
         &assumptions_from_propositions(&requirement_facts),
     )
     .map_err(|message| ClickError::new(format!("`{label}` {message}")))?;
-    let source_layout = SourceExecutionLayout::new(parsed_function.body());
+    let source_layout = SourceExecutionLayout::for_function(parsed_function)?;
     let environment = ExecutionProofEnvironment {
         initial_state: &initial_state,
         function_block,

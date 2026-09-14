@@ -419,7 +419,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
     // Computing the source statement is only worth it when timings are read.
     let timings_enabled = crate::instrumentation::enabled();
     let initialize_statement_index = if timings_enabled {
-        SourceExecutionLayout::new(environment.parsed_function.body())
+        SourceExecutionLayout::for_function(environment.parsed_function)?
             .loop_body_entry(loop_index)
             .unwrap_or(0)
     } else {
@@ -941,7 +941,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
         },
         |source| source.claim_label.clone(),
     );
-    let source_layout = SourceExecutionLayout::new(environment.parsed_function.body());
+    let source_layout = SourceExecutionLayout::for_function(environment.parsed_function)?;
     let loop_body_statement_index = source_layout.loop_body_entry(loop_index).ok_or_else(|| {
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
     })?;
@@ -1142,7 +1142,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         // these generated tactics by expand.
         detach_generated_suffix_from_source_indices(&mut program, first_generated_tactic_index);
     }
-    let source_layout = SourceExecutionLayout::new(environment.parsed_function.body());
+    let source_layout = SourceExecutionLayout::for_function(environment.parsed_function)?;
     let loop_body_statement_index = source_layout.loop_body_entry(loop_index).ok_or_else(|| {
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
     })?;

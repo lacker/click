@@ -80,6 +80,9 @@ pub(super) use execution_state::{
     capture_c0_prepared_proof_site_expansion, capture_c0_prepared_tactic_expansion,
     capture_c0_project_proof_site_expansion, capture_c0_project_tactic_expansion,
     capture_c0_proof_site_expansion, capture_c0_tactic_expansion,
+    capture_cpp_prepared_project_proof_site_expansion,
+    capture_cpp_prepared_project_tactic_expansion, capture_cpp_prepared_proof_site_expansion,
+    capture_cpp_prepared_tactic_expansion,
 };
 use fact_reasoning::*;
 pub(super) use fact_reasoning::{

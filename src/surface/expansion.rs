@@ -462,6 +462,134 @@ pub fn expand_c0_prepared_project_claim_source_by_label(
     )))
 }
 
+pub fn expand_cpp_prepared_claim_source_by_label(
+    click_source: &str,
+    import: &crate::languages::cpp::PreparedCppImport,
+    claim_label: &str,
+) -> Result<String, ClickError> {
+    expand_cpp_prepared_claim_source_by_label_context(None, click_source, import, claim_label)
+}
+
+pub fn expand_cpp_prepared_project_claim_source_by_label(
+    project: &ClickProject,
+    import: &crate::languages::cpp::PreparedCppImport,
+    claim_label: &str,
+) -> Result<String, ClickError> {
+    let click_source = project
+        .entry_source()
+        .ok_or_else(|| ClickError::new(format!("missing entry module `{}`", project.entry())))?;
+    expand_cpp_prepared_claim_source_by_label_context(
+        Some(project),
+        click_source,
+        import,
+        claim_label,
+    )
+}
+
+fn expand_cpp_prepared_claim_source_by_label_context(
+    project: Option<&ClickProject>,
+    click_source: &str,
+    import: &crate::languages::cpp::PreparedCppImport,
+    claim_label: &str,
+) -> Result<String, ClickError> {
+    let sources = match project {
+        Some(project) => CSourceContext::cpp(import)?.with_click_project(project),
+        None => CSourceContext::cpp(import)?,
+    };
+    let file = match project {
+        Some(project) => resolve_click_project_context(project, &sources)?,
+        None => parse_source_with_c_layouts_context(click_source, &sources)?,
+    };
+    for function in file.function_blocks() {
+        let function_name = function.signature().name();
+        if claim_label == format!("{function_name}.contract") && function.grouped_proof().is_some()
+        {
+            return expand_cpp_prepared_claim_source_context(
+                project,
+                click_source,
+                import,
+                function_name,
+                CProofClaim::Grouped,
+            );
+        }
+        for (index, ensure) in function.ensures().iter().enumerate() {
+            let label = ensure.name().map_or_else(
+                || format!("{function_name}.ensures_{index}"),
+                |name| format!("{function_name}.{name}"),
+            );
+            if label == claim_label {
+                return expand_cpp_prepared_claim_source_context(
+                    project,
+                    click_source,
+                    import,
+                    function_name,
+                    CProofClaim::Ensure(index),
+                );
+            }
+        }
+    }
+    Err(ClickError::new(format!(
+        "could not locate C++ function claim `{claim_label}`"
+    )))
+}
+
+fn expand_cpp_prepared_claim_source_context(
+    project: Option<&ClickProject>,
+    click_source: &str,
+    import: &crate::languages::cpp::PreparedCppImport,
+    function_name: &str,
+    claim: CProofClaim,
+) -> Result<String, ClickError> {
+    let sources = match project {
+        Some(project) => CSourceContext::cpp(import)?.with_click_project(project),
+        None => CSourceContext::cpp(import)?,
+    };
+    let file = match project {
+        Some(project) => resolve_click_project_context(project, &sources)?,
+        None => parse_source_with_c_layouts_context(click_source, &sources)?,
+    };
+    let tokens = scan_source_tokens(click_source)?;
+    let function = find_function(&tokens, function_name)?;
+    let function_block = file
+        .function_blocks()
+        .iter()
+        .find(|function| function.signature().name() == function_name)
+        .ok_or_else(|| ClickError::new(format!("unknown function `{function_name}`")))?;
+    let edit = if function_block.grouped_proof().is_some() || claim == CProofClaim::Grouped {
+        ProofSourceEdit::Explicit(find_grouped_proof_span(&tokens, &function)?)
+    } else {
+        find_claim_proof_edit(&tokens, &function, claim)?
+    };
+    let target = position_at_offset(click_source, edit.selector());
+    let verified = match project {
+        Some(project) => {
+            verify_cpp_prepared_project_at(project, import, target.line, target.column)?
+        }
+        None => verify_cpp_prepared_sources_at(click_source, import, target.line, target.column)?,
+    };
+    let theorem = select_expansion_theorem(&verified, function_name, claim)?;
+    let replacement = theorem.expanded_proof_source()?;
+    let span = edit.span();
+    let replacement = indent_replacement(click_source, span.start, &replacement);
+    let replacement = match edit {
+        ProofSourceEdit::Explicit(_) => replacement,
+        ProofSourceEdit::DefaultTerminator { .. } => {
+            let separator = click_source[..span.start]
+                .chars()
+                .next_back()
+                .is_some_and(|character| !character.is_whitespace());
+            format!("{}{replacement}", if separator { " " } else { "" })
+        }
+        ProofSourceEdit::OmittedLoopPhase { .. } => unreachable!(),
+    };
+    let mut expanded =
+        String::with_capacity(click_source.len() - (span.end - span.start) + replacement.len());
+    expanded.push_str(&click_source[..span.start]);
+    expanded.push_str(&replacement);
+    expanded.push_str(&click_source[span.end..]);
+    Ok(expanded)
+}
+
 pub use crate::source::SourcePosition;
 
 /// One source-selectable smart tactic in a parsed `.click` sidecar.
@@ -493,6 +621,14 @@ pub fn c0_prepared_smart_tactic_source_sites(
     c0_smart_tactic_source_sites_context(click_source, &sources)
 }
 
+pub fn cpp_prepared_smart_tactic_source_sites(
+    click_source: &str,
+    import: &crate::languages::cpp::PreparedCppImport,
+) -> Result<Vec<SmartTacticSourceSite>, ClickError> {
+    let sources = CSourceContext::cpp(import)?;
+    c0_smart_tactic_source_sites_context(click_source, &sources)
+}
+
 pub fn c0_project_smart_tactic_source_sites(
     project: &ClickProject,
     c_sources: &[(&str, &str)],
@@ -507,6 +643,15 @@ pub fn c0_prepared_project_smart_tactic_source_sites(
     imports: &[crate::languages::c::compiler_import::PreparedCImport],
 ) -> Result<Vec<SmartTacticSourceSite>, ClickError> {
     let sources = CSourceContext::prepared(imports).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    c0_smart_tactic_source_sites_file(&file)
+}
+
+pub fn cpp_prepared_project_smart_tactic_source_sites(
+    project: &ClickProject,
+    import: &crate::languages::cpp::PreparedCppImport,
+) -> Result<Vec<SmartTacticSourceSite>, ClickError> {
+    let sources = CSourceContext::cpp(import)?.with_click_project(project);
     let file = resolve_click_project_context(project, &sources)?;
     c0_smart_tactic_source_sites_file(&file)
 }
@@ -1096,6 +1241,148 @@ pub fn expand_c0_prepared_project_tactic_source_at(
         .entry_source()
         .ok_or_else(|| ClickError::new(format!("missing entry module `{}`", project.entry())))?;
     expand_c0_prepared_tactic_source_at_context(Some(project), click_source, imports, line, column)
+}
+
+pub fn expand_cpp_prepared_tactic_source_at(
+    click_source: &str,
+    import: &crate::languages::cpp::PreparedCppImport,
+    line: usize,
+    column: usize,
+) -> Result<String, ClickError> {
+    expand_cpp_prepared_tactic_source_at_context(None, click_source, import, line, column)
+}
+
+pub fn expand_cpp_prepared_project_tactic_source_at(
+    project: &ClickProject,
+    import: &crate::languages::cpp::PreparedCppImport,
+    line: usize,
+    column: usize,
+) -> Result<String, ClickError> {
+    let click_source = project
+        .entry_source()
+        .ok_or_else(|| ClickError::new(format!("missing entry module `{}`", project.entry())))?;
+    expand_cpp_prepared_tactic_source_at_context(Some(project), click_source, import, line, column)
+}
+
+fn expand_cpp_prepared_tactic_source_at_context(
+    project: Option<&ClickProject>,
+    click_source: &str,
+    import: &crate::languages::cpp::PreparedCppImport,
+    line: usize,
+    column: usize,
+) -> Result<String, ClickError> {
+    let sources = match project {
+        Some(project) => CSourceContext::cpp(import)?.with_click_project(project),
+        None => CSourceContext::cpp(import)?,
+    };
+    let file = match project {
+        Some(project) => resolve_click_project_context(project, &sources)?,
+        None => parse_source_with_c_layouts_context(click_source, &sources)?,
+    };
+    let selected = locate_source_tactic_file(click_source, &file, line, column)?;
+    if matches!(selected.site, ProofSite::TheoremEnsure { .. }) {
+        return Err(ClickError::new(
+            "C++ prepared-input expansion currently selects function proofs",
+        ));
+    }
+    if let (
+        ProofSite::FunctionClaim {
+            function_name,
+            claim,
+        },
+        TacticSourceEdit::WholeProof(_),
+    ) = (&selected.site, &selected.edit)
+    {
+        return expand_cpp_prepared_claim_source_context(
+            project,
+            click_source,
+            import,
+            function_name,
+            *claim,
+        );
+    }
+    let replacement_tactics = match &selected.edit {
+        TacticSourceEdit::Partial(_) | TacticSourceEdit::PartialProofClause(_) => {
+            if let Some(project) = project {
+                super::proof::capture_cpp_prepared_project_tactic_expansion(
+                    project,
+                    import,
+                    selected.site.clone(),
+                    selected.source_index,
+                )?
+            } else {
+                super::proof::capture_cpp_prepared_tactic_expansion(
+                    click_source,
+                    import,
+                    selected.site.clone(),
+                    selected.source_index,
+                )?
+            }
+        }
+        TacticSourceEdit::WholeProof(_) => {
+            if let Some(project) = project {
+                super::proof::capture_cpp_prepared_project_proof_site_expansion(
+                    project,
+                    import,
+                    selected.site.clone(),
+                )?
+            } else {
+                super::proof::capture_cpp_prepared_proof_site_expansion(
+                    click_source,
+                    import,
+                    selected.site.clone(),
+                )?
+            }
+        }
+    };
+    let (span, replacement) = match selected.edit {
+        TacticSourceEdit::Partial(span) => (
+            span,
+            super::printing::format_partial_tactic_sequence(&replacement_tactics),
+        ),
+        TacticSourceEdit::PartialProofClause(span) => {
+            let certificate =
+                ProofCertificate::from_proof_tactics(&replacement_tactics).map_err(|error| {
+                    ClickError::new(format!(
+                        "selected tactic did not produce a surface certificate: {error:?}"
+                    ))
+                })?;
+            (
+                span,
+                super::printing::format_proof_certificate(&certificate),
+            )
+        }
+        TacticSourceEdit::WholeProof(edit) => {
+            let certificate =
+                ProofCertificate::from_proof_tactics(&replacement_tactics).map_err(|error| {
+                    ClickError::new(format!(
+                        "selected tactic did not produce a surface certificate: {error:?}"
+                    ))
+                })?;
+            let replacement = super::printing::format_proof_certificate(&certificate);
+            let span = edit.span().clone();
+            let replacement = match edit {
+                ProofSourceEdit::Explicit(_) => replacement,
+                ProofSourceEdit::DefaultTerminator { .. } => {
+                    let separator = click_source[..span.start]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|character| !character.is_whitespace());
+                    format!("{}{replacement}", if separator { " " } else { "" })
+                }
+                ProofSourceEdit::OmittedLoopPhase { phase, .. } => {
+                    format!("    {phase} {}\n", replacement.replace('\n', "\n    "))
+                }
+            };
+            (span, replacement)
+        }
+    };
+    let mut expanded =
+        String::with_capacity(click_source.len() - (span.end - span.start) + replacement.len());
+    expanded.push_str(&click_source[..span.start]);
+    expanded.push_str(&replacement);
+    expanded.push_str(&click_source[span.end..]);
+    checked_expanded_source(click_source, &sources, &replacement, expanded)
 }
 
 fn expand_c0_prepared_tactic_source_at_context(
@@ -1972,6 +2259,16 @@ pub fn c0_prepared_tactic_source_position(
     c0_tactic_source_position_context(&sources, click_source, claim_label, source_index)
 }
 
+pub fn cpp_prepared_tactic_source_position(
+    click_source: &str,
+    import: &crate::languages::cpp::PreparedCppImport,
+    claim_label: &str,
+    source_index: usize,
+) -> Result<SourcePosition, ClickError> {
+    let sources = CSourceContext::cpp(import)?;
+    c0_tactic_source_position_context(&sources, click_source, claim_label, source_index)
+}
+
 pub fn c0_project_tactic_source_position(
     project: &ClickProject,
     c_sources: &[(&str, &str)],
@@ -1995,6 +2292,22 @@ pub fn c0_prepared_project_tactic_source_position(
     source_index: usize,
 ) -> Result<SourcePosition, ClickError> {
     let sources = CSourceContext::prepared(imports).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    c0_tactic_source_position_file(
+        &file,
+        project.entry_source().expect("resolved entry source"),
+        claim_label,
+        source_index,
+    )
+}
+
+pub fn cpp_prepared_project_tactic_source_position(
+    project: &ClickProject,
+    import: &crate::languages::cpp::PreparedCppImport,
+    claim_label: &str,
+    source_index: usize,
+) -> Result<SourcePosition, ClickError> {
+    let sources = CSourceContext::cpp(import)?.with_click_project(project);
     let file = resolve_click_project_context(project, &sources)?;
     c0_tactic_source_position_file(
         &file,

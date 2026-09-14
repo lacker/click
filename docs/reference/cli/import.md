@@ -96,16 +96,40 @@ exporter, profile, artifact, and configuration identities.
 
 Loading through the C++ library boundary subsequently validates the source,
 lock, and typed artifact without locating or running Clang. This separation is
-intentional: compiler execution belongs to explicit refresh. The library can
-lower this exact artifact directly to the kernel execution vocabulary without
+intentional: compiler execution belongs to explicit refresh. The library
+lowers this exact artifact directly to the kernel execution vocabulary without
 generating C text or invoking the C parser. A mutable `int&` becomes an
 address-valued parameter; its reads and assignment become typed loads and a
 typed store of the referent, and signed addition retains the kernel's existing
 overflow check. The lowered value remains paired with the immutable semantic
 artifact so Clang declaration identities and source spans are not discarded.
 
-Sidecar binding, public C++ contract syntax, constructors, destructors, and
-broader C++ syntax remain outside this slice.
+The first proof-facing interface uses existing Surface Click pointer syntax
+for the reference's one-cell mutable view:
+
+<!-- verified-example: tests/fixtures/cpp-verification/increment/increment.click -->
+```click
+verifying "increment.cpp";
+
+int32 increment(int32* value) {
+    requires value[0] < 2147483647;
+    owns value[0..1];
+    ensures value[0] == old(value[0]) + 1;
+    ensures result == value[0];
+} by {
+    execute();
+    simp();
+}
+```
+
+This spelling does not translate the C++ body to C. The sidecar signature is
+checked against the selected typed Clang declaration, while proof execution
+uses its direct kernel lowering. `click verify`, `click profile`, `click
+expand`, and `click audit` all load the same locked C++ input; verification and
+rewritten-proof checks remain offline after refresh.
+
+Constructors, destructors, additional functions, control flow, and broader C++
+syntax remain outside this first end-to-end slice.
 
 ## Validation and supported profile
 

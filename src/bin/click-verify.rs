@@ -20,8 +20,11 @@ use click::surface::{
     ClickProject, VerifiedCTheorem, c0_incremental_selection,
     c0_prepared_project_external_dependencies, c0_prepared_project_selected_proof_count,
     c0_project_external_dependencies, c0_project_selected_proof_count,
-    c0_project_selected_proof_names, verify_c0_prepared_project, verify_c0_prepared_project_at,
-    verify_c0_project, verify_c0_project_at, verify_c0_project_functions, verifying_source_paths,
+    c0_project_selected_proof_names, cpp_prepared_project_external_dependencies,
+    cpp_prepared_project_selected_proof_count, verify_c0_prepared_project,
+    verify_c0_prepared_project_at, verify_c0_project, verify_c0_project_at,
+    verify_c0_project_functions, verify_cpp_prepared_project, verify_cpp_prepared_project_at,
+    verifying_source_paths,
 };
 
 const USAGE: &str = "\
@@ -198,7 +201,7 @@ fn verify_changed(
         }
         let sources = match &inputs {
             CInput::Bundle(sources) => sources.clone(),
-            CInput::Prepared(_) => unreachable!(),
+            CInput::Prepared(_) | CInput::PreparedCpp(_) => unreachable!(),
         };
         let refs = source_refs(&sources);
         let baseline_attested = has_full_verification_marker(&repo, &baseline_commit, &sidecar)?;
@@ -648,11 +651,15 @@ fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
         CInput::Prepared(imports) => {
             c0_prepared_project_external_dependencies(&project, imports).map_err(click_message)?
         }
+        CInput::PreparedCpp(import) => {
+            cpp_prepared_project_external_dependencies(&project, import).map_err(click_message)?
+        }
     };
     let verified = click::instrumentation::with_deadline(time_limit, || {
         let result = match &inputs {
             CInput::Bundle(sources) => verify_c0_project(&project, &source_refs(sources)),
             CInput::Prepared(imports) => verify_c0_prepared_project(&project, imports),
+            CInput::PreparedCpp(import) => verify_cpp_prepared_project(&project, import),
         };
         result.map_err(|error| {
             format!(
@@ -669,6 +676,9 @@ fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
             .map_err(click_message)?,
         CInput::Prepared(imports) => {
             c0_prepared_project_selected_proof_count(&project, imports).map_err(click_message)?
+        }
+        CInput::PreparedCpp(import) => {
+            cpp_prepared_project_selected_proof_count(&project, import).map_err(click_message)?
         }
     };
     println!("{selected} selected proof{} verified", plural(selected));
@@ -696,6 +706,9 @@ fn verify_location(
         CInput::Prepared(imports) => {
             c0_prepared_project_external_dependencies(&project, imports).map_err(click_message)?
         }
+        CInput::PreparedCpp(import) => {
+            cpp_prepared_project_external_dependencies(&project, import).map_err(click_message)?
+        }
     };
     let verified = click::instrumentation::with_deadline(time_limit, || {
         let result = match &inputs {
@@ -704,6 +717,9 @@ fn verify_location(
             }
             CInput::Prepared(imports) => {
                 verify_c0_prepared_project_at(&project, imports, line, column)
+            }
+            CInput::PreparedCpp(import) => {
+                verify_cpp_prepared_project_at(&project, import, line, column)
             }
         };
         result.map_err(|error| {

@@ -89,6 +89,7 @@ pub const PUBLIC_CLI_BEHAVIORS: &[&str] = &[
 use crate::instrumentation::{TacticEvent, VerificationEvent};
 use crate::languages::c::compiler_import::PreparedCImport;
 use crate::languages::c::source as c_source;
+use crate::languages::cpp::PreparedCppImport;
 use crate::surface::verifying_source_paths;
 use crate::surface::{ClickModuleSource, ClickProject, ViewSemanticsMode, click_import_sites};
 
@@ -440,11 +441,12 @@ pub fn read_verifying_sources(
 pub enum CInput {
     Bundle(Vec<(String, String)>),
     Prepared(Vec<PreparedCImport>),
+    PreparedCpp(PreparedCppImport),
 }
 
 impl CInput {
     pub fn is_prepared(&self) -> bool {
-        matches!(self, Self::Prepared(_))
+        matches!(self, Self::Prepared(_) | Self::PreparedCpp(_))
     }
 }
 
@@ -466,8 +468,12 @@ pub fn read_c_inputs(sidecar: &Path, click_source: &str) -> Result<CInput, Strin
                     .map_err(|error| format!("failed to resolve import config directory: {error}"))?
                     .join(config)
             };
-            let imports = crate::languages::c::compiler_import::load_imports(&config)?;
-            return Ok(CInput::Prepared(imports));
+            return crate::languages::load_compiler_import(&config).map(|imports| match imports {
+                crate::languages::PreparedCompilerImport::C(imports) => CInput::Prepared(imports),
+                crate::languages::PreparedCompilerImport::Cpp(import) => {
+                    CInput::PreparedCpp(import)
+                }
+            });
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {

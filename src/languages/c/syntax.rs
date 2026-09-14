@@ -137,6 +137,10 @@ struct StaticAddress {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0Function {
     pub(crate) program_entry_state: Option<std::sync::Arc<crate::kernel::CState>>,
+    /// A typed language frontend may provide executable kernel semantics
+    /// directly while reusing this declaration interface for Surface Click
+    /// contract checking. C parsing always leaves this absent.
+    prelowered_kernel_function: Option<crate::kernel::CFunction>,
     return_type: C0Type,
     return_pointee_constant: bool,
     return_struct_name: Option<String>,
@@ -2344,6 +2348,7 @@ impl C0Function {
             name,
             inline_body: false,
             program_entry_state: None,
+            prelowered_kernel_function: None,
             parameters,
             body: C0Statement::Skip,
             structs: BTreeMap::new(),
@@ -2388,6 +2393,18 @@ impl C0Function {
 
     pub fn body(&self) -> &C0Statement {
         &self.body
+    }
+
+    pub(crate) fn with_prelowered_kernel_function(
+        mut self,
+        function: crate::kernel::CFunction,
+    ) -> Self {
+        self.prelowered_kernel_function = Some(function);
+        self
+    }
+
+    pub(crate) fn prelowered_kernel_function(&self) -> Option<&crate::kernel::CFunction> {
+        self.prelowered_kernel_function.as_ref()
     }
 
     pub fn structs(&self) -> &BTreeMap<String, C0StructLayout> {
@@ -2760,6 +2777,9 @@ impl C0Function {
     }
 
     pub fn to_kernel_function(&self) -> crate::kernel::CFunction {
+        if let Some(function) = &self.prelowered_kernel_function {
+            return function.clone();
+        }
         let mut function = crate::kernel::c_function(
             if self.return_struct_name.is_some() {
                 crate::kernel::CType::UInt8Pointer
@@ -6570,6 +6590,7 @@ impl Parser {
             name: header.name,
             inline_body,
             program_entry_state: None,
+            prelowered_kernel_function: None,
             parameters: header.parameters,
             body,
             structs: self.structs.clone(),

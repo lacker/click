@@ -343,7 +343,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
     let proof_claims = [*claim];
     let constants = ExecutionProofConstants {
         proof_site: proof_site_for_claims(function_block, &proof_claims, false),
-        source_layout: SourceExecutionLayout::new(parsed_function.body()),
+        source_layout: SourceExecutionLayout::for_function(parsed_function)?,
         execution_start_facts: Arc::new(pure_facts.clone()),
         entry_fact_origins: Arc::new(entry_fact_origins),
         caller_requirement_index: Arc::new(caller_requirement_index),
@@ -552,7 +552,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         })?;
     let constants = ExecutionProofConstants {
         proof_site: proof_site_for_claims(function_block, claims, true),
-        source_layout: SourceExecutionLayout::new(parsed_function.body()),
+        source_layout: SourceExecutionLayout::for_function(parsed_function)?,
         execution_start_facts: Arc::new(pure_facts.clone()),
         entry_fact_origins: Arc::new(entry_fact_origins),
         caller_requirement_index: Arc::new(caller_requirement_index),

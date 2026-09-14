@@ -111,11 +111,16 @@ pub use expansion::{
     c0_prepared_smart_tactic_source_sites, c0_prepared_tactic_source_position,
     c0_project_smart_tactic_source_sites, c0_project_tactic_source_position,
     c0_smart_tactic_source_sites, c0_tactic_source_position, click_import_sites,
+    cpp_prepared_project_smart_tactic_source_sites, cpp_prepared_project_tactic_source_position,
+    cpp_prepared_smart_tactic_source_sites, cpp_prepared_tactic_source_position,
     expand_c0_claim_source, expand_c0_claim_source_by_label,
     expand_c0_prepared_claim_source_by_label, expand_c0_prepared_project_claim_source_by_label,
     expand_c0_prepared_project_tactic_source_at, expand_c0_prepared_tactic_source_at,
     expand_c0_project_claim_source_by_label, expand_c0_project_tactic_source_at,
-    expand_c0_tactic_source_at, verifying_source_paths,
+    expand_c0_tactic_source_at, expand_cpp_prepared_claim_source_by_label,
+    expand_cpp_prepared_project_claim_source_by_label,
+    expand_cpp_prepared_project_tactic_source_at, expand_cpp_prepared_tactic_source_at,
+    verifying_source_paths,
 };
 use expansion::{
     ExpansionCapture, ProofSite, VerificationTarget, verification_target_at,
@@ -145,12 +150,14 @@ pub use verification::{
     c0_prepared_project_external_dependencies, c0_prepared_project_selected_proof_count,
     c0_prepared_project_selected_proof_names, c0_project_external_dependencies,
     c0_project_function_names, c0_project_selected_proof_count, c0_project_selected_proof_names,
-    parse, verify_c0_prepared_project, verify_c0_prepared_project_at,
+    cpp_prepared_project_external_dependencies, cpp_prepared_project_selected_proof_count, parse,
+    verify_c0_prepared_project, verify_c0_prepared_project_at,
     verify_c0_prepared_project_functions, verify_c0_prepared_sources,
     verify_c0_prepared_sources_at, verify_c0_prepared_sources_functions, verify_c0_project,
     verify_c0_project_at, verify_c0_project_functions, verify_c0_project_in_mode,
     verify_c0_sources, verify_c0_sources_at, verify_c0_sources_functions,
-    verify_c0_sources_in_mode, verify_click_theorems, verify_standard_library,
+    verify_c0_sources_in_mode, verify_click_theorems, verify_cpp_prepared_project,
+    verify_cpp_prepared_project_at, verify_cpp_prepared_sources_at, verify_standard_library,
 };
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
@@ -5129,6 +5136,7 @@ pub struct C0VerificationSession {
     c_sources: Vec<(String, String)>,
     click_project: Option<ClickProject>,
     pub(crate) prepared_imports: Option<Vec<crate::languages::c::compiler_import::PreparedCImport>>,
+    pub(crate) prepared_cpp_import: Option<crate::languages::cpp::PreparedCppImport>,
     baseline_file: ClickFile,
     verified_function_environment: CExecutionEnvironment,
     environment_identity: verification::CProofArtifactIdentity,

@@ -59,6 +59,49 @@ pub(in crate::surface) enum SourceStatementKind {
 }
 
 impl SourceExecutionLayout {
+    pub(in crate::surface) fn for_function(
+        function: &syntax::C0Function,
+    ) -> Result<Self, ClickError> {
+        let Some(function) = function.prelowered_kernel_function() else {
+            return Ok(Self::new(function.body()));
+        };
+        let mut layout = SourceExecutionLayoutData::default();
+        let mut next_statement_index = 0;
+        fn visit(
+            statement: &CStatement,
+            next_statement_index: &mut usize,
+            layout: &mut SourceExecutionLayoutData,
+        ) -> Result<(), ClickError> {
+            match statement {
+                CStatement::Seq(first, second) => {
+                    visit(first, next_statement_index, layout)?;
+                    visit(second, next_statement_index, layout)
+                }
+                CStatement::If { .. } | CStatement::While { .. } | CStatement::Switch { .. } => {
+                    Err(ClickError::new(
+                        "typed-frontend source layout does not yet support control-flow statements",
+                    ))
+                }
+                _ => {
+                    let statement_index = *next_statement_index;
+                    *next_statement_index += 1;
+                    layout.statements.insert(
+                        statement_index,
+                        SourceStatementRegion {
+                            continuation_node: *next_statement_index,
+                            kind: SourceStatementKind::Plain,
+                        },
+                    );
+                    Ok(())
+                }
+            }
+        }
+        visit(function.body(), &mut next_statement_index, &mut layout)?;
+        Ok(Self {
+            data: std::sync::Arc::new(layout),
+        })
+    }
+
     pub(in crate::surface) fn new(statement: &syntax::C0Statement) -> Self {
         /// Visits one subtree and returns the pre-order index of its last
         /// top-level statement, so an enclosing `if` can redirect its arms'

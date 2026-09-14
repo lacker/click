@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use click::cli::{CInput, read_c_inputs, read_click_project};
 use click::kernel::{
     Bitvector32Term, CExpression, CFunctionOutcome, CMemory, CMemoryRange, CResourceFact, CState,
     CStatement, CType, CUndefinedBehavior, Pointer, PointerOffsetTerm, Proposition,
@@ -13,8 +14,14 @@ use click::languages::cpp::{
     CppBinaryOperator, CppExpression, CppStatement, CppType, load_import, lower_import,
     refresh_import,
 };
+use click::surface::{
+    C0VerificationSession, VerifiedClaim, cpp_prepared_project_smart_tactic_source_sites,
+    cpp_prepared_project_tactic_source_position, expand_cpp_prepared_project_tactic_source_at,
+    verify_cpp_prepared_project,
+};
 
-const SOURCE: &str = include_str!("fixtures/cpp-import/increment.cpp");
+const SOURCE: &str = include_str!("fixtures/cpp-verification/increment/increment.cpp");
+const SIDECAR: &str = include_str!("fixtures/cpp-verification/increment/increment.click");
 
 struct Project {
     directory: PathBuf,
@@ -149,6 +156,119 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
             ..
         }
     ));
+}
+
+#[test]
+fn locked_cpp_function_verifies_through_the_shared_sidecar_path_offline() {
+    let project = Project::new();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("refresh the C++ import explicitly");
+    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let inputs = read_c_inputs(&sidecar, &click_source).expect("load the locked sidecar input");
+    let CInput::PreparedCpp(import) = inputs else {
+        panic!("language=c++ must select the C++ prepared-input path")
+    };
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    let verified = verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify the directly lowered C++ function");
+    assert_eq!(
+        verified
+            .iter()
+            .map(|theorem| match theorem.claim {
+                VerifiedClaim::Ensure { index, .. } => index,
+            })
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2],
+        "the grouped proof checks returned ownership plus both value postconditions"
+    );
+    assert!(
+        verified
+            .iter()
+            .all(|theorem| { theorem.import_identity.as_deref() == Some(import.identity()) })
+    );
+}
+
+#[test]
+fn cpp_profile_expansion_and_audit_session_share_the_locked_input() {
+    let project = Project::new();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, SIDECAR).unwrap();
+    refresh_import(&project.config()).unwrap();
+    fs::remove_file(&project.exporter).unwrap();
+    let import = load_import(&project.config()).unwrap();
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+
+    let sites = cpp_prepared_project_smart_tactic_source_sites(&click_project, &import).unwrap();
+    assert_eq!(
+        sites
+            .iter()
+            .map(|site| site.tactic_name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["execute", "simp"]
+    );
+    let execute = cpp_prepared_project_tactic_source_position(
+        &click_project,
+        &import,
+        "increment.contract",
+        0,
+    )
+    .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .unwrap();
+    assert_ne!(expanded, click_source);
+    let rewritten = click_project.with_entry_source(expanded.clone());
+    verify_cpp_prepared_project(&rewritten, &import).expect("expanded proof must reverify");
+
+    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
+        .expect("start the retained audit session");
+    let next =
+        cpp_prepared_project_tactic_source_position(&rewritten, &import, "increment.contract", 0)
+            .unwrap();
+    session
+        .verify_at_project(&expanded, next.line, next.column)
+        .expect("retained session must verify the rewritten C++ proof");
+}
+
+#[test]
+fn cpp_sidecar_reports_source_and_signature_mismatches_without_c_fallback() {
+    let project = Project::new();
+    refresh_import(&project.config()).unwrap();
+    fs::remove_file(&project.exporter).unwrap();
+    let import = load_import(&project.config()).unwrap();
+
+    let wrong_source = SIDECAR.replace("increment.cpp", "other.cpp");
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, &wrong_source).unwrap();
+    let click_project = read_click_project(&sidecar, &wrong_source).unwrap();
+    let error = verify_cpp_prepared_project(&click_project, &import).unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("prepared C++ import logical source must exactly match"),
+        "{}",
+        error.message()
+    );
+
+    let wrong_signature = SIDECAR.replace("int32* value", "uint32* value");
+    fs::write(&sidecar, &wrong_signature).unwrap();
+    let click_project = read_click_project(&sidecar, &wrong_signature).unwrap();
+    let error = verify_cpp_prepared_project(&click_project, &import).unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("signature mismatch for `increment` parameter 1"),
+        "{}",
+        error.message()
+    );
 }
 
 #[test]

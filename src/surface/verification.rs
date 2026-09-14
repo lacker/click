@@ -1,6 +1,7 @@
 use super::validation::combined_algebraic_type_definitions;
 use super::*;
 use crate::languages::c::compiler_import::PreparedCImport;
+use crate::languages::cpp::{LoweredCppFunction, PreparedCppImport, lower_import};
 use sha2::{Digest, Sha256};
 #[cfg(test)]
 use std::cell::Cell;
@@ -131,6 +132,8 @@ fn digest_framed_parts<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> [u8; 32
 pub(in crate::surface) struct CSourceContext<'a> {
     bundle: Option<BTreeMap<&'a str, &'a str>>,
     imports: Option<&'a [PreparedCImport]>,
+    cpp_import: Option<&'a PreparedCppImport>,
+    cpp_lowered: Option<LoweredCppFunction>,
     prepared_by_source: Option<BTreeMap<&'a str, &'a PreparedCImport>>,
     prepared_project_identity: Option<String>,
     input_digest: [u8; 32],
@@ -161,6 +164,8 @@ impl<'a> CSourceContext<'a> {
         Self {
             bundle: Some(bundle),
             imports: None,
+            cpp_import: None,
+            cpp_lowered: None,
             prepared_by_source: None,
             prepared_project_identity: None,
             input_digest: digest_framed_parts(parts),
@@ -224,6 +229,8 @@ impl<'a> CSourceContext<'a> {
         Self {
             bundle: None,
             imports: Some(imports),
+            cpp_import: None,
+            cpp_lowered: None,
             prepared_by_source: Some(
                 imports
                     .iter()
@@ -239,6 +246,41 @@ impl<'a> CSourceContext<'a> {
             #[cfg(test)]
             prepared_parse_count: Cell::new(0),
         }
+    }
+
+    pub(in crate::surface) fn cpp(import: &'a PreparedCppImport) -> Result<Self, ClickError> {
+        Self::cpp_with_mode(import, ViewSemanticsMode::process_default())
+    }
+
+    fn cpp_with_mode(
+        import: &'a PreparedCppImport,
+        view_semantics: ViewSemanticsMode,
+    ) -> Result<Self, ClickError> {
+        let lowered = lower_import(import).map_err(|error| {
+            ClickError::new(format!(
+                "failed to lower compiler-prepared C++ source `{}`: {error}",
+                import.logical_source()
+            ))
+        })?;
+        Ok(Self {
+            bundle: None,
+            imports: None,
+            cpp_import: Some(import),
+            cpp_lowered: Some(lowered),
+            prepared_by_source: None,
+            prepared_project_identity: Some(import.identity().to_string()),
+            input_digest: digest_framed_parts([
+                b"click-cpp-prepared-project-v1".as_slice(),
+                import.logical_source().as_bytes(),
+                import.identity().as_bytes(),
+            ]),
+            specification_digest: None,
+            view_semantics,
+            prepared_duplicates: false,
+            parsed_units: RefCell::new(BTreeMap::new()),
+            #[cfg(test)]
+            prepared_parse_count: Cell::new(0),
+        })
     }
 
     pub(in crate::surface) fn environment_identity(&self) -> CProofArtifactIdentity {
@@ -964,6 +1006,28 @@ pub fn verify_c0_prepared_project(
     })
 }
 
+/// Verifies the locked C++ declaration through the ordinary Click proof
+/// engine. Clang is not consulted here; the prepared artifact supplies the
+/// declaration interface and its direct kernel lowering supplies the body.
+pub fn verify_cpp_prepared_project(
+    project: &ClickProject,
+    import: &PreparedCppImport,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::cpp(import)?.with_click_project(project);
+        let file = resolve_click_project_context(project, &sources)?;
+        verify_c0_sources_with_context(
+            project.entry_source().expect("resolved entry source"),
+            &sources,
+            None,
+            None,
+            None,
+            Some(file),
+        )
+        .map(|(verified, _)| verified)
+    })
+}
+
 pub fn verify_c0_prepared_project_at(
     project: &ClickProject,
     imports: &[PreparedCImport],
@@ -972,6 +1036,22 @@ pub fn verify_c0_prepared_project_at(
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     instrumentation::with_default_tactic_limits(|| {
         let sources = CSourceContext::prepared(imports).with_click_project(project);
+        let file = resolve_click_project_context(project, &sources)?;
+        let source = project.entry_source().expect("resolved entry source");
+        let target = expansion::verification_target_at_file(source, &file, line, column)?;
+        verify_c0_sources_with_context(source, &sources, Some(target), None, None, Some(file))
+            .map(|(verified, _)| verified)
+    })
+}
+
+pub fn verify_cpp_prepared_project_at(
+    project: &ClickProject,
+    import: &PreparedCppImport,
+    line: usize,
+    column: usize,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::cpp(import)?.with_click_project(project);
         let file = resolve_click_project_context(project, &sources)?;
         let source = project.entry_source().expect("resolved entry source");
         let target = expansion::verification_target_at_file(source, &file, line, column)?;
@@ -1115,6 +1195,26 @@ pub(in crate::surface) fn verify_c0_prepared_project_with_expansion_capture(
     })
 }
 
+pub(in crate::surface) fn verify_cpp_prepared_project_with_expansion_capture(
+    project: &ClickProject,
+    import: &PreparedCppImport,
+    expansion_capture: &mut ExpansionCapture,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::cpp(import)?.with_click_project(project);
+        let file = resolve_click_project_context(project, &sources)?;
+        verify_c0_sources_with_context(
+            project.entry_source().expect("resolved entry source"),
+            &sources,
+            None,
+            None,
+            Some(expansion_capture),
+            Some(file),
+        )
+        .map(|(verified, _)| verified)
+    })
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0IncrementalSelection {
     pub selected_functions: Vec<String>,
@@ -1174,6 +1274,20 @@ pub fn c0_prepared_project_selected_proof_count(
     imports: &[PreparedCImport],
 ) -> Result<usize, ClickError> {
     let sources = CSourceContext::prepared(imports).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    Ok(file.function_blocks().len()
+        + file
+            .theorem_definitions()
+            .iter()
+            .filter(|theorem| file.theorem_is_selected(theorem.name()))
+            .count())
+}
+
+pub fn cpp_prepared_project_selected_proof_count(
+    project: &ClickProject,
+    import: &PreparedCppImport,
+) -> Result<usize, ClickError> {
+    let sources = CSourceContext::cpp(import)?.with_click_project(project);
     let file = resolve_click_project_context(project, &sources)?;
     Ok(file.function_blocks().len()
         + file
@@ -1478,6 +1592,31 @@ impl C0VerificationSession {
         })
     }
 
+    pub fn new_cpp_prepared(
+        click_source: &str,
+        import: &PreparedCppImport,
+    ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
+        instrumentation::with_default_tactic_limits(|| {
+            let sources = CSourceContext::cpp(import)?;
+            let (verified, verified_function_environment) =
+                verify_c0_sources_with_context(click_source, &sources, None, None, None, None)?;
+            let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
+            Ok((
+                Self {
+                    c_sources: Vec::new(),
+                    click_project: None,
+                    prepared_imports: None,
+                    prepared_cpp_import: Some(import.clone()),
+                    baseline_file,
+                    verified_function_environment,
+                    environment_identity: sources.environment_identity(),
+                    view_semantics: sources.view_semantics(),
+                },
+                verified,
+            ))
+        })
+    }
+
     pub(crate) fn new_prepared_with_mode(
         click_source: &str,
         imports: &[PreparedCImport],
@@ -1493,6 +1632,7 @@ impl C0VerificationSession {
                     c_sources: Vec::new(),
                     click_project: None,
                     prepared_imports: Some(imports.to_vec()),
+                    prepared_cpp_import: None,
                     baseline_file,
                     verified_function_environment,
                     environment_identity: sources.environment_identity(),
@@ -1520,6 +1660,7 @@ impl C0VerificationSession {
                     .collect(),
                 click_project: None,
                 prepared_imports: None,
+                prepared_cpp_import: None,
                 baseline_file,
                 verified_function_environment,
                 environment_identity: sources.environment_identity(),
@@ -1553,6 +1694,7 @@ impl C0VerificationSession {
                         .collect(),
                     click_project: Some(project.clone()),
                     prepared_imports: None,
+                    prepared_cpp_import: None,
                     baseline_file,
                     verified_function_environment,
                     environment_identity: sources.environment_identity(),
@@ -1583,6 +1725,38 @@ impl C0VerificationSession {
                     c_sources: Vec::new(),
                     click_project: Some(project.clone()),
                     prepared_imports: Some(imports.to_vec()),
+                    prepared_cpp_import: None,
+                    baseline_file,
+                    verified_function_environment,
+                    environment_identity: sources.environment_identity(),
+                    view_semantics: sources.view_semantics(),
+                },
+                verified,
+            ))
+        })
+    }
+
+    pub fn new_cpp_prepared_project(
+        project: &ClickProject,
+        import: &PreparedCppImport,
+    ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
+        instrumentation::with_default_tactic_limits(|| {
+            let sources = CSourceContext::cpp(import)?.with_click_project(project);
+            let baseline_file = resolve_click_project_context(project, &sources)?;
+            let (verified, verified_function_environment) = verify_c0_sources_with_context(
+                project.entry_source().expect("resolved entry source"),
+                &sources,
+                None,
+                None,
+                None,
+                Some(baseline_file.clone()),
+            )?;
+            Ok((
+                Self {
+                    c_sources: Vec::new(),
+                    click_project: Some(project.clone()),
+                    prepared_imports: None,
+                    prepared_cpp_import: Some(import.clone()),
                     baseline_file,
                     verified_function_environment,
                     environment_identity: sources.environment_identity(),
@@ -1635,7 +1809,10 @@ impl C0VerificationSession {
                 .iter()
                 .map(|(name, source)| (name.as_str(), source.as_str()))
                 .collect::<Vec<_>>();
-            let sources = if let Some(imports) = self.prepared_imports.as_ref() {
+            let sources = if let Some(import) = self.prepared_cpp_import.as_ref() {
+                CSourceContext::cpp_with_mode(import, self.view_semantics)?
+                    .with_click_project(&project)
+            } else if let Some(imports) = self.prepared_imports.as_ref() {
                 CSourceContext::prepared_with_mode(imports, self.view_semantics)
                     .with_click_project(&project)
             } else {
@@ -1698,11 +1875,16 @@ impl C0VerificationSession {
         line: usize,
         column: usize,
     ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-        let imports = self.prepared_imports.as_ref().ok_or_else(|| {
-            ClickError::new("verification session does not contain prepared imports")
-        })?;
         instrumentation::with_default_tactic_limits(|| {
-            let sources = CSourceContext::prepared_with_mode(imports, self.view_semantics);
+            let sources = if let Some(import) = self.prepared_cpp_import.as_ref() {
+                CSourceContext::cpp_with_mode(import, self.view_semantics)?
+            } else if let Some(imports) = self.prepared_imports.as_ref() {
+                CSourceContext::prepared_with_mode(imports, self.view_semantics)
+            } else {
+                return Err(ClickError::new(
+                    "verification session does not contain prepared imports",
+                ));
+            };
             ensure_environment_identity(&self.environment_identity, &sources)?;
             let target = verification_target_at_context(click_source, &sources, line, column)?;
             let target_exists_in_baseline = match &target {
@@ -1835,6 +2017,20 @@ pub fn verify_c0_prepared_sources_at(
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     instrumentation::with_default_tactic_limits(|| {
         let sources = CSourceContext::prepared(imports);
+        let target = verification_target_at_context(click_source, &sources, line, column)?;
+        verify_c0_sources_with_context(click_source, &sources, Some(target), None, None, None)
+            .map(|(verified, _)| verified)
+    })
+}
+
+pub fn verify_cpp_prepared_sources_at(
+    click_source: &str,
+    import: &PreparedCppImport,
+    line: usize,
+    column: usize,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::cpp(import)?;
         let target = verification_target_at_context(click_source, &sources, line, column)?;
         verify_c0_sources_with_context(click_source, &sources, Some(target), None, None, None)
             .map(|(verified, _)| verified)
@@ -2948,7 +3144,7 @@ fn verify_c0_sources_with_context(
     function_environment =
         function_environment.with_verified_function_termination_rules(termination_rules);
 
-    if c_sources.imports.is_some() {
+    if c_sources.prepared_project_identity.is_some() {
         for theorem in &mut verified {
             theorem.import_identity = c_sources.prepared_project_identity.clone();
         }
@@ -3202,6 +3398,15 @@ pub fn c0_prepared_project_external_dependencies(
     imports: &[PreparedCImport],
 ) -> Result<BTreeMap<String, Vec<String>>, ClickError> {
     let sources = CSourceContext::prepared(imports).with_click_project(project);
+    let file = resolve_click_project_context(project, &sources)?;
+    c0_external_dependencies_file(&file, &sources)
+}
+
+pub fn cpp_prepared_project_external_dependencies(
+    project: &ClickProject,
+    import: &PreparedCppImport,
+) -> Result<BTreeMap<String, Vec<String>>, ClickError> {
+    let sources = CSourceContext::cpp(import)?.with_click_project(project);
     let file = resolve_click_project_context(project, &sources)?;
     c0_external_dependencies_file(&file, &sources)
 }
@@ -4031,6 +4236,26 @@ pub(in crate::surface) fn parse_c_layouts(
     let mut qualified_objects = BTreeMap::new();
     let mut local_struct_pointers = BTreeMap::new();
     let verifying_paths = super::verifying_source_paths(click_source)?;
+    if let Some(import) = c_sources.cpp_import {
+        let expected = BTreeSet::from([import.logical_source().to_string()]);
+        let actual = verifying_paths.iter().cloned().collect::<BTreeSet<_>>();
+        if actual != expected {
+            return Err(ClickError::new(format!(
+                "prepared C++ import logical source must exactly match the verifying clause (expected {}, received {})",
+                expected.iter().cloned().collect::<Vec<_>>().join(", "),
+                actual.iter().cloned().collect::<Vec<_>>().join(", "),
+            )));
+        }
+        return Ok((
+            layouts,
+            union_layouts,
+            aggregate_objects,
+            aggregate_array_objects,
+            global_array_shapes,
+            qualified_objects,
+            local_struct_pointers,
+        ));
+    }
     if let Some(imports) = c_sources.imports {
         if c_sources.prepared_duplicates {
             return Err(ClickError::new(
@@ -4388,6 +4613,8 @@ pub(in crate::surface) fn parse_verified_sources(
     let context = CSourceContext {
         bundle: Some(c_sources.clone()),
         imports: None,
+        cpp_import: None,
+        cpp_lowered: None,
         prepared_by_source: None,
         prepared_project_identity: None,
         input_digest: digest_framed_parts(
@@ -4422,6 +4649,31 @@ pub(in crate::surface) fn parse_verified_sources_context(
         return Err(ClickError::new(
             "`.click` file must declare at least one `verifying \"source.c\";`",
         ));
+    }
+
+    if let Some(import) = c_sources.cpp_import {
+        let expected = BTreeSet::from([import.logical_source().to_string()]);
+        let actual = file
+            .verifying_sources
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if actual != expected {
+            return Err(ClickError::new(format!(
+                "prepared C++ import logical source must exactly match the verifying clause (expected {}, received {})",
+                expected.iter().cloned().collect::<Vec<_>>().join(", "),
+                actual.iter().cloned().collect::<Vec<_>>().join(", "),
+            )));
+        }
+        let lowered = c_sources
+            .cpp_lowered
+            .as_ref()
+            .expect("C++ source context retains its direct lowering");
+        let function = cpp_function_interface(import, lowered)?;
+        return Ok(BTreeMap::from([(
+            function.name().to_string(),
+            (import.logical_source().to_string(), function),
+        )]));
     }
 
     let mut parsed = BTreeMap::new();
@@ -5075,6 +5327,59 @@ pub(in crate::surface) fn external_c0_function(
             .collect(),
     )
     .with_return_pointee_constant(function_block.signature().return_pointee_is_constant())
+}
+
+/// Builds the proof-facing signature for the first C++ slice from Clang's
+/// typed declaration. The body deliberately remains absent here: executable
+/// semantics come from `lower_import`, never from reconstructing C++ as C.
+fn cpp_function_interface(
+    import: &PreparedCppImport,
+    lowered: &LoweredCppFunction,
+) -> Result<syntax::C0Function, ClickError> {
+    let source = &import.export().function;
+    let return_type = match source.return_type {
+        crate::languages::cpp::CppType::Integer {
+            bits: 32,
+            signed: true,
+            is_const: false,
+        } => C0Type::Int32,
+        _ => {
+            return Err(ClickError::new(format!(
+                "C++ declaration `{}` has an unsupported return type",
+                source.declaration_id
+            )));
+        }
+    };
+    let parameters = source
+        .parameters
+        .iter()
+        .map(|parameter| match &parameter.value_type {
+            crate::languages::cpp::CppType::LvalueReference { pointee }
+                if matches!(
+                    pointee.as_ref(),
+                    crate::languages::cpp::CppType::Integer {
+                        bits: 32,
+                        signed: true,
+                        is_const: false,
+                    }
+                ) =>
+            {
+                Ok(syntax::C0Parameter::new(
+                    C0Type::Int32Pointer,
+                    parameter.name.clone(),
+                    None,
+                ))
+            }
+            _ => Err(ClickError::new(format!(
+                "C++ declaration `{}` parameter `{}` is outside the supported reference interface",
+                source.declaration_id, parameter.name
+            ))),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(
+        syntax::C0Function::external(return_type, source.name.clone(), parameters)
+            .with_prelowered_kernel_function(lowered.kernel_function().clone()),
+    )
 }
 
 pub(in crate::surface) fn build_function_environment(
