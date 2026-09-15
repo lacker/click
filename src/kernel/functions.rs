@@ -13670,6 +13670,206 @@ fn quantified_resource_fact_memory_obligation_is_discharged(
     assume_conjuncts(assumptions.clone(), antecedent).proves_atomic_memory_or_resource(consequent)
 }
 
+/// The facts a constructor case exposes for the exact folded resource field
+/// the proof matched.
+///
+/// This is the read-only half of an instance unfold: it binds the selected
+/// arm's constructor payloads and evaluates that arm's facts against its own
+/// immediate memory body, but it neither publishes the body's ownership nor
+/// changes `state`.  The projection identifies one held instance directly;
+/// no ambient resource or premise scan is needed.  Any mismatch or unsupported
+/// body shape fails closed by publishing no facts.
+pub(in crate::kernel) fn matched_resource_instance_case_facts(
+    state: &CState,
+    projection: &ResourceFieldProjection,
+    model: &AlgebraicTerm,
+    constructor: &AlgebraicTerm,
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+) -> Vec<Proposition> {
+    if projection.at_entry {
+        return Vec::new();
+    }
+    if !projection.children.is_empty() {
+        return Vec::new();
+    }
+    let Some(instance) = state.owned_resource_instance(projection.identity) else {
+        return Vec::new();
+    };
+    let Ok(definition_index) =
+        definitions.binary_search_by(|definition| definition.name().cmp(instance.name()))
+    else {
+        return Vec::new();
+    };
+    let definition = &definitions[definition_index];
+    let Some(matched) = definition.matched.as_ref() else {
+        return Vec::new();
+    };
+    if projection.field_index != matched.field_index
+        || !matches!(
+            instance.fields().get(projection.field_index),
+            Some(AlgebraicValue::Algebraic(field_model)) if field_model == model
+        )
+    {
+        return Vec::new();
+    }
+    let Ok((arm, selected_constructor)) =
+        selected_instance_match_arm(instance, definition, definitions, assumptions)
+    else {
+        return Vec::new();
+    };
+    // A matched child has its own folded instance and field scope. Publishing
+    // facts about it without performing the explicit child-selection rewrite
+    // would conflate the parent's proof match with an ownership unfold. Keep
+    // this read-only publication to flat arms; recursive arms still acquire
+    // their facts through `unfold(parent) as { ... }`.
+    if !arm.children.is_empty() {
+        return Vec::new();
+    }
+    if &selected_constructor != constructor {
+        return Vec::new();
+    }
+    let AlgebraicTermNode::Constructor { fields, .. } = &constructor.node else {
+        return Vec::new();
+    };
+    if fields.len() != arm.bindings.len()
+        || fields.len() != arm.binding_types.len()
+        || fields.len() != arm.binding_variables.len()
+    {
+        return Vec::new();
+    }
+
+    let Ok(mut evaluation) = instance_body_evaluation(state, instance, definition) else {
+        return Vec::new();
+    };
+    let mut integer_bindings = BTreeMap::new();
+    let mut algebraic_bindings = BTreeMap::new();
+    for (index, value) in fields.iter().enumerate() {
+        let name = &arm.bindings[index];
+        match (
+            &arm.binding_types[index],
+            arm.binding_variables[index],
+            value,
+        ) {
+            (AlgebraicValueType::C(_), None, AlgebraicValue::C(value)) => {
+                let ty = value.c_type();
+                let value = arm_binding_program_spelling(value, assumptions)
+                    .unwrap_or_else(|| value.clone());
+                evaluation.locals.set_typed(name.clone(), value, ty);
+            }
+            (AlgebraicValueType::Integer, Some(variable), AlgebraicValue::Integer(value)) => {
+                if integer_bindings.insert(variable, value.clone()).is_some() {
+                    return Vec::new();
+                }
+            }
+            (AlgebraicValueType::Algebraic { .. }, None, AlgebraicValue::Algebraic(value)) => {
+                algebraic_bindings.insert(name.clone(), value.clone());
+            }
+            _ => return Vec::new(),
+        }
+    }
+
+    let mut budget = ExecutionBudget::default();
+    let Some(active) = evaluate_composite_resource_body_condition(
+        definition,
+        &evaluation,
+        assumptions,
+        &mut budget,
+    ) else {
+        return Vec::new();
+    };
+    if !active {
+        return Vec::new();
+    }
+    let Ok(Ok((body_resources, _))) = evaluate_function_resource_context_with_normalization(
+        &evaluation,
+        &arm.contains,
+        &[],
+        assumptions,
+        &mut budget,
+        false,
+    ) else {
+        return Vec::new();
+    };
+    evaluation.resources = body_resources.clone();
+    let mut supporting_facts = body_resources.observable_facts_assuming_valid(assumptions);
+    for fact in body_resources.facts() {
+        let Some(range) = fact.memory_range() else {
+            continue;
+        };
+        let width = range.element_width();
+        supporting_facts.push(Proposition::CMemoryLoadable {
+            memory: state.memory.clone(),
+            base: range
+                .base()
+                .offset_by_elements(range.start().clone(), width),
+            bytes: Bitvector32Term::multiply(
+                Bitvector32Term::subtract(range.end().clone(), range.start().clone()),
+                Bitvector32Term::Constant(width),
+            ),
+        });
+    }
+    supporting_facts.push(Proposition::CResourceComposition(body_resources));
+    let mut body_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
+    for fact in supporting_facts {
+        body_assumptions = body_assumptions.assume_proposition(fact);
+    }
+
+    let c_replacements = BTreeMap::new();
+    let algebraic_replacements = BTreeMap::new();
+    let mut fact_rewrite =
+        crate::kernel::proof::term_rewrite::TermRewrite::for_checked_typed_variables(
+            &c_replacements,
+            &integer_bindings,
+            &algebraic_replacements,
+        );
+    fact_rewrite.enable_registered_load_resolution();
+    if fact_rewrite
+        .reserve_spec_proposition_sources(arm.facts.iter())
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let mut facts = Vec::with_capacity(arm.facts.len());
+    for fact in &arm.facts {
+        crate::instrumentation::record_deterministic_work(1);
+        let Ok(fact) = fact_rewrite.spec_proposition(fact) else {
+            return Vec::new();
+        };
+        let Ok(paths) =
+            crate::kernel::spec::lower_spec_proposition_at_state_with_algebraic_bindings(
+                &evaluation,
+                &fact,
+                None,
+                &body_assumptions,
+                &algebraic_bindings,
+                &mut budget,
+            )
+        else {
+            return Vec::new();
+        };
+        let [path] = paths.as_slice() else {
+            return Vec::new();
+        };
+        if path.facts.iter().any(|fact| {
+            !required_obligation_is_exactly_discharged(&body_assumptions, fact.proposition())
+        }) || path.obligations.iter().any(|goal| {
+            !required_obligation_is_exactly_discharged(&body_assumptions, goal.proposition())
+                && !quantified_resource_fact_memory_obligation_is_discharged(
+                    &body_assumptions,
+                    goal.proposition(),
+                )
+        }) {
+            return Vec::new();
+        }
+        facts.push(path.proposition.clone());
+    }
+    facts
+}
+
 pub(in crate::kernel) fn selected_instance_match_arm<'a>(
     instance: &ResourceInstance,
     definition: &'a CCompositeResourceDefinition,

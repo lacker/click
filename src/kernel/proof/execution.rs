@@ -1469,7 +1469,13 @@ pub(crate) struct CheckedProofCasePartition {
     identity: Arc<()>,
     root_facts: ProofFacts,
     case_facts: Vec<Proposition>,
-    /// Exact contradictions checked under root premises plus that case only.
+    /// The exact delta each arm adds to `root_facts`: its constructor case,
+    /// followed by any facts checked for the one resource field that was
+    /// matched. Keeping this in the kernel-issued partition makes independent
+    /// certificate checking use the same premises without trusting surface
+    /// bookkeeping.
+    arm_additions: Vec<Vec<Proposition>>,
+    /// Exact contradictions checked under that arm's canonical premises.
     excluded: Vec<Option<Proposition>>,
     /// Generative constructor witnesses are introduced only at their unchanged
     /// entry scope. Complementary propositional splits need no such scope.
@@ -1508,8 +1514,7 @@ impl CheckedProofCasePartition {
         fact: Proposition,
     ) -> Option<Arc<Self>> {
         self.witness_scope.as_ref()?;
-        let case = self.case_facts.get(index)?;
-        if !self.root_facts.with_fact(case.clone()).contradicts(&fact) {
+        if !self.facts_for_case(index)?.contradicts(&fact) {
             return None;
         }
         let mut successor = self.clone();
@@ -1521,6 +1526,16 @@ impl CheckedProofCasePartition {
 
     pub(crate) fn case_fact(&self, index: usize) -> Option<&Proposition> {
         self.case_facts.get(index)
+    }
+
+    pub(crate) fn facts_for_case(&self, index: usize) -> Option<ProofFacts> {
+        let additions = self.arm_additions.get(index)?;
+        Some(
+            additions
+                .iter()
+                .cloned()
+                .fold(self.root_facts.clone(), |facts, fact| facts.with_fact(fact)),
+        )
     }
 
     /// The facts this partition was issued against. An arm's premises are
@@ -1542,10 +1557,20 @@ impl CheckedProofCasePartition {
         {
             return None;
         }
+        let arm_additions = [&then_fact, &else_fact]
+            .into_iter()
+            .map(|fact| {
+                root_facts
+                    .with_fact(fact.clone())
+                    .introduced_since(root_facts)
+                    .unwrap_or_default()
+            })
+            .collect();
         Some(Arc::new(Self {
             identity: Arc::new(()),
             root_facts: root_facts.clone(),
-            case_facts: vec![then_fact, else_fact],
+            case_facts: vec![then_fact.clone(), else_fact.clone()],
+            arm_additions,
             excluded: vec![None, None],
             witness_scope: None,
         }))
@@ -1578,12 +1603,7 @@ impl CheckedProofCaseArm {
                 .facts
                 .introduced_since(&self.partition.root_facts)
                 .is_some_and(|introduced| {
-                    introduced == vec![self.partition.case_facts[self.arm_index].clone()]
-                        || introduced.is_empty()
-                            && self
-                                .partition
-                                .root_facts
-                                .contains(&self.partition.case_facts[self.arm_index])
+                    introduced == self.partition.arm_additions[self.arm_index]
                 })
     }
 }
@@ -4809,6 +4829,7 @@ impl ExecutionProofCore {
         value: &crate::kernel::AlgebraicTerm,
         environment: &crate::kernel::CExecutionEnvironment,
         definitions: &[crate::kernel::CCompositeResourceDefinition],
+        matched_resource_field: Option<&crate::kernel::ResourceFieldProjection>,
         first_variable: u64,
         stride: u64,
     ) -> Option<(
@@ -4827,7 +4848,8 @@ impl ExecutionProofCore {
         // before the cursor moved, and the loop head spoke about the frame
         // above (A26, gap 57b). The refutation is scoped to the scrutinee's
         // own instance, so the cost is that one instance's arms.
-        let facts = &self.model_arm_refutations_for(facts, value, definitions);
+        let facts =
+            &self.model_arm_refutations_for(facts, value, definitions, matched_resource_field);
         let reserved = self.initial_match_reserved_variables();
         let issued = self.next_kernel_variable;
         let environment_variables =
@@ -4864,12 +4886,36 @@ impl ExecutionProofCore {
             return None;
         }
         let (case_facts, bindings): (Vec<_>, Vec<_>) = equations.into_iter().unzip();
+        let arm_additions = case_facts
+            .iter()
+            .map(|case| {
+                let mut arm_facts = facts.with_fact(case.clone());
+                if let (
+                    Some(projection),
+                    Proposition::Equal(Term::Algebraic(model), Term::Algebraic(constructor)),
+                ) = (matched_resource_field, case)
+                {
+                    for fact in crate::kernel::functions::matched_resource_instance_case_facts(
+                        &self.state,
+                        projection,
+                        model,
+                        constructor,
+                        definitions,
+                        arm_facts.assumptions(),
+                    ) {
+                        arm_facts = arm_facts.with_fact(fact);
+                    }
+                }
+                arm_facts.introduced_since(facts).unwrap_or_default()
+            })
+            .collect();
         Some((
             Arc::new(CheckedProofCasePartition {
                 identity: Arc::new(()),
                 root_facts: facts.clone(),
                 excluded: vec![None; case_facts.len()],
                 case_facts,
+                arm_additions,
                 witness_scope: Some(self.state.clone()),
             }),
             bindings,
@@ -4891,6 +4937,7 @@ impl ExecutionProofCore {
         facts: &ProofFacts,
         value: &crate::kernel::AlgebraicTerm,
         definitions: &[crate::kernel::CCompositeResourceDefinition],
+        matched_resource_field: Option<&crate::kernel::ResourceFieldProjection>,
     ) -> ProofFacts {
         let crate::kernel::AlgebraicTermNode::Variable(variable) = value.node else {
             return facts.clone();
@@ -4901,6 +4948,34 @@ impl ExecutionProofCore {
         let state: &crate::kernel::CState = &self.state;
         let assumptions = facts.assumptions();
         let mut extended = facts.clone();
+        if let Some(projection) = matched_resource_field {
+            if !projection.children.is_empty() {
+                return extended;
+            }
+            let Some(instance) = state.owned_resource_instance(projection.identity) else {
+                return extended;
+            };
+            if instance
+                .fields()
+                .get(projection.field_index)
+                .is_some_and(|field| {
+                    matches!(
+                        field,
+                        crate::kernel::AlgebraicValue::Algebraic(model) if model == value
+                    )
+                })
+            {
+                for published in crate::kernel::functions::instance_arm_model_facts(
+                    instance,
+                    definitions,
+                    state,
+                    assumptions,
+                ) {
+                    extended = extended.with_fact(published);
+                }
+            }
+            return extended;
+        }
         for fact in state.resources().facts() {
             let crate::kernel::CResource::Instance(instance) = fact.resource() else {
                 continue;
@@ -5780,6 +5855,7 @@ mod tests {
                     &value,
                     &crate::kernel::CExecutionEnvironment::new(),
                     &[],
+                    None,
                     4_000_000,
                     65_536,
                 )
@@ -5824,6 +5900,7 @@ mod tests {
                     &value,
                     &crate::kernel::CExecutionEnvironment::new(),
                     &[],
+                    None,
                     4_000_000,
                     65_536,
                 )
@@ -5847,6 +5924,7 @@ mod tests {
                 &value,
                 &crate::kernel::CExecutionEnvironment::new(),
                 &[],
+                None,
                 4_000_000,
                 65_536,
             )
@@ -5899,20 +5977,20 @@ mod tests {
         )]);
         let env = crate::kernel::CExecutionEnvironment::new();
         let (partition, fields, next) = core
-            .algebraic_case_partition(&root, &value, &env, &[], 4_000_000, 65_536)
+            .algebraic_case_partition(&root, &value, &env, &[], None, 4_000_000, 65_536)
             .unwrap();
         assert!(fields.iter().flatten().all(|(var, _)| var.0 > occupied.0));
         let facts = root.with_fact(partition.case_fact(0).unwrap().clone());
         let (_, later, _) = core
-            .algebraic_case_partition(&facts, &value, &env, &[], next, 65_536)
+            .algebraic_case_partition(&facts, &value, &env, &[], None, next, 65_536)
             .unwrap();
         assert!(later.iter().flatten().all(|(var, _)| var.0 >= next));
         assert!(
-            core.algebraic_case_partition(&root, &value, &env, &[], u64::MAX, 1)
+            core.algebraic_case_partition(&root, &value, &env, &[], None, u64::MAX, 1)
                 .is_none()
         );
         assert!(
-            core.algebraic_case_partition(&root, &value, &env, &[], 0, 0)
+            core.algebraic_case_partition(&root, &value, &env, &[], None, 0, 0)
                 .is_none()
         );
     }
@@ -5930,14 +6008,14 @@ mod tests {
         let root = ProofFacts::default();
         let env = crate::kernel::CExecutionEnvironment::new();
         let (_, fields, _) = core
-            .algebraic_case_partition(&root, &value, &env, &[], 4_000_000, 65_536)
+            .algebraic_case_partition(&root, &value, &env, &[], None, 4_000_000, 65_536)
             .expect("a loop-body frontier issues its partition");
         assert!(fields.iter().flatten().all(|(var, _)| *var != occupied));
 
         let mut issued = core.clone();
         issued.next_kernel_variable = 4_200_000;
         let (_, fields, _) = issued
-            .algebraic_case_partition(&root, &value, &env, &[], 4_000_000, 65_536)
+            .algebraic_case_partition(&root, &value, &env, &[], None, 4_000_000, 65_536)
             .expect("a partition skips the issued range");
         assert!(fields.iter().flatten().all(|(var, _)| var.0 >= 4_200_000));
     }
@@ -5966,6 +6044,7 @@ mod tests {
                 &value,
                 &environment,
                 &[],
+                None,
                 4_000_000,
                 65_536,
             )
@@ -5991,7 +6070,7 @@ mod tests {
             let mut next = 4_000_000;
             for _ in 0..size {
                 let (partition, fields, successor) = core
-                    .algebraic_case_partition(&facts, &value, &environment, &[], next, 65_536)
+                    .algebraic_case_partition(&facts, &value, &environment, &[], None, next, 65_536)
                     .unwrap();
                 assert_eq!(fields.iter().map(Vec::len).sum::<usize>(), 2);
                 facts = facts.with_fact(partition.case_fact(0).unwrap().clone());

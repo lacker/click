@@ -1997,21 +1997,22 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         if !matches!(branch.obligation, ProofObligation::Frontier(_)) {
             return Err("match requires an execution frontier");
         }
-        let case = partition
-            .case_fact(index)
-            .ok_or("match case index is outside its partition")?
-            .clone();
+        let facts = partition
+            .facts_for_case(index)
+            .ok_or("match case index is outside its partition")?;
+        let additions = facts
+            .introduced_since(partition.root_facts())
+            .ok_or("match case facts do not extend their partition root")?;
         let mut execution = branch
             .state
             .execution
             .as_deref()
             .cloned()
             .ok_or("match requires execution state")?;
-        // The arm's premises are the partition's own root facts plus this
-        // case, not the branch's: the partition may carry the model facts
-        // this frontier's premises force on the scrutinee's instance, and
-        // those hold on every arm (A26, gap 57b).
-        let facts = partition.root_facts().with_fact(case.clone());
+        // The arm's premises are the partition's own root facts plus its
+        // canonical additions, not the branch's: the partition may carry the
+        // model facts this frontier forces on the scrutinee's instance and
+        // checked facts of a selected flat resource arm.
         if !execution
             .core
             .record_proof_case_arm(partition, index, facts.clone())
@@ -2028,8 +2029,8 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
                     .state
                     .open_branches
                     .replace_at(self.focused_branch, successor),
-                added_facts: Arc::new(vec![case.clone()]),
-                checked_facts: Arc::new(vec![case]),
+                added_facts: Arc::new(additions.clone()),
+                checked_facts: Arc::new(additions),
             },
             self.focused_branch,
         ))

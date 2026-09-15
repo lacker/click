@@ -153,6 +153,21 @@ impl<'a> Proof<'a> {
         else {
             unreachable!()
         };
+        // A direct resource-field match has one indexed semantic owner. Pass
+        // that exact projection into the kernel partition so constructor-arm
+        // facts are checked for this instance without searching unrelated
+        // resources. Other algebraic expressions remain ordinary matches.
+        let matched_resource_field = match &expression {
+            ContractExpression::ResourceField(access) => {
+                Some(crate::kernel::ResourceFieldProjection {
+                    identity: access.identity,
+                    children: access.children.clone(),
+                    field_index: access.field_index,
+                    at_entry: false,
+                })
+            }
+            _ => None,
+        };
         let values = parameter_values(context.parsed_function.parameters(), context.arguments)
             .map_err(|error| self.step_error(error.message))?;
         let array_refs = array_refs_for_parameters(
@@ -228,6 +243,7 @@ impl<'a> Proof<'a> {
                 &value,
                 context.function_environment,
                 context.function.composite_resource_definitions(),
+                matched_resource_field.as_ref(),
                 first,
                 65_536,
             )

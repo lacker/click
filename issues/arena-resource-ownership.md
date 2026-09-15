@@ -94,15 +94,25 @@ surface proof still records the original condition, and its generated
 certificate independently verifies. The focused regression is
 `mdtests/loop_preserve_if_reads_match_binding.md`.
 
-Attempting the symbolic adjacent-allocation proof exposed the next independent
-boundary. A universal fact obtained by matching a resource model loses the
-source identity needed by explicit `instantiate`, and lowering the same
-quantified resource fact again for `fold` currently registers fresh load
-identities rather than recognizing the unchanged loads already proved. The
-proof therefore cannot open a symbolic occupancy partition, instantiate its
-per-cell fact, and fold the partition again without restating a constant-sized
-special case. Fixing this must retain checkable provenance and use indexed
-identity lookup; it must not add a linear exact-premise scan.
+The matched quantified-fact boundary is now fixed. A proof `match` on the
+model field of an exactly named folded resource publishes a flat selected
+arm's facts in the kernel-issued constructor partition, including facts that
+name a constructor payload. Arms that contain child instances retain the
+existing explicit `unfold(parent) as { ... }` boundary, because matching their
+model must not implicitly unfold child ownership. The kernel resolves the one
+flat instance by its resource field projection, evaluates the facts against
+the arm's own contained memory, and records the exact additions that
+independent certificate checking must reproduce; it does not scan ambient resources or
+premises. Explicit `instantiate` can use a
+bounded universal fact before `unfold`, and an unchanged arm can be unfolded,
+updated with a value preserving the fact, reproved, and folded again. The
+positive and negative regressions are
+`mdtests/resource_match_quantified_fact_round_trip.md` and
+`mdtests/resource_match_quantified_fact_rejects_changed_load.md`; expansion of
+the positive grouped proof independently reverifies. The reduction also
+showed that refolding after an explicit unfold already retained the necessary
+load identities: the missing step was publication of binding-dependent arm
+facts at proof-match entry, not a separate fold identity mechanism.
 
 Two later proof-driver gaps are also known from that experiment. Stable loop
 invariants already present in the current context can be misaligned when the
@@ -129,20 +139,22 @@ The use-after-free rejection already lives in
 `mdtests/arena_use_after_free.md`. Double free and overlapping live regions
 still need focused negative regressions.
 
-## Next chunk: retain matched quantified resource facts
+## Next chunk: retain stable loop invariants at preservation export
 
-Add a focused positive regression in which matching a field-bearing resource
-introduces a bounded universal memory fact, a proof explicitly instantiates
-that fact, and the unchanged resource is folded again. Preserve the matched
-fact's checked source identity through instantiation and refolding so the
-generated certificate independently verifies. Add a negative regression that
-changes one covered load and proves the fold is still rejected. Keep lookup
-indexed by the fact/load identity; do not scan or clone the complete proof
-state.
+Reduce the symbolic arena experiment to a loop whose preservation proof starts
+with a stable invariant already present in the current proof context, adds a
+changing invariant, and exports both after the body. The exported result must
+retain the original invariant's exact checked identity and ordering rather
+than rebuilding the result by membership-filtering a larger fact context.
+Cover the source proof and its expanded certificate, and add a sibling fact
+that must not be exported so the regression distinguishes an exact invariant
+delta from ambient fact retention. Keep export work proportional to the
+declared invariant vector and produced delta; do not scan or clone the complete
+proof state.
 
-After that focused chunk, repair the stable-invariant export and the
-branch-complete early-return postcondition lowering with their own regressions.
-Then return to `arena_alloc`: replace the fixed `[2, 4)` transition with one
+After that focused chunk, repair branch-complete early-return postcondition
+lowering with its own regression. Then return to `arena_alloc`: replace the
+fixed `[2, 4)` transition with one
 parameterized by a retained prefix model. Keep the occupancy partition folded
 through the count-validation branches, open it for the scan/mark loops, restore
 it on failure, and on success return the old live prefix, exactly

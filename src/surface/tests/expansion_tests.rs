@@ -11270,6 +11270,36 @@ fn bound_universal_bubble_sort3_two_pass_sorted_has_no_outcome_fallbacks() {
 }
 
 #[test]
+fn matched_resource_quantified_fact_expands_and_reverifies() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/resource_match_quantified_fact_round_trip.md");
+    let markdown = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &markdown)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("matched quantified fact fixture should contain Click source");
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+
+    verify_c0_sources(click_source, &c_sources)
+        .expect("the matched quantified resource fact should verify");
+    let expanded =
+        expand_c0_claim_source(click_source, &c_sources, "write_zero", CProofClaim::Grouped)
+            .expect("the matched quantified resource proof should expand");
+    assert!(expanded.contains("match prefix.tag"), "{expanded}");
+    assert!(expanded.contains("instantiate(forall"), "{expanded}");
+    assert!(expanded.contains("fold(zero_prefix(buffer)"), "{expanded}");
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("the expanded matched quantified resource proof should reverify");
+}
+
+#[test]
 fn bound_universal_fixture_split_covers_original_census() {
     assert_eq!(
         BOUND_UNIVERSAL_FIXTURE_CASES,
