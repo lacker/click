@@ -1143,7 +1143,7 @@ fn uint32_order_condition(
     }
 }
 
-fn apply_same_block_pointer_operation(
+fn apply_same_object_pointer_operation(
     left: Pointer,
     right: Pointer,
     facts: Vec<ExecutionPureFact>,
@@ -1156,16 +1156,8 @@ fn apply_same_block_pointer_operation(
         Vec<ProofObligation>,
     ) -> Vec<CExpressionPath>,
 ) -> Vec<CExpressionPath> {
-    let left_base = Pointer {
-        block: left.block.clone(),
-        offset: PointerOffsetTerm::Constant(0),
-    };
-    let right_base = Pointer {
-        block: right.block.clone(),
-        offset: PointerOffsetTerm::Constant(0),
-    };
-    let same_block = ConditionTerm::pointer_equal(left_base, right_base);
-    match decide_with_facts(assumptions, &facts, &same_block) {
+    let same_object = pointer_same_object_condition(&left, &right);
+    match decide_with_facts(assumptions, &facts, &same_object) {
         Some(true) => apply(left, right, facts, obligations),
         Some(false) => vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic),
@@ -1173,24 +1165,36 @@ fn apply_same_block_pointer_operation(
             obligations,
         }],
         None => {
-            let mut same_block_facts = facts.clone();
-            add_condition_path_fact(&mut same_block_facts, assumptions, same_block.clone(), true)
-                .expect("same-block pointer guard should be consistent");
-            let mut paths = apply(left, right, same_block_facts, obligations.clone());
+            let mut same_object_facts = facts.clone();
+            add_condition_path_fact(
+                &mut same_object_facts,
+                assumptions,
+                same_object.clone(),
+                true,
+            )
+            .expect("same-object pointer guard should be consistent");
+            let mut paths = apply(left, right, same_object_facts, obligations.clone());
 
-            let mut different_block_facts = facts;
-            add_condition_path_fact(&mut different_block_facts, assumptions, same_block, false)
-                .expect("different-block pointer guard should be consistent");
+            let mut different_object_facts = facts;
+            add_condition_path_fact(&mut different_object_facts, assumptions, same_object, false)
+                .expect("different-object pointer guard should be consistent");
             paths.push(CExpressionPath {
                 outcome: CExpressionOutcome::UndefinedBehavior(
                     CUndefinedBehavior::PointerArithmetic,
                 ),
-                facts: different_block_facts,
+                facts: different_object_facts,
                 obligations,
             });
             paths
         }
     }
+}
+
+pub(in crate::kernel) fn pointer_same_object_condition(
+    left: &Pointer,
+    right: &Pointer,
+) -> ConditionTerm {
+    ConditionTerm::pointer_equal(left.object_identity(), right.object_identity())
 }
 
 fn apply_c_comparison(
@@ -1236,7 +1240,7 @@ fn apply_c_comparison(
             else {
                 return vec![c_type_mismatch_expression_path(facts, obligations)];
             };
-            apply_same_block_pointer_operation(
+            apply_same_object_pointer_operation(
                 left.into_pointer(),
                 right.into_pointer(),
                 facts,
@@ -1417,7 +1421,7 @@ pub(in crate::kernel) fn apply_c_subtract(
             else {
                 return vec![c_type_mismatch_expression_path(facts, obligations)];
             };
-            apply_same_block_pointer_operation(
+            apply_same_object_pointer_operation(
                 left.into_pointer(),
                 right.into_pointer(),
                 facts,

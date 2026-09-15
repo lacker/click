@@ -13,6 +13,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, OnceLock};
 
+pub(crate) const SAME_OBJECT_PREDICATE_NAME: &str = "__click_same_object";
+
 mod contracts;
 pub(crate) use contracts::{memory_range_byte_count, memory_range_byte_count_guards};
 mod integer;
@@ -404,6 +406,10 @@ pub enum PointerBlock {
     Function(String),
     FunctionSymbolic(Variable),
     ExternalArgument,
+    /// Opaque C object provenance paired with an external argument address.
+    /// Distinct tokens are not assumed distinct: two parameters may still
+    /// have been derived from the same caller object.
+    ExternalObject(Variable),
     Symbolic(Variable),
     /// A trusted allocation identity. Unlike a symbolic/opaque block, this is
     /// fresh and distinct from every other block identity.
@@ -442,6 +448,10 @@ impl std::hash::Hash for PointerBlock {
                 identity.hash(state);
                 bytes.hash(state);
             }
+            Self::ExternalObject(variable) => {
+                7u64.hash(state);
+                variable.hash(state);
+            }
         }
     }
 }
@@ -466,6 +476,7 @@ impl PointerBlock {
             | Self::Function(_)
             | Self::FunctionSymbolic(_)
             | Self::ExternalArgument
+            | Self::ExternalObject(_)
             | Self::Symbolic(_)
             | Self::Heap(_) => None,
         }
@@ -494,6 +505,7 @@ impl std::fmt::Display for PointerBlock {
                 write!(formatter, "symbolic-function-pointer:{}", variable.0)
             }
             Self::ExternalArgument => formatter.write_str("arg-memory"),
+            Self::ExternalObject(variable) => write!(formatter, "arg-object:{}", variable.0),
             Self::Symbolic(variable) => write!(formatter, "symbolic-pointer:{}", variable.0),
             Self::Heap(identity) => write!(formatter, "heap-allocation:{identity}"),
         }

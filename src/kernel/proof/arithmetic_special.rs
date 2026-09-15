@@ -37,6 +37,7 @@ fn pointer_block_payload(block: &PointerBlock) -> Option<usize> {
             .checked_add(bytes.len())?,
         PointerBlock::FunctionSymbolic(_)
         | PointerBlock::ExternalArgument
+        | PointerBlock::ExternalObject(_)
         | PointerBlock::Symbolic(_)
         | PointerBlock::Heap(_) => 1,
     };

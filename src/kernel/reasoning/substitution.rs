@@ -1197,7 +1197,9 @@ fn collect_expression_outcome_bound_variables(
 
 fn collect_pointer_bound_variables(pointer: &Pointer, variables: &mut BTreeSet<Variable>) {
     match &pointer.block {
-        PointerBlock::FunctionSymbolic(variable) | PointerBlock::Symbolic(variable) => {
+        PointerBlock::FunctionSymbolic(variable)
+        | PointerBlock::Symbolic(variable)
+        | PointerBlock::ExternalObject(variable) => {
             variables.insert(*variable);
         }
         PointerBlock::Concrete(_)
@@ -5440,9 +5442,9 @@ fn pointer_capture_avoiding_quantifier_body(
     replacement: &Pointer,
 ) -> (Proposition, Variable) {
     let replacement_variable = match replacement.block {
-        PointerBlock::FunctionSymbolic(variable) | PointerBlock::Symbolic(variable) => {
-            Some(variable)
-        }
+        PointerBlock::FunctionSymbolic(variable)
+        | PointerBlock::Symbolic(variable)
+        | PointerBlock::ExternalObject(variable) => Some(variable),
         PointerBlock::Concrete(_)
         | PointerBlock::StringLiteral { .. }
         | PointerBlock::Function(_)
@@ -5676,6 +5678,13 @@ fn substitute_pointer_variable_in_pointer(
     from: Variable,
     to: &Pointer,
 ) -> Pointer {
+    if matches!(pointer.block, PointerBlock::ExternalObject(variable) if variable == from) {
+        let identity = to.object_identity();
+        return Pointer {
+            block: identity.block,
+            offset: PointerOffsetTerm::add(identity.offset, pointer.offset.clone()),
+        };
+    }
     let replaces_block = matches!(
         (&pointer.block, &to.block),
         (PointerBlock::Symbolic(variable), _) | (PointerBlock::FunctionSymbolic(variable), _)
@@ -6479,6 +6488,7 @@ fn substitute_pointer_variable_in_block(
     to: &Pointer,
 ) -> PointerBlock {
     match block {
+        PointerBlock::ExternalObject(variable) if *variable == from => to.object_identity().block,
         PointerBlock::Symbolic(variable) | PointerBlock::FunctionSymbolic(variable)
             if *variable == from =>
         {

@@ -2580,6 +2580,25 @@ impl AnnotationLowerer<'_> {
     ) -> Result<SpecProposition, String> {
         match proposition {
             ClickProposition::PredicateCall { name, arguments } => {
+                if name == "same_object" {
+                    let [left, right] = arguments.as_slice() else {
+                        return Err(format!(
+                            "same_object expects two pointer arguments, got {}",
+                            arguments.len()
+                        ));
+                    };
+                    return Ok(SpecProposition::Predicate {
+                        name: crate::kernel::SAME_OBJECT_PREDICATE_NAME.to_string(),
+                        arguments: vec![
+                            SpecPredicateArgument::Value(
+                                self.lower_contract_expression_to_spec(left, environment)?,
+                            ),
+                            SpecPredicateArgument::Value(
+                                self.lower_contract_expression_to_spec(right, environment)?,
+                            ),
+                        ],
+                    });
+                }
                 if let Some(signature) = self.predicate_environment.contract_signature(name) {
                     let [function] = arguments.as_slice() else {
                         return Err(format!(

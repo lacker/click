@@ -146,7 +146,30 @@ pub(super) fn validate_proposition_expression_types(
             body_variables.insert(item.clone(), C0Type::Int32);
             validate_proposition_expression_types(body, &body_variables, click_functions, context)
         }
-        ClickProposition::PredicateCall { arguments, .. } => {
+        ClickProposition::PredicateCall { name, arguments } => {
+            if name == "same_object" {
+                let [left, right] = arguments.as_slice() else {
+                    return Err(ClickError::new(format!(
+                        "same_object expects two pointer arguments in {context}, got {}",
+                        arguments.len()
+                    )));
+                };
+                for argument in [left, right] {
+                    let actual = infer_contract_expression_type(
+                        argument,
+                        variables,
+                        click_functions,
+                        context,
+                    )?;
+                    if !actual.is_some_and(C0Type::is_object_pointer) {
+                        return Err(ClickError::new(format!(
+                            "same_object expects pointer arguments in {context}, got {}",
+                            actual.map_or_else(|| "an unknown type".to_string(), describe_c0_type)
+                        )));
+                    }
+                }
+                return Ok(());
+            }
             for argument in arguments {
                 let _ = infer_spec_value_type(argument, variables, click_functions, context)?;
             }
@@ -2964,6 +2987,18 @@ pub(super) fn validate_predicate_calls_in_proposition(
             validate_predicate_calls_in_proposition(body, predicates, click_functions, context)
         }
         ClickProposition::PredicateCall { name, arguments } => {
+            if name == "same_object" {
+                if arguments.len() != 2 {
+                    return Err(ClickError::new(format!(
+                        "same_object expects two pointer arguments in {context}, got {}",
+                        arguments.len()
+                    )));
+                }
+                for argument in arguments {
+                    validate_contract_expression_calls(argument, click_functions, context)?;
+                }
+                return Ok(());
+            }
             let Some(arity) = predicates.get(name) else {
                 return Err(ClickError::new(format!(
                     "unknown predicate `{name}` in {context}"

@@ -52,6 +52,9 @@ fn write_havoc_block(identity: &mut String, block: PointerBlock) {
             let _ = write!(identity, "bfs{};", variable.0);
         }
         PointerBlock::ExternalArgument => identity.push_str("be;"),
+        PointerBlock::ExternalObject(variable) => {
+            let _ = write!(identity, "beo{};", variable.0);
+        }
         PointerBlock::Symbolic(variable) => {
             let _ = write!(identity, "bs{};", variable.0);
         }

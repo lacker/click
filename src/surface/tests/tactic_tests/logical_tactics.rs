@@ -896,6 +896,53 @@ fn rejects_unknown_predicate_call() {
 }
 
 #[test]
+fn rejects_same_object_with_non_pointer_arguments() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                requires same_object(x, x);
+                ensures result == x by auto;
+            }
+        "#;
+
+    let error = verify_c0_sources(source, &[("identity.c", c_source)])
+        .expect_err("same_object should require object pointers");
+
+    assert!(
+        error
+            .message()
+            .contains("same_object expects pointer arguments"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn rejects_redefinition_of_same_object() {
+    let source = r#"
+            predicate same_object(x: int32) {
+                x == x
+            }
+        "#;
+
+    let error = parse(source).expect_err("same_object should remain a built-in proposition");
+
+    assert!(
+        error
+            .message()
+            .contains("built-in proposition and cannot be redefined"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn rejects_predicate_call_with_wrong_arity() {
     let source = r#"
             verifying "identity.c";

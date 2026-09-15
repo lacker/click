@@ -847,6 +847,7 @@ requires input_nonnegative: n >= 0;
 requires loadable(p[0..n]);
 requires loadable((p + 1)[0..1]);
 requires separate(memory(dst[0..n]), memory(src[0..n]));
+requires same_object(begin, end);
 requires defined(x + 1);
 views p[0..1];
 consumes p[0..1];
@@ -871,6 +872,17 @@ with the kernel's C expression semantics, so signed overflow, division, shifts,
 and memory-load obligations share the same rules as execution. It currently
 accepts C0 expression fragments; `old`, `at`, folds, lets, and Click function
 calls inside `defined(...)` are not yet supported.
+
+`same_object(left, right)` states that two object pointers carry provenance
+from the same C array or aggregate object. It is the required precondition for
+relational pointer comparison or pointer subtraction between independently
+supplied pointer parameters. Pointer arithmetic preserves the relationship,
+so the fact also covers pointers derived from either argument. It does not say
+that the pointer values are equal, grant access to pointee memory, or replace
+an `owns`, `views`, or `loadable` clause. Conversely, pointer equality does
+not establish `same_object`: equal addresses can carry provenance from
+adjacent objects. The caller must establish the relationship from its concrete
+pointer objects or from its own retained `same_object` requirement.
 
 `aligned(pointer, n)` states that the pointer's address is a multiple of `n`,
 a power of two. It is sugar for `address(pointer) & (n - 1) == 0`. Click

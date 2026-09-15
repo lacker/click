@@ -2151,6 +2151,93 @@ fn pointer_subtraction_rejects_different_blocks_as_undefined_behavior() {
 }
 
 #[test]
+fn pointer_order_and_subtraction_require_external_parameters_to_share_an_object() {
+    let external = |variable| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(variable))),
+            byte_width: 4,
+        },
+    };
+    let left = external(31_000);
+    let right = external(31_001);
+    let state = CState::new()
+        .with_local("left", CValue::pointer(left))
+        .with_local("right", CValue::pointer(right));
+
+    for expression in [
+        c_less_than(c_variable("left"), c_variable("right")),
+        c_less_equal(c_variable("left"), c_variable("right")),
+        c_greater_than(c_variable("left"), c_variable("right")),
+        c_greater_equal(c_variable("left"), c_variable("right")),
+        c_subtract(c_variable("left"), c_variable("right")),
+    ] {
+        let mut budget = ExecutionBudget::for_c_expression(&expression);
+        let paths =
+            evaluate_c_expression_paths(&state, &expression, &PureFactContext::new(), &mut budget)
+                .expect("external pointer operation should stay within its execution budget");
+        assert!(
+            paths
+                .iter()
+                .any(|path| matches!(path.outcome, CExpressionOutcome::Value(_)))
+        );
+        assert!(paths.iter().any(|path| matches!(
+            path.outcome,
+            CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic)
+        )));
+    }
+
+    for expression in [
+        c_equal(c_variable("left"), c_variable("right")),
+        c_not_equal(c_variable("left"), c_variable("right")),
+    ] {
+        let mut budget = ExecutionBudget::for_c_expression(&expression);
+        let paths =
+            evaluate_c_expression_paths(&state, &expression, &PureFactContext::new(), &mut budget)
+                .expect("external pointer equality should stay within its execution budget");
+        assert!(!paths.is_empty());
+        assert!(
+            paths
+                .iter()
+                .all(|path| matches!(path.outcome, CExpressionOutcome::Value(_)))
+        );
+    }
+}
+
+#[test]
+fn pointer_arithmetic_preserves_external_object_identity() {
+    let left = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(31_100))),
+            byte_width: 4,
+        },
+    };
+    let right = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(31_101))),
+            byte_width: 4,
+        },
+    };
+    let derived_left = left.offset_by_int32_elements(Bitvector32Term::Variable(Variable(31_102)));
+    let derived_right = right.offset_by_int32_elements(Bitvector32Term::Constant(1));
+
+    assert_eq!(
+        pointer_same_object_condition(&derived_left, &derived_right),
+        pointer_same_object_condition(&left, &right)
+    );
+
+    let raw_address_equality = pointer_equality_condition(left.clone(), right.clone());
+    let equal_addresses = PureFactContext::new().assume_condition(raw_address_equality, true);
+    assert_eq!(
+        equal_addresses.decide(&pointer_same_object_condition(&left, &right)),
+        None,
+        "address equality must not imply same-object provenance"
+    );
+}
+
+#[test]
 fn viewed_memory_resource_permits_pointer_addition_load_beyond_memory_block() {
     let base = Pointer {
         block: "block".into(),

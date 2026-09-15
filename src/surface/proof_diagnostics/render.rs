@@ -773,7 +773,8 @@ impl Renderer {
             }
             crate::kernel::PointerBlock::Heap(id) => self.fmt(format_args!("heap#{id}")),
             crate::kernel::PointerBlock::Symbolic(v)
-            | crate::kernel::PointerBlock::FunctionSymbolic(v) => {
+            | crate::kernel::PointerBlock::FunctionSymbolic(v)
+            | crate::kernel::PointerBlock::ExternalObject(v) => {
                 self.fmt(format_args!("symbolic#{}", v.0))
             }
             crate::kernel::PointerBlock::ExternalArgument => self.push("external"),

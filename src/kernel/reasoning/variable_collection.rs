@@ -2995,7 +2995,9 @@ fn collect_pointer_capture_variables(
         return;
     }
     match &pointer.block {
-        PointerBlock::Symbolic(variable) | PointerBlock::FunctionSymbolic(variable) => {
+        PointerBlock::Symbolic(variable)
+        | PointerBlock::FunctionSymbolic(variable)
+        | PointerBlock::ExternalObject(variable) => {
             variables.insert(*variable);
         }
         PointerBlock::Concrete(_)
@@ -3600,7 +3602,9 @@ fn collect_pointer_scope_summary(
         return IntegerScopeSummary::default();
     }
     let mut summary = match &pointer.block {
-        PointerBlock::Symbolic(variable) | PointerBlock::FunctionSymbolic(variable) => {
+        PointerBlock::Symbolic(variable)
+        | PointerBlock::FunctionSymbolic(variable)
+        | PointerBlock::ExternalObject(variable) => {
             IntegerScopeSummary::bitvector_variable(*variable)
         }
         _ => IntegerScopeSummary::default(),
@@ -4663,7 +4667,9 @@ pub(in crate::kernel) fn collect_pointer_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match &pointer.block {
-        PointerBlock::Symbolic(variable) | PointerBlock::FunctionSymbolic(variable) => {
+        PointerBlock::Symbolic(variable)
+        | PointerBlock::FunctionSymbolic(variable)
+        | PointerBlock::ExternalObject(variable) => {
             variables.insert(*variable);
         }
         PointerBlock::Concrete(_)
@@ -4681,7 +4687,9 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables(
 ) {
     for (block, contents) in memory.blocks.iter() {
         match block {
-            PointerBlock::Symbolic(variable) | PointerBlock::FunctionSymbolic(variable) => {
+            PointerBlock::Symbolic(variable)
+            | PointerBlock::FunctionSymbolic(variable)
+            | PointerBlock::ExternalObject(variable) => {
                 variables.insert(*variable);
             }
             PointerBlock::Concrete(_)

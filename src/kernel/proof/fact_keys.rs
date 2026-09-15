@@ -793,6 +793,7 @@ enum AlphaPointerBlockKey {
     Function(String),
     FunctionSymbolic(AlphaVariableKey),
     ExternalArgument,
+    ExternalObject(AlphaVariableKey),
     Symbolic(AlphaVariableKey),
     Heap(u64),
 }
@@ -1525,6 +1526,13 @@ fn alpha_pointer_key_with_bindings<const ALLOW_LOADS: bool>(
             )?)
         }
         PointerBlock::ExternalArgument => AlphaPointerBlockKey::ExternalArgument,
+        PointerBlock::ExternalObject(variable) => {
+            AlphaPointerBlockKey::ExternalObject(alpha_variable_key_with_bindings::<ALLOW_LOADS>(
+                *variable,
+                bindings,
+                &bindings.bitvector,
+            )?)
+        }
         PointerBlock::Symbolic(variable) => {
             AlphaPointerBlockKey::Symbolic(alpha_variable_key_with_bindings::<ALLOW_LOADS>(
                 *variable,

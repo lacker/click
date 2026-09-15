@@ -10,6 +10,14 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
 
     let mut predicates = BTreeMap::new();
     for definition in &predicate_definitions {
+        if matches!(
+            definition.name(),
+            "same_object" | crate::kernel::SAME_OBJECT_PREDICATE_NAME
+        ) {
+            return Err(ClickError::new(
+                "`same_object` is a built-in proposition and cannot be redefined",
+            ));
+        }
         generics::validate_type_parameter_list(
             "predicate",
             definition.name(),
@@ -28,6 +36,14 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
 
     let mut contracts = BTreeMap::new();
     for definition in file.contract_definitions() {
+        if matches!(
+            definition.name(),
+            "same_object" | crate::kernel::SAME_OBJECT_PREDICATE_NAME
+        ) {
+            return Err(ClickError::new(
+                "`same_object` is a built-in proposition and cannot be redefined",
+            ));
+        }
         if predicates.contains_key(definition.name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a predicate and a contract",
@@ -48,6 +64,7 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         }
     }
     let mut proposition_calls = predicates.clone();
+    proposition_calls.insert("same_object".to_string(), 2);
     proposition_calls.extend(contracts.keys().map(|name| (name.clone(), 1)));
 
     let mut click_functions = BTreeMap::new();
@@ -535,6 +552,29 @@ fn validate_contract_applications_in_proposition(
 ) -> Result<(), ClickError> {
     match proposition {
         ClickProposition::PredicateCall { name, arguments } => {
+            if name == "same_object" {
+                let [left, right] = arguments.as_slice() else {
+                    return Err(ClickError::new(format!(
+                        "same_object expects two pointer arguments in {context}, got {}",
+                        arguments.len()
+                    )));
+                };
+                for argument in [left, right] {
+                    let actual = infer_contract_expression_type(
+                        argument,
+                        variables,
+                        click_functions,
+                        context,
+                    )?;
+                    if !actual.is_some_and(C0Type::is_object_pointer) {
+                        return Err(ClickError::new(format!(
+                            "same_object expects pointer arguments in {context}, got {}",
+                            actual.map_or_else(|| "an unknown type".to_string(), describe_c0_type)
+                        )));
+                    }
+                }
+                return Ok(());
+            }
             let Some(expected) = contracts.get(name) else {
                 return Ok(());
             };

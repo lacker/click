@@ -2757,6 +2757,52 @@ impl CLValue {
 }
 
 impl Pointer {
+    /// The C object identity carried by this pointer.
+    ///
+    /// Concrete blocks already are object identities. External parameters
+    /// share one address-space block so memory operations remain conservatively
+    /// alias-aware; the variable in their leading offset also names a separate
+    /// opaque object block. Keeping that block separate from the raw offset is
+    /// essential: address equality does not prove that adjacent C objects have
+    /// the same provenance. Pointer arithmetic appends displacement terms and
+    /// therefore preserves the leading identity.
+    pub(in crate::kernel) fn object_identity(&self) -> Self {
+        fn external_base(offset: &PointerOffsetTerm) -> &PointerOffsetTerm {
+            match offset {
+                PointerOffsetTerm::Add(base, _) => external_base(base),
+                offset => offset,
+            }
+        }
+
+        if self.block == PointerBlock::ExternalArgument {
+            let base = external_base(&self.offset);
+            let variable = match base {
+                PointerOffsetTerm::Variable(variable) => Some(*variable),
+                PointerOffsetTerm::Int32Scaled { value, .. }
+                | PointerOffsetTerm::Int64Scaled { value, .. } => match value.as_ref() {
+                    Bitvector32Term::Variable(variable) => Some(*variable),
+                    _ => None,
+                },
+                PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Add(_, _) => None,
+            };
+            if let Some(variable) = variable {
+                return Self {
+                    block: PointerBlock::ExternalObject(variable),
+                    offset: PointerOffsetTerm::Constant(0),
+                };
+            }
+            return Self {
+                block: self.block.clone(),
+                offset: base.clone(),
+            };
+        }
+
+        Self {
+            block: self.block.clone(),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
     pub(crate) fn null() -> Self {
         Self {
             block: "null".into(),
@@ -2808,7 +2854,11 @@ impl Pointer {
         // (`ExternalArgument`) existed before the call and cannot be one of
         // them.
         let local_versus_argument = |left: &PointerBlock, right: &PointerBlock| {
-            left.starts_with("local:") && matches!(right, PointerBlock::ExternalArgument)
+            left.starts_with("local:")
+                && matches!(
+                    right,
+                    PointerBlock::ExternalArgument | PointerBlock::ExternalObject(_)
+                )
         };
         self.block != other.block
             && (matches!(self.block, PointerBlock::Heap(_))

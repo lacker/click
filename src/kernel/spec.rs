@@ -4567,6 +4567,28 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
         paths = next_paths;
     }
 
+    if name == SAME_OBJECT_PREDICATE_NAME {
+        for path in &mut paths {
+            let Proposition::Predicate { arguments, .. } = &path.proposition else {
+                unreachable!("predicate lowering retains its proposition carrier")
+            };
+            let [
+                Term::CState(_),
+                Term::CValue(CValue::Pointer(left)),
+                Term::CValue(CValue::Pointer(right)),
+            ] = arguments.as_slice()
+            else {
+                return Ok(Vec::new());
+            };
+            if !left.c_type().is_object_pointer() || !right.c_type().is_object_pointer() {
+                return Ok(Vec::new());
+            }
+            path.proposition = Proposition::ConditionIs(
+                pointer_same_object_condition(left.pointer(), right.pointer()),
+                true,
+            );
+        }
+    }
     Ok(paths)
 }
 
