@@ -13,6 +13,7 @@
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/AST/Stmt.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Version.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -129,7 +130,7 @@ public:
     profile["rtti"] = false;
 
     llvm::json::Object artifact;
-    artifact["schema"] = 3;
+    artifact["schema"] = 4;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["logical_source"] = logical_source_;
@@ -140,6 +141,12 @@ public:
 
 private:
   using Json = llvm::json::Value;
+
+  struct LoweredCall {
+    llvm::json::Object callee;
+    llvm::json::Array arguments;
+    Json span;
+  };
 
   std::optional<Json> lower_function(const clang::FunctionDecl *declaration) {
     const auto *prototype =
@@ -173,7 +180,7 @@ private:
 
     llvm::json::Array statements;
     for (const clang::Stmt *statement : body->body()) {
-      auto lowered = lower_statement(statement, declaration);
+      auto lowered = lower_statement(statement, declaration, true);
       if (!lowered) {
         return std::nullopt;
       }
@@ -259,7 +266,16 @@ private:
   }
 
   std::optional<Json> lower_statement(const clang::Stmt *statement,
-                                      const clang::FunctionDecl *function) {
+                                      const clang::FunctionDecl *function,
+                                      bool allow_local_declaration) {
+    if (const auto *declaration = llvm::dyn_cast<clang::DeclStmt>(statement)) {
+      if (!allow_local_declaration) {
+        fail(declaration->getBeginLoc(),
+             "automatic C++ locals are currently supported only in the function body");
+        return std::nullopt;
+      }
+      return lower_local_declaration(declaration, function);
+    }
     if (const auto *call = llvm::dyn_cast<clang::CallExpr>(statement)) {
       return lower_call(call, function);
     }
@@ -325,6 +341,93 @@ private:
 
   std::optional<Json> lower_call(const clang::CallExpr *call,
                                  const clang::FunctionDecl *caller) {
+    auto lowered = lower_call_operation(call, caller);
+    if (!lowered) {
+      return std::nullopt;
+    }
+    llvm::json::Object result;
+    result["kind"] = "call";
+    result["callee"] = std::move(lowered->callee);
+    result["arguments"] = std::move(lowered->arguments);
+    result["span"] = std::move(lowered->span);
+    return Json(std::move(result));
+  }
+
+  std::optional<Json>
+  lower_local_declaration(const clang::DeclStmt *statement,
+                          const clang::FunctionDecl *function) {
+    if (!statement->isSingleDecl()) {
+      fail(statement->getBeginLoc(),
+           "the supported C++ local declaration must declare exactly one variable");
+      return std::nullopt;
+    }
+    const auto *local =
+        llvm::dyn_cast<clang::VarDecl>(statement->getSingleDecl());
+    if (local == nullptr || !local->hasLocalStorage() || local->isStaticLocal()) {
+      fail(statement->getBeginLoc(),
+           "the supported C++ local must have automatic storage");
+      return std::nullopt;
+    }
+    if (!context_.hasSameType(local->getType().getUnqualifiedType(),
+                              context_.IntTy) ||
+        local->getType().isConstQualified()) {
+      fail(local->getLocation(),
+           "the supported automatic C++ local must resolve to mutable int");
+      return std::nullopt;
+    }
+    if (!local->hasInit()) {
+      fail(local->getLocation(),
+           "the supported automatic C++ local requires an initializer");
+      return std::nullopt;
+    }
+
+    auto value_type = lower_type(local->getType(), local->getLocation());
+    if (!value_type) {
+      return std::nullopt;
+    }
+    llvm::json::Object place;
+    place["declaration_id"] = declaration_id(local);
+    place["name"] = local->getNameAsString();
+    place["value_type"] = std::move(*value_type);
+    place["span"] = span(local->getSourceRange());
+
+    llvm::json::Object initializer;
+    const clang::Expr *source_initializer = local->getInit();
+    const clang::Expr *semantic_initializer =
+        source_initializer->IgnoreParenImpCasts();
+    if (const auto *call =
+            llvm::dyn_cast<clang::CallExpr>(semantic_initializer)) {
+      auto lowered = lower_call_operation(call, function);
+      if (!lowered) {
+        return std::nullopt;
+      }
+      initializer["kind"] = "call";
+      initializer["callee"] = std::move(lowered->callee);
+      initializer["arguments"] = std::move(lowered->arguments);
+      initializer["span"] = std::move(lowered->span);
+    } else {
+      auto value = lower_expression(source_initializer, function);
+      if (!value) {
+        return std::nullopt;
+      }
+      initializer["kind"] = "value";
+      initializer["value"] = std::move(*value);
+    }
+
+    llvm::json::Object result;
+    result["kind"] = "declare";
+    result["local"] = std::move(place);
+    result["initializer"] = std::move(initializer);
+    result["span"] = span(statement->getSourceRange());
+    if (!state_.error.empty()) {
+      return std::nullopt;
+    }
+    return Json(std::move(result));
+  }
+
+  std::optional<LoweredCall>
+  lower_call_operation(const clang::CallExpr *call,
+                       const clang::FunctionDecl *caller) {
     const clang::FunctionDecl *callee = call->getDirectCallee();
     if (callee == nullptr) {
       fail(call->getExprLoc(),
@@ -375,15 +478,12 @@ private:
     reference["name"] = definition->getNameAsString();
     reference["span"] = span(call->getCallee()->getSourceRange());
 
-    llvm::json::Object result;
-    result["kind"] = "call";
-    result["callee"] = std::move(reference);
-    result["arguments"] = std::move(arguments);
-    result["span"] = span(call->getSourceRange());
+    Json call_span = span(call->getSourceRange());
     if (!state_.error.empty()) {
       return std::nullopt;
     }
-    return Json(std::move(result));
+    return LoweredCall{std::move(reference), std::move(arguments),
+                       std::move(call_span)};
   }
 
   std::optional<Json>
@@ -425,7 +525,7 @@ private:
     }
     if (const auto *compound = llvm::dyn_cast<clang::CompoundStmt>(statement)) {
       for (const clang::Stmt *member : compound->body()) {
-        auto lowered = lower_statement(member, function);
+        auto lowered = lower_statement(member, function, false);
         if (!lowered) {
           return std::nullopt;
         }
@@ -433,7 +533,7 @@ private:
       }
       return result;
     }
-    auto lowered = lower_statement(statement, function);
+    auto lowered = lower_statement(statement, function, false);
     if (!lowered) {
       return std::nullopt;
     }
@@ -513,18 +613,25 @@ private:
                         const clang::FunctionDecl *expected_function) {
     expression = expression->IgnoreParenImpCasts();
     const auto *reference = llvm::dyn_cast<clang::DeclRefExpr>(expression);
-    const auto *parameter =
+    const auto *place =
         reference == nullptr
             ? nullptr
-            : llvm::dyn_cast<clang::ParmVarDecl>(reference->getDecl());
-    if (parameter == nullptr || parameter->getDeclContext() != expected_function) {
+            : llvm::dyn_cast<clang::ValueDecl>(reference->getDecl());
+    const auto *variable = llvm::dyn_cast_or_null<clang::VarDecl>(place);
+    const bool supported_parameter =
+        llvm::isa_and_nonnull<clang::ParmVarDecl>(place);
+    const bool supported_local =
+        variable != nullptr && !supported_parameter &&
+        variable->hasLocalStorage() && !variable->isStaticLocal();
+    if (place == nullptr || place->getDeclContext() != expected_function ||
+        (!supported_parameter && !supported_local)) {
       fail(expression->getExprLoc(),
-           "the supported C++ slice can access only current function parameters");
+           "the supported C++ slice can access only current function parameters and automatic locals");
       return std::nullopt;
     }
     llvm::json::Object result;
-    result["declaration_id"] = declaration_id(parameter);
-    result["name"] = parameter->getNameAsString();
+    result["declaration_id"] = declaration_id(place);
+    result["name"] = place->getNameAsString();
     result["span"] = span(reference->getSourceRange());
     if (!state_.error.empty()) {
       return std::nullopt;

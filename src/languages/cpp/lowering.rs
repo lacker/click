@@ -5,17 +5,19 @@
 //! slice represents `int&` and `const int&` as address-valued kernel parameters;
 //! every C++ lvalue-to-rvalue conversion becomes a typed load through that
 //! address and assignment writes the referent without reseating the reference.
+//! Function-body scalar locals use the kernel's ordinary declaration,
+//! assignment, and call-result statements.
 
 use std::collections::BTreeMap;
 
 use super::{
-    CppBinaryOperator, CppCallArgument, CppExpression, CppFunction, CppPlace, CppPlaceReference,
-    CppStatement, CppType, PreparedCppImport,
+    CppBinaryOperator, CppCallArgument, CppExpression, CppFunction, CppInitializer, CppPlace,
+    CppPlaceReference, CppStatement, CppType, PreparedCppImport,
 };
 use crate::kernel::{
-    CExpression, CFunction, CStatement, CType, LoadSourceId, LoadSourceOwnerId, c_add, c_call,
-    c_function, c_if, c_int32_literal, c_parameter, c_return, c_seq, c_skip,
-    c_typed_load_with_source, c_typed_store, c_variable,
+    CExpression, CFunction, CStatement, CType, LoadSourceId, LoadSourceOwnerId, c_add, c_assign,
+    c_call, c_call_assign, c_declare, c_function, c_if, c_int32_literal, c_parameter, c_return,
+    c_seq, c_skip, c_typed_load_with_source, c_typed_store, c_variable,
 };
 
 /// One kernel function together with the immutable semantic artifact that
@@ -67,6 +69,10 @@ fn lower_function(import: &PreparedCppImport, source: &CppFunction) -> Result<CF
     let places = source
         .parameters
         .iter()
+        .chain(source.body.iter().filter_map(|statement| match statement {
+            CppStatement::Declare { local, .. } => Some(local),
+            _ => None,
+        }))
         .map(|parameter| (parameter.declaration_id.as_str(), parameter))
         .collect::<BTreeMap<_, _>>();
     let parameters = source
@@ -131,10 +137,37 @@ impl LoweringContext<'_> {
 
     fn lower_statement(&mut self, statement: &CppStatement) -> Result<CStatement, String> {
         match statement {
+            CppStatement::Declare {
+                local, initializer, ..
+            } => {
+                let declaration = c_declare(local.name.clone(), CType::Int32);
+                let initialization = match initializer {
+                    CppInitializer::Value { value } => {
+                        c_assign(local.name.clone(), self.lower_expression(value)?)
+                    }
+                    CppInitializer::Call {
+                        callee, arguments, ..
+                    } => c_call_assign(
+                        local.name.clone(),
+                        callee.name.clone(),
+                        self.lower_call_arguments(arguments)?,
+                    ),
+                };
+                Ok(c_seq(declaration, initialization))
+            }
             CppStatement::Assign { target, value, .. } => {
-                let pointer = self.lower_place(target)?;
+                let target_is_local =
+                    matches!(self.place(target)?.value_type, CppType::Integer { .. });
                 let value = self.lower_expression(value)?;
-                Ok(c_typed_store(pointer, value, CType::Int32))
+                if target_is_local {
+                    Ok(c_assign(target.name.clone(), value))
+                } else {
+                    Ok(c_typed_store(
+                        self.lower_place(target)?,
+                        value,
+                        CType::Int32,
+                    ))
+                }
             }
             CppStatement::Return { value, .. } => Ok(c_return(self.lower_expression(value)?)),
             CppStatement::If {
@@ -150,14 +183,21 @@ impl LoweringContext<'_> {
             }
             CppStatement::Call {
                 callee, arguments, ..
-            } => {
-                let arguments = arguments
-                    .iter()
-                    .map(|argument| self.lower_call_argument(argument))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(c_call(callee.name.clone(), arguments))
-            }
+            } => Ok(c_call(
+                callee.name.clone(),
+                self.lower_call_arguments(arguments)?,
+            )),
         }
+    }
+
+    fn lower_call_arguments(
+        &mut self,
+        arguments: &[CppCallArgument],
+    ) -> Result<Vec<CExpression>, String> {
+        arguments
+            .iter()
+            .map(|argument| self.lower_call_argument(argument))
+            .collect()
     }
 
     fn lower_call_argument(&mut self, argument: &CppCallArgument) -> Result<CExpression, String> {
@@ -193,6 +233,12 @@ impl LoweringContext<'_> {
                         is_const: false,
                     },
                 ) => Ok(c_variable(place.name.clone())),
+                (CppType::Integer { .. }, CppType::Integer { .. })
+                    if is_mutable_int32(&self.place(place)?.value_type)
+                        && is_mutable_int32(value_type) =>
+                {
+                    Ok(c_variable(place.name.clone()))
+                }
                 (CppType::LvalueReference { pointee }, value_type)
                     if (is_mutable_int32(pointee) || is_const_int32(pointee))
                         && is_mutable_int32(value_type) =>

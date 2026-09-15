@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 3;
+pub(crate) const EXPORT_SCHEMA: u32 = 4;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -121,7 +121,25 @@ pub enum CppCallArgument {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CppInitializer {
+    Value {
+        value: CppExpression,
+    },
+    Call {
+        callee: CppFunctionReference,
+        arguments: Vec<CppCallArgument>,
+        span: CppSpan,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CppStatement {
+    Declare {
+        local: CppPlace,
+        initializer: CppInitializer,
+        span: CppSpan,
+    },
     Assign {
         target: CppPlaceReference,
         value: CppExpression,
@@ -247,6 +265,7 @@ impl CppFunction {
         }
         self.span.validate(logical_source)?;
         let mut places = BTreeMap::new();
+        let mut names = std::collections::BTreeSet::new();
         for parameter in &self.parameters {
             parameter.span.validate(logical_source)?;
             if parameter.declaration_id.is_empty() || parameter.name.is_empty() {
@@ -278,12 +297,48 @@ impl CppFunction {
                     parameter.declaration_id
                 ));
             }
+            if !names.insert(parameter.name.clone()) {
+                return Err(format!("duplicate C++ parameter name `{}`", parameter.name));
+            }
         }
         if self.body.is_empty() {
             return Err("supported C++ function has no executable statements".into());
         }
         for statement in &self.body {
-            statement.validate(&places, logical_source)?;
+            if let CppStatement::Declare {
+                local,
+                initializer,
+                span,
+            } = statement
+            {
+                span.validate(logical_source)?;
+                local.span.validate(logical_source)?;
+                if local.declaration_id.is_empty() || local.name.is_empty() {
+                    return Err("C++ local is missing declaration identity".into());
+                }
+                require_int32(&local.value_type, false, "automatic local")?;
+                initializer.validate(&places, logical_source)?;
+                if places
+                    .insert(
+                        local.declaration_id.clone(),
+                        (local.name.clone(), local.value_type.clone()),
+                    )
+                    .is_some()
+                {
+                    return Err(format!(
+                        "duplicate C++ local declaration identity `{}`",
+                        local.declaration_id
+                    ));
+                }
+                if !names.insert(local.name.clone()) {
+                    return Err(format!(
+                        "C++ local `{}` shadows another supported place",
+                        local.name
+                    ));
+                }
+            } else {
+                statement.validate(&places, logical_source)?;
+            }
         }
         if !sequence_always_returns(&self.body) {
             return Err(
@@ -301,6 +356,9 @@ impl CppStatement {
         logical_source: &str,
     ) -> Result<(), String> {
         match self {
+            Self::Declare { .. } => {
+                Err("automatic C++ locals are currently supported only in the function body".into())
+            }
             Self::Assign {
                 target,
                 value,
@@ -312,7 +370,14 @@ impl CppStatement {
                     CppType::LvalueReference { pointee } => {
                         require_int32(pointee, false, "assignment target")?;
                     }
-                    _ => return Err("C++ assignment target is not a mutable reference".into()),
+                    CppType::Integer { .. } => {
+                        require_int32(target_type, false, "assignment target")?;
+                    }
+                    _ => {
+                        return Err(
+                            "C++ assignment target is not a mutable reference or local".into()
+                        );
+                    }
                 }
                 value.validate(places, logical_source)?;
                 require_int32(value.value_type(), false, "assignment value")
@@ -340,19 +405,47 @@ impl CppStatement {
                 callee,
                 arguments,
                 span,
-            } => {
-                span.validate(logical_source)?;
-                callee.span.validate(logical_source)?;
-                if callee.declaration_id.is_empty() || callee.name.is_empty() {
-                    return Err("C++ call is missing resolved declaration identity".into());
-                }
-                for argument in arguments {
-                    argument.validate(places, logical_source)?;
-                }
-                Ok(())
-            }
+            } => validate_call(callee, arguments, span, places, logical_source),
         }
     }
+}
+
+impl CppInitializer {
+    fn validate(
+        &self,
+        places: &BTreeMap<String, (String, CppType)>,
+        logical_source: &str,
+    ) -> Result<(), String> {
+        match self {
+            Self::Value { value } => {
+                value.validate(places, logical_source)?;
+                require_int32(value.value_type(), false, "local initializer")
+            }
+            Self::Call {
+                callee,
+                arguments,
+                span,
+            } => validate_call(callee, arguments, span, places, logical_source),
+        }
+    }
+}
+
+fn validate_call(
+    callee: &CppFunctionReference,
+    arguments: &[CppCallArgument],
+    span: &CppSpan,
+    places: &BTreeMap<String, (String, CppType)>,
+    logical_source: &str,
+) -> Result<(), String> {
+    span.validate(logical_source)?;
+    callee.span.validate(logical_source)?;
+    if callee.declaration_id.is_empty() || callee.name.is_empty() {
+        return Err("C++ call is missing resolved declaration identity".into());
+    }
+    for argument in arguments {
+        argument.validate(places, logical_source)?;
+    }
+    Ok(())
 }
 
 impl CppCallArgument {
@@ -418,7 +511,10 @@ impl CppExpression {
                         require_bool(place_type, false, "loaded parameter")?;
                         require_bool(value_type, false, "loaded value type")
                     }
-                    _ => Err("C++ load does not name a supported parameter".into()),
+                    CppType::Integer { .. } => {
+                        require_int32(place_type, false, "loaded local")?;
+                        require_int32(value_type, false, "loaded value type")
+                    }
                 }
             }
             Self::Binary {
@@ -452,7 +548,7 @@ impl CppStatement {
                 else_branch,
                 ..
             } => sequence_always_returns(then_branch) && sequence_always_returns(else_branch),
-            Self::Assign { .. } | Self::Call { .. } => false,
+            Self::Declare { .. } | Self::Assign { .. } | Self::Call { .. } => false,
         }
     }
 }
@@ -526,6 +622,14 @@ fn collect_calls<'a>(
 ) {
     for statement in statements {
         match statement {
+            CppStatement::Declare {
+                initializer:
+                    CppInitializer::Call {
+                        callee, arguments, ..
+                    },
+                ..
+            } => calls.push((callee, arguments)),
+            CppStatement::Declare { .. } => {}
             CppStatement::Call {
                 callee, arguments, ..
             } => calls.push((callee, arguments)),

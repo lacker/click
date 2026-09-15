@@ -149,9 +149,18 @@ ordinary modular call environment. Each definition has its own sidecar
 contract and proof. The artifact rejects recursion, ambiguous reachable names,
 missing definitions, and reachable functions that are not `noexcept`.
 
-Constructors, destructors, local declarations, call results, methods, indirect
-calls, loops, external specifications, object operations, and broader C++
-syntax remain outside this end-to-end subset.
+The `scalar-local` fixture adds mutable automatic `int` locals declared directly
+in the function body. Each local requires an initializer, which may be an
+already-supported integer expression or a supported direct call. Local
+declaration identity comes from Clang; direct-call initialization lowers to the
+kernel's ordinary `Declare` and `CallAssign` statements, while later reads and
+assignments use the existing scalar rules. This makes call results usable
+without treating a compiler-resolved C++ expression as C source text.
+
+Constructors, destructors, uninitialized or nested locals, local references,
+shadowing, address-taking, call results outside a local initializer, methods,
+indirect calls, loops, external specifications, object operations, and broader
+C++ syntax remain outside this end-to-end subset.
 
 ## Validation and supported profile
 

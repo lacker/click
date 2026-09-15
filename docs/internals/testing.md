@@ -90,11 +90,15 @@ an early return, a mutable/const reference pair that explicitly aliases one
 owned cell, and a selected function that reaches another `noexcept` definition
 through a resolved direct call. The call fixture checks modular contracts,
 offline loading, expansion/reverification, and retained audit against the same
-multi-function artifact. Focused negative coverage rejects missing, throwing,
-and recursive reachable definitions. Other coverage exercises source/signature
-mismatch diagnostics, const-write rejection, and smart-tactic inventory.
-Missing Clang development tooling fails the gate, and unsupported C++ does not
-fall back to the C parser.
+multi-function artifact. A scalar-local fixture captures that call's result,
+copies it through an expression-initialized local, assigns it, and returns it
+through the kernel's shared declaration and scalar rules. Its false-result
+contract is rejected. Focused negative coverage rejects missing, throwing, and
+recursive reachable definitions as well as uninitialized, reference-valued,
+and nested locals. Other coverage exercises source/signature mismatch
+diagnostics, const-write rejection, and smart-tactic inventory. Missing Clang
+development tooling fails the gate, and unsupported C++ does not fall back to
+the C parser.
 
 ## What the gate runs
 

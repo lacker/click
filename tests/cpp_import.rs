@@ -11,8 +11,8 @@ use click::kernel::{
     prove_symbolic_c_function_execution,
 };
 use click::languages::cpp::{
-    CppBinaryOperator, CppCallArgument, CppExpression, CppStatement, CppType, load_import,
-    lower_import, refresh_import,
+    CppBinaryOperator, CppCallArgument, CppExpression, CppInitializer, CppStatement, CppType,
+    load_import, lower_import, refresh_import,
 };
 use click::surface::{
     C0VerificationSession, VerifiedClaim, cpp_prepared_project_smart_tactic_source_sites,
@@ -32,6 +32,10 @@ const DIRECT_CALL_SOURCE: &str =
     include_str!("fixtures/cpp-verification/direct-call/call_set_seven.cpp");
 const DIRECT_CALL_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/direct-call/call_set_seven.click");
+const SCALAR_LOCAL_SOURCE: &str =
+    include_str!("fixtures/cpp-verification/scalar-local/relay_value.cpp");
+const SCALAR_LOCAL_SIDECAR: &str =
+    include_str!("fixtures/cpp-verification/scalar-local/relay_value.click");
 
 struct Project {
     directory: PathBuf,
@@ -58,6 +62,10 @@ impl Project {
 
     fn direct_call() -> Self {
         Self::with_fixture("call_set_seven.cpp", "call_set_seven", DIRECT_CALL_SOURCE)
+    }
+
+    fn scalar_local() -> Self {
+        Self::with_fixture("relay_value.cpp", "relay_value", SCALAR_LOCAL_SOURCE)
     }
 
     fn with_fixture(source_name: &str, function: &str, source: &str) -> Self {
@@ -154,7 +162,7 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
     let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
-    assert_eq!(prepared.export().schema, 3);
+    assert_eq!(prepared.export().schema, 4);
     assert!(prepared.export().reachable_functions.is_empty());
     assert_eq!(prepared.logical_source(), "increment.cpp");
     assert_eq!(prepared.identity().len(), 64);
@@ -449,6 +457,56 @@ fn contains_call(statement: &CStatement, expected: &str) -> bool {
     }
 }
 
+fn contains_scalar_local_pipeline(
+    statement: &CStatement,
+    call_local: &str,
+    value_local: &str,
+    callee: &str,
+) -> [bool; 4] {
+    let mut found = [false; 4];
+    fn visit(
+        statement: &CStatement,
+        call_local: &str,
+        value_local: &str,
+        callee: &str,
+        found: &mut [bool; 4],
+    ) {
+        match statement {
+            CStatement::Declare {
+                name,
+                c_type: CType::Int32,
+                ..
+            } if name == call_local => found[0] = true,
+            CStatement::CallAssign {
+                target,
+                function_name,
+                ..
+            } if target == call_local && function_name == callee => found[1] = true,
+            CStatement::Declare {
+                name,
+                c_type: CType::Int32,
+                ..
+            } if name == value_local => found[2] = true,
+            CStatement::Assign { name, .. } if name == value_local => found[3] = true,
+            CStatement::Seq(first, second) => {
+                visit(first, call_local, value_local, callee, found);
+                visit(second, call_local, value_local, callee, found);
+            }
+            CStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                visit(then_branch, call_local, value_local, callee, found);
+                visit(else_branch, call_local, value_local, callee, found);
+            }
+            _ => {}
+        }
+    }
+    visit(statement, call_local, value_local, callee, &mut found);
+    found
+}
+
 #[test]
 fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline() {
     let project = Project::direct_call();
@@ -458,7 +516,7 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the call graph artifact offline");
-    assert_eq!(import.export().schema, 3);
+    assert_eq!(import.export().schema, 4);
     assert_eq!(import.export().function.name, "call_set_seven");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -524,6 +582,120 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
     session
         .verify_at_project(&expanded, next.line, next.column)
         .expect("retained audit session must accept the expanded caller proof");
+}
+
+#[test]
+fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
+    let project = Project::scalar_local();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, SCALAR_LOCAL_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("export the typed C++ local and call result");
+    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+
+    let import = load_import(&project.config()).expect("load the scalar-local artifact offline");
+    assert_eq!(import.export().schema, 4);
+    assert_eq!(import.export().function.name, "relay_value");
+    assert_eq!(import.export().reachable_functions.len(), 1);
+    let reachable = &import.export().reachable_functions[0];
+    assert_eq!(reachable.name, "read_value");
+    let [
+        CppStatement::Declare {
+            local: captured,
+            initializer: CppInitializer::Call {
+                callee, arguments, ..
+            },
+            ..
+        },
+        CppStatement::Declare {
+            local: relayed,
+            initializer: CppInitializer::Value { value: copied },
+            ..
+        },
+        CppStatement::Assign { target, value, .. },
+        CppStatement::Return {
+            value: returned, ..
+        },
+    ] = import.export().function.body.as_slice()
+    else {
+        panic!("caller did not retain declaration, local assignment, and return")
+    };
+    assert_eq!(captured.name, "captured");
+    assert!(!captured.declaration_id.is_empty());
+    assert_eq!(relayed.name, "relayed");
+    assert_ne!(captured.declaration_id, relayed.declaration_id);
+    assert_eq!(callee.declaration_id, reachable.declaration_id);
+    assert!(matches!(
+        arguments.as_slice(),
+        [CppCallArgument::Reference { .. }]
+    ));
+    assert!(matches!(
+        copied,
+        CppExpression::Load { place, .. }
+            if place.declaration_id == captured.declaration_id
+    ));
+    assert_eq!(target.declaration_id, relayed.declaration_id);
+    assert!(matches!(
+        value,
+        CppExpression::Binary { left, .. }
+            if matches!(left.as_ref(), CppExpression::Load { place, .. }
+                if place.declaration_id == relayed.declaration_id)
+    ));
+    assert!(matches!(
+        returned,
+        CppExpression::Load { place, .. } if place.declaration_id == relayed.declaration_id
+    ));
+
+    let lowered = lower_import(&import).expect("lower the scalar local through kernel statements");
+    assert_eq!(
+        contains_scalar_local_pipeline(
+            lowered.kernel_function().body(),
+            "captured",
+            "relayed",
+            "read_value"
+        ),
+        [true, true, true, true]
+    );
+
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    let verified = verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify local initialization through the shared call-result rule");
+    assert_eq!(verified.len(), 5);
+
+    let execute = cpp_prepared_project_tactic_source_position(
+        &click_project,
+        &import,
+        "relay_value.contract",
+        0,
+    )
+    .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .expect("expand the scalar-local caller proof");
+    let rewritten = click_project.with_entry_source(expanded.clone());
+    verify_cpp_prepared_project(&rewritten, &import)
+        .expect("the expanded scalar-local proof must reverify");
+    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
+        .expect("retain the scalar-local verification environment");
+    let next =
+        cpp_prepared_project_tactic_source_position(&rewritten, &import, "relay_value.contract", 0)
+            .unwrap();
+    session
+        .verify_at_project(&expanded, next.line, next.column)
+        .expect("retained audit session must accept the expanded local proof");
+
+    let false_contract = SCALAR_LOCAL_SIDECAR.replace(
+        "ensures result == value[0] + 1;",
+        "ensures result == value[0] + 2;",
+    );
+    fs::write(&sidecar, &false_contract).unwrap();
+    let false_project = read_click_project(&sidecar, &false_contract).unwrap();
+    verify_cpp_prepared_project(&false_project, &import)
+        .expect_err("a false claim about the captured call result must be rejected");
 }
 
 #[test]
@@ -770,7 +942,7 @@ fn cpp_frontend_rejects_unsupported_source_without_a_c_fallback() {
     .unwrap();
     let error = refresh_import(&project.config()).unwrap_err();
     assert!(error.contains("increment.cpp:8"), "{error}");
-    assert!(error.contains("unsupported statement"), "{error}");
+    assert!(error.contains("must resolve to mutable int"), "{error}");
     assert!(!project.artifact().exists());
 
     fs::write(
@@ -781,6 +953,43 @@ fn cpp_frontend_rejects_unsupported_source_without_a_c_fallback() {
     let error = refresh_import(&project.config()).unwrap_err();
     assert!(error.contains("increment.cpp:2"), "{error}");
     assert!(error.contains("const-qualified"), "{error}");
+    assert!(!project.artifact().exists());
+}
+
+#[test]
+fn cpp_scalar_locals_reject_uninitialized_reference_and_nested_declarations() {
+    let project = Project::scalar_local();
+    fs::write(
+        project.source(),
+        "int relay_value(int& value) noexcept {\n    int captured;\n    return value;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("relay_value.cpp:2"), "{error}");
+    assert!(error.contains("requires an initializer"), "{error}");
+    assert!(!project.artifact().exists());
+
+    fs::write(
+        project.source(),
+        "int relay_value(int& value) noexcept {\n    int& captured = value;\n    return captured;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("relay_value.cpp:2"), "{error}");
+    assert!(error.contains("must resolve to mutable int"), "{error}");
+    assert!(!project.artifact().exists());
+
+    fs::write(
+        project.source(),
+        "int relay_value(bool choose, int& value) noexcept {\n    if (choose) {\n        int captured = value;\n        return captured;\n    }\n    return value;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("relay_value.cpp:3"), "{error}");
+    assert!(
+        error.contains("supported only in the function body"),
+        "{error}"
+    );
     assert!(!project.artifact().exists());
 }
 
