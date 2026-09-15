@@ -10,6 +10,13 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# Documentation-only changes have a focused gate. Keep this opt-in so the
+# ordinary invocation remains the complete green-tree verdict.
+if [[ "${1:-}" == "--docs-only" ]]; then
+    shift
+    exec scripts/check-docs.sh "$@"
+fi
+
 # A few expansion regressions recurse deeply enough to overflow the default
 # per-test thread stack on otherwise healthy runners.
 export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"

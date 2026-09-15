@@ -51,9 +51,13 @@ explicit authorization.
 
 ## Working conventions
 
-- Gate: `scripts/check.sh` is the only green-tree verdict, and CI runs the same
-  script. Run it unpiped. It covers formatting, documentation, library and
-  binary tests, mdtests, and examples, using nextest when available.
+- Gate: `scripts/check.sh` is the full green-tree verdict, and CI runs the same
+  script for code-affecting changes. Run it unpiped. It covers formatting,
+  documentation, library and binary tests, mdtests, and examples, using
+  nextest. For changes limited to prose or documentation metadata, run
+  `scripts/check.sh --docs-only`; it renders and checks the documentation
+  without running unrelated unit or verifier tests. `mdtests/` Markdown is
+  executable proof input, so changes there require the full gate.
 - Probe pattern: env-gated eprintln/file dumps at the failing check,
   run under a filter, strip probes before committing.
 - Bound any new recursive prover arm by the inputs it walks: the term's

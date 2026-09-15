@@ -48,6 +48,20 @@ Run the full suite with:
 scripts/check.sh
 ```
 
+For a change limited to prose or documentation metadata, use the focused
+documentation gate:
+
+```sh
+scripts/check.sh --docs-only
+```
+
+This renders the site, runs the advisory docs lint, and runs the
+source-backed documentation test. It skips Rust formatting and Clippy, the
+C++ exporter, library and binary unit tests, proof fixtures, examples, and
+compiler-import fixtures. Do not use it for `mdtests/` changes: those Markdown
+files are executable proof fixtures, not prose documentation. Code, scripts,
+configuration, and example implementation changes also require the full gate.
+
 Run the markdown proof fixtures with:
 
 ```sh
@@ -130,13 +144,16 @@ the gate, and unsupported C++ does not fall back to the C parser.
 
 ## What the gate runs
 
-`scripts/check.sh` is the single source of truth for "is this tree green", and
-CI runs exactly that script. In order it runs `cargo fmt --check`, then
+`scripts/check.sh` with no options is the single source of truth for "is this
+tree green", and CI runs that full gate for code-affecting changes. In order it
+runs `cargo fmt --check`, then
 `cargo clippy --all-targets -- -D warnings`, then the mdBook render and the
 docs lint, then `cargo nextest run --lib --bins --test documentation`, then
 the mdtest, example, C compiler-import, and C++ semantic-import fixture
-harnesses one after the other. The proof fixtures verify their inputs on every
-core. Judge the verdict from the script's exit status.
+harnesses one after the other. For docs-only changes, CI and the explicit
+`scripts/check.sh --docs-only` path run only the focused documentation gate
+described above. The proof fixtures verify their inputs on every core. Judge
+the verdict from the script's exit status.
 
 The tree is clippy-clean, so a new diagnostic belongs to the change that
 introduced it. When a lint is wrong about a deliberate design, silence exactly

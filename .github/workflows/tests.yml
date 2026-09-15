@@ -16,6 +16,31 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Determine check scope
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$PR_BASE"
+          else
+            base="$BEFORE"
+          fi
+
+          # A missing base (for example, the first push) gets the full gate.
+          if [[ -z "$base" || "$base" == 0000000000000000000000000000000000000000 ]] || \
+             ! git cat-file -e "$base^{commit}"; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$base" "$HEAD" | scripts/is-docs-only-change.sh; then
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          fi
       # Installs the toolchain pinned in `rust-toolchain.toml`, the same one
       # local runs use.
       - run: rustup toolchain install
@@ -24,6 +49,7 @@ jobs:
       # The C++ semantic exporter is built against the exact Clang/LLVM API
       # pinned by scripts/build-cpp-exporter.sh. The gate never downloads it.
       - name: Install Clang 19.1.7 development libraries
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
           echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-19 main" | sudo tee /etc/apt/sources.list.d/llvm-19.list
@@ -38,4 +64,9 @@ jobs:
           key: ${{ runner.os }}-click-tools-${{ hashFiles('scripts/tools.sh') }}
       - run: scripts/install-tools.sh
       # The same script a developer runs locally, so the two cannot drift.
-      - run: ./scripts/check.sh
+      - name: Run documentation-only gate
+        if: steps.scope.outputs.docs_only == 'true'
+        run: ./scripts/check.sh --docs-only
+      - name: Run full gate
+        if: steps.scope.outputs.docs_only != 'true'
+        run: ./scripts/check.sh
