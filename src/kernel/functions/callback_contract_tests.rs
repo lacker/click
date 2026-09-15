@@ -98,6 +98,86 @@ fn resource_call_arguments_are_checked_in_kernel_and_fields_are_fresh() {
 }
 
 #[test]
+fn direct_call_map_is_checked_in_kernel_like_named_proof_arguments() {
+    let schema = ResourceFieldSchema::new(vec![(
+        "revision".into(),
+        ResourceFieldType::C(CType::Int32),
+    )])
+    .unwrap();
+    let parameter = |identity| {
+        CResourceSpec::instance(
+            Variable(identity),
+            format!("cell{identity}"),
+            schema.clone(),
+            CResourceSpec::composite(CResourceAccessMode::Own, "marker".into(), vec![], vec![]),
+            CResourceTransferRole::Borrow,
+            CResourceSnapshot::Current,
+        )
+        .unwrap()
+    };
+    let function = c_function(CType::Void, "touch", vec![], CStatement::Skip)
+        .with_contract(vec![], vec![], vec![], vec![], true)
+        .with_resource_summary(
+            vec![parameter(0), parameter(1)],
+            vec![parameter(0), parameter(1)],
+        );
+    let owned = |identity: u64| {
+        CResourceFact::own(CResource::Instance(
+            ResourceInstance::new(
+                Variable(identity),
+                "marker".into(),
+                vec![].into(),
+                schema.clone(),
+                vec![AlgebraicValue::C(symbolic_call_result(
+                    CType::Int32,
+                    Variable(1_000_000 + identity),
+                ))]
+                .into(),
+            )
+            .unwrap(),
+        ))
+    };
+    let state = CState::new()
+        .with_resource_context(ResourceContext::new().unchecked_with_facts([owned(10), owned(11)]));
+    let bind = |callee: &str, pairs: &[(u64, u64)]| {
+        let environment = CExecutionEnvironment::new().with_selected_call_binders(
+            callee,
+            0,
+            pairs
+                .iter()
+                .map(|(binder, instance)| (Variable(*binder), Variable(*instance)))
+                .collect(),
+        );
+        selected_call_binder_application(
+            "touch",
+            function.contract_interface(),
+            &state,
+            &environment,
+        )
+    };
+    let application = bind("touch", &[(0, 10), (1, 11)])
+        .unwrap()
+        .expect("a map naming this callee binds it");
+    assert_eq!(application.parameters.len(), 2);
+    assert_eq!(application.bindings.len(), 2);
+    assert!(
+        bind("other", &[(0, 10), (1, 11)]).unwrap().is_none(),
+        "a map for another callee binds nothing here"
+    );
+    // The same two refusals the named proof arguments get, from the same
+    // constructor: one instance for two binders, and an instance the caller
+    // does not own.
+    assert_eq!(
+        bind("touch", &[(0, 10), (1, 10)]).unwrap_err(),
+        "duplicate exclusive resource proof argument"
+    );
+    assert_eq!(
+        bind("touch", &[(0, 99), (1, 11)]).unwrap_err(),
+        "resource proof argument is not owned"
+    );
+}
+
+#[test]
 fn resource_transition_retains_borrow_role_for_owned_entry_fact() {
     let pointer = Pointer {
         block: PointerBlock::Concrete("local:borrow-role:data".to_string()),

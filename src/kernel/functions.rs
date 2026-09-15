@@ -1442,11 +1442,15 @@ pub(super) fn execute_c_function_call_paths(
         // repackage one as `CVerifiedFunctionRule`, whose type carries body
         // safety evidence. Applying the shared rule engine does not execute,
         // inspect, or certify the external body's storage.
-        let binder_application = selected_call_binder_application(
+        let binder_application = match selected_call_binder_application(
             rule.function.name(),
             rule.function.contract_interface(),
+            caller_state,
             environment,
-        );
+        ) {
+            Ok(application) => application,
+            Err(message) => return Ok(vec![resource_call_failure(message)]),
+        };
         return execute_verified_function_applications(
             caller_state,
             &[CFunctionContractApplication {
@@ -1704,11 +1708,15 @@ fn execute_verified_function_rule(
     // A `step(callee(...), { binder: instance })` names exactly this call.
     // The map is the whole binding: every instance binder the callee declares
     // is looked up once, and nothing else is consulted.
-    let binder_application = selected_call_binder_application(
+    let binder_application = match selected_call_binder_application(
         rule.function.name(),
         rule.function.contract_interface(),
+        caller_state,
         environment,
-    );
+    ) {
+        Ok(application) => application,
+        Err(message) => return Ok(vec![resource_call_failure(message)]),
+    };
     execute_verified_function_applications(
         caller_state,
         &[CFunctionContractApplication {
@@ -1735,11 +1743,14 @@ fn execute_verified_function_rule(
 fn selected_call_binder_application(
     function_name: &str,
     interface: &CFunctionContractInterface,
+    caller_state: &CState,
     environment: &CExecutionEnvironment,
-) -> Option<ResourceCallApplication> {
-    let transport = environment.selected_call_binders.as_ref()?;
+) -> Result<Option<ResourceCallApplication>, &'static str> {
+    let Some(transport) = environment.selected_call_binders.as_ref() else {
+        return Ok(None);
+    };
     if transport.function.as_ref() != function_name {
-        return None;
+        return Ok(None);
     }
     // Only the binders required at entry are checked here; a `produces`
     // binder has no instance to check until the call returns.
@@ -1749,10 +1760,7 @@ fn selected_call_binder_application(
         .filter(|resource| resource.is_instance())
         .cloned()
         .collect::<Vec<_>>();
-    Some(ResourceCallApplication {
-        parameters: parameters.into(),
-        bindings: transport.bindings.clone(),
-    })
+    ResourceCallApplication::bind(parameters, transport.bindings.clone(), caller_state).map(Some)
 }
 
 /// One candidate contract application. The interface is the complete input
@@ -3178,30 +3186,26 @@ pub(super) fn execute_c_function_contracts_paths(
             )]);
         }
         let mut bindings = BTreeMap::new();
-        let mut actuals = BTreeSet::new();
         for (parameter, argument) in contract.proof_parameters().iter().zip(arguments) {
             let Some(identity) = parameter.instance_identity() else {
                 return Ok(vec![resource_call_failure(
                     "resource proof parameter must be an exclusive instance",
                 )]);
             };
-            let Some(instance) = caller_state.owned_resource_instance(*argument) else {
-                return Ok(vec![resource_call_failure(
-                    "resource proof argument is not owned",
-                )]);
-            };
-            if !actuals.insert(instance.identity())
-                || bindings.insert(identity, instance.identity()).is_some()
-            {
+            if bindings.insert(identity, *argument).is_some() {
                 return Ok(vec![resource_call_failure(
                     "duplicate exclusive resource proof argument",
                 )]);
             }
         }
-        Some(ResourceCallApplication {
-            parameters: contract.proof_parameters().to_vec().into(),
-            bindings: std::sync::Arc::new(bindings),
-        })
+        match ResourceCallApplication::bind(
+            contract.proof_parameters().to_vec(),
+            std::sync::Arc::new(bindings),
+            caller_state,
+        ) {
+            Ok(application) => Some(application),
+            Err(message) => return Ok(vec![resource_call_failure(message)]),
+        }
     } else {
         None
     };
@@ -3227,9 +3231,49 @@ pub(super) fn execute_c_function_contracts_paths(
     )
 }
 
+#[derive(Debug)]
 struct ResourceCallApplication {
     parameters: std::sync::Arc<[CResourceSpec]>,
     bindings: std::sync::Arc<BTreeMap<Variable, Variable>>,
+}
+
+impl ResourceCallApplication {
+    /// The one checked binding of a callee's instance binders to the caller's
+    /// instances, whether the proof wrote a direct call map
+    /// (`step(callee(...), { binder: instance })`) or a named contract's
+    /// proof arguments (`step(Contract(instance, ...))`). Each bound
+    /// parameter must be an exclusive instance the caller owns now, and no
+    /// instance may supply two parameters. The surface refuses both mistakes
+    /// with source positions; the kernel refuses them here regardless, so a
+    /// transport it did not see cannot bind what the proof state lacks. A
+    /// binder the map omits is refused by the application engine, which
+    /// checks completeness against the interface.
+    fn bind(
+        parameters: Vec<CResourceSpec>,
+        bindings: std::sync::Arc<BTreeMap<Variable, Variable>>,
+        caller_state: &CState,
+    ) -> Result<Self, &'static str> {
+        let mut actuals = BTreeSet::new();
+        for parameter in &parameters {
+            crate::instrumentation::record_deterministic_work(1);
+            let Some(identity) = parameter.instance_identity() else {
+                return Err("resource proof parameter must be an exclusive instance");
+            };
+            let Some(actual) = bindings.get(&identity) else {
+                continue;
+            };
+            if caller_state.owned_resource_instance(*actual).is_none() {
+                return Err("resource proof argument is not owned");
+            }
+            if !actuals.insert(*actual) {
+                return Err("duplicate exclusive resource proof argument");
+            }
+        }
+        Ok(Self {
+            parameters: parameters.into(),
+            bindings,
+        })
+    }
 }
 
 fn resource_call_failure(message: &str) -> CFunctionPath {

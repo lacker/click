@@ -278,6 +278,33 @@ composition set; `scripts/check.sh` passes.
 
 D3 is settled: audit only. Depends on W5'.
 
+**Landed 2026-09-14** (`Bind a call's instance binders through one checked
+kernel constructor`). Audit result: the three forms are two kernel
+constructions feeding one engine. A direct call map
+(`step(callee(...), { binder: instance })`) reaches
+`selected_call_binder_application`; a named contract's proof arguments
+(`step(Contract(instance, ...))`) reach the argument zip in
+`execute_c_function_contracts_paths`; an execution theorem's `as` map only
+renames spellings (`InstanceRename`), and its block binds through one of
+those two steps. Both produce `ResourceCallApplication`, and the engine
+checks completeness (every declared binder bound) for both. Before this
+chunk the named construction also checked ownership and distinctness in
+the kernel while the direct one trusted the surface and a later transfer
+refusal, with a different message. Now both call
+`ResourceCallApplication::bind`, which refuses an unowned instance and an
+instance supplying two binders with one message set. The parser's
+call-binder registry stays, documented at its definition
+(`CalleeResourceBinder`), because call maps resolve while parsing.
+Regressions: `direct_call_map_is_checked_in_kernel_like_named_proof_arguments`
+beside the named-path kernel test, and four fixtures pinning the shared
+and consumed-instance refusals in both forms
+(`c_call_binder_transport_rejects_{shared,consumed}_instance.md`,
+`c_named_contract_rejects_{shared,consumed}_instance.md`). Positive
+agreement stays pinned by `c_call_binder_transport*.md` (direct) and
+`c_contract_executes_counter_*.md` (theorem plus named): identity kept,
+fields fresh, return snapshots unchanged. No lookup changed shape, so no
+new curve.
+
 - Audit that direct calls, named contracts, and execution theorems resolve
   binders to one kernel identity map (`CCallBinderTransport`) with the same
   exact/forced pairing and ambiguity refusals, and that expansion spells the
@@ -331,7 +358,7 @@ rather than trusting this table.
 | R2 | The same dependent clause through named callback, execution theorem, automatic formation, and certification. | direct and named paths in the R1 fixtures; `named_contract_rejects_unheld_link_read.md` | execution-theorem and certification variants (W7') |
 | R3 | One scoped open, three owned-footprint callbacks, permitted mutation, changed cell and consumed support rejected, no call after the close. | `rb_augment_callbacks_helper_{owns,owns_cell_separate,owns_rejects_unseparated,mutates_body,mutates_body_stepwise,rejects_changed_cell,consumes_suite,rejects_call_after_close,calls_after_close_through_view}.md` | none known |
 | R4 | Raw and one-layer `Buffer` have the same checked effects; unrelated cell and token framed; out-of-authority write and view-to-own fail. | `c_contract_executes_buffer.md`, `c_named_function_contract_frames_*`, `c_named_function_contract_rejects_ownership_from_view.md` | none known |
-| R5 | Entry-selected `owns` range after a field change; returned instance with identity and fresh fields; no retargeting, invented preservation, or aliased identities. | `field_derived_view_does_not_retarget_after_a_pointer_write`, `c_contract_executes_counter_{forward,wrong_instance,unpromised_field}.md` | three-form agreement (W6') |
+| R5 | Entry-selected `owns` range after a field change; returned instance with identity and fresh fields; no retargeting, invented preservation, or aliased identities. | `field_derived_view_does_not_retarget_after_a_pointer_write`, `c_contract_executes_counter_{forward,wrong_instance,unpromised_field}.md`, `c_call_binder_transport*.md`, `direct_call_map_is_checked_in_kernel_like_named_proof_arguments` | none known |
 | R6 | Callback borrows a token or view without a persistent caller view; double consumption fails; scoped views do not escape. | `c_named_function_contract_borrows_*`, `c_named_function_contract_rejects_consumed_*`, `resource_scope_*.md`, `borrowing_composite_survives_an_owning_call.md` | none known |
 
 ## Gates and handoffs
