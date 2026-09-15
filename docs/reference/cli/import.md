@@ -206,9 +206,17 @@ returns 7, the final path returns 9, and both restore the referenced integer to
 its entry value. A return before construction is rejected rather than assigned
 a cleanup for an object that is not alive.
 
+The `reverse-destructor-order` fixture permits exactly two such top-level
+objects when both use the supported constructor and destructor. Both objects
+must be constructed before any return. Each return records the second object's
+destructor before the first object's destructor, and lowering checks those
+calls in that order. The fixture makes the ordering observable: the second
+guard restores 7 before the first guard restores the caller's entry value.
+
 Copies and moves, default or partial aggregate initialization, multiple or
-nested destructible local objects, ordinary methods, inheritance, private fields,
-bit-fields, nested records, and multiple record types remain explicit errors.
+more than two destructible local objects, nested destructible local objects,
+ordinary methods, inheritance, private fields, bit-fields, nested records, and
+multiple record types remain explicit errors.
 Uninitialized or nested scalar locals, local references, shadowing,
 address-taking other than a current mutable reference parameter for a supported
 pointer call, pointer locals, pointer arithmetic, null pointers, multiple

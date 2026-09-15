@@ -486,39 +486,42 @@ private:
       llvm::json::Array cleanups;
       const auto cleanup = cleanup_locals_.find(function->getCanonicalDecl());
       if (cleanup != cleanup_locals_.end()) {
-        const clang::VarDecl *local = cleanup->second;
-        const auto *record_type = local->getType()->getAs<clang::RecordType>();
-        const auto *record =
-            record_type == nullptr
-                ? nullptr
-                : llvm::dyn_cast<clang::CXXRecordDecl>(
-                      record_type->getDecl()->getDefinition());
-        const clang::CXXDestructorDecl *destructor =
-            record == nullptr ? nullptr : record->getDestructor();
-        const auto *definition =
-            destructor == nullptr
-                ? nullptr
-                : llvm::dyn_cast_or_null<clang::CXXDestructorDecl>(
-                      destructor->getDefinition());
-        if (record == nullptr || definition == nullptr) {
-          fail(returned->getReturnLoc(),
-               "could not resolve the automatic object's destructor at the return edge");
-          return std::nullopt;
+        for (auto iterator = cleanup->second.rbegin();
+             iterator != cleanup->second.rend(); ++iterator) {
+          const clang::VarDecl *local = *iterator;
+          const auto *record_type = local->getType()->getAs<clang::RecordType>();
+          const auto *record =
+              record_type == nullptr
+                  ? nullptr
+                  : llvm::dyn_cast<clang::CXXRecordDecl>(
+                        record_type->getDecl()->getDefinition());
+          const clang::CXXDestructorDecl *destructor =
+              record == nullptr ? nullptr : record->getDestructor();
+          const auto *definition =
+              destructor == nullptr
+                  ? nullptr
+                  : llvm::dyn_cast_or_null<clang::CXXDestructorDecl>(
+                        destructor->getDefinition());
+          if (record == nullptr || definition == nullptr) {
+            fail(returned->getReturnLoc(),
+                 "could not resolve the automatic object's destructor at the return edge");
+            return std::nullopt;
+          }
+          llvm::json::Object object;
+          object["declaration_id"] = declaration_id(local);
+          object["name"] = local->getNameAsString();
+          object["span"] = span(local->getSourceRange());
+          llvm::json::Object callee;
+          callee["declaration_id"] = declaration_id(definition);
+          callee["name"] = destructor_name(definition);
+          callee["span"] = span(definition->getNameInfo().getSourceRange());
+          llvm::json::Object cleanup_call;
+          cleanup_call["kind"] = "destructor";
+          cleanup_call["object"] = std::move(object);
+          cleanup_call["callee"] = std::move(callee);
+          cleanup_call["span"] = span(returned->getSourceRange());
+          cleanups.push_back(std::move(cleanup_call));
         }
-        llvm::json::Object object;
-        object["declaration_id"] = declaration_id(local);
-        object["name"] = local->getNameAsString();
-        object["span"] = span(local->getSourceRange());
-        llvm::json::Object callee;
-        callee["declaration_id"] = declaration_id(definition);
-        callee["name"] = destructor_name(definition);
-        callee["span"] = span(definition->getNameInfo().getSourceRange());
-        llvm::json::Object cleanup_call;
-        cleanup_call["kind"] = "destructor";
-        cleanup_call["object"] = std::move(object);
-        cleanup_call["callee"] = std::move(callee);
-        cleanup_call["span"] = span(returned->getSourceRange());
-        cleanups.push_back(std::move(cleanup_call));
       }
       result["cleanups"] = std::move(cleanups);
       result["span"] = span(returned->getSourceRange());
@@ -605,16 +608,21 @@ private:
     }
     if (record_object) {
       const clang::FunctionDecl *canonical = function->getCanonicalDecl();
-      if (!functions_with_aggregate_local_.insert(canonical).second) {
-        fail(local->getLocation(),
-             "the first C++ aggregate-local slice permits one object per function");
-        return std::nullopt;
-      }
       if (!remember_record(record)) {
         return std::nullopt;
       }
       const clang::CXXDestructorDecl *destructor = record->getDestructor();
-      if (destructor != nullptr && !destructor->isImplicit()) {
+      const bool destructible = destructor != nullptr && !destructor->isImplicit();
+      if (!functions_with_aggregate_local_.insert(canonical).second) {
+        const auto previous = cleanup_locals_.find(canonical);
+        if (!destructible || previous == cleanup_locals_.end() ||
+            previous->second.size() != 1) {
+          fail(local->getLocation(),
+               "the supported C++ slice permits one aggregate object or exactly two destructible objects per function");
+          return std::nullopt;
+        }
+      }
+      if (destructible) {
         const auto *definition =
             llvm::dyn_cast_or_null<clang::CXXDestructorDecl>(
                 destructor->getDefinition());
@@ -626,7 +634,7 @@ private:
           }
           return std::nullopt;
         }
-        cleanup_locals_.emplace(canonical, local);
+        cleanup_locals_[canonical].push_back(local);
         if (known_functions_.insert(definition->getCanonicalDecl()).second) {
           reachable_definitions_.push_back(definition);
         }
@@ -1547,7 +1555,8 @@ private:
   std::vector<const clang::CXXRecordDecl *> record_definitions_;
   std::unordered_set<const clang::FunctionDecl *>
       functions_with_aggregate_local_;
-  std::unordered_map<const clang::FunctionDecl *, const clang::VarDecl *>
+  std::unordered_map<const clang::FunctionDecl *,
+                     std::vector<const clang::VarDecl *>>
       cleanup_locals_;
 };
 

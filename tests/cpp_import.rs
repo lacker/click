@@ -59,6 +59,10 @@ const EARLY_RETURN_DESTRUCTOR_SOURCE: &str =
     include_str!("fixtures/cpp-verification/early-return-destructor/with_restore.cpp");
 const EARLY_RETURN_DESTRUCTOR_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/early-return-destructor/with_restore.click");
+const REVERSE_DESTRUCTOR_SOURCE: &str =
+    include_str!("fixtures/cpp-verification/reverse-destructor-order/restore_twice.cpp");
+const REVERSE_DESTRUCTOR_SIDECAR: &str =
+    include_str!("fixtures/cpp-verification/reverse-destructor-order/restore_twice.click");
 
 struct Project {
     directory: PathBuf,
@@ -116,6 +120,14 @@ impl Project {
             "with_restore.cpp",
             "with_restore",
             EARLY_RETURN_DESTRUCTOR_SOURCE,
+        )
+    }
+
+    fn reverse_destructor_order() -> Self {
+        Self::with_fixture(
+            "restore_twice.cpp",
+            "restore_twice",
+            REVERSE_DESTRUCTOR_SOURCE,
         )
     }
 
@@ -530,6 +542,39 @@ fn call_order(statement: &CStatement) -> Vec<&str> {
     let mut calls = Vec::new();
     visit(statement, &mut calls);
     calls
+}
+
+fn destructor_object_order<'a>(statement: &'a CStatement, destructor: &str) -> Vec<&'a str> {
+    fn visit<'a>(statement: &'a CStatement, destructor: &str, objects: &mut Vec<&'a str>) {
+        match statement {
+            CStatement::Call {
+                function_name,
+                arguments,
+            } if function_name == destructor => {
+                if let [CExpression::Cast { expression, .. }] = arguments.as_slice()
+                    && let CExpression::Variable(name) = expression.as_ref()
+                {
+                    objects.push(name);
+                }
+            }
+            CStatement::Seq(first, second) => {
+                visit(first, destructor, objects);
+                visit(second, destructor, objects);
+            }
+            CStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                visit(then_branch, destructor, objects);
+                visit(else_branch, destructor, objects);
+            }
+            _ => {}
+        }
+    }
+    let mut objects = Vec::new();
+    visit(statement, destructor, &mut objects);
+    objects
 }
 
 fn contains_aggregate_construction_begin(statement: &CStatement, expected: &str) -> bool {
@@ -1567,6 +1612,103 @@ fn every_return_after_construction_runs_the_checked_destructor() {
 }
 
 #[test]
+fn two_constructed_objects_are_destroyed_in_reverse_order_on_every_return() {
+    let project = Project::reverse_destructor_order();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, REVERSE_DESTRUCTOR_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("export reverse cleanup on both C++ return edges");
+    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+
+    let import = load_import(&project.config()).expect("load the ordered cleanup artifact offline");
+    assert_eq!(import.export().schema, 9);
+    let [
+        CppStatement::Declare { local: first, .. },
+        CppStatement::Declare { local: second, .. },
+        CppStatement::If { then_branch, .. },
+        CppStatement::Assign { .. },
+        CppStatement::Return {
+            cleanups: final_cleanups,
+            ..
+        },
+    ] = import.export().function.body.as_slice()
+    else {
+        panic!("the two constructed objects and return edges were not retained")
+    };
+    let [
+        CppStatement::Return {
+            cleanups: early_cleanups,
+            ..
+        },
+    ] = then_branch.as_slice()
+    else {
+        panic!("the early return edge was not retained")
+    };
+    assert_eq!(first.name, "first");
+    assert_eq!(second.name, "second");
+    for cleanups in [early_cleanups, final_cleanups] {
+        let [
+            CppCleanup::Destructor {
+                object: second_cleanup,
+                ..
+            },
+            CppCleanup::Destructor {
+                object: first_cleanup,
+                ..
+            },
+        ] = cleanups.as_slice()
+        else {
+            panic!("each return must retain two destructor calls")
+        };
+        assert_eq!(second_cleanup.declaration_id, second.declaration_id);
+        assert_eq!(first_cleanup.declaration_id, first.declaration_id);
+    }
+
+    let lowered = lower_import(&import).expect("lower both reversed cleanup lists");
+    assert_eq!(
+        destructor_object_order(lowered.kernel_function().body(), "Restore_destructor"),
+        ["second", "first", "second", "first"]
+    );
+
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify both return values and reverse-order restoration");
+
+    let execute = cpp_prepared_project_tactic_source_position(
+        &click_project,
+        &import,
+        "restore_twice.contract",
+        0,
+    )
+    .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .expect("expand the proof across both ordered cleanup lists");
+    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+        .expect("the expanded reverse-cleanup proof must reverify");
+
+    let rejected = Project::reverse_destructor_order();
+    fs::write(
+        rejected.source(),
+        REVERSE_DESTRUCTOR_SOURCE.replace(
+            "Restore second(&value);",
+            "Restore second(&value);\n    Restore third(&value);",
+        ),
+    )
+    .unwrap();
+    let error = refresh_import(&rejected.config()).unwrap_err();
+    assert!(error.contains("restore_twice.cpp"), "{error}");
+    assert!(
+        error.contains("exactly two destructible objects"),
+        "{error}"
+    );
+}
+
+#[test]
 fn constructor_local_rejects_implicit_throwing_partial_and_reordered_forms() {
     let project = Project::constructor_local();
     for (source, expected) in [
@@ -1670,7 +1812,7 @@ fn cpp_local_aggregate_rejects_partial_default_copy_nested_and_second_objects() 
         ),
         (
             "struct RestoreState { int* pointer; int saved; };\nint stage_restore(int& value) noexcept {\n    RestoreState first{&value, value};\n    RestoreState second{&value, value};\n    return value;\n}\n",
-            "one object per function",
+            "one aggregate object or exactly two destructible objects",
         ),
     ] {
         fs::write(project.source(), source).unwrap();

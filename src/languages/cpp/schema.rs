@@ -667,7 +667,7 @@ impl CppFunction {
             return Err("supported C++ function has no executable statements".into());
         }
         let mut aggregate_locals = 0;
-        let mut destructible_local = None;
+        let mut destructible_locals = Vec::new();
         for statement in &self.body {
             if let CppStatement::Declare {
                 local,
@@ -690,9 +690,9 @@ impl CppFunction {
                     } => {
                         let record = validate_record_reference(records, declaration_id, name)?;
                         aggregate_locals += 1;
-                        if aggregate_locals > 1 {
+                        if aggregate_locals > 2 {
                             return Err(format!(
-                                "C++ function `{}` declares more than one aggregate local",
+                                "C++ function `{}` declares more than two aggregate locals",
                                 self.name
                             ));
                         }
@@ -703,7 +703,7 @@ impl CppFunction {
                                     local.name
                                 ));
                             }
-                            destructible_local = Some(local.clone());
+                            destructible_locals.push(local.clone());
                         }
                     }
                     _ => {
@@ -741,14 +741,20 @@ impl CppFunction {
                 statement.validate(&places, records, logical_source)?;
             }
         }
-        if let Some(local) = destructible_local {
+        if aggregate_locals > 1 && destructible_locals.len() != aggregate_locals {
+            return Err(format!(
+                "C++ function `{}` may declare two aggregate locals only when both require destruction",
+                self.name
+            ));
+        }
+        if !destructible_locals.is_empty() {
             let Some(CppStatement::Return { .. }) = self.body.last() else {
                 return Err(format!(
                     "C++ function `{}` with automatic destruction requires one final return",
                     self.name
                 ));
             };
-            validate_return_cleanups(&self.body, &self.name, &local)?;
+            validate_return_cleanups(&self.body, &self.name, &destructible_locals)?;
         } else if sequence_contains_cleanup(&self.body) {
             return Err(format!(
                 "C++ function `{}` has cleanup without a constructed automatic object",
@@ -1207,20 +1213,14 @@ fn sequence_contains_cleanup(statements: &[CppStatement]) -> bool {
 fn validate_return_cleanups(
     statements: &[CppStatement],
     function_name: &str,
-    local: &CppPlace,
+    locals: &[CppPlace],
 ) -> Result<(), String> {
     for statement in statements {
         match statement {
             CppStatement::Return { cleanups, .. } => {
-                if !matches!(
-                    cleanups.as_slice(),
-                    [CppCleanup::Destructor { object, .. }]
-                        if object.declaration_id == local.declaration_id
-                            && object.name == local.name
-                ) {
+                if !return_cleanups_match(cleanups, locals) {
                     return Err(format!(
-                        "C++ return from `{function_name}` must destroy local `{}` exactly once",
-                        local.name
+                        "C++ return from `{function_name}` must destroy every constructed local exactly once in reverse construction order"
                     ));
                 }
             }
@@ -1229,8 +1229,8 @@ fn validate_return_cleanups(
                 else_branch,
                 ..
             } => {
-                validate_return_cleanups(then_branch, function_name, local)?;
-                validate_return_cleanups(else_branch, function_name, local)?;
+                validate_return_cleanups(then_branch, function_name, locals)?;
+                validate_return_cleanups(else_branch, function_name, locals)?;
             }
             CppStatement::Declare { .. }
             | CppStatement::Assign { .. }
@@ -1240,6 +1240,21 @@ fn validate_return_cleanups(
         }
     }
     Ok(())
+}
+
+fn return_cleanups_match(cleanups: &[CppCleanup], locals: &[CppPlace]) -> bool {
+    cleanups.len() == locals.len()
+        && cleanups
+            .iter()
+            .zip(locals.iter().rev())
+            .all(|(cleanup, local)| {
+                matches!(
+                    cleanup,
+                    CppCleanup::Destructor { object, .. }
+                        if object.declaration_id == local.declaration_id
+                            && object.name == local.name
+                )
+            })
 }
 
 impl CppStatement {
@@ -1685,10 +1700,67 @@ fn require_bool(value: &CppType, allow_const: bool, label: &str) -> Result<(), S
 mod tests {
     use super::*;
 
+    fn cleanup_place(declaration_id: &str, name: &str) -> CppPlace {
+        CppPlace {
+            declaration_id: declaration_id.into(),
+            name: name.into(),
+            value_type: CppType::Record {
+                declaration_id: "record".into(),
+                name: "Guard".into(),
+            },
+            span: cleanup_span(),
+        }
+    }
+
+    fn cleanup_for(local: &CppPlace) -> CppCleanup {
+        CppCleanup::Destructor {
+            object: CppPlaceReference {
+                declaration_id: local.declaration_id.clone(),
+                name: local.name.clone(),
+                span: cleanup_span(),
+            },
+            callee: CppFunctionReference {
+                declaration_id: "destructor".into(),
+                name: "Guard_destructor".into(),
+                span: cleanup_span(),
+            },
+            span: cleanup_span(),
+        }
+    }
+
+    fn cleanup_span() -> CppSpan {
+        CppSpan {
+            file: "fixture.cpp".into(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 1,
+            end_column: 2,
+        }
+    }
+
     #[test]
     fn schema_refuses_unknown_fields() {
         let input = br#"{"schema":1,"surprise":1}"#;
         let error = serde_json::from_slice::<CppExport>(input).unwrap_err();
         assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn return_cleanup_list_requires_each_local_once_in_reverse_order() {
+        let first = cleanup_place("first", "first");
+        let second = cleanup_place("second", "second");
+        let locals = [first.clone(), second.clone()];
+        let reversed = [cleanup_for(&second), cleanup_for(&first)];
+        assert!(return_cleanups_match(&reversed, &locals));
+
+        assert!(!return_cleanups_match(&reversed[..1], &locals));
+        assert!(!return_cleanups_match(
+            &[cleanup_for(&second), cleanup_for(&second)],
+            &locals
+        ));
+        assert!(!return_cleanups_match(
+            &[cleanup_for(&first), cleanup_for(&second)],
+            &locals
+        ));
     }
 }
