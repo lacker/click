@@ -4412,6 +4412,30 @@ fn project_explicit_memory_segments(
     Ok(Ok((ranges.into_iter().collect(), evidence_facts)))
 }
 
+/// The canonical owned memory ranges one checked owned fact denotes: the
+/// fact expanded through the composite definitions over `memory`, every
+/// owned range of the expansion in canonical form. This is the one
+/// derivation of a resource-derived write footprint, for a function's frame
+/// and a loop's declared frame alike; nothing lowered from source is a
+/// second source of it. `None` when the expansion is unavailable.
+pub(super) fn checked_owned_memory_ranges(
+    fact: &CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &PureFactContext,
+) -> Option<Vec<CMemoryRange>> {
+    let singleton = ResourceContext::new().unchecked_with_fact(fact.clone());
+    let expanded =
+        expand_all_composite_resource_facts(&singleton, definitions, memory, assumptions)?;
+    Some(
+        expanded
+            .facts()
+            .iter()
+            .filter_map(|fact| Some(canonical_memory_range(fact.memory_own_range()?.clone())))
+            .collect(),
+    )
+}
+
 pub(crate) fn project_contract_memory_effects_with_guard_policy(
     entry: &CState,
     interface: &CFunctionContractInterface,
@@ -4476,9 +4500,8 @@ pub(crate) fn project_contract_memory_effects_with_guard_policy(
             if !checked.fact.is_own() {
                 continue;
             }
-            let singleton = ResourceContext::new().unchecked_with_fact(checked.fact.clone());
-            let Some(expanded) = expand_all_composite_resource_facts(
-                &singleton,
+            let Some(expanded) = checked_owned_memory_ranges(
+                &checked.fact,
                 interface.composite_resource_definitions(),
                 entry.memory(),
                 assumptions,
@@ -4487,10 +4510,7 @@ pub(crate) fn project_contract_memory_effects_with_guard_policy(
                     "could not expand the checked resource transition".to_string()
                 ));
             };
-            for range in expanded.facts().iter().filter_map(|fact| {
-                let range = fact.memory_own_range()?;
-                Some(canonical_memory_range(range.clone()))
-            }) {
+            for range in expanded {
                 // Every byte of the expansion belongs to this one requirement,
                 // whatever depth it came from, so the requirement is the
                 // provenance recorded for each of its ranges.
@@ -4724,6 +4744,59 @@ pub(crate) fn validate_resource_derived_loop_frames(
     check_statement(function.body())
 }
 
+/// Whether an owned composite the interface requires has a guarded body
+/// anywhere under it. A resource-derived footprint used to be lowered from
+/// source with the enclosing conditions as guards on every segment beneath
+/// them; the kernel now reads the definitions instead, so the refusals those
+/// guards produced are unchanged.
+fn requirements_reach_a_guarded_composite(interface: &CFunctionContractInterface) -> bool {
+    fn composite_name(spec: &CResourceSpec) -> Option<&str> {
+        match spec.term() {
+            CResourceTerm::Composite { name, .. } => Some(name),
+            CResourceTerm::Instance { resource, .. } => match resource.as_ref() {
+                CResourceTerm::Composite { name, .. } => Some(name),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    fn guarded(
+        name: &str,
+        definitions: &[CCompositeResourceDefinition],
+        active: &mut BTreeSet<String>,
+    ) -> bool {
+        if !active.insert(name.to_string()) {
+            return false;
+        }
+        let result = definitions
+            .iter()
+            .find(|definition| definition.name() == name)
+            .is_some_and(|definition| {
+                definition.condition().is_some()
+                    || definition
+                        .contains()
+                        .iter()
+                        .filter(|spec| spec.access() == CResourceAccessMode::Own)
+                        .filter_map(composite_name)
+                        .any(|child| guarded(child, definitions, active))
+            });
+        active.remove(name);
+        result
+    }
+    interface
+        .resource_requires()
+        .iter()
+        .filter(|spec| spec.access() == CResourceAccessMode::Own)
+        .filter_map(composite_name)
+        .any(|name| {
+            guarded(
+                name,
+                interface.composite_resource_definitions(),
+                &mut BTreeSet::new(),
+            )
+        })
+}
+
 fn evaluate_contract_mutable_ranges_for_interface(
     interface: &CFunctionContractInterface,
     entry: &CState,
@@ -4732,10 +4805,12 @@ fn evaluate_contract_mutable_ranges_for_interface(
     require_unguarded: bool,
 ) -> ExecutionResult<Option<Vec<CMemoryRange>>> {
     if require_unguarded
-        && interface
+        && (interface
             .contract_mutable()
             .iter()
             .any(|s| s.guard().is_some())
+            || (interface.resource_derived_mutable_frame()
+                && requirements_reach_a_guarded_composite(interface)))
     {
         return Ok(None);
     }

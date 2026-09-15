@@ -341,10 +341,24 @@ D2 is settled: rebuild from the record. Depends on W5' and W6'.
   project the same effects, hand the callee the same authority, and leave
   the caller the same unrelated frame; they differ only in the lend. This
   closes the fix-views carry-over item about the definitional routes.
-- Retire or demote the surface footprint traversal
-  (`collect_owned_resource_memory_segments` and its consumers in
-  `function_contract_summary`): either delete it or make it a read-only
-  consumer of the kernel projection, with a test that it cannot disagree.
+- Retire the surface footprint traversal (done 2026-09-14, `Derive every
+  resource-derived write footprint in the kernel`). The traversal
+  `collect_owned_resource_memory_segments` and the interface's
+  `resource_derived_mutable_segments` are deleted. Its two consumers now
+  read the kernel: a function's frame comes from `project_contract_memory_effects`
+  as before, and a loop's declared frame is installed at loop entry by
+  `install_declared_loop_frames` from the kernel's evaluation of the loop's
+  own specs through the one shared derivation, `checked_owned_memory_ranges`.
+  A resource-origin loop check (declared or inherited) without installed
+  ranges fails closed; the segment list on such a check is never read. The
+  "mixed" refusal now means an explicit effect segment beside a
+  resource-derived frame, which no source can spell since the `mutable`
+  clause was removed; the guard a derived segment used to carry for
+  automatic refinement is read from the composite definitions instead
+  (`requirements_reach_a_guarded_composite`). Regressions:
+  `declared_loop_frame_is_installed_from_the_loop_specs_not_from_segments`,
+  the existing loop fixtures (135 pass unchanged), and the retained
+  no-fallback and mixed-frame kernel tests.
 - Unify resource clause numbering: the surface stall diagnostic in
   `resource_lowering.rs` counts surface clauses while the kernel counts
   lowered specs; a `MemoryAggregate` clause that lowers to several specs
@@ -404,7 +418,7 @@ without explicit user authorization.
 - Clause evaluation does not lose available authority because an address
   depends on memory inside a folded resource.
 - The transition projection is the sole memory-effect source; no surface
-  reconstruction can disagree with it.
+  reconstruction can disagree with it (done: no surface footprint exists).
 - No memory-DAG or frame query scans compositions unrelated to its subject
   (D1 settled and implemented), with curves pinning the bound.
 - Observations survive exactly when their support permits; scoped views do

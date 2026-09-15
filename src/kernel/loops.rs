@@ -2531,7 +2531,7 @@ fn execute_c_while_exit_paths(
                 &head,
                 condition,
                 invariant_checks,
-                effect_checks,
+                &head.effect_checks,
                 resource_specs,
                 ranking_measures,
                 structural_measure,
@@ -3442,10 +3442,16 @@ fn evaluate_whole_loop_effect_ranges(
                     ranges_by_summary.push(validated.to_vec());
                     continue;
                 }
-                if check.origin() == CLoopEffectOrigin::InheritedResourceDerived {
-                    // The source-oriented segments are diagnostic metadata;
-                    // an inherited resource frame is authoritative only after
-                    // entry transition setup has installed fixed ranges.
+                if matches!(
+                    check.origin(),
+                    CLoopEffectOrigin::InheritedResourceDerived
+                        | CLoopEffectOrigin::DeclaredResource
+                ) {
+                    // A resource-derived frame carries no segments of its
+                    // own: it is authoritative only once the checked entry
+                    // transition (for an inherited frame) or the loop's
+                    // entry evaluation (for a declared one) has installed
+                    // fixed ranges.
                     all_ranges_evaluable = false;
                     continue;
                 }
@@ -3517,6 +3523,10 @@ pub(super) struct CLoopHead {
     /// Why a declared loop resource could not be taken from the enclosing
     /// resource context. A non-empty list is a verification failure.
     pub(super) resource_failures: Vec<String>,
+    /// The loop's effect checks with every declared-resource frame installed
+    /// from the checked evaluation of the loop's own resource specs at entry.
+    /// Every later check of this loop reads these, never the originals.
+    pub(super) effect_checks: Vec<CLoopEffectCheck>,
 }
 
 impl CLoopHead {
@@ -3557,6 +3567,65 @@ pub(super) fn environment_composite_resource_definitions(
         })
 }
 
+/// Installs a loop's declared-resource frame from the kernel's own reading
+/// of the loop's resource specs at entry: each owned spec evaluated against
+/// the entering context, expanded through the composite definitions, and
+/// its owned ranges canonicalized, the same derivation a function's
+/// resource-derived frame gets. A check that already carries validated
+/// ranges keeps them. When the specs do not evaluate, the checks stay
+/// uninstalled and the loop's declaration failure is the verdict; the
+/// declared frame then fails closed like an inherited one.
+fn install_declared_loop_frames(
+    entry_state: &CState,
+    effect_checks: &[CLoopEffectCheck],
+    resource_specs: &[CResourceSpec],
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CLoopEffectCheck>> {
+    if !effect_checks.iter().any(|check| {
+        check.origin() == CLoopEffectOrigin::DeclaredResource && check.validated_ranges().is_none()
+    }) {
+        return Ok(effect_checks.to_vec());
+    }
+    let Ok((_, checked)) = super::functions::evaluate_function_resource_context_with_metadata(
+        entry_state,
+        resource_specs,
+        definitions,
+        assumptions,
+        budget,
+    )?
+    else {
+        return Ok(effect_checks.to_vec());
+    };
+    let mut ranges = BTreeSet::new();
+    for fact in checked.iter().filter(|checked| checked.fact.is_own()) {
+        crate::instrumentation::record_deterministic_work(1);
+        let Some(expanded) = super::functions::checked_owned_memory_ranges(
+            &fact.fact,
+            definitions,
+            entry_state.memory(),
+            assumptions,
+        ) else {
+            return Ok(effect_checks.to_vec());
+        };
+        ranges.extend(expanded);
+    }
+    let ranges = ranges.into_iter().collect::<Vec<_>>();
+    Ok(effect_checks
+        .iter()
+        .map(|check| {
+            if check.origin() == CLoopEffectOrigin::DeclaredResource
+                && check.validated_ranges().is_none()
+            {
+                check.clone().with_validated_ranges(ranges.clone())
+            } else {
+                check.clone()
+            }
+        })
+        .collect())
+}
+
 pub(super) fn prepare_loop_top_state(
     entry_state: &CState,
     effect_checks: &[CLoopEffectCheck],
@@ -3568,10 +3637,18 @@ pub(super) fn prepare_loop_top_state(
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<CLoopHead> {
+    let effect_checks = install_declared_loop_frames(
+        entry_state,
+        effect_checks,
+        resource_specs,
+        definitions,
+        assumptions,
+        budget,
+    )?;
     let include_mutable_summaries = statement_may_write_memory(entry_state, body);
     let (effect_ranges, all_ranges_evaluable) = evaluate_whole_loop_effect_ranges(
         entry_state,
-        effect_checks,
+        &effect_checks,
         include_mutable_summaries,
         assumptions,
         budget,
@@ -3720,6 +3797,7 @@ pub(super) fn prepare_loop_top_state(
         entry: entry_state,
         summaries,
         resource_failures,
+        effect_checks,
     })
 }
 
@@ -4502,13 +4580,17 @@ pub(super) fn collect_loop_effect_check_obligations(
                             element_width: range.element_width,
                         })
                         .collect()
-                } else if check.origin() == CLoopEffectOrigin::InheritedResourceDerived {
+                } else if matches!(
+                    check.origin(),
+                    CLoopEffectOrigin::InheritedResourceDerived
+                        | CLoopEffectOrigin::DeclaredResource
+                ) {
                     segment_evaluation_failed = true;
                     push_false_loop_effect_obligation(
                         &mut obligations,
                         loop_effect_failure_context(
                             check,
-                            "inherited resource frame was not established from the checked entry transition".to_string(),
+                            "resource-derived loop frame was not established from the checked entry transition".to_string(),
                         ),
                     );
                     Vec::new()

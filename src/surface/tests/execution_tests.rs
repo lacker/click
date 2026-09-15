@@ -651,12 +651,11 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
                                 invariant,
                                 invariant_checks,
                                 vec![
+                                    // A resource-derived frame is lowered without
+                                    // segments; the kernel installs its ranges from
+                                    // the checked entry transition.
                                     CLoopEffectCheck::new_with_origin(
-                                        CLoopEffect::Mutable(vec![CMemorySegment::new(
-                                            crate::kernel::c_variable("p"),
-                                            crate::kernel::c_int32_literal(0),
-                                            crate::kernel::c_int32_literal(3),
-                                        )]),
+                                        CLoopEffect::Mutable(Vec::new()),
                                         CLoopEffectSpan::Whole,
                                         CLoopEffectOrigin::InheritedResourceDerived,
                                         Some("loop 0 inherited owned resource frame".to_string()),
@@ -703,11 +702,9 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
                     operator: CComparisonOperator::Equal,
                     right: SpecExpression::Value(int32(2)),
                 }],
-                vec![CMemorySegment::new(
-                    CExpression::Variable("p".to_string()),
-                    CExpression::Value(int32(0)),
-                    CExpression::Value(int32(3)),
-                )],
+                // The write footprint is not lowered: the kernel projects it
+                // from the resource clause, so the explicit list stays empty.
+                Vec::new(),
                 vec![CFunctionContractClaim::ensure_proposition(0, 0)],
                 true,
             )

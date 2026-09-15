@@ -1355,6 +1355,104 @@ fn resource_derived_loop_frame_rejects_wrapper_range_disagreement() {
 }
 
 #[test]
+fn declared_loop_frame_is_installed_from_the_loop_specs_not_from_segments() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("local:loop-declared:data".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let definition = CCompositeResourceDefinition::new(
+        "LoopWrapper",
+        vec![c_parameter("data", CType::Int32Pointer)],
+        None,
+        false,
+        vec![CResourceSpec::owned_memory(CMemorySegment::new(
+            CExpression::Variable("data".into()),
+            CExpression::Value(int32(0)),
+            CExpression::Value(int32(1)),
+        ))],
+        vec![],
+    );
+    let spec = CResourceSpec::composite(
+        CResourceAccessMode::Own,
+        "LoopWrapper".into(),
+        vec![CExpression::Variable("p".into())],
+        vec![CType::Int32Pointer],
+    );
+    let state = CState::new()
+        .with_local("p", CValue::pointer(pointer.clone()))
+        .with_memory(CMemory::new().with_block(pointer.block.clone(), 4))
+        .with_resource_context(ResourceContext::new().unchecked_with_fact(
+            CResourceFact::own_composite(
+                "LoopWrapper".into(),
+                vec![CValue::pointer(pointer.clone())],
+            ),
+        ));
+    // The surface lowers no segments for a declared frame; a stale or
+    // hostile segment list here must be ignored either way.
+    let declared = CLoopEffectCheck::new_with_origin(
+        CLoopEffect::Mutable(vec![CMemorySegment::new(
+            CExpression::Variable("p".into()),
+            CExpression::Value(int32(5)),
+            CExpression::Value(int32(9)),
+        )]),
+        CLoopEffectSpan::Whole,
+        CLoopEffectOrigin::DeclaredResource,
+        Some("loop 0 declared owned resource frame".into()),
+    );
+    let assumptions = PureFactContext::new();
+    let head = |definitions: &[CCompositeResourceDefinition]| {
+        let mut budget = ExecutionBudget::default();
+        let mut variables = KernelVariableGenerator::fresh_for(1_000, BTreeSet::new());
+        crate::kernel::loops::prepare_loop_top_state(
+            &state,
+            std::slice::from_ref(&declared),
+            &[],
+            std::slice::from_ref(&spec),
+            definitions,
+            &CStatement::Skip,
+            &assumptions,
+            &mut budget,
+            &mut variables,
+        )
+        .unwrap()
+    };
+
+    // With the loop's spec, the frame is the composite's expanded memory,
+    // read from the kernel's evaluation of that spec: not the segments.
+    let installed = head(std::slice::from_ref(&definition));
+    assert!(installed.resource_failures.is_empty());
+    let ranges = installed.effect_checks[0]
+        .validated_ranges()
+        .expect("a declared frame is installed at loop entry");
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].base(), &pointer);
+    assert_eq!(ranges[0].start(), &Bitvector32Term::Constant(0));
+    assert_eq!(ranges[0].end(), &Bitvector32Term::Constant(1));
+
+    // When the kernel cannot read the spec (no definition to expand it
+    // through), the frame stays uninstalled and the back edge refuses it;
+    // the segments are never a fallback. A spec the entering context holds
+    // no resource for is installed from its denotation, exactly as before,
+    // and the loop's declaration failure is the verdict for that case.
+    let bare = head(&[]);
+    assert!(bare.effect_checks[0].validated_ranges().is_none());
+    let obligations = crate::kernel::loops::collect_loop_effect_check_obligations(
+        &state,
+        &state,
+        &bare.effect_checks,
+        &[],
+        &[],
+        &assumptions,
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+    assert!(
+        !obligations.is_empty(),
+        "an uninstalled declared frame must be refused"
+    );
+}
+
+#[test]
 fn resource_derived_loop_setup_does_not_fallback_to_surface_metadata() {
     let pointer = Pointer {
         block: PointerBlock::Concrete("local:loop-fallback:data".to_string()),
@@ -1406,8 +1504,7 @@ fn resource_derived_loop_setup_does_not_fallback_to_surface_metadata() {
     )
     .with_contract(vec![], vec![], vec![], vec![], true)
     .with_resource_summary(vec![quantity], vec![])
-    .with_resource_derived_mutable_frame()
-    .with_resource_derived_mutable_segments(vec![source_segment]);
+    .with_resource_derived_mutable_frame();
     let state = CState::new()
         .with_local("p", CValue::pointer(pointer.clone()))
         .with_memory(CMemory::new().with_block(pointer.block, 4));

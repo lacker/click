@@ -5391,7 +5391,6 @@ pub(in crate::surface) fn build_function_environment(
                     contract_requirement_sources,
                     contract_ensures,
                     contract_mutable,
-                    resource_derived_mutable,
                     contract_claims,
                     opaque_supported,
                     predicate_unfoldings,
@@ -5424,8 +5423,6 @@ pub(in crate::surface) fn build_function_environment(
                         opaque_supported,
                     )
                     .with_contract_requirement_sources(contract_requirement_sources);
-                let function =
-                    function.with_resource_derived_mutable_segments(resource_derived_mutable);
                 if resource_derived_mutable_frame {
                     function.with_resource_derived_mutable_frame()
                 } else {
@@ -6047,26 +6044,6 @@ fn resource_clause_to_resource_spec_with_metadata(
             .map_err(|error| ClickError::new(error.to_string()))
         }
     }
-}
-
-pub(in crate::surface) fn resource_argument_contract_substitutions(
-    definition: &ResourceDefinition,
-    arguments: &[ContractExpression],
-) -> Result<BTreeMap<String, ContractExpression>, ClickError> {
-    if definition.parameters().len() != arguments.len() {
-        return Err(ClickError::new(format!(
-            "resource `{}` expects {} argument(s), got {}",
-            definition.name(),
-            definition.parameters().len(),
-            arguments.len()
-        )));
-    }
-    Ok(definition
-        .parameters()
-        .iter()
-        .zip(arguments)
-        .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
-        .collect())
 }
 
 pub(in crate::surface) fn substitute_resource_clause_for_summary<'a>(

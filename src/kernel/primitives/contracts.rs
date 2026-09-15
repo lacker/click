@@ -698,7 +698,6 @@ impl CFunctionContractInterface {
             contract_requirement_sources: ContractRequirementSources::default(),
             contract_ensures: Vec::new(),
             contract_mutable: Vec::new(),
-            resource_derived_mutable_segments: Vec::new(),
             contract_effect_claim_required: false,
             resource_derived_mutable_frame: false,
             resource_derived_frame_mixed: false,
@@ -823,7 +822,6 @@ impl CFunctionContractInterface {
             && self.contract_requires == other.contract_requires
             && self.contract_ensures == other.contract_ensures
             && self.contract_mutable == other.contract_mutable
-            && self.resource_derived_mutable_segments == other.resource_derived_mutable_segments
             && self.contract_effect_claim_required == other.contract_effect_claim_required
             && self.resource_derived_mutable_frame == other.resource_derived_mutable_frame
             && self.resource_derived_frame_mixed == other.resource_derived_frame_mixed
@@ -1001,33 +999,12 @@ impl CFunction {
             ContractRequirementSources(vec![None; self.contract_interface.contract_requires.len()]);
         self.contract_interface.contract_ensures = ensures;
         self.contract_interface.contract_mutable = mutable;
-        self.contract_interface
-            .resource_derived_mutable_segments
-            .clear();
         self.contract_interface.resource_derived_frame_mixed = false;
         self.contract_interface.contract_effect_claim_required =
             !self.contract_interface.contract_mutable.is_empty();
         self.contract_interface.resource_derived_mutable_frame = false;
         self.contract_interface.contract_claims = claims;
         self.contract_interface.opaque_contract_supported = opaque_supported;
-        self
-    }
-
-    /// Retain the source-derived resource frame separately from startup or
-    /// explicit effect metadata. This is checked when the derived marker is
-    /// installed, so a mixed interface cannot silently drop an explicit
-    /// segment from its modular memory authority.
-    pub(crate) fn with_resource_derived_mutable_segments(
-        mut self,
-        segments: Vec<CMemorySegment>,
-    ) -> Self {
-        self.contract_interface.resource_derived_mutable_segments = segments;
-        if self.contract_interface.resource_derived_mutable_frame {
-            self.contract_interface.resource_derived_frame_mixed =
-                !self.contract_interface.contract_mutable.is_empty()
-                    && self.contract_interface.contract_mutable
-                        != self.contract_interface.resource_derived_mutable_segments;
-        }
         self
     }
 
@@ -1053,25 +1030,16 @@ impl CFunction {
     /// function-level Effect claim. This narrow crate-level escape hatch is
     /// used by the surface lowering; external kernel callers retain the
     /// default requirement that a nonempty frame have an Effect claim.
+    /// Mark the function's write footprint as derived from its resources.
+    /// The footprint itself is never stored: the kernel projects it from the
+    /// checked resource transition whenever it is needed, so no lowered
+    /// segment list can disagree with it. An explicit effect segment beside
+    /// a resource-derived frame is a mixed interface, refused when the
+    /// projection is asked for.
     pub(crate) fn with_resource_derived_mutable_frame(mut self) -> Self {
         self.contract_interface.contract_effect_claim_required = false;
-        if self
-            .contract_interface
-            .resource_derived_mutable_segments
-            .is_empty()
-        {
-            self.contract_interface.resource_derived_mutable_segments = self
-                .contract_interface
-                .resource_requires
-                .iter()
-                .filter_map(CResourceSpec::memory_segment)
-                .cloned()
-                .collect();
-        }
         self.contract_interface.resource_derived_frame_mixed =
-            !self.contract_interface.contract_mutable.is_empty()
-                && self.contract_interface.contract_mutable
-                    != self.contract_interface.resource_derived_mutable_segments;
+            !self.contract_interface.contract_mutable.is_empty();
         self.contract_interface.resource_derived_mutable_frame = true;
         self
     }

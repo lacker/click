@@ -176,16 +176,19 @@ mod resource_frame_substitution_tests {
             CExpression::Value(int32(1)),
         );
         let function = CFunction::new(CType::Void, "substitution", Vec::new(), statement)
+            .with_contract(
+                Vec::new(),
+                Vec::new(),
+                vec![derived_segment],
+                Vec::new(),
+                true,
+            )
             .with_resource_summary(Vec::new(), Vec::new())
-            .with_resource_derived_mutable_segments(vec![derived_segment])
             .with_resource_derived_mutable_frame();
         let substituted = substitute_pointer_variable_in_c_function(&function, from, &replacement);
         assert!(substituted.resource_derived_mutable_frame());
         assert_eq!(
-            substituted
-                .contract_interface()
-                .resource_derived_mutable_segments[0]
-                .base,
+            substituted.contract_mutable()[0].base,
             CExpression::Value(CValue::pointer(replacement))
         );
     }
@@ -4018,12 +4021,6 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
         .iter()
         .map(|segment| substitute_bitvector_variable_in_c_memory_segment(segment, from, to))
         .collect();
-    interface.resource_derived_mutable_segments = function
-        .contract_interface()
-        .resource_derived_mutable_segments
-        .iter()
-        .map(|segment| substitute_bitvector_variable_in_c_memory_segment(segment, from, to))
-        .collect();
     interface.composite_resource_definitions = function
         .composite_resource_definitions()
         .iter()
@@ -7185,12 +7182,6 @@ fn substitute_pointer_variable_in_c_function(
         .collect();
     interface.contract_mutable = function
         .contract_mutable()
-        .iter()
-        .map(|segment| substitute_pointer_variable_in_c_memory_segment(segment, from, to))
-        .collect();
-    interface.resource_derived_mutable_segments = function
-        .contract_interface()
-        .resource_derived_mutable_segments
         .iter()
         .map(|segment| substitute_pointer_variable_in_c_memory_segment(segment, from, to))
         .collect();

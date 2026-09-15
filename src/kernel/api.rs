@@ -3567,12 +3567,6 @@ pub(in crate::kernel) fn proof_evidence_function_refines_same_source(
         && original.contract_requires() == checked.contract_requires()
         && original.contract_ensures() == checked.contract_ensures()
         && original.contract_mutable() == checked.contract_mutable()
-        && original
-            .contract_interface()
-            .resource_derived_mutable_segments
-            == checked
-                .contract_interface()
-                .resource_derived_mutable_segments
         && original.resource_derived_mutable_frame() == checked.resource_derived_mutable_frame()
         && original.contract_interface().resource_derived_frame_mixed
             == checked.contract_interface().resource_derived_frame_mixed

@@ -258,7 +258,6 @@ type FunctionContractSummary = (
     Vec<Option<usize>>,
     Vec<SpecProposition>,
     Vec<CMemorySegment>,
-    Vec<CMemorySegment>,
     Vec<CFunctionContractClaim>,
     bool,
     Vec<CPredicateUnfolding>,
@@ -618,7 +617,6 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
         contract_requirement_sources,
         contract_ensures,
         contract_mutable,
-        resource_derived_mutable,
         contract_claims,
         opaque_contract_supported,
         predicate_unfoldings,
@@ -633,12 +631,13 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
         .requires()
         .iter()
         .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_)));
-    // `consumes` grants the callee a write-capable owned range. Carry that
-    // frame into loop summaries so checked proof artifacts retain the same
-    // memory-footprint evidence as independent contract certification. A
-    // derived function inherits only its separately tracked resource frame.
+    // A resource-derived function's write footprint is never lowered from
+    // source: the kernel projects it from the checked resource transition,
+    // and a loop inherits it as validated ranges installed at function
+    // entry. Only a function with explicit startup segments hands a loop a
+    // segment list here.
     let implicit_contract_mutable_segments = if resource_derived_mutable_frame {
-        resource_derived_mutable.as_slice()
+        &[]
     } else {
         contract_mutable.as_slice()
     };
@@ -685,12 +684,8 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
     // Loop-level resource declarations are lowered once, before the body, so
     // every loop reaches its footprint and its body resource context without
     // re-walking the contract.
-    let loop_resources = loop_resource_declarations(
-        function_block,
-        parsed_function,
-        resource_environment,
-        &mut lowerer,
-    )?;
+    let loop_resources =
+        loop_resource_declarations(function_block, parsed_function, resource_environment)?;
     lowerer.loop_resources = loop_resources;
     let parsed_kernel_function = parsed_function.to_kernel_function();
     let body = if parsed_function.prelowered_kernel_function().is_some() {
@@ -763,7 +758,6 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
             opaque_contract_supported,
         )
         .with_contract_requirement_sources(contract_requirement_sources);
-    let function = function.with_resource_derived_mutable_segments(resource_derived_mutable);
     let function = if resource_derived_mutable_frame {
         let function = function.with_resource_derived_mutable_frame();
         if !function_block.is_external()
@@ -1381,7 +1375,6 @@ pub(in crate::surface) fn function_contract_summary(
     }
 
     let mut mutable = Vec::new();
-    let mut resource_derived_mutable = Vec::new();
     {
         if let Some(startup) = &parsed_function.program_entry_state {
             mutable.extend(startup.resources().facts().iter().filter_map(|fact| {
@@ -1396,22 +1389,6 @@ pub(in crate::surface) fn function_contract_summary(
                 )
             }));
         }
-        // Keep the lowered owned segments separate from startup/explicit
-        // metadata. The kernel's modular-call projection derives authority
-        // from checked resource facts; these segments are only for body and
-        // loop proof framing after their equivalence is checked.
-        for requirement in function_block.requires() {
-            if let Requirement::Resource(resource) = requirement.inner() {
-                collect_owned_resource_memory_segments(
-                    resource,
-                    _resource_environment,
-                    parsed_function.parameters(),
-                    &mut lowerer,
-                    &mut resource_derived_mutable,
-                )?;
-            }
-        }
-        mutable.extend(resource_derived_mutable.iter().cloned());
     }
     let claims = if function_block.ensures().is_empty() {
         vec![CFunctionContractClaim::body_safety()]
@@ -1442,7 +1419,6 @@ pub(in crate::surface) fn function_contract_summary(
         contract_requirement_sources,
         ensures,
         mutable,
-        resource_derived_mutable,
         claims,
         opaque_contract_supported,
         predicate_unfoldings,
@@ -1481,7 +1457,6 @@ fn loop_resource_declarations(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
     resource_environment: &ResourceEnvironment,
-    lowerer: &mut AnnotationLowerer<'_>,
 ) -> Result<BTreeMap<usize, LoopResourceDeclaration>, ClickError> {
     let mut declarations: BTreeMap<usize, LoopResourceDeclaration> = BTreeMap::new();
     for clause in function_block.structural_clauses() {
@@ -1494,13 +1469,6 @@ fn loop_resource_declarations(
         let declaration = declarations.entry(*loop_index).or_default();
         for resource in clause.resources() {
             let resource = &loop_resource_with_field_schema(resource, resource_environment)?;
-            collect_owned_resource_memory_segments(
-                resource,
-                resource_environment,
-                parsed_function.parameters(),
-                lowerer,
-                &mut declaration.owned_segments,
-            )?;
             append_entry_resource_specs(
                 resource,
                 parsed_function.parameters(),
@@ -1555,153 +1523,12 @@ fn loop_resource_with_field_schema(
     })
 }
 
-fn collect_owned_resource_memory_segments(
-    resource: &ResourceClause,
-    resource_environment: &ResourceEnvironment,
-    parameters: &[syntax::C0Parameter],
-    lowerer: &mut AnnotationLowerer<'_>,
-    output: &mut Vec<CMemorySegment>,
-) -> Result<(), ClickError> {
-    collect_owned_resource_memory_segments_inner(
-        resource,
-        resource_environment,
-        parameters,
-        lowerer,
-        output,
-        &mut BTreeSet::new(),
-        None,
-    )
-}
-
-fn collect_owned_resource_memory_segments_inner(
-    resource: &ResourceClause,
-    resource_environment: &ResourceEnvironment,
-    parameters: &[syntax::C0Parameter],
-    lowerer: &mut AnnotationLowerer<'_>,
-    output: &mut Vec<CMemorySegment>,
-    active_resources: &mut BTreeSet<String>,
-    active_guard: Option<ClickProposition>,
-) -> Result<(), ClickError> {
-    match resource {
-        ResourceClause::Named { resource, .. } | ResourceClause::Quantified { resource, .. } => {
-            collect_owned_resource_memory_segments_inner(
-                resource,
-                resource_environment,
-                parameters,
-                lowerer,
-                output,
-                active_resources,
-                active_guard,
-            )
-        }
-        ResourceClause::ViewMemory(_) => Ok(()),
-        ResourceClause::OwnMemory(segment) => {
-            let element_width = contract_segment_element_width(parameters, segment);
-            let mut segment = CMemorySegment::new(
-                segment.base.clone(),
-                segment.start.clone(),
-                segment.end.clone(),
-            )
-            .with_element_width(element_width);
-            if let Some(guard) = active_guard {
-                segment = segment.with_guard(
-                    lowerer
-                        .click_proposition_to_spec_proposition(
-                            &guard,
-                            &SpecElaborationContext::for_function_contract(),
-                        )
-                        .map_err(ClickError::new)?,
-                );
-            }
-            output.push(segment);
-            Ok(())
-        }
-        ResourceClause::MemoryAggregate { access, segments } => {
-            if *access == ResourceAccessMode::View {
-                return Ok(());
-            }
-            for segment in segments {
-                collect_owned_resource_memory_segments_inner(
-                    &ResourceClause::OwnMemory(segment.clone()),
-                    resource_environment,
-                    parameters,
-                    lowerer,
-                    output,
-                    active_resources,
-                    active_guard.clone(),
-                )?;
-            }
-            Ok(())
-        }
-        ResourceClause::Declared {
-            access: ResourceAccessMode::View,
-            ..
-        } => Ok(()),
-        ResourceClause::Declared {
-            access: ResourceAccessMode::Own,
-            kind: ResourceKind::Token,
-            ..
-        } => Ok(()),
-        ResourceClause::Declared {
-            access: ResourceAccessMode::Own,
-            kind: ResourceKind::Composite,
-            name,
-            arguments,
-            ..
-        } => {
-            if !active_resources.insert(name.clone()) {
-                return Ok(());
-            }
-            let result = (|| {
-                let definition = resource_environment.get(name).ok_or_else(|| {
-                    ClickError::new(format!("unknown composite resource `{name}`"))
-                })?;
-                let Some(body) = definition.composite_body() else {
-                    return Ok(());
-                };
-                let substitutions =
-                    resource_argument_contract_substitutions(definition, arguments)?;
-                let nested_guard = body
-                    .condition()
-                    .map(|condition| substitute_click_proposition(condition, &substitutions))
-                    .transpose()
-                    .map_err(ClickError::new)?;
-                let active_guard = match (active_guard.clone(), nested_guard) {
-                    (Some(outer), Some(inner)) => {
-                        Some(ClickProposition::And(Box::new(outer), Box::new(inner)))
-                    }
-                    (Some(guard), None) | (None, Some(guard)) => Some(guard),
-                    (None, None) => None,
-                };
-                for contained in body.contains() {
-                    let contained =
-                        substitute_resource_clause_for_summary(contained, &substitutions)
-                            .map_err(ClickError::new)?;
-                    collect_owned_resource_memory_segments_inner(
-                        &contained,
-                        resource_environment,
-                        parameters,
-                        lowerer,
-                        output,
-                        active_resources,
-                        active_guard.clone(),
-                    )?;
-                }
-                Ok(())
-            })();
-            active_resources.remove(name);
-            result
-        }
-    }
-}
-
 /// A loop's declared resources, lowered once for the enclosing function.
 #[derive(Clone, Debug, Default)]
 struct LoopResourceDeclaration {
-    /// The memory the loop owns, used as its checked whole-loop footprint.
-    owned_segments: Vec<CMemorySegment>,
     /// The loop's declarations as kernel resource specs, evaluated at loop
-    /// entry to build the body's resource context.
+    /// entry to build the body's resource context and, from that same
+    /// evaluation, the loop's checked whole-loop footprint.
     specs: Vec<CResourceSpec>,
 }
 
@@ -5444,12 +5271,15 @@ impl AnnotationLowerer<'_> {
         // write any of the memory it can reach, so every viewed cell is framed
         // across it. The inherited claim stays checked at every back edge, so
         // a body that does write outside the footprint fails there.
-        if let Some(declaration) = self.loop_resources.get(&loop_index) {
+        if self.loop_resources.contains_key(&loop_index) {
             // A loop that declares its own resources has the shape of a
             // callee: its footprint is the memory it owns, not everything the
-            // function owns. The claim stays checked at every back edge.
+            // function owns. The footprint itself is not lowered here: the
+            // kernel derives it from the loop's specs at entry and installs
+            // it as the check's validated ranges. The claim stays checked at
+            // every back edge.
             checks.push(CLoopEffectCheck::new_with_origin(
-                CLoopEffect::Mutable(declaration.owned_segments.clone()),
+                CLoopEffect::Mutable(Vec::new()),
                 CLoopEffectSpan::Whole,
                 CLoopEffectOrigin::DeclaredResource,
                 Some(format!("loop {loop_index} declared owned resource frame")),
