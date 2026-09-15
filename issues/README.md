@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (4)
+## P1: before launch (5)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -48,14 +48,15 @@ ordering, RCU grace periods, or data races. Those belong to
 compiler/target profile; cross-compiler and cross-architecture verification
 belongs to [multiple-compilers.md](multiple-compilers.md).
 
-P1 is the work that has to land before that claim can be made. The list is a
+P1 is the work that has to land before launch. The list is a
 dependency marker, not a prescribed implementation order. An unsound rule is
 P1 whatever it is about: the claim is worthless if the verifier accepts false
 contracts, so soundness bugs come first even when rbtree does not exercise
 them. A gap that only a different program would hit is normally P2. The
-explicitly selected stable-views, basic-C++, and Bitcoin Core `MoneyRange`
-milestones are also P1: they check the architecture before launch while rbtree
-remains the key demo.
+explicitly selected stable-views, basic-C++, Bitcoin Core `MoneyRange`, and
+concurrency-demo milestones are also P1: they check the architecture before
+launch while rbtree remains the key demo. The concurrency demo covers a narrow
+thread/mutex/publication slice; broader concurrency and atomics remain P2.
 
 Soundness and kernel shape:
 
@@ -65,6 +66,7 @@ Program import and execution:
 
 - [Add basic C++ verification with references and scoped cleanup](basic-cpp-support.md)
 - [Verify Bitcoin Core `MoneyRange` under a supported Clang profile](bitcoin-core-money-range-cpp.md)
+- [Verify a concurrency demo with threads, mutexes, and publication](concurrency-demo.md)
 
 The C++ dependency order is the basic language/frontend slice first, then the
 unchanged Bitcoin Core function under its real project profile. Stable-view and

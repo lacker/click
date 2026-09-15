@@ -2,6 +2,15 @@
 
 C0 has no threads, synchronization, atomics, fences, or data-race model.
 
+The P1 [concurrency demo](concurrency-demo.md) owns the before-launch slice:
+three programs exercising fork/join ownership, mutex-protected mutation, and
+one-shot release/acquire publication, with production checked rules and
+deterministic scaling regressions. This P2 issue owns broader support beyond
+that slice, including general atomic read-modify-write operations, reusable
+protocols, additional orders/fences and synchronization APIs, and concurrent
+memory reclamation. The atomic-counter regression below remains a follow-up;
+the P1 counter uses a mutex and ordinary memory.
+
 The [stable views record](../docs/internals/stable-views.md) establishes stable shared borrowing
 and checks resource transfer between small modeled thread contexts. Build on
 those resource laws here; this issue owns the C execution/memory model,
