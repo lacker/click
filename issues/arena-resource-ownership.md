@@ -60,8 +60,26 @@ suffix resource. A composite resource's opaque sibling cannot supply the
 `region->end` load needed to form the other sibling's argument while the body
 is being checked. Flattening the same exclusive prefix and suffix authorities
 is sufficient for this first transition, so this is a composition constraint
-to account for in the next experiment rather than evidence for an arena-built-in
-operation.
+to account for rather than evidence for an arena-built-in operation.
+
+The pipeline's second adjacent allocation now also verifies against the fixed
+C, in `examples/arena/arena_second_alloc.click`. The bounded input state owns
+the complete occupancy map and free data suffix `[2, capacity)`, leaving the
+first live data prefix `[0, 2)` framed in the caller. Failure restores that
+state and the caller-owned descriptor. Success transfers `[2, 4)` into the new
+region, retains `[4, capacity)`, and increments `live_regions` from one to two.
+This establishes that two adjacent live data regions can be held disjointly;
+it does not yet make the transition symbolic.
+
+The attempted symbolic form identified a narrower language boundary. The
+prior endpoint is not named by an `arena_alloc` C parameter. A resource field
+can retain it as model data, but such a field is rejected as the endpoint of
+an `owns` range because memory endpoints must currently be C expressions.
+Adding the endpoint as a free resource argument does not bind it at the C
+contract boundary, and nesting the first region beside a suffix still hits the
+opaque-sibling load constraint above. The focused
+`mdtests/resource_field_memory_endpoint_rejected.md` regression records the
+first and most direct limitation.
 
 The empty-arena lifecycle now verifies independently of that partition model.
 `arena_init` returns an `arena_init_result` plus conditional initialized access:
@@ -79,21 +97,20 @@ The use-after-free rejection already lives in
 `mdtests/arena_use_after_free.md`. Double free and overlapping live regions
 still need focused negative regressions.
 
-## Next chunk: second adjacent allocation
+## Next chunk: symbolic prefix/suffix boundaries
 
-Generalize the checked allocator transition just far enough to allocate from
-the retained suffix beside one live prefix. The target state is the pipeline's
-second allocation: two adjacent live regions with disjoint prefix intervals
-and one arena-owned suffix, while failure preserves the prior partition and
-caller-owned descriptor. Do not attempt arbitrary holes or the whole pipeline
-in the same chunk.
+Generalize memory-range selection so a stable scalar stored in a resource can
+serve as an owned range endpoint. Start from the focused negative regression
+above and add a positive resource-only regression showing that unfold/fold
+preserves a symbolic suffix without scanning or cloning unrelated resources.
+The mechanism must be general to memory resources; do not special-case arenas
+or integer backing arrays.
 
-This experiment should decide whether a small explicit partition resource can
-thread the first live prefix and remaining suffix through the existing
-first-fit scan, or whether the opaque-sibling argument constraint blocks a
-natural representation. If it blocks, reduce that exact composition boundary
-to a focused regression before proposing a general ownership-collection
-extension. Keep the C fixed throughout.
+Then use that capability to replace the two pipeline-specific allocator
+contracts with one transition parameterized by the retained prefix endpoint.
+It must preserve the caller's live prefix on failure and transfer exactly the
+next adjacent interval on success. Keep arbitrary hole collections, freeing,
+recombination, and the end-to-end pipeline out of this chunk.
 
 ## Violated invariant
 

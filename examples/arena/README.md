@@ -31,6 +31,16 @@ suffix `[count, capacity)` in the same outcome resource. This deliberately
 specialized contract establishes the first ownership-partition transition
 without pretending that arbitrary holes are modeled yet.
 
+`arena_second_alloc.click` verifies the pipeline's next allocation as a
+separate, equally explicit transition. Its input state describes the occupied
+prefix `[0, 2)` and owns the free data suffix `[2, capacity)` plus the complete
+occupancy map. The first live region can therefore remain framed in the
+caller. Failure restores that state and the caller-owned descriptor; success
+returns the new region `[2, 4)` and retains `[4, capacity)` for the arena. The
+contract is intentionally fixed to the pipeline's two-cell allocations: the
+prior endpoint is not a C parameter, and a resource field cannot currently be
+used as a memory-range endpoint.
+
 `arena_init` and `arena_destroy` now verify as an independent empty-arena
 lifecycle. Initialization returns the caller-owned descriptor on every path,
 returns both complete backing allocations and ranges only on success, proves
@@ -43,6 +53,9 @@ zeroed descriptor.
 contracts for `arena_init`, the specialized first-allocation form of
 `arena_alloc`, `arena_region_length`, `arena_read`, `arena_write`, `arena_free`,
 and `arena_destroy` over the lifecycle, `arena_region`, `arena_available`, and
-shared `arena_metadata` resources. `arena_pipeline` remains unverified. The
-next ownership experiment is a second adjacent allocation from the retained
-suffix; arbitrary free-interval collections remain later work.
+shared `arena_metadata` resources. The second specialized `arena_alloc`
+contract lives in `arena_second_alloc.click`. `arena_pipeline` remains
+unverified. The next ownership experiment is to make a resource-stored scalar
+usable as a stable memory-range endpoint, then replace these fixed boundaries
+with one symbolic prefix/suffix transition. Arbitrary free-interval
+collections remain later work.
