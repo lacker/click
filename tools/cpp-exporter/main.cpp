@@ -434,7 +434,7 @@ private:
              "the supported C++ slice permits one nested scope directly in a free-function body");
         return std::nullopt;
       }
-      return lower_scope(compound, function);
+      return lower_scope(compound, function, false);
     }
     if (const auto *call = llvm::dyn_cast<clang::CallExpr>(statement)) {
       return lower_call(call, function);
@@ -517,8 +517,10 @@ private:
         return std::nullopt;
       }
       auto condition = lower_expression(conditional->getCond(), function);
-      auto then_branch = lower_branch(conditional->getThen(), function);
-      auto else_branch = lower_branch(conditional->getElse(), function);
+      auto then_branch =
+          lower_branch(conditional->getThen(), function, allow_nested_scope);
+      auto else_branch =
+          lower_branch(conditional->getElse(), function, allow_nested_scope);
       if (!condition || !then_branch || !else_branch) {
         return std::nullopt;
       }
@@ -757,12 +759,34 @@ private:
   }
 
   std::optional<Json> lower_scope(const clang::CompoundStmt *scope,
-                                  const clang::FunctionDecl *function) {
+                                  const clang::FunctionDecl *function,
+                                  bool conditional_arm) {
     const clang::FunctionDecl *canonical = function->getCanonicalDecl();
     auto &active = cleanup_locals_[canonical];
     const bool has_outer_aggregate =
         functions_with_aggregate_local_.contains(canonical);
     unsigned &scope_count = nested_scope_counts_[canonical];
+    if (llvm::isa<clang::CXXMethodDecl>(function)) {
+      fail(scope->getLBracLoc(),
+           "nested C++ scopes are supported only in a free-function body");
+      return std::nullopt;
+    }
+    if (conditional_arm && (has_outer_aggregate || !active.empty())) {
+      fail(scope->getLBracLoc(),
+           "conditional construction cannot yet be combined with an outer aggregate object");
+      return std::nullopt;
+    }
+    if (conditional_arm && scope_count != 0) {
+      fail(scope->getLBracLoc(),
+           "the conditional-construction slice permits exactly one cleanup scope in one if arm");
+      return std::nullopt;
+    }
+    if (!conditional_arm &&
+        functions_with_conditional_scope_.contains(canonical)) {
+      fail(scope->getLBracLoc(),
+           "the conditional-construction slice cannot be combined with another cleanup scope");
+      return std::nullopt;
+    }
     if (has_outer_aggregate && active.size() != 1) {
       fail(scope->getLBracLoc(),
            "the overlapping cleanup-scope slice requires exactly one outer destructible object");
@@ -784,6 +808,9 @@ private:
       return std::nullopt;
     }
     functions_with_nested_scope_.insert(canonical);
+    if (conditional_arm) {
+      functions_with_conditional_scope_.insert(canonical);
+    }
     ++scope_count;
     const std::size_t entry_count = active.size();
     unsigned local_count = 0;
@@ -1000,12 +1027,40 @@ private:
 
   std::optional<llvm::json::Array>
   lower_branch(const clang::Stmt *statement,
-               const clang::FunctionDecl *function) {
+               const clang::FunctionDecl *function,
+               bool allow_cleanup_scope) {
     llvm::json::Array result;
     if (statement == nullptr) {
       return result;
     }
     if (const auto *compound = llvm::dyn_cast<clang::CompoundStmt>(statement)) {
+      bool has_direct_destructible_object = false;
+      for (const clang::Stmt *member : compound->body()) {
+        const auto *declarations = llvm::dyn_cast<clang::DeclStmt>(member);
+        const auto *local =
+            declarations != nullptr && declarations->isSingleDecl()
+                ? llvm::dyn_cast<clang::VarDecl>(declarations->getSingleDecl())
+                : nullptr;
+        const auto *record_type =
+            local == nullptr ? nullptr : local->getType()->getAs<clang::RecordType>();
+        const auto *record =
+            record_type == nullptr
+                ? nullptr
+                : llvm::dyn_cast<clang::CXXRecordDecl>(
+                      record_type->getDecl()->getDefinition());
+        const clang::CXXDestructorDecl *destructor =
+            record == nullptr ? nullptr : record->getDestructor();
+        has_direct_destructible_object |=
+            destructor != nullptr && !destructor->isImplicit();
+      }
+      if (allow_cleanup_scope && has_direct_destructible_object) {
+        auto lowered = lower_scope(compound, function, true);
+        if (!lowered) {
+          return std::nullopt;
+        }
+        result.push_back(std::move(*lowered));
+        return result;
+      }
       for (const clang::Stmt *member : compound->body()) {
         auto lowered = lower_statement(member, function, false, false);
         if (!lowered) {
@@ -1646,6 +1701,8 @@ private:
   std::unordered_set<const clang::FunctionDecl *>
       functions_with_aggregate_local_;
   std::unordered_set<const clang::FunctionDecl *> functions_with_nested_scope_;
+  std::unordered_set<const clang::FunctionDecl *>
+      functions_with_conditional_scope_;
   std::unordered_map<const clang::FunctionDecl *, unsigned>
       nested_scope_counts_;
   std::unordered_map<const clang::FunctionDecl *,

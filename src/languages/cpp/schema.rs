@@ -674,6 +674,7 @@ impl CppFunction {
         let mut destructible_locals = Vec::new();
         let mut nested_scopes = 0;
         let mut nested_scope_outer_cleanup_counts = Vec::new();
+        let mut has_conditional_cleanup_scope = false;
         for statement in &self.body {
             if let CppStatement::Declare {
                 local,
@@ -694,6 +695,12 @@ impl CppFunction {
                         declaration_id,
                         name,
                     } => {
+                        if has_conditional_cleanup_scope {
+                            return Err(format!(
+                                "C++ function `{}` cannot combine conditional construction with an outer aggregate object",
+                                self.name
+                            ));
+                        }
                         let record = validate_record_reference(records, declaration_id, name)?;
                         aggregate_locals += 1;
                         if aggregate_locals > 2 {
@@ -754,6 +761,12 @@ impl CppFunction {
                         "nested C++ scopes are supported only in a free-function body".into(),
                     );
                 }
+                if has_conditional_cleanup_scope {
+                    return Err(format!(
+                        "C++ function `{}` cannot combine conditional construction with another cleanup scope",
+                        self.name
+                    ));
+                }
                 nested_scopes += 1;
                 if nested_scopes > 2 {
                     return Err(format!(
@@ -768,6 +781,82 @@ impl CppFunction {
                     span,
                     &places,
                     &destructible_locals,
+                    records,
+                    logical_source,
+                    &self.name,
+                )?;
+            } else if let CppStatement::If {
+                condition,
+                then_branch,
+                else_branch,
+                span,
+            } = statement
+                && then_branch
+                    .iter()
+                    .chain(else_branch)
+                    .any(|statement| matches!(statement, CppStatement::Scope { .. }))
+            {
+                if !matches!(self.function_kind, CppFunctionKind::Free) {
+                    return Err(
+                        "conditional C++ construction is supported only in a free-function body"
+                            .into(),
+                    );
+                }
+                if nested_scopes != 0 || has_conditional_cleanup_scope {
+                    return Err(format!(
+                        "C++ function `{}` may contain exactly one cleanup scope in one if arm",
+                        self.name
+                    ));
+                }
+                if aggregate_locals != 0 || !destructible_locals.is_empty() {
+                    return Err(format!(
+                        "C++ function `{}` cannot combine conditional construction with an outer aggregate object",
+                        self.name
+                    ));
+                }
+                let (scope_body, scope_cleanups, scope_span) = match (
+                    then_branch.as_slice(),
+                    else_branch.as_slice(),
+                ) {
+                    (
+                        [
+                            CppStatement::Scope {
+                                body,
+                                cleanups,
+                                span,
+                            },
+                        ],
+                        [],
+                    )
+                    | (
+                        [],
+                        [
+                            CppStatement::Scope {
+                                body,
+                                cleanups,
+                                span,
+                            },
+                        ],
+                    ) => (body, cleanups, span),
+                    _ => {
+                        return Err(format!(
+                            "C++ function `{}` may conditionally construct an object in exactly one otherwise-empty if arm",
+                            self.name
+                        ));
+                    }
+                };
+                span.validate(logical_source)?;
+                condition.validate(&places, records, logical_source)?;
+                require_bool(condition.value_type(), false, "if condition")?;
+                nested_scopes += 1;
+                nested_scope_outer_cleanup_counts.push(0);
+                has_conditional_cleanup_scope = true;
+                validate_nested_scope(
+                    scope_body,
+                    scope_cleanups,
+                    scope_span,
+                    &places,
+                    &[],
                     records,
                     logical_source,
                     &self.name,

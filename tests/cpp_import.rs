@@ -75,6 +75,10 @@ const OVERLAPPING_SCOPE_DESTRUCTORS_SOURCE: &str =
     include_str!("fixtures/cpp-verification/overlapping-scope-destructors/overlap_restore.cpp");
 const OVERLAPPING_SCOPE_DESTRUCTORS_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/overlapping-scope-destructors/overlap_restore.click");
+const CONDITIONAL_CONSTRUCTION_SOURCE: &str =
+    include_str!("fixtures/cpp-verification/conditional-construction/conditional_restore.cpp");
+const CONDITIONAL_CONSTRUCTION_SIDECAR: &str =
+    include_str!("fixtures/cpp-verification/conditional-construction/conditional_restore.click");
 
 struct Project {
     directory: PathBuf,
@@ -164,6 +168,14 @@ impl Project {
             "overlap_restore.cpp",
             "overlap_restore",
             OVERLAPPING_SCOPE_DESTRUCTORS_SOURCE,
+        )
+    }
+
+    fn conditional_construction() -> Self {
+        Self::with_fixture(
+            "conditional_restore.cpp",
+            "conditional_restore",
+            CONDITIONAL_CONSTRUCTION_SOURCE,
         )
     }
 
@@ -2112,6 +2124,147 @@ fn overlapping_scope_rejects_shadowing_and_a_second_inner_lifetime() {
         ),
     ] {
         let project = Project::overlapping_scope_destructors();
+        fs::write(project.source(), source).unwrap();
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains(expected), "{error}");
+        assert!(!project.artifact().exists());
+    }
+}
+
+#[test]
+fn conditional_construction_cleans_up_only_the_constructed_arm() {
+    let project = Project::conditional_construction();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, CONDITIONAL_CONSTRUCTION_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("export the conditional object lifetime");
+    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+
+    let import =
+        load_import(&project.config()).expect("load the conditional-construction artifact offline");
+    let [
+        CppStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        },
+        CppStatement::Return {
+            cleanups: final_cleanups,
+            ..
+        },
+    ] = import.export().function.body.as_slice()
+    else {
+        panic!("the conditional lifetime boundary was not retained")
+    };
+    let [
+        CppStatement::Scope {
+            body,
+            cleanups: fallthrough_cleanups,
+            ..
+        },
+    ] = then_branch.as_slice()
+    else {
+        panic!("the constructed arm was not retained as a cleanup scope")
+    };
+    let [
+        CppStatement::Declare { local, .. },
+        CppStatement::If {
+            then_branch: early_branch,
+            ..
+        },
+        CppStatement::Assign { .. },
+    ] = body.as_slice()
+    else {
+        panic!("the conditional cleanup scope body was not retained")
+    };
+    let [
+        CppStatement::Return {
+            cleanups: early_cleanups,
+            ..
+        },
+    ] = early_branch.as_slice()
+    else {
+        panic!("the constructed arm's early return was not retained")
+    };
+    assert!(else_branch.is_empty());
+    assert!(final_cleanups.is_empty());
+    for cleanups in [early_cleanups, fallthrough_cleanups] {
+        assert!(matches!(
+            cleanups.as_slice(),
+            [CppCleanup::Destructor { object, .. }]
+                if object.declaration_id == local.declaration_id
+                    && object.name == "guard"
+        ));
+    }
+
+    let lowered = lower_import(&import).expect("lower the conditional lifetime directly");
+    assert_eq!(
+        call_order(lowered.kernel_function().body()),
+        [
+            "Restore_constructor",
+            "Restore_destructor",
+            "Restore_destructor",
+        ]
+    );
+
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    verify_cpp_prepared_project(&click_project, &import).expect(
+        "verify cleanup on constructed paths without calling the destructor on the skipped path",
+    );
+
+    let execute = cpp_prepared_project_tactic_source_position(
+        &click_project,
+        &import,
+        "conditional_restore.contract",
+        0,
+    )
+    .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .expect("expand the proof across the conditional lifetime");
+    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+        .expect("the expanded conditional-construction proof must reverify");
+
+    let wrong_skipped_result = CONDITIONAL_CONSTRUCTION_SIDECAR.replace(
+        "ensures construct == 0 implies result == 41;",
+        "ensures construct == 0 implies result == 7;",
+    );
+    fs::write(&sidecar, &wrong_skipped_result).unwrap();
+    let wrong_project = read_click_project(&sidecar, &wrong_skipped_result).unwrap();
+    verify_cpp_prepared_project(&wrong_project, &import)
+        .expect_err("the skipped-construction path must return the untouched input");
+}
+
+#[test]
+fn conditional_construction_rejects_both_arms_outer_objects_and_deeper_objects() {
+    for (source, expected) in [
+        (
+            CONDITIONAL_CONSTRUCTION_SOURCE.replace(
+                "        value = 9;\n    }\n    return value;",
+                "        value = 9;\n    } else {\n        Restore other(&value);\n        value = 11;\n    }\n    return value;",
+            ),
+            "exactly one cleanup scope in one if arm",
+        ),
+        (
+            CONDITIONAL_CONSTRUCTION_SOURCE.replace(
+                "int conditional_restore(bool construct, bool early, int& value) noexcept {\n    if (construct)",
+                "int conditional_restore(bool construct, bool early, int& value) noexcept {\n    Restore outer(&value);\n    if (construct)",
+            ),
+            "conditional construction cannot yet be combined with an outer aggregate object",
+        ),
+        (
+            CONDITIONAL_CONSTRUCTION_SOURCE.replace(
+                "        Restore guard(&value);",
+                "        if (early) {\n            Restore nested(&value);\n        }\n        Restore guard(&value);",
+            ),
+            "automatic C++ locals are currently supported only in the function body",
+        ),
+    ] {
+        let project = Project::conditional_construction();
         fs::write(project.source(), source).unwrap();
         let error = refresh_import(&project.config()).unwrap_err();
         assert!(error.contains(expected), "{error}");

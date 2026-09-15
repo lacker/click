@@ -118,9 +118,12 @@ reuses one local spelling across two distinct non-overlapping lifetimes and
 checks each block's early-return and fallthrough edges. An overlapping-lifetime
 fixture checks one outer object plus one inner block object, including
 inner-before-outer cleanup on early return, inner-only cleanup on block
-fallthrough, and outer-only cleanup on the final return. Conditional
-construction, deeper nested blocks, shadowing while both objects are live, and
-broader overlapping forms remain focused frontend errors.
+fallthrough, and outer-only cleanup on the final return. A conditional fixture
+checks that one object in one `if` arm is destroyed on that arm's early return
+and fallthrough but is never constructed or destroyed on the skipped path.
+Objects in both arms, conditional construction with another cleanup lifetime,
+deeper nested blocks, shadowing while objects are live, and broader overlapping
+forms remain focused frontend errors.
 Other coverage exercises source/signature mismatch diagnostics, const-write
 rejection, and smart-tactic inventory. Missing Clang development tooling fails
 the gate, and unsupported C++ does not fall back to the C parser.

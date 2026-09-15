@@ -238,6 +238,16 @@ outer guard ultimately restores caller memory. Conditional construction,
 deeper blocks, shadowing between the two live objects, a second inner scope,
 and broader overlapping lifetimes remain rejected.
 
+The `conditional-construction` fixture permits exactly one top-level `if` to
+contain one cleanup scope in one otherwise-empty arm. The object's constructor
+and destructor occur only on that arm: an early return destroys the object,
+normal arm fallthrough destroys it before the outer continuation, and the
+skipped arm plus final return carry no cleanup. The destructor contract has a
+precondition established by construction, so verification would reject a
+destructor synthesized on the path where no object exists. Objects in both
+arms, combination with another aggregate or cleanup scope, and deeper
+conditional construction remain rejected.
+
 Copies and moves, default or partial aggregate initialization, multiple or
 more than two top-level destructible local objects, broader nested lifetimes,
 ordinary methods, inheritance, private fields, bit-fields, nested records, and
