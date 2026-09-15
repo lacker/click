@@ -95,14 +95,15 @@ Homebrew's `llvm@19` package provides the expected toolchain. The Linux CI job
 installs the pinned development packages before entering the network-free
 gate.
 
-The C++ fixtures refresh typed artifacts for header-free C++20 functions through
-one exact JSON compilation-database entry, then make the exporter unavailable
-and load the artifacts again. This checks the intended phase boundary: explicit
-refresh executes Clang, while ordinary loading validates the config,
-compilation database, source, lock, and stored semantic artifact. Focused
-failures cover a missing or ambiguous translation-unit command, a non-Clang
-driver, a mismatched semantic profile, and a command change that must invalidate
-the offline lock.
+The C++ fixtures refresh typed artifacts for C++20 functions in a translation
+unit or one selected included project header through one exact JSON
+compilation-database entry, then make the exporter unavailable and load the
+artifacts again. This checks the intended phase boundary: explicit refresh
+executes Clang, while ordinary loading validates the config, compilation
+database, translation unit, selected logical source, lock, and stored semantic
+artifact. Focused failures cover a missing or ambiguous translation-unit
+command, a non-Clang driver, a mismatched semantic profile, a changed command or
+selected header, and an ambiguous or wrong-location header declaration.
 They verify a linear mutable-reference function, a by-value-boolean branch with
 an early return, a mutable/const reference pair that explicitly aliases one
 owned cell, and a selected function that reaches another `noexcept` definition

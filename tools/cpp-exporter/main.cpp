@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -38,6 +39,7 @@ constexpr const char *kClangVersion = "19.1.7";
 
 struct Options {
   std::string logical_source;
+  std::string logical_source_path;
   std::string function;
   std::string source;
   std::string compilation_database;
@@ -62,6 +64,8 @@ std::optional<Options> parse_options(int argc, const char **argv) {
     const std::string value = argv[index + 1];
     if (option == "--logical-source") {
       result.logical_source = value;
+    } else if (option == "--logical-source-path") {
+      result.logical_source_path = value;
     } else if (option == "--function") {
       result.function = value;
     } else if (option == "--source") {
@@ -73,11 +77,12 @@ std::optional<Options> parse_options(int argc, const char **argv) {
       return std::nullopt;
     }
   }
-  if (result.logical_source.empty() || result.function.empty() ||
-      result.source.empty() || result.compilation_database.empty()) {
+  if (result.logical_source.empty() || result.logical_source_path.empty() ||
+      result.function.empty() || result.source.empty() ||
+      result.compilation_database.empty()) {
     llvm::errs()
-        << "error: --logical-source, --function, --source, and "
-           "--compilation-database are required\n";
+        << "error: --logical-source, --logical-source-path, --function, "
+           "--source, and --compilation-database are required\n";
     return std::nullopt;
   }
   return result;
@@ -86,6 +91,7 @@ std::optional<Options> parse_options(int argc, const char **argv) {
 class SemanticExporter : public clang::RecursiveASTVisitor<SemanticExporter> {
 public:
   SemanticExporter(clang::ASTContext &context, std::string logical_source,
+                   std::string logical_source_path,
                    std::string selected_name,
                    std::string compilation_directory,
                    std::string compilation_file,
@@ -93,6 +99,7 @@ public:
                    ExportState &state)
       : context_(context), source_manager_(context.getSourceManager()),
         logical_source_(std::move(logical_source)),
+        logical_source_path_(std::move(logical_source_path)),
         selected_name_(std::move(selected_name)),
         compilation_directory_(std::move(compilation_directory)),
         compilation_file_(std::move(compilation_file)),
@@ -102,8 +109,7 @@ public:
     if (!llvm::isa<clang::CXXMethodDecl>(declaration) &&
         declaration->isThisDeclarationADefinition() &&
         declaration->getNameAsString() == selected_name_ &&
-        source_manager_.isWrittenInMainFile(
-            source_manager_.getSpellingLoc(declaration->getLocation()))) {
+        is_in_logical_source(declaration->getLocation())) {
       matches_.push_back(declaration);
     }
     return true;
@@ -166,7 +172,7 @@ public:
     profile["compilation_command"] = std::move(compilation_command);
 
     llvm::json::Object artifact;
-    artifact["schema"] = 11;
+    artifact["schema"] = 12;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["logical_source"] = logical_source_;
@@ -971,7 +977,7 @@ private:
     }
     const clang::SourceLocation definition_location =
         source_manager_.getSpellingLoc(definition->getLocation());
-    if (!source_manager_.isWrittenInMainFile(definition_location)) {
+    if (!is_in_logical_source(definition_location)) {
       fail(call->getExprLoc(),
            "the supported C++ call graph requires definitions in the selected file");
       return std::nullopt;
@@ -1260,8 +1266,7 @@ private:
            "the supported C++ record must be a named struct");
       return false;
     }
-    if (!source_manager_.isWrittenInMainFile(
-            source_manager_.getSpellingLoc(record->getLocation()))) {
+    if (!is_in_logical_source(record->getLocation())) {
       fail(record->getLocation(),
            "the supported C++ record must be declared in the selected file");
       return false;
@@ -1368,8 +1373,7 @@ private:
     }
     if (!constructor->doesThisDeclarationHaveABody() ||
         constructor->getDefinition() != constructor ||
-        !source_manager_.isWrittenInMainFile(source_manager_.getSpellingLoc(
-            constructor->getLocation()))) {
+        !is_in_logical_source(constructor->getLocation())) {
       fail(constructor->getLocation(),
            "the supported constructor must have an inline definition in the selected file");
       return false;
@@ -1433,8 +1437,7 @@ private:
     }
     if (!destructor->doesThisDeclarationHaveABody() ||
         destructor->getDefinition() != destructor ||
-        !source_manager_.isWrittenInMainFile(source_manager_.getSpellingLoc(
-            destructor->getLocation()))) {
+        !is_in_logical_source(destructor->getLocation())) {
       fail(destructor->getLocation(),
            "the supported destructor must have an inline definition in the selected file");
       return false;
@@ -1669,9 +1672,8 @@ private:
     clang::SourceLocation begin =
         source_manager_.getSpellingLoc(range.getBegin());
     clang::SourceLocation end = source_manager_.getSpellingLoc(range.getEnd());
-    if (!begin.isValid() || !end.isValid() ||
-        !source_manager_.isWrittenInMainFile(begin) ||
-        !source_manager_.isWrittenInMainFile(end)) {
+    if (!begin.isValid() || !end.isValid() || !is_in_logical_source(begin) ||
+        !is_in_logical_source(end)) {
       fail(
           begin,
           "the first C++ slice requires source locations in the selected file");
@@ -1692,6 +1694,26 @@ private:
     result["end_line"] = static_cast<std::int64_t>(finish.getLine());
     result["end_column"] = static_cast<std::int64_t>(finish.getColumn());
     return Json(std::move(result));
+  }
+
+  bool is_in_logical_source(clang::SourceLocation location) const {
+    const clang::SourceLocation spelling =
+        source_manager_.getSpellingLoc(location);
+    if (!spelling.isValid()) {
+      return false;
+    }
+    const llvm::StringRef filename = source_manager_.getFilename(spelling);
+    if (filename.empty()) {
+      return false;
+    }
+    std::filesystem::path candidate(filename.str());
+    if (candidate.is_relative()) {
+      candidate = std::filesystem::path(compilation_directory_) / candidate;
+    }
+    std::error_code error;
+    const std::filesystem::path canonical =
+        std::filesystem::weakly_canonical(candidate, error);
+    return !error && canonical == std::filesystem::path(logical_source_path_);
   }
 
   void fail(clang::SourceLocation location, std::string message) {
@@ -1715,6 +1737,7 @@ private:
   clang::ASTContext &context_;
   clang::SourceManager &source_manager_;
   std::string logical_source_;
+  std::string logical_source_path_;
   std::string selected_name_;
   std::string compilation_directory_;
   std::string compilation_file_;
@@ -1741,7 +1764,8 @@ class ExportConsumer : public clang::ASTConsumer {
 public:
   ExportConsumer(clang::ASTContext &context, const Options &options,
                  ExportState &state)
-      : exporter_(context, options.logical_source, options.function,
+      : exporter_(context, options.logical_source, options.logical_source_path,
+                  options.function,
                   options.compilation_directory, options.compilation_file,
                   options.compilation_command, state) {}
 

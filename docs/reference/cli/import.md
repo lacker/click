@@ -59,10 +59,13 @@ assembly are silently deleted to make an import pass.
 
 ## Preliminary C++ semantic artifact
 
-The preliminary C++ frontend boundary accepts one header-free C++20 translation
-unit selected by exactly one entry in a JSON compilation database, with one
+The preliminary C++ frontend boundary accepts one C++20 translation unit
+selected by exactly one entry in a JSON compilation database, with one
 selected, explicitly `noexcept` free function and the uniquely named `noexcept`
 free-function definitions reachable from its supported direct call statements.
+The selected definitions may be written in the `.cpp` translation unit or in
+one configured `.h` project header included by that translation unit. All
+lowered declarations and source spans must come from that one logical source.
 The linear reference fixture is:
 
 ```cpp
@@ -83,7 +86,7 @@ configuration identities.
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "language": "c++",
   "standard": "c++20",
   "target": "x86_64-unknown-linux-gnu",
@@ -102,21 +105,24 @@ configuration identities.
 The database must resolve the configured translation unit to exactly one
 command using the pinned Clang driver and the configured C++20, target,
 exception, and RTTI profile. Missing or ambiguous entries and mismatched driver
-or semantic profiles fail refresh locally. Header dependency capture is not yet
-part of this slice.
+or semantic profiles fail refresh locally. When `logical_source` names a
+header, the importer resolves and hashes that file separately from the `.cpp`
+translation unit. Offline loading rejects a missing or modified selected
+header. Capturing other transitively included headers is not yet part of this
+slice.
 
-Loading through the C++ library boundary subsequently validates the source,
-compilation database, lock, and typed artifact without locating or running
-Clang. This separation is intentional: compiler execution belongs to explicit
-refresh. Changing any command, including a flag that leaves the selected AST
-unchanged, invalidates the lock. The library lowers this exact artifact directly
-to the kernel execution vocabulary without generating C text or invoking the C
-parser. An `int&` or `const int&` becomes an address-valued parameter with its
-pointee qualification preserved. Reads become typed loads, while only the
-mutable reference permits a typed store; signed addition retains the kernel's
-existing overflow check. The lowered value remains paired with the immutable
-semantic artifact so Clang declaration identities and source spans are not
-discarded.
+Loading through the C++ library boundary subsequently validates the translation
+unit, selected logical source, compilation database, lock, and typed artifact
+without locating or running Clang. This separation is intentional: compiler
+execution belongs to explicit refresh. Changing either source or any command,
+including a flag that leaves the selected AST unchanged, invalidates the lock.
+The library lowers this exact artifact directly to the kernel execution
+vocabulary without generating C text or invoking the C parser. An `int&` or
+`const int&` becomes an address-valued parameter with its pointee qualification
+preserved. Reads become typed loads, while only the mutable reference permits a
+typed store; signed addition retains the kernel's existing overflow check. The
+lowered value remains paired with the immutable semantic artifact so Clang
+declaration identities and source spans are not discarded.
 
 The first proof-facing interface uses existing Surface Click pointer syntax
 for the reference's one-cell mutable view:

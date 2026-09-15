@@ -179,6 +179,21 @@ impl Project {
         )
     }
 
+    fn header_function() -> Self {
+        let project = Self::with_fixture(
+            "driver.cpp",
+            "header_increment",
+            "#include \"selected.h\"\n",
+        );
+        fs::write(
+            project.logical_header(),
+            "inline int header_increment(int& value) noexcept {\n    value = value + 1;\n    return value;\n}\n",
+        )
+        .unwrap();
+        project.write_config_with_logical_source("header_increment", "selected.h");
+        project
+    }
+
     fn with_fixture(source_name: &str, function: &str, source: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let directory = std::env::temp_dir().join(format!(
@@ -221,6 +236,10 @@ impl Project {
 
     fn source(&self) -> PathBuf {
         self.directory.join(&self.source_name)
+    }
+
+    fn logical_header(&self) -> PathBuf {
+        self.directory.join("selected.h")
     }
 
     fn compilation_database(&self) -> PathBuf {
@@ -285,8 +304,12 @@ impl Project {
     }
 
     fn write_config(&self, function: &str) {
+        self.write_config_with_logical_source(function, &self.source_name);
+    }
+
+    fn write_config_with_logical_source(&self, function: &str, logical_source: &str) {
         let config = serde_json::json!({
-            "schema": 2,
+            "schema": 3,
             "language": "c++",
             "standard": "c++20",
             "target": "x86_64-unknown-linux-gnu",
@@ -296,7 +319,7 @@ impl Project {
             "compilation_database": "compile_commands.json",
             "working_directory": ".",
             "source": &self.source_name,
-            "logical_source": &self.source_name,
+            "logical_source": logical_source,
             "function": function,
             "artifact": format!("{}.click-cpp.json", self.source_name)
         });
@@ -336,7 +359,7 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
     let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
-    assert_eq!(prepared.export().schema, 11);
+    assert_eq!(prepared.export().schema, 12);
     assert!(prepared.export().reachable_functions.is_empty());
     assert_eq!(prepared.logical_source(), "increment.cpp");
     assert_eq!(prepared.identity().len(), 64);
@@ -487,6 +510,73 @@ fn compilation_database_command_is_selected_locked_and_validated() {
         "{error}"
     );
     assert!(!wrong_target.artifact().exists());
+}
+
+#[test]
+fn included_header_definition_is_selected_locked_and_validated() {
+    let project = Project::header_function();
+    refresh_import(&project.config()).expect("export the selected header definition");
+    let lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(project.lock()).unwrap()).unwrap();
+    assert_eq!(lock["logical_source_sha256"].as_str().unwrap().len(), 64);
+
+    let prepared = load_import(&project.config()).expect("load the locked header definition");
+    assert_eq!(prepared.logical_source(), "selected.h");
+    assert_eq!(prepared.export().logical_source, "selected.h");
+    assert_eq!(prepared.export().profile.compilation_file, "driver.cpp");
+    assert_eq!(prepared.export().function.name, "header_increment");
+    assert_eq!(prepared.export().function.span.file, "selected.h");
+
+    let sidecar = project.directory.join("demo.click");
+    let sidecar_source = SIDECAR
+        .replace("increment.cpp", "selected.h")
+        .replace("increment", "header_increment");
+    fs::write(&sidecar, &sidecar_source).unwrap();
+    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+    let inputs = read_c_inputs(&sidecar, &sidecar_source).expect("load the header import offline");
+    let CInput::PreparedCpp(import) = inputs else {
+        panic!("language=c++ must select the C++ prepared-input path")
+    };
+    let click_project = read_click_project(&sidecar, &sidecar_source).unwrap();
+    verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify the selected header function through the ordinary workflow");
+
+    let stale = Project::header_function();
+    refresh_import(&stale.config()).expect("lock the original header contents");
+    let original_identity = load_import(&stale.config()).unwrap().identity().to_string();
+    fs::write(
+        stale.logical_header(),
+        "inline int header_increment(int& value) noexcept {\n    value = value + 1;\n    return value;\n}\n\n",
+    )
+    .unwrap();
+    let error = load_import(&stale.config()).unwrap_err();
+    assert!(error.contains("logical source differs"), "{error}");
+    refresh_import(&stale.config()).expect("refresh after changing the selected header");
+    assert_ne!(
+        load_import(&stale.config()).unwrap().identity(),
+        original_identity
+    );
+
+    let wrong_location = Project::header_function();
+    fs::write(
+        wrong_location.directory.join("wrong.h"),
+        "// not selected\n",
+    )
+    .unwrap();
+    wrong_location.write_config_with_logical_source("header_increment", "wrong.h");
+    let error = refresh_import(&wrong_location.config()).unwrap_err();
+    assert!(error.contains("was not found"), "{error}");
+    assert!(!wrong_location.artifact().exists());
+
+    let ambiguous = Project::header_function();
+    fs::write(
+        ambiguous.logical_header(),
+        "inline int header_increment(int& value) noexcept { return value; }\ninline int header_increment(const int& value) noexcept { return value; }\n",
+    )
+    .unwrap();
+    let error = refresh_import(&ambiguous.config()).unwrap_err();
+    assert!(error.contains("is overloaded"), "{error}");
+    assert!(!ambiguous.artifact().exists());
 }
 
 #[test]
@@ -933,7 +1023,7 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the call graph artifact offline");
-    assert_eq!(import.export().schema, 11);
+    assert_eq!(import.export().schema, 12);
     assert_eq!(import.export().function.name, "call_set_seven");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -1010,7 +1100,7 @@ fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the scalar-local artifact offline");
-    assert_eq!(import.export().schema, 11);
+    assert_eq!(import.export().schema, 12);
     assert_eq!(import.export().function.name, "relay_value");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -1124,7 +1214,7 @@ fn mutable_pointer_dereference_and_reference_address_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the pointer artifact offline");
-    assert_eq!(import.export().schema, 11);
+    assert_eq!(import.export().schema, 12);
     let caller = &import.export().function;
     assert_eq!(caller.name, "bump_reference");
     assert!(matches!(
@@ -1261,7 +1351,7 @@ fn record_reference_member_loads_and_stores_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the record artifact offline");
-    assert_eq!(import.export().schema, 11);
+    assert_eq!(import.export().schema, 12);
     let [record] = import.export().records.as_slice() else {
         panic!("the referenced record layout was not captured")
     };
@@ -1363,7 +1453,7 @@ fn brace_initialized_local_aggregate_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the aggregate artifact offline");
-    assert_eq!(import.export().schema, 11);
+    assert_eq!(import.export().schema, 12);
     let [record] = import.export().records.as_slice() else {
         panic!("the local aggregate record layout was not captured")
     };
@@ -1463,7 +1553,7 @@ fn explicit_constructor_local_verifies_as_a_modular_call() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the constructor artifact offline");
-    assert_eq!(import.export().schema, 11);
+    assert_eq!(import.export().schema, 12);
     let [record] = import.export().records.as_slice() else {
         panic!("the constructed record layout was not captured")
     };
@@ -1598,7 +1688,7 @@ fn terminal_return_captures_value_before_checked_destructor_cleanup() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 11);
+    assert_eq!(import.export().schema, 12);
     let [record] = import.export().records.as_slice() else {
         panic!("the destructible record layout was not captured")
     };
@@ -1744,7 +1834,7 @@ fn every_return_after_construction_runs_the_checked_destructor() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 11);
+    assert_eq!(import.export().schema, 12);
     let destructor = import
         .export()
         .reachable_functions
@@ -1845,7 +1935,7 @@ fn two_constructed_objects_are_destroyed_in_reverse_order_on_every_return() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the ordered cleanup artifact offline");
-    assert_eq!(import.export().schema, 11);
+    assert_eq!(import.export().schema, 12);
     let [
         CppStatement::Declare { local: first, .. },
         CppStatement::Declare { local: second, .. },
@@ -1942,7 +2032,7 @@ fn nested_scope_destroys_its_object_on_return_and_fallthrough() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the nested-scope artifact offline");
-    assert_eq!(import.export().schema, 11);
+    assert_eq!(import.export().schema, 12);
     let destructor = import
         .export()
         .reachable_functions

@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use super::schema::{CppExport, CppProfile, EXPORT_SCHEMA, LANGUAGE, STANDARD, TARGET};
 use crate::languages::compiler_process::{CompilerLimits, run_compiler};
 
-const CONFIG_SCHEMA: u32 = 2;
+const CONFIG_SCHEMA: u32 = 3;
 const MAX_CONFIG_BYTES: usize = 1 << 20;
 const MAX_COMPILATION_DATABASE_BYTES: usize = 16 << 20;
 const MAX_SOURCE_BYTES: usize = 1 << 20;
@@ -79,6 +79,7 @@ struct Lock {
     exporter_sha256: String,
     compilation_database_sha256: String,
     source_sha256: String,
+    logical_source_sha256: String,
     artifact_sha256: String,
     artifact_bytes: usize,
     profile: CppProfile,
@@ -109,10 +110,12 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
         ));
     }
     let source = resolve_source(&config, &working_directory)?;
+    let logical_source = resolve_logical_source(&config, &working_directory)?;
     reject_output_collisions(
         config_path,
         &config,
         &source,
+        &logical_source,
         &exporter,
         &compilation_database,
     )?;
@@ -124,9 +127,13 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
         "C++ compilation database",
     )?;
     let source_before = read_stable(&source, MAX_SOURCE_BYTES, "C++ source")?;
+    let logical_source_before =
+        read_stable(&logical_source, MAX_SOURCE_BYTES, "C++ logical source")?;
     let arguments = vec![
         "--logical-source".into(),
         config.logical_source.clone(),
+        "--logical-source-path".into(),
+        logical_source.to_string_lossy().into_owned(),
         "--function".into(),
         config.function.clone(),
         "--source".into(),
@@ -155,6 +162,11 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
     if read_stable(&source, MAX_SOURCE_BYTES, "C++ source")? != source_before {
         return Err("C++ source changed during semantic export".into());
     }
+    if read_stable(&logical_source, MAX_SOURCE_BYTES, "C++ logical source")?
+        != logical_source_before
+    {
+        return Err("C++ logical source changed during semantic export".into());
+    }
     if read_stable(&exporter, MAX_EXPORTER_BYTES, "C++ exporter")? != exporter_bytes {
         return Err("C++ exporter changed during semantic export".into());
     }
@@ -172,11 +184,13 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
     let exporter_sha256 = hex_digest(&exporter_bytes);
     let compilation_database_sha256 = hex_digest(&compilation_database_before);
     let source_sha256 = hex_digest(&source_before);
+    let logical_source_sha256 = hex_digest(&logical_source_before);
     let artifact_sha256 = hex_digest(&output.stdout);
     let identity = semantic_identity(
         &config_sha256,
         &compilation_database_sha256,
         &source_sha256,
+        &logical_source_sha256,
         &exporter_sha256,
         &artifact_sha256,
         &export.profile,
@@ -187,6 +201,7 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
         exporter_sha256,
         compilation_database_sha256,
         source_sha256,
+        logical_source_sha256,
         artifact_sha256,
         artifact_bytes: output.stdout.len(),
         profile: export.profile,
@@ -250,6 +265,12 @@ fn load_import_inner(config_path: &Path) -> Result<PreparedCppImport, String> {
     if lock.source_sha256 != hex_digest(&source_bytes) {
         return Err("C++ source differs from the import lock; refresh it".into());
     }
+    let logical_source = resolve_logical_source(&config, &working_directory)?;
+    let logical_source_bytes =
+        read_stable(&logical_source, MAX_SOURCE_BYTES, "C++ logical source")?;
+    if lock.logical_source_sha256 != hex_digest(&logical_source_bytes) {
+        return Err("C++ logical source differs from the import lock; refresh it".into());
+    }
     let artifact = read_stable(
         &artifact_path(&config)?,
         MAX_ARTIFACT_BYTES,
@@ -266,6 +287,7 @@ fn load_import_inner(config_path: &Path) -> Result<PreparedCppImport, String> {
         &lock.config_sha256,
         &lock.compilation_database_sha256,
         &lock.source_sha256,
+        &lock.logical_source_sha256,
         &lock.exporter_sha256,
         &lock.artifact_sha256,
         &lock.profile,
@@ -294,6 +316,7 @@ fn semantic_identity(
     config_sha256: &str,
     compilation_database_sha256: &str,
     source_sha256: &str,
+    logical_source_sha256: &str,
     exporter_sha256: &str,
     artifact_sha256: &str,
     profile: &CppProfile,
@@ -301,10 +324,11 @@ fn semantic_identity(
     let encoded = serde_json::to_vec(&(
         CONFIG_SCHEMA,
         EXPORT_SCHEMA,
-        "click-cpp-semantic-import-v2",
+        "click-cpp-semantic-import-v3",
         config_sha256,
         compilation_database_sha256,
         source_sha256,
+        logical_source_sha256,
         exporter_sha256,
         artifact_sha256,
         profile,
@@ -359,12 +383,16 @@ fn validate_config(config: &Config) -> Result<(), String> {
         .extension()
         .and_then(|value| value.to_str())
         != Some("cpp")
-        || Path::new(&config.logical_source)
-            .extension()
-            .and_then(|value| value.to_str())
-            != Some("cpp")
     {
-        return Err("the first C++ import slice requires a `.cpp` source".into());
+        return Err("the first C++ import slice requires a `.cpp` translation unit".into());
+    }
+    if !matches!(
+        Path::new(&config.logical_source)
+            .extension()
+            .and_then(|value| value.to_str()),
+        Some("cpp" | "h")
+    ) {
+        return Err("the first C++ import slice requires a `.cpp` or `.h` logical source".into());
     }
     if !is_identifier(&config.function) {
         return Err("the first C++ import slice requires an unqualified function name".into());
@@ -429,6 +457,14 @@ fn resolve_source(config: &Config, working_directory: &Path) -> Result<PathBuf, 
     resolve_input(working_directory, &config.source, "C++ source")
 }
 
+fn resolve_logical_source(config: &Config, working_directory: &Path) -> Result<PathBuf, String> {
+    resolve_input(
+        working_directory,
+        &config.logical_source,
+        "C++ logical source",
+    )
+}
+
 fn artifact_path(config: &Config) -> Result<PathBuf, String> {
     validate_relative_path(&config.artifact, "artifact")?;
     Ok(config.directory.join(&config.artifact))
@@ -453,6 +489,7 @@ fn reject_output_collisions(
     config_path: &Path,
     config: &Config,
     source: &Path,
+    logical_source: &Path,
     exporter: &Path,
     compilation_database: &Path,
 ) -> Result<(), String> {
@@ -463,6 +500,7 @@ fn reject_output_collisions(
         for (input_label, input) in [
             ("config", config_path.as_path()),
             ("source", source),
+            ("logical source", logical_source),
             ("exporter", exporter),
             ("compilation database", compilation_database),
         ] {
