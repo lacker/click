@@ -39,6 +39,10 @@ const SCALAR_LOCAL_SIDECAR: &str =
 const POINTER_SOURCE: &str = include_str!("fixtures/cpp-verification/pointer/bump_reference.cpp");
 const POINTER_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/pointer/bump_reference.click");
+const STRUCT_MEMBER_SOURCE: &str =
+    include_str!("fixtures/cpp-verification/struct-member/stage_restore.cpp");
+const STRUCT_MEMBER_SIDECAR: &str =
+    include_str!("fixtures/cpp-verification/struct-member/stage_restore.click");
 
 struct Project {
     directory: PathBuf,
@@ -73,6 +77,10 @@ impl Project {
 
     fn pointer() -> Self {
         Self::with_fixture("bump_reference.cpp", "bump_reference", POINTER_SOURCE)
+    }
+
+    fn struct_member() -> Self {
+        Self::with_fixture("stage_restore.cpp", "stage_restore", STRUCT_MEMBER_SOURCE)
     }
 
     fn with_fixture(source_name: &str, function: &str, source: &str) -> Self {
@@ -169,7 +177,7 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
     let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
-    assert_eq!(prepared.export().schema, 5);
+    assert_eq!(prepared.export().schema, 6);
     assert!(prepared.export().reachable_functions.is_empty());
     assert_eq!(prepared.logical_source(), "increment.cpp");
     assert_eq!(prepared.identity().len(), 64);
@@ -523,7 +531,7 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the call graph artifact offline");
-    assert_eq!(import.export().schema, 5);
+    assert_eq!(import.export().schema, 6);
     assert_eq!(import.export().function.name, "call_set_seven");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -600,7 +608,7 @@ fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the scalar-local artifact offline");
-    assert_eq!(import.export().schema, 5);
+    assert_eq!(import.export().schema, 6);
     assert_eq!(import.export().function.name, "relay_value");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -714,7 +722,7 @@ fn mutable_pointer_dereference_and_reference_address_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the pointer artifact offline");
-    assert_eq!(import.export().schema, 5);
+    assert_eq!(import.export().schema, 6);
     let caller = &import.export().function;
     assert_eq!(caller.name, "bump_reference");
     assert!(matches!(
@@ -843,6 +851,108 @@ fn mutable_pointer_dereference_and_reference_address_verify_offline() {
 }
 
 #[test]
+fn record_reference_member_loads_and_stores_verify_offline() {
+    let project = Project::struct_member();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, STRUCT_MEMBER_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("export the resolved C++ record layout and fields");
+    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+
+    let import = load_import(&project.config()).expect("load the record artifact offline");
+    assert_eq!(import.export().schema, 6);
+    let [record] = import.export().records.as_slice() else {
+        panic!("the referenced record layout was not captured")
+    };
+    assert_eq!(record.name, "RestoreState");
+    assert_eq!((record.size_bytes, record.alignment_bytes), (16, 8));
+    let [pointer, saved] = record.fields.as_slice() else {
+        panic!("the record fields were not captured")
+    };
+    assert_eq!(
+        (
+            pointer.name.as_str(),
+            pointer.offset_bytes,
+            pointer.size_bytes
+        ),
+        ("pointer", 0, 8)
+    );
+    assert!(matches!(pointer.value_type, CppType::Pointer { .. }));
+    assert_eq!(
+        (saved.name.as_str(), saved.offset_bytes, saved.size_bytes),
+        ("saved", 8, 4)
+    );
+    assert!(matches!(saved.value_type, CppType::Integer { .. }));
+
+    let function = &import.export().function;
+    assert!(matches!(
+        &function.parameters[0].value_type,
+        CppType::LvalueReference { pointee }
+            if matches!(pointee.as_ref(), CppType::Record { name, declaration_id }
+                if name == "RestoreState" && declaration_id == &record.declaration_id)
+    ));
+    assert!(matches!(
+        function.body.as_slice(),
+        [
+            CppStatement::MemberStore { field: first, .. },
+            CppStatement::MemberStore { field: second, .. },
+            CppStatement::Store {
+                pointer: CppExpression::MemberLoad { field: third, .. },
+                ..
+            },
+            CppStatement::Return {
+                value: CppExpression::MemberLoad { field: fourth, .. },
+                ..
+            },
+        ] if first.declaration_id == pointer.declaration_id
+            && second.declaration_id == saved.declaration_id
+            && third.declaration_id == pointer.declaration_id
+            && fourth.declaration_id == saved.declaration_id
+    ));
+
+    let lowered = lower_import(&import).expect("lower member operations through checked offsets");
+    assert_eq!(
+        lowered.kernel_function().parameters()[0].c_type(),
+        CType::Int32Pointer
+    );
+
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    let verified = verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify field access and the loaded pointer through shared memory rules");
+    assert_eq!(verified.len(), 7);
+
+    let execute = cpp_prepared_project_tactic_source_position(
+        &click_project,
+        &import,
+        "stage_restore.contract",
+        0,
+    )
+    .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .expect("expand the record execution proof");
+    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+        .expect("the expanded record proof must reverify");
+
+    let missing_ownership = STRUCT_MEMBER_SIDECAR.replace("    owns state->pointer;\n", "");
+    fs::write(&sidecar, &missing_ownership).unwrap();
+    let missing_project = read_click_project(&sidecar, &missing_ownership).unwrap();
+    verify_cpp_prepared_project(&missing_project, &import)
+        .expect_err("writing a field without its memory authority must not verify");
+
+    let false_contract =
+        STRUCT_MEMBER_SIDECAR.replace("ensures value[0] == 7;", "ensures value[0] == 8;");
+    fs::write(&sidecar, &false_contract).unwrap();
+    let false_project = read_click_project(&sidecar, &false_contract).unwrap();
+    verify_cpp_prepared_project(&false_project, &import)
+        .expect_err("a false pointer-mediated member effect must be rejected");
+}
+
+#[test]
 fn cpp_pointer_slice_rejects_arithmetic_null_multilevel_and_pointer_locals() {
     let project = Project::pointer();
 
@@ -884,6 +994,54 @@ fn cpp_pointer_slice_rejects_arithmetic_null_multilevel_and_pointer_locals() {
     let error = refresh_import(&project.config()).unwrap_err();
     assert!(error.contains("bump_reference.cpp:1"), "{error}");
     assert!(error.contains("mutable int* parameter"), "{error}");
+    assert!(!project.artifact().exists());
+}
+
+#[test]
+fn cpp_record_slice_rejects_methods_bitfields_inheritance_and_multiple_types() {
+    let project = Project::struct_member();
+
+    fs::write(
+        project.source(),
+        "struct RestoreState {\n    int saved;\n    int read() noexcept { return saved; }\n};\n\nint stage_restore(RestoreState& state, int& value) noexcept {\n    return state.saved;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("stage_restore.cpp:3"), "{error}");
+    assert!(
+        error.contains("methods, constructors, and destructors"),
+        "{error}"
+    );
+    assert!(!project.artifact().exists());
+
+    fs::write(
+        project.source(),
+        "struct RestoreState {\n    int saved : 4;\n};\n\nint stage_restore(RestoreState& state, int& value) noexcept {\n    return state.saved;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("stage_restore.cpp:2"), "{error}");
+    assert!(error.contains("without bit-fields"), "{error}");
+    assert!(!project.artifact().exists());
+
+    fs::write(
+        project.source(),
+        "struct Base { int base; };\nstruct RestoreState : Base { int saved; };\n\nint stage_restore(RestoreState& state, int& value) noexcept {\n    return state.saved;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("stage_restore.cpp:2"), "{error}");
+    assert!(error.contains("with no bases"), "{error}");
+    assert!(!project.artifact().exists());
+
+    fs::write(
+        project.source(),
+        "struct First { int value; };\nstruct Second { int value; };\n\nint stage_restore(First& first, Second& second) noexcept {\n    first.value = second.value;\n    return first.value;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("stage_restore.cpp:2"), "{error}");
+    assert!(error.contains("exactly one record type"), "{error}");
     assert!(!project.artifact().exists());
 }
 

@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <limits>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -13,6 +14,7 @@
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/AST/RecordLayout.h"
 #include "clang/AST/Stmt.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Version.h"
@@ -120,6 +122,14 @@ public:
       }
       reachable_functions.push_back(std::move(*reachable));
     }
+    llvm::json::Array records;
+    for (const clang::CXXRecordDecl *record : record_definitions_) {
+      auto lowered = lower_record(record);
+      if (!lowered) {
+        return;
+      }
+      records.push_back(std::move(*lowered));
+    }
 
     llvm::json::Object profile;
     profile["frontend"] = "clang";
@@ -130,10 +140,11 @@ public:
     profile["rtti"] = false;
 
     llvm::json::Object artifact;
-    artifact["schema"] = 5;
+    artifact["schema"] = 6;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["logical_source"] = logical_source_;
+    artifact["records"] = std::move(records);
     artifact["function"] = std::move(*function);
     artifact["reachable_functions"] = std::move(reachable_functions);
     state_.artifact.emplace(std::move(artifact));
@@ -146,6 +157,11 @@ private:
     llvm::json::Object callee;
     llvm::json::Array arguments;
     Json span;
+  };
+
+  struct LoweredMember {
+    Json object;
+    Json field;
   };
 
   std::optional<Json> lower_function(const clang::FunctionDecl *declaration) {
@@ -206,12 +222,22 @@ private:
         parameter->getType()->getAs<clang::LValueReferenceType>();
     const bool int_reference =
         reference != nullptr &&
+        !reference->getPointeeType().isVolatileQualified() &&
+        !reference->getPointeeType().isRestrictQualified() &&
         context_.hasSameType(reference->getPointeeType().getUnqualifiedType(),
                              context_.IntTy);
+    const clang::CXXRecordDecl *record_reference = nullptr;
+    if (reference != nullptr && !reference->getPointeeType().hasQualifiers()) {
+      if (const auto *record_type =
+              reference->getPointeeType()->getAs<clang::RecordType>()) {
+        record_reference = llvm::dyn_cast<clang::CXXRecordDecl>(
+            record_type->getDecl()->getDefinition());
+      }
+    }
     const auto *pointer = parameter->getType()->getAs<clang::PointerType>();
     const bool mutable_int_pointer =
-        pointer != nullptr && !parameter->getType().isConstQualified() &&
-        !pointer->getPointeeType().isConstQualified() &&
+        pointer != nullptr && !parameter->getType().hasQualifiers() &&
+        !pointer->getPointeeType().hasQualifiers() &&
         context_.hasSameType(pointer->getPointeeType().getUnqualifiedType(),
                              context_.IntTy);
     const bool by_value_bool =
@@ -219,9 +245,13 @@ private:
         context_.hasSameType(parameter->getType().getUnqualifiedType(),
                              context_.BoolTy) &&
         !parameter->getType().isConstQualified();
-    if (!int_reference && !mutable_int_pointer && !by_value_bool) {
+    if (!int_reference && record_reference == nullptr &&
+        !mutable_int_pointer && !by_value_bool) {
       fail(parameter->getLocation(),
-           "the supported C++ parameter must be a by-value bool, int&, const int&, or mutable int* parameter");
+           "the supported C++ parameter must be a by-value bool, int&, const int&, or mutable int* parameter, or a mutable simple-record reference parameter");
+      return std::nullopt;
+    }
+    if (record_reference != nullptr && !remember_record(record_reference)) {
       return std::nullopt;
     }
     auto value_type =
@@ -262,6 +292,25 @@ private:
       result["pointee"] = std::move(*pointee);
       return Json(std::move(result));
     }
+    if (const auto *record_type = type->getAs<clang::RecordType>()) {
+      const auto *record = llvm::dyn_cast<clang::CXXRecordDecl>(
+          record_type->getDecl()->getDefinition());
+      if (type.hasQualifiers() || record == nullptr ||
+          !remember_record(record)) {
+        if (record == nullptr && state_.error.empty()) {
+          fail(location, "the supported C++ record type must be complete");
+        } else if (type.hasQualifiers() && state_.error.empty()) {
+          fail(location,
+               "qualified C++ record objects are outside the supported slice");
+        }
+        return std::nullopt;
+      }
+      llvm::json::Object result;
+      result["kind"] = "record";
+      result["declaration_id"] = declaration_id(record);
+      result["name"] = record->getNameAsString();
+      return Json(std::move(result));
+    }
     if (context_.hasSameType(type.getUnqualifiedType(), context_.BoolTy)) {
       llvm::json::Object result;
       result["kind"] = "boolean";
@@ -271,7 +320,7 @@ private:
     }
     if (!context_.hasSameType(type.getUnqualifiedType(), context_.IntTy)) {
       fail(location,
-           "the supported C++ slice supports bool, int, int&, and mutable int* types");
+           "the supported C++ slice supports bool, int, int&, mutable int*, and one simple record-reference type");
       return std::nullopt;
     }
     llvm::json::Object result;
@@ -308,7 +357,16 @@ private:
       }
       llvm::json::Object result;
       const clang::Expr *left = binary->getLHS()->IgnoreParens();
-      if (const auto *dereference = llvm::dyn_cast<clang::UnaryOperator>(left);
+      if (const auto *member = llvm::dyn_cast<clang::MemberExpr>(left)) {
+        auto lowered = lower_member(member, function);
+        if (!lowered) {
+          return std::nullopt;
+        }
+        result["kind"] = "member_store";
+        result["object"] = std::move(lowered->object);
+        result["field"] = std::move(lowered->field);
+      } else if (const auto *dereference =
+                     llvm::dyn_cast<clang::UnaryOperator>(left);
           dereference != nullptr && dereference->getOpcode() == clang::UO_Deref) {
         auto pointer = lower_expression(dereference->getSubExpr(), function);
         if (!pointer) {
@@ -600,7 +658,15 @@ private:
       }
       llvm::json::Object result;
       const clang::Expr *source = cast->getSubExpr()->IgnoreParens();
-      if (const auto *dereference =
+      if (const auto *member = llvm::dyn_cast<clang::MemberExpr>(source)) {
+        auto lowered = lower_member(member, function);
+        if (!lowered) {
+          return std::nullopt;
+        }
+        result["kind"] = "member_load";
+        result["object"] = std::move(lowered->object);
+        result["field"] = std::move(lowered->field);
+      } else if (const auto *dereference =
               llvm::dyn_cast<clang::UnaryOperator>(source);
           dereference != nullptr && dereference->getOpcode() == clang::UO_Deref) {
         auto pointer = lower_expression(dereference->getSubExpr(), function);
@@ -703,6 +769,194 @@ private:
     return std::nullopt;
   }
 
+  bool remember_record(const clang::CXXRecordDecl *record) {
+    const clang::CXXRecordDecl *definition =
+        record == nullptr ? nullptr : record->getDefinition();
+    if (definition == nullptr) {
+      fail({}, "the supported C++ record type must be complete");
+      return false;
+    }
+    const clang::CXXRecordDecl *canonical = definition->getCanonicalDecl();
+    if (!known_records_.empty() && known_records_.count(canonical) == 0) {
+      fail(definition->getLocation(),
+           "the first C++ object slice supports exactly one record type");
+      return false;
+    }
+    if (known_records_.insert(canonical).second) {
+      if (!validate_record(definition)) {
+        return false;
+      }
+      record_definitions_.push_back(definition);
+    }
+    return true;
+  }
+
+  bool validate_record(const clang::CXXRecordDecl *record) {
+    if (!record->isStruct() || record->getName().empty()) {
+      fail(record->getLocation(),
+           "the supported C++ record must be a named struct");
+      return false;
+    }
+    if (!source_manager_.isWrittenInMainFile(
+            source_manager_.getSpellingLoc(record->getLocation()))) {
+      fail(record->getLocation(),
+           "the supported C++ record must be declared in the selected file");
+      return false;
+    }
+    if (!record->isStandardLayout() || !record->isTriviallyCopyable() ||
+        !record->isAggregate() || record->getNumBases() != 0) {
+      fail(record->getLocation(),
+           "the supported C++ record must be an aggregate, standard-layout, trivially-copyable struct with no bases");
+      return false;
+    }
+    if (record->field_empty()) {
+      fail(record->getLocation(),
+           "the supported C++ record must contain at least one field");
+      return false;
+    }
+    for (const clang::Decl *member : record->decls()) {
+      if (const auto *method = llvm::dyn_cast<clang::CXXMethodDecl>(member);
+          method != nullptr && !method->isImplicit()) {
+        fail(method->getLocation(),
+             "methods, constructors, and destructors are outside the supported C++ record slice");
+        return false;
+      }
+      if (!member->isImplicit() && !llvm::isa<clang::FieldDecl>(member) &&
+          !llvm::isa<clang::AccessSpecDecl>(member)) {
+        fail(member->getLocation(),
+             "nested declarations and static data members are outside the supported C++ record slice");
+        return false;
+      }
+    }
+    for (const clang::FieldDecl *field : record->fields()) {
+      const clang::QualType type = field->getType();
+      const auto *pointer = type->getAs<clang::PointerType>();
+      const bool mutable_int =
+          !type.hasQualifiers() &&
+          context_.hasSameType(type.getUnqualifiedType(), context_.IntTy);
+      const bool mutable_int_pointer =
+          pointer != nullptr && !type.hasQualifiers() &&
+          !pointer->getPointeeType().hasQualifiers() &&
+          context_.hasSameType(pointer->getPointeeType().getUnqualifiedType(),
+                               context_.IntTy);
+      if (field->getAccess() != clang::AS_public || field->isBitField() ||
+          field->isMutable() || field->hasInClassInitializer() ||
+          field->getName().empty() ||
+          (!mutable_int && !mutable_int_pointer)) {
+        fail(field->getLocation(),
+             "the supported C++ record fields must be named public mutable int or mutable int* fields without bit-fields");
+        return false;
+      }
+    }
+    return true;
+  }
+
+  std::optional<Json> lower_record(const clang::CXXRecordDecl *record) {
+    const clang::ASTRecordLayout &layout = context_.getASTRecordLayout(record);
+    const std::uint64_t size = layout.getSize().getQuantity();
+    const std::uint64_t alignment = layout.getAlignment().getQuantity();
+    if (size > std::numeric_limits<std::uint32_t>::max() ||
+        alignment > std::numeric_limits<std::uint32_t>::max()) {
+      fail(record->getLocation(), "supported C++ record layout is too large");
+      return std::nullopt;
+    }
+    llvm::json::Array fields;
+    unsigned index = 0;
+    for (const clang::FieldDecl *field : record->fields()) {
+      const std::uint64_t bit_offset = layout.getFieldOffset(index++);
+      const std::uint64_t field_size =
+          context_.getTypeSizeInChars(field->getType()).getQuantity();
+      if (bit_offset % 8 != 0 ||
+          bit_offset / 8 > std::numeric_limits<std::uint32_t>::max() ||
+          field_size > std::numeric_limits<std::uint32_t>::max()) {
+        fail(field->getLocation(), "supported C++ field layout is too large");
+        return std::nullopt;
+      }
+      auto value_type = lower_type(field->getType(), field->getLocation());
+      if (!value_type) {
+        return std::nullopt;
+      }
+      llvm::json::Object lowered;
+      lowered["declaration_id"] = declaration_id(field);
+      lowered["name"] = field->getNameAsString();
+      lowered["value_type"] = std::move(*value_type);
+      lowered["offset_bytes"] = static_cast<std::int64_t>(bit_offset / 8);
+      lowered["size_bytes"] = static_cast<std::int64_t>(field_size);
+      lowered["span"] = span(field->getSourceRange());
+      fields.push_back(std::move(lowered));
+    }
+    llvm::json::Object result;
+    result["declaration_id"] = declaration_id(record);
+    result["name"] = record->getNameAsString();
+    result["size_bytes"] = static_cast<std::int64_t>(size);
+    result["alignment_bytes"] = static_cast<std::int64_t>(alignment);
+    result["fields"] = std::move(fields);
+    result["span"] = span(record->getSourceRange());
+    if (!state_.error.empty()) {
+      return std::nullopt;
+    }
+    return Json(std::move(result));
+  }
+
+  std::optional<LoweredMember>
+  lower_member(const clang::MemberExpr *member,
+               const clang::FunctionDecl *function) {
+    if (member->isArrow()) {
+      fail(member->getOperatorLoc(),
+           "the first C++ object slice supports dot access through a record reference, not arrow access");
+      return std::nullopt;
+    }
+    const auto *field = llvm::dyn_cast<clang::FieldDecl>(member->getMemberDecl());
+    const auto *record = field == nullptr
+                             ? nullptr
+                             : llvm::dyn_cast<clang::CXXRecordDecl>(
+                                   field->getParent()->getDefinition());
+    if (field == nullptr || record == nullptr || !remember_record(record)) {
+      if (field == nullptr && state_.error.empty()) {
+        fail(member->getMemberLoc(),
+             "the supported C++ member access must resolve to a data field");
+      }
+      return std::nullopt;
+    }
+    const clang::Expr *base = member->getBase()->IgnoreParenImpCasts();
+    const auto *reference = llvm::dyn_cast<clang::DeclRefExpr>(base);
+    const auto *parameter =
+        reference == nullptr
+            ? nullptr
+            : llvm::dyn_cast<clang::ParmVarDecl>(reference->getDecl());
+    const auto *reference_type =
+        parameter == nullptr
+            ? nullptr
+            : parameter->getType()->getAs<clang::LValueReferenceType>();
+    const auto *base_record_type =
+        reference_type == nullptr
+            ? nullptr
+            : reference_type->getPointeeType()->getAs<clang::RecordType>();
+    if (parameter == nullptr || parameter->getDeclContext() != function ||
+        reference_type == nullptr ||
+        reference_type->getPointeeType().hasQualifiers() ||
+        base_record_type == nullptr ||
+        base_record_type->getDecl()->getCanonicalDecl() !=
+            record->getCanonicalDecl()) {
+      fail(member->getMemberLoc(),
+           "supported C++ member access must use a mutable record-reference parameter directly");
+      return std::nullopt;
+    }
+    auto object = lower_place_reference(base, function);
+    if (!object) {
+      return std::nullopt;
+    }
+    llvm::json::Object lowered_field;
+    lowered_field["record_declaration_id"] = declaration_id(record);
+    lowered_field["declaration_id"] = declaration_id(field);
+    lowered_field["name"] = field->getNameAsString();
+    lowered_field["span"] = span(member->getMemberNameInfo().getSourceRange());
+    if (!state_.error.empty()) {
+      return std::nullopt;
+    }
+    return LoweredMember{std::move(*object), Json(std::move(lowered_field))};
+  }
+
   std::optional<Json>
   lower_place_reference(const clang::Expr *expression,
                         const clang::FunctionDecl *expected_function) {
@@ -799,6 +1053,8 @@ private:
   std::vector<clang::FunctionDecl *> matches_;
   std::unordered_set<const clang::FunctionDecl *> known_functions_;
   std::vector<const clang::FunctionDecl *> reachable_definitions_;
+  std::unordered_set<const clang::CXXRecordDecl *> known_records_;
+  std::vector<const clang::CXXRecordDecl *> record_definitions_;
 };
 
 class ExportConsumer : public clang::ASTConsumer {

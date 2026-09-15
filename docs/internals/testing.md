@@ -100,9 +100,15 @@ mutable `int*` helper, then checks dereference reads, a checked write, offline
 verification, and expansion/reverification. Removing memory ownership and a
 false memory postcondition both fail; pointer arithmetic, null conversion,
 pointer locals, and multiple indirection are rejected at the frontend
-boundary. Other coverage exercises source/signature mismatch diagnostics,
-const-write rejection, and smart-tactic inventory. Missing Clang development
-tooling fails the gate, and unsupported C++ does not fall back to the C parser.
+boundary. A record fixture carries one aggregate struct's Clang declaration
+identities and exact LP64 layout into the proof interface, then checks field
+reads and writes plus a dereference through an `int*` field. It verifies
+offline and after expansion; missing field authority and a false pointee effect
+both fail. Focused frontend checks reject methods, bit-fields, inheritance, and
+multiple record types. Other coverage exercises source/signature mismatch
+diagnostics, const-write rejection, and smart-tactic inventory. Missing Clang
+development tooling fails the gate, and unsupported C++ does not fall back to
+the C parser.
 
 ## What the gate runs
 

@@ -4059,6 +4059,62 @@ pub(in crate::surface) fn parse_c_layouts(
                 actual.iter().cloned().collect::<Vec<_>>().join(", "),
             )));
         }
+        for record in &import.export().records {
+            let fields = record
+                .fields
+                .iter()
+                .map(|field| {
+                    let c_type = match &field.value_type {
+                        crate::languages::cpp::CppType::Integer {
+                            bits: 32,
+                            signed: true,
+                            is_const: false,
+                        } => C0Type::Int32,
+                        crate::languages::cpp::CppType::Pointer { pointee }
+                            if matches!(
+                                pointee.as_ref(),
+                                crate::languages::cpp::CppType::Integer {
+                                    bits: 32,
+                                    signed: true,
+                                    is_const: false,
+                                }
+                            ) =>
+                        {
+                            C0Type::Int32Pointer
+                        }
+                        _ => {
+                            return Err(ClickError::new(format!(
+                                "C++ record field `{}.{}` is outside the supported proof interface",
+                                record.name, field.name
+                            )));
+                        }
+                    };
+                    Ok((
+                        field.name.clone(),
+                        c_type,
+                        field.offset_bytes,
+                        field.size_bytes,
+                    ))
+                })
+                .collect::<Result<Vec<_>, ClickError>>()?;
+            let layout = syntax::C0StructLayout::from_explicit_fields(
+                fields,
+                record.size_bytes,
+                record.alignment_bytes,
+            )
+            .map_err(|error| {
+                ClickError::new(format!(
+                    "invalid C++ record layout for `{}`: {error}",
+                    record.name
+                ))
+            })?;
+            if layouts.insert(record.name.clone(), layout).is_some() {
+                return Err(ClickError::new(format!(
+                    "duplicate C++ record name `{}`",
+                    record.name
+                )));
+            }
+        }
         return Ok((
             layouts,
             union_layouts,
@@ -5215,6 +5271,19 @@ fn cpp_function_interface(
                 )
                 .with_pointee_constant(*is_const))
             }
+            crate::languages::cpp::CppType::LvalueReference { pointee } => {
+                let crate::languages::cpp::CppType::Record { name, .. } = pointee.as_ref() else {
+                    return Err(ClickError::new(format!(
+                        "C++ declaration `{}` parameter `{}` has an unsupported reference pointee",
+                        source.declaration_id, parameter.name
+                    )));
+                };
+                Ok(syntax::C0Parameter::new(
+                    C0Type::Int32Pointer,
+                    parameter.name.clone(),
+                    Some(name.clone()),
+                ))
+            }
             crate::languages::cpp::CppType::Pointer { pointee }
                 if matches!(
                     pointee.as_ref(),
@@ -5232,7 +5301,7 @@ fn cpp_function_interface(
                 ))
             }
             _ => Err(ClickError::new(format!(
-                "C++ declaration `{}` parameter `{}` is outside the supported bool/reference/pointer interface",
+                "C++ declaration `{}` parameter `{}` is outside the supported bool/reference/pointer/record interface",
                 source.declaration_id, parameter.name
             ))),
         })

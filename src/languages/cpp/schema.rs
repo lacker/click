@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 5;
+pub(crate) const EXPORT_SCHEMA: u32 = 6;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -15,8 +15,31 @@ pub struct CppExport {
     pub language: String,
     pub profile: CppProfile,
     pub logical_source: String,
+    pub records: Vec<CppRecord>,
     pub function: CppFunction,
     pub reachable_functions: Vec<CppFunction>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CppRecord {
+    pub declaration_id: String,
+    pub name: String,
+    pub size_bytes: u32,
+    pub alignment_bytes: u32,
+    pub fields: Vec<CppField>,
+    pub span: CppSpan,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CppField {
+    pub declaration_id: String,
+    pub name: String,
+    pub value_type: CppType,
+    pub offset_bytes: u32,
+    pub size_bytes: u32,
+    pub span: CppSpan,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -60,6 +83,10 @@ pub enum CppType {
     Pointer {
         pointee: Box<CppType>,
     },
+    Record {
+        declaration_id: String,
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -100,6 +127,12 @@ pub enum CppExpression {
         value_type: CppType,
         span: CppSpan,
     },
+    MemberLoad {
+        object: CppPlaceReference,
+        field: CppFieldReference,
+        value_type: CppType,
+        span: CppSpan,
+    },
     Binary {
         operator: CppBinaryOperator,
         left: Box<CppExpression>,
@@ -120,6 +153,15 @@ pub struct CppPlaceReference {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CppFunctionReference {
+    pub declaration_id: String,
+    pub name: String,
+    pub span: CppSpan,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CppFieldReference {
+    pub record_declaration_id: String,
     pub declaration_id: String,
     pub name: String,
     pub span: CppSpan,
@@ -160,6 +202,12 @@ pub enum CppStatement {
     },
     Store {
         pointer: CppExpression,
+        value: CppExpression,
+        span: CppSpan,
+    },
+    MemberStore {
+        object: CppPlaceReference,
+        field: CppFieldReference,
         value: CppExpression,
         span: CppSpan,
     },
@@ -228,10 +276,27 @@ impl CppExport {
             ));
         }
 
+        if self.records.len() > 1 {
+            return Err("the first C++ object slice supports exactly one record type".into());
+        }
+        let mut records = BTreeMap::new();
+        for record in &self.records {
+            record.validate(logical_source)?;
+            if records
+                .insert(record.declaration_id.clone(), record)
+                .is_some()
+            {
+                return Err(format!(
+                    "duplicate C++ record declaration identity `{}`",
+                    record.declaration_id
+                ));
+            }
+        }
+
         let mut functions = BTreeMap::new();
         let mut names = BTreeMap::new();
         for source in std::iter::once(&self.function).chain(&self.reachable_functions) {
-            source.validate(logical_source)?;
+            source.validate(logical_source, &records)?;
             if functions
                 .insert(source.declaration_id.clone(), source)
                 .is_some()
@@ -269,8 +334,77 @@ impl CppExport {
     }
 }
 
-impl CppFunction {
+impl CppRecord {
     fn validate(&self, logical_source: &str) -> Result<(), String> {
+        if self.declaration_id.is_empty() || self.name.is_empty() {
+            return Err("C++ record is missing declaration identity".into());
+        }
+        self.span.validate(logical_source)?;
+        if self.fields.is_empty()
+            || self.alignment_bytes == 0
+            || !self.alignment_bytes.is_power_of_two()
+            || self.size_bytes == 0
+            || !self.size_bytes.is_multiple_of(self.alignment_bytes)
+        {
+            return Err(format!("C++ record `{}` has an invalid layout", self.name));
+        }
+        let mut identities = std::collections::BTreeSet::new();
+        let mut names = std::collections::BTreeSet::new();
+        let mut previous_end = 0u32;
+        for field in &self.fields {
+            field.span.validate(logical_source)?;
+            if field.declaration_id.is_empty() || field.name.is_empty() {
+                return Err(format!(
+                    "C++ record `{}` has an unidentified field",
+                    self.name
+                ));
+            }
+            if !identities.insert(field.declaration_id.clone()) || !names.insert(field.name.clone())
+            {
+                return Err(format!("C++ record `{}` has a duplicate field", self.name));
+            }
+            let (size, alignment) = match &field.value_type {
+                CppType::Integer { .. } => {
+                    require_int32(&field.value_type, false, "record field")?;
+                    (4, 4)
+                }
+                CppType::Pointer { pointee } => {
+                    require_int32(pointee, false, "record pointer field")?;
+                    (8, 8)
+                }
+                _ => {
+                    return Err(format!(
+                        "C++ record field `{}.{}` is outside the `int`/`int*` slice",
+                        self.name, field.name
+                    ));
+                }
+            };
+            let end = field
+                .offset_bytes
+                .checked_add(field.size_bytes)
+                .ok_or_else(|| format!("C++ record `{}` field layout overflows", self.name))?;
+            if field.size_bytes != size
+                || field.offset_bytes % alignment != 0
+                || field.offset_bytes < previous_end
+                || end > self.size_bytes
+            {
+                return Err(format!(
+                    "C++ record field `{}.{}` has an invalid layout",
+                    self.name, field.name
+                ));
+            }
+            previous_end = end;
+        }
+        Ok(())
+    }
+}
+
+impl CppFunction {
+    fn validate(
+        &self,
+        logical_source: &str,
+        records: &BTreeMap<String, &CppRecord>,
+    ) -> Result<(), String> {
         if self.name.is_empty() || self.declaration_id.is_empty() {
             return Err("C++ function is missing declaration identity".into());
         }
@@ -294,14 +428,22 @@ impl CppFunction {
                     require_bool(&parameter.value_type, false, "by-value parameter")?;
                 }
                 CppType::LvalueReference { pointee } => {
-                    require_int32(pointee, true, "reference pointee")?;
+                    if let CppType::Record {
+                        declaration_id,
+                        name,
+                    } = pointee.as_ref()
+                    {
+                        validate_record_reference(records, declaration_id, name)?;
+                    } else {
+                        require_int32(pointee, true, "reference pointee")?;
+                    }
                 }
                 CppType::Pointer { pointee } => {
                     require_int32(pointee, false, "pointer pointee")?;
                 }
                 _ => {
                     return Err(
-                        "the supported C++ parameters are by-value `bool`, `int&`, `const int&`, and `int*`"
+                        "the supported C++ parameters are by-value `bool`, `int&`, `const int&`, `int*`, and one simple record reference"
                             .into(),
                     );
                 }
@@ -338,7 +480,7 @@ impl CppFunction {
                     return Err("C++ local is missing declaration identity".into());
                 }
                 require_int32(&local.value_type, false, "automatic local")?;
-                initializer.validate(&places, logical_source)?;
+                initializer.validate(&places, records, logical_source)?;
                 if places
                     .insert(
                         local.declaration_id.clone(),
@@ -358,7 +500,7 @@ impl CppFunction {
                     ));
                 }
             } else {
-                statement.validate(&places, logical_source)?;
+                statement.validate(&places, records, logical_source)?;
             }
         }
         if !sequence_always_returns(&self.body) {
@@ -374,6 +516,7 @@ impl CppStatement {
     fn validate(
         &self,
         places: &BTreeMap<String, (String, CppType)>,
+        records: &BTreeMap<String, &CppRecord>,
         logical_source: &str,
     ) -> Result<(), String> {
         match self {
@@ -400,7 +543,7 @@ impl CppStatement {
                         );
                     }
                 }
-                value.validate(places, logical_source)?;
+                value.validate(places, records, logical_source)?;
                 require_int32(value.value_type(), false, "assignment value")
             }
             Self::Store {
@@ -409,14 +552,32 @@ impl CppStatement {
                 span,
             } => {
                 span.validate(logical_source)?;
-                pointer.validate(places, logical_source)?;
+                pointer.validate(places, records, logical_source)?;
                 require_mutable_int32_pointer(pointer.value_type(), "store pointer")?;
-                value.validate(places, logical_source)?;
+                value.validate(places, records, logical_source)?;
                 require_int32(value.value_type(), false, "stored value")
+            }
+            Self::MemberStore {
+                object,
+                field,
+                value,
+                span,
+            } => {
+                span.validate(logical_source)?;
+                let field_type =
+                    validate_member_reference(object, field, places, records, logical_source)?;
+                value.validate(places, records, logical_source)?;
+                if value.value_type() != field_type {
+                    return Err(format!(
+                        "C++ member store to `{}` has a mismatched value type",
+                        field.name
+                    ));
+                }
+                Ok(())
             }
             Self::Return { value, span } => {
                 span.validate(logical_source)?;
-                value.validate(places, logical_source)?;
+                value.validate(places, records, logical_source)?;
                 require_int32(value.value_type(), false, "return value")
             }
             Self::If {
@@ -426,10 +587,10 @@ impl CppStatement {
                 span,
             } => {
                 span.validate(logical_source)?;
-                condition.validate(places, logical_source)?;
+                condition.validate(places, records, logical_source)?;
                 require_bool(condition.value_type(), false, "if condition")?;
                 for statement in then_branch.iter().chain(else_branch) {
-                    statement.validate(places, logical_source)?;
+                    statement.validate(places, records, logical_source)?;
                 }
                 Ok(())
             }
@@ -437,7 +598,7 @@ impl CppStatement {
                 callee,
                 arguments,
                 span,
-            } => validate_call(callee, arguments, span, places, logical_source),
+            } => validate_call(callee, arguments, span, places, records, logical_source),
         }
     }
 }
@@ -446,18 +607,19 @@ impl CppInitializer {
     fn validate(
         &self,
         places: &BTreeMap<String, (String, CppType)>,
+        records: &BTreeMap<String, &CppRecord>,
         logical_source: &str,
     ) -> Result<(), String> {
         match self {
             Self::Value { value } => {
-                value.validate(places, logical_source)?;
+                value.validate(places, records, logical_source)?;
                 require_int32(value.value_type(), false, "local initializer")
             }
             Self::Call {
                 callee,
                 arguments,
                 span,
-            } => validate_call(callee, arguments, span, places, logical_source),
+            } => validate_call(callee, arguments, span, places, records, logical_source),
         }
     }
 }
@@ -467,6 +629,7 @@ fn validate_call(
     arguments: &[CppCallArgument],
     span: &CppSpan,
     places: &BTreeMap<String, (String, CppType)>,
+    records: &BTreeMap<String, &CppRecord>,
     logical_source: &str,
 ) -> Result<(), String> {
     span.validate(logical_source)?;
@@ -475,7 +638,7 @@ fn validate_call(
         return Err("C++ call is missing resolved declaration identity".into());
     }
     for argument in arguments {
-        argument.validate(places, logical_source)?;
+        argument.validate(places, records, logical_source)?;
     }
     Ok(())
 }
@@ -484,10 +647,11 @@ impl CppCallArgument {
     fn validate(
         &self,
         places: &BTreeMap<String, (String, CppType)>,
+        records: &BTreeMap<String, &CppRecord>,
         logical_source: &str,
     ) -> Result<(), String> {
         match self {
-            Self::Value { value } => value.validate(places, logical_source),
+            Self::Value { value } => value.validate(places, records, logical_source),
             Self::Reference { place } => {
                 let value_type = validate_place_reference(place, places, logical_source)?;
                 match value_type {
@@ -508,6 +672,7 @@ impl CppExpression {
             | Self::Load { value_type, .. }
             | Self::AddressOf { value_type, .. }
             | Self::Dereference { value_type, .. }
+            | Self::MemberLoad { value_type, .. }
             | Self::Binary { value_type, .. } => value_type,
         }
     }
@@ -515,6 +680,7 @@ impl CppExpression {
     fn validate(
         &self,
         places: &BTreeMap<String, (String, CppType)>,
+        records: &BTreeMap<String, &CppRecord>,
         logical_source: &str,
     ) -> Result<(), String> {
         match self {
@@ -553,6 +719,9 @@ impl CppExpression {
                         require_mutable_int32_pointer(place_type, "loaded pointer parameter")?;
                         require_mutable_int32_pointer(value_type, "loaded pointer value type")
                     }
+                    CppType::Record { .. } => {
+                        Err("C++ record values cannot be loaded or copied".into())
+                    }
                 }
             }
             Self::AddressOf {
@@ -580,9 +749,26 @@ impl CppExpression {
                 span,
             } => {
                 span.validate(logical_source)?;
-                pointer.validate(places, logical_source)?;
+                pointer.validate(places, records, logical_source)?;
                 require_mutable_int32_pointer(pointer.value_type(), "dereference operand")?;
                 require_int32(value_type, false, "dereference result type")
+            }
+            Self::MemberLoad {
+                object,
+                field,
+                value_type,
+                span,
+            } => {
+                span.validate(logical_source)?;
+                let field_type =
+                    validate_member_reference(object, field, places, records, logical_source)?;
+                if value_type != field_type {
+                    return Err(format!(
+                        "C++ member load of `{}` has a mismatched value type",
+                        field.name
+                    ));
+                }
+                Ok(())
             }
             Self::Binary {
                 left,
@@ -593,8 +779,8 @@ impl CppExpression {
             } => {
                 require_int32(value_type, false, "binary result type")?;
                 span.validate(logical_source)?;
-                left.validate(places, logical_source)?;
-                right.validate(places, logical_source)?;
+                left.validate(places, records, logical_source)?;
+                right.validate(places, records, logical_source)?;
                 require_int32(left.value_type(), false, "binary left operand")?;
                 require_int32(right.value_type(), false, "binary right operand")
             }
@@ -615,9 +801,11 @@ impl CppStatement {
                 else_branch,
                 ..
             } => sequence_always_returns(then_branch) && sequence_always_returns(else_branch),
-            Self::Declare { .. } | Self::Assign { .. } | Self::Store { .. } | Self::Call { .. } => {
-                false
-            }
+            Self::Declare { .. }
+            | Self::Assign { .. }
+            | Self::Store { .. }
+            | Self::MemberStore { .. }
+            | Self::Call { .. } => false,
         }
     }
 }
@@ -712,6 +900,7 @@ fn collect_calls<'a>(
             }
             CppStatement::Assign { .. }
             | CppStatement::Store { .. }
+            | CppStatement::MemberStore { .. }
             | CppStatement::Return { .. } => {}
         }
     }
@@ -828,6 +1017,74 @@ fn validate_place_reference<'a>(
         ));
     }
     Ok(value_type)
+}
+
+fn validate_record_reference<'a>(
+    records: &'a BTreeMap<String, &CppRecord>,
+    declaration_id: &str,
+    name: &str,
+) -> Result<&'a CppRecord, String> {
+    let record = records.get(declaration_id).ok_or_else(|| {
+        format!("C++ type refers to unknown record declaration `{declaration_id}`")
+    })?;
+    if record.name != name {
+        return Err(format!(
+            "C++ record declaration `{declaration_id}` is named `{}`, not `{name}`",
+            record.name
+        ));
+    }
+    Ok(record)
+}
+
+fn validate_member_reference<'a>(
+    object: &CppPlaceReference,
+    field: &CppFieldReference,
+    places: &'a BTreeMap<String, (String, CppType)>,
+    records: &'a BTreeMap<String, &CppRecord>,
+    logical_source: &str,
+) -> Result<&'a CppType, String> {
+    field.span.validate(logical_source)?;
+    if field.declaration_id.is_empty()
+        || field.record_declaration_id.is_empty()
+        || field.name.is_empty()
+    {
+        return Err("C++ member reference is missing declaration identity".into());
+    }
+    let object_type = validate_place_reference(object, places, logical_source)?;
+    let CppType::LvalueReference { pointee } = object_type else {
+        return Err("C++ member access requires a supported record reference".into());
+    };
+    let CppType::Record {
+        declaration_id,
+        name,
+    } = pointee.as_ref()
+    else {
+        return Err("C++ member access requires a supported record reference".into());
+    };
+    if declaration_id != &field.record_declaration_id {
+        return Err(format!(
+            "C++ field `{}` belongs to the wrong record declaration",
+            field.name
+        ));
+    }
+    let record = validate_record_reference(records, declaration_id, name)?;
+    let resolved = record
+        .fields
+        .iter()
+        .find(|candidate| candidate.declaration_id == field.declaration_id)
+        .ok_or_else(|| {
+            format!(
+                "C++ member access refers to unknown field declaration `{}`",
+                field.declaration_id
+            )
+        })?;
+    if resolved.name != field.name {
+        return Err(format!(
+            "C++ field declaration `{}` is named `{}`, not `{}`",
+            field.declaration_id, resolved.name, field.name
+        ));
+    }
+    Ok(&resolved.value_type)
 }
 
 fn require_int32(value: &CppType, allow_const: bool, label: &str) -> Result<(), String> {

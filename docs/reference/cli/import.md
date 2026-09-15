@@ -137,8 +137,9 @@ into C text. The `const-reference-alias` fixture writes through an `int&` and
 reads through an aliased `const int&`, using one explicit `owns` resource.
 C++ `const` restricts access through that reference; it does not create a Click
 `views` resource or imply that aliases cannot write. Supported parameters are
-currently by-value `bool`, `int&`, `const int&`, and mutable `int*`, and
-selected functions still return `int`.
+currently by-value `bool`, `int&`, `const int&`, mutable `int*`, and a mutable
+reference to the one supported simple record type. Selected functions still
+return `int`.
 
 The `direct-call` fixture selects a caller and captures the transitive closure
 of definitions reached by discarded-result direct call statements. Each call
@@ -164,12 +165,24 @@ kernel's existing address, typed-load, and typed-store operations, so the
 sidecar must provide ordinary memory authority. Removing that authority or
 claiming the wrong pointer-mediated memory effect fails verification.
 
-Constructors, destructors, uninitialized or nested locals, local references,
-shadowing, address-taking other than a current mutable reference parameter for
-a supported pointer call, pointer locals, pointer arithmetic, null pointers,
-multiple indirection, call results outside a local initializer, methods,
-indirect calls, loops, external specifications, object operations, and broader
-C++ syntax remain outside this end-to-end subset.
+The `struct-member` fixture accepts one named, public, non-inheriting aggregate
+`struct` whose fields are mutable `int` or mutable `int*`. Clang supplies the
+record and field declaration identities plus the exact LP64 size, alignment,
+field offsets, and field widths. A function may receive an existing object by
+mutable reference and read or write those fields with `object.field`; a pointer
+loaded from a field may use the already-supported checked dereference rules.
+The proof interface spells that reference as `struct Name*` and uses ordinary
+field resources such as `owns state->saved`. Click does not reconstruct the
+layout from C++ source or create a synthetic C body.
+
+Object construction, local objects, constructors, destructors, copies and
+moves, methods, inheritance, private fields, bit-fields, nested records, and
+multiple record types remain explicit errors. Uninitialized or nested locals,
+local references, shadowing, address-taking other than a current mutable
+reference parameter for a supported pointer call, pointer locals, pointer
+arithmetic, null pointers, multiple indirection, call results outside a local
+initializer, indirect calls, loops, external specifications, and broader C++
+syntax also remain outside this end-to-end subset.
 
 ## Validation and supported profile
 

@@ -2916,6 +2916,84 @@ impl C0Expression {
 }
 
 impl C0StructLayout {
+    /// Constructs the proof-facing view of a flat, compiler-laid-out record.
+    ///
+    /// This is intentionally narrower than the C parser's aggregate builder:
+    /// the initial C++ object slice admits only scalar `int` and `int*` fields
+    /// and carries their already-decided ABI offsets across the frontend
+    /// boundary without reconstructing source text.
+    pub(crate) fn from_explicit_fields(
+        fields: Vec<(String, C0Type, u32, u32)>,
+        size_bytes: u32,
+        alignment_bytes: u32,
+    ) -> Result<Self, String> {
+        if fields.is_empty()
+            || size_bytes == 0
+            || alignment_bytes == 0
+            || !alignment_bytes.is_power_of_two()
+            || !size_bytes.is_multiple_of(alignment_bytes)
+        {
+            return Err("explicit struct layout has invalid size or alignment".into());
+        }
+        let mut named_fields = BTreeMap::new();
+        let mut aggregate_fields = Vec::with_capacity(fields.len());
+        let mut previous_end = 0u32;
+        for (name, c_type, offset_bytes, byte_width) in fields {
+            let (expected_width, expected_alignment) = match c_type {
+                C0Type::Int32 => (4, 4),
+                C0Type::Int32Pointer => (8, 8),
+                _ => {
+                    return Err(format!(
+                        "explicit struct field `{name}` has unsupported type"
+                    ));
+                }
+            };
+            let end = offset_bytes
+                .checked_add(byte_width)
+                .ok_or_else(|| format!("explicit struct field `{name}` layout overflows"))?;
+            if name.is_empty()
+                || byte_width != expected_width
+                || offset_bytes % expected_alignment != 0
+                || offset_bytes < previous_end
+                || end > size_bytes
+            {
+                return Err(format!("explicit struct field `{name}` has invalid layout"));
+            }
+            if named_fields
+                .insert(
+                    name.clone(),
+                    C0StructField {
+                        c_type,
+                        struct_name: None,
+                        enum_name: None,
+                        union_name: None,
+                        function_pointer_signature: None,
+                        array_element_width: None,
+                        array_shape: None,
+                        offset_bytes,
+                        byte_width,
+                    },
+                )
+                .is_some()
+            {
+                return Err(format!("duplicate explicit struct field `{name}`"));
+            }
+            aggregate_fields.push(C0AggregateField {
+                name,
+                offset_bytes,
+                c_type,
+            });
+            previous_end = end;
+        }
+        Ok(Self {
+            fields: named_fields,
+            aggregate_fields,
+            aggregate_unions: Vec::new(),
+            size_bytes,
+            alignment_bytes,
+        })
+    }
+
     pub fn fields(&self) -> &BTreeMap<String, C0StructField> {
         &self.fields
     }

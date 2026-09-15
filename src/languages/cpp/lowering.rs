@@ -13,13 +13,15 @@
 use std::collections::BTreeMap;
 
 use super::{
-    CppBinaryOperator, CppCallArgument, CppExpression, CppFunction, CppInitializer, CppPlace,
-    CppPlaceReference, CppStatement, CppType, PreparedCppImport,
+    CppBinaryOperator, CppCallArgument, CppExpression, CppFieldReference, CppFunction,
+    CppInitializer, CppPlace, CppPlaceReference, CppRecord, CppStatement, CppType,
+    PreparedCppImport,
 };
 use crate::kernel::{
     CExpression, CFunction, CStatement, CType, LoadSourceId, LoadSourceOwnerId, c_add, c_assign,
-    c_call, c_call_assign, c_declare, c_function, c_if, c_int32_literal, c_parameter, c_return,
-    c_seq, c_skip, c_typed_load_with_source, c_typed_store, c_variable,
+    c_call, c_call_assign, c_declare, c_function, c_if, c_int32_literal, c_parameter,
+    c_pointer_offset_bytes, c_return, c_seq, c_skip, c_typed_load_with_source, c_typed_store,
+    c_variable,
 };
 
 /// One kernel function together with the immutable semantic artifact that
@@ -86,6 +88,12 @@ fn lower_function(import: &PreparedCppImport, source: &CppFunction) -> Result<CF
         source_unit: import.logical_source(),
         function_name: &source.name,
         places,
+        records: import
+            .export()
+            .records
+            .iter()
+            .map(|record| (record.declaration_id.as_str(), record))
+            .collect(),
         next_load_occurrence: 0,
     };
     let body = context.lower_sequence(&source.body)?;
@@ -109,11 +117,16 @@ fn lower_parameter(parameter: &CppPlace) -> Result<crate::kernel::CParameter, St
             Ok(c_parameter(parameter.name.clone(), CType::Int32Pointer)
                 .with_pointee_constant(is_const_int32(pointee)))
         }
+        CppType::LvalueReference { pointee }
+            if matches!(pointee.as_ref(), CppType::Record { .. }) =>
+        {
+            Ok(c_parameter(parameter.name.clone(), CType::Int32Pointer))
+        }
         CppType::Pointer { pointee } if is_mutable_int32(pointee) => {
             Ok(c_parameter(parameter.name.clone(), CType::Int32Pointer))
         }
         _ => Err(format!(
-            "C++ parameter `{}` is outside direct by-value `bool`, `int&`, `const int&`, and `int*` lowering",
+            "C++ parameter `{}` is outside direct by-value `bool`, `int&`, `const int&`, `int*`, and record-reference lowering",
             parameter.name
         )),
     }
@@ -123,6 +136,7 @@ struct LoweringContext<'a> {
     source_unit: &'a str,
     function_name: &'a str,
     places: BTreeMap<&'a str, &'a CppPlace>,
+    records: BTreeMap<&'a str, &'a CppRecord>,
     next_load_occurrence: u32,
 }
 
@@ -179,6 +193,19 @@ impl LoweringContext<'_> {
                 self.lower_expression(value)?,
                 CType::Int32,
             )),
+            CppStatement::MemberStore {
+                object,
+                field,
+                value,
+                ..
+            } => {
+                let (pointer, value_type) = self.lower_member_pointer(object, field)?;
+                Ok(c_typed_store(
+                    pointer,
+                    self.lower_expression(value)?,
+                    value_type,
+                ))
+            }
             CppStatement::Return { value, .. } => Ok(c_return(self.lower_expression(value)?)),
             CppStatement::If {
                 condition,
@@ -301,6 +328,21 @@ impl LoweringContext<'_> {
             CppExpression::Dereference { .. } => {
                 Err("C++ dereference is outside mutable `int*` lowering".into())
             }
+            CppExpression::MemberLoad {
+                object,
+                field,
+                value_type,
+                ..
+            } => {
+                let (pointer, field_type) = self.lower_member_pointer(object, field)?;
+                if cpp_scalar_kernel_type(value_type)? != field_type {
+                    return Err(format!(
+                        "C++ member `{}` load type disagrees with its record field",
+                        field.name
+                    ));
+                }
+                self.lower_typed_load(pointer, field_type)
+            }
             CppExpression::Binary {
                 operator: CppBinaryOperator::Add,
                 left,
@@ -325,6 +367,14 @@ impl LoweringContext<'_> {
 
     fn lower_typed_int32_load(&mut self, pointer: &CppExpression) -> Result<CExpression, String> {
         let pointer = self.lower_expression(pointer)?;
+        self.lower_typed_load(pointer, CType::Int32)
+    }
+
+    fn lower_typed_load(
+        &mut self,
+        pointer: CExpression,
+        value_type: CType,
+    ) -> Result<CExpression, String> {
         let occurrence = self.next_load_occurrence;
         self.next_load_occurrence = self
             .next_load_occurrence
@@ -332,7 +382,7 @@ impl LoweringContext<'_> {
             .ok_or_else(|| "C++ load occurrence capacity exceeded".to_string())?;
         Ok(c_typed_load_with_source(
             pointer,
-            CType::Int32,
+            value_type,
             Some(LoadSourceId {
                 owner: LoadSourceOwnerId {
                     source_unit: self.source_unit.into(),
@@ -340,6 +390,65 @@ impl LoweringContext<'_> {
                 },
                 occurrence,
             }),
+        ))
+    }
+
+    fn lower_member_pointer(
+        &self,
+        object: &CppPlaceReference,
+        field: &CppFieldReference,
+    ) -> Result<(CExpression, CType), String> {
+        let place = self.place(object)?;
+        let CppType::LvalueReference { pointee } = &place.value_type else {
+            return Err(format!(
+                "C++ member object `{}` is not a record reference",
+                object.name
+            ));
+        };
+        let CppType::Record {
+            declaration_id,
+            name,
+        } = pointee.as_ref()
+        else {
+            return Err(format!(
+                "C++ member object `{}` is not a record reference",
+                object.name
+            ));
+        };
+        if declaration_id != &field.record_declaration_id {
+            return Err(format!(
+                "C++ member `{}` does not belong to record `{name}`",
+                field.name
+            ));
+        }
+        let record = self.records.get(declaration_id.as_str()).ok_or_else(|| {
+            format!("C++ lowering found unknown record declaration `{declaration_id}`")
+        })?;
+        if record.name != *name {
+            return Err(format!(
+                "C++ record declaration `{declaration_id}` is named `{}`, not `{name}`",
+                record.name
+            ));
+        }
+        let member = record
+            .fields
+            .iter()
+            .find(|candidate| candidate.declaration_id == field.declaration_id)
+            .ok_or_else(|| {
+                format!(
+                    "C++ lowering found unknown field declaration `{}`",
+                    field.declaration_id
+                )
+            })?;
+        if member.name != field.name {
+            return Err(format!(
+                "C++ field declaration `{}` is named `{}`, not `{}`",
+                field.declaration_id, member.name, field.name
+            ));
+        }
+        Ok((
+            c_pointer_offset_bytes(c_variable(object.name.clone()), member.offset_bytes),
+            cpp_scalar_kernel_type(&member.value_type)?,
         ))
     }
 
@@ -357,6 +466,16 @@ impl LoweringContext<'_> {
             ));
         }
         Ok(parameter)
+    }
+}
+
+fn cpp_scalar_kernel_type(value_type: &CppType) -> Result<CType, String> {
+    if is_mutable_int32(value_type) {
+        Ok(CType::Int32)
+    } else if is_mutable_int32_pointer(value_type) {
+        Ok(CType::Int32Pointer)
+    } else {
+        Err("C++ record field is outside mutable `int`/`int*` lowering".into())
     }
 }
 
