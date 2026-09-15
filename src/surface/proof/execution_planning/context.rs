@@ -93,6 +93,7 @@ pub(in crate::surface) fn verify_loop_execution_proofs(
             case_path: Vec::new(),
             next_opaque_call: 0,
             next_kernel_variable: 0,
+            resume_at_statement: None,
         }],
         &mut next_statement_index,
         &mut next_loop_index,
@@ -143,6 +144,7 @@ pub(in crate::surface::proof) fn kernel_loop_by_index<'a>(
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. }
         | CStatement::Assign { .. }
@@ -238,6 +240,8 @@ pub(in crate::surface::proof) struct PlanningExecutionContext {
     pub(in crate::surface::proof) case_path: Vec<ProofCaseChoice>,
     pub(in crate::surface::proof) next_opaque_call: u64,
     pub(in crate::surface::proof) next_kernel_variable: u64,
+    /// A direct forward `goto` suspends this path until traversal reaches its target.
+    pub(in crate::surface::proof) resume_at_statement: Option<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

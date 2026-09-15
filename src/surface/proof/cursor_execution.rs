@@ -2173,6 +2173,7 @@ fn execute_step_from_frontier_position_selecting_path(
         CStatementOutcome::Normal(state)
         | CStatementOutcome::Break(state)
         | CStatementOutcome::Continue(state)
+        | CStatementOutcome::Jump { state, .. }
         | CStatementOutcome::Return { state, .. } => Some(state.clone()),
         CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => None,
         CStatementOutcome::VerificationDiverges => None,
@@ -2194,6 +2195,7 @@ fn execute_step_from_frontier_position_selecting_path(
                     CStatementOutcome::Normal(state)
                     | CStatementOutcome::Break(state)
                     | CStatementOutcome::Continue(state)
+                    | CStatementOutcome::Jump { state, .. }
                     | CStatementOutcome::Return { state, .. } => state.clone(),
                     CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_)
@@ -2307,6 +2309,26 @@ fn execute_step_from_frontier_position_selecting_path(
             // own continuation.
             *available_pure_facts = successor_pure_facts;
             execution.core.frontier.execution_start_state = Some(execution_start_state);
+            *state = next_state;
+        }
+        CStatementOutcome::Jump {
+            target,
+            state: next_state,
+        } => {
+            let target = function.control_target(target).ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced an unknown goto target"
+                ))
+            })?;
+            *available_pure_facts = successor_pure_facts;
+            execution.core.frontier.execution_start_state = Some(execution_start_state);
+            record_statement_program_snapshot_state(
+                &mut execution.presentation.recorded_snapshots,
+                function_block,
+                target.statement_index,
+                ProgramPointKind::Entry,
+                next_state.clone(),
+            );
             *state = next_state;
         }
         CStatementOutcome::VerificationDiverges => {
@@ -3109,6 +3131,7 @@ pub(super) fn describe_statement_head(statement: &CStatement) -> String {
         CStatement::Skip => "skip".to_string(),
         CStatement::Break => "break".to_string(),
         CStatement::Continue => "continue".to_string(),
+        CStatement::Goto { target } => format!("goto target({})", target.0),
         CStatement::ContinueWithStep { .. } => "continue".to_string(),
         CStatement::Declare { name, .. } => format!("declare {name}"),
         CStatement::DeclareAggregate { name, .. } => format!("declare aggregate {name}"),

@@ -1,11 +1,158 @@
 use super::loans::{
     CheckedLoanCallEvidence, CompositeLoanBacking, CompositeProjectionEvidence, LoanId, LoanLedger,
     LoanRefusal, LoanRefusalOperation, LoanRefusalSubject, LoanViewBinding, LoanViewBindings,
-    StableViewTransferPlan, append_checked_loan_evidence, empty_checked_loan_evidence_sequence,
-    plan_stable_view_transfer_with_bindings_and_composites,
+    StableViewTransferPlan, append_checked_loan_evidence, concat_checked_loan_evidence,
+    empty_checked_loan_evidence_sequence, plan_stable_view_transfer_with_bindings_and_composites,
 };
 use super::prelude::*;
 use std::sync::Arc;
+
+fn execute_c_function_body_paths(
+    state: &CState,
+    function: &CFunction,
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let initial = execute_c_statement_paths(
+        state,
+        function.body(),
+        assumptions,
+        environment,
+        execution_semantics,
+        budget,
+    )?;
+    if function.control_target_count() == 0 {
+        return Ok(initial);
+    }
+    let mut pending = initial
+        .into_iter()
+        .map(|path| (path, 0usize))
+        .collect::<Vec<_>>();
+    let mut completed = Vec::new();
+    while let Some((path, jump_count)) = pending.pop() {
+        let CStatementOutcome::Jump {
+            target,
+            state: jump_state,
+        } = &path.outcome
+        else {
+            completed.push(path);
+            continue;
+        };
+        let Some(target) = function.control_target(*target) else {
+            completed.push(invalid_goto_path(
+                path,
+                "goto refers to an unknown function target",
+            ));
+            continue;
+        };
+        if jump_count >= function.control_target_count() {
+            completed.push(invalid_goto_path(path, "goto control flow is not forward"));
+            continue;
+        }
+        let suffix = execute_c_statement_paths_with_prefix(
+            jump_state,
+            &target.remaining,
+            assumptions,
+            environment,
+            execution_semantics,
+            &path.facts,
+            &path.obligations,
+            &path.loan_evidence,
+            budget,
+        )?;
+        pending.extend(
+            suffix
+                .into_iter()
+                .map(|suffix_path| (suffix_path, jump_count + 1)),
+        );
+    }
+    budget.check_path_width(completed.len())?;
+    Ok(completed)
+}
+
+fn execute_c_function_body_verification_paths(
+    state: &CState,
+    function: &CFunction,
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    budget: &mut ExecutionBudget,
+    variables: &mut KernelVariableGenerator,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let initial = execute_c_statement_verification_paths(
+        state,
+        function.body(),
+        assumptions,
+        environment,
+        execution_semantics,
+        budget,
+        variables,
+    )?;
+    if function.control_target_count() == 0 {
+        return Ok(initial);
+    }
+    let mut pending = initial
+        .into_iter()
+        .map(|path| (path, 0usize))
+        .collect::<Vec<_>>();
+    let mut completed = Vec::new();
+    while let Some((path, jump_count)) = pending.pop() {
+        let CStatementOutcome::Jump {
+            target,
+            state: jump_state,
+        } = &path.outcome
+        else {
+            completed.push(path);
+            continue;
+        };
+        let Some(target) = function.control_target(*target) else {
+            completed.push(invalid_goto_path(
+                path,
+                "goto refers to an unknown function target",
+            ));
+            continue;
+        };
+        if jump_count >= function.control_target_count() {
+            completed.push(invalid_goto_path(path, "goto control flow is not forward"));
+            continue;
+        }
+        let mut suffix = execute_c_statement_verification_paths_with_prefix(
+            jump_state,
+            &target.remaining,
+            assumptions,
+            environment,
+            execution_semantics,
+            &path.facts,
+            &path.obligations,
+            budget,
+            variables,
+        )?;
+        for suffix_path in &mut suffix {
+            suffix_path.loan_evidence =
+                concat_checked_loan_evidence(&path.loan_evidence, &suffix_path.loan_evidence);
+        }
+        pending.extend(
+            suffix
+                .into_iter()
+                .map(|suffix_path| (suffix_path, jump_count + 1)),
+        );
+    }
+    budget.check_path_width(completed.len())?;
+    Ok(completed)
+}
+
+fn invalid_goto_path(path: CStatementExecutionPath, message: &str) -> CStatementExecutionPath {
+    CStatementExecutionPath {
+        outcome: CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
+            message.to_string(),
+        )),
+        facts: path.facts,
+        obligations: path.obligations,
+        loan_evidence: path.loan_evidence,
+    }
+}
 
 #[cfg(test)]
 mod callback_contract_tests;
@@ -1135,9 +1282,9 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
         } else {
             (callee_state, None)
         };
-        for body_path in execute_c_statement_paths(
+        for body_path in execute_c_function_body_paths(
             &callee_state,
-            function.body(),
+            function,
             &body_assumptions,
             environment,
             execution_semantics,
@@ -1361,9 +1508,9 @@ pub(super) fn execute_c_function_verification_paths(
             "independent kernel execution",
             "verification body execution",
             || {
-                execute_c_statement_verification_paths(
+                execute_c_function_body_verification_paths(
                     &callee_state,
-                    function.body(),
+                    function,
                     &body_assumptions,
                     environment,
                     execution_semantics,
@@ -1648,9 +1795,9 @@ pub(super) fn execute_c_function_call_paths(
             // clauses lend nothing, and any call it makes plans from and
             // recovers to the caller's ledger, whose evidence the path keeps.
             let callee_state = callee_state.with_resource_context(caller_state.resources().clone());
-            for body_path in execute_c_statement_paths(
+            for body_path in execute_c_function_body_paths(
                 &callee_state,
-                function.body(),
+                function,
                 &body_assumptions,
                 environment,
                 execution_semantics,
@@ -1707,9 +1854,9 @@ pub(super) fn execute_c_function_call_paths(
             }
         };
         let callee_state = callee_state_with_resource_transfer(callee_state, &resource_transfer);
-        for body_path in execute_c_statement_paths(
+        for body_path in execute_c_function_body_paths(
             &callee_state,
-            function.body(),
+            function,
             &body_assumptions,
             environment,
             execution_semantics,
@@ -7186,6 +7333,7 @@ fn statement_writes_aggregate_parameter(
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. }
         | CStatement::Assign { .. }
@@ -7662,7 +7810,8 @@ fn statement_outcome_state(outcome: &CStatementOutcome) -> Option<&CState> {
     match outcome {
         CStatementOutcome::Normal(state)
         | CStatementOutcome::Break(state)
-        | CStatementOutcome::Continue(state) => Some(state),
+        | CStatementOutcome::Continue(state)
+        | CStatementOutcome::Jump { state, .. } => Some(state),
         CStatementOutcome::Return { state, .. } => Some(state),
         CStatementOutcome::VerificationDiverges
         | CStatementOutcome::UndefinedBehavior(_)
@@ -8776,6 +8925,7 @@ fn collect_c_memory_read_expressions(statement: &CStatement, reads: &mut Vec<CEx
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. } => {}
         CStatement::ContinueWithStep { step } => collect_c_memory_read_expressions(step, reads),
@@ -18634,7 +18784,9 @@ pub(super) fn function_outcome_from_body(
             CFunctionOutcome::RuntimeError(CRuntimeError::MissingReturn),
             obligations,
         ),
-        CStatementOutcome::Break(_) | CStatementOutcome::Continue(_) => (
+        CStatementOutcome::Break(_)
+        | CStatementOutcome::Continue(_)
+        | CStatementOutcome::Jump { .. } => (
             CFunctionOutcome::RuntimeError(CRuntimeError::MissingReturn),
             obligations,
         ),

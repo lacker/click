@@ -885,6 +885,7 @@ impl CFunction {
             inline_body: false,
             source_body: body.clone(),
             body,
+            control_targets: std::sync::Arc::new(BTreeMap::new()),
             contract_interface: CFunctionContractInterface::new(return_type, parameters),
             global_variables: Vec::new(),
             global_arrays: Vec::new(),
@@ -964,6 +965,27 @@ impl CFunction {
     pub fn with_source_body(mut self, source_body: CStatement) -> Self {
         self.source_body = source_body;
         self
+    }
+
+    pub(crate) fn with_control_targets(
+        mut self,
+        control_targets: BTreeMap<CControlTargetId, CControlTarget>,
+    ) -> Self {
+        self.control_targets = std::sync::Arc::new(control_targets);
+        self
+    }
+
+    pub(crate) fn with_control_targets_from(mut self, source: &Self) -> Self {
+        self.control_targets = source.control_targets.clone();
+        self
+    }
+
+    pub(crate) fn control_target(&self, target: CControlTargetId) -> Option<&CControlTarget> {
+        self.control_targets.get(&target)
+    }
+
+    pub(crate) fn control_target_count(&self) -> usize {
+        self.control_targets.len()
     }
 
     pub(crate) fn with_body(mut self, body: CStatement) -> Self {

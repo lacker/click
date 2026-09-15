@@ -907,6 +907,7 @@ impl Renderer {
             crate::kernel::CStatementOutcome::Normal(_) => "normal",
             crate::kernel::CStatementOutcome::Break(_) => "break",
             crate::kernel::CStatementOutcome::Continue(_) => "continue",
+            crate::kernel::CStatementOutcome::Jump { .. } => "jump",
             crate::kernel::CStatementOutcome::Return { .. } => "return",
             crate::kernel::CStatementOutcome::VerificationDiverges => "verification-diverges",
             crate::kernel::CStatementOutcome::UndefinedBehavior(_) => "undefined-behavior",

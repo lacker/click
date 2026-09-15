@@ -923,6 +923,7 @@ pub(in crate::kernel) fn collect_c_statement_bound_variables(
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. } => {}
         CStatement::ContinueWithStep { step } => {
@@ -1049,7 +1050,10 @@ pub(in crate::kernel) fn collect_statement_outcome_bound_variables(
     match outcome {
         CStatementOutcome::Normal(state)
         | CStatementOutcome::Break(state)
-        | CStatementOutcome::Continue(state) => collect_c_state_bound_variables(state, variables),
+        | CStatementOutcome::Continue(state)
+        | CStatementOutcome::Jump { state, .. } => {
+            collect_c_state_bound_variables(state, variables)
+        }
         CStatementOutcome::Return { value, state } => {
             collect_c_value_bound_variables(value, variables);
             collect_c_state_bound_variables(state, variables);
@@ -2765,6 +2769,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
         CStatement::Skip => CStatement::Skip,
         CStatement::Break => CStatement::Break,
         CStatement::Continue => CStatement::Continue,
+        CStatement::Goto { target } => CStatement::Goto { target: *target },
         CStatement::ContinueWithStep { step } => CStatement::ContinueWithStep {
             step: Box::new(substitute_bitvector_variable_in_c_statement(step, from, to)),
         },
@@ -3752,6 +3757,10 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement_outcome(
         CStatementOutcome::Continue(state) => {
             CStatementOutcome::Continue(substitute_bitvector_variable_in_c_state(state, from, to))
         }
+        CStatementOutcome::Jump { target, state } => CStatementOutcome::Jump {
+            target: *target,
+            state: substitute_bitvector_variable_in_c_state(state, from, to),
+        },
         CStatementOutcome::Return { value, state } => CStatementOutcome::Return {
             value: substitute_bitvector_variable_in_c_value(value, from, to),
             state: substitute_bitvector_variable_in_c_state(state, from, to),
@@ -4113,6 +4122,27 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
         inline_body: function.inline_body,
         body: substitute_bitvector_variable_in_c_statement(function.body(), from, to),
         source_body: substitute_bitvector_variable_in_c_statement(function.source_body(), from, to),
+        control_targets: std::sync::Arc::new(
+            function
+                .control_targets
+                .iter()
+                .map(|(identity, target)| {
+                    (
+                        *identity,
+                        CControlTarget {
+                            statement_index: target.statement_index,
+                            remaining: std::sync::Arc::new(
+                                substitute_bitvector_variable_in_c_statement(
+                                    &target.remaining,
+                                    from,
+                                    to,
+                                ),
+                            ),
+                        },
+                    )
+                })
+                .collect(),
+        ),
         contract_interface: interface,
         global_variables: function.global_variables.clone(),
         global_arrays: function.global_arrays.clone(),
@@ -5846,6 +5876,7 @@ fn substitute_pointer_variable_in_c_statement(
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. } => statement.clone(),
         CStatement::ContinueWithStep { step } => CStatement::ContinueWithStep {
@@ -6079,6 +6110,10 @@ fn substitute_pointer_variable_in_c_statement_outcome(
         CStatementOutcome::Continue(state) => {
             CStatementOutcome::Continue(substitute_pointer_variable_in_c_state(state, from, to))
         }
+        CStatementOutcome::Jump { target, state } => CStatementOutcome::Jump {
+            target: *target,
+            state: substitute_pointer_variable_in_c_state(state, from, to),
+        },
         CStatementOutcome::Return { value, state } => CStatementOutcome::Return {
             value: substitute_pointer_variable_in_c_value(value, from, to),
             state: substitute_pointer_variable_in_c_state(state, from, to),
@@ -7277,6 +7312,27 @@ fn substitute_pointer_variable_in_c_function(
         inline_body: function.inline_body,
         body: substitute_pointer_variable_in_c_statement(function.body(), from, to),
         source_body: substitute_pointer_variable_in_c_statement(function.source_body(), from, to),
+        control_targets: std::sync::Arc::new(
+            function
+                .control_targets
+                .iter()
+                .map(|(identity, target)| {
+                    (
+                        *identity,
+                        CControlTarget {
+                            statement_index: target.statement_index,
+                            remaining: std::sync::Arc::new(
+                                substitute_pointer_variable_in_c_statement(
+                                    &target.remaining,
+                                    from,
+                                    to,
+                                ),
+                            ),
+                        },
+                    )
+                })
+                .collect(),
+        ),
         contract_interface: interface,
         global_variables: function.global_variables.clone(),
         global_arrays: function.global_arrays.clone(),

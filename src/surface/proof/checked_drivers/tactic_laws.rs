@@ -423,6 +423,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
             case_path,
             next_opaque_call: execution.core.next_opaque_call,
             next_kernel_variable: execution.core.next_kernel_variable,
+            resume_at_statement: None,
         }],
         &mut next_statement_index,
         &mut next_loop_index,

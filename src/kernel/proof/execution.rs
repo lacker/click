@@ -3087,6 +3087,7 @@ fn statement_call_havoc_views(theorem: &Theorem) -> Vec<crate::kernel::SharedCMe
         CStatementOutcome::Normal(state)
         | CStatementOutcome::Break(state)
         | CStatementOutcome::Continue(state)
+        | CStatementOutcome::Jump { state, .. }
         | CStatementOutcome::Return { state, .. } => state.memory(),
         CStatementOutcome::VerificationDiverges
         | CStatementOutcome::UndefinedBehavior(_)
@@ -3591,7 +3592,8 @@ fn check_evidence_events_with_call_events(
                         completed = Some(outcome);
                     }
                     CStatementOutcome::UndefinedBehavior(_)
-                    | CStatementOutcome::RuntimeError(_) => return None,
+                    | CStatementOutcome::RuntimeError(_)
+                    | CStatementOutcome::Jump { .. } => return None,
                 }
             }
             CheckedExecutionEvent::Condition(theorem) => {
@@ -3691,7 +3693,11 @@ fn trace_completion(
                             context,
                         ));
                     }
-                    CStatementOutcome::Break(_) | CStatementOutcome::Continue(_) => {}
+                    CStatementOutcome::Break(_)
+                    | CStatementOutcome::Continue(_)
+                    | CStatementOutcome::Jump { .. } => {
+                        fallthrough = None;
+                    }
                     CStatementOutcome::Return { .. } | CStatementOutcome::VerificationDiverges => {
                         // The path completes under the context its final
                         // theorem was proved under, recorded right after it.
@@ -4153,6 +4159,18 @@ impl ExecutionProofCore {
                 self.evidence_state = Some(state);
                 self.evidence_completed = false;
             }
+            CStatementOutcome::Jump { target, state } => {
+                let target = function
+                    .control_target(target)
+                    .ok_or_else(|| EvidenceRefusal::from("goto target is not in its function"))?;
+                self.frontier.next_statement_index = target.statement_index;
+                self.frontier.position = FrontierPosition::StatementEntry {
+                    remaining: target.remaining.clone(),
+                };
+                self.evidence_source = Some(target.remaining.clone());
+                self.evidence_state = Some(state);
+                self.evidence_completed = false;
+            }
             // An error outcome is recorded so the driver reports it; it
             // completes the trace without a state a later theorem could
             // start from, and completion will not accept it as a path.
@@ -4397,6 +4415,19 @@ impl ExecutionProofCore {
                     return Err("retained statement evidence has a non-statement conclusion".into());
                 }
             };
+        match (proved_statement, outcome) {
+            (
+                CStatement::Goto { target: expected },
+                CStatementOutcome::Jump { target: actual, .. },
+            ) if expected == actual && function.control_target(*actual).is_some() => {}
+            (CStatement::Goto { .. }, _) => {
+                return Err("goto evidence does not carry its checked function target".into());
+            }
+            (_, CStatementOutcome::Jump { .. }) => {
+                return Err("non-goto evidence carries a control-flow jump".into());
+            }
+            _ => {}
+        }
         // The source left after the theorem: a `Skip` theorem consumes a
         // `Skip` at the head of the source when there is one and otherwise
         // nothing; another theorem consumes its statement after the

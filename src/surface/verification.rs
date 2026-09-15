@@ -3341,9 +3341,13 @@ pub(in crate::surface) fn c0_statement_calls(
                     collect_function_pointer_names(case.body(), names);
                 }
             }
+            syntax::C0Statement::Label { statement, .. } => {
+                collect_function_pointer_names(statement, names)
+            }
             syntax::C0Statement::Skip
             | syntax::C0Statement::Break
             | syntax::C0Statement::Continue
+            | syntax::C0Statement::Goto { .. }
             | syntax::C0Statement::Declare { .. }
             | syntax::C0Statement::DeclareStructValue { .. }
             | syntax::C0Statement::Assign { .. }
@@ -3487,6 +3491,10 @@ pub(in crate::surface) fn c0_statement_calls(
             syntax::C0Statement::Skip
             | syntax::C0Statement::Break
             | syntax::C0Statement::Continue => {}
+            syntax::C0Statement::Goto { .. } => calls.push(BTreeSet::new()),
+            syntax::C0Statement::Label { statement, .. } => {
+                visit(statement, calls, function_pointer_names)
+            }
             syntax::C0Statement::Seq(first, second) => {
                 visit(first, calls, function_pointer_names);
                 visit(second, calls, function_pointer_names);

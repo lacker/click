@@ -152,6 +152,9 @@ pub struct C0Function {
     inline_body: bool,
     parameters: Vec<C0Parameter>,
     body: C0Statement,
+    /// Function-scope C label spellings resolved to kernel identities and
+    /// executable statement indices after the complete body is parsed.
+    control_targets: BTreeMap<String, (crate::kernel::CControlTargetId, usize)>,
     structs: BTreeMap<String, C0StructLayout>,
     enums: BTreeMap<String, C0EnumDefinition>,
     unions: BTreeMap<String, C0UnionLayout>,
@@ -2011,6 +2014,17 @@ pub enum C0Statement {
     Skip,
     Break,
     Continue,
+    Goto {
+        target: String,
+        position: Option<SourcePosition>,
+        direct_function_body: bool,
+    },
+    Label {
+        name: String,
+        statement: Box<C0Statement>,
+        position: Option<SourcePosition>,
+        direct_function_body: bool,
+    },
     Declare {
         c_type: C0Type,
         name: String,
@@ -2351,6 +2365,7 @@ impl C0Function {
             prelowered_kernel_function: None,
             parameters,
             body: C0Statement::Skip,
+            control_targets: BTreeMap::new(),
             structs: BTreeMap::new(),
             enums: BTreeMap::new(),
             unions: BTreeMap::new(),
@@ -2491,7 +2506,14 @@ impl C0Function {
     }
 
     pub fn body_kernel_statement(&self) -> crate::kernel::CStatement {
-        self.body.to_kernel_statement()
+        self.body
+            .to_kernel_statement_with_control_targets(&self.control_targets)
+    }
+
+    pub(crate) fn control_targets(
+        &self,
+    ) -> &BTreeMap<String, (crate::kernel::CControlTargetId, usize)> {
+        &self.control_targets
     }
 
     fn static_object_address(&self, name: &str) -> Option<StaticAddress> {
@@ -2780,6 +2802,40 @@ impl C0Function {
         if let Some(function) = &self.prelowered_kernel_function {
             return function.clone();
         }
+        let kernel_body = self
+            .body
+            .to_kernel_statement_with_control_targets(&self.control_targets);
+        let mut suffix: Option<std::sync::Arc<crate::kernel::CStatement>> = None;
+        let mut control_targets = BTreeMap::new();
+        if !self.control_targets.is_empty() {
+            let mut statements = Vec::new();
+            flatten_direct_c0_statements(&self.body, &mut statements);
+            for (index, statement) in statements.into_iter().enumerate().rev() {
+                let lowered =
+                    statement.to_kernel_statement_with_control_targets(&self.control_targets);
+                let remaining = match suffix {
+                    Some(tail) => {
+                        std::sync::Arc::new(crate::kernel::c_seq(lowered, (*tail).clone()))
+                    }
+                    None => std::sync::Arc::new(lowered),
+                };
+                if let C0Statement::Label { name, .. } = statement {
+                    let (target, statement_index) = self
+                        .control_targets
+                        .get(name)
+                        .expect("validated label has a target record");
+                    debug_assert_eq!(*statement_index, index);
+                    control_targets.insert(
+                        *target,
+                        crate::kernel::CControlTarget {
+                            statement_index: *statement_index,
+                            remaining: remaining.clone(),
+                        },
+                    );
+                }
+                suffix = Some(remaining);
+            }
+        }
         let mut function = crate::kernel::c_function(
             if self.return_struct_name.is_some() {
                 crate::kernel::CType::UInt8Pointer
@@ -2791,8 +2847,9 @@ impl C0Function {
                 .iter()
                 .map(C0Parameter::to_kernel_parameter)
                 .collect(),
-            self.body.to_kernel_statement(),
-        );
+            kernel_body,
+        )
+        .with_control_targets(control_targets);
         function = function.with_return_pointee_constant(self.return_pointee_constant);
         if self.program_entry_state.is_some() {
             function = function.with_program_entry();
@@ -3452,10 +3509,26 @@ impl C0Type {
 
 impl C0Statement {
     pub fn to_kernel_statement(&self) -> crate::kernel::CStatement {
+        self.to_kernel_statement_with_control_targets(&BTreeMap::new())
+    }
+
+    pub(crate) fn to_kernel_statement_with_control_targets(
+        &self,
+        targets: &BTreeMap<String, (crate::kernel::CControlTargetId, usize)>,
+    ) -> crate::kernel::CStatement {
         match self {
             Self::Skip => crate::kernel::c_skip(),
             Self::Break => crate::kernel::c_break(),
             Self::Continue => crate::kernel::c_continue(),
+            Self::Goto { target, .. } => crate::kernel::c_goto(
+                targets
+                    .get(target)
+                    .expect("validated C goto target has a kernel identity")
+                    .0,
+            ),
+            Self::Label { statement, .. } => {
+                statement.to_kernel_statement_with_control_targets(targets)
+            }
             Self::Declare {
                 c_type,
                 name,
@@ -3518,9 +3591,10 @@ impl C0Statement {
             Self::Assert { condition, label } => {
                 crate::kernel::c_labeled_assert(condition.to_kernel_expression(), label.clone())
             }
-            Self::Seq(first, second) => {
-                crate::kernel::c_seq(first.to_kernel_statement(), second.to_kernel_statement())
-            }
+            Self::Seq(first, second) => crate::kernel::c_seq(
+                first.to_kernel_statement_with_control_targets(targets),
+                second.to_kernel_statement_with_control_targets(targets),
+            ),
             Self::Return(expression) => crate::kernel::c_return(expression.to_kernel_expression()),
             Self::Store {
                 pointer,
@@ -3581,17 +3655,17 @@ impl C0Statement {
                 else_branch,
             } => crate::kernel::c_if(
                 condition.to_kernel_expression(),
-                then_branch.to_kernel_statement(),
-                else_branch.to_kernel_statement(),
+                then_branch.to_kernel_statement_with_control_targets(targets),
+                else_branch.to_kernel_statement_with_control_targets(targets),
             ),
             Self::While { condition, body } => crate::kernel::c_while(
                 condition.to_kernel_expression(),
                 Vec::new(),
-                body.to_kernel_statement(),
+                body.to_kernel_statement_with_control_targets(targets),
             ),
             Self::DoWhile { condition, body } => crate::kernel::c_do_while(
                 condition.to_kernel_expression(),
-                body.to_kernel_statement(),
+                body.to_kernel_statement_with_control_targets(targets),
             ),
             Self::For {
                 initializer,
@@ -3599,13 +3673,16 @@ impl C0Statement {
                 step,
                 body,
             } => {
-                let step = step.to_kernel_statement();
+                let step = step.to_kernel_statement_with_control_targets(targets);
                 crate::kernel::c_seq(
-                    initializer.to_kernel_statement(),
+                    initializer.to_kernel_statement_with_control_targets(targets),
                     crate::kernel::c_while(
                         condition.to_kernel_expression(),
                         Vec::new(),
-                        crate::kernel::c_for_body_with_step(body.to_kernel_statement(), step),
+                        crate::kernel::c_for_body_with_step(
+                            body.to_kernel_statement_with_control_targets(targets),
+                            step,
+                        ),
                     ),
                 )
             }
@@ -3615,7 +3692,7 @@ impl C0Statement {
                     .iter()
                     .map(|case| crate::kernel::CSwitchCase {
                         value: case.value,
-                        body: Box::new(case.body.to_kernel_statement()),
+                        body: Box::new(case.body.to_kernel_statement_with_control_targets(targets)),
                     })
                     .collect(),
             ),
@@ -3967,9 +4044,11 @@ fn validate_function_returns(
         C0Statement::Switch { cases, .. } => cases
             .iter()
             .try_for_each(|case| validate_function_returns(&case.body, return_type)),
+        C0Statement::Label { statement, .. } => validate_function_returns(statement, return_type),
         C0Statement::Skip
         | C0Statement::Break
         | C0Statement::Continue
+        | C0Statement::Goto { .. }
         | C0Statement::Declare { .. }
         | C0Statement::DeclareStructValue { .. }
         | C0Statement::Assign { .. }
@@ -3987,9 +4066,190 @@ fn validate_function_returns(
     }
 }
 
+fn flatten_direct_c0_statements<'a>(
+    statement: &'a C0Statement,
+    statements: &mut Vec<&'a C0Statement>,
+) {
+    match statement {
+        C0Statement::Seq(first, second) => {
+            flatten_direct_c0_statements(first, statements);
+            flatten_direct_c0_statements(second, statements);
+        }
+        statement => statements.push(statement),
+    }
+}
+
+fn control_statement_error(
+    position: &Option<SourcePosition>,
+    message: impl Into<String>,
+) -> C0SyntaxError {
+    match position {
+        Some(position) => C0SyntaxError::at(position.clone(), message),
+        None => C0SyntaxError::new(message),
+    }
+}
+
+/// Resolves the deliberately narrow first goto slice after the complete
+/// function body is available. Both endpoints must be direct children of a
+/// straight-line function body, and every accepted edge points forward.
+fn validate_direct_forward_gotos(
+    body: &C0Statement,
+) -> Result<BTreeMap<String, (crate::kernel::CControlTargetId, usize)>, C0SyntaxError> {
+    fn inspect_nested(statement: &C0Statement) -> Result<bool, C0SyntaxError> {
+        match statement {
+            C0Statement::Goto {
+                position,
+                direct_function_body,
+                ..
+            }
+            | C0Statement::Label {
+                position,
+                direct_function_body,
+                ..
+            } if !direct_function_body => Err(control_statement_error(
+                position,
+                "the first goto slice supports labels and jumps only as direct function-body statements",
+            )),
+            C0Statement::Goto { .. } | C0Statement::Label { .. } => Ok(true),
+            C0Statement::Seq(first, second) => {
+                Ok(inspect_nested(first)? || inspect_nested(second)?)
+            }
+            C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => Ok(inspect_nested(then_branch)? || inspect_nested(else_branch)?),
+            C0Statement::While { body, .. }
+            | C0Statement::DoWhile { body, .. }
+            | C0Statement::For { body, .. } => inspect_nested(body),
+            C0Statement::Switch { cases, .. } => {
+                for case in cases {
+                    if inspect_nested(case.body())? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    if !inspect_nested(body)? {
+        return Ok(BTreeMap::new());
+    }
+
+    let mut statements = Vec::new();
+    flatten_direct_c0_statements(body, &mut statements);
+    if statements.iter().any(|statement| {
+        matches!(
+            statement,
+            C0Statement::If { .. }
+                | C0Statement::While { .. }
+                | C0Statement::DoWhile { .. }
+                | C0Statement::For { .. }
+                | C0Statement::Switch { .. }
+        )
+    }) {
+        let position = statements.iter().find_map(|statement| match statement {
+            C0Statement::Goto { position, .. } | C0Statement::Label { position, .. } => {
+                position.clone()
+            }
+            _ => None,
+        });
+        return Err(control_statement_error(
+            &position,
+            "the first goto slice requires a straight-line function body",
+        ));
+    }
+
+    let mut labels = BTreeMap::new();
+    for (index, statement) in statements.iter().enumerate() {
+        let C0Statement::Label {
+            name,
+            statement,
+            position,
+            ..
+        } = statement
+        else {
+            continue;
+        };
+        if matches!(
+            statement.as_ref(),
+            C0Statement::Seq(..)
+                | C0Statement::If { .. }
+                | C0Statement::While { .. }
+                | C0Statement::DoWhile { .. }
+                | C0Statement::For { .. }
+                | C0Statement::Switch { .. }
+                | C0Statement::Label { .. }
+        ) {
+            return Err(control_statement_error(
+                position,
+                "the first goto slice requires a label to govern one ordinary statement",
+            ));
+        }
+        if labels
+            .insert(name.clone(), (index, position.clone()))
+            .is_some()
+        {
+            return Err(control_statement_error(
+                position,
+                format!("duplicate label `{name}`"),
+            ));
+        }
+    }
+
+    let mut targets = BTreeMap::new();
+    for (ordinal, (name, (index, _))) in labels.iter().enumerate() {
+        let identity = u32::try_from(ordinal)
+            .map(crate::kernel::CControlTargetId)
+            .map_err(|_| C0SyntaxError::new("too many control-flow labels"))?;
+        targets.insert(name.clone(), (identity, *index));
+    }
+    for (index, statement) in statements.iter().enumerate() {
+        let C0Statement::Goto {
+            target, position, ..
+        } = statement
+        else {
+            continue;
+        };
+        let Some((target_index, _)) = labels.get(target) else {
+            return Err(control_statement_error(
+                position,
+                format!("unknown goto label `{target}`"),
+            ));
+        };
+        if *target_index <= index {
+            return Err(control_statement_error(
+                position,
+                format!("backward goto to `{target}` is not supported"),
+            ));
+        }
+        if statements[index + 1..*target_index]
+            .iter()
+            .any(|statement| {
+                matches!(
+                    statement,
+                    C0Statement::Declare { .. } | C0Statement::DeclareStructValue { .. }
+                )
+            })
+        {
+            return Err(control_statement_error(
+                position,
+                format!("goto to `{target}` would bypass a local declaration"),
+            ));
+        }
+    }
+    Ok(targets)
+}
+
 fn statement_contains_control_transfer(statement: &C0Statement) -> bool {
     match statement {
-        C0Statement::Break | C0Statement::Continue | C0Statement::Return(_) => true,
+        C0Statement::Break
+        | C0Statement::Continue
+        | C0Statement::Goto { .. }
+        | C0Statement::Return(_) => true,
+        C0Statement::Label { statement, .. } => statement_contains_control_transfer(statement),
         C0Statement::Seq(first, second) => {
             statement_contains_control_transfer(first)
                 || statement_contains_control_transfer(second)
@@ -5437,6 +5697,12 @@ struct Parser {
     current_return_pointer_struct_name: Option<String>,
     current_return_type: C0Type,
     current_return_pointee_constant: bool,
+    /// Lexical compound-statement depth inside the function currently being
+    /// parsed. The first supported goto slice accepts labels and jumps only
+    /// as direct children of the function body.
+    function_block_depth: usize,
+    /// Non-compound statement nesting under `if`, loops, or a label.
+    controlled_statement_depth: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -5627,6 +5893,8 @@ impl Parser {
             current_return_pointer_struct_name: None,
             current_return_type: C0Type::Void,
             current_return_pointee_constant: false,
+            function_block_depth: 0,
+            controlled_statement_depth: 0,
         })
     }
 
@@ -6651,6 +6919,7 @@ impl Parser {
                 Box::new(C0Statement::Return(C0Expression::Void)),
             );
         }
+        let control_targets = validate_direct_forward_gotos(&body)?;
 
         let static_locals = std::mem::take(&mut self.static_locals);
         let local_struct_pointers = std::mem::take(&mut self.local_struct_pointers)
@@ -6671,6 +6940,7 @@ impl Parser {
             prelowered_kernel_function: None,
             parameters: header.parameters,
             body,
+            control_targets,
             structs: self.structs.clone(),
             enums: self.enums.clone(),
             unions: self.unions.clone(),
@@ -9415,6 +9685,9 @@ impl Parser {
 
     fn parse_block_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
         self.expect(Token::LBrace)?;
+        if self.current_function_source_name.is_some() {
+            self.function_block_depth += 1;
+        }
         self.push_scope();
         let mut statements = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
@@ -9427,6 +9700,9 @@ impl Parser {
         let body = balanced_statement_sequence(statements).unwrap_or(C0Statement::Skip);
         let body = self.lower_call_expressions(body)?;
         self.pop_scope();
+        if self.current_function_source_name.is_some() {
+            self.function_block_depth -= 1;
+        }
 
         Ok(body)
     }
@@ -9518,15 +9794,18 @@ impl Parser {
         &mut self,
         construct: &str,
     ) -> Result<C0Statement, C0SyntaxError> {
-        if self.peek() == Some(&Token::LBrace) {
-            return self.parse_block_statement();
-        }
-        if self.is_type_start() {
-            return Err(self.error_here(format!(
+        self.controlled_statement_depth += 1;
+        let result = if self.peek() == Some(&Token::LBrace) {
+            self.parse_block_statement()
+        } else if self.is_type_start() {
+            Err(self.error_here(format!(
                 "a declaration controlled by `{construct}` must be enclosed in braces"
-            )));
-        }
-        self.parse_statement()
+            )))
+        } else {
+            self.parse_statement()
+        };
+        self.controlled_statement_depth -= 1;
+        result
     }
 
     fn parse_loop_control_statement(
@@ -9625,6 +9904,22 @@ impl Parser {
                 self.expect(Token::Semicolon)?;
                 Ok(statement)
             }
+            Some(Token::Ident(_)) if self.peek_next() == Some(&Token::Colon) => {
+                let position = self.here();
+                let name = self.expect_ident("label")?;
+                self.expect(Token::Colon)?;
+                let direct_function_body =
+                    self.function_block_depth == 1 && self.controlled_statement_depth == 0;
+                self.controlled_statement_depth += 1;
+                let statement = self.parse_statement();
+                self.controlled_statement_depth -= 1;
+                Ok(C0Statement::Label {
+                    name,
+                    statement: Box::new(statement?),
+                    position,
+                    direct_function_body,
+                })
+            }
             Some(Token::Ident(_)) if self.is_type_start() => self.parse_local_declaration(),
             Some(Token::Ident(_)) => match self.peek_ident() {
                 Some("return") => {
@@ -9670,6 +9965,18 @@ impl Parser {
                 }
                 Some("break") => self.parse_loop_control_statement(false),
                 Some("continue") => self.parse_loop_control_statement(true),
+                Some("goto") => {
+                    let position = self.here();
+                    self.position += 1;
+                    let target = self.expect_ident("goto target")?;
+                    self.expect(Token::Semicolon)?;
+                    Ok(C0Statement::Goto {
+                        target,
+                        position,
+                        direct_function_body: self.function_block_depth == 1
+                            && self.controlled_statement_depth == 0,
+                    })
+                }
                 Some("if") => {
                     self.position += 1;
                     self.expect(Token::LParen)?;
@@ -12722,9 +13029,11 @@ impl Parser {
                         statements.push(&case.body);
                     }
                 }
+                C0Statement::Label { statement, .. } => statements.push(statement),
                 C0Statement::Skip
                 | C0Statement::Break
                 | C0Statement::Continue
+                | C0Statement::Goto { .. }
                 | C0Statement::Declare { .. }
                 | C0Statement::DeclareStructValue { .. } => {}
             }
@@ -13033,8 +13342,20 @@ impl Parser {
             C0Statement::Skip
             | C0Statement::Break
             | C0Statement::Continue
+            | C0Statement::Goto { .. }
             | C0Statement::Declare { .. }
             | C0Statement::DeclareStructValue { .. } => Ok(statement),
+            C0Statement::Label {
+                name,
+                statement,
+                position,
+                direct_function_body,
+            } => Ok(C0Statement::Label {
+                name,
+                statement: Box::new(self.lower_statement_calls(*statement)?),
+                position,
+                direct_function_body,
+            }),
             C0Statement::Assert { condition, label } => {
                 let (prefix, condition) = self.lower_expression_calls(condition)?;
                 Ok(prepend_statements(
@@ -16923,11 +17244,13 @@ fn statement_continues_enclosing_loop(statement: &C0Statement) -> bool {
         C0Statement::Switch { cases, .. } => cases
             .iter()
             .any(|case| statement_continues_enclosing_loop(&case.body)),
+        C0Statement::Label { statement, .. } => statement_continues_enclosing_loop(statement),
         C0Statement::While { .. }
         | C0Statement::DoWhile { .. }
         | C0Statement::For { .. }
         | C0Statement::Skip
         | C0Statement::Break
+        | C0Statement::Goto { .. }
         | C0Statement::Declare { .. }
         | C0Statement::DeclareStructValue { .. }
         | C0Statement::Assign { .. }
@@ -17009,6 +17332,8 @@ fn prepend_condition_check_before_loop_continues(
         | C0Statement::For { .. }
         | C0Statement::Skip
         | C0Statement::Break
+        | C0Statement::Goto { .. }
+        | C0Statement::Label { .. }
         | C0Statement::Declare { .. }
         | C0Statement::DeclareStructValue { .. }
         | C0Statement::Assign { .. }

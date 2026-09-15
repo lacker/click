@@ -1708,11 +1708,27 @@ pub struct CSwitchCase {
     pub body: Box<CStatement>,
 }
 
+/// Stable identity of one source control-flow target inside a function.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CControlTargetId(pub(crate) u32);
+
+/// The exact executable frontier named by a control-flow target.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) struct CControlTarget {
+    pub(crate) statement_index: usize,
+    pub(crate) remaining: std::sync::Arc<CStatement>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CStatement {
     Skip,
     Break,
     Continue,
+    /// A source-directed edge whose target is resolved in the containing
+    /// function's checked control-flow table.
+    Goto {
+        target: CControlTargetId,
+    },
     /// Internal lowering for a C `for` continue. The update clause is part
     /// of this atomic control transfer so source proofs still see one
     /// `continue` statement.
@@ -2255,6 +2271,7 @@ pub struct CFunction {
     pub(super) inline_body: bool,
     pub(super) body: CStatement,
     pub(super) source_body: CStatement,
+    pub(super) control_targets: std::sync::Arc<BTreeMap<CControlTargetId, CControlTarget>>,
     pub(super) contract_interface: CFunctionContractInterface,
     pub(super) global_variables: Vec<CGlobal>,
     pub(super) global_arrays: Vec<CGlobalArray>,
@@ -2824,6 +2841,11 @@ pub enum CStatementOutcome {
     Normal(CState),
     Break(CState),
     Continue(CState),
+    /// A checked source edge awaiting resumption at its function-owned target.
+    Jump {
+        target: CControlTargetId,
+        state: CState,
+    },
     Return {
         value: CValue,
         state: CState,

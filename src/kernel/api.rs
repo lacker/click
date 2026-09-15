@@ -1421,6 +1421,10 @@ pub fn c_continue() -> CStatement {
     CStatement::Continue
 }
 
+pub(crate) fn c_goto(target: CControlTargetId) -> CStatement {
+    CStatement::Goto { target }
+}
+
 pub fn c_switch(expression: CExpression, cases: Vec<CSwitchCase>) -> CStatement {
     CStatement::Switch { expression, cases }
 }
@@ -2894,7 +2898,8 @@ fn statement_outcome_memory(outcome: &CStatementOutcome) -> Option<&CMemory> {
     match outcome {
         CStatementOutcome::Normal(state)
         | CStatementOutcome::Break(state)
-        | CStatementOutcome::Continue(state) => Some(state.memory()),
+        | CStatementOutcome::Continue(state)
+        | CStatementOutcome::Jump { state, .. } => Some(state.memory()),
         CStatementOutcome::Return { state, .. } => Some(state.memory()),
         CStatementOutcome::VerificationDiverges
         | CStatementOutcome::UndefinedBehavior(_)

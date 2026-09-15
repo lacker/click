@@ -691,7 +691,7 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
     let body = if parsed_function.prelowered_kernel_function().is_some() {
         parsed_kernel_function.body().clone()
     } else {
-        lowerer.lower_statement(parsed_function.body())?
+        lowerer.lower_statement(parsed_function.body(), parsed_function.control_targets())?
     };
     let source_body = parsed_kernel_function.body().clone();
     let mut function = c_function(
@@ -709,7 +709,8 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
         body,
     )
     .with_return_pointee_constant(parsed_function.return_pointee_is_constant())
-    .with_source_body(source_body);
+    .with_source_body(source_body)
+    .with_control_targets_from(&parsed_kernel_function);
     if parsed_kernel_function.is_program_entry() {
         function = function.with_program_entry();
     }
@@ -1833,16 +1834,18 @@ impl AnnotationLowerer<'_> {
     fn lower_statement(
         &mut self,
         statement: &syntax::C0Statement,
+        control_targets: &BTreeMap<String, (crate::kernel::CControlTargetId, usize)>,
     ) -> Result<CStatement, ClickError> {
         Ok(match statement {
-            syntax::C0Statement::Seq(first, second) => {
-                c_seq(self.lower_statement(first)?, self.lower_statement(second)?)
-            }
+            syntax::C0Statement::Seq(first, second) => c_seq(
+                self.lower_statement(first, control_targets)?,
+                self.lower_statement(second, control_targets)?,
+            ),
             syntax::C0Statement::While { condition, body }
             | syntax::C0Statement::DoWhile { condition, body } => {
                 self.next_statement_index();
                 let loop_index = self.next_loop_index();
-                let lowered_body = self.lower_statement(body)?;
+                let lowered_body = self.lower_statement(body, control_targets)?;
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
                 let effect_checks = self.loop_frame_checks(loop_index)?;
                 let resource_specs = self.loop_resource_specs(loop_index);
@@ -1877,11 +1880,11 @@ impl AnnotationLowerer<'_> {
                 step,
                 body,
             } => {
-                let lowered_initializer = self.lower_statement(initializer)?;
+                let lowered_initializer = self.lower_statement(initializer, control_targets)?;
                 self.next_statement_index();
                 let loop_index = self.next_loop_index();
-                let lowered_body = self.lower_statement(body)?;
-                let lowered_step = self.lower_statement(step)?;
+                let lowered_body = self.lower_statement(body, control_targets)?;
+                let lowered_step = self.lower_statement(step, control_targets)?;
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
                 let effect_checks = self.loop_frame_checks(loop_index)?;
                 let resource_specs = self.loop_resource_specs(loop_index);
@@ -1909,13 +1912,13 @@ impl AnnotationLowerer<'_> {
                 self.next_statement_index();
                 c_if(
                     condition.to_kernel_expression(),
-                    self.lower_statement(then_branch)?,
-                    self.lower_statement(else_branch)?,
+                    self.lower_statement(then_branch, control_targets)?,
+                    self.lower_statement(else_branch, control_targets)?,
                 )
             }
             statement => {
                 self.next_statement_index();
-                statement.to_kernel_statement()
+                statement.to_kernel_statement_with_control_targets(control_targets)
             }
         })
     }

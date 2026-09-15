@@ -2184,6 +2184,16 @@ pub(in crate::kernel) fn execute_c_statement_paths(
 
             loan_evidence: empty_checked_loan_evidence_sequence(),
         }],
+        CStatement::Goto { target } => vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::Jump {
+                target: *target,
+                state: state.clone(),
+            },
+            facts: Vec::new(),
+            obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
+        }],
         CStatement::ContinueWithStep { step } => {
             let mut paths = Vec::new();
             for step_path in execute_c_statement_paths(
@@ -2343,6 +2353,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                     }
                     outcome @ (CStatementOutcome::Break(_)
                     | CStatementOutcome::Continue(_)
+                    | CStatementOutcome::Jump { .. }
                     | CStatementOutcome::Return { .. }
                     | CStatementOutcome::VerificationDiverges
                     | CStatementOutcome::UndefinedBehavior(_)
@@ -2722,6 +2733,7 @@ fn execute_c_switch_suffix_paths(
                 loan_evidence: empty_checked_loan_evidence_sequence(),
             }),
             outcome @ (CStatementOutcome::Continue(_)
+            | CStatementOutcome::Jump { .. }
             | CStatementOutcome::Return { .. }
             | CStatementOutcome::VerificationDiverges
             | CStatementOutcome::UndefinedBehavior(_)
@@ -2971,6 +2983,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
                                     });
                                 }
                                 outcome @ (CStatementOutcome::Return { .. }
+                                | CStatementOutcome::Jump { .. }
                                 | CStatementOutcome::VerificationDiverges
                                 | CStatementOutcome::UndefinedBehavior(_)
                                 | CStatementOutcome::RuntimeError(_)) => {

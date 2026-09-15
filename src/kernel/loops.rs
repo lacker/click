@@ -1093,6 +1093,7 @@ pub(super) fn execute_c_statement_verification_paths(
                     }
                     outcome @ (CStatementOutcome::Break(_)
                     | CStatementOutcome::Continue(_)
+                    | CStatementOutcome::Jump { .. }
                     | CStatementOutcome::Return { .. }
                     | CStatementOutcome::VerificationDiverges
                     | CStatementOutcome::UndefinedBehavior(_)
@@ -1216,6 +1217,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 CStatement::Skip => "verification statement: skip",
                 CStatement::Break => "verification statement: break",
                 CStatement::Continue => "verification statement: continue",
+                CStatement::Goto { .. } => "verification statement: goto",
                 CStatement::ContinueWithStep { .. } => {
                     "verification statement: continue with for step"
                 }
@@ -3384,6 +3386,7 @@ pub(super) fn collect_loop_preservation_summary(
                         );
                     }
                     CStatementOutcome::Return { .. }
+                    | CStatementOutcome::Jump { .. }
                     | CStatementOutcome::VerificationDiverges
                     | CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_) => {
@@ -5436,6 +5439,7 @@ pub(super) fn statement_may_write_memory(state: &CState, statement: &CStatement)
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. }
         | CStatement::Assert { .. }
@@ -5542,6 +5546,7 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. }
         | CStatement::Assert { .. }
@@ -5626,6 +5631,7 @@ pub(crate) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. } => {}
         CStatement::Assign { expression, .. } => {

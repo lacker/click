@@ -1,5 +1,49 @@
 use super::*;
 use crate::kernel::loans::LoanLedger;
+use std::sync::Arc;
+
+#[test]
+fn whole_function_execution_resumes_a_direct_forward_goto_target() {
+    let target = CControlTargetId(0);
+    let target_statement = c_return(c_variable("x"));
+    let function = c_function(
+        CType::Int32,
+        "forward",
+        vec![c_parameter("x", CType::Int32)],
+        c_seq(
+            c_goto(target),
+            c_seq(c_return(c_int32_literal(99)), target_statement.clone()),
+        ),
+    )
+    .with_control_targets(BTreeMap::from([(
+        target,
+        CControlTarget {
+            statement_index: 2,
+            remaining: Arc::new(target_statement),
+        },
+    )]));
+    let theorem = prove_symbolic_c_function_execution(
+        CState::new(),
+        function,
+        vec![c_int32_literal(1)],
+        PureFactContext::new(),
+    )
+    .expect("forward goto should resume at its target");
+    assert!(
+        matches!(
+            theorem.proposition(),
+            Proposition::CFunctionExecutes {
+                outcome: CFunctionOutcome::Return {
+                    value: CValue::Int32(Bitvector32Term::Constant(1)),
+                    ..
+                },
+                ..
+            }
+        ),
+        "{:?}",
+        theorem.proposition()
+    );
+}
 
 fn active_memory_loan(range: CMemoryRange) -> LoanLedger {
     let fact = CResourceFact::own_memory(range);

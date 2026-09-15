@@ -508,6 +508,7 @@ fn statement_consults_conditions(state: &CState, statement: &CStatement) -> bool
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. } => false,
         CStatement::ContinueWithStep { step } => statement_consults_conditions(state, step),
@@ -601,6 +602,7 @@ pub(in crate::surface::proof) fn statement_contains_call(statement: &CStatement)
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. }
         | CStatement::Assign { .. }

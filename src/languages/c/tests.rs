@@ -1,6 +1,66 @@
 use super::*;
 
 #[test]
+fn direct_forward_goto_lowers_to_an_indexed_kernel_target() {
+    let function =
+        syntax::parse_function("int32 f(void) { int32 x; goto done; x = 9; done: return x; }")
+            .unwrap();
+    let kernel = function.to_kernel_function();
+    fn goto_target(
+        statement: &crate::kernel::CStatement,
+    ) -> Option<crate::kernel::CControlTargetId> {
+        match statement {
+            crate::kernel::CStatement::Goto { target } => Some(*target),
+            crate::kernel::CStatement::Seq(first, second) => {
+                goto_target(first).or_else(|| goto_target(second))
+            }
+            _ => None,
+        }
+    }
+    let target = goto_target(kernel.body()).expect("goto should survive kernel lowering");
+    let target = kernel
+        .control_target(target)
+        .expect("goto target should be indexed");
+    assert!(matches!(
+        target.remaining.as_ref(),
+        crate::kernel::CStatement::Return(_)
+    ));
+}
+
+#[test]
+fn goto_slice_rejects_unknown_backward_duplicate_and_nested_targets() {
+    for (source, expected) in [
+        (
+            "int32 f(void) { goto missing; return 0; }",
+            "unknown goto label",
+        ),
+        (
+            "int32 f(void) { again: ; goto again; return 0; }",
+            "backward goto",
+        ),
+        (
+            "int32 f(void) { same: ; same: return 0; }",
+            "duplicate label",
+        ),
+        (
+            "int32 f(int32 x) { if (x) goto done; done: return 0; }",
+            "direct function-body",
+        ),
+        (
+            "int32 f(void) { goto done; if (1) return 1; done: return 0; }",
+            "straight-line",
+        ),
+        (
+            "int32 f(void) { goto done; int32 x = 1; done: return 0; }",
+            "bypass a local declaration",
+        ),
+    ] {
+        let error = syntax::parse_function(source).expect_err(source);
+        assert!(error.message().contains(expected), "{source}: {error}");
+    }
+}
+
+#[test]
 fn imported_parser_errors_keep_original_header_location() {
     let (source, map) = provenance::CSourceMap::decode(
         "# 1 \"generated/header.h\" 1\nint32 broken(int32 x) { return x + ...; }\n",
@@ -4419,8 +4479,10 @@ fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
             syntax::C0Statement::Switch { cases, .. } => {
                 cases.iter().any(|case| contains_skip(case.body()))
             }
+            syntax::C0Statement::Label { statement, .. } => contains_skip(statement),
             syntax::C0Statement::Break
             | syntax::C0Statement::Continue
+            | syntax::C0Statement::Goto { .. }
             | syntax::C0Statement::Declare { .. }
             | syntax::C0Statement::DeclareStructValue { .. }
             | syntax::C0Statement::Assign { .. }

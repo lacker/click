@@ -1503,7 +1503,8 @@ fn collect_term_memory_loads(
         Term::CStatementOutcome(outcome) => match outcome {
             CStatementOutcome::Normal(state)
             | CStatementOutcome::Break(state)
-            | CStatementOutcome::Continue(state) => {
+            | CStatementOutcome::Continue(state)
+            | CStatementOutcome::Jump { state, .. } => {
                 let _ = state;
                 Ok(())
             }

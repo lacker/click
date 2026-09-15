@@ -397,6 +397,7 @@ fn structural_recursion_paths(
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Assert { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
@@ -1075,6 +1076,7 @@ fn statement_takes_address_of(statement: &CStatement, name: &str) -> bool {
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. } => false,
         CStatement::ContinueWithStep { step } => statement_takes_address_of(step, name),
@@ -1194,6 +1196,7 @@ fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. }
         | CStatement::Assign { .. }
@@ -1240,6 +1243,7 @@ fn statement_declared_variables(statement: &CStatement, names: &mut BTreeSet<Str
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Assign { .. }
         | CStatement::Update { .. }
         | CStatement::Call { .. }
@@ -1274,6 +1278,7 @@ fn recursion_paths(
     match statement {
         CStatement::Skip
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. }
         | CStatement::Assert { .. }
@@ -1946,6 +1951,7 @@ fn check_loops(
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. }
         | CStatement::Assign { .. }

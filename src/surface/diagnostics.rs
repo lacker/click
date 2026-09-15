@@ -1469,6 +1469,7 @@ pub(super) fn describe_c_statement_head(statement: &CStatement) -> String {
         CStatement::Skip => ";".to_string(),
         CStatement::Break => "break;".to_string(),
         CStatement::Continue => "continue;".to_string(),
+        CStatement::Goto { target } => format!("goto target({});", target.0),
         CStatement::ContinueWithStep { step } => {
             format!("continue; (with {})", describe_c_statement_head(step))
         }

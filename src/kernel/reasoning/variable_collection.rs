@@ -377,6 +377,7 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
+        | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. } => {}
         CStatement::ContinueWithStep { step } => {
@@ -1440,7 +1441,9 @@ pub(in crate::kernel) fn collect_c_statement_outcome_bitvector_variables(
 ) {
     match outcome {
         CStatementOutcome::Normal(state) => collect_c_state_bitvector_variables(state, variables),
-        CStatementOutcome::Break(state) | CStatementOutcome::Continue(state) => {
+        CStatementOutcome::Break(state)
+        | CStatementOutcome::Continue(state)
+        | CStatementOutcome::Jump { state, .. } => {
             collect_c_state_bitvector_variables(state, variables)
         }
         CStatementOutcome::Return { value, state } => {

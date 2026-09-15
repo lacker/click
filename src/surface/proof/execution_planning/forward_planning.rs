@@ -251,6 +251,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         case_path: context.case_path.clone(),
                         next_opaque_call: context.next_opaque_call,
                         next_kernel_variable: context.next_kernel_variable,
+                        resume_at_statement: context.resume_at_statement,
                     });
                 }
                 final_exit_candidates_by_context.push(final_exit_candidates);
@@ -422,7 +423,20 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         "execution proof traversal could not resolve source statement({statement_index})"
                     ))
                 })?;
-            Ok(Vec::new())
+            let mut bypassed = Vec::new();
+            for context in contexts {
+                match context.resume_at_statement {
+                    Some(target) if target > statement_index => bypassed.push(context),
+                    Some(target) if target == statement_index => {}
+                    Some(_) => {
+                        return Err(ClickError::new(
+                            "execution proof traversal passed a goto target",
+                        ));
+                    }
+                    None => {}
+                }
+            }
+            Ok(bypassed)
         }
         _ => {
             let statement_index = *next_statement_index;
@@ -435,9 +449,26 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         "execution proof traversal could not resolve source statement({statement_index})"
                     ))
                 })?;
-            advance_execution_proof_statement(
+            let mut active = Vec::new();
+            let mut bypassed = Vec::new();
+            for mut context in contexts {
+                match context.resume_at_statement {
+                    Some(target) if target > statement_index => bypassed.push(context),
+                    Some(target) if target == statement_index => {
+                        context.resume_at_statement = None;
+                        active.push(context);
+                    }
+                    Some(_) => {
+                        return Err(ClickError::new(
+                            "execution proof traversal passed a goto target",
+                        ));
+                    }
+                    None => active.push(context),
+                }
+            }
+            let advanced = advance_execution_proof_statement(
                 statement,
-                contexts,
+                active,
                 statement_index,
                 None,
                 environment,
@@ -446,7 +477,9 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                 false,
                 None,
                 None,
-            )
+            )?;
+            bypassed.extend(advanced);
+            Ok(bypassed)
         }
     }
 }
@@ -483,6 +516,7 @@ fn split_execution_proof_branch_contexts(
                 },
                 next_opaque_call: context.next_opaque_call,
                 next_kernel_variable: context.next_kernel_variable,
+                resume_at_statement: context.resume_at_statement,
             };
             if transition.is_true {
                 then_contexts.push(next);
@@ -980,7 +1014,23 @@ fn advance_execution_proof_statement(
                     case_path: context.case_path.clone(),
                     next_opaque_call: context.next_opaque_call,
                     next_kernel_variable: context.next_kernel_variable,
+                    resume_at_statement: None,
                 }),
+                CStatementOutcome::Jump { target, state } => {
+                    let target = environment.function.control_target(target).ok_or_else(|| {
+                        ClickError::new("execution proof traversal produced an unknown goto target")
+                    })?;
+                    advanced.push(PlanningExecutionContext {
+                        state,
+                        pure_facts: transition.pure_facts,
+                        surface_propositions,
+                        recorded_snapshots,
+                        case_path: context.case_path.clone(),
+                        next_opaque_call: context.next_opaque_call,
+                        next_kernel_variable: context.next_kernel_variable,
+                        resume_at_statement: Some(target.statement_index),
+                    });
+                }
                 CStatementOutcome::Break(_)
                 | CStatementOutcome::Continue(_)
                 | CStatementOutcome::Return { .. } => {}
