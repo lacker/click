@@ -127,10 +127,11 @@ counted populations; new recursion forms; more permissive binder inference;
 the loan-preserving havoc's known cells-times-symbolic-loans cost (pinned in
 the stable views record); and unrelated prover completeness work.
 
-## Design decisions to settle first
+## Design decisions
 
-Each decision lists a recommendation. Implementation of the affected chunk
-waits on the user's choice.
+Settled by the user on 2026-09-14: the first option of each decision below
+is the chosen one. The alternatives are kept so a worker knows what was
+rejected and why.
 
 **D1. Load framing across havoc for cells inside composites.** The memory
 DAG justifies a load surviving a call or loop havoc when the loaded pointer
@@ -138,7 +139,7 @@ is proven disjoint from the havoc's mutable ranges. When the pointer's cell
 is owned only through a composite, the direct prover cannot see it, and the
 frame path expands every composition. Options:
 
-- *Provenance first (recommended).* Mirror `4b9debcd`: every havoc range
+- *Provenance first (chosen).* Mirror `4b9debcd`: every havoc range
   already records the owned occurrence it was reserved from. A pointer whose
   authority comes from an occurrence the call did not reserve is disjoint
   by the partition invariant; only the same-occurrence case needs arithmetic,
@@ -157,7 +158,7 @@ the four reconstruction callers consume requirements definitionally so a
 state rebuilt around an application that already happened does not lend
 twice. Options:
 
-- *Rebuild from the record (recommended).* Where a checked
+- *Rebuild from the record (chosen).* Where a checked
   `CFunctionResourceTransfer` exists for the application (certification's
   transition applier, the entry-state builder given a selected interface),
   rebuild from that record instead of re-consuming; where none exists (a
@@ -173,7 +174,7 @@ twice. Options:
 execution theorem's `as` map is a rename of spellings applied while lowering
 clauses, and a call's `{ binder: instance }` map is an identity transport
 carried on the selected interface. W6 asked to keep spelling separate from
-semantic identity, which is what this split does. Recommendation: treat W6's
+semantic identity, which is what this split does. Chosen: treat W6's
 remaining scope as an audit that the three forms (direct call, named
 contract, execution theorem) reach the same kernel identity map with the same
 ambiguity refusals, and add the missing agreement test; do not merge the two
@@ -188,7 +189,7 @@ edited by two workers concurrently.
 
 ### W5' — Rebaseline frame provenance on the partition invariant
 
-Depends on D1.
+D1 is settled: provenance first.
 
 - Measure first. Under ordinary bounded verification, find which corpus
   proofs and which of the three `memory_provenance.rs` hops reach
@@ -219,7 +220,7 @@ composition set; `scripts/check.sh` passes.
 
 ### W6' — Binder audit
 
-Depends on D3 and W5'.
+D3 is settled: audit only. Depends on W5'.
 
 - Audit that direct calls, named contracts, and execution theorems resolve
   binders to one kernel identity map (`CCallBinderTransport`) with the same
@@ -237,7 +238,7 @@ one is documented at its definition.
 
 ### W7' — One account, cleanup, and documentation
 
-Depends on D2, W5', and W6'.
+D2 is settled: rebuild from the record. Depends on W5' and W6'.
 
 - Implement D2. Replace the `plan_stable_views` boolean with a typed purpose;
   rebuild from the transfer record where one exists; pin call-site and
