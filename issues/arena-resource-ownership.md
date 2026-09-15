@@ -41,10 +41,27 @@ proof object's typed execution evidence is retained instead; see
 `docs/internals/proof-objects.md`). The footprint evaluation had to learn to
 name a load through a folded contained unit symbolically. `arena_free` now
 consumes the live region, clears its occupancy interval with checked loop
-bounds, restores the descriptor and shared metadata, and returns both the
-cleared occupancy interval and its backing data interval as an
-`arena_available` resource. The next bounded blockers are `arena_alloc` and
-the end-to-end `arena_pipeline`.
+bounds, restores the descriptor and shared metadata, returns both the cleared
+occupancy interval and its backing data interval as an `arena_available`
+resource, and exposes the exact decrement of `live_regions`.
+
+The smallest first-allocation transition now verifies with existing resource
+machinery and the fixed C. `arena_alloc` consumes an all-zero `arena_empty` and
+the caller-owned descriptor. Invalid counts return failure with both resources
+intact. Success necessarily selects `[0, count)`, transfers that exact prefix
+as the live allocation, retains `[count, capacity)` as arena-owned backing and
+occupancy ranges, initializes the descriptor, and increments `live_regions`
+to one. The result is intentionally specialized as
+`arena_first_alloc_result`; it is not a claim that arbitrary holes are already
+modeled.
+
+The success resource is flat rather than nesting `arena_region` beside a
+suffix resource. A composite resource's opaque sibling cannot supply the
+`region->end` load needed to form the other sibling's argument while the body
+is being checked. Flattening the same exclusive prefix and suffix authorities
+is sufficient for this first transition, so this is a composition constraint
+to account for in the next experiment rather than evidence for an arena-built-in
+operation.
 
 The empty-arena lifecycle now verifies independently of that partition model.
 `arena_init` returns an `arena_init_result` plus conditional initialized access:
@@ -62,15 +79,20 @@ The use-after-free rejection already lives in
 `mdtests/arena_use_after_free.md`. Double free and overlapping live regions
 still need focused negative regressions.
 
-## Next chunk: allocator partition
+## Next chunk: second adjacent allocation
 
-Verify `arena_alloc` as the next bounded experiment. It must transfer exactly
-the chosen interval while preserving an arena-owned description of every other
-free interval, including holes created by prior allocations and frees. Start
-from the verified successful `arena_init` outputs and diagnose the smallest
-first-allocation transition before attempting the full pipeline. If the
-current language cannot express that transition, reduce the exact boundary to
-a focused regression before proposing a general ownership-collection
+Generalize the checked allocator transition just far enough to allocate from
+the retained suffix beside one live prefix. The target state is the pipeline's
+second allocation: two adjacent live regions with disjoint prefix intervals
+and one arena-owned suffix, while failure preserves the prior partition and
+caller-owned descriptor. Do not attempt arbitrary holes or the whole pipeline
+in the same chunk.
+
+This experiment should decide whether a small explicit partition resource can
+thread the first live prefix and remaining suffix through the existing
+first-fit scan, or whether the opaque-sibling argument constraint blocks a
+natural representation. If it blocks, reduce that exact composition boundary
+to a focused regression before proposing a general ownership-collection
 extension. Keep the C fixed throughout.
 
 ## Violated invariant

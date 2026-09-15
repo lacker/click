@@ -17,12 +17,19 @@ frees them in reverse order, and then allocates one region spanning their
 combined space. It cleans up correctly along every allocation-failure path.
 
 The C is the fixed implementation boundary for the resource-modeling work.
-The intended Click proof gives each live region exclusive access to its
-backing interval. `arena_free` now consumes that authority, clears the
-occupancy map through a checked loop, and returns both the backing and
-occupancy intervals as an `arena_available` resource together with the shared
-arena metadata. Allocation remains the unresolved ownership-partition
-transition.
+The Click proof gives each live region exclusive access to its backing
+interval. `arena_free` consumes that authority, clears the occupancy map
+through a checked loop, and returns both the backing and occupancy intervals
+as an `arena_available` resource together with the shared arena metadata. Its
+contract also exposes the exact decrement of `live_regions`.
+
+`arena_alloc` now verifies for the first allocation from a freshly initialized
+empty arena. Invalid counts return failure without consuming the empty arena
+or the caller-owned descriptor. A successful allocation transfers the exact
+prefix `[0, count)` into `arena_first_allocation` and retains the adjacent
+suffix `[count, capacity)` in the same outcome resource. This deliberately
+specialized contract establishes the first ownership-partition transition
+without pretending that arbitrary holes are modeled yet.
 
 `arena_init` and `arena_destroy` now verify as an independent empty-arena
 lifecycle. Initialization returns the caller-owned descriptor on every path,
@@ -33,9 +40,9 @@ second allocation fails. Destruction requires an `arena_empty` resource with
 zeroed descriptor.
 
 `arena.click` keeps every source in the C0 parser gate and declares checked
-contracts for `arena_init`, `arena_region_length`, `arena_read`, `arena_write`,
-`arena_free`, and `arena_destroy` over the lifecycle, `arena_region`,
-`arena_available`, and shared `arena_metadata` resources. `arena_alloc` and
-`arena_pipeline` remain unverified; the open arena resource-ownership issue
-defines that proof work rather than treating parser coverage as verification
-of the allocator.
+contracts for `arena_init`, the specialized first-allocation form of
+`arena_alloc`, `arena_region_length`, `arena_read`, `arena_write`, `arena_free`,
+and `arena_destroy` over the lifecycle, `arena_region`, `arena_available`, and
+shared `arena_metadata` resources. `arena_pipeline` remains unverified. The
+next ownership experiment is a second adjacent allocation from the retained
+suffix; arbitrary free-interval collections remain later work.
