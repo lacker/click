@@ -782,12 +782,26 @@ impl<'a> ProofScope<'a> {
                         &execution.core.unfolded_predicates,
                         preserve_exposed_body,
                     )?;
-                    let selected = lower_resource_clause_at_state(
+                    let lowered = lower_resource_clause_at_state(
                         &resource,
                         context.parsed_function.parameters(),
                         context.arguments,
                         &checked.state,
                     )?;
+                    // The `open(...)` clause spells no access, so it lowers
+                    // as owned, but the head returns to the closed state
+                    // with the access it was opened with. Record the head as
+                    // the state holds it, so a viewed open closes through the
+                    // same evidence an owned one does; the deferred close at
+                    // function exit already folds against the state.
+                    let selected = checked
+                        .state
+                        .resources()
+                        .facts()
+                        .iter()
+                        .find(|fact| fact.resource() == lowered.resource())
+                        .cloned()
+                        .unwrap_or(lowered);
                     execution
                         .core
                         .record_resource_rewrite(

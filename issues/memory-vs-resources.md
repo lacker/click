@@ -213,24 +213,30 @@ natural proof failed under the old recursive expansion too, and the
 unfolded spellings hit the two findings below, so the nesting rule is
 pinned at the kernel level.
 
-Findings from this chunk, reported and not filed:
+Findings from this chunk:
 
-- `open(viewed composite) { step(); ... }` refuses the close with
-  `kernel rejected checked resource close: the rewritten composite is
-  absent from both resource representations`, even when every call stays
-  inside the open, while `open { execute(); }` on the same fixture passes.
-  Reduction: `rb_augment_callbacks_helper_mutates_body.md` with
-  `step(); step(); step();` in place of `execute();`. The owned spelling
-  (`owns callback_suite`) works with steps, which the new fixture uses.
-- After `execute()` reaches the outcome state, `unfold(tree(r))` followed
+- Fixed 2026-09-14 (`Close an open of a viewed composite the same way
+  from a step as from execute`): `open(viewed composite) { step(); ... }`
+  refused the close with `the rewritten composite is absent from both
+  resource representations` while `open { execute(); }` passed. The
+  mid-body close in `proof_object/scope.rs` re-lowered the `open(...)`
+  clause, which spells no access, as an owned head; the deferred close at
+  function exit folds against the state and never did. The close now
+  records the head as the closed state holds it. Regressions:
+  `rb_augment_callbacks_helper_mutates_body_stepwise.md` (the reduction,
+  passes) and `rb_augment_callbacks_helper_calls_after_close_through_view.md`
+  (the viewed spelling of the close case: the call after the close is
+  authorized through the caller's stable view, the matched positive to the
+  owned refusal).
+- Reported, not filed: after `execute()` reaches the outcome state, `unfold(tree(r))` followed
   by `unfold(leaf_cell(r->leaf))` fails to lower the nested argument
   (`missing pure fact: loadable(base=r, bytes=8)`), although the same two
   unfolds lower before `execute()` (`c_chained_field_access.md`).
 
 Classification of the remaining W5 semantic cases:
 
-- Mutation then scoped-open expiry: pinned by the new fixture (owned
-  spelling); the viewed spelling waits on the first finding.
+- Mutation then scoped-open expiry: pinned in both spellings, the owned
+  refusal and the viewed continuation.
 - Fresh ensures after invalidation: the verified call path builds the post
   state from the havoc memory through the state's memory hook before the
   return outputs are installed (`functions.rs`, call havoc then
@@ -244,8 +250,8 @@ Classification of the remaining W5 semantic cases:
 - Support preservation through fold/unfold/open/close: the stable-views
   regression map rows for composites and escaping borrows.
 
-W5' is complete apart from the two findings, which are tooling gaps
-outside its scope.
+W5' is complete; the unfold-after-execute lowering finding is reported
+above and is outside its scope.
 
 - Measure first (done, above).
 - Implement D1's chosen option (done, above).
@@ -323,7 +329,7 @@ rather than trusting this table.
 | --- | --- | --- | --- |
 | R1 | `owns pair(node)` supplies the link for a separate `owns node->right->augmented`; missing authority or guard fails locally. | `contract_owns_composite_argument*.md`, `contract_owns_through_composite_field*.md`, `contract_dynamic_loadable_*`, `contract_nested_*` | none known |
 | R2 | The same dependent clause through named callback, execution theorem, automatic formation, and certification. | direct and named paths in the R1 fixtures; `named_contract_rejects_unheld_link_read.md` | execution-theorem and certification variants (W7') |
-| R3 | One scoped open, three owned-footprint callbacks, permitted mutation, changed cell and consumed support rejected, no call after the close. | `rb_augment_callbacks_helper_{owns,owns_cell_separate,owns_rejects_unseparated,mutates_body,rejects_changed_cell,consumes_suite,rejects_call_after_close}.md` | viewed-suite spelling of the close case (blocked on the step/execute finding) |
+| R3 | One scoped open, three owned-footprint callbacks, permitted mutation, changed cell and consumed support rejected, no call after the close. | `rb_augment_callbacks_helper_{owns,owns_cell_separate,owns_rejects_unseparated,mutates_body,mutates_body_stepwise,rejects_changed_cell,consumes_suite,rejects_call_after_close,calls_after_close_through_view}.md` | none known |
 | R4 | Raw and one-layer `Buffer` have the same checked effects; unrelated cell and token framed; out-of-authority write and view-to-own fail. | `c_contract_executes_buffer.md`, `c_named_function_contract_frames_*`, `c_named_function_contract_rejects_ownership_from_view.md` | none known |
 | R5 | Entry-selected `owns` range after a field change; returned instance with identity and fresh fields; no retargeting, invented preservation, or aliased identities. | `field_derived_view_does_not_retarget_after_a_pointer_write`, `c_contract_executes_counter_{forward,wrong_instance,unpromised_field}.md` | three-form agreement (W6') |
 | R6 | Callback borrows a token or view without a persistent caller view; double consumption fails; scoped views do not escape. | `c_named_function_contract_borrows_*`, `c_named_function_contract_rejects_consumed_*`, `resource_scope_*.md`, `borrowing_composite_survives_an_owning_call.md` | none known |
