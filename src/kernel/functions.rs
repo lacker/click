@@ -2801,7 +2801,40 @@ fn prepare_verified_function_call<'a>(
     entry_state = callee_state_with_resource_transfer(entry_state, &transfer);
     let entry_contract_state =
         with_contract_interface_argument_views(&entry_state, contract_interface, &argument_values);
-
+    // The callee's pure preconditions are read in the state its entry will
+    // hold: the transferred clause set, opened through the composite
+    // definitions the way the callee's own entry opens it. A precondition
+    // that reads a cell a transferred composite owns (`requires node->left
+    // != 0` beside `owns pair(node)`) is then justified by the clause set at
+    // the call exactly as at the entry, instead of becoming a caller
+    // obligation about a folded composite. The opened context is read here
+    // only; the transfer itself keeps the folded heads.
+    let precondition_state = if entry_contract_state
+        .resources()
+        .facts()
+        .iter()
+        .any(|fact| matches!(fact.resource(), CResource::Composite { .. }))
+    {
+        let definitions = contract_interface.composite_resource_definitions();
+        expand_all_composite_resource_facts(
+            entry_contract_state.resources(),
+            definitions,
+            entry_contract_state.memory(),
+            &path_assumptions,
+        )
+        .map(|opened| {
+            let opened = expand_decidable_composite_resource_frontier(
+                &opened,
+                definitions,
+                entry_contract_state.memory(),
+                &path_assumptions,
+            );
+            entry_contract_state.clone().with_resource_context(opened)
+        })
+        .unwrap_or_else(|| entry_contract_state.clone())
+    } else {
+        entry_contract_state.clone()
+    };
     let mut obligations = argument_obligations;
     let mut facts = arguments_path.facts;
     let mut established_requirements = Vec::new();
@@ -2858,9 +2891,9 @@ fn prepare_verified_function_call<'a>(
             source
         };
         let requirement_paths = lower_spec_proposition_at_state_with_loop_entry(
-            &entry_contract_state,
+            &precondition_state,
             requirement,
-            Some(&entry_contract_state),
+            Some(&precondition_state),
             &lowering_assumptions,
             budget,
         )?;
@@ -2910,7 +2943,23 @@ fn prepare_verified_function_call<'a>(
                 // required verification condition at the call step,
                 // carrying the head chain recorded for it, for the proof
                 // side to discharge. The kernel searches for no proof of it.
-                if required_obligation_is_exactly_discharged(&requirement_assumptions, &guarded) {
+                // A load the precondition performs is authorized by the
+                // clause set the callee receives: the opened transferred
+                // context permits the read, so the condition is discharged
+                // as it is at the callee's own entry. Only load-shaped
+                // conditions are judged this way; the state check answers
+                // nothing about any other proposition.
+                let load_condition_is_justified = loadability_obligation_shape(
+                    path_obligation.proposition(),
+                )
+                    && super::api::contract_certification::c_state_justifies_loadability_obligation(
+                        &precondition_state,
+                        &guarded,
+                        &requirement_assumptions,
+                    );
+                if load_condition_is_justified
+                    || required_obligation_is_exactly_discharged(&requirement_assumptions, &guarded)
+                {
                     super::assumptions::record_reasoning_provenance(
                         &requirement_assumptions,
                         &guarded,
@@ -3340,6 +3389,20 @@ impl ResourceCallApplication {
             parameters: parameters.into(),
             bindings,
         })
+    }
+}
+
+/// Whether an obligation is a load condition, possibly under the premises a
+/// lowering path recorded: the only shape the opened-clause-set discharge of
+/// a call precondition applies to.
+fn loadability_obligation_shape(proposition: &Proposition) -> bool {
+    match proposition {
+        Proposition::CMemoryLoadable { .. } => true,
+        Proposition::Implies(_, body) => loadability_obligation_shape(body),
+        Proposition::And(left, right) => {
+            loadability_obligation_shape(left) && loadability_obligation_shape(right)
+        }
+        _ => false,
     }
 }
 
@@ -11646,6 +11709,28 @@ fn evaluate_contract_return_resource_context(
             .or_default()
             .push_back(canonical.clone());
     }
+    // An entry-snapshot borrow whose address depends on a cell the contract's
+    // own composites hold (`owns pair(node)` supplying the link
+    // `owns pair(node->left->left)` loads) is read the way the entry read
+    // it: through the clause set opened by its definitions. The opened cells
+    // enter as read authority only, computed once for the entry; the
+    // evaluated fact is then matched to the owner the transition lent, never
+    // replaced.
+    let entry_opened_views = if interface
+        .resource_ensures()
+        .iter()
+        .take(count)
+        .any(|resource| resource.snapshot() == CResourceSnapshot::Entry)
+    {
+        opened_composite_read_views(
+            entry_state.resources(),
+            interface.composite_resource_definitions(),
+            entry_state.memory(),
+            assumptions,
+        )
+    } else {
+        Vec::new()
+    };
     for resource in interface.resource_ensures().iter().take(count) {
         // Snapshot selection is carried by the normalized specification. A
         // named instance is always post-evaluated by lowering, so its
@@ -11663,12 +11748,15 @@ fn evaluate_contract_return_resource_context(
             .resources()
             .clone()
             .unchecked_with_facts(context.facts().iter().cloned());
-        let views = instance_arm_views(
+        let mut views = instance_arm_views(
             &supply,
             interface.composite_resource_definitions(),
             state,
             assumptions,
         );
+        if resource.snapshot() == CResourceSnapshot::Entry {
+            views.extend(entry_opened_views.iter().cloned());
+        }
         let evaluation_state = state
             .clone()
             .with_resource_context(supply.unchecked_with_facts(views));
@@ -11698,6 +11786,43 @@ fn evaluate_contract_return_resource_context(
         };
     }
     Ok(Ok(context))
+}
+
+/// The memory a context's owned composites hold, opened through their
+/// definitions over `memory`, as read views: the authority a clause set
+/// gives to the addresses its own dependent clauses load, offered to an
+/// evaluation that reads the entry the way the entry itself did. Nothing is
+/// owned twice; a view grants a read and no more.
+fn opened_composite_read_views(
+    resources: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &PureFactContext,
+) -> Vec<CResourceFact> {
+    if !resources
+        .facts()
+        .iter()
+        .any(|fact| fact.is_own() && matches!(fact.resource(), CResource::Composite { .. }))
+    {
+        return Vec::new();
+    }
+    let Some(opened) =
+        expand_all_composite_resource_facts(resources, definitions, memory, assumptions)
+    else {
+        return Vec::new();
+    };
+    let opened =
+        expand_decidable_composite_resource_frontier(&opened, definitions, memory, assumptions);
+    opened
+        .facts()
+        .iter()
+        .filter_map(|fact| match fact {
+            CResourceFact::Own(resource @ CResource::Memory(_), _) => {
+                Some(CResourceFact::View(resource.clone()))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// The owned facts a call's lend escrowed. They are not in the

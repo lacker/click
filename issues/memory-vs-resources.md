@@ -380,24 +380,35 @@ D2 is settled: rebuild from the record. Depends on W5' and W6'.
   artifacts with every `execute()`/`simp()` replaced by explicit steps;
   both artifacts pass the mdtest harness and `click audit` (0 and 2 smart
   sites left to audit, 0 failures). `click audit` on four matrix fixtures reverifies 11 retained
-  sites with 0 failures. **Finding, verified, not filed:** R2's call forms
-  do not hold. A function whose contract has a dependent composite
-  argument (`owns pair(node); owns pair(node->left->left)`) verifies at
-  its own entry and prepares as a named contract, but no call to it
-  verifies: the dependent argument lowers to `loadable(node, 8)` as a
-  precondition of the callee, and the caller, holding `pair(node)` folded,
-  cannot discharge it under the retained-evidence rule for call
-  preconditions, with or without `observe` of the composite, at depth two
-  or three. The direct call, the named callback application, the execution
-  theorem, and automatic formation through a call all fail on that one
-  precondition (the theorem block additionally cannot lower
-  `observe(pair(node->left->left))`). Pinned as the frontier fixture
-  `contract_owns_composite_argument_call_frontier.md`; the probes for the
-  other forms are in the session record. The fix direction is that a call
-  boundary should evaluate a dependent clause set the way the callee's
-  entry does, from the transferred clauses, instead of emitting the link
-  load as a caller precondition. This is the one open item against the R2
-  acceptance criterion.
+  sites with 0 failures. **Finding, fixed 2026-09-15** (`Carry a dependent clause set across a
+  call boundary`): R2's call forms did not hold. A function whose contract
+  has a dependent composite argument (`owns pair(node); owns
+  pair(node->left->left)`) verified at its own entry and prepared as a
+  named contract, but no call to it verified, in any form. Two causes, both
+  at the call boundary: the callee's pure precondition `node->left != 0`
+  was lowered in the transferred callee state, where the call-site planner
+  hands the composite over folded, so the read became a caller obligation
+  the retained-evidence rule refused; and the borrowed `owns
+  pair(node->left->left)` was returned by re-evaluating its address at the
+  entry snapshot, which loaded the same link without the clause set's
+  supply. The call now reads both the way the callee's entry does: a
+  load-shaped precondition condition is discharged against the transferred
+  clause set opened by its definitions
+  (`c_state_justifies_loadability_obligation` over `precondition_state`),
+  and an entry-snapshot borrow is evaluated with the opened cells as read
+  views (`opened_composite_read_views`), then matched to the owner the
+  transition lent. Nothing is owned twice; the transfer keeps the folded
+  heads. Regressions: `contract_owns_composite_argument_call.md` (direct
+  call) and `contract_owns_composite_argument_across_forms.md` (named
+  callback application, execution theorem, explicit-theorem caller,
+  automatic formation). A call-side negative beyond the transfer's
+  missing-resource refusal does not exist: a read the callee's clause set
+  cannot justify is refused at the callee's own entry first
+  (`named_contract_rejects_unheld_link_read.md`). Residual, reported and
+  not filed: inside an execution theorem's block, `observe` of a dependent
+  composite argument (`observe(pair(node->left->left))`) fails to lower the
+  argument ("the kernel evaluation produced 0 paths"); the observe is no
+  longer needed for these proofs.
 - Update `docs/concepts/resources.md`, `docs/concepts/contracts.md`, and
   `docs/internals/architecture.md` to describe the shared interface, the
   single transition record, and the retained family distinctions. Do not
@@ -415,7 +426,7 @@ column is the checked residue.
 | ID | Behavior | In corpus | Still to add |
 | --- | --- | --- | --- |
 | R1 | `owns pair(node)` supplies the link for a separate `owns node->right->augmented`; missing authority or guard fails locally. | `contract_owns_composite_argument*.md`, `contract_owns_through_composite_field*.md`, `contract_dynamic_loadable_*`, `contract_nested_*` | none known |
-| R2 | The same dependent clause through named callback, execution theorem, automatic formation, and certification. | entry and named-contract preparation in the R1 fixtures; `named_contract_rejects_unheld_link_read.md`; certification by `contract_certification_reports_resource_error.md` | every call form: pinned open as `contract_owns_composite_argument_call_frontier.md` (see the finding above) |
+| R2 | The same dependent clause through named callback, execution theorem, automatic formation, and certification. | `contract_owns_composite_argument_call.md`, `contract_owns_composite_argument_across_forms.md`; entry and named-contract preparation in the R1 fixtures; `named_contract_rejects_unheld_link_read.md`; certification by `contract_certification_reports_resource_error.md` | none known |
 | R3 | One scoped open, three owned-footprint callbacks, permitted mutation, changed cell and consumed support rejected, no call after the close. | `rb_augment_callbacks_helper_{owns,owns_cell_separate,owns_rejects_unseparated,mutates_body,mutates_body_stepwise,rejects_changed_cell,consumes_suite,rejects_call_after_close,calls_after_close_through_view}.md` | none known |
 | R4 | Raw and one-layer `Buffer` have the same checked effects; unrelated cell and token framed; out-of-authority write and view-to-own fail. | `c_contract_executes_buffer.md`, `c_named_function_contract_frames_*`, `c_named_function_contract_rejects_ownership_from_view.md` | none known |
 | R5 | Entry-selected `owns` range after a field change; returned instance with identity and fresh fields; no retargeting, invented preservation, or aliased identities. | `field_derived_view_does_not_retarget_after_a_pointer_write`, `c_contract_executes_counter_{forward,wrong_instance,unpromised_field}.md`, `c_call_binder_transport*.md`, `direct_call_map_is_checked_in_kernel_like_named_proof_arguments` | none known |
