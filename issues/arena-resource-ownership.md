@@ -87,13 +87,31 @@ family declared by the selected arm, with declaration expansion still checking
 the actual slot family. The regression is
 `mdtests/loop_binder_takes_over_unfolded_cross_family_child.md`.
 
-The remaining blocker is loop-local model destructuring. The generalized scan
-can carry the occupancy partition as a loop-owned resource, but a proof
-`match` on that resource's model inside `preserve by` does not keep the matched
-scalar endpoint bindings available to the following tactic. Consequently the
-scan cannot yet compare its C index with the retained prefix or instantiate the
-partition facts without reintroducing a pipeline-specific constant. This is a
-proof-driver binding-scope gap, not an ownership-collection requirement.
+Loop-local model destructuring now works through proof conditionals. A proof
+`match` on a loop-owned resource model inside `preserve by` keeps its scalar
+constructor bindings available while lowering a nested proof `if`; the
+surface proof still records the original condition, and its generated
+certificate independently verifies. The focused regression is
+`mdtests/loop_preserve_if_reads_match_binding.md`.
+
+Attempting the symbolic adjacent-allocation proof exposed the next independent
+boundary. A universal fact obtained by matching a resource model loses the
+source identity needed by explicit `instantiate`, and lowering the same
+quantified resource fact again for `fold` currently registers fresh load
+identities rather than recognizing the unchanged loads already proved. The
+proof therefore cannot open a symbolic occupancy partition, instantiate its
+per-cell fact, and fold the partition again without restating a constant-sized
+special case. Fixing this must retain checkable provenance and use indexed
+identity lookup; it must not add a linear exact-premise scan.
+
+Two later proof-driver gaps are also known from that experiment. Stable loop
+invariants already present in the current context can be misaligned when the
+preservation result is exported by membership filtering. In addition, an
+early-return outcome postcondition that inspects a consumed algebraic resource
+model through a pure helper can lower into several candidate paths, none of
+which is selected and checked. These are separate from ownership collection
+and should be reduced with focused regressions before the complete symbolic
+arena transition relies on them.
 
 The empty-arena lifecycle now verifies independently of that partition model.
 `arena_init` returns an `arena_init_result` plus conditional initialized access:
@@ -111,14 +129,19 @@ The use-after-free rejection already lives in
 `mdtests/arena_use_after_free.md`. Double free and overlapping live regions
 still need focused negative regressions.
 
-## Next chunk: carry model bindings through loop preservation
+## Next chunk: retain matched quantified resource facts
 
-Add a focused regression in which a loop-owned, field-bearing resource is
-matched inside `preserve by`, and the next simple tactic uses the constructor's
-C-scalar binding. Preserve the binding in the checked loop proof driver without
-cloning the complete proof state or adding an unchecked fallback; the expanded
-certificate must independently verify.
+Add a focused positive regression in which matching a field-bearing resource
+introduces a bounded universal memory fact, a proof explicitly instantiates
+that fact, and the unchanged resource is folded again. Preserve the matched
+fact's checked source identity through instantiation and refolding so the
+generated certificate independently verifies. Add a negative regression that
+changes one covered load and proves the fold is still rejected. Keep lookup
+indexed by the fact/load identity; do not scan or clone the complete proof
+state.
 
+After that focused chunk, repair the stable-invariant export and the
+branch-complete early-return postcondition lowering with their own regressions.
 Then return to `arena_alloc`: replace the fixed `[2, 4)` transition with one
 parameterized by a retained prefix model. Keep the occupancy partition folded
 through the count-validation branches, open it for the scan/mark loops, restore

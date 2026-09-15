@@ -1033,6 +1033,7 @@ impl<'a> Proof<'a> {
         )?;
         let mut arms: [Option<(ProofFacts, ExecutionProofState, Vec<Proposition>)>; 2] =
             [None, None];
+        let lowering_condition = self.substitute_fixed_state_locals_in_proposition(condition)?;
         for value in [true, false] {
             let mut arm_execution = base_execution.clone();
             let mut arm_facts = self.facts().to_vec();
@@ -1043,6 +1044,7 @@ impl<'a> Proof<'a> {
                 &mut arm_facts,
                 base_execution.core.has_structured_branch_history,
                 condition,
+                &lowering_condition,
                 value,
             )?;
             if !feasible {

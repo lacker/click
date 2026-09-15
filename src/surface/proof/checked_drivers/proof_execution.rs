@@ -3168,6 +3168,7 @@ pub(in crate::surface::proof) fn introduce_proof_case_assumption(
     pure_facts: &mut Vec<Proposition>,
     structured_branch_history: bool,
     condition: &ClickProposition,
+    lowering_condition: &ClickProposition,
     value: bool,
 ) -> Result<bool, ClickError> {
     let tactic_index = proof_context.tactic_index;
@@ -3188,7 +3189,7 @@ pub(in crate::surface::proof) fn introduce_proof_case_assumption(
         // involving `result` or the post-state retain the deferred per-outcome
         // handling below.
         if let Ok(proposition) = lower_fixed_state_proposition(
-            condition,
+            lowering_condition,
             pure_facts,
             parameters,
             arguments,
@@ -3256,7 +3257,7 @@ pub(in crate::surface::proof) fn introduce_proof_case_assumption(
     }
     let at_function_entry = execution.core.frontier.is_at_function_entry();
     let proposition = lower_fixed_state_proposition(
-        condition,
+        lowering_condition,
         pure_facts,
         parameters,
         arguments,

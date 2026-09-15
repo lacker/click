@@ -13673,6 +13673,42 @@ fn loop_preservation_case_before_step_expands_in_place() {
 }
 
 #[test]
+fn loop_preservation_if_retains_its_enclosing_match_binding() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/loop_preserve_if_reads_match_binding.md");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("the regression should contain Click source");
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+
+    verify_c0_sources(click_source, &c_sources)
+        .expect("the preservation `if` should read its enclosing match binding");
+    let expanded =
+        expand_c0_claim_source(click_source, &c_sources, "count_to", CProofClaim::Grouped)
+            .expect("the loop proof should expand");
+    let preserve = expanded
+        .find("preserve by")
+        .expect("the expansion should retain the preservation phase");
+    let body = &expanded[preserve..];
+    assert!(
+        body.contains("match m.model") && body.contains("if i < end"),
+        "the generated certificate must keep `end` inside its match arm: {expanded}"
+    );
+    verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
+        panic!("expanded proof failed independent verification: {error:?}\n{expanded}")
+    });
+}
+
+#[test]
 fn loop_entry_lowering_guard_expands_to_an_explicit_introduction() {
     // Lowering wraps this loop's quantified entry obligation in a loadability
     // guard that has no Surface connective. The guard is derivable at entry
