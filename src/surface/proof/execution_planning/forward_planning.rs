@@ -53,8 +53,28 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                     "execution proof traversal expected source statement({statement_index}) to be an `if`"
                 )));
             };
+            let mut active = Vec::new();
+            let mut bypassed = Vec::new();
+            for context in contexts {
+                match context.resume_at_statement {
+                    Some(target) if target >= source_region.continuation_node => {
+                        bypassed.push(context);
+                    }
+                    Some(target) if target > statement_index => {
+                        return Err(ClickError::new(
+                            "execution proof traversal found a goto target inside an `if`",
+                        ));
+                    }
+                    Some(_) => {
+                        return Err(ClickError::new(
+                            "execution proof traversal passed a goto target",
+                        ));
+                    }
+                    None => active.push(context),
+                }
+            }
             let (then_contexts, else_contexts) =
-                split_execution_proof_branch_contexts(condition, contexts)?;
+                split_execution_proof_branch_contexts(condition, active)?;
             *next_statement_index = then_statement_index;
             let mut joined = verify_execution_proofs_forward(
                 expansion_capture.as_deref_mut(),
@@ -75,6 +95,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                 environment,
                 verified_loop_rules,
             )?);
+            joined.extend(bypassed);
             *next_statement_index = source_region.continuation_node;
             Ok(joined)
         }

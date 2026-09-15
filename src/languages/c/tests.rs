@@ -28,7 +28,42 @@ fn direct_forward_goto_lowers_to_an_indexed_kernel_target() {
 }
 
 #[test]
-fn goto_slice_rejects_unknown_backward_duplicate_and_nested_targets() {
+fn conditional_forward_goto_uses_the_preorder_source_target_index() {
+    let function = syntax::parse_function(
+        "int32 f(int32 flag) { int32 x; if (flag) goto done; x = 9; done: return x; }",
+    )
+    .unwrap();
+    let kernel = function.to_kernel_function();
+    fn goto_target(
+        statement: &crate::kernel::CStatement,
+    ) -> Option<crate::kernel::CControlTargetId> {
+        match statement {
+            crate::kernel::CStatement::Goto { target } => Some(*target),
+            crate::kernel::CStatement::Seq(first, second) => {
+                goto_target(first).or_else(|| goto_target(second))
+            }
+            crate::kernel::CStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => goto_target(then_branch).or_else(|| goto_target(else_branch)),
+            _ => None,
+        }
+    }
+    let target = goto_target(kernel.body()).expect("goto should survive conditional lowering");
+    let target = kernel
+        .control_target(target)
+        .expect("conditional goto target should be indexed");
+    // declare(0), if(1), then-goto(2), else-skip(3), assignment(4), label-return(5)
+    assert_eq!(target.statement_index, 5);
+    assert!(matches!(
+        target.remaining.as_ref(),
+        crate::kernel::CStatement::Return(_)
+    ));
+}
+
+#[test]
+fn goto_slice_rejects_unknown_backward_duplicate_and_unsupported_targets() {
     for (source, expected) in [
         (
             "int32 f(void) { goto missing; return 0; }",
@@ -43,15 +78,19 @@ fn goto_slice_rejects_unknown_backward_duplicate_and_nested_targets() {
             "duplicate label",
         ),
         (
-            "int32 f(int32 x) { if (x) goto done; done: return 0; }",
-            "direct function-body",
+            "int32 f(int32 x) { if (x) { inside: x = 1; } return x; }",
+            "labels must be direct function-body",
         ),
         (
-            "int32 f(void) { goto done; if (1) return 1; done: return 0; }",
-            "straight-line",
+            "int32 f(int32 x) { while (x) { goto done; } done: return 0; }",
+            "does not support loops or switches",
         ),
         (
             "int32 f(void) { goto done; int32 x = 1; done: return 0; }",
+            "bypass a local declaration",
+        ),
+        (
+            "int32 f(int32 x) { if (x) goto done; int32 y = 1; done: return y; }",
             "bypass a local declaration",
         ),
     ] {

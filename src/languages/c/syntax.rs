@@ -2810,7 +2810,7 @@ impl C0Function {
         if !self.control_targets.is_empty() {
             let mut statements = Vec::new();
             flatten_direct_c0_statements(&self.body, &mut statements);
-            for (index, statement) in statements.into_iter().enumerate().rev() {
+            for statement in statements.into_iter().rev() {
                 let lowered =
                     statement.to_kernel_statement_with_control_targets(&self.control_targets);
                 let remaining = match suffix {
@@ -2824,7 +2824,6 @@ impl C0Function {
                         .control_targets
                         .get(name)
                         .expect("validated label has a target record");
-                    debug_assert_eq!(*statement_index, index);
                     control_targets.insert(
                         *target,
                         crate::kernel::CControlTarget {
@@ -4079,6 +4078,41 @@ fn flatten_direct_c0_statements<'a>(
     }
 }
 
+/// Counts source statement regions using the same preorder as Surface
+/// execution. A control target needs this index rather than its ordinal among
+/// direct function-body statements: an `if` contributes regions for the
+/// condition and both arms before its continuation.
+fn c0_source_statement_width(statement: &C0Statement) -> usize {
+    match statement {
+        C0Statement::Seq(first, second) => {
+            c0_source_statement_width(first) + c0_source_statement_width(second)
+        }
+        C0Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => 1 + c0_source_statement_width(then_branch) + c0_source_statement_width(else_branch),
+        C0Statement::While { body, .. } | C0Statement::DoWhile { body, .. } => {
+            1 + c0_source_statement_width(body)
+        }
+        C0Statement::For {
+            initializer,
+            step,
+            body,
+            ..
+        } => {
+            c0_source_statement_width(initializer)
+                + 1
+                + c0_source_statement_width(body)
+                + c0_source_statement_width(step)
+        }
+        // Switch is one source region in the current Surface layout. Goto
+        // functions reject it below, but keeping the count aligned avoids a
+        // second definition of source indexing.
+        _ => 1,
+    }
+}
+
 fn control_statement_error(
     position: &Option<SourcePosition>,
     message: impl Into<String>,
@@ -4089,143 +4123,220 @@ fn control_statement_error(
     }
 }
 
-/// Resolves the deliberately narrow first goto slice after the complete
-/// function body is available. Both endpoints must be direct children of a
-/// straight-line function body, and every accepted edge points forward.
+/// Resolves the deliberately narrow forward-goto slice after the complete
+/// function body is available. Targets remain direct function-body labels;
+/// jumps may also originate in `if` arms. Every accepted edge points forward.
 fn validate_direct_forward_gotos(
     body: &C0Statement,
 ) -> Result<BTreeMap<String, (crate::kernel::CControlTargetId, usize)>, C0SyntaxError> {
-    fn inspect_nested(statement: &C0Statement) -> Result<bool, C0SyntaxError> {
+    fn first_control_position(statement: &C0Statement) -> Option<Option<SourcePosition>> {
         match statement {
-            C0Statement::Goto {
-                position,
-                direct_function_body,
-                ..
+            C0Statement::Goto { position, .. } | C0Statement::Label { position, .. } => {
+                Some(position.clone())
             }
-            | C0Statement::Label {
-                position,
-                direct_function_body,
-                ..
-            } if !direct_function_body => Err(control_statement_error(
-                position,
-                "the first goto slice supports labels and jumps only as direct function-body statements",
-            )),
-            C0Statement::Goto { .. } | C0Statement::Label { .. } => Ok(true),
             C0Statement::Seq(first, second) => {
-                Ok(inspect_nested(first)? || inspect_nested(second)?)
+                first_control_position(first).or_else(|| first_control_position(second))
             }
             C0Statement::If {
                 then_branch,
                 else_branch,
                 ..
-            } => Ok(inspect_nested(then_branch)? || inspect_nested(else_branch)?),
-            C0Statement::While { body, .. }
-            | C0Statement::DoWhile { body, .. }
-            | C0Statement::For { body, .. } => inspect_nested(body),
+            } => {
+                first_control_position(then_branch).or_else(|| first_control_position(else_branch))
+            }
+            C0Statement::While { body, .. } | C0Statement::DoWhile { body, .. } => {
+                first_control_position(body)
+            }
+            C0Statement::For {
+                initializer,
+                step,
+                body,
+                ..
+            } => first_control_position(initializer)
+                .or_else(|| first_control_position(body))
+                .or_else(|| first_control_position(step)),
             C0Statement::Switch { cases, .. } => {
                 for case in cases {
-                    if inspect_nested(case.body())? {
-                        return Ok(true);
+                    if let Some(position) = first_control_position(case.body()) {
+                        return Some(position);
                     }
                 }
-                Ok(false)
+                None
             }
-            _ => Ok(false),
+            _ => None,
         }
     }
 
-    if !inspect_nested(body)? {
+    let Some(control_position) = first_control_position(body) else {
         return Ok(BTreeMap::new());
-    }
+    };
 
     let mut statements = Vec::new();
     flatten_direct_c0_statements(body, &mut statements);
     if statements.iter().any(|statement| {
         matches!(
             statement,
-            C0Statement::If { .. }
-                | C0Statement::While { .. }
+            C0Statement::While { .. }
                 | C0Statement::DoWhile { .. }
                 | C0Statement::For { .. }
                 | C0Statement::Switch { .. }
         )
     }) {
-        let position = statements.iter().find_map(|statement| match statement {
-            C0Statement::Goto { position, .. } | C0Statement::Label { position, .. } => {
-                position.clone()
-            }
-            _ => None,
-        });
         return Err(control_statement_error(
-            &position,
-            "the first goto slice requires a straight-line function body",
+            &control_position,
+            "the conditional goto slice does not support loops or switches in the same function",
         ));
     }
 
+    #[derive(Clone)]
+    struct PendingGoto {
+        target: String,
+        position: Option<SourcePosition>,
+        direct_statement_index: usize,
+    }
+
+    fn collect_if_arm_gotos(
+        statement: &C0Statement,
+        direct_statement_index: usize,
+        gotos: &mut Vec<PendingGoto>,
+    ) -> Result<(), C0SyntaxError> {
+        match statement {
+            C0Statement::Goto {
+                target, position, ..
+            } => gotos.push(PendingGoto {
+                target: target.clone(),
+                position: position.clone(),
+                direct_statement_index,
+            }),
+            C0Statement::Label { position, .. } => {
+                return Err(control_statement_error(
+                    position,
+                    "goto labels must be direct function-body statements",
+                ));
+            }
+            C0Statement::Seq(first, second) => {
+                collect_if_arm_gotos(first, direct_statement_index, gotos)?;
+                collect_if_arm_gotos(second, direct_statement_index, gotos)?;
+            }
+            C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_if_arm_gotos(then_branch, direct_statement_index, gotos)?;
+                collect_if_arm_gotos(else_branch, direct_statement_index, gotos)?;
+            }
+            C0Statement::While { .. }
+            | C0Statement::DoWhile { .. }
+            | C0Statement::For { .. }
+            | C0Statement::Switch { .. } => {
+                return Err(control_statement_error(
+                    &first_control_position(statement).flatten(),
+                    "the conditional goto slice does not support jumps inside loops or switches",
+                ));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     let mut labels = BTreeMap::new();
+    let mut gotos = Vec::new();
+    let mut source_statement_index = 0;
     for (index, statement) in statements.iter().enumerate() {
-        let C0Statement::Label {
-            name,
-            statement,
-            position,
-            ..
-        } = statement
-        else {
-            continue;
-        };
-        if matches!(
-            statement.as_ref(),
-            C0Statement::Seq(..)
-                | C0Statement::If { .. }
-                | C0Statement::While { .. }
-                | C0Statement::DoWhile { .. }
-                | C0Statement::For { .. }
-                | C0Statement::Switch { .. }
-                | C0Statement::Label { .. }
-        ) {
-            return Err(control_statement_error(
+        match statement {
+            C0Statement::Goto {
+                target,
                 position,
-                "the first goto slice requires a label to govern one ordinary statement",
-            ));
-        }
-        if labels
-            .insert(name.clone(), (index, position.clone()))
-            .is_some()
-        {
-            return Err(control_statement_error(
+                direct_function_body,
+            } => {
+                if !direct_function_body {
+                    return Err(control_statement_error(
+                        position,
+                        "goto statements must be direct function-body statements or occur inside an `if` arm",
+                    ));
+                }
+                gotos.push(PendingGoto {
+                    target: target.clone(),
+                    position: position.clone(),
+                    direct_statement_index: index,
+                });
+            }
+            C0Statement::Label {
+                name,
+                statement,
                 position,
-                format!("duplicate label `{name}`"),
-            ));
+                direct_function_body,
+            } => {
+                if !direct_function_body {
+                    return Err(control_statement_error(
+                        position,
+                        "goto labels must be direct function-body statements",
+                    ));
+                }
+                if matches!(
+                    statement.as_ref(),
+                    C0Statement::Seq(..)
+                        | C0Statement::If { .. }
+                        | C0Statement::While { .. }
+                        | C0Statement::DoWhile { .. }
+                        | C0Statement::For { .. }
+                        | C0Statement::Switch { .. }
+                        | C0Statement::Goto { .. }
+                        | C0Statement::Label { .. }
+                ) {
+                    return Err(control_statement_error(
+                        position,
+                        "the forward goto slice requires a label to govern one ordinary statement",
+                    ));
+                }
+                if labels
+                    .insert(
+                        name.clone(),
+                        (index, source_statement_index, position.clone()),
+                    )
+                    .is_some()
+                {
+                    return Err(control_statement_error(
+                        position,
+                        format!("duplicate label `{name}`"),
+                    ));
+                }
+            }
+            C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_if_arm_gotos(then_branch, index, &mut gotos)?;
+                collect_if_arm_gotos(else_branch, index, &mut gotos)?;
+            }
+            _ => {}
         }
+        source_statement_index += c0_source_statement_width(statement);
     }
 
     let mut targets = BTreeMap::new();
-    for (ordinal, (name, (index, _))) in labels.iter().enumerate() {
+    for (ordinal, (name, (_, source_index, _))) in labels.iter().enumerate() {
         let identity = u32::try_from(ordinal)
             .map(crate::kernel::CControlTargetId)
             .map_err(|_| C0SyntaxError::new("too many control-flow labels"))?;
-        targets.insert(name.clone(), (identity, *index));
+        targets.insert(name.clone(), (identity, *source_index));
     }
-    for (index, statement) in statements.iter().enumerate() {
-        let C0Statement::Goto {
-            target, position, ..
-        } = statement
-        else {
-            continue;
-        };
-        let Some((target_index, _)) = labels.get(target) else {
+    for pending in gotos {
+        let Some((target_index, _, _)) = labels.get(&pending.target) else {
             return Err(control_statement_error(
-                position,
-                format!("unknown goto label `{target}`"),
+                &pending.position,
+                format!("unknown goto label `{}`", pending.target),
             ));
         };
-        if *target_index <= index {
+        if *target_index <= pending.direct_statement_index {
             return Err(control_statement_error(
-                position,
-                format!("backward goto to `{target}` is not supported"),
+                &pending.position,
+                format!("backward goto to `{}` is not supported", pending.target),
             ));
         }
-        if statements[index + 1..*target_index]
+        if statements[pending.direct_statement_index + 1..*target_index]
             .iter()
             .any(|statement| {
                 matches!(
@@ -4235,8 +4346,11 @@ fn validate_direct_forward_gotos(
             })
         {
             return Err(control_statement_error(
-                position,
-                format!("goto to `{target}` would bypass a local declaration"),
+                &pending.position,
+                format!(
+                    "goto to `{}` would bypass a local declaration",
+                    pending.target
+                ),
             ));
         }
     }
@@ -5698,8 +5812,8 @@ struct Parser {
     current_return_type: C0Type,
     current_return_pointee_constant: bool,
     /// Lexical compound-statement depth inside the function currently being
-    /// parsed. The first supported goto slice accepts labels and jumps only
-    /// as direct children of the function body.
+    /// parsed. Forward-goto labels remain direct children of the function
+    /// body; the validator separately admits jumps nested in `if` arms.
     function_block_depth: usize,
     /// Non-compound statement nesting under `if`, loops, or a label.
     controlled_statement_depth: usize,
