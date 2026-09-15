@@ -619,7 +619,7 @@ private:
             llvm::dyn_cast_or_null<clang::CXXDestructorDecl>(
                 destructor->getDefinition());
         if (definition == nullptr ||
-            !validate_terminal_cleanup_source(function, local)) {
+            !validate_return_cleanup_source(function, local)) {
           if (definition == nullptr && state_.error.empty()) {
             fail(destructor->getLocation(),
                  "the supported destructor has no reachable definition");
@@ -757,32 +757,47 @@ private:
     return Json(std::move(result));
   }
 
-  bool validate_terminal_cleanup_source(const clang::FunctionDecl *function,
-                                        const clang::VarDecl *local) {
+  bool validate_return_cleanup_source(const clang::FunctionDecl *function,
+                                      const clang::VarDecl *local) {
     const auto *body =
         llvm::dyn_cast_or_null<clang::CompoundStmt>(function->getBody());
     if (body == nullptr || body->body_empty() ||
         !llvm::isa<clang::ReturnStmt>(body->body_back())) {
       fail(local->getLocation(),
-           "the terminal-cleanup slice requires one final return after object construction");
+           "the return-cleanup slice requires one final return after object construction");
       return false;
     }
+    bool constructed = false;
     for (auto iterator = body->body_begin(); iterator != body->body_end();
          ++iterator) {
       const clang::Stmt *statement = *iterator;
-      const bool final = std::next(iterator) == body->body_end();
-      if (llvm::isa<clang::IfStmt>(statement)) {
-        fail(statement->getBeginLoc(),
-             "branches with automatic destruction are outside the terminal-cleanup slice");
-        return false;
+      if (const auto *declarations =
+              llvm::dyn_cast<clang::DeclStmt>(statement)) {
+        for (const clang::Decl *declaration : declarations->decls()) {
+          if (declaration == local) {
+            constructed = true;
+          }
+        }
       }
-      if (llvm::isa<clang::ReturnStmt>(statement) && !final) {
+      if (!constructed && statement_contains_return(statement)) {
         fail(statement->getBeginLoc(),
-             "early returns with automatic destruction are outside the terminal-cleanup slice");
+             "returns before automatic object construction are outside the return-cleanup slice");
         return false;
       }
     }
     return true;
+  }
+
+  bool statement_contains_return(const clang::Stmt *statement) const {
+    if (llvm::isa<clang::ReturnStmt>(statement)) {
+      return true;
+    }
+    for (const clang::Stmt *child : statement->children()) {
+      if (child != nullptr && statement_contains_return(child)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   std::optional<LoweredCall>

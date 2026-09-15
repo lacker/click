@@ -742,41 +742,13 @@ impl CppFunction {
             }
         }
         if let Some(local) = destructible_local {
-            if self
-                .body
-                .iter()
-                .any(|statement| matches!(statement, CppStatement::If { .. }))
-            {
-                return Err(format!(
-                    "C++ function `{}` with automatic destruction cannot contain branches in the terminal-cleanup slice",
-                    self.name
-                ));
-            }
-            let Some(CppStatement::Return { cleanups, .. }) = self.body.last() else {
+            let Some(CppStatement::Return { .. }) = self.body.last() else {
                 return Err(format!(
                     "C++ function `{}` with automatic destruction requires one final return",
                     self.name
                 ));
             };
-            if self.body[..self.body.len() - 1]
-                .iter()
-                .any(|statement| matches!(statement, CppStatement::Return { .. }))
-            {
-                return Err(format!(
-                    "C++ function `{}` with automatic destruction requires one final return",
-                    self.name
-                ));
-            }
-            if !matches!(
-                cleanups.as_slice(),
-                [CppCleanup::Destructor { object, .. }]
-                    if object.declaration_id == local.declaration_id && object.name == local.name
-            ) {
-                return Err(format!(
-                    "C++ return from `{}` must destroy local `{}` exactly once",
-                    self.name, local.name
-                ));
-            }
+            validate_return_cleanups(&self.body, &self.name, &local)?;
         } else if sequence_contains_cleanup(&self.body) {
             return Err(format!(
                 "C++ function `{}` has cleanup without a constructed automatic object",
@@ -1230,6 +1202,44 @@ fn sequence_contains_cleanup(statements: &[CppStatement]) -> bool {
         } => sequence_contains_cleanup(then_branch) || sequence_contains_cleanup(else_branch),
         _ => false,
     })
+}
+
+fn validate_return_cleanups(
+    statements: &[CppStatement],
+    function_name: &str,
+    local: &CppPlace,
+) -> Result<(), String> {
+    for statement in statements {
+        match statement {
+            CppStatement::Return { cleanups, .. } => {
+                if !matches!(
+                    cleanups.as_slice(),
+                    [CppCleanup::Destructor { object, .. }]
+                        if object.declaration_id == local.declaration_id
+                            && object.name == local.name
+                ) {
+                    return Err(format!(
+                        "C++ return from `{function_name}` must destroy local `{}` exactly once",
+                        local.name
+                    ));
+                }
+            }
+            CppStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                validate_return_cleanups(then_branch, function_name, local)?;
+                validate_return_cleanups(else_branch, function_name, local)?;
+            }
+            CppStatement::Declare { .. }
+            | CppStatement::Assign { .. }
+            | CppStatement::Store { .. }
+            | CppStatement::MemberStore { .. }
+            | CppStatement::Call { .. } => {}
+        }
+    }
+    Ok(())
 }
 
 impl CppStatement {

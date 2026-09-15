@@ -196,12 +196,18 @@ as cleanup on the function's single final return. Direct lowering first
 captures the return expression in an internal scalar local, then calls the
 checked destructor, then returns the captured value. The fixture proves that
 the destructor restores caller memory while the result retains the value seen
-before cleanup; missing and false destructor contracts are rejected. Branches,
-early returns, nested scopes, and more than one destructible automatic object
-remain rejected until cleanup-edge ordering is represented generally.
+before cleanup; missing and false destructor contracts are rejected.
+
+The `early-return-destructor` fixture permits structured `if` statements after
+one destructible object has been constructed directly in the function body.
+Every return edge captures its result and then invokes that same checked
+destructor. It verifies the original two-path `Restore` example: the early path
+returns 7, the final path returns 9, and both restore the referenced integer to
+its entry value. A return before construction is rejected rather than assigned
+a cleanup for an object that is not alive.
 
 Copies and moves, default or partial aggregate initialization, multiple or
-nested local objects, ordinary methods, inheritance, private fields,
+nested destructible local objects, ordinary methods, inheritance, private fields,
 bit-fields, nested records, and multiple record types remain explicit errors.
 Uninitialized or nested scalar locals, local references, shadowing,
 address-taking other than a current mutable reference parameter for a supported

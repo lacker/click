@@ -55,6 +55,10 @@ const TERMINAL_DESTRUCTOR_SOURCE: &str =
     include_str!("fixtures/cpp-verification/terminal-destructor/capture.cpp");
 const TERMINAL_DESTRUCTOR_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/terminal-destructor/capture.click");
+const EARLY_RETURN_DESTRUCTOR_SOURCE: &str =
+    include_str!("fixtures/cpp-verification/early-return-destructor/with_restore.cpp");
+const EARLY_RETURN_DESTRUCTOR_SIDECAR: &str =
+    include_str!("fixtures/cpp-verification/early-return-destructor/with_restore.click");
 
 struct Project {
     directory: PathBuf,
@@ -105,6 +109,14 @@ impl Project {
 
     fn terminal_destructor() -> Self {
         Self::with_fixture("capture.cpp", "capture", TERMINAL_DESTRUCTOR_SOURCE)
+    }
+
+    fn early_return_destructor() -> Self {
+        Self::with_fixture(
+            "with_restore.cpp",
+            "with_restore",
+            EARLY_RETURN_DESTRUCTOR_SOURCE,
+        )
     }
 
     fn with_fixture(source_name: &str, function: &str, source: &str) -> Self {
@@ -1454,6 +1466,107 @@ fn terminal_return_captures_value_before_checked_destructor_cleanup() {
 }
 
 #[test]
+fn every_return_after_construction_runs_the_checked_destructor() {
+    let project = Project::early_return_destructor();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, EARLY_RETURN_DESTRUCTOR_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("export cleanup on both C++ return edges");
+    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+
+    let import = load_import(&project.config()).expect("load the cleanup artifact offline");
+    assert_eq!(import.export().schema, 9);
+    let destructor = import
+        .export()
+        .reachable_functions
+        .iter()
+        .find(|function| matches!(function.function_kind, CppFunctionKind::Destructor { .. }))
+        .expect("destructor definition must be reachable");
+    let [
+        CppStatement::Declare { local, .. },
+        CppStatement::If { then_branch, .. },
+        CppStatement::Assign { .. },
+        CppStatement::Return {
+            cleanups: final_cleanups,
+            ..
+        },
+    ] = import.export().function.body.as_slice()
+    else {
+        panic!("the two cleanup-bearing return paths were not retained")
+    };
+    let [
+        CppStatement::Return {
+            cleanups: early_cleanups,
+            ..
+        },
+    ] = then_branch.as_slice()
+    else {
+        panic!("the early return edge was not retained")
+    };
+    for cleanups in [early_cleanups, final_cleanups] {
+        assert!(matches!(
+            cleanups.as_slice(),
+            [CppCleanup::Destructor {
+                object,
+                callee,
+                ..
+            }] if object.declaration_id == local.declaration_id
+                && callee.declaration_id == destructor.declaration_id
+        ));
+    }
+
+    let lowered = lower_import(&import).expect("lower cleanup on both return edges");
+    assert_eq!(
+        call_order(lowered.kernel_function().body()),
+        [
+            "Restore_constructor",
+            "Restore_destructor",
+            "Restore_destructor"
+        ]
+    );
+
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    let verified = verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify both captured results and both restored-memory paths");
+    let ensure_indices = verified
+        .iter()
+        .map(|theorem| match theorem.claim {
+            VerifiedClaim::Ensure { index, .. } => index,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        ensure_indices.ends_with(&[0, 1, 2, 3, 0, 1, 2, 3]),
+        "both caller return paths must certify ownership, the captured result, and restoration: {ensure_indices:?}"
+    );
+
+    let execute = cpp_prepared_project_tactic_source_position(
+        &click_project,
+        &import,
+        "with_restore.contract",
+        0,
+    )
+    .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .expect("expand the proof across both cleanup edges");
+    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+        .expect("the expanded early-return cleanup proof must reverify");
+
+    let wrong_early_result = EARLY_RETURN_DESTRUCTOR_SIDECAR.replace(
+        "ensures early != 0 implies result == 7;",
+        "ensures early != 0 implies result == 9;",
+    );
+    fs::write(&sidecar, &wrong_early_result).unwrap();
+    let wrong_project = read_click_project(&sidecar, &wrong_early_result).unwrap();
+    verify_cpp_prepared_project(&wrong_project, &import)
+        .expect_err("cleanup must not overwrite the value captured by the early return");
+}
+
+#[test]
 fn constructor_local_rejects_implicit_throwing_partial_and_reordered_forms() {
     let project = Project::constructor_local();
     for (source, expected) in [
@@ -1513,10 +1626,10 @@ fn terminal_destructor_rejects_throwing_virtual_empty_and_nonterminal_cleanup() 
         ),
         (
             TERMINAL_DESTRUCTOR_SOURCE.replace(
-                "return value;",
-                "if (value == 7) { return value; }\n    return value;",
+                "RestoreState state(&value);\n    return value;",
+                "return value;\n    RestoreState state(&value);\n    return value;",
             ),
-            "branches with automatic destruction",
+            "returns before automatic object construction",
         ),
         (
             TERMINAL_DESTRUCTOR_SOURCE.replace(
