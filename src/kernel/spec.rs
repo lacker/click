@@ -4583,10 +4583,7 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
             if !left.c_type().is_object_pointer() || !right.c_type().is_object_pointer() {
                 return Ok(Vec::new());
             }
-            path.proposition = Proposition::ConditionIs(
-                pointer_same_object_condition(left.pointer(), right.pointer()),
-                true,
-            );
+            path.proposition = pointer_same_object_proposition(left.pointer(), right.pointer());
         }
     }
     Ok(paths)
@@ -7860,7 +7857,15 @@ mod spec_pointer_subtraction_tests {
             ))
         );
         assert!(paths[0].facts.contains(&ExecutionPureFact::condition(
-            pointer_same_object_condition(&right, &left),
+            pointer_object_is_null_condition(&right),
+            false,
+        )));
+        assert!(paths[0].facts.contains(&ExecutionPureFact::condition(
+            pointer_object_is_null_condition(&left),
+            false,
+        )));
+        assert!(paths[0].facts.contains(&ExecutionPureFact::condition(
+            pointer_object_identity_condition(&right, &left),
             true,
         )));
         assert!(paths[0].facts.contains(&ExecutionPureFact::condition(

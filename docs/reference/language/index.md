@@ -887,8 +887,11 @@ so the fact also covers pointers derived from either argument. It does not say
 that the pointer values are equal, grant access to pointee memory, or replace
 an `owns`, `views`, or `loadable` clause. Conversely, pointer equality does
 not establish `same_object`: equal addresses can carry provenance from
-adjacent objects. The caller must establish the relationship from its concrete
-pointer objects or from its own retained `same_object` requirement.
+adjacent objects. Null pointers do not carry object provenance, so
+`same_object(0, 0)` is false even though the pointers compare equal. The caller
+must establish the relationship from its concrete pointer objects, a nonempty
+memory resource, or its own retained `same_object` requirement. An empty
+memory range does not establish that its base has object provenance.
 
 `aligned(pointer, n)` states that the pointer's address is a multiple of `n`,
 a power of two. It is sugar for `address(pointer) & (n - 1) == 0`. Click

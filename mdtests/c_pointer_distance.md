@@ -15,6 +15,7 @@ int32 pointer_distance(int32 data[], int32 n) {
 verifying "c_pointer_distance.c";
 
 int32 pointer_distance(int32 data[], int32 n) {
+    requires data != 0;
     requires 0 <= n;
     views data[0..n];
     ensures result == n by auto;

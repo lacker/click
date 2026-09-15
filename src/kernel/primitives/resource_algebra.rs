@@ -1722,7 +1722,10 @@ impl ResourceContext {
         });
     }
 
-    fn memory_block_facts(&self, block: &PointerBlock) -> impl Iterator<Item = &CResourceFact> {
+    pub(in crate::kernel) fn memory_block_facts(
+        &self,
+        block: &PointerBlock,
+    ) -> impl Iterator<Item = &CResourceFact> {
         self.storage
             .index
             .memory_by_block

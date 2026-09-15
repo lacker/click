@@ -2757,6 +2757,30 @@ impl CLValue {
 }
 
 impl Pointer {
+    /// The raw base address from which this pointer's object provenance came.
+    ///
+    /// External parameters share one memory block, so their leading offset is
+    /// the only raw base address that survives parameter abstraction. Pointer
+    /// arithmetic appends displacement terms; remove those displacements when
+    /// deciding whether the originating object base may be null.
+    pub(in crate::kernel) fn object_base(&self) -> Self {
+        fn external_base(offset: &PointerOffsetTerm) -> &PointerOffsetTerm {
+            match offset {
+                PointerOffsetTerm::Add(base, _) => external_base(base),
+                offset => offset,
+            }
+        }
+
+        Self {
+            block: self.block.clone(),
+            offset: if self.block == PointerBlock::ExternalArgument {
+                external_base(&self.offset).clone()
+            } else {
+                PointerOffsetTerm::Constant(0)
+            },
+        }
+    }
+
     /// The C object identity carried by this pointer.
     ///
     /// Concrete blocks already are object identities. External parameters
@@ -2767,16 +2791,9 @@ impl Pointer {
     /// the same provenance. Pointer arithmetic appends displacement terms and
     /// therefore preserves the leading identity.
     pub(in crate::kernel) fn object_identity(&self) -> Self {
-        fn external_base(offset: &PointerOffsetTerm) -> &PointerOffsetTerm {
-            match offset {
-                PointerOffsetTerm::Add(base, _) => external_base(base),
-                offset => offset,
-            }
-        }
-
         if self.block == PointerBlock::ExternalArgument {
-            let base = external_base(&self.offset);
-            let variable = match base {
+            let base = self.object_base();
+            let variable = match &base.offset {
                 PointerOffsetTerm::Variable(variable) => Some(*variable),
                 PointerOffsetTerm::Int32Scaled { value, .. }
                 | PointerOffsetTerm::Int64Scaled { value, .. } => match value.as_ref() {
@@ -2793,7 +2810,7 @@ impl Pointer {
             }
             return Self {
                 block: self.block.clone(),
-                offset: base.clone(),
+                offset: base.offset,
             };
         }
 

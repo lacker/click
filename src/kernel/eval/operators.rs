@@ -395,6 +395,7 @@ pub(in crate::kernel) fn evaluate_c_comparison_paths(
         budget,
         |left, right, facts, obligations| {
             apply_c_comparison(
+                state,
                 operator,
                 left,
                 right,
@@ -1115,6 +1116,7 @@ fn uint32_order_condition(
 }
 
 fn apply_same_object_pointer_operation(
+    state: &CState,
     left: Pointer,
     right: Pointer,
     facts: Vec<ExecutionPureFact>,
@@ -1127,33 +1129,114 @@ fn apply_same_object_pointer_operation(
         Vec<ProofObligation>,
     ) -> Vec<CExpressionPath>,
 ) -> Vec<CExpressionPath> {
-    let same_object = pointer_same_object_condition(&left, &right);
-    match decide_with_facts(assumptions, &facts, &same_object) {
-        Some(true) => apply(left, right, facts, obligations),
-        Some(false) => vec![CExpressionPath {
+    let left_is_null = pointer_object_is_null_condition(&left);
+    apply_pointer_object_nonnull_guard(
+        state,
+        &left.clone(),
+        left_is_null,
+        facts,
+        obligations,
+        assumptions,
+        move |facts, obligations| {
+            let right_is_null = pointer_object_is_null_condition(&right);
+            apply_pointer_object_nonnull_guard(
+                state,
+                &right.clone(),
+                right_is_null,
+                facts,
+                obligations,
+                assumptions,
+                move |facts, obligations| {
+                    let same_identity = pointer_object_identity_condition(&left, &right);
+                    apply_pointer_provenance_guard(
+                        same_identity,
+                        true,
+                        facts,
+                        obligations,
+                        assumptions,
+                        move |facts, obligations| apply(left, right, facts, obligations),
+                    )
+                },
+            )
+        },
+    )
+}
+
+fn apply_pointer_object_nonnull_guard(
+    state: &CState,
+    pointer: &Pointer,
+    is_null: ConditionTerm,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    apply: impl FnOnce(Vec<ExecutionPureFact>, Vec<ProofObligation>) -> Vec<CExpressionPath>,
+) -> Vec<CExpressionPath> {
+    if pointer_has_nonempty_memory_resource(state, pointer, assumptions, &facts) {
+        let mut facts = facts;
+        if add_condition_path_fact(&mut facts, assumptions, is_null, false).is_none() {
+            return Vec::new();
+        }
+        return apply(facts, obligations);
+    }
+    apply_pointer_provenance_guard(is_null, false, facts, obligations, assumptions, apply)
+}
+
+fn pointer_has_nonempty_memory_resource(
+    state: &CState,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+    facts: &[ExecutionPureFact],
+) -> bool {
+    let decide =
+        |condition: ConditionTerm| decide_with_facts(assumptions, facts, &condition) == Some(true);
+    let contains_object = |resources: &ResourceContext| {
+        resources.memory_block_facts(&pointer.block).any(|fact| {
+            let Some(range) = fact.memory_range() else {
+                return false;
+            };
+            decide(pointer_object_identity_condition(pointer, range.base()))
+                && decide(ConditionTerm::signed_less_than(
+                    range.start().clone(),
+                    range.end().clone(),
+                ))
+        })
+    };
+    contains_object(state.resources())
+        || assumptions
+            .resource_compositions
+            .iter()
+            .any(contains_object)
+}
+
+fn apply_pointer_provenance_guard(
+    condition: ConditionTerm,
+    expected: bool,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    apply: impl FnOnce(Vec<ExecutionPureFact>, Vec<ProofObligation>) -> Vec<CExpressionPath>,
+) -> Vec<CExpressionPath> {
+    match decide_with_facts(assumptions, &facts, &condition) {
+        Some(value) if value == expected => apply(facts, obligations),
+        Some(_) => vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic),
             facts,
             obligations,
         }],
         None => {
-            let mut same_object_facts = facts.clone();
-            add_condition_path_fact(
-                &mut same_object_facts,
-                assumptions,
-                same_object.clone(),
-                true,
-            )
-            .expect("same-object pointer guard should be consistent");
-            let mut paths = apply(left, right, same_object_facts, obligations.clone());
+            let mut valid_facts = facts.clone();
+            add_condition_path_fact(&mut valid_facts, assumptions, condition.clone(), expected)
+                .expect("valid pointer provenance guard should be consistent");
+            let mut paths = apply(valid_facts, obligations.clone());
 
-            let mut different_object_facts = facts;
-            add_condition_path_fact(&mut different_object_facts, assumptions, same_object, false)
-                .expect("different-object pointer guard should be consistent");
+            let mut invalid_facts = facts;
+            add_condition_path_fact(&mut invalid_facts, assumptions, condition, !expected)
+                .expect("invalid pointer provenance guard should be consistent");
             paths.push(CExpressionPath {
                 outcome: CExpressionOutcome::UndefinedBehavior(
                     CUndefinedBehavior::PointerArithmetic,
                 ),
-                facts: different_object_facts,
+                facts: invalid_facts,
                 obligations,
             });
             paths
@@ -1161,14 +1244,41 @@ fn apply_same_object_pointer_operation(
     }
 }
 
-pub(in crate::kernel) fn pointer_same_object_condition(
+pub(in crate::kernel) fn pointer_object_identity_condition(
     left: &Pointer,
     right: &Pointer,
 ) -> ConditionTerm {
     ConditionTerm::pointer_equal(left.object_identity(), right.object_identity())
 }
 
+pub(in crate::kernel) fn pointer_object_is_null_condition(pointer: &Pointer) -> ConditionTerm {
+    pointer_is_null_condition(pointer.object_base())
+}
+
+pub(in crate::kernel) fn pointer_same_object_proposition(
+    left: &Pointer,
+    right: &Pointer,
+) -> Proposition {
+    Proposition::And(
+        Box::new(Proposition::ConditionIs(
+            pointer_object_is_null_condition(left),
+            false,
+        )),
+        Box::new(Proposition::And(
+            Box::new(Proposition::ConditionIs(
+                pointer_object_is_null_condition(right),
+                false,
+            )),
+            Box::new(Proposition::ConditionIs(
+                pointer_object_identity_condition(left, right),
+                true,
+            )),
+        )),
+    )
+}
+
 fn apply_c_comparison(
+    state: &CState,
     operator: CComparisonOperator,
     left: CValue,
     right: CValue,
@@ -1212,6 +1322,7 @@ fn apply_c_comparison(
                 return vec![c_type_mismatch_expression_path(facts, obligations)];
             };
             apply_same_object_pointer_operation(
+                state,
                 left.into_pointer(),
                 right.into_pointer(),
                 facts,
@@ -1393,6 +1504,7 @@ pub(in crate::kernel) fn apply_c_subtract(
                 return vec![c_type_mismatch_expression_path(facts, obligations)];
             };
             apply_same_object_pointer_operation(
+                state,
                 left.into_pointer(),
                 right.into_pointer(),
                 facts,
