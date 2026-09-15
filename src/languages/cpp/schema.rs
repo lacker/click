@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 10;
+pub(crate) const EXPORT_SCHEMA: u32 = 11;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -52,6 +53,9 @@ pub struct CppProfile {
     pub target: String,
     pub exceptions: bool,
     pub rtti: bool,
+    pub compilation_directory: String,
+    pub compilation_file: String,
+    pub compilation_command: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -312,6 +316,25 @@ impl CppExport {
                 "C++ export used `{}`; expected Clang {CLANG_VERSION}",
                 self.profile.frontend_version
             ));
+        }
+        if self.profile.compilation_directory.is_empty()
+            || self.profile.compilation_directory.as_bytes().contains(&0)
+            || self.profile.compilation_file.is_empty()
+            || self.profile.compilation_file.as_bytes().contains(&0)
+            || self.profile.compilation_command.is_empty()
+            || self
+                .profile
+                .compilation_command
+                .iter()
+                .any(|argument| argument.is_empty() || argument.as_bytes().contains(&0))
+        {
+            return Err("C++ export is missing its selected compilation command identity".into());
+        }
+        let driver = Path::new(&self.profile.compilation_command[0])
+            .file_name()
+            .and_then(|name| name.to_str());
+        if !matches!(driver, Some("clang++" | "clang++-19")) {
+            return Err("C++ export compilation command does not use pinned Clang".into());
         }
         if self.logical_source != logical_source {
             return Err(format!(

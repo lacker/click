@@ -201,6 +201,7 @@ impl Project {
             exporter,
             source_name: source_name.to_string(),
         };
+        project.write_compilation_database();
         project.write_config(function);
         project
     }
@@ -222,15 +223,77 @@ impl Project {
         self.directory.join(&self.source_name)
     }
 
+    fn compilation_database(&self) -> PathBuf {
+        self.directory.join("compile_commands.json")
+    }
+
+    fn compilation_arguments(&self) -> Vec<String> {
+        [
+            "clang++",
+            "-x",
+            "c++",
+            "-std=c++20",
+            "--target=x86_64-unknown-linux-gnu",
+            "-fno-exceptions",
+            "-fno-rtti",
+            "-funsigned-char",
+            "-ffreestanding",
+            "-nostdinc",
+            "-nostdinc++",
+            "-Wno-reorder-ctor",
+            "-c",
+            &self.source_name,
+            "-o",
+            "fixture.o",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+    }
+
+    fn write_compilation_database(&self) {
+        self.write_compilation_database_commands(&[self.compilation_arguments()]);
+    }
+
+    fn write_compilation_database_commands(&self, commands: &[Vec<String>]) {
+        let database = commands
+            .iter()
+            .map(|arguments| {
+                serde_json::json!({
+                    "directory": self.directory,
+                    "file": self.source_name,
+                    "arguments": arguments,
+                    "output": "fixture.o"
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut bytes = serde_json::to_vec_pretty(&database).unwrap();
+        bytes.push(b'\n');
+        fs::write(self.compilation_database(), bytes).unwrap();
+    }
+
+    fn write_compilation_database_command_string(&self, command: &str) {
+        let database = serde_json::json!([{
+            "directory": self.directory,
+            "file": self.source_name,
+            "command": command,
+            "output": "fixture.o"
+        }]);
+        let mut bytes = serde_json::to_vec_pretty(&database).unwrap();
+        bytes.push(b'\n');
+        fs::write(self.compilation_database(), bytes).unwrap();
+    }
+
     fn write_config(&self, function: &str) {
         let config = serde_json::json!({
-            "schema": 1,
+            "schema": 2,
             "language": "c++",
             "standard": "c++20",
             "target": "x86_64-unknown-linux-gnu",
             "exceptions": false,
             "rtti": false,
             "exporter": self.exporter,
+            "compilation_database": "compile_commands.json",
             "working_directory": ".",
             "source": &self.source_name,
             "logical_source": &self.source_name,
@@ -273,10 +336,22 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
     let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
-    assert_eq!(prepared.export().schema, 10);
+    assert_eq!(prepared.export().schema, 11);
     assert!(prepared.export().reachable_functions.is_empty());
     assert_eq!(prepared.logical_source(), "increment.cpp");
     assert_eq!(prepared.identity().len(), 64);
+    assert_eq!(
+        prepared.export().profile.compilation_directory,
+        project.directory.to_string_lossy()
+    );
+    assert_eq!(
+        prepared.export().profile.compilation_file,
+        project.source_name
+    );
+    assert_eq!(
+        prepared.export().profile.compilation_command,
+        project.compilation_arguments()
+    );
     let function = &prepared.export().function;
     assert_eq!(function.name, "increment");
     assert!(function.declaration_id.starts_with("c:@F@increment#"));
@@ -310,6 +385,108 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
             ..
         }
     ));
+}
+
+#[test]
+fn compilation_database_command_is_selected_locked_and_validated() {
+    let project = Project::new();
+    refresh_import(&project.config()).expect("export through the selected compilation command");
+    let first = load_import(&project.config()).expect("load the locked compilation command");
+    let first_identity = first.identity().to_string();
+    let lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(project.lock()).unwrap()).unwrap();
+    assert_eq!(
+        lock["compilation_database_sha256"].as_str().unwrap().len(),
+        64
+    );
+    assert_eq!(
+        lock["profile"]["compilation_command"],
+        serde_json::json!(project.compilation_arguments())
+    );
+
+    let mut changed = project.compilation_arguments();
+    changed.insert(changed.len() - 4, "-DCLICK_COMMAND_VARIANT=1".into());
+    project.write_compilation_database_commands(&[changed.clone()]);
+    let error = load_import(&project.config()).unwrap_err();
+    assert!(error.contains("compilation database differs"), "{error}");
+    refresh_import(&project.config()).expect("refresh after an explicit command change");
+    let refreshed = load_import(&project.config()).unwrap();
+    assert_ne!(refreshed.identity(), first_identity);
+    assert_eq!(refreshed.export().profile.compilation_command, changed);
+
+    let command_string = Project::new();
+    let arguments = command_string.compilation_arguments();
+    command_string.write_compilation_database_command_string(&arguments.join(" "));
+    refresh_import(&command_string.config()).expect("parse a CMake-style command string entry");
+    assert_eq!(
+        load_import(&command_string.config())
+            .unwrap()
+            .export()
+            .profile
+            .compilation_command,
+        arguments
+    );
+
+    let missing = Project::new();
+    missing.write_compilation_database_commands(&[]);
+    let error = refresh_import(&missing.config()).unwrap_err();
+    assert!(error.contains("has no command"), "{error}");
+    assert!(!missing.artifact().exists());
+
+    let ambiguous = Project::new();
+    let command = ambiguous.compilation_arguments();
+    ambiguous.write_compilation_database_commands(&[command.clone(), command]);
+    let error = refresh_import(&ambiguous.config()).unwrap_err();
+    assert!(error.contains("exactly one is required"), "{error}");
+    assert!(!ambiguous.artifact().exists());
+
+    let wrong_driver = Project::new();
+    let mut command = wrong_driver.compilation_arguments();
+    command[0] = "g++".into();
+    wrong_driver.write_compilation_database_commands(&[command]);
+    let error = refresh_import(&wrong_driver.config()).unwrap_err();
+    assert!(error.contains("pinned Clang driver"), "{error}");
+    assert!(!wrong_driver.artifact().exists());
+
+    let wrong_standard = Project::new();
+    let command = wrong_standard
+        .compilation_arguments()
+        .into_iter()
+        .map(|argument| {
+            if argument == "-std=c++20" {
+                "-std=gnu++20".into()
+            } else {
+                argument
+            }
+        })
+        .collect::<Vec<_>>();
+    wrong_standard.write_compilation_database_commands(&[command]);
+    let error = refresh_import(&wrong_standard.config()).unwrap_err();
+    assert!(
+        error.contains("export profile must be Clang c++20"),
+        "{error}"
+    );
+    assert!(!wrong_standard.artifact().exists());
+
+    let wrong_target = Project::new();
+    let command = wrong_target
+        .compilation_arguments()
+        .into_iter()
+        .map(|argument| {
+            if argument == "--target=x86_64-unknown-linux-gnu" {
+                "--target=aarch64-unknown-linux-gnu".into()
+            } else {
+                argument
+            }
+        })
+        .collect::<Vec<_>>();
+    wrong_target.write_compilation_database_commands(&[command]);
+    let error = refresh_import(&wrong_target.config()).unwrap_err();
+    assert!(
+        error.contains("export profile must be Clang c++20"),
+        "{error}"
+    );
+    assert!(!wrong_target.artifact().exists());
 }
 
 #[test]
@@ -756,7 +933,7 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the call graph artifact offline");
-    assert_eq!(import.export().schema, 10);
+    assert_eq!(import.export().schema, 11);
     assert_eq!(import.export().function.name, "call_set_seven");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -833,7 +1010,7 @@ fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the scalar-local artifact offline");
-    assert_eq!(import.export().schema, 10);
+    assert_eq!(import.export().schema, 11);
     assert_eq!(import.export().function.name, "relay_value");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -947,7 +1124,7 @@ fn mutable_pointer_dereference_and_reference_address_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the pointer artifact offline");
-    assert_eq!(import.export().schema, 10);
+    assert_eq!(import.export().schema, 11);
     let caller = &import.export().function;
     assert_eq!(caller.name, "bump_reference");
     assert!(matches!(
@@ -1084,7 +1261,7 @@ fn record_reference_member_loads_and_stores_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the record artifact offline");
-    assert_eq!(import.export().schema, 10);
+    assert_eq!(import.export().schema, 11);
     let [record] = import.export().records.as_slice() else {
         panic!("the referenced record layout was not captured")
     };
@@ -1186,7 +1363,7 @@ fn brace_initialized_local_aggregate_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the aggregate artifact offline");
-    assert_eq!(import.export().schema, 10);
+    assert_eq!(import.export().schema, 11);
     let [record] = import.export().records.as_slice() else {
         panic!("the local aggregate record layout was not captured")
     };
@@ -1286,7 +1463,7 @@ fn explicit_constructor_local_verifies_as_a_modular_call() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the constructor artifact offline");
-    assert_eq!(import.export().schema, 10);
+    assert_eq!(import.export().schema, 11);
     let [record] = import.export().records.as_slice() else {
         panic!("the constructed record layout was not captured")
     };
@@ -1421,7 +1598,7 @@ fn terminal_return_captures_value_before_checked_destructor_cleanup() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 10);
+    assert_eq!(import.export().schema, 11);
     let [record] = import.export().records.as_slice() else {
         panic!("the destructible record layout was not captured")
     };
@@ -1567,7 +1744,7 @@ fn every_return_after_construction_runs_the_checked_destructor() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 10);
+    assert_eq!(import.export().schema, 11);
     let destructor = import
         .export()
         .reachable_functions
@@ -1668,7 +1845,7 @@ fn two_constructed_objects_are_destroyed_in_reverse_order_on_every_return() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the ordered cleanup artifact offline");
-    assert_eq!(import.export().schema, 10);
+    assert_eq!(import.export().schema, 11);
     let [
         CppStatement::Declare { local: first, .. },
         CppStatement::Declare { local: second, .. },
@@ -1765,7 +1942,7 @@ fn nested_scope_destroys_its_object_on_return_and_fallthrough() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the nested-scope artifact offline");
-    assert_eq!(import.export().schema, 10);
+    assert_eq!(import.export().schema, 11);
     let destructor = import
         .export()
         .reachable_functions

@@ -17,8 +17,9 @@ use sha2::{Digest, Sha256};
 use super::schema::{CppExport, CppProfile, EXPORT_SCHEMA, LANGUAGE, STANDARD, TARGET};
 use crate::languages::compiler_process::{CompilerLimits, run_compiler};
 
-const CONFIG_SCHEMA: u32 = 1;
+const CONFIG_SCHEMA: u32 = 2;
 const MAX_CONFIG_BYTES: usize = 1 << 20;
+const MAX_COMPILATION_DATABASE_BYTES: usize = 16 << 20;
 const MAX_SOURCE_BYTES: usize = 1 << 20;
 const MAX_EXPORTER_BYTES: usize = 64 << 20;
 const MAX_ARTIFACT_BYTES: usize = 8 << 20;
@@ -60,6 +61,7 @@ struct Config {
     exceptions: bool,
     rtti: bool,
     exporter: String,
+    compilation_database: String,
     working_directory: String,
     source: String,
     logical_source: String,
@@ -75,6 +77,7 @@ struct Lock {
     schema: u32,
     config_sha256: String,
     exporter_sha256: String,
+    compilation_database_sha256: String,
     source_sha256: String,
     artifact_sha256: String,
     artifact_bytes: usize,
@@ -89,6 +92,11 @@ pub fn refresh_import(config_path: &Path) -> Result<(), String> {
 fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
     let (config, config_bytes) = read_config(config_path)?;
     let exporter = resolve_input(&config.directory, &config.exporter, "C++ exporter")?;
+    let compilation_database = resolve_input(
+        &config.directory,
+        &config.compilation_database,
+        "C++ compilation database",
+    )?;
     let working_directory = resolve_input(
         &config.directory,
         &config.working_directory,
@@ -101,9 +109,20 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
         ));
     }
     let source = resolve_source(&config, &working_directory)?;
-    reject_output_collisions(config_path, &config, &source, &exporter)?;
+    reject_output_collisions(
+        config_path,
+        &config,
+        &source,
+        &exporter,
+        &compilation_database,
+    )?;
 
     let exporter_bytes = read_stable(&exporter, MAX_EXPORTER_BYTES, "C++ exporter")?;
+    let compilation_database_before = read_stable(
+        &compilation_database,
+        MAX_COMPILATION_DATABASE_BYTES,
+        "C++ compilation database",
+    )?;
     let source_before = read_stable(&source, MAX_SOURCE_BYTES, "C++ source")?;
     let arguments = vec![
         "--logical-source".into(),
@@ -112,6 +131,8 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
         config.function.clone(),
         "--source".into(),
         source.to_string_lossy().into_owned(),
+        "--compilation-database".into(),
+        compilation_database.to_string_lossy().into_owned(),
     ];
     let output = run_compiler(
         &exporter,
@@ -137,14 +158,24 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
     if read_stable(&exporter, MAX_EXPORTER_BYTES, "C++ exporter")? != exporter_bytes {
         return Err("C++ exporter changed during semantic export".into());
     }
+    if read_stable(
+        &compilation_database,
+        MAX_COMPILATION_DATABASE_BYTES,
+        "C++ compilation database",
+    )? != compilation_database_before
+    {
+        return Err("C++ compilation database changed during semantic export".into());
+    }
 
     let export = decode_artifact(&output.stdout, &config)?;
     let config_sha256 = hex_digest(&config_bytes);
     let exporter_sha256 = hex_digest(&exporter_bytes);
+    let compilation_database_sha256 = hex_digest(&compilation_database_before);
     let source_sha256 = hex_digest(&source_before);
     let artifact_sha256 = hex_digest(&output.stdout);
     let identity = semantic_identity(
         &config_sha256,
+        &compilation_database_sha256,
         &source_sha256,
         &exporter_sha256,
         &artifact_sha256,
@@ -154,6 +185,7 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
         schema: CONFIG_SCHEMA,
         config_sha256,
         exporter_sha256,
+        compilation_database_sha256,
         source_sha256,
         artifact_sha256,
         artifact_bytes: output.stdout.len(),
@@ -194,6 +226,20 @@ fn load_import_inner(config_path: &Path) -> Result<PreparedCppImport, String> {
         return Err("C++ import lock does not match the import config; refresh it".into());
     }
 
+    let compilation_database = resolve_input(
+        &config.directory,
+        &config.compilation_database,
+        "C++ compilation database",
+    )?;
+    let compilation_database_bytes = read_stable(
+        &compilation_database,
+        MAX_COMPILATION_DATABASE_BYTES,
+        "C++ compilation database",
+    )?;
+    if lock.compilation_database_sha256 != hex_digest(&compilation_database_bytes) {
+        return Err("C++ compilation database differs from the import lock; refresh it".into());
+    }
+
     let working_directory = resolve_input(
         &config.directory,
         &config.working_directory,
@@ -218,6 +264,7 @@ fn load_import_inner(config_path: &Path) -> Result<PreparedCppImport, String> {
     }
     let identity = semantic_identity(
         &lock.config_sha256,
+        &lock.compilation_database_sha256,
         &lock.source_sha256,
         &lock.exporter_sha256,
         &lock.artifact_sha256,
@@ -245,6 +292,7 @@ fn decode_artifact(bytes: &[u8], config: &Config) -> Result<CppExport, String> {
 
 fn semantic_identity(
     config_sha256: &str,
+    compilation_database_sha256: &str,
     source_sha256: &str,
     exporter_sha256: &str,
     artifact_sha256: &str,
@@ -253,8 +301,9 @@ fn semantic_identity(
     let encoded = serde_json::to_vec(&(
         CONFIG_SCHEMA,
         EXPORT_SCHEMA,
-        "click-cpp-semantic-import-v1",
+        "click-cpp-semantic-import-v2",
         config_sha256,
+        compilation_database_sha256,
         source_sha256,
         exporter_sha256,
         artifact_sha256,
@@ -291,6 +340,7 @@ fn validate_config(config: &Config) -> Result<(), String> {
     }
     for (label, value) in [
         ("exporter", config.exporter.as_str()),
+        ("compilation database", config.compilation_database.as_str()),
         ("working directory", config.working_directory.as_str()),
         ("source", config.source.as_str()),
         ("logical source", config.logical_source.as_str()),
@@ -302,6 +352,7 @@ fn validate_config(config: &Config) -> Result<(), String> {
         }
     }
     validate_relative_path(&config.source, "source")?;
+    validate_relative_path(&config.compilation_database, "compilation database")?;
     validate_relative_path(&config.logical_source, "logical source")?;
     validate_relative_path(&config.artifact, "artifact")?;
     if Path::new(&config.source)
@@ -403,6 +454,7 @@ fn reject_output_collisions(
     config: &Config,
     source: &Path,
     exporter: &Path,
+    compilation_database: &Path,
 ) -> Result<(), String> {
     let config_path = absolute_path(config_path)?;
     let artifact = artifact_path(config)?;
@@ -412,6 +464,7 @@ fn reject_output_collisions(
             ("config", config_path.as_path()),
             ("source", source),
             ("exporter", exporter),
+            ("compilation database", compilation_database),
         ] {
             if output == input {
                 return Err(format!(

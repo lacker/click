@@ -18,6 +18,7 @@
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/RecordLayout.h"
 #include "clang/AST/Stmt.h"
+#include "clang/Basic/LangStandard.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Version.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -25,6 +26,7 @@
 #include "clang/Index/USRGeneration.h"
 #include "clang/Lex/Lexer.h"
 #include "clang/Tooling/CompilationDatabase.h"
+#include "clang/Tooling/JSONCompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/JSON.h"
@@ -33,13 +35,15 @@
 namespace {
 
 constexpr const char *kClangVersion = "19.1.7";
-constexpr const char *kStandard = "c++20";
-constexpr const char *kTarget = "x86_64-unknown-linux-gnu";
 
 struct Options {
   std::string logical_source;
   std::string function;
   std::string source;
+  std::string compilation_database;
+  std::string compilation_directory;
+  std::string compilation_file;
+  std::vector<std::string> compilation_command;
 };
 
 struct ExportState {
@@ -62,15 +66,18 @@ std::optional<Options> parse_options(int argc, const char **argv) {
       result.function = value;
     } else if (option == "--source") {
       result.source = value;
+    } else if (option == "--compilation-database") {
+      result.compilation_database = value;
     } else {
       llvm::errs() << "error: unknown exporter option `" << option << "`\n";
       return std::nullopt;
     }
   }
   if (result.logical_source.empty() || result.function.empty() ||
-      result.source.empty()) {
+      result.source.empty() || result.compilation_database.empty()) {
     llvm::errs()
-        << "error: --logical-source, --function, and --source are required\n";
+        << "error: --logical-source, --function, --source, and "
+           "--compilation-database are required\n";
     return std::nullopt;
   }
   return result;
@@ -79,10 +86,17 @@ std::optional<Options> parse_options(int argc, const char **argv) {
 class SemanticExporter : public clang::RecursiveASTVisitor<SemanticExporter> {
 public:
   SemanticExporter(clang::ASTContext &context, std::string logical_source,
-                   std::string selected_name, ExportState &state)
+                   std::string selected_name,
+                   std::string compilation_directory,
+                   std::string compilation_file,
+                   std::vector<std::string> compilation_command,
+                   ExportState &state)
       : context_(context), source_manager_(context.getSourceManager()),
         logical_source_(std::move(logical_source)),
-        selected_name_(std::move(selected_name)), state_(state) {}
+        selected_name_(std::move(selected_name)),
+        compilation_directory_(std::move(compilation_directory)),
+        compilation_file_(std::move(compilation_file)),
+        compilation_command_(std::move(compilation_command)), state_(state) {}
 
   bool VisitFunctionDecl(clang::FunctionDecl *declaration) {
     if (!llvm::isa<clang::CXXMethodDecl>(declaration) &&
@@ -136,13 +150,23 @@ public:
     llvm::json::Object profile;
     profile["frontend"] = "clang";
     profile["frontend_version"] = clang::getClangFullVersion();
-    profile["standard"] = kStandard;
-    profile["target"] = kTarget;
-    profile["exceptions"] = false;
-    profile["rtti"] = false;
+    profile["standard"] = clang::LangStandard::getLangStandardForKind(
+                              context_.getLangOpts().LangStd)
+                              .getName();
+    profile["target"] = context_.getTargetInfo().getTriple().str();
+    profile["exceptions"] =
+        static_cast<bool>(context_.getLangOpts().CXXExceptions);
+    profile["rtti"] = static_cast<bool>(context_.getLangOpts().RTTI);
+    profile["compilation_directory"] = compilation_directory_;
+    profile["compilation_file"] = compilation_file_;
+    llvm::json::Array compilation_command;
+    for (const std::string &argument : compilation_command_) {
+      compilation_command.push_back(argument);
+    }
+    profile["compilation_command"] = std::move(compilation_command);
 
     llvm::json::Object artifact;
-    artifact["schema"] = 10;
+    artifact["schema"] = 11;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["logical_source"] = logical_source_;
@@ -1692,6 +1716,9 @@ private:
   clang::SourceManager &source_manager_;
   std::string logical_source_;
   std::string selected_name_;
+  std::string compilation_directory_;
+  std::string compilation_file_;
+  std::vector<std::string> compilation_command_;
   ExportState &state_;
   std::vector<clang::FunctionDecl *> matches_;
   std::unordered_set<const clang::FunctionDecl *> known_functions_;
@@ -1714,7 +1741,9 @@ class ExportConsumer : public clang::ASTConsumer {
 public:
   ExportConsumer(clang::ASTContext &context, const Options &options,
                  ExportState &state)
-      : exporter_(context, options.logical_source, options.function, state) {}
+      : exporter_(context, options.logical_source, options.function,
+                  options.compilation_directory, options.compilation_file,
+                  options.compilation_command, state) {}
 
   void HandleTranslationUnit(clang::ASTContext &context) override {
     exporter_.TraverseDecl(context.getTranslationUnitDecl());
@@ -1759,7 +1788,7 @@ private:
 } // namespace
 
 int main(int argc, const char **argv) {
-  const auto options = parse_options(argc, argv);
+  auto options = parse_options(argc, argv);
   if (!options) {
     return 2;
   }
@@ -1770,23 +1799,44 @@ int main(int argc, const char **argv) {
     return 2;
   }
 
-  const std::vector<std::string> compiler_arguments = {
-      "-x",
-      "c++",
-      "-std=c++20",
-      "--target=x86_64-unknown-linux-gnu",
-      "-fno-exceptions",
-      "-fno-rtti",
-      "-funsigned-char",
-      "-ffreestanding",
-      "-nostdinc",
-      "-nostdinc++",
-      "-Wno-reorder-ctor",
-      "-fsyntax-only",
-  };
-  clang::tooling::FixedCompilationDatabase database(
-      std::filesystem::current_path().string(), compiler_arguments);
-  clang::tooling::ClangTool tool(database, {options->source});
+  std::string database_error;
+  auto database = clang::tooling::JSONCompilationDatabase::loadFromFile(
+      options->compilation_database, database_error,
+      clang::tooling::JSONCommandLineSyntax::AutoDetect);
+  if (database == nullptr) {
+    llvm::errs() << "error: load C++ compilation database: " << database_error
+                 << "\n";
+    return 2;
+  }
+  const auto commands = database->getCompileCommands(options->source);
+  if (commands.empty()) {
+    llvm::errs() << "error: C++ compilation database has no command for `"
+                 << options->source << "`\n";
+    return 2;
+  }
+  if (commands.size() != 1) {
+    llvm::errs() << "error: C++ compilation database has " << commands.size()
+                 << " commands for `" << options->source
+                 << "`; exactly one is required\n";
+    return 2;
+  }
+  const clang::tooling::CompileCommand &command = commands.front();
+  if (command.CommandLine.empty()) {
+    llvm::errs() << "error: selected C++ compilation command is empty\n";
+    return 2;
+  }
+  const std::string driver =
+      std::filesystem::path(command.CommandLine.front()).filename().string();
+  if (driver != "clang++" && driver != "clang++-19") {
+    llvm::errs() << "error: selected C++ compilation command must use the "
+                    "pinned Clang driver, not `"
+                 << command.CommandLine.front() << "`\n";
+    return 2;
+  }
+  options->compilation_directory = command.Directory;
+  options->compilation_file = command.Filename;
+  options->compilation_command = command.CommandLine;
+  clang::tooling::ClangTool tool(*database, {options->source});
   ExportState state;
   ExportActionFactory factory(*options, state);
   const int status = tool.run(&factory);

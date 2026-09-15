@@ -59,10 +59,11 @@ assembly are silently deleted to make an import pass.
 
 ## Preliminary C++ semantic artifact
 
-The preliminary C++ frontend boundary accepts one header-free C++20 source with
-one selected, explicitly `noexcept` free function and the uniquely named
-`noexcept` free-function definitions reachable from its supported direct call
-statements. The linear reference fixture is:
+The preliminary C++ frontend boundary accepts one header-free C++20 translation
+unit selected by exactly one entry in a JSON compilation database, with one
+selected, explicitly `noexcept` free function and the uniquely named `noexcept`
+free-function definitions reachable from its supported direct call statements.
+The linear reference fixture is:
 
 ```cpp
 int increment(int& value) noexcept {
@@ -73,20 +74,23 @@ int increment(int& value) noexcept {
 
 Its import configuration explicitly sets `"language": "c++"`, the standard
 to `c++20`, target to `x86_64-unknown-linux-gnu`, exceptions and RTTI to false,
-and paths for the pinned exporter, working directory, `.cpp` source, logical
-source, selected function, and semantic artifact. `click import lock` executes
-the repository-owned Clang 19.1.7 LibTooling exporter and records the source,
-exporter, profile, artifact, and configuration identities.
+and paths for the pinned exporter, compilation database, working directory,
+`.cpp` translation unit, logical source, selected function, and semantic
+artifact. `click import lock` executes the repository-owned Clang 19.1.7
+LibTooling exporter with that entry and records the database bytes, exact parsed
+command and directory, source, exporter, semantic profile, artifact, and
+configuration identities.
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "language": "c++",
   "standard": "c++20",
   "target": "x86_64-unknown-linux-gnu",
   "exceptions": false,
   "rtti": false,
   "exporter": "target/cpp-exporter/click-cpp-exporter",
+  "compilation_database": "compile_commands.json",
   "working_directory": ".",
   "source": "increment.cpp",
   "logical_source": "increment.cpp",
@@ -95,16 +99,24 @@ exporter, profile, artifact, and configuration identities.
 }
 ```
 
+The database must resolve the configured translation unit to exactly one
+command using the pinned Clang driver and the configured C++20, target,
+exception, and RTTI profile. Missing or ambiguous entries and mismatched driver
+or semantic profiles fail refresh locally. Header dependency capture is not yet
+part of this slice.
+
 Loading through the C++ library boundary subsequently validates the source,
-lock, and typed artifact without locating or running Clang. This separation is
-intentional: compiler execution belongs to explicit refresh. The library
-lowers this exact artifact directly to the kernel execution vocabulary without
-generating C text or invoking the C parser. An `int&` or `const int&` becomes an
-address-valued parameter with its pointee qualification preserved. Reads become
-typed loads, while only the mutable reference permits a typed store; signed
-addition retains the kernel's existing overflow check. The lowered value
-remains paired with the immutable semantic artifact so Clang declaration
-identities and source spans are not discarded.
+compilation database, lock, and typed artifact without locating or running
+Clang. This separation is intentional: compiler execution belongs to explicit
+refresh. Changing any command, including a flag that leaves the selected AST
+unchanged, invalidates the lock. The library lowers this exact artifact directly
+to the kernel execution vocabulary without generating C text or invoking the C
+parser. An `int&` or `const int&` becomes an address-valued parameter with its
+pointee qualification preserved. Reads become typed loads, while only the
+mutable reference permits a typed store; signed addition retains the kernel's
+existing overflow check. The lowered value remains paired with the immutable
+semantic artifact so Clang declaration identities and source spans are not
+discarded.
 
 The first proof-facing interface uses existing Surface Click pointer syntax
 for the reference's one-cell mutable view:
