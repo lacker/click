@@ -142,7 +142,7 @@ public:
     profile["rtti"] = false;
 
     llvm::json::Object artifact;
-    artifact["schema"] = 9;
+    artifact["schema"] = 10;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["logical_source"] = logical_source_;
@@ -275,7 +275,7 @@ private:
       }
     }
     for (const clang::Stmt *statement : body->body()) {
-      auto lowered = lower_statement(statement, declaration, true);
+      auto lowered = lower_statement(statement, declaration, true, true);
       if (!lowered) {
         return std::nullopt;
       }
@@ -417,14 +417,24 @@ private:
 
   std::optional<Json> lower_statement(const clang::Stmt *statement,
                                       const clang::FunctionDecl *function,
-                                      bool allow_local_declaration) {
+                                      bool allow_local_declaration,
+                                      bool allow_nested_scope) {
     if (const auto *declaration = llvm::dyn_cast<clang::DeclStmt>(statement)) {
       if (!allow_local_declaration) {
         fail(declaration->getBeginLoc(),
              "automatic C++ locals are currently supported only in the function body");
         return std::nullopt;
       }
-      return lower_local_declaration(declaration, function);
+      return lower_local_declaration(declaration, function,
+                                     allow_nested_scope);
+    }
+    if (const auto *compound = llvm::dyn_cast<clang::CompoundStmt>(statement)) {
+      if (!allow_nested_scope || llvm::isa<clang::CXXMethodDecl>(function)) {
+        fail(compound->getLBracLoc(),
+             "the supported C++ slice permits one nested scope directly in a free-function body");
+        return std::nullopt;
+      }
+      return lower_scope(compound, function);
     }
     if (const auto *call = llvm::dyn_cast<clang::CallExpr>(statement)) {
       return lower_call(call, function);
@@ -488,39 +498,11 @@ private:
       if (cleanup != cleanup_locals_.end()) {
         for (auto iterator = cleanup->second.rbegin();
              iterator != cleanup->second.rend(); ++iterator) {
-          const clang::VarDecl *local = *iterator;
-          const auto *record_type = local->getType()->getAs<clang::RecordType>();
-          const auto *record =
-              record_type == nullptr
-                  ? nullptr
-                  : llvm::dyn_cast<clang::CXXRecordDecl>(
-                        record_type->getDecl()->getDefinition());
-          const clang::CXXDestructorDecl *destructor =
-              record == nullptr ? nullptr : record->getDestructor();
-          const auto *definition =
-              destructor == nullptr
-                  ? nullptr
-                  : llvm::dyn_cast_or_null<clang::CXXDestructorDecl>(
-                        destructor->getDefinition());
-          if (record == nullptr || definition == nullptr) {
-            fail(returned->getReturnLoc(),
-                 "could not resolve the automatic object's destructor at the return edge");
+          auto lowered = lower_cleanup(*iterator, returned->getSourceRange());
+          if (!lowered) {
             return std::nullopt;
           }
-          llvm::json::Object object;
-          object["declaration_id"] = declaration_id(local);
-          object["name"] = local->getNameAsString();
-          object["span"] = span(local->getSourceRange());
-          llvm::json::Object callee;
-          callee["declaration_id"] = declaration_id(definition);
-          callee["name"] = destructor_name(definition);
-          callee["span"] = span(definition->getNameInfo().getSourceRange());
-          llvm::json::Object cleanup_call;
-          cleanup_call["kind"] = "destructor";
-          cleanup_call["object"] = std::move(object);
-          cleanup_call["callee"] = std::move(callee);
-          cleanup_call["span"] = span(returned->getSourceRange());
-          cleanups.push_back(std::move(cleanup_call));
+          cleanups.push_back(std::move(*lowered));
         }
       }
       result["cleanups"] = std::move(cleanups);
@@ -569,7 +551,8 @@ private:
 
   std::optional<Json>
   lower_local_declaration(const clang::DeclStmt *statement,
-                          const clang::FunctionDecl *function) {
+                          const clang::FunctionDecl *function,
+                          bool function_body_local) {
     if (!statement->isSingleDecl()) {
       fail(statement->getBeginLoc(),
            "the supported C++ local declaration must declare exactly one variable");
@@ -627,7 +610,8 @@ private:
             llvm::dyn_cast_or_null<clang::CXXDestructorDecl>(
                 destructor->getDefinition());
         if (definition == nullptr ||
-            !validate_return_cleanup_source(function, local)) {
+            (function_body_local &&
+             !validate_return_cleanup_source(function, local))) {
           if (definition == nullptr && state_.error.empty()) {
             fail(destructor->getLocation(),
                  "the supported destructor has no reachable definition");
@@ -763,6 +747,90 @@ private:
       return std::nullopt;
     }
     return Json(std::move(result));
+  }
+
+  std::optional<Json> lower_scope(const clang::CompoundStmt *scope,
+                                  const clang::FunctionDecl *function) {
+    const clang::FunctionDecl *canonical = function->getCanonicalDecl();
+    if (!functions_with_nested_scope_.insert(canonical).second) {
+      fail(scope->getLBracLoc(),
+           "the supported C++ slice permits one nested scope per function");
+      return std::nullopt;
+    }
+    auto &active = cleanup_locals_[canonical];
+    if (!active.empty()) {
+      fail(scope->getLBracLoc(),
+           "nested-scope cleanup cannot yet be combined with an outer destructible object");
+      return std::nullopt;
+    }
+    const std::size_t entry_count = active.size();
+    unsigned local_count = 0;
+    llvm::json::Array body;
+    for (const clang::Stmt *statement : scope->body()) {
+      if (llvm::isa<clang::DeclStmt>(statement)) {
+        ++local_count;
+      }
+      auto lowered = lower_statement(statement, function, true, false);
+      if (!lowered) {
+        return std::nullopt;
+      }
+      body.push_back(std::move(*lowered));
+    }
+    if (local_count != 1 || active.size() != entry_count + 1) {
+      fail(scope->getLBracLoc(),
+           "the nested-scope slice requires exactly one destructible object and no other locals");
+      return std::nullopt;
+    }
+    llvm::json::Array cleanups;
+    auto cleanup = lower_cleanup(active.back(), scope->getSourceRange());
+    if (!cleanup) {
+      return std::nullopt;
+    }
+    cleanups.push_back(std::move(*cleanup));
+    active.resize(entry_count);
+
+    llvm::json::Object result;
+    result["kind"] = "scope";
+    result["body"] = std::move(body);
+    result["cleanups"] = std::move(cleanups);
+    result["span"] = span(scope->getSourceRange());
+    return Json(std::move(result));
+  }
+
+  std::optional<Json> lower_cleanup(const clang::VarDecl *local,
+                                    clang::SourceRange edge) {
+    const auto *record_type = local->getType()->getAs<clang::RecordType>();
+    const auto *record =
+        record_type == nullptr
+            ? nullptr
+            : llvm::dyn_cast<clang::CXXRecordDecl>(
+                  record_type->getDecl()->getDefinition());
+    const clang::CXXDestructorDecl *destructor =
+        record == nullptr ? nullptr : record->getDestructor();
+    const auto *definition =
+        destructor == nullptr
+            ? nullptr
+            : llvm::dyn_cast_or_null<clang::CXXDestructorDecl>(
+                  destructor->getDefinition());
+    if (record == nullptr || definition == nullptr) {
+      fail(edge.getBegin(),
+           "could not resolve the automatic object's destructor at the cleanup edge");
+      return std::nullopt;
+    }
+    llvm::json::Object object;
+    object["declaration_id"] = declaration_id(local);
+    object["name"] = local->getNameAsString();
+    object["span"] = span(local->getSourceRange());
+    llvm::json::Object callee;
+    callee["declaration_id"] = declaration_id(definition);
+    callee["name"] = destructor_name(definition);
+    callee["span"] = span(definition->getNameInfo().getSourceRange());
+    llvm::json::Object cleanup_call;
+    cleanup_call["kind"] = "destructor";
+    cleanup_call["object"] = std::move(object);
+    cleanup_call["callee"] = std::move(callee);
+    cleanup_call["span"] = span(edge);
+    return Json(std::move(cleanup_call));
   }
 
   bool validate_return_cleanup_source(const clang::FunctionDecl *function,
@@ -917,7 +985,7 @@ private:
     }
     if (const auto *compound = llvm::dyn_cast<clang::CompoundStmt>(statement)) {
       for (const clang::Stmt *member : compound->body()) {
-        auto lowered = lower_statement(member, function, false);
+        auto lowered = lower_statement(member, function, false, false);
         if (!lowered) {
           return std::nullopt;
         }
@@ -925,7 +993,7 @@ private:
       }
       return result;
     }
-    auto lowered = lower_statement(statement, function, false);
+    auto lowered = lower_statement(statement, function, false, false);
     if (!lowered) {
       return std::nullopt;
     }
@@ -1555,6 +1623,7 @@ private:
   std::vector<const clang::CXXRecordDecl *> record_definitions_;
   std::unordered_set<const clang::FunctionDecl *>
       functions_with_aggregate_local_;
+  std::unordered_set<const clang::FunctionDecl *> functions_with_nested_scope_;
   std::unordered_map<const clang::FunctionDecl *,
                      std::vector<const clang::VarDecl *>>
       cleanup_locals_;

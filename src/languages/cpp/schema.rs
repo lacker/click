@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 9;
+pub(crate) const EXPORT_SCHEMA: u32 = 10;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -260,6 +260,11 @@ pub enum CppStatement {
         cleanups: Vec<CppCleanup>,
         span: CppSpan,
     },
+    Scope {
+        body: Vec<CppStatement>,
+        cleanups: Vec<CppCleanup>,
+        span: CppSpan,
+    },
     If {
         condition: CppExpression,
         then_branch: Vec<CppStatement>,
@@ -491,12 +496,11 @@ impl CppFunction {
     fn place_type(&self, declaration_id: &str) -> Option<&CppType> {
         self.parameters
             .iter()
-            .chain(self.body.iter().filter_map(|statement| match statement {
-                CppStatement::Declare { local, .. } => Some(local),
-                _ => None,
-            }))
             .find(|place| place.declaration_id == declaration_id)
             .map(|place| &place.value_type)
+            .or_else(|| {
+                find_declared_place(&self.body, declaration_id).map(|place| &place.value_type)
+            })
     }
 
     fn validate(
@@ -668,6 +672,7 @@ impl CppFunction {
         }
         let mut aggregate_locals = 0;
         let mut destructible_locals = Vec::new();
+        let mut nested_scopes = 0;
         for statement in &self.body {
             if let CppStatement::Declare {
                 local,
@@ -737,9 +742,42 @@ impl CppFunction {
                         local.name
                     ));
                 }
+            } else if let CppStatement::Scope {
+                body,
+                cleanups,
+                span,
+            } = statement
+            {
+                if !matches!(self.function_kind, CppFunctionKind::Free) {
+                    return Err(
+                        "nested C++ scopes are supported only in a free-function body".into(),
+                    );
+                }
+                nested_scopes += 1;
+                if nested_scopes > 1 {
+                    return Err(format!(
+                        "C++ function `{}` contains more than one supported nested scope",
+                        self.name
+                    ));
+                }
+                validate_nested_scope(
+                    body,
+                    cleanups,
+                    span,
+                    &places,
+                    records,
+                    logical_source,
+                    &self.name,
+                )?;
             } else {
                 statement.validate(&places, records, logical_source)?;
             }
+        }
+        if nested_scopes != 0 && aggregate_locals != 0 {
+            return Err(format!(
+                "C++ function `{}` cannot yet combine nested-scope cleanup with an outer aggregate object",
+                self.name
+            ));
         }
         if aggregate_locals > 1 && destructible_locals.len() != aggregate_locals {
             return Err(format!(
@@ -755,11 +793,8 @@ impl CppFunction {
                 ));
             };
             validate_return_cleanups(&self.body, &self.name, &destructible_locals)?;
-        } else if sequence_contains_cleanup(&self.body) {
-            return Err(format!(
-                "C++ function `{}` has cleanup without a constructed automatic object",
-                self.name
-            ));
+        } else {
+            validate_return_cleanups(&self.body, &self.name, &[])?;
         }
         match &self.function_kind {
             CppFunctionKind::Free if !sequence_always_returns(&self.body) => {
@@ -857,6 +892,10 @@ impl CppStatement {
                 }
                 Ok(())
             }
+            Self::Scope { .. } => Err(
+                "the supported C++ slice permits one nested scope directly in a free-function body"
+                    .into(),
+            ),
             Self::If {
                 condition,
                 then_branch,
@@ -1182,6 +1221,134 @@ impl CppExpression {
     }
 }
 
+fn find_declared_place<'a>(
+    statements: &'a [CppStatement],
+    declaration_id: &str,
+) -> Option<&'a CppPlace> {
+    for statement in statements {
+        match statement {
+            CppStatement::Declare { local, .. } if local.declaration_id == declaration_id => {
+                return Some(local);
+            }
+            CppStatement::Scope { body, .. } => {
+                if let Some(local) = find_declared_place(body, declaration_id) {
+                    return Some(local);
+                }
+            }
+            CppStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                if let Some(local) = find_declared_place(then_branch, declaration_id)
+                    .or_else(|| find_declared_place(else_branch, declaration_id))
+                {
+                    return Some(local);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn validate_nested_scope(
+    body: &[CppStatement],
+    cleanups: &[CppCleanup],
+    span: &CppSpan,
+    outer_places: &BTreeMap<String, (String, CppType)>,
+    records: &BTreeMap<String, &CppRecord>,
+    logical_source: &str,
+    function_name: &str,
+) -> Result<(), String> {
+    span.validate(logical_source)?;
+    let mut places = outer_places.clone();
+    let mut names = places
+        .values()
+        .map(|(name, _)| name.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut local = None;
+    for statement in body {
+        if let CppStatement::Declare {
+            local: candidate,
+            initializer,
+            span,
+        } = statement
+        {
+            if local.is_some() {
+                return Err(format!(
+                    "nested scope in `{function_name}` declares more than one automatic local"
+                ));
+            }
+            span.validate(logical_source)?;
+            candidate.span.validate(logical_source)?;
+            if candidate.declaration_id.is_empty() || candidate.name.is_empty() {
+                return Err("C++ local is missing declaration identity".into());
+            }
+            let CppType::Record {
+                declaration_id,
+                name,
+            } = &candidate.value_type
+            else {
+                return Err(
+                    "the nested-scope slice requires exactly one destructible record object".into(),
+                );
+            };
+            let record = validate_record_reference(records, declaration_id, name)?;
+            if record.destructor.is_none()
+                || !matches!(initializer, CppInitializer::Constructor { .. })
+            {
+                return Err(format!(
+                    "nested C++ local `{}` requires direct construction and nontrivial destruction",
+                    candidate.name
+                ));
+            }
+            initializer.validate_for_local(
+                &candidate.value_type,
+                &places,
+                records,
+                logical_source,
+            )?;
+            if places
+                .insert(
+                    candidate.declaration_id.clone(),
+                    (candidate.name.clone(), candidate.value_type.clone()),
+                )
+                .is_some()
+            {
+                return Err(format!(
+                    "duplicate C++ local declaration identity `{}`",
+                    candidate.declaration_id
+                ));
+            }
+            if !names.insert(candidate.name.clone()) {
+                return Err(format!(
+                    "C++ local `{}` shadows another supported place",
+                    candidate.name
+                ));
+            }
+            local = Some(candidate.clone());
+        } else {
+            statement.validate(&places, records, logical_source)?;
+        }
+    }
+    let Some(local) = local else {
+        return Err(format!(
+            "nested scope in `{function_name}` must declare exactly one destructible object"
+        ));
+    };
+    validate_return_cleanups(body, function_name, std::slice::from_ref(&local))?;
+    for cleanup in cleanups {
+        cleanup.validate(&places, records, logical_source)?;
+    }
+    if !return_cleanups_match(cleanups, std::slice::from_ref(&local)) {
+        return Err(format!(
+            "nested scope in `{function_name}` must destroy its local exactly once on fallthrough"
+        ));
+    }
+    Ok(())
+}
+
 fn sequence_always_returns(statements: &[CppStatement]) -> bool {
     statements.iter().any(CppStatement::always_returns)
 }
@@ -1194,18 +1361,7 @@ fn sequence_contains_return(statements: &[CppStatement]) -> bool {
             else_branch,
             ..
         } => sequence_contains_return(then_branch) || sequence_contains_return(else_branch),
-        _ => false,
-    })
-}
-
-fn sequence_contains_cleanup(statements: &[CppStatement]) -> bool {
-    statements.iter().any(|statement| match statement {
-        CppStatement::Return { cleanups, .. } => !cleanups.is_empty(),
-        CppStatement::If {
-            then_branch,
-            else_branch,
-            ..
-        } => sequence_contains_cleanup(then_branch) || sequence_contains_cleanup(else_branch),
+        CppStatement::Scope { body, .. } => sequence_contains_return(body),
         _ => false,
     })
 }
@@ -1232,6 +1388,7 @@ fn validate_return_cleanups(
                 validate_return_cleanups(then_branch, function_name, locals)?;
                 validate_return_cleanups(else_branch, function_name, locals)?;
             }
+            CppStatement::Scope { .. } => {}
             CppStatement::Declare { .. }
             | CppStatement::Assign { .. }
             | CppStatement::Store { .. }
@@ -1266,6 +1423,7 @@ impl CppStatement {
                 else_branch,
                 ..
             } => sequence_always_returns(then_branch) && sequence_always_returns(else_branch),
+            Self::Scope { body, .. } => sequence_always_returns(body),
             Self::Declare { .. }
             | Self::Assign { .. }
             | Self::Store { .. }
@@ -1471,6 +1629,13 @@ fn collect_calls<'a>(statements: &'a [CppStatement], calls: &mut Vec<CollectedCa
             } => {
                 collect_calls(then_branch, calls);
                 collect_calls(else_branch, calls);
+            }
+            CppStatement::Scope { body, cleanups, .. } => {
+                collect_calls(body, calls);
+                for cleanup in cleanups {
+                    let CppCleanup::Destructor { object, callee, .. } = cleanup;
+                    calls.push(CollectedCall::Destructor { object, callee });
+                }
             }
             CppStatement::Return { cleanups, .. } => {
                 for cleanup in cleanups {

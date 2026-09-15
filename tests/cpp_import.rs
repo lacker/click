@@ -63,6 +63,10 @@ const REVERSE_DESTRUCTOR_SOURCE: &str =
     include_str!("fixtures/cpp-verification/reverse-destructor-order/restore_twice.cpp");
 const REVERSE_DESTRUCTOR_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/reverse-destructor-order/restore_twice.click");
+const NESTED_SCOPE_DESTRUCTOR_SOURCE: &str =
+    include_str!("fixtures/cpp-verification/nested-scope-destructor/scoped_restore.cpp");
+const NESTED_SCOPE_DESTRUCTOR_SIDECAR: &str =
+    include_str!("fixtures/cpp-verification/nested-scope-destructor/scoped_restore.click");
 
 struct Project {
     directory: PathBuf,
@@ -128,6 +132,14 @@ impl Project {
             "restore_twice.cpp",
             "restore_twice",
             REVERSE_DESTRUCTOR_SOURCE,
+        )
+    }
+
+    fn nested_scope_destructor() -> Self {
+        Self::with_fixture(
+            "scoped_restore.cpp",
+            "scoped_restore",
+            NESTED_SCOPE_DESTRUCTOR_SOURCE,
         )
     }
 
@@ -225,7 +237,7 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
     let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
-    assert_eq!(prepared.export().schema, 9);
+    assert_eq!(prepared.export().schema, 10);
     assert!(prepared.export().reachable_functions.is_empty());
     assert_eq!(prepared.logical_source(), "increment.cpp");
     assert_eq!(prepared.identity().len(), 64);
@@ -708,7 +720,7 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the call graph artifact offline");
-    assert_eq!(import.export().schema, 9);
+    assert_eq!(import.export().schema, 10);
     assert_eq!(import.export().function.name, "call_set_seven");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -785,7 +797,7 @@ fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the scalar-local artifact offline");
-    assert_eq!(import.export().schema, 9);
+    assert_eq!(import.export().schema, 10);
     assert_eq!(import.export().function.name, "relay_value");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -899,7 +911,7 @@ fn mutable_pointer_dereference_and_reference_address_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the pointer artifact offline");
-    assert_eq!(import.export().schema, 9);
+    assert_eq!(import.export().schema, 10);
     let caller = &import.export().function;
     assert_eq!(caller.name, "bump_reference");
     assert!(matches!(
@@ -1036,7 +1048,7 @@ fn record_reference_member_loads_and_stores_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the record artifact offline");
-    assert_eq!(import.export().schema, 9);
+    assert_eq!(import.export().schema, 10);
     let [record] = import.export().records.as_slice() else {
         panic!("the referenced record layout was not captured")
     };
@@ -1138,7 +1150,7 @@ fn brace_initialized_local_aggregate_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the aggregate artifact offline");
-    assert_eq!(import.export().schema, 9);
+    assert_eq!(import.export().schema, 10);
     let [record] = import.export().records.as_slice() else {
         panic!("the local aggregate record layout was not captured")
     };
@@ -1238,7 +1250,7 @@ fn explicit_constructor_local_verifies_as_a_modular_call() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the constructor artifact offline");
-    assert_eq!(import.export().schema, 9);
+    assert_eq!(import.export().schema, 10);
     let [record] = import.export().records.as_slice() else {
         panic!("the constructed record layout was not captured")
     };
@@ -1373,7 +1385,7 @@ fn terminal_return_captures_value_before_checked_destructor_cleanup() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 9);
+    assert_eq!(import.export().schema, 10);
     let [record] = import.export().records.as_slice() else {
         panic!("the destructible record layout was not captured")
     };
@@ -1519,7 +1531,7 @@ fn every_return_after_construction_runs_the_checked_destructor() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 9);
+    assert_eq!(import.export().schema, 10);
     let destructor = import
         .export()
         .reachable_functions
@@ -1620,7 +1632,7 @@ fn two_constructed_objects_are_destroyed_in_reverse_order_on_every_return() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the ordered cleanup artifact offline");
-    assert_eq!(import.export().schema, 9);
+    assert_eq!(import.export().schema, 10);
     let [
         CppStatement::Declare { local: first, .. },
         CppStatement::Declare { local: second, .. },
@@ -1706,6 +1718,131 @@ fn two_constructed_objects_are_destroyed_in_reverse_order_on_every_return() {
         error.contains("exactly two destructible objects"),
         "{error}"
     );
+}
+
+#[test]
+fn nested_scope_destroys_its_object_on_return_and_fallthrough() {
+    let project = Project::nested_scope_destructor();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, NESTED_SCOPE_DESTRUCTOR_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("export both nested-scope cleanup edges");
+    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+
+    let import = load_import(&project.config()).expect("load the nested-scope artifact offline");
+    assert_eq!(import.export().schema, 10);
+    let destructor = import
+        .export()
+        .reachable_functions
+        .iter()
+        .find(|function| matches!(function.function_kind, CppFunctionKind::Destructor { .. }))
+        .expect("destructor definition must be reachable");
+    let [
+        CppStatement::Scope {
+            body,
+            cleanups: fallthrough_cleanups,
+            ..
+        },
+        CppStatement::Return {
+            cleanups: outer_cleanups,
+            ..
+        },
+    ] = import.export().function.body.as_slice()
+    else {
+        panic!("the lexical cleanup boundary was not retained")
+    };
+    let [
+        CppStatement::Declare { local, .. },
+        CppStatement::If { then_branch, .. },
+        CppStatement::Assign { .. },
+    ] = body.as_slice()
+    else {
+        panic!("the nested block body was not retained")
+    };
+    let [
+        CppStatement::Return {
+            cleanups: early_cleanups,
+            ..
+        },
+    ] = then_branch.as_slice()
+    else {
+        panic!("the nested early return was not retained")
+    };
+    assert!(outer_cleanups.is_empty());
+    for cleanups in [early_cleanups, fallthrough_cleanups] {
+        assert!(matches!(
+            cleanups.as_slice(),
+            [CppCleanup::Destructor {
+                object,
+                callee,
+                ..
+            }] if object.declaration_id == local.declaration_id
+                && callee.declaration_id == destructor.declaration_id
+        ));
+    }
+
+    let lowered = lower_import(&import).expect("lower the lexical cleanup boundary directly");
+    assert_eq!(
+        destructor_object_order(lowered.kernel_function().body(), "Restore_destructor"),
+        ["guard", "guard"]
+    );
+
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify early exit and normal exit from the nested scope");
+
+    let execute = cpp_prepared_project_tactic_source_position(
+        &click_project,
+        &import,
+        "scoped_restore.contract",
+        0,
+    )
+    .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .expect("expand the proof across both nested-scope cleanup edges");
+    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+        .expect("the expanded nested-scope proof must reverify");
+
+    let wrong_fallthrough = NESTED_SCOPE_DESTRUCTOR_SIDECAR.replace(
+        "ensures early == 0 implies result == old(value[0]);",
+        "ensures early == 0 implies result == 9;",
+    );
+    fs::write(&sidecar, &wrong_fallthrough).unwrap();
+    let wrong_project = read_click_project(&sidecar, &wrong_fallthrough).unwrap();
+    verify_cpp_prepared_project(&wrong_project, &import)
+        .expect_err("fallthrough destruction must occur before the outer return");
+}
+
+#[test]
+fn nested_scope_rejects_conditional_construction_and_deeper_blocks() {
+    for (source, expected) in [
+        (
+            NESTED_SCOPE_DESTRUCTOR_SOURCE.replace(
+                "        Restore guard(&value);\n        if (early) {\n            return value;\n        }\n        value = 9;",
+                "        if (early) {\n            Restore guard(&value);\n        }",
+            ),
+            "automatic C++ locals are currently supported only in the function body",
+        ),
+        (
+            NESTED_SCOPE_DESTRUCTOR_SOURCE.replace(
+                "        Restore guard(&value);",
+                "        {\n            Restore guard(&value);\n        }",
+            ),
+            "permits one nested scope directly in a free-function body",
+        ),
+    ] {
+        let project = Project::nested_scope_destructor();
+        fs::write(project.source(), source).unwrap();
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("scoped_restore.cpp"), "{error}");
+        assert!(error.contains(expected), "{error}");
+        assert!(!project.artifact().exists());
+    }
 }
 
 #[test]

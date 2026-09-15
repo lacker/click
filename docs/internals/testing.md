@@ -109,7 +109,12 @@ field, lowers its exact layout to checked stack memory, and reads its fields
 after initialization. It also verifies offline and after expansion; missing
 input authority and a false saved-field result fail. Focused frontend checks
 reject methods, bit-fields, inheritance, multiple record types, partial or
-default initialization, copies, nested objects, and a second local object.
+default initialization, copies, unsupported nested object forms, and a second
+local object.
+Destructor coverage additionally checks cleanup on every return, reverse order
+for two top-level objects, and one direct nested block whose object is destroyed
+both on early return and before an outer continuation. Conditional construction
+and deeper nested blocks remain focused frontend errors.
 Other coverage exercises source/signature mismatch diagnostics, const-write
 rejection, and smart-tactic inventory. Missing Clang development tooling fails
 the gate, and unsupported C++ does not fall back to the C parser.

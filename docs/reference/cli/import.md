@@ -213,8 +213,18 @@ destructor before the first object's destructor, and lowering checks those
 calls in that order. The fixture makes the ordering observable: the second
 guard restores 7 before the first guard restores the caller's entry value.
 
+The `nested-scope-destructor` fixture alternatively permits one explicit block
+directly in a free-function body, with exactly one directly constructed
+destructible object and no other block local. A return from the block captures
+its value before running the destructor, while normal fallthrough runs the
+same checked cleanup before the next outer statement. The artifact retains
+that lexical boundary as a `scope` statement; the outer return consequently
+has no cleanup for the already-destroyed object. Conditional construction,
+deeper blocks, a second nested scope, and combining this form with an outer
+aggregate object are rejected.
+
 Copies and moves, default or partial aggregate initialization, multiple or
-more than two destructible local objects, nested destructible local objects,
+more than two top-level destructible local objects, broader nested lifetimes,
 ordinary methods, inheritance, private fields, bit-fields, nested records, and
 multiple record types remain explicit errors.
 Uninitialized or nested scalar locals, local references, shadowing,

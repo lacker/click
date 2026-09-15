@@ -71,13 +71,12 @@ pub fn lower_import(import: &PreparedCppImport) -> Result<LoweredCppFunction, St
 }
 
 fn lower_function(import: &PreparedCppImport, source: &CppFunction) -> Result<CFunction, String> {
+    let mut declared_places = Vec::new();
+    collect_declared_places(&source.body, &mut declared_places);
     let places = source
         .parameters
         .iter()
-        .chain(source.body.iter().filter_map(|statement| match statement {
-            CppStatement::Declare { local, .. } => Some(local),
-            _ => None,
-        }))
+        .chain(declared_places)
         .map(|parameter| (parameter.declaration_id.as_str(), parameter))
         .collect::<BTreeMap<_, _>>();
     let parameters = source
@@ -302,16 +301,16 @@ impl LoweringContext<'_> {
                     c_assign(capture.clone(), value),
                 );
                 for cleanup in cleanups {
-                    let CppCleanup::Destructor { object, callee, .. } = cleanup;
-                    result = c_seq(
-                        result,
-                        c_call(
-                            callee.name.clone(),
-                            vec![c_cast(self.lower_place(object)?, CType::Int32Pointer)],
-                        ),
-                    );
+                    result = c_seq(result, self.lower_cleanup(cleanup)?);
                 }
                 Ok(c_seq(result, c_return(c_variable(capture))))
+            }
+            CppStatement::Scope { body, cleanups, .. } => {
+                let mut result = self.lower_sequence(body)?;
+                for cleanup in cleanups {
+                    result = c_seq(result, self.lower_cleanup(cleanup)?);
+                }
+                Ok(result)
             }
             CppStatement::If {
                 condition,
@@ -341,6 +340,14 @@ impl LoweringContext<'_> {
             .iter()
             .map(|argument| self.lower_call_argument(argument))
             .collect()
+    }
+
+    fn lower_cleanup(&self, cleanup: &CppCleanup) -> Result<CStatement, String> {
+        let CppCleanup::Destructor { object, callee, .. } = cleanup;
+        Ok(c_call(
+            callee.name.clone(),
+            vec![c_cast(self.lower_place(object)?, CType::Int32Pointer)],
+        ))
     }
 
     fn lower_call_argument(&mut self, argument: &CppCallArgument) -> Result<CExpression, String> {
@@ -580,18 +587,12 @@ impl LoweringContext<'_> {
 }
 
 fn return_capture_name(function: &CppFunction) -> String {
+    let mut declared_places = Vec::new();
+    collect_declared_places(&function.body, &mut declared_places);
     let names = function
         .parameters
         .iter()
-        .chain(
-            function
-                .body
-                .iter()
-                .filter_map(|statement| match statement {
-                    CppStatement::Declare { local, .. } => Some(local),
-                    _ => None,
-                }),
-        )
+        .chain(declared_places)
         .map(|place| place.name.as_str())
         .collect::<std::collections::BTreeSet<_>>();
     let base = "__click_cpp_return_value";
@@ -605,6 +606,24 @@ fn return_capture_name(function: &CppFunction) -> String {
         }
     }
     unreachable!("an unbounded suffix space contains an unused internal name")
+}
+
+fn collect_declared_places<'a>(statements: &'a [CppStatement], places: &mut Vec<&'a CppPlace>) {
+    for statement in statements {
+        match statement {
+            CppStatement::Declare { local, .. } => places.push(local),
+            CppStatement::Scope { body, .. } => collect_declared_places(body, places),
+            CppStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_declared_places(then_branch, places);
+                collect_declared_places(else_branch, places);
+            }
+            _ => {}
+        }
+    }
 }
 
 fn cpp_record_layout(record: &CppRecord) -> Result<CAggregateLayout, String> {
