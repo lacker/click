@@ -113,8 +113,11 @@ default initialization, copies, unsupported nested object forms, and a second
 local object.
 Destructor coverage additionally checks cleanup on every return, reverse order
 for two top-level objects, and one direct nested block whose object is destroyed
-both on early return and before an outer continuation. Conditional construction
-and deeper nested blocks remain focused frontend errors.
+both on early return and before an outer continuation. A sibling-block fixture
+reuses one local spelling across two distinct non-overlapping lifetimes and
+checks each block's early-return and fallthrough edges. Conditional
+construction, deeper nested blocks, and overlapping outer objects remain
+focused frontend errors.
 Other coverage exercises source/signature mismatch diagnostics, const-write
 rejection, and smart-tactic inventory. Missing Clang development tooling fails
 the gate, and unsupported C++ does not fall back to the C parser.

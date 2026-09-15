@@ -219,9 +219,15 @@ destructible object and no other block local. A return from the block captures
 its value before running the destructor, while normal fallthrough runs the
 same checked cleanup before the next outer statement. The artifact retains
 that lexical boundary as a `scope` statement; the outer return consequently
-has no cleanup for the already-destroyed object. Conditional construction,
-deeper blocks, a second nested scope, and combining this form with an outer
-aggregate object are rejected.
+has no cleanup for the already-destroyed object.
+
+The `sibling-scope-destructors` fixture composes up to two such blocks when
+their object lifetimes do not overlap. Each sibling carries its own return and
+fallthrough cleanup, and the next block begins only after the preceding
+destructor. The fixture deliberately reuses the source name `guard`; distinct
+Clang declaration identities and the kernel's sequential local-lifetime rule
+keep the two objects separate. Conditional construction, deeper or overlapping
+blocks, and combining this form with an outer aggregate object are rejected.
 
 Copies and moves, default or partial aggregate initialization, multiple or
 more than two top-level destructible local objects, broader nested lifetimes,

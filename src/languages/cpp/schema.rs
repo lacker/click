@@ -754,9 +754,9 @@ impl CppFunction {
                     );
                 }
                 nested_scopes += 1;
-                if nested_scopes > 1 {
+                if nested_scopes > 2 {
                     return Err(format!(
-                        "C++ function `{}` contains more than one supported nested scope",
+                        "C++ function `{}` contains more than two sibling cleanup scopes",
                         self.name
                     ));
                 }

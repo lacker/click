@@ -596,13 +596,20 @@ private:
       }
       const clang::CXXDestructorDecl *destructor = record->getDestructor();
       const bool destructible = destructor != nullptr && !destructor->isImplicit();
-      if (!functions_with_aggregate_local_.insert(canonical).second) {
-        const auto previous = cleanup_locals_.find(canonical);
-        if (!destructible || previous == cleanup_locals_.end() ||
-            previous->second.size() != 1) {
+      if (function_body_local) {
+        if (functions_with_nested_scope_.contains(canonical)) {
           fail(local->getLocation(),
-               "the supported C++ slice permits one aggregate object or exactly two destructible objects per function");
+               "nested-scope cleanup cannot yet be combined with an outer aggregate object");
           return std::nullopt;
+        }
+        if (!functions_with_aggregate_local_.insert(canonical).second) {
+          const auto previous = cleanup_locals_.find(canonical);
+          if (!destructible || previous == cleanup_locals_.end() ||
+              previous->second.size() != 1) {
+            fail(local->getLocation(),
+                 "the supported C++ slice permits one aggregate object or exactly two destructible objects per function");
+            return std::nullopt;
+          }
         }
       }
       if (destructible) {
@@ -752,9 +759,17 @@ private:
   std::optional<Json> lower_scope(const clang::CompoundStmt *scope,
                                   const clang::FunctionDecl *function) {
     const clang::FunctionDecl *canonical = function->getCanonicalDecl();
-    if (!functions_with_nested_scope_.insert(canonical).second) {
+    functions_with_nested_scope_.insert(canonical);
+    unsigned &scope_count = nested_scope_counts_[canonical];
+    if (scope_count == 2) {
       fail(scope->getLBracLoc(),
-           "the supported C++ slice permits one nested scope per function");
+           "the supported C++ slice permits at most two sibling cleanup scopes per function");
+      return std::nullopt;
+    }
+    ++scope_count;
+    if (functions_with_aggregate_local_.contains(canonical)) {
+      fail(scope->getLBracLoc(),
+           "nested-scope cleanup cannot yet be combined with an outer aggregate object");
       return std::nullopt;
     }
     auto &active = cleanup_locals_[canonical];
@@ -1624,6 +1639,8 @@ private:
   std::unordered_set<const clang::FunctionDecl *>
       functions_with_aggregate_local_;
   std::unordered_set<const clang::FunctionDecl *> functions_with_nested_scope_;
+  std::unordered_map<const clang::FunctionDecl *, unsigned>
+      nested_scope_counts_;
   std::unordered_map<const clang::FunctionDecl *,
                      std::vector<const clang::VarDecl *>>
       cleanup_locals_;

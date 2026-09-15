@@ -67,6 +67,10 @@ const NESTED_SCOPE_DESTRUCTOR_SOURCE: &str =
     include_str!("fixtures/cpp-verification/nested-scope-destructor/scoped_restore.cpp");
 const NESTED_SCOPE_DESTRUCTOR_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/nested-scope-destructor/scoped_restore.click");
+const SIBLING_SCOPE_DESTRUCTORS_SOURCE: &str =
+    include_str!("fixtures/cpp-verification/sibling-scope-destructors/sibling_restore.cpp");
+const SIBLING_SCOPE_DESTRUCTORS_SIDECAR: &str =
+    include_str!("fixtures/cpp-verification/sibling-scope-destructors/sibling_restore.click");
 
 struct Project {
     directory: PathBuf,
@@ -140,6 +144,14 @@ impl Project {
             "scoped_restore.cpp",
             "scoped_restore",
             NESTED_SCOPE_DESTRUCTOR_SOURCE,
+        )
+    }
+
+    fn sibling_scope_destructors() -> Self {
+        Self::with_fixture(
+            "sibling_restore.cpp",
+            "sibling_restore",
+            SIBLING_SCOPE_DESTRUCTORS_SOURCE,
         )
     }
 
@@ -1819,6 +1831,150 @@ fn nested_scope_destroys_its_object_on_return_and_fallthrough() {
 }
 
 #[test]
+fn sibling_scopes_reuse_a_local_name_with_independent_cleanup() {
+    let project = Project::sibling_scope_destructors();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, SIBLING_SCOPE_DESTRUCTORS_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("export both sibling cleanup scopes");
+    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+
+    let import = load_import(&project.config()).expect("load the sibling-scope artifact offline");
+    let [
+        CppStatement::Scope {
+            body: first_body,
+            cleanups: first_fallthrough,
+            ..
+        },
+        CppStatement::Scope {
+            body: second_body,
+            cleanups: second_fallthrough,
+            ..
+        },
+        CppStatement::Return {
+            cleanups: outer_cleanups,
+            ..
+        },
+    ] = import.export().function.body.as_slice()
+    else {
+        panic!("the two sibling lifetime boundaries were not retained")
+    };
+    let [
+        CppStatement::Declare {
+            local: first_local, ..
+        },
+        CppStatement::If {
+            then_branch: first_then,
+            ..
+        },
+        CppStatement::Assign { .. },
+    ] = first_body.as_slice()
+    else {
+        panic!("the first sibling scope was not retained")
+    };
+    let [
+        CppStatement::Declare {
+            local: second_local,
+            ..
+        },
+        CppStatement::If {
+            then_branch: second_then,
+            ..
+        },
+        CppStatement::Assign { .. },
+    ] = second_body.as_slice()
+    else {
+        panic!("the second sibling scope was not retained")
+    };
+    assert_eq!(first_local.name, "guard");
+    assert_eq!(second_local.name, "guard");
+    assert_ne!(first_local.declaration_id, second_local.declaration_id);
+    assert!(outer_cleanups.is_empty());
+    for (local, branch, fallthrough) in [
+        (first_local, first_then, first_fallthrough),
+        (second_local, second_then, second_fallthrough),
+    ] {
+        let [
+            CppStatement::Return {
+                cleanups: return_cleanups,
+                ..
+            },
+        ] = branch.as_slice()
+        else {
+            panic!("a sibling scope lost its early return")
+        };
+        for cleanups in [return_cleanups, fallthrough] {
+            assert!(matches!(
+                cleanups.as_slice(),
+                [CppCleanup::Destructor { object, .. }]
+                    if object.declaration_id == local.declaration_id
+                        && object.name == local.name
+            ));
+        }
+    }
+
+    let lowered = lower_import(&import).expect("lower the sibling lexical lifetimes directly");
+    assert_eq!(
+        call_order(lowered.kernel_function().body()),
+        [
+            "Restore_constructor",
+            "Restore_destructor",
+            "Restore_destructor",
+            "Restore_constructor",
+            "Restore_destructor",
+            "Restore_destructor",
+        ]
+    );
+
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify independent cleanup and restoration in both sibling scopes");
+
+    let execute = cpp_prepared_project_tactic_source_position(
+        &click_project,
+        &import,
+        "sibling_restore.contract",
+        0,
+    )
+    .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .expect("expand the proof across both sibling lifetime boundaries");
+    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+        .expect("the expanded sibling-scope proof must reverify");
+
+    let wrong_final = SIBLING_SCOPE_DESTRUCTORS_SIDECAR.replace(
+        "second_early == 0 implies result == old(value[0])",
+        "second_early == 0 implies result == 11",
+    );
+    fs::write(&sidecar, &wrong_final).unwrap();
+    let wrong_project = read_click_project(&sidecar, &wrong_final).unwrap();
+    verify_cpp_prepared_project(&wrong_project, &import)
+        .expect_err("the second scope must clean up before the final outer return");
+
+    let rejected = Project::sibling_scope_destructors();
+    fs::write(
+        rejected.source(),
+        SIBLING_SCOPE_DESTRUCTORS_SOURCE.replace(
+            "    return value;\n}",
+            "    {\n        Restore guard(&value);\n        value = 13;\n    }\n    return value;\n}",
+        ),
+    )
+    .unwrap();
+    let error = refresh_import(&rejected.config()).unwrap_err();
+    assert!(error.contains("sibling_restore.cpp"), "{error}");
+    assert!(
+        error.contains("at most two sibling cleanup scopes"),
+        "{error}"
+    );
+    assert!(!rejected.artifact().exists());
+}
+
+#[test]
 fn nested_scope_rejects_conditional_construction_and_deeper_blocks() {
     for (source, expected) in [
         (
@@ -1834,6 +1990,13 @@ fn nested_scope_rejects_conditional_construction_and_deeper_blocks() {
                 "        {\n            Restore guard(&value);\n        }",
             ),
             "permits one nested scope directly in a free-function body",
+        ),
+        (
+            NESTED_SCOPE_DESTRUCTOR_SOURCE.replace(
+                "int scoped_restore(bool early, int& value) noexcept {\n    {",
+                "int scoped_restore(bool early, int& value) noexcept {\n    Restore outer(&value);\n    {",
+            ),
+            "nested-scope cleanup cannot yet be combined with an outer aggregate object",
         ),
     ] {
         let project = Project::nested_scope_destructor();
