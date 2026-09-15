@@ -963,6 +963,7 @@ struct ResourceFactRead {
     base: CExpression,
     index: CExpression,
     expression: String,
+    enclosing_range: Option<(CExpression, CExpression)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1383,21 +1384,111 @@ fn collect_resource_fact_reads_from_proposition(
                 resource_name,
             )
         }
-        ClickProposition::Not(body)
-        | ClickProposition::ForAll { body, .. }
-        | ClickProposition::Exists { body, .. } => collect_resource_fact_reads_from_proposition(
-            body,
-            predicate_definitions,
-            click_function_definitions,
-            visited_predicates,
-            visited_functions,
-            reads,
-            resource_name,
-        ),
-        ClickProposition::RangeAll {
-            start, end, body, ..
+        ClickProposition::Not(body) | ClickProposition::Exists { body, .. } => {
+            collect_resource_fact_reads_from_proposition(
+                body,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
         }
-        | ClickProposition::RangeAny {
+        ClickProposition::ForAll { name, body, .. } => {
+            if let ClickProposition::Implies(antecedent, consequent) = body.as_ref() {
+                collect_resource_fact_reads_from_proposition(
+                    antecedent,
+                    predicate_definitions,
+                    click_function_definitions,
+                    visited_predicates,
+                    visited_functions,
+                    reads,
+                    resource_name,
+                )?;
+                let first_consequent_read = reads.len();
+                collect_resource_fact_reads_from_proposition(
+                    consequent,
+                    predicate_definitions,
+                    click_function_definitions,
+                    visited_predicates,
+                    visited_functions,
+                    reads,
+                    resource_name,
+                )?;
+                if let Some((start, end)) = quantified_index_interval(body, name) {
+                    for read in &mut reads[first_consequent_read..] {
+                        if read.index == CExpression::Variable(name.clone()) {
+                            read.enclosing_range = Some((start.clone(), end.clone()));
+                        }
+                    }
+                }
+                Ok(())
+            } else {
+                collect_resource_fact_reads_from_proposition(
+                    body,
+                    predicate_definitions,
+                    click_function_definitions,
+                    visited_predicates,
+                    visited_functions,
+                    reads,
+                    resource_name,
+                )
+            }
+        }
+        ClickProposition::RangeAll {
+            start,
+            end,
+            item,
+            body,
+            ..
+        } => {
+            collect_resource_fact_reads_from_contract_expression(
+                start,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_fact_reads_from_contract_expression(
+                end,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            let first_body_read = reads.len();
+            collect_resource_fact_reads_from_proposition(
+                body,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            let start = contract_expression_as_c_fragment(start).ok_or_else(|| {
+                ClickError::new(format!(
+                    "resource `{resource_name}` range fact has a non-C start"
+                ))
+            })?;
+            let end = contract_expression_as_c_fragment(end).ok_or_else(|| {
+                ClickError::new(format!(
+                    "resource `{resource_name}` range fact has a non-C end"
+                ))
+            })?;
+            for read in &mut reads[first_body_read..] {
+                if read.index == CExpression::Variable(item.clone()) {
+                    read.enclosing_range = Some((start.clone(), end.clone()));
+                }
+            }
+            Ok(())
+        }
+        ClickProposition::RangeAny {
             start, end, body, ..
         } => {
             collect_resource_fact_reads_from_contract_expression(
@@ -1469,6 +1560,56 @@ fn collect_resource_fact_reads_from_proposition(
             result
         }
     }
+}
+
+fn quantified_index_interval(
+    body: &ClickProposition,
+    name: &str,
+) -> Option<(CExpression, CExpression)> {
+    let ClickProposition::Implies(antecedent, _) = body else {
+        return None;
+    };
+    fn visit(
+        proposition: &ClickProposition,
+        name: &str,
+        lower: &mut Option<CExpression>,
+        upper: &mut Option<CExpression>,
+    ) {
+        match proposition {
+            ClickProposition::And(left, right) => {
+                visit(left, name, lower, upper);
+                visit(right, name, lower, upper);
+            }
+            ClickProposition::Comparison {
+                left,
+                operator,
+                right,
+            } => {
+                let variable =
+                    ContractExpression::CFragment(CExpression::Variable(name.to_string()));
+                match operator {
+                    ComparisonOperator::LessEqual if right == &variable => {
+                        *lower = contract_expression_as_c_fragment(left);
+                    }
+                    ComparisonOperator::GreaterEqual if left == &variable => {
+                        *lower = contract_expression_as_c_fragment(right);
+                    }
+                    ComparisonOperator::LessThan if left == &variable => {
+                        *upper = contract_expression_as_c_fragment(right);
+                    }
+                    ComparisonOperator::GreaterThan if right == &variable => {
+                        *upper = contract_expression_as_c_fragment(left);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut lower = None;
+    let mut upper = None;
+    visit(antecedent, name, &mut lower, &mut upper);
+    Some((lower?, upper?))
 }
 
 fn collect_resource_fact_reads_from_contract_segment(
@@ -1742,6 +1883,7 @@ fn collect_resource_fact_reads_from_contract_expression(
                 expression: describe_contract_expression(expression),
                 base,
                 index,
+                enclosing_range: None,
             });
             Ok(())
         }
@@ -1935,6 +2077,7 @@ fn collect_resource_fact_reads_from_c_expression(
                 base: pointer.as_ref().clone(),
                 index: CExpression::Value(CValue::Int32(Bitvector32Term::Constant(0))),
                 expression: describe_c_expression(expression),
+                enclosing_range: None,
             });
         }
         CExpression::TypedLoad { pointer, .. } => {
@@ -1943,6 +2086,7 @@ fn collect_resource_fact_reads_from_c_expression(
                 base: pointer.as_ref().clone(),
                 index: CExpression::Value(CValue::Int32(Bitvector32Term::Constant(0))),
                 expression: describe_c_expression(expression),
+                enclosing_range: None,
             });
         }
         CExpression::Index(base, index) => {
@@ -1952,6 +2096,7 @@ fn collect_resource_fact_reads_from_c_expression(
                 base: base.as_ref().clone(),
                 index: index.as_ref().clone(),
                 expression: describe_c_expression(expression),
+                enclosing_range: None,
             });
         }
         CExpression::LessThan(left, right)
@@ -2020,6 +2165,25 @@ fn analyze_resource_fact_read_authority(
             };
         }
         if segment.base == read.base {
+            if read.enclosing_range.as_ref().is_some_and(|(start, end)| {
+                symbolic_segment_covers_range(
+                    &segment.start,
+                    &segment.end,
+                    start,
+                    end,
+                    assumptions,
+                    values,
+                    array_refs,
+                    memory,
+                    predicate_environment,
+                    click_function_environment,
+                )
+            }) {
+                return ResourceFactReadAuthorityAnalysis {
+                    covered: true,
+                    notes,
+                };
+            }
             if symbolic_segment_covers_index(
                 &segment.start,
                 &segment.end,
@@ -2145,6 +2309,61 @@ fn evaluated_segment_covers_resource_fact_read(
     };
     let read_pointer = offset_pointer_by_elements(read_base.into_pointer(), index, 4);
     segment_contains_pointer(&segment, &read_pointer, assumptions)
+}
+
+fn symbolic_segment_covers_range(
+    available_start: &CExpression,
+    available_end: &CExpression,
+    required_start: &CExpression,
+    required_end: &CExpression,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> bool {
+    let state = CState::new().with_memory(memory.clone());
+    let evaluate = |expression: &CExpression| {
+        crate::surface::proof::evaluate_fixed_state_expression_through_kernel(
+            &ContractExpression::CFragment(expression.clone()),
+            &PureFactContext::new(),
+            values,
+            array_refs,
+            &state,
+            &state,
+            None,
+            &RecordedSnapshots::new(),
+            predicate_environment,
+            click_function_environment,
+            &BTreeSet::new(),
+        )
+    };
+    let Ok(available_start) = evaluate(available_start) else {
+        return false;
+    };
+    let Ok(available_end) = evaluate(available_end) else {
+        return false;
+    };
+    let Ok(required_start) = evaluate(required_start) else {
+        return false;
+    };
+    let Ok(required_end) = evaluate(required_end) else {
+        return false;
+    };
+    let Ok(lower_bound) = comparison_proposition(
+        available_start,
+        ComparisonOperator::LessEqual,
+        required_start,
+    ) else {
+        return false;
+    };
+    let Ok(upper_bound) =
+        comparison_proposition(required_end, ComparisonOperator::LessEqual, available_end)
+    else {
+        return false;
+    };
+    assumptions.proves(&lower_bound) && assumptions.proves(&upper_bound)
 }
 
 fn symbolic_segment_covers_index(
@@ -2361,6 +2580,7 @@ mod read_authority_tests {
             base,
             index,
             expression: "cell[index]".to_string(),
+            enclosing_range: None,
         }
     }
 

@@ -13602,6 +13602,10 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             !required_obligation_is_exactly_discharged(&body_assumptions, fact.proposition())
         }) || path.obligations.iter().any(|goal| {
             !required_obligation_is_exactly_discharged(&body_assumptions, goal.proposition())
+                && !quantified_resource_fact_memory_obligation_is_discharged(
+                    &body_assumptions,
+                    goal.proposition(),
+                )
         }) {
             return Err("instance body fact needs an unsupported conditional proof".into());
         }
@@ -13640,6 +13644,30 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         }
     }
     Ok((next, if unfold { facts } else { vec![] }))
+}
+
+fn quantified_resource_fact_memory_obligation_is_discharged(
+    assumptions: &PureFactContext,
+    proposition: &Proposition,
+) -> bool {
+    let Proposition::ForAll { body, .. } = proposition else {
+        return false;
+    };
+    let Proposition::Implies(antecedent, consequent) = body.as_ref() else {
+        return false;
+    };
+    fn assume_conjuncts(
+        assumptions: PureFactContext,
+        proposition: &Proposition,
+    ) -> PureFactContext {
+        if let Proposition::And(left, right) = proposition {
+            let assumptions = assume_conjuncts(assumptions, left);
+            assume_conjuncts(assumptions, right)
+        } else {
+            assumptions.assume_proposition(proposition.clone())
+        }
+    }
+    assume_conjuncts(assumptions.clone(), antecedent).proves_atomic_memory_or_resource(consequent)
 }
 
 pub(in crate::kernel) fn selected_instance_match_arm<'a>(

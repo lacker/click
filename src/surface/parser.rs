@@ -3203,7 +3203,7 @@ impl Parser {
         };
         let identity = match rebound {
             Some((identity, family)) => {
-                if &family != resource_name {
+                if &family != resource_name && !self.child_slot_identities.contains(&identity) {
                     return Err(self.error(format!(
                         "loop binder `{name}` rebinds an instance of resource `{family}`, not `{resource_name}`"
                     )));

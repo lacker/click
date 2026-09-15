@@ -71,15 +71,29 @@ region, retains `[4, capacity)`, and increments `live_regions` from one to two.
 This establishes that two adjacent live data regions can be held disjointly;
 it does not yet make the transition symbolic.
 
-The attempted symbolic form identified a narrower language boundary. The
-prior endpoint is not named by an `arena_alloc` C parameter. A resource field
-can retain it as model data, but such a field is rejected as the endpoint of
-an `owns` range because memory endpoints must currently be C expressions.
-Adding the endpoint as a free resource argument does not bind it at the C
-contract boundary, and nesting the first region beside a suffix still hits the
-opaque-sibling load constraint above. The focused
-`mdtests/resource_field_memory_endpoint_rejected.md` regression records the
-first and most direct limitation.
+The symbolic endpoint itself no longer appears to require a language change.
+A C scalar carried by a matched algebraic resource payload can select a memory
+range, and unfold/fold preserves the symbolic suffix. Resource facts may also
+quantify over a bounded subrange of contained memory: definition validation
+checks that the quantified interval is covered, and resource rewriting checks
+the corresponding universal loadability obligation from the same contained
+authority. The positive end-to-end regression is
+`mdtests/resource_match_payload_memory_endpoint.md`.
+
+The same experiment fixed one adjacent parser gap. A child introduced by
+`unfold(parent) as { slot: child }` initially has only its parent's provisional
+family in parser state; a loop binder may now take over that child under the
+family declared by the selected arm, with declaration expansion still checking
+the actual slot family. The regression is
+`mdtests/loop_binder_takes_over_unfolded_cross_family_child.md`.
+
+The remaining blocker is loop-local model destructuring. The generalized scan
+can carry the occupancy partition as a loop-owned resource, but a proof
+`match` on that resource's model inside `preserve by` does not keep the matched
+scalar endpoint bindings available to the following tactic. Consequently the
+scan cannot yet compare its C index with the retained prefix or instantiate the
+partition facts without reintroducing a pipeline-specific constant. This is a
+proof-driver binding-scope gap, not an ownership-collection requirement.
 
 The empty-arena lifecycle now verifies independently of that partition model.
 `arena_init` returns an `arena_init_result` plus conditional initialized access:
@@ -97,20 +111,20 @@ The use-after-free rejection already lives in
 `mdtests/arena_use_after_free.md`. Double free and overlapping live regions
 still need focused negative regressions.
 
-## Next chunk: symbolic prefix/suffix boundaries
+## Next chunk: carry model bindings through loop preservation
 
-Generalize memory-range selection so a stable scalar stored in a resource can
-serve as an owned range endpoint. Start from the focused negative regression
-above and add a positive resource-only regression showing that unfold/fold
-preserves a symbolic suffix without scanning or cloning unrelated resources.
-The mechanism must be general to memory resources; do not special-case arenas
-or integer backing arrays.
+Add a focused regression in which a loop-owned, field-bearing resource is
+matched inside `preserve by`, and the next simple tactic uses the constructor's
+C-scalar binding. Preserve the binding in the checked loop proof driver without
+cloning the complete proof state or adding an unchecked fallback; the expanded
+certificate must independently verify.
 
-Then use that capability to replace the two pipeline-specific allocator
-contracts with one transition parameterized by the retained prefix endpoint.
-It must preserve the caller's live prefix on failure and transfer exactly the
-next adjacent interval on success. Keep arbitrary hole collections, freeing,
-recombination, and the end-to-end pipeline out of this chunk.
+Then return to `arena_alloc`: replace the fixed `[2, 4)` transition with one
+parameterized by a retained prefix model. Keep the occupancy partition folded
+through the count-validation branches, open it for the scan/mark loops, restore
+it on failure, and on success return the old live prefix, exactly
+`[prefix, prefix + count)`, and the updated suffix. Keep arbitrary holes,
+free/recombine, and the end-to-end pipeline out of that implementation chunk.
 
 ## Violated invariant
 
