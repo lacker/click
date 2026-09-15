@@ -132,6 +132,12 @@ tactic budget is not a termination proof. Compare a forward C cleanup jump,
 the C++ RAII return example, and a Rust conditional drop when selecting the
 shared representation.
 
+The separately selected P1 [control-flow demo](../issues/control-flow-demo.md)
+now requires forward C cleanup jumps and a narrow cross-call C++ exception
+probe before launch. The [goto issue](../issues/goto.md) is P1 for its forward
+slice; general backward jumps remain P2. This does not expand the first
+non-throwing C++ slice or make it wait on exception support.
+
 ## Shared resources and Rust borrowing
 
 Stable shared borrowing for ordinary memory shipped from the P1
@@ -422,9 +428,11 @@ ever wider syntax acceptance:
    plus growing unrelated resource contexts. Ending a loan should touch its
    dependent obligations, not scan every fact, pointer, or memory snapshot.
 
-For C++, follow normal cleanup with object initialization/validity and storage
-reuse, class copy/move and temporaries, then exceptions and partial
-construction. Template instantiation can use compiler-resolved definitions,
+For C++, follow normal cleanup with the selected scalar-exception probe in the
+control-flow demo. Broader object initialization/validity and storage reuse,
+class copy/move and temporaries, and exceptions during partial construction
+remain later work; they are not prerequisites of that narrow probe.
+Template instantiation can use compiler-resolved definitions,
 but template syntax support is not a library proof. Virtual dispatch,
 inheritance/subobject identity, standard-library contracts, and concurrent
 objects each need explicit semantic coverage before taking on a large project.

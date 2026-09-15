@@ -55,6 +55,12 @@ and general `goto`. Unsupported selected code gets a source diagnostic.
 These omissions are an explicit subset boundary, not permission to rewrite
 an existing C++ implementation until it passes.
 
+The separately selected P1 [control-flow demo](control-flow-demo.md) adds a
+narrow exception-enabled profile after this non-throwing slice. Its forward
+C cleanup-jump prerequisite is P1 under [goto.md](goto.md). These separate
+milestones do not add exceptions or general goto to this issue's completion
+criteria.
+
 ## Small intended regression
 
 Verify the original source of this synthetic example:

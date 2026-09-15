@@ -13,9 +13,17 @@ feature backlog.
 Work through the open P1 issues in dependency order. P1 means required before
 launch, not a prescribed order within the list. Choose the next task by its
 dependencies and what it unblocks. P1 includes the explicitly selected
-stable-views, basic-C++, and concurrency-demo architecture milestones alongside
-the rbtree work. The concurrency demo covers thread ownership, mutex-protected
-mutation, and one-shot release/acquire publication in three small C programs.
+stable-views, basic-C++, concurrency, byte-representation, control-flow, and
+shared-heap-graph architecture milestones alongside the rbtree work and the
+Bitcoin Core C++ proof. The concurrency demo covers thread ownership,
+mutex-protected mutation, and one-shot release/acquire publication. The other
+demos exercise object representation copying, C cleanup jumps and narrow C++
+exception unwinding, and independently owned parents sharing a child.
+
+Forward goto cleanup support is P1 as a dependency of the control-flow demo;
+general backward and irreducible jumps remain deferred. Normal C++ cleanup
+lands before the exception probe. Each milestone keeps a bounded support
+claim and uses the existing proof engine with deterministic scaling evidence.
 Close an issue only when its fix, regression coverage, and documentation land.
 
 Keep verifier correctness and tooling stability ahead of feature work. A
@@ -58,7 +66,8 @@ result:
 
 The P2 list records deferred work. Broader C coverage, additional targets,
 concurrency beyond the selected demo, other library demos, C++ beyond its
-selected basic slice, and Rust remain later work. The
+selected basic and exception-demo slices, and Rust remain later work. General
+goto, type punning, and cyclic-graph reclamation also remain deferred. The
 [supporting more languages design](https://github.com/lacker/click/blob/master/design/supporting-more-languages.md)
 records the language sequence and longer-term architecture. Revisit deferred
 work after the rbtree launch; the issue list remains authoritative for explicit

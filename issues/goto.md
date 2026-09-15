@@ -1,6 +1,14 @@
-# Model forward and backward `goto` edges
+# P1: Forward `goto` cleanup edges; broader jumps deferred
 
 Found during the 2026-09-03 control-flow follow-up after commit 184b4ef2.
+
+Promoted on 2026-09-15 as a prerequisite for the P1
+[control-flow demo](control-flow-demo.md). The before-launch requirement is
+the forward cleanup slice specified below: labels, checked forward edges,
+target resumption, and joins, including a chain of cleanup labels. General
+backward jumps, entry into unsupported scopes, and irreducible control flow
+remain P2. This priority does not make full goto support a dependency of the
+first basic-C++ slice.
 
 C0 has no labels or `goto`. This is a separate problem from structured loop
 control: the current kernel executes a statement tree with a remaining-source
@@ -35,8 +43,9 @@ the certificate and diagnostics.
 Before fixing the representation, check it against a forward C cleanup jump,
 a C++ RAII early return, and a Rust conditional-drop edge. These are design
 checks; this issue does not require implementing the other language frontends
-or exception handling. Reuse cleanup-edge work from the basic C++ issue
-without introducing a dependency cycle between the two issues.
+or exception handling. The control-flow demo owns the selected cross-call C++
+exception probe. Reuse cleanup-edge work from the basic C++ issue without
+introducing a dependency cycle between these issues.
 
 ## Violated invariant
 
@@ -79,3 +88,7 @@ Start with the forward cleanup idiom, then add the general edge cases:
   later support must include a deterministic termination regression rather than
   relying on an execution budget.
 - The goto regressions and `scripts/check.sh` pass.
+
+When the forward slice and its durable documentation land, its P1 dependency
+is satisfied. Narrow this issue to the still-unsupported general jumps and
+move it back to P2; do not keep backward-jump work on the launch critical path.
