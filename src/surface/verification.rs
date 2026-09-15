@@ -5215,8 +5215,24 @@ fn cpp_function_interface(
                 )
                 .with_pointee_constant(*is_const))
             }
+            crate::languages::cpp::CppType::Pointer { pointee }
+                if matches!(
+                    pointee.as_ref(),
+                    crate::languages::cpp::CppType::Integer {
+                        bits: 32,
+                        signed: true,
+                        is_const: false,
+                    }
+                ) =>
+            {
+                Ok(syntax::C0Parameter::new(
+                    C0Type::Int32Pointer,
+                    parameter.name.clone(),
+                    None,
+                ))
+            }
             _ => Err(ClickError::new(format!(
-                "C++ declaration `{}` parameter `{}` is outside the supported bool/reference interface",
+                "C++ declaration `{}` parameter `{}` is outside the supported bool/reference/pointer interface",
                 source.declaration_id, parameter.name
             ))),
         })

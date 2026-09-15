@@ -95,10 +95,14 @@ copies it through an expression-initialized local, assigns it, and returns it
 through the kernel's shared declaration and scalar rules. Its false-result
 contract is rejected. Focused negative coverage rejects missing, throwing, and
 recursive reachable definitions as well as uninitialized, reference-valued,
-and nested locals. Other coverage exercises source/signature mismatch
-diagnostics, const-write rejection, and smart-tactic inventory. Missing Clang
-development tooling fails the gate, and unsupported C++ does not fall back to
-the C parser.
+and nested locals. A pointer fixture passes `&value` from an `int&` caller to a
+mutable `int*` helper, then checks dereference reads, a checked write, offline
+verification, and expansion/reverification. Removing memory ownership and a
+false memory postcondition both fail; pointer arithmetic, null conversion,
+pointer locals, and multiple indirection are rejected at the frontend
+boundary. Other coverage exercises source/signature mismatch diagnostics,
+const-write rejection, and smart-tactic inventory. Missing Clang development
+tooling fails the gate, and unsupported C++ does not fall back to the C parser.
 
 ## What the gate runs
 

@@ -36,6 +36,9 @@ const SCALAR_LOCAL_SOURCE: &str =
     include_str!("fixtures/cpp-verification/scalar-local/relay_value.cpp");
 const SCALAR_LOCAL_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/scalar-local/relay_value.click");
+const POINTER_SOURCE: &str = include_str!("fixtures/cpp-verification/pointer/bump_reference.cpp");
+const POINTER_SIDECAR: &str =
+    include_str!("fixtures/cpp-verification/pointer/bump_reference.click");
 
 struct Project {
     directory: PathBuf,
@@ -66,6 +69,10 @@ impl Project {
 
     fn scalar_local() -> Self {
         Self::with_fixture("relay_value.cpp", "relay_value", SCALAR_LOCAL_SOURCE)
+    }
+
+    fn pointer() -> Self {
+        Self::with_fixture("bump_reference.cpp", "bump_reference", POINTER_SOURCE)
     }
 
     fn with_fixture(source_name: &str, function: &str, source: &str) -> Self {
@@ -162,7 +169,7 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
     let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
-    assert_eq!(prepared.export().schema, 4);
+    assert_eq!(prepared.export().schema, 5);
     assert!(prepared.export().reachable_functions.is_empty());
     assert_eq!(prepared.logical_source(), "increment.cpp");
     assert_eq!(prepared.identity().len(), 64);
@@ -516,7 +523,7 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the call graph artifact offline");
-    assert_eq!(import.export().schema, 4);
+    assert_eq!(import.export().schema, 5);
     assert_eq!(import.export().function.name, "call_set_seven");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -593,7 +600,7 @@ fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the scalar-local artifact offline");
-    assert_eq!(import.export().schema, 4);
+    assert_eq!(import.export().schema, 5);
     assert_eq!(import.export().function.name, "relay_value");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -696,6 +703,188 @@ fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
     let false_project = read_click_project(&sidecar, &false_contract).unwrap();
     verify_cpp_prepared_project(&false_project, &import)
         .expect_err("a false claim about the captured call result must be rejected");
+}
+
+#[test]
+fn mutable_pointer_dereference_and_reference_address_verify_offline() {
+    let project = Project::pointer();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, POINTER_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("export pointer operations and the resolved call");
+    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+
+    let import = load_import(&project.config()).expect("load the pointer artifact offline");
+    assert_eq!(import.export().schema, 5);
+    let caller = &import.export().function;
+    assert_eq!(caller.name, "bump_reference");
+    assert!(matches!(
+        caller.parameters[0].value_type,
+        CppType::LvalueReference { .. }
+    ));
+    let [helper] = import.export().reachable_functions.as_slice() else {
+        panic!("the pointer helper was not captured")
+    };
+    assert_eq!(helper.name, "bump_pointer");
+    assert!(matches!(
+        helper.parameters[0].value_type,
+        CppType::Pointer { ref pointee }
+            if matches!(pointee.as_ref(), CppType::Integer {
+                bits: 32,
+                signed: true,
+                is_const: false,
+            })
+    ));
+
+    let [
+        CppStatement::Declare {
+            initializer: CppInitializer::Call {
+                callee, arguments, ..
+            },
+            ..
+        },
+        CppStatement::Return { .. },
+    ] = caller.body.as_slice()
+    else {
+        panic!("the reference caller did not retain its call-result local")
+    };
+    assert_eq!(callee.declaration_id, helper.declaration_id);
+    assert!(matches!(
+        arguments.as_slice(),
+        [CppCallArgument::Value {
+            value: CppExpression::AddressOf { place, value_type, .. }
+        }] if place.declaration_id == caller.parameters[0].declaration_id
+            && matches!(value_type, CppType::Pointer { .. })
+    ));
+
+    let [
+        CppStatement::Store {
+            pointer: stored_through,
+            value: CppExpression::Binary {
+                left: loaded_value, ..
+            },
+            ..
+        },
+        CppStatement::Return {
+            value: returned_value,
+            ..
+        },
+    ] = helper.body.as_slice()
+    else {
+        panic!("the pointer helper did not retain its checked load/store operations")
+    };
+    assert!(matches!(
+        stored_through,
+        CppExpression::Load { place, value_type, .. }
+            if place.declaration_id == helper.parameters[0].declaration_id
+                && matches!(value_type, CppType::Pointer { .. })
+    ));
+    assert!(matches!(
+        loaded_value.as_ref(),
+        CppExpression::Dereference { pointer, .. }
+            if matches!(pointer.as_ref(), CppExpression::Load { place, .. }
+                if place.declaration_id == helper.parameters[0].declaration_id)
+    ));
+    assert!(matches!(
+        returned_value,
+        CppExpression::Dereference { pointer, .. }
+            if matches!(pointer.as_ref(), CppExpression::Load { place, .. }
+                if place.declaration_id == helper.parameters[0].declaration_id)
+    ));
+
+    let lowered =
+        lower_import(&import).expect("lower pointer operations through kernel memory rules");
+    assert_eq!(
+        lowered.kernel_function().parameters()[0].c_type(),
+        CType::Int32Pointer
+    );
+    assert_eq!(
+        lowered.reachable_kernel_functions()[0].parameters()[0].c_type(),
+        CType::Int32Pointer
+    );
+    assert!(!lowered.reachable_kernel_functions()[0].parameters()[0].pointee_is_constant());
+
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    let verified = verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify pointer load/store and reference address through shared rules");
+    assert_eq!(verified.len(), 6);
+
+    let execute = cpp_prepared_project_tactic_source_position(
+        &click_project,
+        &import,
+        "bump_reference.contract",
+        0,
+    )
+    .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .expect("expand the pointer caller proof");
+    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+        .expect("the expanded pointer proof must reverify");
+
+    let missing_ownership = POINTER_SIDECAR.replacen("    owns pointer[0..1];\n", "", 1);
+    fs::write(&sidecar, &missing_ownership).unwrap();
+    let missing_ownership_project = read_click_project(&sidecar, &missing_ownership).unwrap();
+    verify_cpp_prepared_project(&missing_ownership_project, &import)
+        .expect_err("dereferencing without memory authority must not verify");
+
+    let false_contract = POINTER_SIDECAR.replace(
+        "ensures value[0] == old(value[0]) + 1;",
+        "ensures value[0] == old(value[0]) + 2;",
+    );
+    fs::write(&sidecar, &false_contract).unwrap();
+    let false_project = read_click_project(&sidecar, &false_contract).unwrap();
+    verify_cpp_prepared_project(&false_project, &import)
+        .expect_err("a false pointer-mediated memory effect must be rejected");
+}
+
+#[test]
+fn cpp_pointer_slice_rejects_arithmetic_null_multilevel_and_pointer_locals() {
+    let project = Project::pointer();
+
+    fs::write(
+        project.source(),
+        "int bump_reference(int* pointer) noexcept {\n    return *(pointer + 1);\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("bump_reference.cpp:2"), "{error}");
+    assert!(error.contains("pointer arithmetic"), "{error}");
+    assert!(!project.artifact().exists());
+
+    fs::write(
+        project.source(),
+        "int read_pointer(int* pointer) noexcept { return *pointer; }\n\nint bump_reference(int& value) noexcept {\n    int result = read_pointer(nullptr);\n    return result;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("bump_reference.cpp:4"), "{error}");
+    assert!(error.contains("unsupported implicit conversion"), "{error}");
+    assert!(!project.artifact().exists());
+
+    fs::write(
+        project.source(),
+        "int bump_reference(int& value) noexcept {\n    int* pointer = &value;\n    return *pointer;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("bump_reference.cpp:2"), "{error}");
+    assert!(error.contains("must resolve to mutable int"), "{error}");
+    assert!(!project.artifact().exists());
+
+    fs::write(
+        project.source(),
+        "int bump_reference(int** pointer) noexcept {\n    return **pointer;\n}\n",
+    )
+    .unwrap();
+    let error = refresh_import(&project.config()).unwrap_err();
+    assert!(error.contains("bump_reference.cpp:1"), "{error}");
+    assert!(error.contains("mutable int* parameter"), "{error}");
+    assert!(!project.artifact().exists());
 }
 
 #[test]
@@ -925,14 +1114,11 @@ fn cpp_frontend_rejects_unsupported_source_without_a_c_fallback() {
 
     fs::write(
         project.source(),
-        "int increment(int* value) noexcept {\n    *value = *value + 1;\n    return *value;\n}\n",
+        "int increment(const int* value) noexcept {\n    return *value;\n}\n",
     )
     .unwrap();
     let error = refresh_import(&project.config()).unwrap_err();
-    assert!(
-        error.contains("by-value bool, int&, or const int& parameter"),
-        "{error}"
-    );
+    assert!(error.contains("mutable int* parameter"), "{error}");
     assert!(!project.artifact().exists());
 
     fs::write(

@@ -5,6 +5,8 @@
 //! slice represents `int&` and `const int&` as address-valued kernel parameters;
 //! every C++ lvalue-to-rvalue conversion becomes a typed load through that
 //! address and assignment writes the referent without reseating the reference.
+//! Mutable `int*` parameters remain distinct from references in the semantic
+//! artifact, while both reuse the kernel's checked address and memory rules.
 //! Function-body scalar locals use the kernel's ordinary declaration,
 //! assignment, and call-result statements.
 
@@ -107,8 +109,11 @@ fn lower_parameter(parameter: &CppPlace) -> Result<crate::kernel::CParameter, St
             Ok(c_parameter(parameter.name.clone(), CType::Int32Pointer)
                 .with_pointee_constant(is_const_int32(pointee)))
         }
+        CppType::Pointer { pointee } if is_mutable_int32(pointee) => {
+            Ok(c_parameter(parameter.name.clone(), CType::Int32Pointer))
+        }
         _ => Err(format!(
-            "C++ parameter `{}` is outside direct by-value `bool`, `int&`, and `const int&` lowering",
+            "C++ parameter `{}` is outside direct by-value `bool`, `int&`, `const int&`, and `int*` lowering",
             parameter.name
         )),
     }
@@ -169,6 +174,11 @@ impl LoweringContext<'_> {
                     ))
                 }
             }
+            CppStatement::Store { pointer, value, .. } => Ok(c_typed_store(
+                self.lower_expression(pointer)?,
+                self.lower_expression(value)?,
+                CType::Int32,
+            )),
             CppStatement::Return { value, .. } => Ok(c_return(self.lower_expression(value)?)),
             CppStatement::If {
                 condition,
@@ -239,6 +249,14 @@ impl LoweringContext<'_> {
                 {
                     Ok(c_variable(place.name.clone()))
                 }
+                (
+                    CppType::Pointer { pointee },
+                    CppType::Pointer {
+                        pointee: value_pointee,
+                    },
+                ) if is_mutable_int32(pointee) && is_mutable_int32(value_pointee) => {
+                    Ok(c_variable(place.name.clone()))
+                }
                 (CppType::LvalueReference { pointee }, value_type)
                     if (is_mutable_int32(pointee) || is_const_int32(pointee))
                         && is_mutable_int32(value_type) =>
@@ -263,6 +281,26 @@ impl LoweringContext<'_> {
                 }
                 _ => Err("C++ load is outside direct bool/reference lowering".into()),
             },
+            CppExpression::AddressOf {
+                place, value_type, ..
+            } => match (&self.place(place)?.value_type, value_type) {
+                (CppType::LvalueReference { pointee }, CppType::Pointer { pointee: result })
+                    if is_mutable_int32(pointee) && is_mutable_int32(result) =>
+                {
+                    Ok(c_variable(place.name.clone()))
+                }
+                _ => Err("C++ address-of is outside mutable `int&` lowering".into()),
+            },
+            CppExpression::Dereference {
+                pointer,
+                value_type,
+                ..
+            } if is_mutable_int32(value_type) && is_mutable_int32_pointer(pointer.value_type()) => {
+                self.lower_typed_int32_load(pointer)
+            }
+            CppExpression::Dereference { .. } => {
+                Err("C++ dereference is outside mutable `int*` lowering".into())
+            }
             CppExpression::Binary {
                 operator: CppBinaryOperator::Add,
                 left,
@@ -283,6 +321,26 @@ impl LoweringContext<'_> {
     fn lower_place(&self, place: &CppPlaceReference) -> Result<CExpression, String> {
         self.place(place)?;
         Ok(c_variable(place.name.clone()))
+    }
+
+    fn lower_typed_int32_load(&mut self, pointer: &CppExpression) -> Result<CExpression, String> {
+        let pointer = self.lower_expression(pointer)?;
+        let occurrence = self.next_load_occurrence;
+        self.next_load_occurrence = self
+            .next_load_occurrence
+            .checked_add(1)
+            .ok_or_else(|| "C++ load occurrence capacity exceeded".to_string())?;
+        Ok(c_typed_load_with_source(
+            pointer,
+            CType::Int32,
+            Some(LoadSourceId {
+                owner: LoadSourceOwnerId {
+                    source_unit: self.source_unit.into(),
+                    function: self.function_name.into(),
+                },
+                occurrence,
+            }),
+        ))
     }
 
     fn place(&self, place: &CppPlaceReference) -> Result<&CppPlace, String> {
@@ -322,4 +380,8 @@ fn is_const_int32(value_type: &CppType) -> bool {
             is_const: true,
         }
     )
+}
+
+fn is_mutable_int32_pointer(value_type: &CppType) -> bool {
+    matches!(value_type, CppType::Pointer { pointee } if is_mutable_int32(pointee))
 }

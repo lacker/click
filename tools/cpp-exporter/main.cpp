@@ -130,7 +130,7 @@ public:
     profile["rtti"] = false;
 
     llvm::json::Object artifact;
-    artifact["schema"] = 4;
+    artifact["schema"] = 5;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["logical_source"] = logical_source_;
@@ -208,14 +208,20 @@ private:
         reference != nullptr &&
         context_.hasSameType(reference->getPointeeType().getUnqualifiedType(),
                              context_.IntTy);
+    const auto *pointer = parameter->getType()->getAs<clang::PointerType>();
+    const bool mutable_int_pointer =
+        pointer != nullptr && !parameter->getType().isConstQualified() &&
+        !pointer->getPointeeType().isConstQualified() &&
+        context_.hasSameType(pointer->getPointeeType().getUnqualifiedType(),
+                             context_.IntTy);
     const bool by_value_bool =
         reference == nullptr &&
         context_.hasSameType(parameter->getType().getUnqualifiedType(),
                              context_.BoolTy) &&
         !parameter->getType().isConstQualified();
-    if (!int_reference && !by_value_bool) {
+    if (!int_reference && !mutable_int_pointer && !by_value_bool) {
       fail(parameter->getLocation(),
-           "the supported C++ parameter must be a by-value bool, int&, or const int& parameter");
+           "the supported C++ parameter must be a by-value bool, int&, const int&, or mutable int* parameter");
       return std::nullopt;
     }
     auto value_type =
@@ -246,6 +252,16 @@ private:
       result["pointee"] = std::move(*pointee);
       return Json(std::move(result));
     }
+    if (const auto *pointer = type->getAs<clang::PointerType>()) {
+      auto pointee = lower_type(pointer->getPointeeType(), location);
+      if (!pointee) {
+        return std::nullopt;
+      }
+      llvm::json::Object result;
+      result["kind"] = "pointer";
+      result["pointee"] = std::move(*pointee);
+      return Json(std::move(result));
+    }
     if (context_.hasSameType(type.getUnqualifiedType(), context_.BoolTy)) {
       llvm::json::Object result;
       result["kind"] = "boolean";
@@ -254,7 +270,8 @@ private:
       return Json(std::move(result));
     }
     if (!context_.hasSameType(type.getUnqualifiedType(), context_.IntTy)) {
-      fail(location, "the supported C++ slice supports bool, int, and int& types");
+      fail(location,
+           "the supported C++ slice supports bool, int, int&, and mutable int* types");
       return std::nullopt;
     }
     llvm::json::Object result;
@@ -285,14 +302,28 @@ private:
              "the first C++ slice supports only simple assignment statements");
         return std::nullopt;
       }
-      auto target = lower_place_reference(binary->getLHS(), function);
       auto value = lower_expression(binary->getRHS(), function);
-      if (!target || !value) {
+      if (!value) {
         return std::nullopt;
       }
       llvm::json::Object result;
-      result["kind"] = "assign";
-      result["target"] = std::move(*target);
+      const clang::Expr *left = binary->getLHS()->IgnoreParens();
+      if (const auto *dereference = llvm::dyn_cast<clang::UnaryOperator>(left);
+          dereference != nullptr && dereference->getOpcode() == clang::UO_Deref) {
+        auto pointer = lower_expression(dereference->getSubExpr(), function);
+        if (!pointer) {
+          return std::nullopt;
+        }
+        result["kind"] = "store";
+        result["pointer"] = std::move(*pointer);
+      } else {
+        auto target = lower_place_reference(left, function);
+        if (!target) {
+          return std::nullopt;
+        }
+        result["kind"] = "assign";
+        result["target"] = std::move(*target);
+      }
       result["value"] = std::move(*value);
       result["span"] = span(binary->getSourceRange());
       return Json(std::move(result));
@@ -500,6 +531,15 @@ private:
       result["place"] = std::move(*place);
       return Json(std::move(result));
     }
+    if (parameter->getType()->getAs<clang::PointerType>() != nullptr) {
+      auto value = lower_expression(argument, caller);
+      if (!value) {
+        return std::nullopt;
+      }
+      result["kind"] = "value";
+      result["value"] = std::move(*value);
+      return Json(std::move(result));
+    }
     if (context_.hasSameType(parameter->getType().getUnqualifiedType(),
                              context_.BoolTy) &&
         !parameter->getType().isConstQualified()) {
@@ -554,16 +594,65 @@ private:
              "unsupported implicit conversion in the first C++ slice");
         return std::nullopt;
       }
-      auto place = lower_place_reference(cast->getSubExpr(), function);
       auto value_type = lower_type(cast->getType(), cast->getExprLoc());
+      if (!value_type) {
+        return std::nullopt;
+      }
+      llvm::json::Object result;
+      const clang::Expr *source = cast->getSubExpr()->IgnoreParens();
+      if (const auto *dereference =
+              llvm::dyn_cast<clang::UnaryOperator>(source);
+          dereference != nullptr && dereference->getOpcode() == clang::UO_Deref) {
+        auto pointer = lower_expression(dereference->getSubExpr(), function);
+        if (!pointer) {
+          return std::nullopt;
+        }
+        result["kind"] = "dereference";
+        result["pointer"] = std::move(*pointer);
+      } else {
+        auto place = lower_place_reference(source, function);
+        if (!place) {
+          return std::nullopt;
+        }
+        result["kind"] = "load";
+        result["place"] = std::move(*place);
+      }
+      result["value_type"] = std::move(*value_type);
+      result["span"] = span(cast->getSourceRange());
+      return Json(std::move(result));
+    }
+    if (const auto *address = llvm::dyn_cast<clang::UnaryOperator>(expression);
+        address != nullptr && address->getOpcode() == clang::UO_AddrOf) {
+      const clang::Expr *operand = address->getSubExpr()->IgnoreParenImpCasts();
+      const auto *reference = llvm::dyn_cast<clang::DeclRefExpr>(operand);
+      const auto *parameter =
+          reference == nullptr
+              ? nullptr
+              : llvm::dyn_cast<clang::ParmVarDecl>(reference->getDecl());
+      const auto *reference_type =
+          parameter == nullptr
+              ? nullptr
+              : parameter->getType()->getAs<clang::LValueReferenceType>();
+      if (parameter == nullptr || parameter->getDeclContext() != function ||
+          reference_type == nullptr ||
+          reference_type->getPointeeType().isConstQualified() ||
+          !context_.hasSameType(
+              reference_type->getPointeeType().getUnqualifiedType(),
+              context_.IntTy)) {
+        fail(address->getOperatorLoc(),
+             "supported C++ address-of must name a mutable int& parameter");
+        return std::nullopt;
+      }
+      auto place = lower_place_reference(operand, function);
+      auto value_type = lower_type(address->getType(), address->getExprLoc());
       if (!place || !value_type) {
         return std::nullopt;
       }
       llvm::json::Object result;
-      result["kind"] = "load";
+      result["kind"] = "address_of";
       result["place"] = std::move(*place);
       result["value_type"] = std::move(*value_type);
-      result["span"] = span(cast->getSourceRange());
+      result["span"] = span(address->getSourceRange());
       return Json(std::move(result));
     }
     if (const auto *literal =
@@ -586,6 +675,12 @@ private:
       if (binary->getOpcode() != clang::BO_Add) {
         fail(binary->getOperatorLoc(),
              "unsupported binary operator in the first C++ slice");
+        return std::nullopt;
+      }
+      if (!context_.hasSameType(binary->getType().getUnqualifiedType(),
+                                context_.IntTy)) {
+        fail(binary->getOperatorLoc(),
+             "the supported C++ slice does not include pointer arithmetic");
         return std::nullopt;
       }
       auto left = lower_expression(binary->getLHS(), function);

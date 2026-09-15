@@ -4,8 +4,7 @@ Compiler imports let a sidecar verify the C selected by a configured compiler
 preprocessor. Click still parses and lowers the resulting C and independently
 checks its proofs. This mode is explicit and separate from the existing bounded
 source-bundle preprocessor. The same command also refreshes the preliminary
-typed C++ artifact described below; that artifact is not connected to
-verification yet.
+typed C++ artifact described below.
 
 ```text
 usage: click import lock <sidecar.click>
@@ -138,8 +137,8 @@ into C text. The `const-reference-alias` fixture writes through an `int&` and
 reads through an aliased `const int&`, using one explicit `owns` resource.
 C++ `const` restricts access through that reference; it does not create a Click
 `views` resource or imply that aliases cannot write. Supported parameters are
-currently by-value `bool`, `int&`, and `const int&`, and selected functions
-still return `int`.
+currently by-value `bool`, `int&`, `const int&`, and mutable `int*`, and
+selected functions still return `int`.
 
 The `direct-call` fixture selects a caller and captures the transitive closure
 of definitions reached by discarded-result direct call statements. Each call
@@ -157,8 +156,18 @@ kernel's ordinary `Declare` and `CallAssign` statements, while later reads and
 assignments use the existing scalar rules. This makes call results usable
 without treating a compiler-resolved C++ expression as C source text.
 
+The `pointer` fixture distinguishes a mutable `int*` parameter from an `int&`
+in the Clang artifact. A caller may take the address of its mutable reference
+parameter and pass that pointer to a direct call. Pointer lvalue-to-rvalue
+conversion, `*pointer` reads, and `*pointer = value` writes lower to the
+kernel's existing address, typed-load, and typed-store operations, so the
+sidecar must provide ordinary memory authority. Removing that authority or
+claiming the wrong pointer-mediated memory effect fails verification.
+
 Constructors, destructors, uninitialized or nested locals, local references,
-shadowing, address-taking, call results outside a local initializer, methods,
+shadowing, address-taking other than a current mutable reference parameter for
+a supported pointer call, pointer locals, pointer arithmetic, null pointers,
+multiple indirection, call results outside a local initializer, methods,
 indirect calls, loops, external specifications, object operations, and broader
 C++ syntax remain outside this end-to-end subset.
 

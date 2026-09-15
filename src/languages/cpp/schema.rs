@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 4;
+pub(crate) const EXPORT_SCHEMA: u32 = 5;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -57,6 +57,9 @@ pub enum CppType {
     LvalueReference {
         pointee: Box<CppType>,
     },
+    Pointer {
+        pointee: Box<CppType>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -84,6 +87,16 @@ pub enum CppExpression {
     },
     Load {
         place: CppPlaceReference,
+        value_type: CppType,
+        span: CppSpan,
+    },
+    AddressOf {
+        place: CppPlaceReference,
+        value_type: CppType,
+        span: CppSpan,
+    },
+    Dereference {
+        pointer: Box<CppExpression>,
         value_type: CppType,
         span: CppSpan,
     },
@@ -142,6 +155,11 @@ pub enum CppStatement {
     },
     Assign {
         target: CppPlaceReference,
+        value: CppExpression,
+        span: CppSpan,
+    },
+    Store {
+        pointer: CppExpression,
         value: CppExpression,
         span: CppSpan,
     },
@@ -278,9 +296,12 @@ impl CppFunction {
                 CppType::LvalueReference { pointee } => {
                     require_int32(pointee, true, "reference pointee")?;
                 }
+                CppType::Pointer { pointee } => {
+                    require_int32(pointee, false, "pointer pointee")?;
+                }
                 _ => {
                     return Err(
-                        "the supported C++ parameters are by-value `bool`, `int&`, and `const int&`"
+                        "the supported C++ parameters are by-value `bool`, `int&`, `const int&`, and `int*`"
                             .into(),
                     );
                 }
@@ -382,6 +403,17 @@ impl CppStatement {
                 value.validate(places, logical_source)?;
                 require_int32(value.value_type(), false, "assignment value")
             }
+            Self::Store {
+                pointer,
+                value,
+                span,
+            } => {
+                span.validate(logical_source)?;
+                pointer.validate(places, logical_source)?;
+                require_mutable_int32_pointer(pointer.value_type(), "store pointer")?;
+                value.validate(places, logical_source)?;
+                require_int32(value.value_type(), false, "stored value")
+            }
             Self::Return { value, span } => {
                 span.validate(logical_source)?;
                 value.validate(places, logical_source)?;
@@ -470,10 +502,12 @@ impl CppCallArgument {
 }
 
 impl CppExpression {
-    fn value_type(&self) -> &CppType {
+    pub(crate) fn value_type(&self) -> &CppType {
         match self {
             Self::IntegerLiteral { value_type, .. }
             | Self::Load { value_type, .. }
+            | Self::AddressOf { value_type, .. }
+            | Self::Dereference { value_type, .. }
             | Self::Binary { value_type, .. } => value_type,
         }
     }
@@ -515,7 +549,40 @@ impl CppExpression {
                         require_int32(place_type, false, "loaded local")?;
                         require_int32(value_type, false, "loaded value type")
                     }
+                    CppType::Pointer { .. } => {
+                        require_mutable_int32_pointer(place_type, "loaded pointer parameter")?;
+                        require_mutable_int32_pointer(value_type, "loaded pointer value type")
+                    }
                 }
+            }
+            Self::AddressOf {
+                place,
+                value_type,
+                span,
+            } => {
+                span.validate(logical_source)?;
+                let place_type = validate_place_reference(place, places, logical_source)?;
+                match place_type {
+                    CppType::LvalueReference { pointee } => {
+                        require_int32(pointee, false, "addressed reference pointee")?;
+                    }
+                    _ => {
+                        return Err(
+                            "supported C++ address-of must name a mutable `int&` parameter".into(),
+                        );
+                    }
+                }
+                require_mutable_int32_pointer(value_type, "address-of result type")
+            }
+            Self::Dereference {
+                pointer,
+                value_type,
+                span,
+            } => {
+                span.validate(logical_source)?;
+                pointer.validate(places, logical_source)?;
+                require_mutable_int32_pointer(pointer.value_type(), "dereference operand")?;
+                require_int32(value_type, false, "dereference result type")
             }
             Self::Binary {
                 left,
@@ -548,7 +615,9 @@ impl CppStatement {
                 else_branch,
                 ..
             } => sequence_always_returns(then_branch) && sequence_always_returns(else_branch),
-            Self::Declare { .. } | Self::Assign { .. } | Self::Call { .. } => false,
+            Self::Declare { .. } | Self::Assign { .. } | Self::Store { .. } | Self::Call { .. } => {
+                false
+            }
         }
     }
 }
@@ -641,7 +710,9 @@ fn collect_calls<'a>(
                 collect_calls(then_branch, calls);
                 collect_calls(else_branch, calls);
             }
-            CppStatement::Assign { .. } | CppStatement::Return { .. } => {}
+            CppStatement::Assign { .. }
+            | CppStatement::Store { .. }
+            | CppStatement::Return { .. } => {}
         }
     }
 }
@@ -703,6 +774,11 @@ fn validate_call_arguments(
                     _ => false,
                 }
             }
+            (CppCallArgument::Value { value }, CppType::Pointer { pointee }) => {
+                require_int32(pointee, false, "call pointer parameter").is_ok()
+                    && require_mutable_int32_pointer(value.value_type(), "call pointer argument")
+                        .is_ok()
+            }
             _ => false,
         };
         if !compatible {
@@ -762,6 +838,15 @@ fn require_int32(value: &CppType, allow_const: bool, label: &str) -> Result<(), 
             is_const,
         } if allow_const || !is_const => Ok(()),
         _ => Err(format!("{label} is outside the first C++ `int` slice")),
+    }
+}
+
+fn require_mutable_int32_pointer(value: &CppType, label: &str) -> Result<(), String> {
+    match value {
+        CppType::Pointer { pointee } => require_int32(pointee, false, label),
+        _ => Err(format!(
+            "{label} is outside the supported C++ mutable `int*` slice"
+        )),
     }
 }
 
