@@ -20,11 +20,12 @@ mutex-protected mutation, and one-shot release/acquire publication. The other
 demos exercise object representation copying, C cleanup jumps and narrow C++
 exception unwinding, and independently owned parents sharing a child.
 
-Forward goto cleanup support is P1 as a dependency of the control-flow demo;
-general backward and irreducible jumps remain deferred. Normal C++ cleanup
-lands before the exception probe. Each milestone keeps a bounded support
-claim and uses the existing proof engine with deterministic scaling evidence.
-Close an issue only when its fix, regression coverage, and documentation land.
+The forward goto cleanup dependency is implemented; general backward and
+irreducible jumps remain deferred. The control-flow demo still owns the narrow
+cross-call C++ exception probe. Normal C++ cleanup lands before that probe.
+Each milestone keeps a bounded support claim and uses the existing proof
+engine with deterministic scaling evidence. Close an issue only when its fix,
+regression coverage, and documentation land.
 
 Keep verifier correctness and tooling stability ahead of feature work. A
 soundness bug or broken verification, expansion, or diagnostic boundary is a

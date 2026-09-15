@@ -1,22 +1,20 @@
-# P1: Forward `goto` cleanup edges; broader jumps deferred
+# P2: General backward and irreducible `goto`
 
 Found during the 2026-09-03 control-flow follow-up after commit 184b4ef2.
 
-Promoted on 2026-09-15 as a prerequisite for the P1
-[control-flow demo](control-flow-demo.md). The before-launch requirement is
-the forward cleanup slice specified below: labels, checked forward edges,
-target resumption, and joins, including a chain of cleanup labels. General
-backward jumps, entry into unsupported scopes, and irreducible control flow
-remain P2. This priority does not make full goto support a dependency of the
-first basic-C++ slice.
+The P1 forward-cleanup prerequisite for the
+[control-flow demo](control-flow-demo.md) landed in commits `9e247956`,
+`2e3bdcb9`, and the cleanup-chain regression linked below. Click now has
+checked forward edges from function bodies and `if` arms to later
+function-scope labels, exact target resumption, path joins, and chained
+ordinary C cleanup. This issue now tracks only the deferred general jump
+shapes.
 
-C0 has no labels or `goto`. This is a separate problem from structured loop
-control: the current kernel executes a statement tree with a remaining-source
-tail, while the proof frontier assumes that source indices advance through
-that tree except for loop continuations. A `goto` can skip that tail, enter a
-different source region, or create a backward edge. Treating it as `break`, a
-hidden flag, or a source rewrite would lose the C control-flow semantics that
-Click is meant to verify.
+C0 accepts the documented forward subset but still rejects backward edges,
+jumps involving loops or switches, labels nested below the function body, and
+edges across unsupported declaration scopes. Treating those shapes as
+`break`, a hidden flag, or a source rewrite would lose the C control-flow
+semantics that Click is meant to verify.
 
 ## Cross-language edge design
 
@@ -55,40 +53,40 @@ at the jump, apply any required checked scope-exit effects, and resume exactly
 at its target. Ordinary statements skipped by the jump execute on neither
 the jump path nor its proof trace.
 
+## Delivered forward boundary
+
+The durable regressions are
+[`forward_goto_direct.md`](../mdtests/forward_goto_direct.md),
+[`forward_goto_conditional.md`](../mdtests/forward_goto_conditional.md), and
+[`forward_goto_cleanup_chain.md`](../mdtests/forward_goto_cleanup_chain.md).
+They cover checked edges, skipped statements and conditionals, conditional
+path joins, label chains, allocation cleanup, expansion, and hostile missing
+cleanup. Parser tests retain the unsupported-shape diagnostics.
+
 ## Intended regression
 
-Start with the forward cleanup idiom, then add the general edge cases:
-
-1. A conditional forward `goto cleanup;` that skips ordinary statements and
-   reaches a function-scope cleanup label on both the normal and error paths.
-2. A jump from inside an `if` to a later label, checking that the two paths
-   retain distinct state until their checked join at the label.
-3. Diagnostics for an unknown label, duplicate label, a backward jump, and a
-   jump into a loop, switch, or declaration scope until those shapes are
-   explicitly supported.
+Add a small backward edge whose cycle has an explicit invariant and
+deterministic termination measure. The proof must resume at the exact label
+with the current path state, reject an omitted or non-decreasing measure, and
+expand to a checkable certificate. Then add one independently motivated
+multi-entry or irreducible shape only if its edge invariants and source
+attribution have a bounded rule; do not infer general support from the simple
+cycle.
 
 ## Acceptance criteria
 
-- The parser records labels and `goto` targets, rejects unknown and duplicate
-  labels, and reports unsupported jump shapes without changing the C source.
-- The first semantic slice supports forward jumps to function-scope labels,
-  including the cleanup idiom, with no bypass of a declaration whose runtime
-  initialization must execute before the target.
-- The kernel represents a jump as a checked control-flow edge carrying its
-  target and post-jump state; execution does not emulate the edge with a
-  proof-only local or a hidden conditional flag.
-- The execution frontier and source layout can resume at a target label, and
-  the certificate records and validates the jump edge and all skipped source.
-  Paths that converge at a label use an independently checked state/fact join.
+- Backward edges use explicit checked invariants and termination evidence;
+  an execution or tactic budget is never accepted as a termination proof.
+- The parser assigns each accepted edge a source-attributed target and rejects
+  entry into scopes whose declarations or language-specific lifetime rules
+  make the edge illegal.
+- The kernel edge carries its exact state, obligations, and target through a
+  checked certificate without hidden flags or source rewrites.
+- Multiple entries or irreducible regions, if added, state and check their
+  join interface per incoming edge without scanning or cloning unrelated
+  function state.
 - The edge/scope representation has an explicit account of the C++ cleanup
   and Rust drop design checks above, with language-specific legality and
   reserved normal/unwind distinctions. It does not require a second proof
   engine or treat every scope exit as automatic loan recovery.
-- Backward jumps remain rejected until a termination rule handles their cycle;
-  later support must include a deterministic termination regression rather than
-  relying on an execution budget.
-- The goto regressions and `scripts/check.sh` pass.
-
-When the forward slice and its durable documentation land, its P1 dependency
-is satisfied. Narrow this issue to the still-unsupported general jumps and
-move it back to P2; do not keep backward-jump work on the launch critical path.
+- The general-jump regressions and `scripts/check.sh` pass.

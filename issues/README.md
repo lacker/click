@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (9)
+## P1: before launch (8)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -70,7 +70,6 @@ Program import and execution:
 - [Add basic C++ verification with references and scoped cleanup](basic-cpp-support.md)
 - [Verify Bitcoin Core `MoneyRange` under a supported Clang profile](bitcoin-core-money-range-cpp.md)
 - [Verify a concurrency demo with threads, mutexes, and publication](concurrency-demo.md)
-- [Support forward goto cleanup edges](goto.md)
 - [Verify cleanup jumps and cross-call exception unwinding](control-flow-demo.md)
 
 The C++ dependency order is the basic language/frontend slice first, then the
@@ -88,7 +87,7 @@ Specification and proof:
 
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
 
-## P2: after launch (25)
+## P2: after launch (26)
 
 - [Make `step` simple across a call precondition](simplify-step.md)
 - [Lower a dependent composite argument in every tactic position](dependent-composite-argument-in-tactics.md)
@@ -100,6 +99,7 @@ normal tooling-first policy and moves up.
 
 C language coverage:
 
+- [Support general backward and irreducible goto](goto.md)
 - [Extend static-storage initializers and string-literal coverage](global-variables.md)
 - [Apply Bool integer promotions in ordinary scalar operators](bool-scalar-operator-promotions.md)
 - [Preserve the type of conditional expressions containing calls](conditional-call-result-type.md)

@@ -134,9 +134,10 @@ shared representation.
 
 The separately selected P1 [control-flow demo](../issues/control-flow-demo.md)
 now requires forward C cleanup jumps and a narrow cross-call C++ exception
-probe before launch. The [goto issue](../issues/goto.md) is P1 for its forward
-slice; general backward jumps remain P2. This does not expand the first
-non-throwing C++ slice or make it wait on exception support.
+probe before launch. Its forward C prerequisite is now implemented; the
+remaining [goto issue](../issues/goto.md) tracks general backward and
+irreducible jumps at P2. This does not expand the first non-throwing C++ slice
+or make it wait on exception support.
 
 ## Shared resources and Rust borrowing
 
