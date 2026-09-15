@@ -931,15 +931,8 @@ fn advance_execution_proof_statement(
                         .iter()
                         .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
                     {
-                        let mut invariant_targets = transition.pure_facts.iter().filter(|fact| {
-                            !context.pure_facts.contains(fact)
-                                && !matches!(
-                                    fact,
-                                    Proposition::CMemoryEffectSummary { .. }
-                                        | Proposition::CMemoryMutatesOnly { .. }
-                                        | Proposition::CHeapAllocationFreed { .. }
-                                )
-                        });
+                        let mut invariant_targets =
+                            loop_invariant_export_facts(&transition.introduced_facts);
                         for surface in loop_clause.items().iter().map(StructuralItem::proposition) {
                             let target = invariant_targets.next().ok_or_else(|| {
                                 ClickError::new(format!(

@@ -1998,32 +1998,11 @@ fn execute_step_from_frontier_position_selecting_path(
         // followed by facts from the false loop-condition path. Preserve that
         // structural association instead of searching the ambient context for
         // a proposition that happens to match.
-        // Isolate the rule's exported facts as the exact successor suffix
-        // beyond the unchanged input prefix. A membership filter would
-        // misalign the positional invariant mapping whenever an exported
-        // fact is already available in a richer goal context.
-        let exported: Vec<&Proposition> = if transition.pure_facts.len()
-            >= available_pure_facts.len()
-            && transition.pure_facts[..available_pure_facts.len()] == available_pure_facts[..]
-        {
-            transition.pure_facts[available_pure_facts.len()..]
-                .iter()
-                .collect()
-        } else {
-            transition
-                .pure_facts
-                .iter()
-                .filter(|fact| !available_pure_facts.contains(fact))
-                .collect()
-        };
-        let mut invariant_targets = exported.into_iter().filter(|fact| {
-            !matches!(
-                fact,
-                Proposition::CMemoryEffectSummary { .. }
-                    | Proposition::CMemoryMutatesOnly { .. }
-                    | Proposition::CHeapAllocationFreed { .. }
-            )
-        });
+        // `introduced_facts` is the checked producer's exact, ordered output
+        // delta.  Do not recover it from the ambient successor context: a
+        // stable invariant can already be present there, and transported
+        // sibling facts can prevent the successor from retaining a prefix.
+        let mut invariant_targets = loop_invariant_export_facts(&transition.introduced_facts);
         let mut mapped_invariants = Vec::new();
         for surface in loop_clause.items().iter().map(StructuralItem::proposition) {
             let target = if let Some((_, target)) = mapped_invariants

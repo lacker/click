@@ -114,14 +114,22 @@ showed that refolding after an explicit unfold already retained the necessary
 load identities: the missing step was publication of binding-dependent arm
 facts at proof-match entry, not a separate fold identity mechanism.
 
-Two later proof-driver gaps are also known from that experiment. Stable loop
-invariants already present in the current context can be misaligned when the
-preservation result is exported by membership filtering. In addition, an
+The stable-loop-invariant export gap is now fixed. Both direct cursor execution
+and forward planning associate declared invariants with the checked statement
+transition's producer-owned `introduced_facts` delta, in its original order,
+after skipping the rule's effect summaries. They no longer recover that delta
+with a suffix guess or membership filtering against ambient facts, so an
+already-known invariant retains its checked export position and unrelated
+sibling facts cannot enter the mapping. The focused source regression is
+`mdtests/loop_stable_invariant_export.md`; its grouped expansion independently
+reverifies, and unit coverage checks exact ordering plus output-sized
+iteration.
+
+One later proof-driver gap remains known from the symbolic experiment. An
 early-return outcome postcondition that inspects a consumed algebraic resource
 model through a pure helper can lower into several candidate paths, none of
-which is selected and checked. These are separate from ownership collection
-and should be reduced with focused regressions before the complete symbolic
-arena transition relies on them.
+which is selected and checked. This is separate from ownership collection and
+must be reduced before the complete symbolic arena transition relies on it.
 
 The empty-arena lifecycle now verifies independently of that partition model.
 `arena_init` returns an `arena_init_result` plus conditional initialized access:
@@ -139,22 +147,20 @@ The use-after-free rejection already lives in
 `mdtests/arena_use_after_free.md`. Double free and overlapping live regions
 still need focused negative regressions.
 
-## Next chunk: retain stable loop invariants at preservation export
+## Next chunk: select and check early-return postcondition lowering paths
 
-Reduce the symbolic arena experiment to a loop whose preservation proof starts
-with a stable invariant already present in the current proof context, adds a
-changing invariant, and exports both after the body. The exported result must
-retain the original invariant's exact checked identity and ordering rather
-than rebuilding the result by membership-filtering a larger fact context.
-Cover the source proof and its expanded certificate, and add a sibling fact
-that must not be exported so the regression distinguishes an exact invariant
-delta from ambient fact retention. Keep export work proportional to the
-declared invariant vector and produced delta; do not scan or clone the complete
-proof state.
+Reduce the symbolic arena experiment to a function that consumes a folded
+algebraic resource, returns early on one C branch, and has an outcome
+postcondition whose pure helper inspects the consumed resource model. Preserve
+all feasible lowering candidates until the return outcome selects one, then
+check and record that exact candidate in the source proof and generated
+certificate. The regression must distinguish branches that expose different
+model constructors, so accepting the first candidate or silently dropping an
+unselected postcondition cannot pass. Keep candidate selection bounded by the
+postcondition's produced alternatives; do not search unrelated ambient facts
+or resources.
 
-After that focused chunk, repair branch-complete early-return postcondition
-lowering with its own regression. Then return to `arena_alloc`: replace the
-fixed `[2, 4)` transition with one
+After that focused chunk, return to `arena_alloc`: replace the fixed `[2, 4)` transition with one
 parameterized by a retained prefix model. Keep the occupancy partition folded
 through the count-validation branches, open it for the scan/mark loops, restore
 it on failure, and on success return the old live prefix, exactly

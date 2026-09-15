@@ -13739,6 +13739,34 @@ fn loop_preservation_if_retains_its_enclosing_match_binding() {
 }
 
 #[test]
+fn stable_loop_invariant_export_expands_and_reverifies() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/loop_stable_invariant_export.md");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("the stable invariant regression should contain Click source");
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+
+    verify_c0_sources(click_source, &c_sources)
+        .expect("the stable invariant should retain its loop export position");
+    let expanded =
+        expand_c0_claim_source(click_source, &c_sources, "fill_tail", CProofClaim::Grouped)
+            .expect("the stable invariant proof should expand");
+    verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
+        panic!("expanded stable invariant proof failed: {error:?}\n{expanded}")
+    });
+}
+
+#[test]
 fn loop_entry_lowering_guard_expands_to_an_explicit_introduction() {
     // Lowering wraps this loop's quantified entry obligation in a loadability
     // guard that has no Surface connective. The guard is derivable at entry

@@ -2,6 +2,27 @@ use super::*;
 use crate::kernel::proof::{CheckedBranchSplit, CheckedBranchSplitError};
 use crate::surface::planning::proposition_search::PropositionSearch;
 
+/// The producer-owned portion of a checked loop transition that can be
+/// associated with declared invariant checks.
+///
+/// Verified loop rules emit effect summaries first, invariant facts in
+/// declaration order, and then the false-guard facts.  Callers consume only
+/// as many entries as there are invariant checks.  In particular, this walks
+/// the statement's exact output delta rather than reconstructing that delta
+/// by comparing the successor against an ambient proof context.
+pub(in crate::surface::proof) fn loop_invariant_export_facts(
+    introduced_facts: &[Proposition],
+) -> impl Iterator<Item = &Proposition> {
+    introduced_facts.iter().filter(|fact| {
+        !matches!(
+            fact,
+            Proposition::CMemoryEffectSummary { .. }
+                | Proposition::CMemoryMutatesOnly { .. }
+                | Proposition::CHeapAllocationFreed { .. }
+        )
+    })
+}
+
 fn missing_prerequisite_error(
     message: impl Into<String>,
     obligation: &ProofObligation,
@@ -1444,6 +1465,45 @@ fn direct_transport_with_frame_premises(
 mod condition_transition_tests {
     use super::*;
     use crate::kernel::{CRuntimeError, c_load, c_variable};
+
+    fn named_fact(name: &str) -> Proposition {
+        Proposition::Predicate {
+            name: name.to_owned(),
+            arguments: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn loop_invariant_exports_use_the_producer_delta_in_order() {
+        let stable = named_fact("stable");
+        let changing = named_fact("changing");
+        let exit_guard = named_fact("exit_guard");
+        let sibling = named_fact("ambient_sibling");
+
+        // The stable invariant and unrelated sibling are both already in the
+        // ambient context.  The checked transition nevertheless publishes the
+        // stable invariant in its producer-owned delta, in declaration order.
+        let ambient = [sibling.clone(), stable.clone()];
+        let introduced = [stable.clone(), changing.clone(), exit_guard];
+        let exported = loop_invariant_export_facts(&introduced)
+            .take(2)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        assert_eq!(exported, [stable, changing]);
+        assert!(!exported.contains(&ambient[0]));
+    }
+
+    #[test]
+    fn loop_invariant_export_iteration_scales_with_the_produced_delta() {
+        for count in [8usize, 32, 128, 512] {
+            let introduced = (0..=count)
+                .map(|index| named_fact(&format!("fact_{index}")))
+                .collect::<Vec<_>>();
+            let exported = loop_invariant_export_facts(&introduced).take(count).count();
+            assert_eq!(exported, count);
+        }
+    }
 
     #[test]
     fn planning_condition_transition_still_checks_execution_obligations() {
