@@ -359,10 +359,18 @@ D2 is settled: rebuild from the record. Depends on W5' and W6'.
   `declared_loop_frame_is_installed_from_the_loop_specs_not_from_segments`,
   the existing loop fixtures (135 pass unchanged), and the retained
   no-fallback and mixed-frame kernel tests.
-- Unify resource clause numbering: the surface stall diagnostic in
-  `resource_lowering.rs` counts surface clauses while the kernel counts
-  lowered specs; a `MemoryAggregate` clause that lowers to several specs
-  would number them differently.
+- Unify resource clause numbering (done 2026-09-15, `Number a refused
+  resource clause by the clause the author wrote`). The premise was
+  slightly off: the parser flattens an aggregate clause (an embedded struct
+  field) into one requirement per segment, so the surface check and the
+  kernel both counted flattened clauses and agreed with each other while
+  disagreeing with the source; reproduced as "resource clause 5 of 5" for
+  the second of two written clauses. The function block now records the
+  source clause of every flattened requirement and ensure, and one helper
+  turns that into source positions for the kernel's stamped clause
+  provenance and the surface loadability check alike. Regressions:
+  `contract_numbers_clauses_by_source_not_by_lowered_spec.md` and its named
+  form.
 - Run the R1 to R6 matrix (table below) across direct calls, named
   callbacks, explicit execution theorems, automatic formation where
   admitted, and certification; then expansion followed by reverification

@@ -2133,17 +2133,31 @@ impl Parser {
         self.current_integer_lets = previous_integer_lets;
         self.integer_literal_context = previous_integer_literal_context;
 
+        // Flattening an aggregate clause keeps the clause the author wrote
+        // beside each member, so diagnostics number clauses as written.
+        let mut requirement_source_clauses = Vec::new();
         let requires: Vec<Requirement> = requires
             .into_iter()
-            .flat_map(expand_aggregate_requirement)
+            .enumerate()
+            .flat_map(|(source, requirement)| {
+                let expanded = expand_aggregate_requirement(requirement);
+                requirement_source_clauses.extend(std::iter::repeat_n(source, expanded.len()));
+                expanded
+            })
             .collect();
         let constructs: Vec<ResourceClause> = constructs
             .into_iter()
             .flat_map(expand_aggregate_resource_clause)
             .collect();
+        let mut ensure_source_clauses = Vec::new();
         let ensures: Vec<EnsureClause> = ensures
             .into_iter()
-            .flat_map(expand_aggregate_ensure_clause)
+            .enumerate()
+            .flat_map(|(source, ensure)| {
+                let expanded = expand_aggregate_ensure_clause(ensure);
+                ensure_source_clauses.extend(std::iter::repeat_n(source, expanded.len()));
+                expanded
+            })
             .collect();
 
         let mut object_alignment_facts = Vec::new();
@@ -2173,11 +2187,13 @@ impl Parser {
             external,
             one_call_proof: false,
             requires,
+            requirement_source_clauses,
             requirement_label_indices,
             decreases,
             structural_clauses: Vec::new(),
             constructs,
             ensures,
+            ensure_source_clauses,
             grouped_proof,
         })
     }

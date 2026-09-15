@@ -952,6 +952,13 @@ pub struct FunctionBlock {
     /// The kernel still checks the complete ordinary statement sequence.
     one_call_proof: bool,
     requires: Vec<Requirement>,
+    /// For each entry of `requires`, the 0-based index of the clause the
+    /// author wrote it in. An aggregate clause (an embedded struct field)
+    /// is flattened into one requirement per segment while parsing; this is
+    /// what lets a diagnostic number clauses the way the source does.
+    /// Empty when the block was built without a source (tests), in which
+    /// case each requirement counts as its own clause.
+    requirement_source_clauses: Vec<usize>,
     /// Parsed once so a simple `choose(... from requirement label)` step does
     /// not linearly rescan every function requirement.
     requirement_label_indices: BTreeMap<String, usize>,
@@ -959,7 +966,34 @@ pub struct FunctionBlock {
     structural_clauses: Vec<StructuralClause>,
     constructs: Vec<ResourceClause>,
     ensures: Vec<EnsureClause>,
+    /// As `requirement_source_clauses`, for `ensures`.
+    ensure_source_clauses: Vec<usize>,
     grouped_proof: Option<SourceProof>,
+}
+
+/// Turns the source clause of each flattened clause into its position among
+/// the distinct source clauses, with their count. A clause with no recorded
+/// source counts as its own clause.
+fn source_positions(sources: impl Iterator<Item = Option<usize>>) -> Vec<(usize, usize)> {
+    let sources = sources.collect::<Vec<_>>();
+    let mut ordinals = Vec::with_capacity(sources.len());
+    let mut distinct: Vec<usize> = Vec::new();
+    for (flattened, source) in sources.iter().enumerate() {
+        let key = source.unwrap_or(usize::MAX - flattened);
+        let ordinal = match distinct.iter().position(|seen| *seen == key) {
+            Some(ordinal) => ordinal,
+            None => {
+                distinct.push(key);
+                distinct.len() - 1
+            }
+        };
+        ordinals.push(ordinal);
+    }
+    let count = distinct.len();
+    ordinals
+        .into_iter()
+        .map(|ordinal| (ordinal, count))
+        .collect()
 }
 
 /// A C function's `decreases` measure.
@@ -5399,6 +5433,33 @@ impl FunctionBlock {
 
     pub fn requires(&self) -> &[Requirement] {
         &self.requires
+    }
+
+    /// The source position of each resource requirement, in order: the
+    /// 1-based-ready index of the clause the author wrote among the resource
+    /// clauses they wrote, and how many of those there are. A flattened
+    /// aggregate's members share one position, so the kernel evaluator and
+    /// the surface loadability check name the clause as it was written.
+    pub fn resource_requirement_positions(&self) -> Vec<(usize, usize)> {
+        source_positions(
+            self.requires
+                .iter()
+                .enumerate()
+                .filter(|(_, requirement)| matches!(requirement.inner(), Requirement::Resource(_)))
+                .map(|(index, _)| self.requirement_source_clauses.get(index).copied()),
+        )
+    }
+
+    /// As [`Self::resource_requirement_positions`], for the resource
+    /// `ensures` clauses.
+    pub fn resource_ensure_positions(&self) -> Vec<(usize, usize)> {
+        source_positions(
+            self.ensures
+                .iter()
+                .enumerate()
+                .filter(|(_, ensure)| matches!(ensure.ensure(), Ensure::Resource(_)))
+                .map(|(index, _)| self.ensure_source_clauses.get(index).copied()),
+        )
     }
 
     pub(in crate::surface) fn requirement_label_indices(&self) -> &BTreeMap<String, usize> {

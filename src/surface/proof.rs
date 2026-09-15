@@ -2907,7 +2907,7 @@ fn evaluate_entry_resource_context(
             // and retain the kernel's clause-positioned error.
             if let Err(surface_error) =
                 crate::surface::lowering::check_resource_segment_base_loadability(
-                    function_block.requires(),
+                    function_block,
                     parsed_function.parameters(),
                     arguments,
                     &state,

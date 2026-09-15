@@ -5489,11 +5489,16 @@ pub(in crate::surface) fn function_resource_summary(
         .iter()
         .filter(|requirement| matches!(requirement.inner(), Requirement::Resource(_)))
         .count();
+    let resource_positions = function_block.resource_requirement_positions();
     let mut resource_clause_index = 0;
     for requirement in function_block.requires() {
         let Requirement::Resource(resource) = requirement.inner() else {
             continue;
         };
+        let (clause_index, clause_count) = resource_positions
+            .get(resource_clause_index)
+            .copied()
+            .unwrap_or((resource_clause_index, resource_clause_count));
         let first_spec = requires.len();
         append_entry_resource_specs(
             resource,
@@ -5521,7 +5526,7 @@ pub(in crate::surface) fn function_resource_summary(
                 .clone()
                 .with_role(role)
                 .with_snapshot(CResourceSnapshot::Entry)
-                .with_clause_position(resource_clause_index, resource_clause_count);
+                .with_clause_position(clause_index, clause_count);
         }
         resource_clause_index += 1;
     }
@@ -5531,11 +5536,16 @@ pub(in crate::surface) fn function_resource_summary(
         .iter()
         .filter(|ensure| matches!(ensure.ensure(), Ensure::Resource(_)))
         .count();
+    let ensure_positions = function_block.resource_ensure_positions();
     let mut ensure_clause_index = 0;
     for ensure in function_block.ensures() {
         let Ensure::Resource(resource) = ensure.ensure() else {
             continue;
         };
+        let (clause_index, clause_count) = ensure_positions
+            .get(ensure_clause_index)
+            .copied()
+            .unwrap_or((ensure_clause_index, ensure_clause_count));
         let role = if ensure.borrowed() {
             CResourceTransferRole::Borrow
         } else {
@@ -5561,7 +5571,7 @@ pub(in crate::surface) fn function_resource_summary(
             if ensure.borrowed() && spec.is_instance() {
                 spec = spec.with_snapshot(CResourceSnapshot::Post);
             }
-            ensures.push(spec.with_clause_position(ensure_clause_index, ensure_clause_count));
+            ensures.push(spec.with_clause_position(clause_index, clause_count));
         }
         ensure_clause_index += 1;
     }

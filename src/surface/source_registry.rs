@@ -480,6 +480,8 @@ mod tests {
             structural_clauses: Vec::new(),
             constructs: Vec::new(),
             ensures: Vec::new(),
+            requirement_source_clauses: Vec::new(),
+            ensure_source_clauses: Vec::new(),
             grouped_proof: None,
         }
     }

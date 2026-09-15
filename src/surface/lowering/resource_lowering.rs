@@ -345,21 +345,35 @@ fn materialize_symbolic_access_resource_cells(
 /// (`resource_clause_position_note`, `resource_clause_stall_note`) rather
 /// than inventing a second one for one defect.
 pub(in crate::surface) fn check_resource_segment_base_loadability(
-    requires: &[Requirement],
+    function_block: &FunctionBlock,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
     assumptions: &PureFactContext,
 ) -> Result<(), ClickError> {
-    let clauses = requires
+    let clauses = function_block
+        .requires()
         .iter()
         .filter_map(|requirement| match requirement.inner() {
             Requirement::Resource(resource) => Some(resource),
             _ => None,
         })
         .collect::<Vec<_>>();
+    // Positions are the clauses the author wrote: a flattened aggregate's
+    // members share one, the same numbering the kernel evaluator carries.
+    let positions = function_block.resource_requirement_positions();
+    let clause_count = positions.first().map_or(clauses.len(), |(_, count)| *count);
     let mut stalled = Vec::new();
-    for (position, resource) in clauses.iter().enumerate() {
+    for (flattened, resource) in clauses.iter().enumerate() {
+        let position = positions
+            .get(flattened)
+            .map_or(flattened, |(position, _)| *position);
+        if stalled
+            .iter()
+            .any(|(seen, _, _): &(usize, String, String)| *seen == position)
+        {
+            continue;
+        }
         let segments: &[ContractSegment] = match resource {
             ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
                 std::slice::from_ref(segment)
@@ -395,7 +409,7 @@ pub(in crate::surface) fn check_resource_segment_base_loadability(
     // position instead of sending the user to whichever was written first.
     let note = match stalled.get(1) {
         Some((other, _, _)) => crate::kernel::resource_clause_stall_note(*position, *other),
-        None => crate::kernel::resource_clause_position_note(*position, clauses.len()),
+        None => crate::kernel::resource_clause_position_note(*position, clause_count),
     };
     Err(ClickError::new(format!(
         "could not address resource clause `{segment}` ({note}): {message}"
