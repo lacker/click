@@ -371,10 +371,33 @@ D2 is settled: rebuild from the record. Depends on W5' and W6'.
   provenance and the surface loadability check alike. Regressions:
   `contract_numbers_clauses_by_source_not_by_lowered_spec.md` and its named
   form.
-- Run the R1 to R6 matrix (table below) across direct calls, named
-  callbacks, explicit execution theorems, automatic formation where
-  admitted, and certification; then expansion followed by reverification
-  and the audit/profile agreement checks, through the shared engine.
+- Run the R1 to R6 matrix (done 2026-09-15, checked table below). Every
+  fixture in the matrix was run alone through the mdtest harness with an
+  unpiped verdict: 59 fixtures and the 5 pinned kernel tests all exit 0.
+  Expansion then reverification: `click expand --claim` on
+  `rb_augment_callbacks_helper_mutates_body.md` (`erase_mutating.contract`)
+  and `c_contract_executes_counter_forward.md` (`invoke.contract`) wrote
+  artifacts with every `execute()`/`simp()` replaced by explicit steps;
+  both artifacts pass the mdtest harness and `click audit` (0 and 2 smart
+  sites left to audit, 0 failures). `click audit` on four matrix fixtures reverifies 11 retained
+  sites with 0 failures. **Finding, verified, not filed:** R2's call forms
+  do not hold. A function whose contract has a dependent composite
+  argument (`owns pair(node); owns pair(node->left->left)`) verifies at
+  its own entry and prepares as a named contract, but no call to it
+  verifies: the dependent argument lowers to `loadable(node, 8)` as a
+  precondition of the callee, and the caller, holding `pair(node)` folded,
+  cannot discharge it under the retained-evidence rule for call
+  preconditions, with or without `observe` of the composite, at depth two
+  or three. The direct call, the named callback application, the execution
+  theorem, and automatic formation through a call all fail on that one
+  precondition (the theorem block additionally cannot lower
+  `observe(pair(node->left->left))`). Pinned as the frontier fixture
+  `contract_owns_composite_argument_call_frontier.md`; the probes for the
+  other forms are in the session record. The fix direction is that a call
+  boundary should evaluate a dependent clause set the way the callee's
+  entry does, from the transferred clauses, instead of emitting the link
+  load as a caller precondition. This is the one open item against the R2
+  acceptance criterion.
 - Update `docs/concepts/resources.md`, `docs/concepts/contracts.md`, and
   `docs/internals/architecture.md` to describe the shared interface, the
   single transition record, and the retained family distinctions. Do not
@@ -385,14 +408,14 @@ D2 is settled: rebuild from the record. Depends on W5' and W6'.
 
 ## Regression matrix
 
-Positive and paired negative cases. Rows marked "in corpus" name the
-fixtures believed to pin the behavior today; W7' confirms the full matrix
-rather than trusting this table.
+Positive and paired negative cases. Every fixture named here was run alone
+on 2026-09-15 with an unpiped verdict (all exit 0); the "still to add"
+column is the checked residue.
 
 | ID | Behavior | In corpus | Still to add |
 | --- | --- | --- | --- |
 | R1 | `owns pair(node)` supplies the link for a separate `owns node->right->augmented`; missing authority or guard fails locally. | `contract_owns_composite_argument*.md`, `contract_owns_through_composite_field*.md`, `contract_dynamic_loadable_*`, `contract_nested_*` | none known |
-| R2 | The same dependent clause through named callback, execution theorem, automatic formation, and certification. | direct and named paths in the R1 fixtures; `named_contract_rejects_unheld_link_read.md` | execution-theorem and certification variants (W7') |
+| R2 | The same dependent clause through named callback, execution theorem, automatic formation, and certification. | entry and named-contract preparation in the R1 fixtures; `named_contract_rejects_unheld_link_read.md`; certification by `contract_certification_reports_resource_error.md` | every call form: pinned open as `contract_owns_composite_argument_call_frontier.md` (see the finding above) |
 | R3 | One scoped open, three owned-footprint callbacks, permitted mutation, changed cell and consumed support rejected, no call after the close. | `rb_augment_callbacks_helper_{owns,owns_cell_separate,owns_rejects_unseparated,mutates_body,mutates_body_stepwise,rejects_changed_cell,consumes_suite,rejects_call_after_close,calls_after_close_through_view}.md` | none known |
 | R4 | Raw and one-layer `Buffer` have the same checked effects; unrelated cell and token framed; out-of-authority write and view-to-own fail. | `c_contract_executes_buffer.md`, `c_named_function_contract_frames_*`, `c_named_function_contract_rejects_ownership_from_view.md` | none known |
 | R5 | Entry-selected `owns` range after a field change; returned instance with identity and fresh fields; no retargeting, invented preservation, or aliased identities. | `field_derived_view_does_not_retarget_after_a_pointer_write`, `c_contract_executes_counter_{forward,wrong_instance,unpromised_field}.md`, `c_call_binder_transport*.md`, `direct_call_map_is_checked_in_kernel_like_named_proof_arguments` | none known |
