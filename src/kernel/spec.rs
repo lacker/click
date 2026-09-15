@@ -5009,7 +5009,7 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
             algebraic_bindings,
             budget,
         )?,
-        SpecExpression::Subtract(left, right) => evaluate_spec_scalar_binary_paths(
+        SpecExpression::Subtract(left, right) => evaluate_spec_subtract_paths(
             state,
             left,
             right,
@@ -5017,9 +5017,6 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
             assumptions,
             algebraic_bindings,
             budget,
-            |left, right, facts, obligations| {
-                apply_c_scalar_subtract(left, right, facts, obligations, assumptions)
-            },
         )?,
         SpecExpression::Multiply(left, right) => evaluate_spec_scalar_binary_paths(
             state,
@@ -5791,6 +5788,63 @@ pub(super) fn evaluate_spec_add_paths(
             };
             paths.extend(spec_value_paths(
                 apply_c_add(
+                    state,
+                    left_path.value.clone(),
+                    right_path.value,
+                    left_step_width,
+                    right_step_width,
+                    facts,
+                    obligations,
+                    assumptions,
+                ),
+                budget,
+            ));
+        }
+    }
+    Ok(paths)
+}
+
+pub(super) fn evaluate_spec_subtract_paths(
+    state: &CState,
+    left: &SpecExpression,
+    right: &SpecExpression,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecExpressionPath>> {
+    let mut paths = Vec::new();
+    let left_step_width = spec_expression_pointer_step_width(state, left);
+    let right_step_width = spec_expression_pointer_step_width(state, right);
+    for left_path in evaluate_spec_expression_paths_with_algebraic_bindings(
+        state,
+        left,
+        loop_entry_state,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )? {
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
+        for right_path in evaluate_spec_expression_paths_with_algebraic_bindings(
+            state,
+            right,
+            loop_entry_state,
+            &right_assumptions,
+            algebraic_bindings,
+            budget,
+        )? {
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                &left_path.facts,
+                &left_path.obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+            paths.extend(spec_value_paths(
+                apply_c_subtract(
                     state,
                     left_path.value.clone(),
                     right_path.value,
@@ -7763,6 +7817,59 @@ mod lowering_provenance_tests {
             recorded.is_empty(),
             "unexpected existential head chain: {recorded:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod spec_pointer_subtraction_tests {
+    use super::*;
+
+    #[test]
+    fn specification_subtraction_retains_pointer_provenance_and_overflow_guards() {
+        let external = |variable| Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(Bitvector32Term::Variable(Variable(variable))),
+                byte_width: 4,
+            },
+        };
+        let left = external(32_000);
+        let right = external(32_001);
+        let state = CState::new()
+            .with_local("left", CValue::pointer(left.clone()))
+            .with_local("right", CValue::pointer(right.clone()));
+        let expression = SpecExpression::Subtract(
+            Box::new(SpecExpression::CExpression(c_variable("right"))),
+            Box::new(SpecExpression::CExpression(c_variable("left"))),
+        );
+
+        let paths = evaluate_spec_expression_paths_with_loop_entry(
+            &state,
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("pointer subtraction should stay within its specification budget");
+        assert_eq!(paths.len(), 1);
+        assert_eq!(
+            paths[0].value,
+            int32(Bitvector32Term::subtract(
+                Bitvector32Term::Variable(Variable(32_001)),
+                Bitvector32Term::Variable(Variable(32_000)),
+            ))
+        );
+        assert!(paths[0].facts.contains(&ExecutionPureFact::condition(
+            pointer_same_object_condition(&right, &left),
+            true,
+        )));
+        assert!(paths[0].facts.contains(&ExecutionPureFact::condition(
+            ConditionTerm::signed_subtract_overflows(
+                Bitvector32Term::Variable(Variable(32_001)),
+                Bitvector32Term::Variable(Variable(32_000)),
+            ),
+            false,
+        )));
     }
 }
 

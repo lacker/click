@@ -873,6 +873,12 @@ and memory-load obligations share the same rules as execution. It currently
 accepts C0 expression fragments; `old`, `at`, folds, lets, and Click function
 calls inside `defined(...)` are not yet supported.
 
+For two object pointers, `defined(right - left)` includes both the
+`same_object(right, left)` provenance condition and the requirement that their
+element distance fit in `int32`. A modular pointer-distance helper can use that
+single requirement; a concrete same-array caller, including one using its
+one-past endpoint, discharges it from the pointer objects and their offsets.
+
 `same_object(left, right)` states that two object pointers carry provenance
 from the same C array or aggregate object. It is the required precondition for
 relational pointer comparison or pointer subtraction between independently

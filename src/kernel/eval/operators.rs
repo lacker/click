@@ -713,35 +713,6 @@ fn apply_c_wide_comparison(
     condition_as_c_int32_paths(condition, facts, obligations, assumptions)
 }
 
-pub(in crate::kernel) fn apply_c_scalar_subtract(
-    left: CValue,
-    right: CValue,
-    facts: Vec<ExecutionPureFact>,
-    obligations: Vec<ProofObligation>,
-    assumptions: &PureFactContext,
-) -> Vec<CExpressionPath> {
-    let Some(width) = scalar_width(&left, &right) else {
-        return vec![c_type_mismatch_expression_path(facts, obligations)];
-    };
-    if matches!(width, ScalarWidth::Int64 | ScalarWidth::UInt64) {
-        return apply_c_wide_subtract(left, right, width, facts, obligations, assumptions);
-    }
-    let mut facts = facts;
-    let Some((left, right, width)) = apply_c_scalar_terms(left, right, &mut facts, assumptions)
-    else {
-        return Vec::new();
-    };
-    if matches!(width, ScalarWidth::UInt32) {
-        vec![CExpressionPath {
-            outcome: CExpressionOutcome::Value(uint32(Bitvector32Term::subtract(left, right))),
-            facts,
-            obligations,
-        }]
-    } else {
-        apply_c_int32_subtract(left, right, facts, obligations, assumptions)
-    }
-}
-
 pub(in crate::kernel) fn apply_c_multiply(
     left: CValue,
     right: CValue,
