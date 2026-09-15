@@ -191,14 +191,64 @@ edited by two workers concurrently.
 
 D1 is settled: provenance first.
 
-- Measure first. Under ordinary bounded verification, find which corpus
-  proofs and which of the three `memory_provenance.rs` hops reach
-  `frame_expanded_compositions`, and confirm whether `examples/owned-vector`
-  verifies within the deterministic budget today. Record the commands and
-  the counts; do not raise budgets.
-- Implement D1's chosen option. Delete `frame_expanded_compositions` and its
-  memo if provenance-first is chosen; otherwise index and bound it. Either
-  way no hop may scan compositions unrelated to the queried pointer.
+**D1 landed 2026-09-14** (`Frame loads across havoc through the one-level
+composite frontier`, base `083ebcf8`). Measurement first: with the
+recursive expansion disabled outright, 1 of 1,520 mdtests failed
+(`call_havoc_keeps_names_by_ownership.md`, depth one) and all 27 examples
+passed, `owned-vector` within budget; the frame path fell through 13,218
+times without any other proof noticing. The frame check now opens each
+owned composite of a published composition one level
+(`expand_owned_composite_resource_facts_one_level`,
+`frame_frontier_compositions`); nested composites stay folded and a cell
+below the frontier is refused. Regressions:
+`frame_check_opens_owned_composites_one_level_and_charges_per_head`
+(frontier framed, nested refused, work constant over depths 1, 2, 4, 8) and
+`mdtests/rb_augment_callbacks_helper_rejects_call_after_close.md` (R3:
+permitted mutation inside one open, close, next callback call refused for
+the missing view of the callback cell). Gate: unfiltered `scripts/check.sh`
+exit 0. The walk over the published compositions is retained and bounded
+by the proof's own compositions (11 at most in the corpus); it is not a
+project-wide scan. A depth-two mdtest was attempted and dropped: the
+natural proof failed under the old recursive expansion too, and the
+unfolded spellings hit the two findings below, so the nesting rule is
+pinned at the kernel level.
+
+Findings from this chunk, reported and not filed:
+
+- `open(viewed composite) { step(); ... }` refuses the close with
+  `kernel rejected checked resource close: the rewritten composite is
+  absent from both resource representations`, even when every call stays
+  inside the open, while `open { execute(); }` on the same fixture passes.
+  Reduction: `rb_augment_callbacks_helper_mutates_body.md` with
+  `step(); step(); step();` in place of `execute();`. The owned spelling
+  (`owns callback_suite`) works with steps, which the new fixture uses.
+- After `execute()` reaches the outcome state, `unfold(tree(r))` followed
+  by `unfold(leaf_cell(r->leaf))` fails to lower the nested argument
+  (`missing pure fact: loadable(base=r, bytes=8)`), although the same two
+  unfolds lower before `execute()` (`c_chained_field_access.md`).
+
+Classification of the remaining W5 semantic cases:
+
+- Mutation then scoped-open expiry: pinned by the new fixture (owned
+  spelling); the viewed spelling waits on the first finding.
+- Fresh ensures after invalidation: the verified call path builds the post
+  state from the havoc memory through the state's memory hook before the
+  return outputs are installed (`functions.rs`, call havoc then
+  `post_outputs`). Under the partition invariant a havoc range and a live
+  residual support come from distinct occurrences, so the memory hook is
+  defense in depth there; support consumption is pinned by
+  `rb_augment_callbacks_helper_consumes_suite.md`. No further fixture.
+- Nested and opaque composite prerequisite footprints: E1's
+  `observed_projection_tracks_loaded_*_prerequisite` tests remain the
+  coverage; opaque footprints stay conservative (`Unknown`).
+- Support preservation through fold/unfold/open/close: the stable-views
+  regression map rows for composites and escaping borrows.
+
+W5' is complete apart from the two findings, which are tooling gaps
+outside its scope.
+
+- Measure first (done, above).
+- Implement D1's chosen option (done, above).
 - Classify each remaining W5 semantic case as covered by an existing
   stable-view or callback regression, or add the one missing fixture:
   a permitted callback mutation followed by scoped-open expiry (the
@@ -273,7 +323,7 @@ rather than trusting this table.
 | --- | --- | --- | --- |
 | R1 | `owns pair(node)` supplies the link for a separate `owns node->right->augmented`; missing authority or guard fails locally. | `contract_owns_composite_argument*.md`, `contract_owns_through_composite_field*.md`, `contract_dynamic_loadable_*`, `contract_nested_*` | none known |
 | R2 | The same dependent clause through named callback, execution theorem, automatic formation, and certification. | direct and named paths in the R1 fixtures; `named_contract_rejects_unheld_link_read.md` | execution-theorem and certification variants (W7') |
-| R3 | One scoped open, three owned-footprint callbacks, permitted mutation, changed cell and consumed support rejected. | `rb_augment_callbacks_helper_{owns,owns_cell_separate,owns_rejects_unseparated,mutates_body,rejects_changed_cell,consumes_suite}.md` | mutation followed by scoped-open expiry (W5') |
+| R3 | One scoped open, three owned-footprint callbacks, permitted mutation, changed cell and consumed support rejected, no call after the close. | `rb_augment_callbacks_helper_{owns,owns_cell_separate,owns_rejects_unseparated,mutates_body,rejects_changed_cell,consumes_suite,rejects_call_after_close}.md` | viewed-suite spelling of the close case (blocked on the step/execute finding) |
 | R4 | Raw and one-layer `Buffer` have the same checked effects; unrelated cell and token framed; out-of-authority write and view-to-own fail. | `c_contract_executes_buffer.md`, `c_named_function_contract_frames_*`, `c_named_function_contract_rejects_ownership_from_view.md` | none known |
 | R5 | Entry-selected `owns` range after a field change; returned instance with identity and fresh fields; no retargeting, invented preservation, or aliased identities. | `field_derived_view_does_not_retarget_after_a_pointer_write`, `c_contract_executes_counter_{forward,wrong_instance,unpromised_field}.md` | three-form agreement (W6') |
 | R6 | Callback borrows a token or view without a persistent caller view; double consumption fails; scoped views do not escape. | `c_named_function_contract_borrows_*`, `c_named_function_contract_rejects_consumed_*`, `resource_scope_*.md`, `borrowing_composite_survives_an_owning_call.md` | none known |
