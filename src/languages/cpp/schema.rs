@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 8;
+pub(crate) const EXPORT_SCHEMA: u32 = 9;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -28,6 +28,7 @@ pub struct CppRecord {
     pub size_bytes: u32,
     pub alignment_bytes: u32,
     pub fields: Vec<CppField>,
+    pub destructor: Option<CppFunctionReference>,
     pub span: CppSpan,
 }
 
@@ -71,6 +72,10 @@ pub struct CppFunction {
 pub enum CppFunctionKind {
     Free,
     Constructor {
+        record_declaration_id: String,
+        record_name: String,
+    },
+    Destructor {
         record_declaration_id: String,
         record_name: String,
     },
@@ -189,6 +194,16 @@ pub struct CppFieldInitializer {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CppCleanup {
+    Destructor {
+        object: CppPlaceReference,
+        callee: CppFunctionReference,
+        span: CppSpan,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CppCallArgument {
     Value { value: CppExpression },
     Reference { place: CppPlaceReference },
@@ -242,6 +257,7 @@ pub enum CppStatement {
     },
     Return {
         value: CppExpression,
+        cleanups: Vec<CppCleanup>,
         span: CppSpan,
     },
     If {
@@ -347,6 +363,37 @@ impl CppExport {
             }
         }
 
+        for record in &self.records {
+            let Some(destructor) = &record.destructor else {
+                continue;
+            };
+            let target = functions.get(&destructor.declaration_id).ok_or_else(|| {
+                format!(
+                    "C++ record `{}` refers to missing destructor definition `{}`",
+                    record.name, destructor.declaration_id
+                )
+            })?;
+            if target.name != destructor.name {
+                return Err(format!(
+                    "C++ destructor declaration `{}` is named `{}`, not `{}`",
+                    destructor.declaration_id, target.name, destructor.name
+                ));
+            }
+            if !matches!(
+                &target.function_kind,
+                CppFunctionKind::Destructor {
+                    record_declaration_id,
+                    record_name,
+                } if record_declaration_id == &record.declaration_id
+                    && record_name == &record.name
+            ) {
+                return Err(format!(
+                    "C++ record `{}` has a mismatched destructor declaration",
+                    record.name
+                ));
+            }
+        }
+
         let mut visiting = Vec::new();
         let mut visited = std::collections::BTreeSet::new();
         validate_reachable_calls(
@@ -372,6 +419,15 @@ impl CppRecord {
             return Err("C++ record is missing declaration identity".into());
         }
         self.span.validate(logical_source)?;
+        if let Some(destructor) = &self.destructor {
+            if destructor.declaration_id.is_empty() || destructor.name.is_empty() {
+                return Err(format!(
+                    "C++ record `{}` has an unidentified destructor",
+                    self.name
+                ));
+            }
+            destructor.span.validate(logical_source)?;
+        }
         if self.fields.is_empty()
             || self.alignment_bytes == 0
             || !self.alignment_bytes.is_power_of_two()
@@ -432,6 +488,17 @@ impl CppRecord {
 }
 
 impl CppFunction {
+    fn place_type(&self, declaration_id: &str) -> Option<&CppType> {
+        self.parameters
+            .iter()
+            .chain(self.body.iter().filter_map(|statement| match statement {
+                CppStatement::Declare { local, .. } => Some(local),
+                _ => None,
+            }))
+            .find(|place| place.declaration_id == declaration_id)
+            .map(|place| &place.value_type)
+    }
+
     fn validate(
         &self,
         logical_source: &str,
@@ -447,10 +514,14 @@ impl CppFunction {
             CppFunctionKind::Constructor {
                 record_declaration_id,
                 record_name,
+            }
+            | CppFunctionKind::Destructor {
+                record_declaration_id,
+                record_name,
             } => {
                 if self.return_type != CppType::Void {
                     return Err(format!(
-                        "C++ constructor `{}` must have void artifact return type",
+                        "C++ object operation `{}` must have void artifact return type",
                         self.name
                     ));
                 }
@@ -515,11 +586,15 @@ impl CppFunction {
         if let CppFunctionKind::Constructor {
             record_declaration_id,
             record_name,
+        }
+        | CppFunctionKind::Destructor {
+            record_declaration_id,
+            record_name,
         } = &self.function_kind
         {
             let Some(self_parameter) = self.parameters.first() else {
                 return Err(format!(
-                    "C++ constructor `{}` is missing its explicit object parameter",
+                    "C++ object operation `{}` is missing its explicit object parameter",
                     self.name
                 ));
             };
@@ -535,10 +610,25 @@ impl CppFunction {
                 )
             {
                 return Err(format!(
-                    "C++ constructor `{}` has an invalid explicit object parameter",
+                    "C++ object operation `{}` has an invalid explicit object parameter",
                     self.name
                 ));
             }
+            if matches!(self.function_kind, CppFunctionKind::Destructor { .. })
+                && self.parameters.len() != 1
+            {
+                return Err(format!(
+                    "C++ destructor `{}` cannot have explicit parameters",
+                    self.name
+                ));
+            }
+        }
+        if let CppFunctionKind::Constructor {
+            record_declaration_id,
+            record_name,
+        } = &self.function_kind
+        {
+            let self_parameter = &self.parameters[0];
             let record = validate_record_reference(records, record_declaration_id, record_name)?;
             if self.body.len() < record.fields.len() {
                 return Err(format!(
@@ -577,6 +667,7 @@ impl CppFunction {
             return Err("supported C++ function has no executable statements".into());
         }
         let mut aggregate_locals = 0;
+        let mut destructible_local = None;
         for statement in &self.body {
             if let CppStatement::Declare {
                 local,
@@ -597,13 +688,22 @@ impl CppFunction {
                         declaration_id,
                         name,
                     } => {
-                        validate_record_reference(records, declaration_id, name)?;
+                        let record = validate_record_reference(records, declaration_id, name)?;
                         aggregate_locals += 1;
                         if aggregate_locals > 1 {
                             return Err(format!(
                                 "C++ function `{}` declares more than one aggregate local",
                                 self.name
                             ));
+                        }
+                        if record.destructor.is_some() {
+                            if !matches!(initializer, CppInitializer::Constructor { .. }) {
+                                return Err(format!(
+                                    "C++ local `{}` with nontrivial destruction requires direct constructor initialization",
+                                    local.name
+                                ));
+                            }
+                            destructible_local = Some(local.clone());
                         }
                     }
                     _ => {
@@ -641,15 +741,60 @@ impl CppFunction {
                 statement.validate(&places, records, logical_source)?;
             }
         }
+        if let Some(local) = destructible_local {
+            if self
+                .body
+                .iter()
+                .any(|statement| matches!(statement, CppStatement::If { .. }))
+            {
+                return Err(format!(
+                    "C++ function `{}` with automatic destruction cannot contain branches in the terminal-cleanup slice",
+                    self.name
+                ));
+            }
+            let Some(CppStatement::Return { cleanups, .. }) = self.body.last() else {
+                return Err(format!(
+                    "C++ function `{}` with automatic destruction requires one final return",
+                    self.name
+                ));
+            };
+            if self.body[..self.body.len() - 1]
+                .iter()
+                .any(|statement| matches!(statement, CppStatement::Return { .. }))
+            {
+                return Err(format!(
+                    "C++ function `{}` with automatic destruction requires one final return",
+                    self.name
+                ));
+            }
+            if !matches!(
+                cleanups.as_slice(),
+                [CppCleanup::Destructor { object, .. }]
+                    if object.declaration_id == local.declaration_id && object.name == local.name
+            ) {
+                return Err(format!(
+                    "C++ return from `{}` must destroy local `{}` exactly once",
+                    self.name, local.name
+                ));
+            }
+        } else if sequence_contains_cleanup(&self.body) {
+            return Err(format!(
+                "C++ function `{}` has cleanup without a constructed automatic object",
+                self.name
+            ));
+        }
         match &self.function_kind {
             CppFunctionKind::Free if !sequence_always_returns(&self.body) => {
                 return Err(
                     "supported non-void C++ function can reach the end without returning".into(),
                 );
             }
-            CppFunctionKind::Constructor { .. } if sequence_contains_return(&self.body) => {
+            CppFunctionKind::Constructor { .. } | CppFunctionKind::Destructor { .. }
+                if sequence_contains_return(&self.body) =>
+            {
                 return Err(
-                    "supported C++ constructor body cannot contain a return statement".into(),
+                    "supported C++ constructor/destructor body cannot contain a return statement"
+                        .into(),
                 );
             }
             _ => {}
@@ -721,10 +866,18 @@ impl CppStatement {
                 }
                 Ok(())
             }
-            Self::Return { value, span } => {
+            Self::Return {
+                value,
+                cleanups,
+                span,
+            } => {
                 span.validate(logical_source)?;
                 value.validate(places, records, logical_source)?;
-                require_int32(value.value_type(), false, "return value")
+                require_int32(value.value_type(), false, "return value")?;
+                for cleanup in cleanups {
+                    cleanup.validate(places, records, logical_source)?;
+                }
+                Ok(())
             }
             Self::If {
                 condition,
@@ -745,6 +898,49 @@ impl CppStatement {
                 arguments,
                 span,
             } => validate_call(callee, arguments, span, places, records, logical_source),
+        }
+    }
+}
+
+impl CppCleanup {
+    fn validate(
+        &self,
+        places: &BTreeMap<String, (String, CppType)>,
+        records: &BTreeMap<String, &CppRecord>,
+        logical_source: &str,
+    ) -> Result<(), String> {
+        match self {
+            Self::Destructor {
+                object,
+                callee,
+                span,
+            } => {
+                span.validate(logical_source)?;
+                callee.span.validate(logical_source)?;
+                let CppType::Record {
+                    declaration_id,
+                    name,
+                } = validate_place_reference(object, places, logical_source)?
+                else {
+                    return Err("C++ destructor cleanup must name a record object".into());
+                };
+                let record = validate_record_reference(records, declaration_id, name)?;
+                let Some(destructor) = &record.destructor else {
+                    return Err(format!(
+                        "C++ cleanup names trivially destructible record `{}`",
+                        record.name
+                    ));
+                };
+                if destructor.declaration_id != callee.declaration_id
+                    || destructor.name != callee.name
+                {
+                    return Err(format!(
+                        "C++ cleanup for `{}` names the wrong destructor",
+                        object.name
+                    ));
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -1024,6 +1220,18 @@ fn sequence_contains_return(statements: &[CppStatement]) -> bool {
     })
 }
 
+fn sequence_contains_cleanup(statements: &[CppStatement]) -> bool {
+    statements.iter().any(|statement| match statement {
+        CppStatement::Return { cleanups, .. } => !cleanups.is_empty(),
+        CppStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => sequence_contains_cleanup(then_branch) || sequence_contains_cleanup(else_branch),
+        _ => false,
+    })
+}
+
 impl CppStatement {
     fn always_returns(&self) -> bool {
         match self {
@@ -1083,6 +1291,7 @@ fn validate_reachable_calls(
             | CollectedCall::Constructor {
                 callee, arguments, ..
             } => (*callee, *arguments),
+            CollectedCall::Destructor { callee, .. } => (*callee, &[][..]),
         };
         callee.span.validate(logical_source)?;
         let target = functions.get(&callee.declaration_id).ok_or_else(|| {
@@ -1101,7 +1310,7 @@ fn validate_reachable_calls(
             CollectedCall::Ordinary { .. } => {
                 if !matches!(target.function_kind, CppFunctionKind::Free) {
                     return Err(format!(
-                        "ordinary C++ call from `{}` cannot invoke constructor `{}`",
+                        "ordinary C++ call from `{}` cannot invoke object operation `{}`",
                         function.name, target.name
                     ));
                 }
@@ -1146,6 +1355,34 @@ fn validate_reachable_calls(
                     arguments,
                 )?;
             }
+            CollectedCall::Destructor { object, .. } => {
+                let CppFunctionKind::Destructor {
+                    record_declaration_id,
+                    record_name,
+                } = &target.function_kind
+                else {
+                    return Err(format!(
+                        "C++ cleanup for `{}` refers to non-destructor `{}`",
+                        object.name, target.name
+                    ));
+                };
+                if !matches!(
+                    function.place_type(&object.declaration_id),
+                    Some(CppType::Record { declaration_id, name })
+                        if declaration_id == record_declaration_id && name == record_name
+                ) {
+                    return Err(format!(
+                        "C++ destructor `{}` does not destroy object `{}`",
+                        target.name, object.name
+                    ));
+                }
+                if target.parameters.len() != 1 {
+                    return Err(format!(
+                        "C++ destructor `{}` has an invalid object interface",
+                        target.name
+                    ));
+                }
+            }
         }
         validate_reachable_calls(
             &callee.declaration_id,
@@ -1169,6 +1406,10 @@ enum CollectedCall<'a> {
         local: &'a CppPlace,
         callee: &'a CppFunctionReference,
         arguments: &'a [CppCallArgument],
+    },
+    Destructor {
+        object: &'a CppPlaceReference,
+        callee: &'a CppFunctionReference,
     },
 }
 
@@ -1206,10 +1447,15 @@ fn collect_calls<'a>(statements: &'a [CppStatement], calls: &mut Vec<CollectedCa
                 collect_calls(then_branch, calls);
                 collect_calls(else_branch, calls);
             }
+            CppStatement::Return { cleanups, .. } => {
+                for cleanup in cleanups {
+                    let CppCleanup::Destructor { object, callee, .. } = cleanup;
+                    calls.push(CollectedCall::Destructor { object, callee });
+                }
+            }
             CppStatement::Assign { .. }
             | CppStatement::Store { .. }
-            | CppStatement::MemberStore { .. }
-            | CppStatement::Return { .. } => {}
+            | CppStatement::MemberStore { .. } => {}
         }
     }
 }

@@ -11,7 +11,7 @@ use click::kernel::{
     prove_symbolic_c_function_execution,
 };
 use click::languages::cpp::{
-    CppBinaryOperator, CppCallArgument, CppExpression, CppFunctionKind, CppInitializer,
+    CppBinaryOperator, CppCallArgument, CppCleanup, CppExpression, CppFunctionKind, CppInitializer,
     CppStatement, CppType, load_import, lower_import, refresh_import,
 };
 use click::surface::{
@@ -51,6 +51,10 @@ const CONSTRUCTOR_LOCAL_SOURCE: &str =
     include_str!("fixtures/cpp-verification/constructor-local/capture.cpp");
 const CONSTRUCTOR_LOCAL_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/constructor-local/capture.click");
+const TERMINAL_DESTRUCTOR_SOURCE: &str =
+    include_str!("fixtures/cpp-verification/terminal-destructor/capture.cpp");
+const TERMINAL_DESTRUCTOR_SIDECAR: &str =
+    include_str!("fixtures/cpp-verification/terminal-destructor/capture.click");
 
 struct Project {
     directory: PathBuf,
@@ -97,6 +101,10 @@ impl Project {
 
     fn constructor_local() -> Self {
         Self::with_fixture("capture.cpp", "capture", CONSTRUCTOR_LOCAL_SOURCE)
+    }
+
+    fn terminal_destructor() -> Self {
+        Self::with_fixture("capture.cpp", "capture", TERMINAL_DESTRUCTOR_SOURCE)
     }
 
     fn with_fixture(source_name: &str, function: &str, source: &str) -> Self {
@@ -193,7 +201,7 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
     let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
-    assert_eq!(prepared.export().schema, 8);
+    assert_eq!(prepared.export().schema, 9);
     assert!(prepared.export().reachable_functions.is_empty());
     assert_eq!(prepared.logical_source(), "increment.cpp");
     assert_eq!(prepared.identity().len(), 64);
@@ -488,6 +496,30 @@ fn contains_call(statement: &CStatement, expected: &str) -> bool {
     }
 }
 
+fn call_order(statement: &CStatement) -> Vec<&str> {
+    fn visit<'a>(statement: &'a CStatement, calls: &mut Vec<&'a str>) {
+        match statement {
+            CStatement::Call { function_name, .. } => calls.push(function_name),
+            CStatement::Seq(first, second) => {
+                visit(first, calls);
+                visit(second, calls);
+            }
+            CStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                visit(then_branch, calls);
+                visit(else_branch, calls);
+            }
+            _ => {}
+        }
+    }
+    let mut calls = Vec::new();
+    visit(statement, &mut calls);
+    calls
+}
+
 fn contains_aggregate_construction_begin(statement: &CStatement, expected: &str) -> bool {
     match statement {
         CStatement::DeclareAggregate {
@@ -619,7 +651,7 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the call graph artifact offline");
-    assert_eq!(import.export().schema, 8);
+    assert_eq!(import.export().schema, 9);
     assert_eq!(import.export().function.name, "call_set_seven");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -696,7 +728,7 @@ fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the scalar-local artifact offline");
-    assert_eq!(import.export().schema, 8);
+    assert_eq!(import.export().schema, 9);
     assert_eq!(import.export().function.name, "relay_value");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -810,7 +842,7 @@ fn mutable_pointer_dereference_and_reference_address_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the pointer artifact offline");
-    assert_eq!(import.export().schema, 8);
+    assert_eq!(import.export().schema, 9);
     let caller = &import.export().function;
     assert_eq!(caller.name, "bump_reference");
     assert!(matches!(
@@ -947,7 +979,7 @@ fn record_reference_member_loads_and_stores_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the record artifact offline");
-    assert_eq!(import.export().schema, 8);
+    assert_eq!(import.export().schema, 9);
     let [record] = import.export().records.as_slice() else {
         panic!("the referenced record layout was not captured")
     };
@@ -1049,7 +1081,7 @@ fn brace_initialized_local_aggregate_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the aggregate artifact offline");
-    assert_eq!(import.export().schema, 8);
+    assert_eq!(import.export().schema, 9);
     let [record] = import.export().records.as_slice() else {
         panic!("the local aggregate record layout was not captured")
     };
@@ -1149,7 +1181,7 @@ fn explicit_constructor_local_verifies_as_a_modular_call() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the constructor artifact offline");
-    assert_eq!(import.export().schema, 8);
+    assert_eq!(import.export().schema, 9);
     let [record] = import.export().records.as_slice() else {
         panic!("the constructed record layout was not captured")
     };
@@ -1276,7 +1308,153 @@ fn explicit_constructor_local_verifies_as_a_modular_call() {
 }
 
 #[test]
-fn constructor_local_rejects_implicit_throwing_partial_reordered_and_destructing_forms() {
+fn terminal_return_captures_value_before_checked_destructor_cleanup() {
+    let project = Project::terminal_destructor();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, TERMINAL_DESTRUCTOR_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("export constructor and terminal destructor cleanup");
+    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+
+    let import = load_import(&project.config()).expect("load the cleanup artifact offline");
+    assert_eq!(import.export().schema, 9);
+    let [record] = import.export().records.as_slice() else {
+        panic!("the destructible record layout was not captured")
+    };
+    let destructor_reference = record
+        .destructor
+        .as_ref()
+        .expect("the record must retain its declared destructor identity");
+    let constructor = import
+        .export()
+        .reachable_functions
+        .iter()
+        .find(|function| matches!(function.function_kind, CppFunctionKind::Constructor { .. }))
+        .expect("constructor definition must be reachable");
+    let destructor = import
+        .export()
+        .reachable_functions
+        .iter()
+        .find(|function| matches!(function.function_kind, CppFunctionKind::Destructor { .. }))
+        .expect("destructor definition must be reachable");
+    assert_eq!(
+        destructor_reference.declaration_id,
+        destructor.declaration_id
+    );
+    assert_eq!(destructor_reference.name, "RestoreState_destructor");
+    assert!(matches!(
+        &destructor.function_kind,
+        CppFunctionKind::Destructor {
+            record_declaration_id,
+            record_name,
+        } if record_declaration_id == &record.declaration_id
+            && record_name == "RestoreState"
+    ));
+    assert_eq!(destructor.return_type, CppType::Void);
+    assert!(matches!(
+        destructor.parameters.as_slice(),
+        [self_parameter] if self_parameter.name == "self"
+    ));
+    assert!(matches!(
+        destructor.body.as_slice(),
+        [CppStatement::Store {
+            pointer: CppExpression::MemberLoad { field: pointer, .. },
+            value: CppExpression::MemberLoad { field: saved, .. },
+            ..
+        }] if pointer.name == "pointer" && saved.name == "saved"
+    ));
+
+    let [
+        CppStatement::Declare {
+            local,
+            initializer: CppInitializer::Constructor { callee, .. },
+            ..
+        },
+        CppStatement::Return {
+            cleanups,
+            value: CppExpression::Load { .. },
+            ..
+        },
+    ] = import.export().function.body.as_slice()
+    else {
+        panic!("the terminal cleanup edge was not retained")
+    };
+    assert_eq!(local.name, "state");
+    assert_eq!(callee.declaration_id, constructor.declaration_id);
+    assert!(matches!(
+        cleanups.as_slice(),
+        [CppCleanup::Destructor {
+            object,
+            callee,
+            ..
+        }] if object.declaration_id == local.declaration_id
+            && callee.declaration_id == destructor.declaration_id
+    ));
+
+    let lowered = lower_import(&import).expect("lower return capture and destructor cleanup");
+    assert_eq!(
+        call_order(lowered.kernel_function().body()),
+        ["RestoreState_constructor", "RestoreState_destructor"]
+    );
+    assert!(matches!(
+        lowered.kernel_function().body(),
+        CStatement::Seq(_, returned)
+            if matches!(
+                returned.as_ref(),
+                CStatement::Seq(_, returned)
+                    if matches!(
+                        returned.as_ref(),
+                        CStatement::Return(CExpression::Variable(name))
+                            if name.starts_with("__click_cpp_return_value")
+                    )
+            )
+    ));
+
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify captured result and restored caller memory");
+
+    let execute =
+        cpp_prepared_project_tactic_source_position(&click_project, &import, "capture.contract", 0)
+            .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .expect("expand the proof across terminal cleanup");
+    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+        .expect("expanded terminal-cleanup proof must reverify");
+
+    let missing_destructor = TERMINAL_DESTRUCTOR_SIDECAR.replace(
+        "void RestoreState_destructor(struct RestoreState* self) {\n    requires separate(memory(object(self)), memory(self->pointer[0..1]));\n    owns self->pointer;\n    owns self->saved;\n    owns self->pointer[0..1];\n    ensures self->pointer == old(self->pointer);\n    ensures self->saved == old(self->saved);\n    ensures self->pointer[0] == old(self->saved);\n} by {\n    execute();\n    simp();\n}\n\n",
+        "",
+    );
+    fs::write(&sidecar, &missing_destructor).unwrap();
+    let missing_project = read_click_project(&sidecar, &missing_destructor).unwrap();
+    verify_cpp_prepared_project(&missing_project, &import)
+        .expect_err("implicit cleanup requires a checked destructor contract");
+
+    let false_destructor = TERMINAL_DESTRUCTOR_SIDECAR.replace(
+        "ensures self->pointer[0] == old(self->saved);",
+        "ensures self->pointer[0] == old(self->saved) + 1;",
+    );
+    fs::write(&sidecar, &false_destructor).unwrap();
+    let false_project = read_click_project(&sidecar, &false_destructor).unwrap();
+    verify_cpp_prepared_project(&false_project, &import)
+        .expect_err("a false destructor restore effect must be rejected");
+
+    let wrong_capture = TERMINAL_DESTRUCTOR_SIDECAR
+        .replace("ensures result == 7;", "ensures result == old(value[0]);");
+    fs::write(&sidecar, &wrong_capture).unwrap();
+    let wrong_project = read_click_project(&sidecar, &wrong_capture).unwrap();
+    verify_cpp_prepared_project(&wrong_project, &import)
+        .expect_err("the return value must be captured before destruction");
+}
+
+#[test]
+fn constructor_local_rejects_implicit_throwing_partial_and_reordered_forms() {
     let project = Project::constructor_local();
     for (source, expected) in [
         (
@@ -1295,9 +1473,57 @@ fn constructor_local_rejects_implicit_throwing_partial_reordered_and_destructing
             "struct RestoreState {\n    int* pointer;\n    int saved;\n    explicit RestoreState(int* slot) noexcept : saved(*slot), pointer(slot) {}\n};\nint capture(int& value) noexcept { RestoreState state(&value); return state.saved; }\n",
             "initializer list must follow declaration order",
         ),
+    ] {
+        fs::write(project.source(), source).unwrap();
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("capture.cpp"), "{error}");
+        assert!(error.contains(expected), "{error}");
+        assert!(!project.artifact().exists());
+    }
+}
+
+#[test]
+fn terminal_destructor_rejects_throwing_virtual_empty_and_nonterminal_cleanup() {
+    let project = Project::terminal_destructor();
+    for (source, expected) in [
         (
-            "struct RestoreState {\n    int* pointer;\n    int saved;\n    explicit RestoreState(int* slot) noexcept : pointer(slot), saved(*slot) {}\n    ~RestoreState() noexcept {}\n};\nint capture(int& value) noexcept { RestoreState state(&value); return state.saved; }\n",
-            "trivial destruction",
+            TERMINAL_DESTRUCTOR_SOURCE.replace(
+                "~RestoreState() noexcept",
+                "~RestoreState() noexcept(false)",
+            ),
+            "public, non-virtual, non-deleted, and explicitly noexcept",
+        ),
+        (
+            TERMINAL_DESTRUCTOR_SOURCE.replace("~RestoreState() noexcept", "~RestoreState()"),
+            "public, non-virtual, non-deleted, and explicitly noexcept",
+        ),
+        (
+            TERMINAL_DESTRUCTOR_SOURCE.replace(
+                "~RestoreState() noexcept",
+                "virtual ~RestoreState() noexcept",
+            ),
+            "standard-layout",
+        ),
+        (
+            TERMINAL_DESTRUCTOR_SOURCE.replace(
+                "~RestoreState() noexcept {\n        *pointer = saved;\n    }",
+                "~RestoreState() noexcept {}",
+            ),
+            "nonempty destructor body",
+        ),
+        (
+            TERMINAL_DESTRUCTOR_SOURCE.replace(
+                "return value;",
+                "if (value == 7) { return value; }\n    return value;",
+            ),
+            "branches with automatic destruction",
+        ),
+        (
+            TERMINAL_DESTRUCTOR_SOURCE.replace(
+                "return value;",
+                "int result = value;\n    return result;\n    value = 9;",
+            ),
+            "requires one final return",
         ),
     ] {
         fs::write(project.source(), source).unwrap();
@@ -1398,10 +1624,7 @@ fn cpp_record_slice_rejects_methods_bitfields_inheritance_and_multiple_types() {
     .unwrap();
     let error = refresh_import(&project.config()).unwrap_err();
     assert!(error.contains("stage_restore.cpp:3"), "{error}");
-    assert!(
-        error.contains("methods and user-declared destructors"),
-        "{error}"
-    );
+    assert!(error.contains("ordinary methods"), "{error}");
     assert!(!project.artifact().exists());
 
     fs::write(

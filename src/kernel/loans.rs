@@ -1195,6 +1195,11 @@ pub(crate) struct StableViewTransferPlan {
     pub(crate) caller_resources_after_requirements: ResourceContext,
     pub(crate) callee_resources: ResourceContext,
     pub(crate) transferred_ownership: Vec<CCheckedResourceFact>,
+    /// Caller spellings for transferred ownership when the selected owned
+    /// entry is exactly equivalent to the callee requirement. A covering
+    /// owner that is strictly larger is intentionally left as `None`: the
+    /// call returns only the requested piece, not the whole support.
+    pub(crate) canonical_transferred_ownership: Vec<Option<CResourceFact>>,
     pub(crate) stable_views: Vec<PlannedStableView>,
     pub(crate) memory_effects: Vec<CMemoryRange>,
     /// The owned occurrence each reserved requirement in
@@ -1889,6 +1894,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
         }
     };
     let mut reserved_ownership_supports = Vec::new();
+    let mut canonical_transferred_ownership = Vec::new();
     // Reserve exclusive requirements first. This makes the partition stable
     // under source reordering and prevents a view from hiding a later write.
     for requirement in requirements
@@ -1899,11 +1905,24 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
         // removal below: the transferred hold and the effect provenance both
         // name the residual entry that actually supplied the requirement, not
         // an equal-looking owner elsewhere in the caller's partition.
-        let Some((occurrence, _)) =
+        let Some((occurrence, caller_fact)) =
             residual.directly_supporting_owned_entry(&requirement.fact, assumptions)
         else {
             return Err(missing_own_requirement(&requirement.fact));
         };
+        let same_memory_extent = match (requirement.fact.resource(), caller_fact.resource()) {
+            (CResource::Memory(required), CResource::Memory(caller)) => {
+                let (_, required_bytes) = required.byte_footprint();
+                let (_, caller_bytes) = caller.byte_footprint();
+                assumptions.bitvector_terms_equal_for_transport(&required_bytes, &caller_bytes)
+            }
+            _ => false,
+        };
+        let canonical_caller_fact = (same_memory_extent
+            || ResourceContext::new()
+                .unchecked_with_fact(requirement.fact.clone())
+                .satisfies_fact(caller_fact, assumptions))
+        .then(|| caller_fact.clone());
         if let Some(binding) = parent_view_bindings.get(&occurrence)
             && binding.hold.is_some()
         {
@@ -1919,6 +1938,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
             memory_effects.push(range.clone());
         }
         reserved_ownership_supports.push((requirement.fact.clone(), occurrence));
+        canonical_transferred_ownership.push(canonical_caller_fact);
         transferred_ownership.push(requirement.clone());
     }
 
@@ -2433,6 +2453,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
         caller_resources_after_requirements: residual,
         callee_resources,
         transferred_ownership,
+        canonical_transferred_ownership,
         stable_views,
         memory_effects,
         reserved_ownership_supports,

@@ -1,9 +1,11 @@
 #include <cstdint>
 #include <limits>
 #include <filesystem>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -140,7 +142,7 @@ public:
     profile["rtti"] = false;
 
     llvm::json::Object artifact;
-    artifact["schema"] = 8;
+    artifact["schema"] = 9;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["logical_source"] = logical_source_;
@@ -167,6 +169,8 @@ private:
   std::optional<Json> lower_function(const clang::FunctionDecl *declaration) {
     const auto *constructor =
         llvm::dyn_cast<clang::CXXConstructorDecl>(declaration);
+    const auto *destructor =
+        llvm::dyn_cast<clang::CXXDestructorDecl>(declaration);
     const auto *prototype =
         declaration->getType()->getAs<clang::FunctionProtoType>();
     if (prototype == nullptr || !prototype->isNothrow()) {
@@ -176,15 +180,17 @@ private:
     }
     std::optional<Json> return_type;
     llvm::json::Object function_kind;
-    if (constructor != nullptr) {
-      const auto *record = constructor->getParent()->getDefinition();
+    if (constructor != nullptr || destructor != nullptr) {
+      const auto *method = llvm::cast<clang::CXXMethodDecl>(declaration);
+      const auto *record = method->getParent()->getDefinition();
       if (record == nullptr || !remember_record(record)) {
         return std::nullopt;
       }
       llvm::json::Object void_type;
       void_type["kind"] = "void";
       return_type.emplace(std::move(void_type));
-      function_kind["kind"] = "constructor";
+      function_kind["kind"] =
+          constructor != nullptr ? "constructor" : "destructor";
       function_kind["record_declaration_id"] = declaration_id(record);
       function_kind["record_name"] = record->getNameAsString();
     } else {
@@ -197,8 +203,9 @@ private:
       function_kind["kind"] = "free";
     }
     llvm::json::Array parameters;
-    if (constructor != nullptr) {
-      const auto *record = constructor->getParent()->getDefinition();
+    if (constructor != nullptr || destructor != nullptr) {
+      const auto *method = llvm::cast<clang::CXXMethodDecl>(declaration);
+      const auto *record = method->getParent()->getDefinition();
       llvm::json::Object record_type;
       record_type["kind"] = "record";
       record_type["declaration_id"] = declaration_id(record);
@@ -207,10 +214,10 @@ private:
       reference_type["kind"] = "lvalue_reference";
       reference_type["pointee"] = std::move(record_type);
       llvm::json::Object self;
-      self["declaration_id"] = constructor_self_id(constructor);
+      self["declaration_id"] = object_self_id(method);
       self["name"] = "self";
       self["value_type"] = std::move(reference_type);
-      self["span"] = span(constructor->getNameInfo().getSourceRange());
+      self["span"] = span(method->getNameInfo().getSourceRange());
       parameters.push_back(std::move(self));
     }
     for (const clang::ParmVarDecl *parameter : declaration->parameters()) {
@@ -250,7 +257,7 @@ private:
           return std::nullopt;
         }
         llvm::json::Object object;
-        object["declaration_id"] = constructor_self_id(constructor);
+        object["declaration_id"] = object_self_id(constructor);
         object["name"] = "self";
         object["span"] = span(constructor->getNameInfo().getSourceRange());
         llvm::json::Object field_reference;
@@ -278,7 +285,9 @@ private:
     llvm::json::Object result;
     result["declaration_id"] = declaration_id(declaration);
     result["name"] = constructor == nullptr
-                         ? declaration->getNameAsString()
+                         ? (destructor == nullptr
+                                ? declaration->getNameAsString()
+                                : destructor_name(destructor))
                          : constructor_name(constructor);
     result["function_kind"] = std::move(function_kind);
     result["return_type"] = std::move(*return_type);
@@ -474,6 +483,44 @@ private:
       llvm::json::Object result;
       result["kind"] = "return";
       result["value"] = std::move(*value);
+      llvm::json::Array cleanups;
+      const auto cleanup = cleanup_locals_.find(function->getCanonicalDecl());
+      if (cleanup != cleanup_locals_.end()) {
+        const clang::VarDecl *local = cleanup->second;
+        const auto *record_type = local->getType()->getAs<clang::RecordType>();
+        const auto *record =
+            record_type == nullptr
+                ? nullptr
+                : llvm::dyn_cast<clang::CXXRecordDecl>(
+                      record_type->getDecl()->getDefinition());
+        const clang::CXXDestructorDecl *destructor =
+            record == nullptr ? nullptr : record->getDestructor();
+        const auto *definition =
+            destructor == nullptr
+                ? nullptr
+                : llvm::dyn_cast_or_null<clang::CXXDestructorDecl>(
+                      destructor->getDefinition());
+        if (record == nullptr || definition == nullptr) {
+          fail(returned->getReturnLoc(),
+               "could not resolve the automatic object's destructor at the return edge");
+          return std::nullopt;
+        }
+        llvm::json::Object object;
+        object["declaration_id"] = declaration_id(local);
+        object["name"] = local->getNameAsString();
+        object["span"] = span(local->getSourceRange());
+        llvm::json::Object callee;
+        callee["declaration_id"] = declaration_id(definition);
+        callee["name"] = destructor_name(definition);
+        callee["span"] = span(definition->getNameInfo().getSourceRange());
+        llvm::json::Object cleanup_call;
+        cleanup_call["kind"] = "destructor";
+        cleanup_call["object"] = std::move(object);
+        cleanup_call["callee"] = std::move(callee);
+        cleanup_call["span"] = span(returned->getSourceRange());
+        cleanups.push_back(std::move(cleanup_call));
+      }
+      result["cleanups"] = std::move(cleanups);
       result["span"] = span(returned->getSourceRange());
       return Json(std::move(result));
     }
@@ -565,6 +612,24 @@ private:
       }
       if (!remember_record(record)) {
         return std::nullopt;
+      }
+      const clang::CXXDestructorDecl *destructor = record->getDestructor();
+      if (destructor != nullptr && !destructor->isImplicit()) {
+        const auto *definition =
+            llvm::dyn_cast_or_null<clang::CXXDestructorDecl>(
+                destructor->getDefinition());
+        if (definition == nullptr ||
+            !validate_terminal_cleanup_source(function, local)) {
+          if (definition == nullptr && state_.error.empty()) {
+            fail(destructor->getLocation(),
+                 "the supported destructor has no reachable definition");
+          }
+          return std::nullopt;
+        }
+        cleanup_locals_.emplace(canonical, local);
+        if (known_functions_.insert(definition->getCanonicalDecl()).second) {
+          reachable_definitions_.push_back(definition);
+        }
       }
     }
 
@@ -690,6 +755,34 @@ private:
       return std::nullopt;
     }
     return Json(std::move(result));
+  }
+
+  bool validate_terminal_cleanup_source(const clang::FunctionDecl *function,
+                                        const clang::VarDecl *local) {
+    const auto *body =
+        llvm::dyn_cast_or_null<clang::CompoundStmt>(function->getBody());
+    if (body == nullptr || body->body_empty() ||
+        !llvm::isa<clang::ReturnStmt>(body->body_back())) {
+      fail(local->getLocation(),
+           "the terminal-cleanup slice requires one final return after object construction");
+      return false;
+    }
+    for (auto iterator = body->body_begin(); iterator != body->body_end();
+         ++iterator) {
+      const clang::Stmt *statement = *iterator;
+      const bool final = std::next(iterator) == body->body_end();
+      if (llvm::isa<clang::IfStmt>(statement)) {
+        fail(statement->getBeginLoc(),
+             "branches with automatic destruction are outside the terminal-cleanup slice");
+        return false;
+      }
+      if (llvm::isa<clang::ReturnStmt>(statement) && !final) {
+        fail(statement->getBeginLoc(),
+             "early returns with automatic destruction are outside the terminal-cleanup slice");
+        return false;
+      }
+    }
+    return true;
   }
 
   std::optional<LoweredCall>
@@ -981,10 +1074,9 @@ private:
            "the supported C++ record must be declared in the selected file");
       return false;
     }
-    if (!record->isStandardLayout() || !record->isTriviallyCopyable() ||
-        !record->hasTrivialDestructor() || record->getNumBases() != 0) {
+    if (!record->isStandardLayout() || record->getNumBases() != 0) {
       fail(record->getLocation(),
-           "the supported C++ record must be standard-layout and trivially-copyable, have trivial destruction, and have no bases");
+           "the supported C++ record must be standard-layout and trivially-copyable except for a supported destructor, and have no bases");
       return false;
     }
     if (record->field_empty()) {
@@ -993,6 +1085,7 @@ private:
       return false;
     }
     const clang::CXXConstructorDecl *supported_constructor = nullptr;
+    const clang::CXXDestructorDecl *supported_destructor = nullptr;
     for (const clang::Decl *member : record->decls()) {
       if (const auto *method = llvm::dyn_cast<clang::CXXMethodDecl>(member);
           method != nullptr && !method->isImplicit()) {
@@ -1004,9 +1097,17 @@ private:
             return false;
           }
           supported_constructor = constructor;
+        } else if (const auto *destructor =
+                       llvm::dyn_cast<clang::CXXDestructorDecl>(method)) {
+          if (supported_destructor != nullptr) {
+            fail(destructor->getLocation(),
+                 "the terminal-cleanup slice supports exactly one destructor");
+            return false;
+          }
+          supported_destructor = destructor;
         } else {
           fail(method->getLocation(),
-               "methods and user-declared destructors are outside the constructor-only C++ slice; destruction must remain trivial and implicit");
+               "ordinary methods are outside the supported C++ object slice");
           return false;
         }
       }
@@ -1020,6 +1121,21 @@ private:
     }
     if (supported_constructor != nullptr &&
         !validate_constructor(supported_constructor, record)) {
+      return false;
+    }
+    if (supported_destructor != nullptr) {
+      if (supported_constructor == nullptr) {
+        fail(supported_destructor->getLocation(),
+             "the terminal-cleanup slice requires a supported explicit constructor before a user-declared destructor");
+        return false;
+      }
+      if (!validate_destructor(supported_destructor, record)) {
+        return false;
+      }
+    } else if (!record->isTriviallyCopyable() ||
+               !record->hasTrivialDestructor()) {
+      fail(record->getLocation(),
+           "a record without a supported destructor must remain trivially copyable with trivial destruction");
       return false;
     }
     for (const clang::FieldDecl *field : record->fields()) {
@@ -1108,6 +1224,39 @@ private:
     return true;
   }
 
+  bool validate_destructor(const clang::CXXDestructorDecl *destructor,
+                           const clang::CXXRecordDecl *record) {
+    const auto *prototype =
+        destructor->getType()->getAs<clang::FunctionProtoType>();
+    if (destructor->getParent()->getCanonicalDecl() !=
+            record->getCanonicalDecl() ||
+        destructor->getAccess() != clang::AS_public ||
+        destructor->isVirtual() || destructor->isDeleted() ||
+        prototype == nullptr || !prototype->isNothrow() ||
+        prototype->getExceptionSpecType() != clang::EST_BasicNoexcept ||
+        !destructor->getExceptionSpecSourceRange().isValid()) {
+      fail(destructor->getLocation(),
+           "the supported destructor must be public, non-virtual, non-deleted, and explicitly noexcept");
+      return false;
+    }
+    if (!destructor->doesThisDeclarationHaveABody() ||
+        destructor->getDefinition() != destructor ||
+        !source_manager_.isWrittenInMainFile(source_manager_.getSpellingLoc(
+            destructor->getLocation()))) {
+      fail(destructor->getLocation(),
+           "the supported destructor must have an inline definition in the selected file");
+      return false;
+    }
+    const auto *body =
+        llvm::dyn_cast_or_null<clang::CompoundStmt>(destructor->getBody());
+    if (body == nullptr || body->body_empty()) {
+      fail(destructor->getLocation(),
+           "the terminal-cleanup slice requires a nonempty destructor body");
+      return false;
+    }
+    return true;
+  }
+
   std::optional<Json> lower_record(const clang::CXXRecordDecl *record) {
     const clang::ASTRecordLayout &layout = context_.getASTRecordLayout(record);
     const std::uint64_t size = layout.getSize().getQuantity();
@@ -1148,6 +1297,23 @@ private:
     result["size_bytes"] = static_cast<std::int64_t>(size);
     result["alignment_bytes"] = static_cast<std::int64_t>(alignment);
     result["fields"] = std::move(fields);
+    const clang::CXXDestructorDecl *destructor = record->getDestructor();
+    if (destructor != nullptr && !destructor->isImplicit()) {
+      const auto *definition = llvm::dyn_cast_or_null<clang::CXXDestructorDecl>(
+          destructor->getDefinition());
+      if (definition == nullptr) {
+        fail(destructor->getLocation(),
+             "the supported destructor has no reachable definition");
+        return std::nullopt;
+      }
+      llvm::json::Object reference;
+      reference["declaration_id"] = declaration_id(definition);
+      reference["name"] = destructor_name(definition);
+      reference["span"] = span(definition->getNameInfo().getSourceRange());
+      result["destructor"] = std::move(reference);
+    } else {
+      result["destructor"] = nullptr;
+    }
     result["span"] = span(record->getSourceRange());
     if (!state_.error.empty()) {
       return std::nullopt;
@@ -1172,8 +1338,7 @@ private:
     }
     const clang::Expr *base = member->getBase()->IgnoreParenImpCasts();
     const auto *this_expression = llvm::dyn_cast<clang::CXXThisExpr>(base);
-    const auto *constructor =
-        llvm::dyn_cast<clang::CXXConstructorDecl>(function);
+    const auto *object_method = llvm::dyn_cast<clang::CXXMethodDecl>(function);
     const auto *reference = llvm::dyn_cast<clang::DeclRefExpr>(base);
     const auto *parameter = reference == nullptr
                                 ? nullptr
@@ -1208,17 +1373,19 @@ private:
         local_record_type->getDecl()->getCanonicalDecl() ==
             record->getCanonicalDecl();
     const bool supported_this =
-        this_expression != nullptr && constructor != nullptr &&
-        constructor->getParent()->getCanonicalDecl() ==
+        this_expression != nullptr && object_method != nullptr &&
+        (llvm::isa<clang::CXXConstructorDecl>(object_method) ||
+         llvm::isa<clang::CXXDestructorDecl>(object_method)) &&
+        object_method->getParent()->getCanonicalDecl() ==
             record->getCanonicalDecl();
     if (member->isArrow() && !supported_this) {
       fail(member->getOperatorLoc(),
-           "the first C++ object slice supports arrow access only for the current constructor object");
+           "the first C++ object slice supports arrow access only for the current constructor or destructor object");
       return std::nullopt;
     }
     if (!supported_parameter && !supported_local && !supported_this) {
       fail(member->getMemberLoc(),
-           "supported C++ member access must use the current constructor object, a mutable record-reference parameter, or a supported record local directly");
+           "supported C++ member access must use the current constructor/destructor object, a mutable record-reference parameter, or a supported record local directly");
       return std::nullopt;
     }
     auto object = lower_place_reference(base, function);
@@ -1241,17 +1408,18 @@ private:
                         const clang::FunctionDecl *expected_function) {
     expression = expression->IgnoreParenImpCasts();
     if (llvm::isa<clang::CXXThisExpr>(expression)) {
-      const auto *constructor =
-          llvm::dyn_cast<clang::CXXConstructorDecl>(expected_function);
-      if (constructor == nullptr) {
+      const auto *method = llvm::dyn_cast<clang::CXXMethodDecl>(expected_function);
+      if (method == nullptr ||
+          (!llvm::isa<clang::CXXConstructorDecl>(method) &&
+           !llvm::isa<clang::CXXDestructorDecl>(method))) {
         fail(expression->getExprLoc(),
-             "`this` is supported only inside a constructor body");
+             "`this` is supported only inside a constructor or destructor body");
         return std::nullopt;
       }
       llvm::json::Object result;
-      result["declaration_id"] = constructor_self_id(constructor);
+      result["declaration_id"] = object_self_id(method);
       result["name"] = "self";
-      result["span"] = span(constructor->getNameInfo().getSourceRange());
+      result["span"] = span(method->getNameInfo().getSourceRange());
       return Json(std::move(result));
     }
     const auto *reference = llvm::dyn_cast<clang::DeclRefExpr>(expression);
@@ -1291,14 +1459,18 @@ private:
     return result.str().str();
   }
 
-  std::string constructor_self_id(
-      const clang::CXXConstructorDecl *constructor) {
-    return declaration_id(constructor) + "@this";
+  std::string object_self_id(const clang::CXXMethodDecl *method) {
+    return declaration_id(method) + "@this";
   }
 
   std::string constructor_name(
       const clang::CXXConstructorDecl *constructor) const {
     return constructor->getParent()->getNameAsString() + "_constructor";
+  }
+
+  std::string destructor_name(
+      const clang::CXXDestructorDecl *destructor) const {
+    return destructor->getParent()->getNameAsString() + "_destructor";
   }
 
   Json span(clang::SourceRange range) {
@@ -1360,6 +1532,8 @@ private:
   std::vector<const clang::CXXRecordDecl *> record_definitions_;
   std::unordered_set<const clang::FunctionDecl *>
       functions_with_aggregate_local_;
+  std::unordered_map<const clang::FunctionDecl *, const clang::VarDecl *>
+      cleanup_locals_;
 };
 
 class ExportConsumer : public clang::ASTConsumer {

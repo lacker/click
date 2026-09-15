@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 
 use super::{
-    CppBinaryOperator, CppCallArgument, CppExpression, CppFieldReference, CppFunction,
+    CppBinaryOperator, CppCallArgument, CppCleanup, CppExpression, CppFieldReference, CppFunction,
     CppFunctionKind, CppInitializer, CppPlace, CppPlaceReference, CppRecord, CppStatement, CppType,
     PreparedCppImport,
 };
@@ -96,11 +96,12 @@ fn lower_function(import: &PreparedCppImport, source: &CppFunction) -> Result<CF
             .map(|record| (record.declaration_id.as_str(), record))
             .collect(),
         next_load_occurrence: 0,
+        return_capture_name: return_capture_name(source),
     };
     let body = context.lower_sequence(&source.body)?;
     let return_type = match &source.function_kind {
         CppFunctionKind::Free => CType::Int32,
-        CppFunctionKind::Constructor { .. } => CType::Void,
+        CppFunctionKind::Constructor { .. } | CppFunctionKind::Destructor { .. } => CType::Void,
     };
     Ok(c_function(
         return_type,
@@ -143,6 +144,7 @@ struct LoweringContext<'a> {
     places: BTreeMap<&'a str, &'a CppPlace>,
     records: BTreeMap<&'a str, &'a CppRecord>,
     next_load_occurrence: u32,
+    return_capture_name: String,
 }
 
 impl LoweringContext<'_> {
@@ -287,7 +289,30 @@ impl LoweringContext<'_> {
                     value_type,
                 ))
             }
-            CppStatement::Return { value, .. } => Ok(c_return(self.lower_expression(value)?)),
+            CppStatement::Return {
+                value, cleanups, ..
+            } => {
+                let value = self.lower_expression(value)?;
+                if cleanups.is_empty() {
+                    return Ok(c_return(value));
+                }
+                let capture = self.return_capture_name.clone();
+                let mut result = c_seq(
+                    c_declare(capture.clone(), CType::Int32),
+                    c_assign(capture.clone(), value),
+                );
+                for cleanup in cleanups {
+                    let CppCleanup::Destructor { object, callee, .. } = cleanup;
+                    result = c_seq(
+                        result,
+                        c_call(
+                            callee.name.clone(),
+                            vec![c_cast(self.lower_place(object)?, CType::Int32Pointer)],
+                        ),
+                    );
+                }
+                Ok(c_seq(result, c_return(c_variable(capture))))
+            }
             CppStatement::If {
                 condition,
                 then_branch,
@@ -552,6 +577,34 @@ impl LoweringContext<'_> {
         }
         Ok(parameter)
     }
+}
+
+fn return_capture_name(function: &CppFunction) -> String {
+    let names = function
+        .parameters
+        .iter()
+        .chain(
+            function
+                .body
+                .iter()
+                .filter_map(|statement| match statement {
+                    CppStatement::Declare { local, .. } => Some(local),
+                    _ => None,
+                }),
+        )
+        .map(|place| place.name.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let base = "__click_cpp_return_value";
+    if !names.contains(base) {
+        return base.to_string();
+    }
+    for suffix in 1u64.. {
+        let candidate = format!("{base}_{suffix}");
+        if !names.contains(candidate.as_str()) {
+            return candidate;
+        }
+    }
+    unreachable!("an unbounded suffix space contains an unused internal name")
 }
 
 fn cpp_record_layout(record: &CppRecord) -> Result<CAggregateLayout, String> {

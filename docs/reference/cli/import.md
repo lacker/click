@@ -183,10 +183,27 @@ Clang layout as kernel stack memory before applying typed field stores. Later
 `object.field` reads use the same checked offsets as an existing object passed
 by reference; trivial scope exit needs no destructor action.
 
-Constructors, destructors, copies and moves, default or partial aggregate
-initialization, multiple or nested local objects, methods, inheritance, private
-fields, bit-fields, nested records, and multiple record types remain explicit
-errors. Uninitialized or nested scalar locals, local references, shadowing,
+The `constructor-local` fixture permits that one automatic object to use one
+public, explicit, non-default `noexcept` constructor. Its member-initializer
+list must initialize every field in declaration order; the constructor body
+and its implicit call at the declaration are both lowered and verified through
+the ordinary modular call rules.
+
+The `terminal-destructor` fixture adds one public, non-virtual, non-deleted,
+explicitly `noexcept` destructor with a nonempty supported body. The artifact
+records its declaration identity on the record and records its implicit call
+as cleanup on the function's single final return. Direct lowering first
+captures the return expression in an internal scalar local, then calls the
+checked destructor, then returns the captured value. The fixture proves that
+the destructor restores caller memory while the result retains the value seen
+before cleanup; missing and false destructor contracts are rejected. Branches,
+early returns, nested scopes, and more than one destructible automatic object
+remain rejected until cleanup-edge ordering is represented generally.
+
+Copies and moves, default or partial aggregate initialization, multiple or
+nested local objects, ordinary methods, inheritance, private fields,
+bit-fields, nested records, and multiple record types remain explicit errors.
+Uninitialized or nested scalar locals, local references, shadowing,
 address-taking other than a current mutable reference parameter for a supported
 pointer call, pointer locals, pointer arithmetic, null pointers, multiple
 indirection, call results outside a local initializer, indirect calls, loops,

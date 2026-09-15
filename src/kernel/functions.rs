@@ -222,6 +222,11 @@ struct CFunctionResourceTransfer {
     /// consumed capability when reconstructing the caller successor.
     borrowed_inputs: Vec<CCheckedResourceFact>,
     consumed_inputs: Vec<CCheckedResourceFact>,
+    /// Checked callee-side borrowed ownership paired with an equivalent
+    /// caller-side spelling selected by the exclusive reservation planner.
+    /// This is output-sized call-boundary provenance, not a search through
+    /// the caller frame.
+    canonical_borrowed_owners: Vec<(CResourceFact, CResourceFact)>,
     callee_resources: ResourceContext,
     /// Resources left in the caller after the entry requirements have been
     /// consumed; this is the caller frame for the remainder of the call.
@@ -269,6 +274,59 @@ fn callee_state_with_resource_transfer(
         .with_loan_ledger(Some(plan.ledger.clone()))
         .with_loan_participant(Some(plan.callee_participant()))
         .with_loan_view_bindings(plan.callee_view_bindings().clone())
+}
+
+/// Re-spell symbolic pointer values that a field-derived borrowed owner was
+/// checked against with the exact caller pointer selected by the reservation
+/// planner. This is used only to instantiate verified postconditions: the
+/// contract footprint and resource transition keep their original checked
+/// facts. Restricting the substitution to a zero-based symbolic memory range
+/// makes the replacement a direct pointer identity, with no interval
+/// arithmetic or authority widening.
+fn with_canonical_borrowed_pointer_memory(
+    state: &CState,
+    canonical_borrowed_owners: &[(CResourceFact, CResourceFact)],
+) -> CState {
+    let mut replacements = BTreeMap::<Variable, Option<Pointer>>::new();
+    for (checked, canonical) in canonical_borrowed_owners {
+        let (CResource::Memory(checked), CResource::Memory(canonical)) =
+            (checked.resource(), canonical.resource())
+        else {
+            continue;
+        };
+        let PointerBlock::Symbolic(variable) = checked.base().block else {
+            continue;
+        };
+        if checked.base().offset != PointerOffsetTerm::Constant(0)
+            || checked.start().as_const() != Some(0)
+        {
+            continue;
+        }
+        let (canonical_start, _) = canonical.byte_footprint();
+        replacements
+            .entry(variable)
+            .and_modify(|known| {
+                if known.as_ref() != Some(&canonical_start) {
+                    *known = None;
+                }
+            })
+            .or_insert(Some(canonical_start));
+    }
+    let memory =
+        replacements
+            .into_iter()
+            .fold(
+                state.memory().clone(),
+                |memory, (variable, replacement)| match replacement {
+                    Some(replacement) => super::reasoning::substitute_pointer_variable_in_memory(
+                        &memory,
+                        variable,
+                        &replacement,
+                    ),
+                    None => memory,
+                },
+            );
+    state.clone().with_memory(memory)
 }
 
 /// `output_assumptions` carries the call's certified output facts (the
@@ -2255,6 +2313,7 @@ fn execute_verified_function_applications(
         } = match evaluate_contract_return_resources(
             &caller_resources_after_requirements,
             escrowed_owners(&transfer),
+            &transfer.canonical_borrowed_owners,
             &entry_resource_state,
             &output_resource_state,
             name,
@@ -2289,8 +2348,14 @@ fn execute_verified_function_applications(
         // An undecided continuity relation remains symbolic in this one call
         // successor; it is not an execution-path split.
         post_state.resources = return_resources.clone();
-        let provisional_post_contract_state =
-            with_contract_interface_argument_views(&post_state, interface, &argument_values);
+        let canonical_entry_contract_state = with_canonical_borrowed_pointer_memory(
+            &entry_contract_state,
+            &transfer.canonical_borrowed_owners,
+        );
+        let provisional_post_contract_state = with_canonical_borrowed_pointer_memory(
+            &with_contract_interface_argument_views(&post_state, interface, &argument_values),
+            &transfer.canonical_borrowed_owners,
+        );
         let mut provisional_facts = facts.clone();
         let provisional_ensure_timing = crate::instrumentation::OperationTiming::new(
             name,
@@ -2301,7 +2366,7 @@ fn execute_verified_function_applications(
             &mut provisional_facts,
             &obligations,
             &provisional_post_contract_state,
-            &entry_contract_state,
+            &canonical_entry_contract_state,
             interface,
             interface.contract_ensures().iter(),
             &effective_assumptions,
@@ -2342,8 +2407,10 @@ fn execute_verified_function_applications(
         };
         facts.extend(allocation_effects);
         post_state.set_memory(memory);
-        let post_contract_state =
-            with_contract_interface_argument_views(&post_state, interface, &argument_values);
+        let post_contract_state = with_canonical_borrowed_pointer_memory(
+            &with_contract_interface_argument_views(&post_state, interface, &argument_values),
+            &transfer.canonical_borrowed_owners,
+        );
 
         let ensure_timing = crate::instrumentation::OperationTiming::new(
             name,
@@ -2354,7 +2421,7 @@ fn execute_verified_function_applications(
             &mut facts,
             &obligations,
             &post_contract_state,
-            &entry_contract_state,
+            &canonical_entry_contract_state,
             interface,
             interface.contract_ensures().iter(),
             &effective_assumptions,
@@ -5021,6 +5088,7 @@ fn checked_access_mode_refinement_adapter(
     } = match evaluate_contract_return_resources(
         &transfer.caller_resources_after_requirements,
         escrowed_owners(&transfer),
+        &transfer.canonical_borrowed_owners,
         &caller,
         &post,
         "refinement",
@@ -10794,6 +10862,7 @@ fn prepare_contract_resource_transfer(
         return Ok(Ok(CFunctionResourceTransfer {
             borrowed_inputs: Vec::new(),
             consumed_inputs: Vec::new(),
+            canonical_borrowed_owners: Vec::new(),
             callee_resources: ResourceContext::new(),
             caller_resources_after_requirements: caller_state.resources().clone(),
             memory_effects: Vec::new(),
@@ -11493,9 +11562,28 @@ fn prepare_contract_resource_transfer(
         .filter(|checked| checked.role == CResourceTransferRole::Consume)
         .cloned()
         .collect();
+    let canonical_borrowed_owners = stable_view_plan
+        .as_ref()
+        .into_iter()
+        .flat_map(|plan| {
+            plan.transferred_ownership
+                .iter()
+                .zip(&plan.canonical_transferred_ownership)
+        })
+        .filter_map(|(checked, canonical)| {
+            (checked.role == CResourceTransferRole::Borrow)
+                .then(|| {
+                    canonical
+                        .clone()
+                        .map(|canonical| (checked.fact.clone(), canonical))
+                })
+                .flatten()
+        })
+        .collect();
     Ok(Ok(CFunctionResourceTransfer {
         borrowed_inputs,
         consumed_inputs,
+        canonical_borrowed_owners,
         callee_resources,
         caller_resources_after_requirements: return_resources,
         memory_effects: Vec::new(),
@@ -11523,6 +11611,7 @@ pub(super) fn evaluate_function_return_resource_context(
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
     evaluate_contract_return_resource_context(
         function.contract_interface(),
+        &[],
         entry_state,
         post_state,
         count,
@@ -11533,6 +11622,7 @@ pub(super) fn evaluate_function_return_resource_context(
 
 fn evaluate_contract_return_resource_context(
     interface: &CFunctionContractInterface,
+    canonical_borrowed_owners: &[(CResourceFact, CResourceFact)],
     entry_state: &CState,
     post_state: &CState,
     count: usize,
@@ -11540,6 +11630,22 @@ fn evaluate_contract_return_resource_context(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
     let mut context = ResourceContext::new();
+    // `owns` requirements that are returned as entry-snapshot borrows carry
+    // caller identity in the checked transition. Re-evaluating an address
+    // such as `self->pointer` in the callee entry state can replace that
+    // identity with a symbolic parameter spelling, even though the resource
+    // being returned is exactly the occurrence that was lent. Consume the
+    // already checked owned inputs in their source order instead. Views keep
+    // their ordinary evaluation path because their loan provenance is
+    // reconstructed separately, and post-snapshot instances carry fresh
+    // fields rather than an entry fact.
+    let mut canonical_by_checked = BTreeMap::<CResourceFact, VecDeque<CResourceFact>>::new();
+    for (checked, canonical) in canonical_borrowed_owners {
+        canonical_by_checked
+            .entry(checked.clone())
+            .or_default()
+            .push_back(canonical.clone());
+    }
     for resource in interface.resource_ensures().iter().take(count) {
         // Snapshot selection is carried by the normalized specification. A
         // named instance is always post-evaluated by lowering, so its
@@ -11566,7 +11672,7 @@ fn evaluate_contract_return_resource_context(
         let evaluation_state = state
             .clone()
             .with_resource_context(supply.unchecked_with_facts(views));
-        let resource = match evaluate_function_resource_spec(
+        let evaluated = match evaluate_function_resource_spec(
             &evaluation_state,
             resource,
             assumptions,
@@ -11574,6 +11680,17 @@ fn evaluate_contract_return_resource_context(
         )? {
             Ok(resource) => resource,
             Err(error) => return Ok(Err(error)),
+        };
+        let resource = if resource.role() == CResourceTransferRole::Borrow
+            && resource.snapshot() == CResourceSnapshot::Entry
+            && !resource.is_view()
+        {
+            canonical_by_checked
+                .get_mut(&evaluated)
+                .and_then(VecDeque::pop_front)
+                .unwrap_or(evaluated)
+        } else {
+            evaluated
         };
         context = match context.try_compose_with_fact(resource, assumptions) {
             Ok(context) => context,
@@ -11607,6 +11724,7 @@ fn evaluate_function_return_resources(
     evaluate_contract_return_resources(
         caller_resources_after_requirements,
         escrowed_owners,
+        &[],
         entry_state,
         post_state,
         function.name(),
@@ -11620,6 +11738,7 @@ fn evaluate_function_return_resources(
 fn evaluate_contract_return_resources(
     caller_resources_after_requirements: &ResourceContext,
     escrowed_owners: &[CResourceFact],
+    canonical_borrowed_owners: &[(CResourceFact, CResourceFact)],
     entry_state: &CState,
     post_state: &CState,
     interface_name: &str,
@@ -11634,6 +11753,7 @@ fn evaluate_contract_return_resources(
         || {
             evaluate_contract_return_resource_context(
                 interface,
+                canonical_borrowed_owners,
                 entry_state,
                 post_state,
                 interface.resource_ensures().len(),

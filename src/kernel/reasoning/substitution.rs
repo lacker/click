@@ -6336,7 +6336,7 @@ fn substitute_pointer_variable_in_c_memory_segment(
     }
 }
 
-fn substitute_pointer_variable_in_memory(
+pub(crate) fn substitute_pointer_variable_in_memory(
     memory: &CMemory,
     from: Variable,
     to: &Pointer,
