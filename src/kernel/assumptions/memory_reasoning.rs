@@ -50,7 +50,7 @@ pub fn arm_frame_composite_definitions(
 
 thread_local! {
     /// Composite expansions keyed by composition storage address and
-    /// interned memory id; see `frame_expanded_compositions`.
+    /// interned memory id; see `frame_frontier_compositions`.
     static EXPANSION_MEMO: std::cell::RefCell<
         std::collections::HashMap<(usize, (u32, u32)), (ResourceContext, Option<ResourceContext>)>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
@@ -1833,7 +1833,7 @@ impl PureFactContext {
         if self.ranges_proven_disjoint_from_pointer(ranges, pointer) {
             return true;
         }
-        let expanded = self.frame_expanded_compositions(memory);
+        let expanded = self.frame_frontier_compositions(memory);
         if expanded.is_empty() {
             return false;
         }
@@ -2085,11 +2085,13 @@ impl PureFactContext {
             )) == Some(true)
     }
 
-    /// The compositions with their owned composites expanded over `memory`:
-    /// a composite's footprint is the regions its body denotes at the
-    /// snapshot the composition holds at, so the expansion names those
-    /// regions with the same load variables the live facts use.
-    fn frame_expanded_compositions(&self, memory: &CMemory) -> Vec<ResourceContext> {
+    /// The compositions with each owned composite opened exactly one level
+    /// over `memory`: a composite's frontier is the regions its body denotes
+    /// at the snapshot the composition holds at, named with the same load
+    /// variables the live facts use. Nested composites stay folded, so a
+    /// cell below the frontier is framed only through a live observation or
+    /// an unfold, never by the kernel reading inside a folded body.
+    fn frame_frontier_compositions(&self, memory: &CMemory) -> Vec<ResourceContext> {
         // Cheap gates first: this runs on the store cell-drop path, so a
         // composition with nothing composite to look through must cost a
         // scan of its own facts and no more.
@@ -2130,13 +2132,13 @@ impl PureFactContext {
                 expanded.extend(hit);
                 continue;
             }
-            let computed = crate::kernel::functions::expand_all_composite_resource_facts(
-                composition,
-                &definitions,
-                memory,
-                &PureFactContext::new(),
-            )
-            .filter(|context| context != composition);
+            let computed =
+                crate::kernel::functions::expand_owned_composite_resource_facts_one_level(
+                    composition,
+                    &definitions,
+                    memory,
+                    &PureFactContext::new(),
+                );
             EXPANSION_MEMO.with(|memo| {
                 let mut memo = memo.borrow_mut();
                 if memo.len() >= EXPANSION_MEMO_LIMIT {

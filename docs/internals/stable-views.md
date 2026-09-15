@@ -193,7 +193,10 @@ the bytes, and the folded facts would outlive the values they describe
 (`mdtests/fold_cannot_view_memory_its_context_owns.md`). A body without
 facts of its own may observe its context's owner. A valid context is a partition: distinct owned occurrences are
 bytewise disjoint, composites included, and the kernel does not reason
-inside a folded composite beyond its one-level frontier. Counted populations
+inside a folded composite beyond its one-level frontier. The frame check
+that keeps a loaded cell's name across a call or loop havoc obeys the same
+boundary: it opens each owned composite of a published composition one
+level and frames a cell only from an owned range that opening exposes. Counted populations
 keep the population-wide reading: a unit's body enters the caller where the
 population is activated, and its viewed pieces are observations rather than
 escaping loans.
@@ -245,6 +248,7 @@ production reborrows, and thread APIs stay outside the kernel.
 | Locals and empty views | `active_stable_loan_rejects_direct_local_assignment_and_alias_store`, `candidate_local_array_view_out_of_bounds_is_refused`, `mdtests/empty_view_authorizes_nothing.md` |
 | Entry footprint | `field_derived_view_does_not_retarget_after_a_pointer_write` |
 | Composites | `composite_loan_protects_primitive_frontier_and_restores_head_once`, `projection_extends_permitted_descriptions_without_a_transition`, `candidate_composite_with_unstable_facts_is_refused`, `candidate_composite_view_is_backed_by_a_covering_owned_composite`, `mdtests/produced_composite_body_overlapping_a_held_owner.md` |
+| Frame check at the frontier | `frame_check_opens_owned_composites_one_level_and_charges_per_head`, `mdtests/call_havoc_keeps_names_by_ownership.md` |
 | Escaping borrows | `a_hold_blocks_ending_the_scope_until_released_and_keeps_identity`, `escaping_borrow_keeps_the_loan_open_until_the_composite_is_consumed`, `consuming_the_composite_recovers_the_owner`, `mdtests/borrowing_composite_survives_an_owning_call.md`, `examples/input-cursor` |
 | Effects | `candidate_rejects_mutable_effect_overlapping_a_composite_view_piece`, `candidate_allows_a_mutable_effect_reserved_from_another_owned_occurrence` |
 | Callbacks and refinement | `stable_view_refinement_uses_checked_variance_for_subranges`, `mdtests/rb_augment_callbacks_helper_owns_rejects_unseparated.md` |

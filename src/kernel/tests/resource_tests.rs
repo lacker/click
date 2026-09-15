@@ -6281,3 +6281,106 @@ fn bytewise_disjoint_mismatched_width_owners_compose_and_adjacent_ones_merge() {
         )]
     );
 }
+
+/// The frame check opens each owned composite of a published composition
+/// exactly one level, the boundary a composite lend uses. A cell in the
+/// frontier is framed by ownership; a cell below it, inside a nested
+/// composite, is not: the kernel does not read inside a folded body. The
+/// query's work is charged per head, never per nested level.
+#[test]
+fn frame_check_opens_owned_composites_one_level_and_charges_per_head() {
+    let pointer = |index: u64| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(
+            Bitvector32Term::Variable(Variable(910_000 + index)),
+            4,
+        ),
+    };
+    let cell = CCompositeResourceDefinition::new(
+        "cell",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        None,
+        false,
+        vec![CResourceSpec::owned_memory(CMemorySegment {
+            base: c_variable("p"),
+            start: c_int32_literal(0),
+            end: c_int32_literal(1),
+            element_width: 4,
+            guard: None,
+        })],
+        Vec::new(),
+    );
+    // `wrap1(p)` owns `cell(p)`, `wrap2(p)` owns `wrap1(p)`, and so on.
+    let wrap_name = |depth: usize| format!("wrap{depth}");
+    let mut definitions = vec![cell];
+    for depth in 1..=8 {
+        let inner = if depth == 1 {
+            "cell".to_string()
+        } else {
+            wrap_name(depth - 1)
+        };
+        definitions.push(CCompositeResourceDefinition::new(
+            wrap_name(depth),
+            vec![c_parameter("p", CType::Int32Pointer)],
+            None,
+            false,
+            vec![CResourceSpec::composite(
+                CResourceAccessMode::Own,
+                inner,
+                vec![c_variable("p")],
+                vec![CType::Int32Pointer],
+            )],
+            Vec::new(),
+        ));
+    }
+    let _armed = crate::kernel::arm_frame_composite_definitions(definitions);
+    let havoc_range = memory_range(pointer(1), 0, 1);
+    let composition = |name: &str| {
+        ResourceContext::new().unchecked_with_facts([
+            CResourceFact::own_composite(name.to_string(), vec![CValue::pointer(pointer(0))]),
+            CResourceFact::own_composite("cell".to_string(), vec![CValue::pointer(pointer(1))]),
+        ])
+    };
+    let query = |name: &str| {
+        let assumptions = PureFactContext::new()
+            .assume_proposition(Proposition::CResourceComposition(composition(name)));
+        crate::instrumentation::measure_deterministic_work(|| {
+            assumptions.ranges_proven_disjoint_from_pointer_for_frame(
+                std::slice::from_ref(&havoc_range),
+                &pointer(0),
+                &CMemory::new(),
+            )
+        })
+    };
+
+    // Depth one: `cell(a)` and `cell(b)` open to two owned ranges, so the
+    // havoc over `b` is disjoint from `a` by ownership.
+    let (frontier, _) = query("cell");
+    assert!(frontier, "a frontier cell is framed by ownership");
+
+    // Below the frontier: `wrap1(a)` opens to a folded `cell(a)`, which owns
+    // no range the check may read; the answer is refused, not guessed.
+    let (nested, _) = query("wrap1");
+    assert!(
+        !nested,
+        "a cell inside a nested composite is not framed by the kernel"
+    );
+
+    let samples = [1_usize, 2, 4, 8]
+        .into_iter()
+        .map(|depth| {
+            let (proved, work) = query(&wrap_name(depth));
+            assert!(!proved, "depth {depth}: nested composites stay folded");
+            (depth, work)
+        })
+        .collect::<Vec<_>>();
+    eprintln!("one-level frame query samples: {samples:?}");
+    // Two heads at every depth, so the work is a constant per query; a walk
+    // into the nested levels would add work at each doubling.
+    let works = samples.iter().map(|(_, work)| *work).collect::<Vec<_>>();
+    let (low, high) = (works.iter().min().unwrap(), works.iter().max().unwrap());
+    assert!(
+        high - low <= 4,
+        "frame query work grew with nesting depth: {samples:?}"
+    );
+}

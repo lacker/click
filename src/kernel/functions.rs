@@ -14011,6 +14011,44 @@ pub(super) fn expand_all_composite_resource_facts(
         .map(|(resources, _)| resources)
 }
 
+/// Expands each owned composite of `context` exactly one level, in place of
+/// its head, and leaves every child composite folded. This is the frontier
+/// boundary the composite lend and `project` use: the kernel does not reason
+/// inside a folded composite beyond its one-level frontier, so a frame check
+/// that consults ownership sees exactly what a lend would. `None` when no
+/// head expanded. Work is charged per head, never per nested level.
+pub(super) fn expand_owned_composite_resource_facts_one_level(
+    context: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &PureFactContext,
+) -> Option<ResourceContext> {
+    let heads = context
+        .facts()
+        .iter()
+        .filter(|fact| fact.is_own() && matches!(fact.resource(), CResource::Composite { .. }))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut expanded = context.clone();
+    let mut changed = false;
+    for head in heads {
+        crate::instrumentation::record_deterministic_work(1);
+        if !expanded.facts().contains(&head) {
+            continue;
+        }
+        let Some(next) =
+            expand_composite_resource_fact(&expanded, &head, definitions, memory, assumptions)
+        else {
+            continue;
+        };
+        if next != expanded {
+            expanded = next;
+            changed = true;
+        }
+    }
+    changed.then_some(expanded)
+}
+
 /// Continues through recursive composites only while their guards are
 /// decidable in the current contract path. Unknown branches remain folded.
 fn expand_decidable_composite_resource_frontier(
