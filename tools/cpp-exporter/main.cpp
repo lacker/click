@@ -16,9 +16,11 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/Expr.h"
+#include "clang/AST/ExprCXX.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/RecordLayout.h"
 #include "clang/AST/Stmt.h"
+#include "clang/AST/StmtCXX.h"
 #include "clang/Basic/LangStandard.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Version.h"
@@ -172,9 +174,10 @@ public:
     profile["compilation_command"] = std::move(compilation_command);
 
     llvm::json::Object artifact;
-    artifact["schema"] = 12;
+    artifact["schema"] = 13;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
+    artifact["exception_behavior"] = "normal_only";
     artifact["logical_source"] = logical_source_;
     artifact["records"] = std::move(records);
     artifact["function"] = std::move(*function);
@@ -203,9 +206,17 @@ private:
         llvm::dyn_cast<clang::CXXDestructorDecl>(declaration);
     const auto *prototype =
         declaration->getType()->getAs<clang::FunctionProtoType>();
-    if (prototype == nullptr || !prototype->isNothrow()) {
+    if (prototype == nullptr) {
       fail(declaration->getLocation(),
-           "the first C++ slice requires an explicit noexcept function");
+           "the supported C++ function must have a prototype");
+      return std::nullopt;
+    }
+    if (!prototype->isNothrow() &&
+        (!context_.getLangOpts().CXXExceptions || constructor != nullptr ||
+         destructor != nullptr)) {
+      fail(declaration->getLocation(),
+           "the supported C++ function must declare noexcept outside the "
+           "exception-enabled object-free profile");
       return std::nullopt;
     }
     std::optional<Json> return_type;
@@ -322,7 +333,7 @@ private:
     result["function_kind"] = std::move(function_kind);
     result["return_type"] = std::move(*return_type);
     result["parameters"] = std::move(parameters);
-    result["is_noexcept"] = true;
+    result["declared_noexcept"] = prototype->isNothrow();
     result["span"] = span(declaration->getSourceRange());
     result["body"] = std::move(statements);
     if (!state_.error.empty()) {
@@ -449,6 +460,17 @@ private:
                                       const clang::FunctionDecl *function,
                                       bool allow_local_declaration,
                                       bool allow_nested_scope) {
+    if (const auto *throw_expression =
+            llvm::dyn_cast<clang::CXXThrowExpr>(statement)) {
+      fail(throw_expression->getThrowLoc(),
+           "throw expressions are outside the normal-only C++ profile");
+      return std::nullopt;
+    }
+    if (const auto *try_statement = llvm::dyn_cast<clang::CXXTryStmt>(statement)) {
+      fail(try_statement->getTryLoc(),
+           "try/catch is outside the normal-only C++ profile");
+      return std::nullopt;
+    }
     if (const auto *declaration = llvm::dyn_cast<clang::DeclStmt>(statement)) {
       if (!allow_local_declaration) {
         fail(declaration->getBeginLoc(),
@@ -1110,6 +1132,12 @@ private:
 
   std::optional<Json> lower_expression(const clang::Expr *expression,
                                        const clang::FunctionDecl *function) {
+    if (const auto *throw_expression =
+            llvm::dyn_cast<clang::CXXThrowExpr>(expression)) {
+      fail(throw_expression->getThrowLoc(),
+           "throw expressions are outside the normal-only C++ profile");
+      return std::nullopt;
+    }
     if (const auto *parentheses =
             llvm::dyn_cast<clang::ParenExpr>(expression)) {
       return lower_expression(parentheses->getSubExpr(), function);
@@ -1243,6 +1271,12 @@ private:
         record == nullptr ? nullptr : record->getDefinition();
     if (definition == nullptr) {
       fail({}, "the supported C++ record type must be complete");
+      return false;
+    }
+    if (context_.getLangOpts().CXXExceptions) {
+      fail(definition->getLocation(),
+           "the exception-enabled C++ profile is limited to an object-free "
+           "normal-only graph");
       return false;
     }
     const clang::CXXRecordDecl *canonical = definition->getCanonicalDecl();

@@ -308,7 +308,7 @@ fn load_import_inner(config_path: &Path) -> Result<PreparedCppImport, String> {
 fn decode_artifact(bytes: &[u8], config: &Config) -> Result<CppExport, String> {
     let export: CppExport = serde_json::from_slice(bytes)
         .map_err(|error| format!("parse C++ semantic artifact: {error}"))?;
-    export.validate(&config.logical_source, &config.function)?;
+    export.validate(&config.logical_source, &config.function, config.exceptions)?;
     Ok(export)
 }
 
@@ -355,11 +355,10 @@ fn validate_config(config: &Config) -> Result<(), String> {
         || config.language != LANGUAGE
         || config.standard != STANDARD
         || config.target != TARGET
-        || config.exceptions
         || config.rtti
     {
         return Err(format!(
-            "C++ import config must use schema {CONFIG_SCHEMA}, Clang {STANDARD} for {TARGET}, with exceptions and RTTI disabled"
+            "C++ import config must use schema {CONFIG_SCHEMA}, Clang {STANDARD} for {TARGET}, with RTTI disabled"
         ));
     }
     for (label, value) in [

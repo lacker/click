@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 12;
+pub(crate) const EXPORT_SCHEMA: u32 = 13;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -15,10 +15,17 @@ pub struct CppExport {
     pub schema: u32,
     pub language: String,
     pub profile: CppProfile,
+    pub exception_behavior: CppExceptionBehavior,
     pub logical_source: String,
     pub records: Vec<CppRecord>,
     pub function: CppFunction,
     pub reachable_functions: Vec<CppFunction>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CppExceptionBehavior {
+    NormalOnly,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -66,7 +73,7 @@ pub struct CppFunction {
     pub function_kind: CppFunctionKind,
     pub return_type: CppType,
     pub parameters: Vec<CppPlace>,
-    pub is_noexcept: bool,
+    pub declared_noexcept: bool,
     pub span: CppSpan,
     pub body: Vec<CppStatement>,
 }
@@ -293,7 +300,12 @@ pub struct CppSpan {
 }
 
 impl CppExport {
-    pub(crate) fn validate(&self, logical_source: &str, function: &str) -> Result<(), String> {
+    pub(crate) fn validate(
+        &self,
+        logical_source: &str,
+        function: &str,
+        expected_exceptions: bool,
+    ) -> Result<(), String> {
         if self.schema != EXPORT_SCHEMA {
             return Err(format!(
                 "unsupported C++ exporter schema {}; expected {EXPORT_SCHEMA}",
@@ -304,11 +316,11 @@ impl CppExport {
             || self.profile.frontend != "clang"
             || self.profile.standard != STANDARD
             || self.profile.target != TARGET
-            || self.profile.exceptions
+            || self.profile.exceptions != expected_exceptions
             || self.profile.rtti
         {
             return Err(format!(
-                "C++ export profile must be Clang {STANDARD} for {TARGET} with exceptions and RTTI disabled"
+                "C++ export profile must match the configured Clang {STANDARD} profile for {TARGET} with RTTI disabled"
             ));
         }
         if !self.profile.frontend_version.contains(CLANG_VERSION) {
@@ -355,6 +367,12 @@ impl CppExport {
         if self.records.len() > 1 {
             return Err("the first C++ object slice supports exactly one record type".into());
         }
+        if self.profile.exceptions && !self.records.is_empty() {
+            return Err(
+                "the exception-enabled C++ profile is limited to an object-free normal-only graph"
+                    .into(),
+            );
+        }
         let mut records = BTreeMap::new();
         for record in &self.records {
             record.validate(logical_source)?;
@@ -372,7 +390,7 @@ impl CppExport {
         let mut functions = BTreeMap::new();
         let mut names = BTreeMap::new();
         for source in std::iter::once(&self.function).chain(&self.reachable_functions) {
-            source.validate(logical_source, &records)?;
+            source.validate(logical_source, &records, self.profile.exceptions)?;
             if functions
                 .insert(source.declaration_id.clone(), source)
                 .is_some()
@@ -530,6 +548,7 @@ impl CppFunction {
         &self,
         logical_source: &str,
         records: &BTreeMap<String, &CppRecord>,
+        exceptions_enabled: bool,
     ) -> Result<(), String> {
         if self.name.is_empty() || self.declaration_id.is_empty() {
             return Err("C++ function is missing declaration identity".into());
@@ -555,9 +574,11 @@ impl CppFunction {
                 validate_record_reference(records, record_declaration_id, record_name)?;
             }
         }
-        if !self.is_noexcept {
+        if !self.declared_noexcept
+            && (!exceptions_enabled || !matches!(self.function_kind, CppFunctionKind::Free))
+        {
             return Err(format!(
-                "C++ function `{}` must be explicitly non-throwing",
+                "C++ function `{}` must declare noexcept outside the exception-enabled object-free profile",
                 self.name
             ));
         }

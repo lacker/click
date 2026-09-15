@@ -11,8 +11,9 @@ use click::kernel::{
     prove_symbolic_c_function_execution,
 };
 use click::languages::cpp::{
-    CppBinaryOperator, CppCallArgument, CppCleanup, CppExpression, CppFunctionKind, CppInitializer,
-    CppStatement, CppType, load_import, lower_import, refresh_import,
+    CppBinaryOperator, CppCallArgument, CppCleanup, CppExceptionBehavior, CppExpression,
+    CppFunctionKind, CppInitializer, CppStatement, CppType, load_import, lower_import,
+    refresh_import,
 };
 use click::surface::{
     C0VerificationSession, VerifiedClaim, cpp_prepared_project_smart_tactic_source_sites,
@@ -194,6 +195,18 @@ impl Project {
         project
     }
 
+    fn exception_enabled_header_function() -> Self {
+        let project = Self::header_function();
+        fs::write(
+            project.logical_header(),
+            "inline int header_increment(int& value) {\n    value = value + 1;\n    return value;\n}\n",
+        )
+        .unwrap();
+        project.write_exception_enabled_compilation_database();
+        project.write_config_with_profile("header_increment", "selected.h", true);
+        project
+    }
+
     fn with_fixture(source_name: &str, function: &str, source: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let directory = std::env::temp_dir().join(format!(
@@ -270,8 +283,25 @@ impl Project {
         .collect()
     }
 
+    fn exception_enabled_compilation_arguments(&self) -> Vec<String> {
+        self.compilation_arguments()
+            .into_iter()
+            .map(|argument| {
+                if argument == "-fno-exceptions" {
+                    "-fexceptions".into()
+                } else {
+                    argument
+                }
+            })
+            .collect()
+    }
+
     fn write_compilation_database(&self) {
         self.write_compilation_database_commands(&[self.compilation_arguments()]);
+    }
+
+    fn write_exception_enabled_compilation_database(&self) {
+        self.write_compilation_database_commands(&[self.exception_enabled_compilation_arguments()]);
     }
 
     fn write_compilation_database_commands(&self, commands: &[Vec<String>]) {
@@ -308,12 +338,16 @@ impl Project {
     }
 
     fn write_config_with_logical_source(&self, function: &str, logical_source: &str) {
+        self.write_config_with_profile(function, logical_source, false);
+    }
+
+    fn write_config_with_profile(&self, function: &str, logical_source: &str, exceptions: bool) {
         let config = serde_json::json!({
             "schema": 3,
             "language": "c++",
             "standard": "c++20",
             "target": "x86_64-unknown-linux-gnu",
-            "exceptions": false,
+            "exceptions": exceptions,
             "rtti": false,
             "exporter": self.exporter,
             "compilation_database": "compile_commands.json",
@@ -359,7 +393,7 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
     let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
-    assert_eq!(prepared.export().schema, 12);
+    assert_eq!(prepared.export().schema, 13);
     assert!(prepared.export().reachable_functions.is_empty());
     assert_eq!(prepared.logical_source(), "increment.cpp");
     assert_eq!(prepared.identity().len(), 64);
@@ -486,7 +520,7 @@ fn compilation_database_command_is_selected_locked_and_validated() {
     wrong_standard.write_compilation_database_commands(&[command]);
     let error = refresh_import(&wrong_standard.config()).unwrap_err();
     assert!(
-        error.contains("export profile must be Clang c++20"),
+        error.contains("profile must match the configured"),
         "{error}"
     );
     assert!(!wrong_standard.artifact().exists());
@@ -506,7 +540,7 @@ fn compilation_database_command_is_selected_locked_and_validated() {
     wrong_target.write_compilation_database_commands(&[command]);
     let error = refresh_import(&wrong_target.config()).unwrap_err();
     assert!(
-        error.contains("export profile must be Clang c++20"),
+        error.contains("profile must match the configured"),
         "{error}"
     );
     assert!(!wrong_target.artifact().exists());
@@ -577,6 +611,109 @@ fn included_header_definition_is_selected_locked_and_validated() {
     let error = refresh_import(&ambiguous.config()).unwrap_err();
     assert!(error.contains("is overloaded"), "{error}");
     assert!(!ambiguous.artifact().exists());
+}
+
+#[test]
+fn exception_enabled_profile_verifies_a_checked_normal_only_header_graph() {
+    let project = Project::exception_enabled_header_function();
+    refresh_import(&project.config()).expect("export the exception-enabled normal-only function");
+    let prepared = load_import(&project.config()).expect("load the locked semantic artifact");
+    assert!(prepared.export().profile.exceptions);
+    assert_eq!(
+        prepared.export().exception_behavior,
+        CppExceptionBehavior::NormalOnly
+    );
+    assert!(!prepared.export().function.declared_noexcept);
+    assert!(prepared.export().records.is_empty());
+
+    let sidecar = project.directory.join("demo.click");
+    let sidecar_source = SIDECAR
+        .replace("increment.cpp", "selected.h")
+        .replace("increment", "header_increment");
+    fs::write(&sidecar, &sidecar_source).unwrap();
+    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+    let inputs = read_c_inputs(&sidecar, &sidecar_source)
+        .expect("load the exception-enabled header import offline");
+    let CInput::PreparedCpp(import) = inputs else {
+        panic!("language=c++ must select the C++ prepared-input path")
+    };
+    let click_project = read_click_project(&sidecar, &sidecar_source).unwrap();
+    verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify the normal-only function through the ordinary workflow");
+
+    let graph = Project::direct_call();
+    fs::write(
+        graph.source(),
+        "int set_seven(int& value) {\n    value = 7;\n    return value;\n}\n\nint call_set_seven(int& value) {\n    set_seven(value);\n    return value;\n}\n",
+    )
+    .unwrap();
+    graph.write_exception_enabled_compilation_database();
+    graph.write_config_with_profile("call_set_seven", "call_set_seven.cpp", true);
+    refresh_import(&graph.config()).expect("export a closed normal-only direct-call graph");
+    let graph = load_import(&graph.config()).unwrap();
+    assert!(!graph.export().function.declared_noexcept);
+    assert_eq!(graph.export().reachable_functions.len(), 1);
+    assert!(!graph.export().reachable_functions[0].declared_noexcept);
+}
+
+#[test]
+fn exception_enabled_profile_rejects_exception_and_object_semantics() {
+    let throwing = Project::new();
+    fs::write(
+        throwing.source(),
+        "int increment(int& value) {\n    throw value;\n}\n",
+    )
+    .unwrap();
+    throwing.write_exception_enabled_compilation_database();
+    throwing.write_config_with_profile("increment", "increment.cpp", true);
+    let error = refresh_import(&throwing.config()).unwrap_err();
+    assert!(error.contains("increment.cpp:2"), "{error}");
+    assert!(error.contains("throw expressions are outside"), "{error}");
+    assert!(!throwing.artifact().exists());
+
+    let catching = Project::new();
+    fs::write(
+        catching.source(),
+        "int increment(int& value) {\n    try { value = value + 1; } catch (...) { return 0; }\n    return value;\n}\n",
+    )
+    .unwrap();
+    catching.write_exception_enabled_compilation_database();
+    catching.write_config_with_profile("increment", "increment.cpp", true);
+    let error = refresh_import(&catching.config()).unwrap_err();
+    assert!(error.contains("increment.cpp:2"), "{error}");
+    assert!(error.contains("try/catch is outside"), "{error}");
+    assert!(!catching.artifact().exists());
+
+    let unresolved = Project::direct_call();
+    fs::write(
+        unresolved.source(),
+        "int set_seven(int& value);\n\nint call_set_seven(int& value) {\n    set_seven(value);\n    return value;\n}\n",
+    )
+    .unwrap();
+    unresolved.write_exception_enabled_compilation_database();
+    unresolved.write_config_with_profile("call_set_seven", "call_set_seven.cpp", true);
+    let error = refresh_import(&unresolved.config()).unwrap_err();
+    assert!(
+        error.contains("no reachable function definition"),
+        "{error}"
+    );
+    assert!(!unresolved.artifact().exists());
+
+    let object = Project::new();
+    fs::write(
+        object.source(),
+        "struct Box { int stored; };\nint increment(int& value) {\n    Box box{value};\n    return box.stored;\n}\n",
+    )
+    .unwrap();
+    object.write_exception_enabled_compilation_database();
+    object.write_config_with_profile("increment", "increment.cpp", true);
+    let error = refresh_import(&object.config()).unwrap_err();
+    assert!(error.contains("increment.cpp:1"), "{error}");
+    assert!(
+        error.contains("limited to an object-free normal-only graph"),
+        "{error}"
+    );
+    assert!(!object.artifact().exists());
 }
 
 #[test]
@@ -1023,7 +1160,7 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the call graph artifact offline");
-    assert_eq!(import.export().schema, 12);
+    assert_eq!(import.export().schema, 13);
     assert_eq!(import.export().function.name, "call_set_seven");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -1100,7 +1237,7 @@ fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the scalar-local artifact offline");
-    assert_eq!(import.export().schema, 12);
+    assert_eq!(import.export().schema, 13);
     assert_eq!(import.export().function.name, "relay_value");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -1214,7 +1351,7 @@ fn mutable_pointer_dereference_and_reference_address_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the pointer artifact offline");
-    assert_eq!(import.export().schema, 12);
+    assert_eq!(import.export().schema, 13);
     let caller = &import.export().function;
     assert_eq!(caller.name, "bump_reference");
     assert!(matches!(
@@ -1351,7 +1488,7 @@ fn record_reference_member_loads_and_stores_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the record artifact offline");
-    assert_eq!(import.export().schema, 12);
+    assert_eq!(import.export().schema, 13);
     let [record] = import.export().records.as_slice() else {
         panic!("the referenced record layout was not captured")
     };
@@ -1453,7 +1590,7 @@ fn brace_initialized_local_aggregate_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the aggregate artifact offline");
-    assert_eq!(import.export().schema, 12);
+    assert_eq!(import.export().schema, 13);
     let [record] = import.export().records.as_slice() else {
         panic!("the local aggregate record layout was not captured")
     };
@@ -1553,7 +1690,7 @@ fn explicit_constructor_local_verifies_as_a_modular_call() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the constructor artifact offline");
-    assert_eq!(import.export().schema, 12);
+    assert_eq!(import.export().schema, 13);
     let [record] = import.export().records.as_slice() else {
         panic!("the constructed record layout was not captured")
     };
@@ -1688,7 +1825,7 @@ fn terminal_return_captures_value_before_checked_destructor_cleanup() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 12);
+    assert_eq!(import.export().schema, 13);
     let [record] = import.export().records.as_slice() else {
         panic!("the destructible record layout was not captured")
     };
@@ -1834,7 +1971,7 @@ fn every_return_after_construction_runs_the_checked_destructor() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 12);
+    assert_eq!(import.export().schema, 13);
     let destructor = import
         .export()
         .reachable_functions
@@ -1935,7 +2072,7 @@ fn two_constructed_objects_are_destroyed_in_reverse_order_on_every_return() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the ordered cleanup artifact offline");
-    assert_eq!(import.export().schema, 12);
+    assert_eq!(import.export().schema, 13);
     let [
         CppStatement::Declare { local: first, .. },
         CppStatement::Declare { local: second, .. },
@@ -2032,7 +2169,7 @@ fn nested_scope_destroys_its_object_on_return_and_fallthrough() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the nested-scope artifact offline");
-    assert_eq!(import.export().schema, 12);
+    assert_eq!(import.export().schema, 13);
     let destructor = import
         .export()
         .reachable_functions
@@ -3089,7 +3226,7 @@ fn cpp_direct_calls_reject_missing_throwing_and_recursive_definitions() {
     .unwrap();
     let error = refresh_import(&project.config()).unwrap_err();
     assert!(error.contains("call_set_seven.cpp:1"), "{error}");
-    assert!(error.contains("explicit noexcept function"), "{error}");
+    assert!(error.contains("must declare noexcept"), "{error}");
     assert!(!project.artifact().exists());
 
     fs::write(
@@ -3113,6 +3250,15 @@ fn cpp_config_rejects_profiles_outside_the_pinned_slice() {
     fs::write(project.config(), bytes.replace("c++20", "gnu++20")).unwrap();
     let error = refresh_import(&project.config()).unwrap_err();
     assert!(error.contains("Clang c++20"), "{error}");
+
+    let mismatch = Project::new();
+    mismatch.write_config_with_profile("increment", "increment.cpp", true);
+    let error = refresh_import(&mismatch.config()).unwrap_err();
+    assert!(
+        error.contains("profile must match the configured"),
+        "{error}"
+    );
+    assert!(!mismatch.artifact().exists());
 }
 
 #[test]

@@ -47,6 +47,13 @@ returns normally. Reject reachable `throw`/`try`, unsupported exceptional
 paths, unmodeled termination, and missing callees. Preserve the project's
 existing explicit boundary for trusted external specifications.
 
+The Bitcoin Core dependency may additionally use the same Clang boundary with
+exceptions enabled only for a closed, object-free graph made entirely of these
+already checked normal-returning operations. In that profile, a free function
+may omit `noexcept`; the artifact records both its declared status and the
+graph's `normal_only` behavior. This is a profile compatibility slice, not an
+exception-path model.
+
 Defer templates, overload sets at the public contract boundary, inheritance,
 virtual dispatch, operator overloading, unions, dynamic allocation, temporaries
 of class type, reference lifetime extension, class copy/move and copy elision,
@@ -55,8 +62,8 @@ and general `goto`. Unsupported selected code gets a source diagnostic.
 These omissions are an explicit subset boundary, not permission to rewrite
 an existing C++ implementation until it passes.
 
-The separately selected P1 [control-flow demo](control-flow-demo.md) adds a
-narrow exception-enabled profile after this non-throwing slice. Its forward
+The separately selected P1 [control-flow demo](control-flow-demo.md) adds
+actual exceptional outcomes and unwinding after this normal-only slice. Its forward
 C cleanup-jump prerequisite is P1 under [goto.md](goto.md). These separate
 milestones do not add exceptions or general goto to this issue's completion
 criteria.

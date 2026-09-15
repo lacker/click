@@ -114,7 +114,12 @@ copies it through an expression-initialized local, assigns it, and returns it
 through the kernel's shared declaration and scalar rules. Its false-result
 contract is rejected. Focused negative coverage rejects missing, throwing, and
 recursive reachable definitions as well as uninitialized, reference-valued,
-and nested locals. A pointer fixture passes `&value` from an `int&` caller to a
+and nested locals. An exception-enabled header fixture omits `noexcept`, locks
+the distinct Clang profile, and verifies offline under the artifact's
+`normal_only` guarantee. Its focused checks reject `throw`, `try`/`catch`, an
+unresolved reachable call, record/object use, and config/profile disagreement;
+they do not claim exception-path support. A pointer fixture passes `&value`
+from an `int&` caller to a
 mutable `int*` helper, then checks dereference reads, a checked write, offline
 verification, and expansion/reverification. Removing memory ownership and a
 false memory postcondition both fail; pointer arithmetic, null conversion,

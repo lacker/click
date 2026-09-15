@@ -61,8 +61,13 @@ assembly are silently deleted to make an import pass.
 
 The preliminary C++ frontend boundary accepts one C++20 translation unit
 selected by exactly one entry in a JSON compilation database, with one
-selected, explicitly `noexcept` free function and the uniquely named `noexcept`
-free-function definitions reachable from its supported direct call statements.
+selected free function and the uniquely named free-function definitions
+reachable from its supported direct call statements. In the baseline profile,
+exceptions are disabled and every selected or reachable function must declare
+`noexcept`. A second, deliberately smaller profile may retain the compilation
+command's enabled exception mode: free functions may omit `noexcept`, but the
+entire closed reachable graph must remain object-free and contain only Click's
+already checked normal-returning operations.
 The selected definitions may be written in the `.cpp` translation unit or in
 one configured `.h` project header included by that translation unit. All
 lowered declarations and source spans must come from that one logical source.
@@ -75,8 +80,8 @@ int increment(int& value) noexcept {
 }
 ```
 
-Its import configuration explicitly sets `"language": "c++"`, the standard
-to `c++20`, target to `x86_64-unknown-linux-gnu`, exceptions and RTTI to false,
+Its baseline import configuration explicitly sets `"language": "c++"`, the
+standard to `c++20`, target to `x86_64-unknown-linux-gnu`, exceptions and RTTI to false,
 and paths for the pinned exporter, compilation database, working directory,
 `.cpp` translation unit, logical source, selected function, and semantic
 artifact. `click import lock` executes the repository-owned Clang 19.1.7
@@ -110,6 +115,15 @@ header, the importer resolves and hashes that file separately from the `.cpp`
 translation unit. Offline loading rejects a missing or modified selected
 header. Capturing other transitively included headers is not yet part of this
 slice.
+
+For a compilation command with exceptions enabled, the config instead sets
+`"exceptions": true`; the observed Clang profile must agree. The semantic
+artifact records `exception_behavior: "normal_only"` independently from each
+function's `declared_noexcept` value. This is not exception handling support:
+reachable `throw`, `try`/`catch`, unresolved calls, and every record/object use
+are rejected locally. Because the artifact contains the complete supported
+direct-call closure and has no throwing operation, ordinary verification may
+check its normal behavior without inventing an exceptional proof outcome.
 
 Loading through the C++ library boundary subsequently validates the translation
 unit, selected logical source, compilation database, lock, and typed artifact
@@ -165,7 +179,9 @@ node records the declaration identity resolved by Clang, reference arguments
 retain their parameter identity, and all captured functions lower into the
 ordinary modular call environment. Each definition has its own sidecar
 contract and proof. The artifact rejects recursion, ambiguous reachable names,
-missing definitions, and reachable functions that are not `noexcept`.
+and missing definitions. Reachable functions that omit `noexcept` are accepted
+only in the exception-enabled, object-free, normal-only profile; the baseline
+profile continues to reject them.
 
 The `scalar-local` fixture adds mutable automatic `int` locals declared directly
 in the function body. Each local requires an initializer, which may be an
