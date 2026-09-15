@@ -18,10 +18,11 @@ regression is `mdtests/region_relative_index_read.md`.
 Shared arena metadata and `arena_read` now verify with existing machinery.
 Each `arena_region` contains one `arena_metadata(region->arena)` unit. Units
 with the same arena argument form one counted population whose shared body owns
-the stable `data` and `capacity` fields plus the backing allocation authority.
-Scoped opens borrow that body without duplicating it, so distinct live regions
-can share metadata while retaining exclusive ownership of their own backing
-intervals. No new surface form was needed.
+the stable `data`, `occupied`, `capacity`, and `live_regions` fields plus both
+backing allocation authorities. Scoped opens borrow that body without
+duplicating it, so distinct live regions can share metadata while retaining
+exclusive ownership of their own data and occupancy intervals. No new surface
+form was needed.
 
 The read experiment exposed a kernel alias-resolution bug. A bounded equality
 query could retain a speculative alias guard before its nested separation
@@ -42,8 +43,35 @@ name a load through a folded contained unit symbolically. `arena_free` now
 consumes the live region, clears its occupancy interval with checked loop
 bounds, restores the descriptor and shared metadata, and returns both the
 cleared occupancy interval and its backing data interval as an
-`arena_available` resource. The next bounded blockers are `arena_alloc`,
-`arena_init`, and `arena_destroy`.
+`arena_available` resource. The next bounded blockers are `arena_alloc` and
+the end-to-end `arena_pipeline`.
+
+The empty-arena lifecycle now verifies independently of that partition model.
+`arena_init` returns an `arena_init_result` plus conditional initialized access:
+failure retains the zeroed caller-owned descriptor and no allocation, while
+success returns both allocation authorities, both complete backing ranges, and
+a checked quantified guarantee that every occupancy cell is zero. Its two
+allocation-failure paths release every partially created allocation.
+`arena_destroy` consumes `arena_empty`, which combines the successful result
+with complete backing access and `live_regions == 0`, frees both allocations,
+zeros the descriptor, and returns it. The focused
+`mdtests/arena_destroy_with_live_region.md` regression rejects destruction when
+the caller holds only a live-region resource.
+
+The use-after-free rejection already lives in
+`mdtests/arena_use_after_free.md`. Double free and overlapping live regions
+still need focused negative regressions.
+
+## Next chunk: allocator partition
+
+Verify `arena_alloc` as the next bounded experiment. It must transfer exactly
+the chosen interval while preserving an arena-owned description of every other
+free interval, including holes created by prior allocations and frees. Start
+from the verified successful `arena_init` outputs and diagnose the smallest
+first-allocation transition before attempting the full pipeline. If the
+current language cannot express that transition, reduce the exact boundary to
+a focused regression before proposing a general ownership-collection
+extension. Keep the C fixed throughout.
 
 ## Violated invariant
 
@@ -54,11 +82,11 @@ consume that authority and return its interval to the arena. The allocator
 must not require a kernel-built-in notion of an arena allocation.
 
 The existing resource language can package a particular memory interval in a
-composite region resource. It is not yet established whether it can represent
-stable shared arena metadata or update the arena's arbitrary partition of
-occupied and unoccupied cells without a new general ownership-predicate
-operation. Diagnose each boundary against the fixed implementation before
-proposing syntax or semantics.
+composite region resource and can share stable arena metadata through a counted
+population. It is not yet established whether it can update the arena's
+arbitrary partition of occupied and unoccupied cells without a new general
+ownership-collection operation. Diagnose that boundary against the fixed
+implementation before proposing syntax or semantics.
 
 ## Intended regression
 
@@ -74,14 +102,14 @@ C sources. The pipeline must establish all of the following:
 - arena destruction succeeds only after every live region has been returned;
 - initialization failure releases any partially created backing allocation.
 
-Add focused negative mdtests for double free, use after free, overlapping live
-regions, and destruction with a live region. Keep zero-sized allocation as a
-normal failed allocation, matching the fixed C.
+Retain the focused use-after-free and destruction-with-live-region mdtests, and
+add negative mdtests for double free and overlapping live regions. Keep
+zero-sized allocation as a normal failed allocation, matching the fixed C.
 
 ## Acceptance criteria
 
-- The arena project has no parser-only qualification and verifies under the
-  normal examples gate.
+- All eight arena C functions have checked contracts and proofs, including the
+  end-to-end pipeline, and the project verifies under the normal examples gate.
 - Allocation and free are expressed as checked transformations of ordinary
   user-declared resources over the primitive backing memory and allocation
   authority.

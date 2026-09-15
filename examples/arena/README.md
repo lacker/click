@@ -21,13 +21,21 @@ The intended Click proof gives each live region exclusive access to its
 backing interval. `arena_free` now consumes that authority, clears the
 occupancy map through a checked loop, and returns both the backing and
 occupancy intervals as an `arena_available` resource together with the shared
-arena metadata. The remaining allocator entry points are still unverified;
-`arena_destroy` must also require that no live regions remain.
+arena metadata. Allocation remains the unresolved ownership-partition
+transition.
+
+`arena_init` and `arena_destroy` now verify as an independent empty-arena
+lifecycle. Initialization returns the caller-owned descriptor on every path,
+returns both complete backing allocations and ranges only on success, proves
+that every occupancy cell is zero, and releases the data allocation if the
+second allocation fails. Destruction requires an `arena_empty` resource with
+`live_regions == 0`, consumes both allocation authorities, and returns the
+zeroed descriptor.
 
 `arena.click` keeps every source in the C0 parser gate and declares checked
-contracts for `arena_region_length`, `arena_read`, `arena_write`, and
-`arena_free` over the `arena_region`, `arena_available`, and shared
-`arena_metadata` resources. `arena_init`, `arena_alloc`, and `arena_destroy`
-remain unverified; the open arena resource-ownership issue defines that proof
-work rather than treating the parser-only sources as verification of the
-allocator.
+contracts for `arena_init`, `arena_region_length`, `arena_read`, `arena_write`,
+`arena_free`, and `arena_destroy` over the lifecycle, `arena_region`,
+`arena_available`, and shared `arena_metadata` resources. `arena_alloc` and
+`arena_pipeline` remain unverified; the open arena resource-ownership issue
+defines that proof work rather than treating parser coverage as verification
+of the allocator.
