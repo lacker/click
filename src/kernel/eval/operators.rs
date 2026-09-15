@@ -1171,7 +1171,7 @@ fn apply_pointer_object_nonnull_guard(
     assumptions: &PureFactContext,
     apply: impl FnOnce(Vec<ExecutionPureFact>, Vec<ProofObligation>) -> Vec<CExpressionPath>,
 ) -> Vec<CExpressionPath> {
-    if pointer_has_nonempty_memory_resource(state, pointer, assumptions, &facts) {
+    if pointer_has_object_provenance_evidence(state, pointer, assumptions, &facts) {
         let mut facts = facts;
         if add_condition_path_fact(&mut facts, assumptions, is_null, false).is_none() {
             return Vec::new();
@@ -1181,7 +1181,7 @@ fn apply_pointer_object_nonnull_guard(
     apply_pointer_provenance_guard(is_null, false, facts, obligations, assumptions, apply)
 }
 
-fn pointer_has_nonempty_memory_resource(
+fn pointer_has_object_provenance_evidence(
     state: &CState,
     pointer: &Pointer,
     assumptions: &PureFactContext,
@@ -1206,6 +1206,23 @@ fn pointer_has_nonempty_memory_resource(
             .resource_compositions
             .iter()
             .any(contains_object)
+        || assumptions
+            .memory_loadable_candidates_for_object(pointer)
+            .any(|proposition| {
+                let Proposition::CMemoryLoadable {
+                    memory,
+                    base,
+                    bytes,
+                } = proposition
+                else {
+                    unreachable!("loadability object index contains only loadability facts")
+                };
+                crate::kernel::reasoning::memory_range_still_available(memory, state.memory(), base)
+                    && decide(ConditionTerm::signed_greater_than(
+                        bytes.clone(),
+                        Bitvector32Term::Constant(0),
+                    ))
+            })
 }
 
 fn apply_pointer_provenance_guard(

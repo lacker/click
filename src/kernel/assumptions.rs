@@ -2861,6 +2861,7 @@ impl PureFactContext {
         self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
         self.composition_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
+        self.memory_loadable_object_facts = crate::persistent::PersistentMap::default();
         self.memory_loadable_shape_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         self.memory_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.nonmemory_separation_facts = std::sync::Arc::new(Vec::new());
@@ -2966,6 +2967,24 @@ impl PureFactContext {
         let Proposition::CMemoryLoadable { base, .. } = proposition else {
             return;
         };
+        let object = base.object_identity();
+        let object_facts = self
+            .memory_loadable_object_facts
+            .get(&object)
+            .cloned()
+            .unwrap_or_default();
+        let object_facts = if insert {
+            object_facts.with_value(proposition.clone())
+        } else {
+            object_facts.without_value(proposition)
+        };
+        self.memory_loadable_object_facts = if object_facts.is_empty() {
+            self.memory_loadable_object_facts.without_key(&object)
+        } else {
+            self.memory_loadable_object_facts
+                .with_inserted(object, object_facts)
+        };
+
         let block_index = std::sync::Arc::make_mut(&mut self.memory_loadable_facts);
         if insert {
             block_index
@@ -2989,6 +3008,7 @@ impl PureFactContext {
 
     fn rebuild_memory_loadable_facts(&mut self) {
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
+        self.memory_loadable_object_facts = crate::persistent::PersistentMap::default();
         self.memory_loadable_shape_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         let facts = self.prop_facts.iter().cloned().collect::<Vec<_>>();
         for proposition in facts {
@@ -3297,6 +3317,18 @@ impl PureFactContext {
         exact.chain(fallback)
     }
 
+    pub(in crate::kernel) fn memory_loadable_candidates_for_object(
+        &self,
+        pointer: &Pointer,
+    ) -> impl Iterator<Item = &Proposition> {
+        crate::instrumentation::record_deterministic_work(1);
+        self.memory_loadable_object_facts
+            .get(&pointer.object_identity())
+            .into_iter()
+            .flat_map(crate::persistent::PersistentSet::iter)
+            .inspect(|_| crate::instrumentation::record_deterministic_work(1))
+    }
+
     fn memory_separation_key(
         left: &PointerBlock,
         right: &PointerBlock,
@@ -3552,6 +3584,9 @@ impl PureFactContext {
                 .shares_root_with(&other.algebraic_variable_constructors)
             && std::sync::Arc::ptr_eq(&self.resource_compositions, &other.resource_compositions)
             && std::sync::Arc::ptr_eq(&self.memory_loadable_facts, &other.memory_loadable_facts)
+            && self
+                .memory_loadable_object_facts
+                .shares_root_with(&other.memory_loadable_object_facts)
             && std::sync::Arc::ptr_eq(
                 &self.memory_loadable_shape_facts,
                 &other.memory_loadable_shape_facts,

@@ -2287,6 +2287,89 @@ fn an_external_pointer_does_not_share_an_object_with_itself_until_nonnull() {
 }
 
 #[test]
+fn nonempty_loadability_establishes_external_pointer_object_provenance() {
+    let pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(31_060))),
+            byte_width: 4,
+        },
+    };
+    let state = CState::new().with_local("pointer", CValue::pointer(pointer.clone()));
+    let loadable = |bytes| Proposition::CMemoryLoadable {
+        memory: state.memory().clone(),
+        base: pointer.clone(),
+        bytes: Bitvector32Term::Constant(bytes),
+    };
+
+    let nonempty = PureFactContext::new().assume_proposition(loadable(4));
+    for expression in [
+        c_less_equal(c_variable("pointer"), c_variable("pointer")),
+        c_subtract(c_variable("pointer"), c_variable("pointer")),
+    ] {
+        let mut budget = ExecutionBudget::for_c_expression(&expression);
+        let paths = evaluate_c_expression_paths(&state, &expression, &nonempty, &mut budget)
+            .expect("loadable pointer operation should stay within its execution budget");
+        assert!(!paths.is_empty());
+        assert!(
+            paths
+                .iter()
+                .all(|path| matches!(path.outcome, CExpressionOutcome::Value(_)))
+        );
+    }
+
+    let empty = PureFactContext::new().assume_proposition(loadable(0));
+    let expression = c_less_equal(c_variable("pointer"), c_variable("pointer"));
+    let mut budget = ExecutionBudget::for_c_expression(&expression);
+    let paths = evaluate_c_expression_paths(&state, &expression, &empty, &mut budget)
+        .expect("empty-loadable pointer operation should stay within its execution budget");
+    assert!(paths.iter().any(|path| matches!(
+        path.outcome,
+        CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic)
+    )));
+}
+
+#[test]
+fn loadable_object_provenance_lookup_ignores_unrelated_external_pointers() {
+    let external = |variable| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(variable))),
+            byte_width: 4,
+        },
+    };
+    let target = external(31_070);
+    let loadable = |base| Proposition::CMemoryLoadable {
+        memory: CMemory::new(),
+        base,
+        bytes: Bitvector32Term::Constant(4),
+    };
+
+    let samples = [4usize, 16, 64, 256]
+        .into_iter()
+        .map(|size| {
+            let mut assumptions =
+                PureFactContext::new().assume_proposition(loadable(target.clone()));
+            for index in 0..size {
+                assumptions =
+                    assumptions.assume_proposition(loadable(external(32_000 + index as u64)));
+            }
+            let (count, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assumptions
+                    .memory_loadable_candidates_for_object(&target)
+                    .count()
+            });
+            assert_eq!(count, 1);
+            work
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        samples.windows(2).all(|pair| pair[0] == pair[1]),
+        "object-provenance lookup scanned unrelated external pointers: {samples:?}"
+    );
+}
+
+#[test]
 fn pointer_arithmetic_preserves_external_object_identity() {
     let left = Pointer {
         block: PointerBlock::ExternalArgument,

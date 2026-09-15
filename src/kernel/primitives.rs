@@ -5613,6 +5613,12 @@ pub struct PureFactContext {
     pub(super) disjunction_facts: std::sync::Arc<BTreeSet<Proposition>>,
     pub(super) resource_compositions: std::sync::Arc<BTreeSet<ResourceContext>>,
     pub(super) memory_loadable_facts: std::sync::Arc<BTreeMap<PointerBlock, BTreeSet<Proposition>>>,
+    /// Loadability facts keyed by the C object identity carried by their
+    /// base. Pointer provenance queries use this persistent index instead of
+    /// scanning every external-argument fact, whose physical block is shared
+    /// by all pointer parameters.
+    pub(super) memory_loadable_object_facts:
+        crate::persistent::PersistentMap<Pointer, crate::persistent::PersistentSet<Proposition>>,
     pub(super) memory_loadable_shape_facts:
         std::sync::Arc<std::sync::OnceLock<BTreeMap<(PointerBlock, u64), BTreeSet<Proposition>>>>,
     pub(super) memory_separation_facts: std::sync::Arc<
