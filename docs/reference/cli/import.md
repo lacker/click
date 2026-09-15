@@ -226,8 +226,17 @@ their object lifetimes do not overlap. Each sibling carries its own return and
 fallthrough cleanup, and the next block begins only after the preceding
 destructor. The fixture deliberately reuses the source name `guard`; distinct
 Clang declaration identities and the kernel's sequential local-lifetime rule
-keep the two objects separate. Conditional construction, deeper or overlapping
-blocks, and combining this form with an outer aggregate object are rejected.
+keep the two objects separate.
+
+The `overlapping-scope-destructors` fixture instead composes exactly one outer
+destructible object with exactly one inner cleanup scope. A return from the
+inner scope records the inner destructor before the outer destructor. Normal
+fallthrough destroys only the inner object, and the final function return then
+destroys the still-live outer object. The proof makes the order observable by
+checking that both paths return the value restored by the inner guard while the
+outer guard ultimately restores caller memory. Conditional construction,
+deeper blocks, shadowing between the two live objects, a second inner scope,
+and broader overlapping lifetimes remain rejected.
 
 Copies and moves, default or partial aggregate initialization, multiple or
 more than two top-level destructible local objects, broader nested lifetimes,

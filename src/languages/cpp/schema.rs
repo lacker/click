@@ -673,6 +673,7 @@ impl CppFunction {
         let mut aggregate_locals = 0;
         let mut destructible_locals = Vec::new();
         let mut nested_scopes = 0;
+        let mut nested_scope_outer_cleanup_counts = Vec::new();
         for statement in &self.body {
             if let CppStatement::Declare {
                 local,
@@ -760,11 +761,13 @@ impl CppFunction {
                         self.name
                     ));
                 }
+                nested_scope_outer_cleanup_counts.push(destructible_locals.len());
                 validate_nested_scope(
                     body,
                     cleanups,
                     span,
                     &places,
+                    &destructible_locals,
                     records,
                     logical_source,
                     &self.name,
@@ -773,9 +776,14 @@ impl CppFunction {
                 statement.validate(&places, records, logical_source)?;
             }
         }
-        if nested_scopes != 0 && aggregate_locals != 0 {
+        if nested_scopes != 0
+            && aggregate_locals != 0
+            && (aggregate_locals != 1
+                || destructible_locals.len() != 1
+                || nested_scope_outer_cleanup_counts.as_slice() != [1])
+        {
             return Err(format!(
-                "C++ function `{}` cannot yet combine nested-scope cleanup with an outer aggregate object",
+                "C++ function `{}` may combine cleanup lifetimes only as one outer destructible object followed by one inner cleanup scope",
                 self.name
             ));
         }
@@ -1257,6 +1265,7 @@ fn validate_nested_scope(
     cleanups: &[CppCleanup],
     span: &CppSpan,
     outer_places: &BTreeMap<String, (String, CppType)>,
+    outer_cleanup_locals: &[CppPlace],
     records: &BTreeMap<String, &CppRecord>,
     logical_source: &str,
     function_name: &str,
@@ -1337,7 +1346,9 @@ fn validate_nested_scope(
             "nested scope in `{function_name}` must declare exactly one destructible object"
         ));
     };
-    validate_return_cleanups(body, function_name, std::slice::from_ref(&local))?;
+    let mut return_cleanup_locals = outer_cleanup_locals.to_vec();
+    return_cleanup_locals.push(local.clone());
+    validate_return_cleanups(body, function_name, &return_cleanup_locals)?;
     for cleanup in cleanups {
         cleanup.validate(&places, records, logical_source)?;
     }

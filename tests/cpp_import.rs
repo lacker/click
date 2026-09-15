@@ -71,6 +71,10 @@ const SIBLING_SCOPE_DESTRUCTORS_SOURCE: &str =
     include_str!("fixtures/cpp-verification/sibling-scope-destructors/sibling_restore.cpp");
 const SIBLING_SCOPE_DESTRUCTORS_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/sibling-scope-destructors/sibling_restore.click");
+const OVERLAPPING_SCOPE_DESTRUCTORS_SOURCE: &str =
+    include_str!("fixtures/cpp-verification/overlapping-scope-destructors/overlap_restore.cpp");
+const OVERLAPPING_SCOPE_DESTRUCTORS_SIDECAR: &str =
+    include_str!("fixtures/cpp-verification/overlapping-scope-destructors/overlap_restore.click");
 
 struct Project {
     directory: PathBuf,
@@ -152,6 +156,14 @@ impl Project {
             "sibling_restore.cpp",
             "sibling_restore",
             SIBLING_SCOPE_DESTRUCTORS_SOURCE,
+        )
+    }
+
+    fn overlapping_scope_destructors() -> Self {
+        Self::with_fixture(
+            "overlap_restore.cpp",
+            "overlap_restore",
+            OVERLAPPING_SCOPE_DESTRUCTORS_SOURCE,
         )
     }
 
@@ -1975,6 +1987,139 @@ fn sibling_scopes_reuse_a_local_name_with_independent_cleanup() {
 }
 
 #[test]
+fn overlapping_scope_destroys_inner_before_outer_on_every_exit() {
+    let project = Project::overlapping_scope_destructors();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, OVERLAPPING_SCOPE_DESTRUCTORS_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("export overlapping cleanup lifetimes");
+    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+
+    let import =
+        load_import(&project.config()).expect("load the overlapping-scope artifact offline");
+    let [
+        CppStatement::Declare {
+            local: outer_local, ..
+        },
+        CppStatement::Scope {
+            body: inner_body,
+            cleanups: inner_fallthrough,
+            ..
+        },
+        CppStatement::Declare { .. },
+        CppStatement::Return {
+            cleanups: final_cleanups,
+            ..
+        },
+    ] = import.export().function.body.as_slice()
+    else {
+        panic!("the overlapping lexical cleanup boundary was not retained")
+    };
+    let [
+        CppStatement::Declare {
+            local: inner_local, ..
+        },
+        CppStatement::If { then_branch, .. },
+        CppStatement::Assign { .. },
+    ] = inner_body.as_slice()
+    else {
+        panic!("the inner cleanup scope body was not retained")
+    };
+    let [
+        CppStatement::Return {
+            cleanups: early_cleanups,
+            ..
+        },
+    ] = then_branch.as_slice()
+    else {
+        panic!("the overlapping early return was not retained")
+    };
+    assert_eq!(outer_local.name, "outer");
+    assert_eq!(inner_local.name, "inner");
+    assert!(matches!(
+        inner_fallthrough.as_slice(),
+        [CppCleanup::Destructor { object, .. }]
+            if object.declaration_id == inner_local.declaration_id
+    ));
+    assert!(matches!(
+        early_cleanups.as_slice(),
+        [
+            CppCleanup::Destructor {
+                object: inner_object,
+                ..
+            },
+            CppCleanup::Destructor {
+                object: outer_object,
+                ..
+            },
+        ] if inner_object.declaration_id == inner_local.declaration_id
+            && outer_object.declaration_id == outer_local.declaration_id
+    ));
+    assert!(matches!(
+        final_cleanups.as_slice(),
+        [CppCleanup::Destructor { object, .. }]
+            if object.declaration_id == outer_local.declaration_id
+    ));
+
+    let lowered = lower_import(&import).expect("lower the overlapping lifetimes directly");
+    assert_eq!(
+        destructor_object_order(lowered.kernel_function().body(), "Restore_destructor"),
+        ["inner", "outer", "inner", "outer"]
+    );
+
+    let click_source = fs::read_to_string(&sidecar).unwrap();
+    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify inner-then-outer cleanup and memory restoration");
+
+    let execute = cpp_prepared_project_tactic_source_position(
+        &click_project,
+        &import,
+        "overlap_restore.contract",
+        0,
+    )
+    .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .expect("expand the proof across overlapping cleanup lifetimes");
+    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+        .expect("the expanded overlapping-cleanup proof must reverify");
+
+    let wrong_result = OVERLAPPING_SCOPE_DESTRUCTORS_SIDECAR
+        .replace("ensures result == 7;", "ensures result == 11;");
+    fs::write(&sidecar, &wrong_result).unwrap();
+    let wrong_project = read_click_project(&sidecar, &wrong_result).unwrap();
+    verify_cpp_prepared_project(&wrong_project, &import)
+        .expect_err("inner fallthrough cleanup must restore 7 before the final return");
+}
+
+#[test]
+fn overlapping_scope_rejects_shadowing_and_a_second_inner_lifetime() {
+    for (source, expected) in [
+        (
+            OVERLAPPING_SCOPE_DESTRUCTORS_SOURCE.replace("Restore inner", "Restore outer"),
+            "shadows another supported place",
+        ),
+        (
+            OVERLAPPING_SCOPE_DESTRUCTORS_SOURCE.replace(
+                "    int observed = value;",
+                "    {\n        Restore later(&value);\n        value = 13;\n    }\n    int observed = value;",
+            ),
+            "permits one inner cleanup scope with an outer object",
+        ),
+    ] {
+        let project = Project::overlapping_scope_destructors();
+        fs::write(project.source(), source).unwrap();
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains(expected), "{error}");
+        assert!(!project.artifact().exists());
+    }
+}
+
+#[test]
 fn nested_scope_rejects_conditional_construction_and_deeper_blocks() {
     for (source, expected) in [
         (
@@ -1990,13 +2135,6 @@ fn nested_scope_rejects_conditional_construction_and_deeper_blocks() {
                 "        {\n            Restore guard(&value);\n        }",
             ),
             "permits one nested scope directly in a free-function body",
-        ),
-        (
-            NESTED_SCOPE_DESTRUCTOR_SOURCE.replace(
-                "int scoped_restore(bool early, int& value) noexcept {\n    {",
-                "int scoped_restore(bool early, int& value) noexcept {\n    Restore outer(&value);\n    {",
-            ),
-            "nested-scope cleanup cannot yet be combined with an outer aggregate object",
         ),
     ] {
         let project = Project::nested_scope_destructor();

@@ -759,25 +759,32 @@ private:
   std::optional<Json> lower_scope(const clang::CompoundStmt *scope,
                                   const clang::FunctionDecl *function) {
     const clang::FunctionDecl *canonical = function->getCanonicalDecl();
-    functions_with_nested_scope_.insert(canonical);
+    auto &active = cleanup_locals_[canonical];
+    const bool has_outer_aggregate =
+        functions_with_aggregate_local_.contains(canonical);
     unsigned &scope_count = nested_scope_counts_[canonical];
-    if (scope_count == 2) {
+    if (has_outer_aggregate && active.size() != 1) {
+      fail(scope->getLBracLoc(),
+           "the overlapping cleanup-scope slice requires exactly one outer destructible object");
+      return std::nullopt;
+    }
+    if (has_outer_aggregate && scope_count != 0) {
+      fail(scope->getLBracLoc(),
+           "the overlapping cleanup-scope slice permits one inner cleanup scope with an outer object");
+      return std::nullopt;
+    }
+    if (!has_outer_aggregate && !active.empty()) {
+      fail(scope->getLBracLoc(),
+           "nested-scope cleanup cannot yet be combined with an unsupported outer destructible object");
+      return std::nullopt;
+    }
+    if (!has_outer_aggregate && scope_count == 2) {
       fail(scope->getLBracLoc(),
            "the supported C++ slice permits at most two sibling cleanup scopes per function");
       return std::nullopt;
     }
+    functions_with_nested_scope_.insert(canonical);
     ++scope_count;
-    if (functions_with_aggregate_local_.contains(canonical)) {
-      fail(scope->getLBracLoc(),
-           "nested-scope cleanup cannot yet be combined with an outer aggregate object");
-      return std::nullopt;
-    }
-    auto &active = cleanup_locals_[canonical];
-    if (!active.empty()) {
-      fail(scope->getLBracLoc(),
-           "nested-scope cleanup cannot yet be combined with an outer destructible object");
-      return std::nullopt;
-    }
     const std::size_t entry_count = active.size();
     unsigned local_count = 0;
     llvm::json::Array body;
