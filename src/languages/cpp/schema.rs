@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 7;
+pub(crate) const EXPORT_SCHEMA: u32 = 8;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -58,6 +58,7 @@ pub struct CppProfile {
 pub struct CppFunction {
     pub declaration_id: String,
     pub name: String,
+    pub function_kind: CppFunctionKind,
     pub return_type: CppType,
     pub parameters: Vec<CppPlace>,
     pub is_noexcept: bool,
@@ -67,7 +68,18 @@ pub struct CppFunction {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CppFunctionKind {
+    Free,
+    Constructor {
+        record_declaration_id: String,
+        record_name: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CppType {
+    Void,
     Boolean {
         bits: u32,
         is_const: bool,
@@ -197,6 +209,11 @@ pub enum CppInitializer {
         fields: Vec<CppFieldInitializer>,
         span: CppSpan,
     },
+    Constructor {
+        callee: CppFunctionReference,
+        arguments: Vec<CppCallArgument>,
+        span: CppSpan,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -286,6 +303,9 @@ impl CppExport {
                 "C++ export resolved `{}` instead of selected function `{function}`",
                 self.function.name
             ));
+        }
+        if !matches!(self.function.function_kind, CppFunctionKind::Free) {
+            return Err("the selected C++ declaration must be a free function".into());
         }
 
         if self.records.len() > 1 {
@@ -420,7 +440,23 @@ impl CppFunction {
         if self.name.is_empty() || self.declaration_id.is_empty() {
             return Err("C++ function is missing declaration identity".into());
         }
-        require_int32(&self.return_type, false, "function return type")?;
+        match &self.function_kind {
+            CppFunctionKind::Free => {
+                require_int32(&self.return_type, false, "function return type")?;
+            }
+            CppFunctionKind::Constructor {
+                record_declaration_id,
+                record_name,
+            } => {
+                if self.return_type != CppType::Void {
+                    return Err(format!(
+                        "C++ constructor `{}` must have void artifact return type",
+                        self.name
+                    ));
+                }
+                validate_record_reference(records, record_declaration_id, record_name)?;
+            }
+        }
         if !self.is_noexcept {
             return Err(format!(
                 "C++ function `{}` must be explicitly non-throwing",
@@ -474,6 +510,67 @@ impl CppFunction {
             }
             if !names.insert(parameter.name.clone()) {
                 return Err(format!("duplicate C++ parameter name `{}`", parameter.name));
+            }
+        }
+        if let CppFunctionKind::Constructor {
+            record_declaration_id,
+            record_name,
+        } = &self.function_kind
+        {
+            let Some(self_parameter) = self.parameters.first() else {
+                return Err(format!(
+                    "C++ constructor `{}` is missing its explicit object parameter",
+                    self.name
+                ));
+            };
+            if self_parameter.name != "self"
+                || !matches!(
+                    &self_parameter.value_type,
+                    CppType::LvalueReference { pointee }
+                        if matches!(
+                            pointee.as_ref(),
+                            CppType::Record { declaration_id, name }
+                                if declaration_id == record_declaration_id && name == record_name
+                        )
+                )
+            {
+                return Err(format!(
+                    "C++ constructor `{}` has an invalid explicit object parameter",
+                    self.name
+                ));
+            }
+            let record = validate_record_reference(records, record_declaration_id, record_name)?;
+            if self.body.len() < record.fields.len() {
+                return Err(format!(
+                    "C++ constructor `{}` does not initialize every field",
+                    self.name
+                ));
+            }
+            for (statement, expected_field) in self.body.iter().zip(&record.fields) {
+                let CppStatement::MemberStore {
+                    object,
+                    field,
+                    value,
+                    ..
+                } = statement
+                else {
+                    return Err(format!(
+                        "C++ constructor `{}` must begin with member initialization in declaration order",
+                        self.name
+                    ));
+                };
+                if object.declaration_id != self_parameter.declaration_id
+                    || object.name != self_parameter.name
+                    || field.record_declaration_id != *record_declaration_id
+                    || field.declaration_id != expected_field.declaration_id
+                    || field.name != expected_field.name
+                    || value.references_place(&self_parameter.declaration_id)
+                {
+                    return Err(format!(
+                        "C++ constructor `{}` has an invalid initializer for field `{}`",
+                        self.name, expected_field.name
+                    ));
+                }
             }
         }
         if self.body.is_empty() {
@@ -544,10 +641,18 @@ impl CppFunction {
                 statement.validate(&places, records, logical_source)?;
             }
         }
-        if !sequence_always_returns(&self.body) {
-            return Err(
-                "supported non-void C++ function can reach the end without returning".into(),
-            );
+        match &self.function_kind {
+            CppFunctionKind::Free if !sequence_always_returns(&self.body) => {
+                return Err(
+                    "supported non-void C++ function can reach the end without returning".into(),
+                );
+            }
+            CppFunctionKind::Constructor { .. } if sequence_contains_return(&self.body) => {
+                return Err(
+                    "supported C++ constructor body cannot contain a return statement".into(),
+                );
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -702,12 +807,23 @@ impl CppInitializer {
                 }
                 Ok(())
             }
+            (
+                Self::Constructor {
+                    callee,
+                    arguments,
+                    span,
+                },
+                CppType::Record { .. },
+            ) => validate_call(callee, arguments, span, places, records, logical_source),
             (Self::Aggregate { .. }, _) => {
                 Err("C++ aggregate initializer requires a supported record local".into())
             }
-            (_, CppType::Record { .. }) => {
-                Err("C++ record local requires direct brace initialization of every field".into())
+            (Self::Constructor { .. }, _) => {
+                Err("C++ constructor initializer requires a supported record local".into())
             }
+            (_, CppType::Record { .. }) => Err(
+                "C++ record local requires direct aggregate or constructor initialization".into(),
+            ),
             _ => Err("unsupported C++ local initializer".into()),
         }
     }
@@ -766,6 +882,20 @@ impl CppExpression {
         }
     }
 
+    fn references_place(&self, declaration_id: &str) -> bool {
+        match self {
+            Self::IntegerLiteral { .. } => false,
+            Self::Load { place, .. } | Self::AddressOf { place, .. } => {
+                place.declaration_id == declaration_id
+            }
+            Self::Dereference { pointer, .. } => pointer.references_place(declaration_id),
+            Self::MemberLoad { object, .. } => object.declaration_id == declaration_id,
+            Self::Binary { left, right, .. } => {
+                left.references_place(declaration_id) || right.references_place(declaration_id)
+            }
+        }
+    }
+
     fn validate(
         &self,
         places: &BTreeMap<String, (String, CppType)>,
@@ -811,6 +941,7 @@ impl CppExpression {
                     CppType::Record { .. } => {
                         Err("C++ record values cannot be loaded or copied".into())
                     }
+                    CppType::Void => Err("C++ void values cannot be loaded".into()),
                 }
             }
             Self::AddressOf {
@@ -881,6 +1012,18 @@ fn sequence_always_returns(statements: &[CppStatement]) -> bool {
     statements.iter().any(CppStatement::always_returns)
 }
 
+fn sequence_contains_return(statements: &[CppStatement]) -> bool {
+    statements.iter().any(|statement| match statement {
+        CppStatement::Return { .. } => true,
+        CppStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => sequence_contains_return(then_branch) || sequence_contains_return(else_branch),
+        _ => false,
+    })
+}
+
 impl CppStatement {
     fn always_returns(&self) -> bool {
         match self {
@@ -934,7 +1077,13 @@ fn validate_reachable_calls(
     visiting.push(declaration_id.to_string());
     let mut calls = Vec::new();
     collect_calls(&function.body, &mut calls);
-    for (callee, arguments) in calls {
+    for call in calls {
+        let (callee, arguments) = match &call {
+            CollectedCall::Ordinary { callee, arguments }
+            | CollectedCall::Constructor {
+                callee, arguments, ..
+            } => (*callee, *arguments),
+        };
         callee.span.validate(logical_source)?;
         let target = functions.get(&callee.declaration_id).ok_or_else(|| {
             format!(
@@ -948,7 +1097,56 @@ fn validate_reachable_calls(
                 callee.declaration_id, target.name, callee.name
             ));
         }
-        validate_call_arguments(function, target, arguments)?;
+        match call {
+            CollectedCall::Ordinary { .. } => {
+                if !matches!(target.function_kind, CppFunctionKind::Free) {
+                    return Err(format!(
+                        "ordinary C++ call from `{}` cannot invoke constructor `{}`",
+                        function.name, target.name
+                    ));
+                }
+                validate_call_arguments(
+                    function,
+                    target.name.as_str(),
+                    &target.parameters,
+                    arguments,
+                )?;
+            }
+            CollectedCall::Constructor { local, .. } => {
+                let CppFunctionKind::Constructor {
+                    record_declaration_id,
+                    record_name,
+                } = &target.function_kind
+                else {
+                    return Err(format!(
+                        "C++ local `{}` construction refers to non-constructor `{}`",
+                        local.name, target.name
+                    ));
+                };
+                if !matches!(
+                    &local.value_type,
+                    CppType::Record { declaration_id, name }
+                        if declaration_id == record_declaration_id && name == record_name
+                ) {
+                    return Err(format!(
+                        "C++ constructor `{}` does not construct local `{}`",
+                        target.name, local.name
+                    ));
+                }
+                let Some((_, explicit_parameters)) = target.parameters.split_first() else {
+                    return Err(format!(
+                        "C++ constructor `{}` is missing its object parameter",
+                        target.name
+                    ));
+                };
+                validate_call_arguments(
+                    function,
+                    target.name.as_str(),
+                    explicit_parameters,
+                    arguments,
+                )?;
+            }
+        }
         validate_reachable_calls(
             &callee.declaration_id,
             functions,
@@ -962,10 +1160,19 @@ fn validate_reachable_calls(
     Ok(())
 }
 
-fn collect_calls<'a>(
-    statements: &'a [CppStatement],
-    calls: &mut Vec<(&'a CppFunctionReference, &'a [CppCallArgument])>,
-) {
+enum CollectedCall<'a> {
+    Ordinary {
+        callee: &'a CppFunctionReference,
+        arguments: &'a [CppCallArgument],
+    },
+    Constructor {
+        local: &'a CppPlace,
+        callee: &'a CppFunctionReference,
+        arguments: &'a [CppCallArgument],
+    },
+}
+
+fn collect_calls<'a>(statements: &'a [CppStatement], calls: &mut Vec<CollectedCall<'a>>) {
     for statement in statements {
         match statement {
             CppStatement::Declare {
@@ -974,11 +1181,23 @@ fn collect_calls<'a>(
                         callee, arguments, ..
                     },
                 ..
-            } => calls.push((callee, arguments)),
+            } => calls.push(CollectedCall::Ordinary { callee, arguments }),
+            CppStatement::Declare {
+                local,
+                initializer:
+                    CppInitializer::Constructor {
+                        callee, arguments, ..
+                    },
+                ..
+            } => calls.push(CollectedCall::Constructor {
+                local,
+                callee,
+                arguments,
+            }),
             CppStatement::Declare { .. } => {}
             CppStatement::Call {
                 callee, arguments, ..
-            } => calls.push((callee, arguments)),
+            } => calls.push(CollectedCall::Ordinary { callee, arguments }),
             CppStatement::If {
                 then_branch,
                 else_branch,
@@ -997,19 +1216,20 @@ fn collect_calls<'a>(
 
 fn validate_call_arguments(
     caller: &CppFunction,
-    callee: &CppFunction,
+    callee_name: &str,
+    parameters: &[CppPlace],
     arguments: &[CppCallArgument],
 ) -> Result<(), String> {
-    if arguments.len() != callee.parameters.len() {
+    if arguments.len() != parameters.len() {
         return Err(format!(
             "C++ call from `{}` to `{}` has {} arguments for {} parameters",
             caller.name,
-            callee.name,
+            callee_name,
             arguments.len(),
-            callee.parameters.len()
+            parameters.len()
         ));
     }
-    for (index, (argument, parameter)) in arguments.iter().zip(&callee.parameters).enumerate() {
+    for (index, (argument, parameter)) in arguments.iter().zip(parameters).enumerate() {
         let compatible = match (argument, &parameter.value_type) {
             (
                 CppCallArgument::Value { value },
@@ -1063,7 +1283,7 @@ fn validate_call_arguments(
             return Err(format!(
                 "C++ call from `{}` to `{}` has unsupported argument {} for parameter `{}`",
                 caller.name,
-                callee.name,
+                callee_name,
                 index + 1,
                 parameter.name
             ));

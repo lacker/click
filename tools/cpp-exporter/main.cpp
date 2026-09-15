@@ -140,7 +140,7 @@ public:
     profile["rtti"] = false;
 
     llvm::json::Object artifact;
-    artifact["schema"] = 7;
+    artifact["schema"] = 8;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["logical_source"] = logical_source_;
@@ -165,6 +165,8 @@ private:
   };
 
   std::optional<Json> lower_function(const clang::FunctionDecl *declaration) {
+    const auto *constructor =
+        llvm::dyn_cast<clang::CXXConstructorDecl>(declaration);
     const auto *prototype =
         declaration->getType()->getAs<clang::FunctionProtoType>();
     if (prototype == nullptr || !prototype->isNothrow()) {
@@ -172,13 +174,45 @@ private:
            "the first C++ slice requires an explicit noexcept function");
       return std::nullopt;
     }
-    auto return_type =
-        lower_type(declaration->getReturnType(),
-                   declaration->getReturnTypeSourceRange().getBegin());
-    if (!return_type) {
-      return std::nullopt;
+    std::optional<Json> return_type;
+    llvm::json::Object function_kind;
+    if (constructor != nullptr) {
+      const auto *record = constructor->getParent()->getDefinition();
+      if (record == nullptr || !remember_record(record)) {
+        return std::nullopt;
+      }
+      llvm::json::Object void_type;
+      void_type["kind"] = "void";
+      return_type.emplace(std::move(void_type));
+      function_kind["kind"] = "constructor";
+      function_kind["record_declaration_id"] = declaration_id(record);
+      function_kind["record_name"] = record->getNameAsString();
+    } else {
+      return_type =
+          lower_type(declaration->getReturnType(),
+                     declaration->getReturnTypeSourceRange().getBegin());
+      if (!return_type) {
+        return std::nullopt;
+      }
+      function_kind["kind"] = "free";
     }
     llvm::json::Array parameters;
+    if (constructor != nullptr) {
+      const auto *record = constructor->getParent()->getDefinition();
+      llvm::json::Object record_type;
+      record_type["kind"] = "record";
+      record_type["declaration_id"] = declaration_id(record);
+      record_type["name"] = record->getNameAsString();
+      llvm::json::Object reference_type;
+      reference_type["kind"] = "lvalue_reference";
+      reference_type["pointee"] = std::move(record_type);
+      llvm::json::Object self;
+      self["declaration_id"] = constructor_self_id(constructor);
+      self["name"] = "self";
+      self["value_type"] = std::move(reference_type);
+      self["span"] = span(constructor->getNameInfo().getSourceRange());
+      parameters.push_back(std::move(self));
+    }
     for (const clang::ParmVarDecl *parameter : declaration->parameters()) {
       auto lowered = lower_parameter(parameter);
       if (!lowered) {
@@ -188,13 +222,51 @@ private:
     }
     const auto *body =
         llvm::dyn_cast_or_null<clang::CompoundStmt>(declaration->getBody());
-    if (body == nullptr || body->body_empty()) {
+    if (body == nullptr || (body->body_empty() && constructor == nullptr)) {
       fail(declaration->getLocation(),
            "the supported C++ function requires a nonempty compound body");
       return std::nullopt;
     }
 
     llvm::json::Array statements;
+    if (constructor != nullptr) {
+      const auto *record = constructor->getParent()->getDefinition();
+      for (const clang::FieldDecl *field : record->fields()) {
+        const clang::CXXCtorInitializer *initializer = nullptr;
+        for (const clang::CXXCtorInitializer *candidate : constructor->inits()) {
+          if (candidate->isMemberInitializer() &&
+              candidate->getMember() == field) {
+            initializer = candidate;
+            break;
+          }
+        }
+        if (initializer == nullptr) {
+          fail(constructor->getLocation(),
+               "supported constructor is missing a validated member initializer");
+          return std::nullopt;
+        }
+        auto value = lower_expression(initializer->getInit(), constructor);
+        if (!value) {
+          return std::nullopt;
+        }
+        llvm::json::Object object;
+        object["declaration_id"] = constructor_self_id(constructor);
+        object["name"] = "self";
+        object["span"] = span(constructor->getNameInfo().getSourceRange());
+        llvm::json::Object field_reference;
+        field_reference["record_declaration_id"] = declaration_id(record);
+        field_reference["declaration_id"] = declaration_id(field);
+        field_reference["name"] = field->getNameAsString();
+        field_reference["span"] = span(field->getSourceRange());
+        llvm::json::Object statement;
+        statement["kind"] = "member_store";
+        statement["object"] = std::move(object);
+        statement["field"] = std::move(field_reference);
+        statement["value"] = std::move(*value);
+        statement["span"] = span(initializer->getSourceRange());
+        statements.push_back(std::move(statement));
+      }
+    }
     for (const clang::Stmt *statement : body->body()) {
       auto lowered = lower_statement(statement, declaration, true);
       if (!lowered) {
@@ -205,7 +277,10 @@ private:
 
     llvm::json::Object result;
     result["declaration_id"] = declaration_id(declaration);
-    result["name"] = declaration->getNameAsString();
+    result["name"] = constructor == nullptr
+                         ? declaration->getNameAsString()
+                         : constructor_name(constructor);
+    result["function_kind"] = std::move(function_kind);
     result["return_type"] = std::move(*return_type);
     result["parameters"] = std::move(parameters);
     result["is_noexcept"] = true;
@@ -467,21 +542,21 @@ private:
             ? nullptr
             : llvm::dyn_cast<clang::CXXRecordDecl>(
                   record_type->getDecl()->getDefinition());
-    const bool aggregate_object =
+    const bool record_object =
         record != nullptr && !local->getType().hasQualifiers();
-    if (!mutable_int && !aggregate_object) {
+    if (!mutable_int && !record_object) {
       fail(local->getLocation(),
-           "the supported automatic C++ local must resolve to mutable int or one simple aggregate object");
+           "the supported automatic C++ local must resolve to mutable int or one simple record object");
       return std::nullopt;
     }
     if (!local->hasInit()) {
       fail(local->getLocation(),
-           aggregate_object
-               ? "a supported C++ aggregate local requires direct brace initialization of every field"
+           record_object
+               ? "a supported C++ record local requires direct aggregate or constructor initialization"
                : "the supported automatic C++ local requires an initializer");
       return std::nullopt;
     }
-    if (aggregate_object) {
+    if (record_object) {
       const clang::FunctionDecl *canonical = function->getCanonicalDecl();
       if (!functions_with_aggregate_local_.insert(canonical).second) {
         fail(local->getLocation(),
@@ -507,7 +582,7 @@ private:
     const clang::Expr *source_initializer = local->getInit();
     const clang::Expr *semantic_initializer =
         source_initializer->IgnoreParenImpCasts();
-    if (aggregate_object) {
+    if (record_object && record->isAggregate()) {
       const auto *semantic_list =
           llvm::dyn_cast<clang::InitListExpr>(source_initializer);
       const clang::InitListExpr *syntactic_list = semantic_list;
@@ -545,6 +620,47 @@ private:
       }
       initializer["kind"] = "aggregate";
       initializer["fields"] = std::move(fields);
+      initializer["span"] = span(source_initializer->getSourceRange());
+    } else if (record_object) {
+      const auto *construction =
+          llvm::dyn_cast<clang::CXXConstructExpr>(semantic_initializer);
+      const clang::CXXConstructorDecl *constructor =
+          construction == nullptr ? nullptr : construction->getConstructor();
+      const auto *definition = constructor == nullptr
+                                   ? nullptr
+                                   : llvm::dyn_cast_or_null<clang::CXXConstructorDecl>(
+                                         constructor->getDefinition());
+      if (local->getInitStyle() != clang::VarDecl::CallInit ||
+          construction == nullptr || definition == nullptr ||
+          construction->getConstructionKind() != clang::CXXConstructionKind::Complete ||
+          definition->getParent()->getCanonicalDecl() !=
+              record->getCanonicalDecl() ||
+          construction->getNumArgs() != definition->getNumParams()) {
+        fail(source_initializer->getExprLoc(),
+             "a supported C++ object local requires one direct parenthesized call to its explicit constructor");
+        return std::nullopt;
+      }
+      llvm::json::Array arguments;
+      for (unsigned index = 0; index < construction->getNumArgs(); ++index) {
+        auto argument = lower_call_argument(construction->getArg(index),
+                                            definition->getParamDecl(index),
+                                            function);
+        if (!argument) {
+          return std::nullopt;
+        }
+        arguments.push_back(std::move(*argument));
+      }
+      const clang::FunctionDecl *canonical = definition->getCanonicalDecl();
+      if (known_functions_.insert(canonical).second) {
+        reachable_definitions_.push_back(definition);
+      }
+      llvm::json::Object reference;
+      reference["declaration_id"] = declaration_id(definition);
+      reference["name"] = constructor_name(definition);
+      reference["span"] = span(source_initializer->getSourceRange());
+      initializer["kind"] = "constructor";
+      initializer["callee"] = std::move(reference);
+      initializer["arguments"] = std::move(arguments);
       initializer["span"] = span(source_initializer->getSourceRange());
     } else if (const auto *call =
             llvm::dyn_cast<clang::CallExpr>(semantic_initializer)) {
@@ -866,9 +982,9 @@ private:
       return false;
     }
     if (!record->isStandardLayout() || !record->isTriviallyCopyable() ||
-        !record->isAggregate() || record->getNumBases() != 0) {
+        !record->hasTrivialDestructor() || record->getNumBases() != 0) {
       fail(record->getLocation(),
-           "the supported C++ record must be an aggregate, standard-layout, trivially-copyable struct with no bases");
+           "the supported C++ record must be standard-layout and trivially-copyable, have trivial destruction, and have no bases");
       return false;
     }
     if (record->field_empty()) {
@@ -876,19 +992,35 @@ private:
            "the supported C++ record must contain at least one field");
       return false;
     }
+    const clang::CXXConstructorDecl *supported_constructor = nullptr;
     for (const clang::Decl *member : record->decls()) {
       if (const auto *method = llvm::dyn_cast<clang::CXXMethodDecl>(member);
           method != nullptr && !method->isImplicit()) {
-        fail(method->getLocation(),
-             "methods, constructors, and destructors are outside the supported C++ record slice");
-        return false;
+        if (const auto *constructor =
+                llvm::dyn_cast<clang::CXXConstructorDecl>(method)) {
+          if (supported_constructor != nullptr) {
+            fail(constructor->getLocation(),
+                 "the first constructor slice supports exactly one explicit constructor");
+            return false;
+          }
+          supported_constructor = constructor;
+        } else {
+          fail(method->getLocation(),
+               "methods and user-declared destructors are outside the constructor-only C++ slice; destruction must remain trivial and implicit");
+          return false;
+        }
       }
       if (!member->isImplicit() && !llvm::isa<clang::FieldDecl>(member) &&
+          !llvm::isa<clang::CXXMethodDecl>(member) &&
           !llvm::isa<clang::AccessSpecDecl>(member)) {
         fail(member->getLocation(),
              "nested declarations and static data members are outside the supported C++ record slice");
         return false;
       }
+    }
+    if (supported_constructor != nullptr &&
+        !validate_constructor(supported_constructor, record)) {
+      return false;
     }
     for (const clang::FieldDecl *field : record->fields()) {
       const clang::QualType type = field->getType();
@@ -909,6 +1041,69 @@ private:
              "the supported C++ record fields must be named public mutable int or mutable int* fields without bit-fields");
         return false;
       }
+    }
+    return true;
+  }
+
+  bool validate_constructor(const clang::CXXConstructorDecl *constructor,
+                            const clang::CXXRecordDecl *record) {
+    const auto *prototype =
+        constructor->getType()->getAs<clang::FunctionProtoType>();
+    if (!constructor->isExplicit() || constructor->getAccess() != clang::AS_public ||
+        constructor->isDefaultConstructor() ||
+        constructor->isCopyOrMoveConstructor() ||
+        constructor->isDelegatingConstructor() || constructor->isVariadic() ||
+        prototype == nullptr || !prototype->isNothrow()) {
+      fail(constructor->getLocation(),
+           "the supported constructor must be one public explicit non-default noexcept constructor without copying, moving, delegation, or variadic arguments");
+      return false;
+    }
+    if (!constructor->doesThisDeclarationHaveABody() ||
+        constructor->getDefinition() != constructor ||
+        !source_manager_.isWrittenInMainFile(source_manager_.getSpellingLoc(
+            constructor->getLocation()))) {
+      fail(constructor->getLocation(),
+           "the supported constructor must have an inline definition in the selected file");
+      return false;
+    }
+    for (const clang::ParmVarDecl *parameter : constructor->parameters()) {
+      if (parameter->hasDefaultArg()) {
+        fail(parameter->getLocation(),
+             "default constructor arguments are outside the supported slice");
+        return false;
+      }
+    }
+
+    const unsigned field_count =
+        std::distance(record->field_begin(), record->field_end());
+    if (constructor->getNumCtorInitializers() != field_count) {
+      fail(constructor->getLocation(),
+           "the supported constructor must explicitly initialize every field in declaration order");
+      return false;
+    }
+    std::vector<const clang::CXXCtorInitializer *> source_order(field_count,
+                                                                nullptr);
+    for (const clang::CXXCtorInitializer *initializer : constructor->inits()) {
+      const unsigned order = initializer->getSourceOrder();
+      if (!initializer->isWritten() || !initializer->isMemberInitializer() ||
+          order >= field_count || source_order[order] != nullptr) {
+        fail(constructor->getLocation(),
+             "the supported constructor must use one written member initializer per field");
+        return false;
+      }
+      source_order[order] = initializer;
+    }
+    unsigned index = 0;
+    for (const clang::FieldDecl *field : record->fields()) {
+      if (source_order[index] == nullptr ||
+          source_order[index]->getMember() != field) {
+        fail(source_order[index] == nullptr
+                 ? constructor->getLocation()
+                 : source_order[index]->getSourceLocation(),
+             "the supported constructor member initializer list must follow declaration order");
+        return false;
+      }
+      ++index;
     }
     return true;
   }
@@ -963,11 +1158,6 @@ private:
   std::optional<LoweredMember>
   lower_member(const clang::MemberExpr *member,
                const clang::FunctionDecl *function) {
-    if (member->isArrow()) {
-      fail(member->getOperatorLoc(),
-           "the first C++ object slice supports dot access through a record reference, not arrow access");
-      return std::nullopt;
-    }
     const auto *field = llvm::dyn_cast<clang::FieldDecl>(member->getMemberDecl());
     const auto *record = field == nullptr
                              ? nullptr
@@ -981,6 +1171,9 @@ private:
       return std::nullopt;
     }
     const clang::Expr *base = member->getBase()->IgnoreParenImpCasts();
+    const auto *this_expression = llvm::dyn_cast<clang::CXXThisExpr>(base);
+    const auto *constructor =
+        llvm::dyn_cast<clang::CXXConstructorDecl>(function);
     const auto *reference = llvm::dyn_cast<clang::DeclRefExpr>(base);
     const auto *parameter = reference == nullptr
                                 ? nullptr
@@ -1014,9 +1207,18 @@ private:
         local_record_type != nullptr &&
         local_record_type->getDecl()->getCanonicalDecl() ==
             record->getCanonicalDecl();
-    if (!supported_parameter && !supported_local) {
+    const bool supported_this =
+        this_expression != nullptr && constructor != nullptr &&
+        constructor->getParent()->getCanonicalDecl() ==
+            record->getCanonicalDecl();
+    if (member->isArrow() && !supported_this) {
+      fail(member->getOperatorLoc(),
+           "the first C++ object slice supports arrow access only for the current constructor object");
+      return std::nullopt;
+    }
+    if (!supported_parameter && !supported_local && !supported_this) {
       fail(member->getMemberLoc(),
-           "supported C++ member access must use a mutable record-reference parameter or supported aggregate local directly");
+           "supported C++ member access must use the current constructor object, a mutable record-reference parameter, or a supported record local directly");
       return std::nullopt;
     }
     auto object = lower_place_reference(base, function);
@@ -1038,6 +1240,20 @@ private:
   lower_place_reference(const clang::Expr *expression,
                         const clang::FunctionDecl *expected_function) {
     expression = expression->IgnoreParenImpCasts();
+    if (llvm::isa<clang::CXXThisExpr>(expression)) {
+      const auto *constructor =
+          llvm::dyn_cast<clang::CXXConstructorDecl>(expected_function);
+      if (constructor == nullptr) {
+        fail(expression->getExprLoc(),
+             "`this` is supported only inside a constructor body");
+        return std::nullopt;
+      }
+      llvm::json::Object result;
+      result["declaration_id"] = constructor_self_id(constructor);
+      result["name"] = "self";
+      result["span"] = span(constructor->getNameInfo().getSourceRange());
+      return Json(std::move(result));
+    }
     const auto *reference = llvm::dyn_cast<clang::DeclRefExpr>(expression);
     const auto *place =
         reference == nullptr
@@ -1073,6 +1289,16 @@ private:
       return {};
     }
     return result.str().str();
+  }
+
+  std::string constructor_self_id(
+      const clang::CXXConstructorDecl *constructor) {
+    return declaration_id(constructor) + "@this";
+  }
+
+  std::string constructor_name(
+      const clang::CXXConstructorDecl *constructor) const {
+    return constructor->getParent()->getNameAsString() + "_constructor";
   }
 
   Json span(clang::SourceRange range) {
@@ -1207,6 +1433,7 @@ int main(int argc, const char **argv) {
       "-ffreestanding",
       "-nostdinc",
       "-nostdinc++",
+      "-Wno-reorder-ctor",
       "-fsyntax-only",
   };
   clang::tooling::FixedCompilationDatabase database(

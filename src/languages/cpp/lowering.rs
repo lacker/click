@@ -14,14 +14,15 @@ use std::collections::BTreeMap;
 
 use super::{
     CppBinaryOperator, CppCallArgument, CppExpression, CppFieldReference, CppFunction,
-    CppInitializer, CppPlace, CppPlaceReference, CppRecord, CppStatement, CppType,
+    CppFunctionKind, CppInitializer, CppPlace, CppPlaceReference, CppRecord, CppStatement, CppType,
     PreparedCppImport,
 };
 use crate::kernel::{
     CAggregateField, CAggregateLayout, CExpression, CFunction, CStatement, CType, LoadSourceId,
-    LoadSourceOwnerId, c_add, c_assign, c_call, c_call_assign, c_declare, c_declare_aggregate,
-    c_function, c_if, c_int32_literal, c_parameter, c_pointer_offset_bytes, c_return, c_seq,
-    c_skip, c_typed_load_with_source, c_typed_store, c_variable,
+    LoadSourceOwnerId, c_add, c_assign, c_begin_aggregate_construction, c_call, c_call_assign,
+    c_cast, c_declare, c_declare_aggregate, c_function, c_if, c_int32_literal, c_parameter,
+    c_pointer_offset_bytes, c_return, c_seq, c_skip, c_typed_load_with_source, c_typed_store,
+    c_variable,
 };
 
 /// One kernel function together with the immutable semantic artifact that
@@ -97,8 +98,12 @@ fn lower_function(import: &PreparedCppImport, source: &CppFunction) -> Result<CF
         next_load_occurrence: 0,
     };
     let body = context.lower_sequence(&source.body)?;
+    let return_type = match &source.function_kind {
+        CppFunctionKind::Free => CType::Int32,
+        CppFunctionKind::Constructor { .. } => CType::Void,
+    };
     Ok(c_function(
-        CType::Int32,
+        return_type,
         source.name.clone(),
         parameters,
         body,
@@ -218,6 +223,32 @@ impl LoweringContext<'_> {
                         result = c_seq(result, c_typed_store(pointer, value, value_type));
                     }
                     Ok(result)
+                }
+                (
+                    CppType::Record {
+                        declaration_id,
+                        name,
+                    },
+                    CppInitializer::Constructor {
+                        callee, arguments, ..
+                    },
+                ) => {
+                    let record = self.records.get(declaration_id.as_str()).ok_or_else(|| {
+                        format!("C++ lowering found unknown record declaration `{declaration_id}`")
+                    })?;
+                    if record.name != *name {
+                        return Err(format!(
+                            "C++ constructor initializer for `{name}` disagrees with its record"
+                        ));
+                    }
+                    let layout = cpp_record_layout(record)?;
+                    let mut lowered_arguments =
+                        vec![c_cast(c_variable(local.name.clone()), CType::Int32Pointer)];
+                    lowered_arguments.extend(self.lower_call_arguments(arguments)?);
+                    Ok(c_seq(
+                        c_begin_aggregate_construction(local.name.clone(), layout),
+                        c_call(callee.name.clone(), lowered_arguments),
+                    ))
                 }
                 _ => Err(format!(
                     "C++ local `{}` has an initializer outside direct lowering",

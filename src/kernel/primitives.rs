@@ -1733,6 +1733,10 @@ pub enum CStatement {
     DeclareAggregate {
         name: String,
         layout: CAggregateLayout,
+        /// The storage is entering a checked constructor call. The frontend
+        /// must prove that every fresh field value is overwritten before
+        /// source code can observe it.
+        construction: bool,
     },
     /// Copy an address-backed aggregate, preserving typed views for any
     /// overlapping union members in its layout.

@@ -2245,8 +2245,16 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                 loan_evidence: empty_checked_loan_evidence_sequence(),
             }]
         }
-        CStatement::DeclareAggregate { name, layout } => {
-            let outcome = match declare_aggregate_local(state, name, layout) {
+        CStatement::DeclareAggregate {
+            name,
+            layout,
+            construction,
+        } => {
+            let outcome = match if *construction {
+                begin_aggregate_construction(state, name, layout, budget)
+            } else {
+                declare_aggregate_local(state, name, layout)
+            } {
                 Ok(state) => CStatementOutcome::Normal(state),
                 Err(refusal) => {
                     CStatementOutcome::RuntimeError(CRuntimeError::LoanRefusal(refusal))
@@ -3294,6 +3302,43 @@ pub(in crate::kernel) fn declare_aggregate_local(
     state
         .locals
         .set_aggregate_object_at(name.to_string(), layout.clone(), pointer);
+    Ok(state)
+}
+
+fn begin_aggregate_construction(
+    state: &CState,
+    name: &str,
+    layout: &CAggregateLayout,
+    budget: &mut ExecutionBudget,
+) -> Result<CState, crate::kernel::LoanRefusalDiagnostic> {
+    let mut state = declare_aggregate_local(state, name, layout)?;
+    let pointer = state
+        .locals
+        .slot(name)
+        .expect("aggregate construction has a declared stack slot")
+        .clone();
+    for field in layout.fields() {
+        let variable = Variable(budget.next_kernel_variable);
+        budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
+        let value = crate::kernel::functions::symbolic_call_result(field.c_type(), variable);
+        state.set_memory(
+            state
+                .memory
+                .clone()
+                .store(pointer.offset_by_bytes(field.offset_bytes()), value),
+        );
+    }
+    state.resources = state
+        .resources
+        .clone()
+        .unchecked_with_fact(CResourceFact::own_memory(
+            CMemoryRange::new_with_element_width(
+                pointer,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(layout.size_bytes()),
+                1,
+            ),
+        ));
     Ok(state)
 }
 

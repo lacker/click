@@ -1364,6 +1364,18 @@ pub fn c_declare_aggregate(name: impl Into<String>, layout: CAggregateLayout) ->
     CStatement::DeclareAggregate {
         name: name.into(),
         layout,
+        construction: false,
+    }
+}
+
+pub fn c_begin_aggregate_construction(
+    name: impl Into<String>,
+    layout: CAggregateLayout,
+) -> CStatement {
+    CStatement::DeclareAggregate {
+        name: name.into(),
+        layout,
+        construction: true,
     }
 }
 

@@ -5226,6 +5226,7 @@ fn cpp_function_interface(
     lowered: &crate::kernel::CFunction,
 ) -> Result<syntax::C0Function, ClickError> {
     let return_type = match source.return_type {
+        crate::languages::cpp::CppType::Void => C0Type::Void,
         crate::languages::cpp::CppType::Integer {
             bits: 32,
             signed: true,
