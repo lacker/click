@@ -175,14 +175,23 @@ The proof interface spells that reference as `struct Name*` and uses ordinary
 field resources such as `owns state->saved`. Click does not reconstruct the
 layout from C++ source or create a synthetic C body.
 
-Object construction, local objects, constructors, destructors, copies and
-moves, methods, inheritance, private fields, bit-fields, nested records, and
-multiple record types remain explicit errors. Uninitialized or nested locals,
-local references, shadowing, address-taking other than a current mutable
-reference parameter for a supported pointer call, pointer locals, pointer
-arithmetic, null pointers, multiple indirection, call results outside a local
-initializer, indirect calls, loops, external specifications, and broader C++
-syntax also remain outside this end-to-end subset.
+The `local-aggregate` fixture declares one automatic object of that same record
+kind directly in a function body. It must use direct braces with exactly one
+initializer for every field in declaration order. The artifact binds those
+expressions to Clang field identities, and direct lowering allocates the exact
+Clang layout as kernel stack memory before applying typed field stores. Later
+`object.field` reads use the same checked offsets as an existing object passed
+by reference; trivial scope exit needs no destructor action.
+
+Constructors, destructors, copies and moves, default or partial aggregate
+initialization, multiple or nested local objects, methods, inheritance, private
+fields, bit-fields, nested records, and multiple record types remain explicit
+errors. Uninitialized or nested scalar locals, local references, shadowing,
+address-taking other than a current mutable reference parameter for a supported
+pointer call, pointer locals, pointer arithmetic, null pointers, multiple
+indirection, call results outside a local initializer, indirect calls, loops,
+external specifications, and broader C++ syntax also remain outside this
+end-to-end subset.
 
 ## Validation and supported profile
 

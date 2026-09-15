@@ -104,11 +104,15 @@ boundary. A record fixture carries one aggregate struct's Clang declaration
 identities and exact LP64 layout into the proof interface, then checks field
 reads and writes plus a dereference through an `int*` field. It verifies
 offline and after expansion; missing field authority and a false pointee effect
-both fail. Focused frontend checks reject methods, bit-fields, inheritance, and
-multiple record types. Other coverage exercises source/signature mismatch
-diagnostics, const-write rejection, and smart-tactic inventory. Missing Clang
-development tooling fails the gate, and unsupported C++ does not fall back to
-the C parser.
+both fail. A local-aggregate fixture brace-initializes one object with every
+field, lowers its exact layout to checked stack memory, and reads its fields
+after initialization. It also verifies offline and after expansion; missing
+input authority and a false saved-field result fail. Focused frontend checks
+reject methods, bit-fields, inheritance, multiple record types, partial or
+default initialization, copies, nested objects, and a second local object.
+Other coverage exercises source/signature mismatch diagnostics, const-write
+rejection, and smart-tactic inventory. Missing Clang development tooling fails
+the gate, and unsupported C++ does not fall back to the C parser.
 
 ## What the gate runs
 

@@ -18,10 +18,10 @@ use super::{
     PreparedCppImport,
 };
 use crate::kernel::{
-    CExpression, CFunction, CStatement, CType, LoadSourceId, LoadSourceOwnerId, c_add, c_assign,
-    c_call, c_call_assign, c_declare, c_function, c_if, c_int32_literal, c_parameter,
-    c_pointer_offset_bytes, c_return, c_seq, c_skip, c_typed_load_with_source, c_typed_store,
-    c_variable,
+    CAggregateField, CAggregateLayout, CExpression, CFunction, CStatement, CType, LoadSourceId,
+    LoadSourceOwnerId, c_add, c_assign, c_call, c_call_assign, c_declare, c_declare_aggregate,
+    c_function, c_if, c_int32_literal, c_parameter, c_pointer_offset_bytes, c_return, c_seq,
+    c_skip, c_typed_load_with_source, c_typed_store, c_variable,
 };
 
 /// One kernel function together with the immutable semantic artifact that
@@ -158,22 +158,72 @@ impl LoweringContext<'_> {
         match statement {
             CppStatement::Declare {
                 local, initializer, ..
-            } => {
-                let declaration = c_declare(local.name.clone(), CType::Int32);
-                let initialization = match initializer {
-                    CppInitializer::Value { value } => {
-                        c_assign(local.name.clone(), self.lower_expression(value)?)
-                    }
+            } => match (&local.value_type, initializer) {
+                (CppType::Integer { .. }, CppInitializer::Value { value }) => Ok(c_seq(
+                    c_declare(local.name.clone(), CType::Int32),
+                    c_assign(local.name.clone(), self.lower_expression(value)?),
+                )),
+                (
+                    CppType::Integer { .. },
                     CppInitializer::Call {
                         callee, arguments, ..
-                    } => c_call_assign(
+                    },
+                ) => Ok(c_seq(
+                    c_declare(local.name.clone(), CType::Int32),
+                    c_call_assign(
                         local.name.clone(),
                         callee.name.clone(),
                         self.lower_call_arguments(arguments)?,
                     ),
-                };
-                Ok(c_seq(declaration, initialization))
-            }
+                )),
+                (
+                    CppType::Record {
+                        declaration_id,
+                        name,
+                    },
+                    CppInitializer::Aggregate { fields, .. },
+                ) => {
+                    let record = self.records.get(declaration_id.as_str()).ok_or_else(|| {
+                        format!("C++ lowering found unknown record declaration `{declaration_id}`")
+                    })?;
+                    if record.name != *name || fields.len() != record.fields.len() {
+                        return Err(format!(
+                            "C++ aggregate initializer for `{name}` disagrees with its record"
+                        ));
+                    }
+                    let layout = cpp_record_layout(record)?;
+                    let members = record
+                        .fields
+                        .iter()
+                        .map(|field| {
+                            Ok((
+                                field.declaration_id.clone(),
+                                field.offset_bytes,
+                                cpp_scalar_kernel_type(&field.value_type)?,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    let mut result = c_declare_aggregate(local.name.clone(), layout);
+                    for (initializer, (declaration_id, offset, value_type)) in
+                        fields.iter().zip(members)
+                    {
+                        if initializer.field.declaration_id != declaration_id {
+                            return Err(format!(
+                                "C++ aggregate initializer for `{name}` is out of declaration order"
+                            ));
+                        }
+                        let pointer =
+                            c_pointer_offset_bytes(c_variable(local.name.clone()), offset);
+                        let value = self.lower_expression(&initializer.value)?;
+                        result = c_seq(result, c_typed_store(pointer, value, value_type));
+                    }
+                    Ok(result)
+                }
+                _ => Err(format!(
+                    "C++ local `{}` has an initializer outside direct lowering",
+                    local.name
+                )),
+            },
             CppStatement::Assign { target, value, .. } => {
                 let target_is_local =
                     matches!(self.place(target)?.value_type, CppType::Integer { .. });
@@ -399,19 +449,23 @@ impl LoweringContext<'_> {
         field: &CppFieldReference,
     ) -> Result<(CExpression, CType), String> {
         let place = self.place(object)?;
-        let CppType::LvalueReference { pointee } = &place.value_type else {
-            return Err(format!(
-                "C++ member object `{}` is not a record reference",
-                object.name
-            ));
+        let record_type = match &place.value_type {
+            CppType::LvalueReference { pointee } => pointee.as_ref(),
+            CppType::Record { .. } => &place.value_type,
+            _ => {
+                return Err(format!(
+                    "C++ member object `{}` is not a supported record object",
+                    object.name
+                ));
+            }
         };
         let CppType::Record {
             declaration_id,
             name,
-        } = pointee.as_ref()
+        } = record_type
         else {
             return Err(format!(
-                "C++ member object `{}` is not a record reference",
+                "C++ member object `{}` is not a supported record object",
                 object.name
             ));
         };
@@ -467,6 +521,25 @@ impl LoweringContext<'_> {
         }
         Ok(parameter)
     }
+}
+
+fn cpp_record_layout(record: &CppRecord) -> Result<CAggregateLayout, String> {
+    let fields = record
+        .fields
+        .iter()
+        .map(|field| {
+            Ok(CAggregateField::new(
+                field.name.clone(),
+                field.offset_bytes,
+                cpp_scalar_kernel_type(&field.value_type)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(CAggregateLayout::new(
+        record.size_bytes,
+        record.alignment_bytes,
+        fields,
+    ))
 }
 
 fn cpp_scalar_kernel_type(value_type: &CppType) -> Result<CType, String> {

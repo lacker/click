@@ -140,7 +140,7 @@ public:
     profile["rtti"] = false;
 
     llvm::json::Object artifact;
-    artifact["schema"] = 6;
+    artifact["schema"] = 7;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["logical_source"] = logical_source_;
@@ -457,17 +457,40 @@ private:
            "the supported C++ local must have automatic storage");
       return std::nullopt;
     }
-    if (!context_.hasSameType(local->getType().getUnqualifiedType(),
-                              context_.IntTy) ||
-        local->getType().isConstQualified()) {
+    const bool mutable_int =
+        context_.hasSameType(local->getType().getUnqualifiedType(),
+                             context_.IntTy) &&
+        !local->getType().isConstQualified();
+    const auto *record_type = local->getType()->getAs<clang::RecordType>();
+    const auto *record =
+        record_type == nullptr
+            ? nullptr
+            : llvm::dyn_cast<clang::CXXRecordDecl>(
+                  record_type->getDecl()->getDefinition());
+    const bool aggregate_object =
+        record != nullptr && !local->getType().hasQualifiers();
+    if (!mutable_int && !aggregate_object) {
       fail(local->getLocation(),
-           "the supported automatic C++ local must resolve to mutable int");
+           "the supported automatic C++ local must resolve to mutable int or one simple aggregate object");
       return std::nullopt;
     }
     if (!local->hasInit()) {
       fail(local->getLocation(),
-           "the supported automatic C++ local requires an initializer");
+           aggregate_object
+               ? "a supported C++ aggregate local requires direct brace initialization of every field"
+               : "the supported automatic C++ local requires an initializer");
       return std::nullopt;
+    }
+    if (aggregate_object) {
+      const clang::FunctionDecl *canonical = function->getCanonicalDecl();
+      if (!functions_with_aggregate_local_.insert(canonical).second) {
+        fail(local->getLocation(),
+             "the first C++ aggregate-local slice permits one object per function");
+        return std::nullopt;
+      }
+      if (!remember_record(record)) {
+        return std::nullopt;
+      }
     }
 
     auto value_type = lower_type(local->getType(), local->getLocation());
@@ -484,7 +507,46 @@ private:
     const clang::Expr *source_initializer = local->getInit();
     const clang::Expr *semantic_initializer =
         source_initializer->IgnoreParenImpCasts();
-    if (const auto *call =
+    if (aggregate_object) {
+      const auto *semantic_list =
+          llvm::dyn_cast<clang::InitListExpr>(source_initializer);
+      const clang::InitListExpr *syntactic_list = semantic_list;
+      if (semantic_list != nullptr && semantic_list->getSyntacticForm() != nullptr) {
+        syntactic_list = semantic_list->getSyntacticForm();
+      }
+      const unsigned field_count = std::distance(record->field_begin(),
+                                                 record->field_end());
+      if (local->getInitStyle() != clang::VarDecl::ListInit ||
+          syntactic_list == nullptr || syntactic_list->getNumInits() != field_count) {
+        fail(source_initializer->getExprLoc(),
+             "a supported C++ aggregate local requires one direct brace initializer per field in declaration order");
+        return std::nullopt;
+      }
+      llvm::json::Array fields;
+      unsigned index = 0;
+      for (const clang::FieldDecl *field : record->fields()) {
+        const clang::Expr *field_source = syntactic_list->getInit(index++);
+        const clang::Expr *field_semantic =
+            semantic_list->getInit(index - 1);
+        auto value = lower_expression(field_semantic, function);
+        if (!value) {
+          return std::nullopt;
+        }
+        llvm::json::Object field_reference;
+        field_reference["record_declaration_id"] = declaration_id(record);
+        field_reference["declaration_id"] = declaration_id(field);
+        field_reference["name"] = field->getNameAsString();
+        field_reference["span"] = span(field->getSourceRange());
+        llvm::json::Object field_initializer;
+        field_initializer["field"] = std::move(field_reference);
+        field_initializer["value"] = std::move(*value);
+        field_initializer["span"] = span(field_source->getSourceRange());
+        fields.push_back(std::move(field_initializer));
+      }
+      initializer["kind"] = "aggregate";
+      initializer["fields"] = std::move(fields);
+      initializer["span"] = span(source_initializer->getSourceRange());
+    } else if (const auto *call =
             llvm::dyn_cast<clang::CallExpr>(semantic_initializer)) {
       auto lowered = lower_call_operation(call, function);
       if (!lowered) {
@@ -920,10 +982,14 @@ private:
     }
     const clang::Expr *base = member->getBase()->IgnoreParenImpCasts();
     const auto *reference = llvm::dyn_cast<clang::DeclRefExpr>(base);
-    const auto *parameter =
-        reference == nullptr
-            ? nullptr
-            : llvm::dyn_cast<clang::ParmVarDecl>(reference->getDecl());
+    const auto *parameter = reference == nullptr
+                                ? nullptr
+                                : llvm::dyn_cast<clang::ParmVarDecl>(
+                                      reference->getDecl());
+    const auto *local = reference == nullptr
+                            ? nullptr
+                            : llvm::dyn_cast<clang::VarDecl>(
+                                  reference->getDecl());
     const auto *reference_type =
         parameter == nullptr
             ? nullptr
@@ -932,14 +998,25 @@ private:
         reference_type == nullptr
             ? nullptr
             : reference_type->getPointeeType()->getAs<clang::RecordType>();
-    if (parameter == nullptr || parameter->getDeclContext() != function ||
-        reference_type == nullptr ||
-        reference_type->getPointeeType().hasQualifiers() ||
-        base_record_type == nullptr ||
-        base_record_type->getDecl()->getCanonicalDecl() !=
-            record->getCanonicalDecl()) {
+    const auto *local_record_type =
+        local == nullptr ? nullptr : local->getType()->getAs<clang::RecordType>();
+    const bool supported_parameter =
+        parameter != nullptr && parameter->getDeclContext() == function &&
+        reference_type != nullptr &&
+        !reference_type->getPointeeType().hasQualifiers() &&
+        base_record_type != nullptr &&
+        base_record_type->getDecl()->getCanonicalDecl() ==
+            record->getCanonicalDecl();
+    const bool supported_local =
+        local != nullptr && parameter == nullptr &&
+        local->getDeclContext() == function && local->hasLocalStorage() &&
+        !local->isStaticLocal() && !local->getType().hasQualifiers() &&
+        local_record_type != nullptr &&
+        local_record_type->getDecl()->getCanonicalDecl() ==
+            record->getCanonicalDecl();
+    if (!supported_parameter && !supported_local) {
       fail(member->getMemberLoc(),
-           "supported C++ member access must use a mutable record-reference parameter directly");
+           "supported C++ member access must use a mutable record-reference parameter or supported aggregate local directly");
       return std::nullopt;
     }
     auto object = lower_place_reference(base, function);
@@ -1055,6 +1132,8 @@ private:
   std::vector<const clang::FunctionDecl *> reachable_definitions_;
   std::unordered_set<const clang::CXXRecordDecl *> known_records_;
   std::vector<const clang::CXXRecordDecl *> record_definitions_;
+  std::unordered_set<const clang::FunctionDecl *>
+      functions_with_aggregate_local_;
 };
 
 class ExportConsumer : public clang::ASTConsumer {

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 6;
+pub(crate) const EXPORT_SCHEMA: u32 = 7;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -168,6 +168,14 @@ pub struct CppFieldReference {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CppFieldInitializer {
+    pub field: CppFieldReference,
+    pub value: CppExpression,
+    pub span: CppSpan,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CppCallArgument {
     Value { value: CppExpression },
@@ -183,6 +191,10 @@ pub enum CppInitializer {
     Call {
         callee: CppFunctionReference,
         arguments: Vec<CppCallArgument>,
+        span: CppSpan,
+    },
+    Aggregate {
+        fields: Vec<CppFieldInitializer>,
         span: CppSpan,
     },
 }
@@ -467,6 +479,7 @@ impl CppFunction {
         if self.body.is_empty() {
             return Err("supported C++ function has no executable statements".into());
         }
+        let mut aggregate_locals = 0;
         for statement in &self.body {
             if let CppStatement::Declare {
                 local,
@@ -479,8 +492,36 @@ impl CppFunction {
                 if local.declaration_id.is_empty() || local.name.is_empty() {
                     return Err("C++ local is missing declaration identity".into());
                 }
-                require_int32(&local.value_type, false, "automatic local")?;
-                initializer.validate(&places, records, logical_source)?;
+                match &local.value_type {
+                    CppType::Integer { .. } => {
+                        require_int32(&local.value_type, false, "automatic local")?;
+                    }
+                    CppType::Record {
+                        declaration_id,
+                        name,
+                    } => {
+                        validate_record_reference(records, declaration_id, name)?;
+                        aggregate_locals += 1;
+                        if aggregate_locals > 1 {
+                            return Err(format!(
+                                "C++ function `{}` declares more than one aggregate local",
+                                self.name
+                            ));
+                        }
+                    }
+                    _ => {
+                        return Err(
+                            "the supported automatic C++ local must be mutable `int` or one simple aggregate object"
+                                .into(),
+                        );
+                    }
+                }
+                initializer.validate_for_local(
+                    &local.value_type,
+                    &places,
+                    records,
+                    logical_source,
+                )?;
                 if places
                     .insert(
                         local.declaration_id.clone(),
@@ -604,22 +645,70 @@ impl CppStatement {
 }
 
 impl CppInitializer {
-    fn validate(
+    fn validate_for_local(
         &self,
+        local_type: &CppType,
         places: &BTreeMap<String, (String, CppType)>,
         records: &BTreeMap<String, &CppRecord>,
         logical_source: &str,
     ) -> Result<(), String> {
-        match self {
-            Self::Value { value } => {
+        match (self, local_type) {
+            (Self::Value { value }, CppType::Integer { .. }) => {
                 value.validate(places, records, logical_source)?;
                 require_int32(value.value_type(), false, "local initializer")
             }
-            Self::Call {
-                callee,
-                arguments,
-                span,
-            } => validate_call(callee, arguments, span, places, records, logical_source),
+            (
+                Self::Call {
+                    callee,
+                    arguments,
+                    span,
+                },
+                CppType::Integer { .. },
+            ) => validate_call(callee, arguments, span, places, records, logical_source),
+            (
+                Self::Aggregate { fields, span },
+                CppType::Record {
+                    declaration_id,
+                    name,
+                },
+            ) => {
+                span.validate(logical_source)?;
+                let record = validate_record_reference(records, declaration_id, name)?;
+                if fields.len() != record.fields.len() {
+                    return Err(format!(
+                        "C++ aggregate initializer for `{name}` must initialize every field"
+                    ));
+                }
+                for (initializer, expected) in fields.iter().zip(&record.fields) {
+                    initializer.span.validate(logical_source)?;
+                    initializer.field.span.validate(logical_source)?;
+                    if initializer.field.record_declaration_id != *declaration_id
+                        || initializer.field.declaration_id != expected.declaration_id
+                        || initializer.field.name != expected.name
+                    {
+                        return Err(format!(
+                            "C++ aggregate initializer for `{name}` does not follow declaration order"
+                        ));
+                    }
+                    initializer
+                        .value
+                        .validate(places, records, logical_source)?;
+                    if initializer.value.value_type() != &expected.value_type {
+                        return Err(format!(
+                            "C++ aggregate initializer for `{}.{}` has a mismatched value type",
+                            name, expected.name
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            (Self::Aggregate { .. }, _) => {
+                Err("C++ aggregate initializer requires a supported record local".into())
+            }
+            (_, CppType::Record { .. }) => {
+                Err("C++ record local requires direct brace initialization of every field".into())
+            }
+            _ => Err("unsupported C++ local initializer".into()),
         }
     }
 }
@@ -1051,15 +1140,17 @@ fn validate_member_reference<'a>(
         return Err("C++ member reference is missing declaration identity".into());
     }
     let object_type = validate_place_reference(object, places, logical_source)?;
-    let CppType::LvalueReference { pointee } = object_type else {
-        return Err("C++ member access requires a supported record reference".into());
+    let record_type = match object_type {
+        CppType::LvalueReference { pointee } => pointee.as_ref(),
+        CppType::Record { .. } => object_type,
+        _ => return Err("C++ member access requires a supported record object".into()),
     };
     let CppType::Record {
         declaration_id,
         name,
-    } = pointee.as_ref()
+    } = record_type
     else {
-        return Err("C++ member access requires a supported record reference".into());
+        return Err("C++ member access requires a supported record object".into());
     };
     if declaration_id != &field.record_declaration_id {
         return Err(format!(
