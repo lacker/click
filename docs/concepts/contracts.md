@@ -156,6 +156,12 @@ and a store outside it fails at the store. Unlike a return postcondition, a
 write footprint constrains finite writes even on an execution that later runs
 forever.
 
+The footprint is derived by the verifier from the resource clauses, with
+owned composites opened through their definitions; nothing lowered from the
+contract text is a second copy of it. A loop that declares its own `owns`
+clauses gets its footprint the same way at loop entry, and a loop without a
+declaration inherits the function's.
+
 ## Proof clauses
 
 The `by` clause says how a guarantee is proved:

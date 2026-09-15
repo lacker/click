@@ -56,6 +56,41 @@ explicit proof. In the intended architecture it is serialization: expansion
 extracts attributed operations from checked `Proof` provenance only when proof
 text or an inspection result is requested.
 
+### Contracts and callbacks
+
+One body-independent contract interface carries a function's typed
+parameters and result, proof binders, pure requirements and guarantees,
+normalized resource clauses with their access, transfer role, and snapshot,
+composite definitions, and predicate unfoldings. Verified functions, external
+assumptions, named callback contracts, and execution theorems all apply
+through it; their evidence stays distinct (a callback fact is tied to an exact
+pointer value, an external assumption is never a verified body).
+
+Each application prepares one resource transition: borrowed and consumed
+inputs, the caller residual, the callee's context, the memory-effect
+projection, and the post outputs. It has two purposes. A call site lends, so
+the views it passes become loans and recovery returns them. A function
+boundary, the verified-body executors, the contract entry-state builder, and
+the outcome-through-contract applier, consumes the declared requirements
+definitionally; its input-view loan roots come from the proof's entry
+construction, so nothing is lent twice. The two agree on what the callee
+receives. The callee's pure preconditions and its returned borrows are read
+against the transferred clause set opened through its definitions, the way the
+callee's own entry reads it.
+
+The memory-effect projection of that transition is the only write footprint:
+modular call havoc, refinement containment, certification's effect claims,
+storage-write checks, and every loop frame (inherited at function entry or
+declared at loop entry) derive from it. A frame check across a call or loop
+havoc opens an owned composite one level, the boundary a composite lend and
+`project` use, and never reads inside a folded body.
+
+Instance binders reach one kernel map whether a proof writes a call map or a
+named contract's proof arguments; an execution theorem's `as` map only renames
+spellings before binding through one of those. The loan ledger, its laws, and
+the call boundary's lending and recovery are in
+[stable views](stable-views.md).
+
 ## Trust and boundaries
 
 The kernel semantics and the code that translates accepted source claims into

@@ -5,7 +5,8 @@ file-scope objects, statics, and basic string-literal milestone is delivered.
 This issue retains broader initializer/literal coverage; it no longer stands
 for implementing global storage from scratch. The remaining const callback
 suite integration is P1 under [rbtree C6](rbtree-example.md),
-[stable views](../docs/internals/stable-views.md), and [resource/callback transport](memory-vs-resources.md).
+and [stable views](../docs/internals/stable-views.md); the resource and
+callback transport it also waited on landed on 2026-09-15.
 It is not closed by this audit or demoted with the language-coverage remainder.
 
 ## Delivered scope
@@ -73,9 +74,8 @@ unchanged C, required callback guarantees and read-only table storage. Do not
 mint write authority for const cells, make the table writable, or require an
 artificial `main` in a library proof merely to manufacture the package. The
 final proof must also handle real mutation-capable augmentation callbacks and
-their effects, which is rbtree C6 work on
-[memory-vs-resources.md](memory-vs-resources.md); the no-op audit fixture does
-not complete that requirement.
+their effects, which is rbtree C6 work; the no-op audit fixture does not
+complete that requirement.
 
 `object(&static_object)` still fails parsing with
 `object(...) currently expects a named C struct pointer parameter`. The parser

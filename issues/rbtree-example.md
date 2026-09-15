@@ -505,8 +505,11 @@ verifier gaps. Depends on C3c.
 
 **C6. Augmented variants and callbacks.** `__rb_insert_augmented`,
 `rb_erase_augmented`, and the propagate/copy/rotate callbacks over an
-abstract augmentation. Depends on C3c and C5 and on the callback packaging
-in [memory-vs-resources.md](memory-vs-resources.md). The 2026-09-14 globals
+abstract augmentation. Depends on C3c and C5. The callback and resource
+transport it needed landed on 2026-09-15 (one contract interface, one
+checked transition per application, dependent clause sets carried across
+calls; see [the architecture note](../docs/internals/architecture.md) and
+`mdtests/rb_augment_callbacks_helper_*.md`). The 2026-09-14 globals
 audit adds `mdtests/rb_augment_callbacks_const_suite.md`: the unchanged const
 callback-table caller and a package with read-only fields. It passes under the
 shipped stable-view semantics (an earlier candidate-mode refusal was resolved
@@ -618,6 +621,5 @@ Integer specification coverage is landed and documented in
 [the mathematical-integer internals](../docs/internals/mathematical-integers.md);
 this MVR model work has no pending dependency on the retired Integer P1
 issue. Related: [algebraic-data-types.md](algebraic-data-types.md),
-[resource-algebra-extensions.md](resource-algebra-extensions.md),
-[memory-vs-resources.md](memory-vs-resources.md), and
+[resource-algebra-extensions.md](resource-algebra-extensions.md), and
 [recursion.md](recursion.md).

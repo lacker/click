@@ -215,6 +215,27 @@ Click evaluates the remaining resource, effect, and postcondition clauses of
 that same contract. A requirement such as `1 <= n` can therefore justify a
 later footprint rooted at `p + (n - 1)`.
 
+A contract's clauses are read as one set, at the callee's entry and at every
+call to it. A resource clause whose address loads a cell another clause holds,
+`owns pair(node)` supplying the link that `owns pair(node->left->left)` loads,
+is evaluated against what the whole set supplies, including the cells inside a
+folded composite the set owns. At a call the same holds for a precondition that
+reads such a cell and for the returned borrow: both are read through the
+transferred clause set opened by its definitions, so the caller needs no
+`observe` or `unfold` to make a dependent clause addressable. A read the
+callee's own clauses cannot justify is refused at the callee's entry, before
+any call.
+
+One checked resource transition serves every way a contract is applied: a
+direct call, a call through a function pointer under a named contract, an
+explicit execution theorem, and independent certification. The transition
+records what the caller lends and consumes, what the caller keeps, the write
+footprint the callee's clauses denote, and what the call returns. Where a
+proof binds the callee's instance binders, by a call map or by a named
+contract's proof arguments, one kernel check binds them: an instance the
+caller does not own, or one instance supplying two binders, is refused the
+same way in either spelling.
+
 An unannotated callee receives no external memory permission, even if the
 caller has permissions in its own context. The callee's owned resources provide
 the precise abstract write footprint. Without one, an owned input resource is

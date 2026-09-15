@@ -275,8 +275,8 @@ requirements are implemented or the user explicitly reschedules them:
 - Complete precise import-aware incremental and `--changed-since` selection,
   so unrelated targets are not rebuilt unnecessarily.
 
-None of these items blocks rbtree C3 or C5. C6 currently depends on the
-callback packaging in `memory-vs-resources.md`, not on broader import support.
+None of these items blocks rbtree C3 or C5. C6 depended on callback and
+resource transport, which landed on 2026-09-15, not on broader import support.
 Promote the first item back to P1 only if the eventual C6 design genuinely
 requires a named callback contract to cross a module boundary; do not promote
 it merely to reorganize declarations.
