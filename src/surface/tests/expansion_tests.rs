@@ -11300,6 +11300,42 @@ fn matched_resource_quantified_fact_expands_and_reverifies() {
 }
 
 #[test]
+fn early_return_postcondition_path_selection_expands_and_reverifies() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/early_return_indexed_postcondition_path_selection.md");
+    let markdown = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &markdown)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("early-return path fixture should contain Click source");
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+
+    verify_c0_sources(click_source, &c_sources)
+        .expect("the selected early-return postcondition path should verify");
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &c_sources,
+        "write_selected",
+        CProofClaim::Grouped,
+    )
+    .expect("the selected early-return postcondition path should expand");
+    assert!(expanded.contains("match before.shape"), "{expanded}");
+    assert!(
+        expanded.contains("selected_index(WriteShape::At(position))"),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("the expanded selected postcondition path should reverify");
+}
+
+#[test]
 fn bound_universal_fixture_split_covers_original_census() {
     assert_eq!(
         BOUND_UNIVERSAL_FIXTURE_CASES,

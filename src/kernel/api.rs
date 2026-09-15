@@ -1754,6 +1754,41 @@ fn no_single_path_message<T>(what: &str, paths: &[T], budget: &ExecutionBudget) 
     }
 }
 
+/// Selects the one lowering candidate justified by facts already stated in
+/// this exact proof context. A single candidate needs no routing evidence;
+/// several candidates do. In the latter case every fact that routed the
+/// selected candidate must already be an exactly stated fact, and exactly one
+/// candidate may satisfy that rule.
+///
+/// This deliberately walks only the produced candidates and their own facts.
+/// It neither scans the ambient context nor treats the absence or conflict of
+/// sibling candidates as evidence for a survivor.
+pub(in crate::kernel) fn exactly_selected_spec_proposition_path<'a>(
+    paths: &'a [crate::kernel::spec::SpecPropositionPath],
+    assumptions: &PureFactContext,
+) -> Option<&'a crate::kernel::spec::SpecPropositionPath> {
+    if let [path] = paths {
+        return Some(path);
+    }
+    let mut selected = None;
+    for path in paths {
+        crate::instrumentation::record_deterministic_work(1);
+        if path.facts.is_empty()
+            || !path
+                .facts
+                .iter()
+                .all(|fact| assumptions.states_required_goal(fact.proposition()))
+        {
+            continue;
+        }
+        if selected.is_some() {
+            return None;
+        }
+        selected = Some(path);
+    }
+    selected
+}
+
 /// Proof-side lowering keeps mandatory verification conditions distinct from
 /// assumable evaluation obligations until the caller checks their evidence.
 pub(crate) fn c_lower_spec_proposition_with_checked_obligations(
@@ -1789,7 +1824,7 @@ pub(crate) fn c_lower_spec_proposition_with_checked_obligations(
         }
         limit => format!("the kernel lowering hit {limit:?}"),
     })?;
-    let [path] = paths.as_slice() else {
+    let Some(path) = exactly_selected_spec_proposition_path(&paths, assumptions) else {
         return Err(no_single_path_message("lowering", &paths, &budget));
     };
     Ok((

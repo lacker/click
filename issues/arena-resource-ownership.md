@@ -125,11 +125,20 @@ sibling facts cannot enter the mapping. The focused source regression is
 reverifies, and unit coverage checks exact ordering plus output-sized
 iteration.
 
-One later proof-driver gap remains known from the symbolic experiment. An
-early-return outcome postcondition that inspects a consumed algebraic resource
-model through a pure helper can lower into several candidate paths, none of
-which is selected and checked. This is separate from ownership collection and
-must be reduced before the complete symbolic arena transition relies on it.
+The early-return postcondition lowering gap is now fixed. When lowering a
+checked proposition at one exact return outcome produces several candidates,
+the kernel selects a candidate only when all of its routing facts are exactly
+stated at that outcome and no sibling is also selected. The source proof
+keeps that candidate's facts and completed proposition, and whole-function
+contract certification repeats the same checked selection before matching the
+recorded completion. It never accepts the first candidate, infers a survivor
+merely because siblings conflict, or scans unrelated ambient facts. The focused
+source regression is
+`mdtests/early_return_indexed_postcondition_path_selection.md`;
+its grouped expansion independently reverifies. Unit coverage rejects
+ambiguous and unrouted alternatives, distinguishes a selected later candidate
+from an unproved first candidate, and pins selection work independently of the
+ambient fact count.
 
 The empty-arena lifecycle now verifies independently of that partition model.
 `arena_init` returns an `arena_init_result` plus conditional initialized access:
@@ -147,20 +156,9 @@ The use-after-free rejection already lives in
 `mdtests/arena_use_after_free.md`. Double free and overlapping live regions
 still need focused negative regressions.
 
-## Next chunk: select and check early-return postcondition lowering paths
+## Next chunk: parameterize the adjacent allocation
 
-Reduce the symbolic arena experiment to a function that consumes a folded
-algebraic resource, returns early on one C branch, and has an outcome
-postcondition whose pure helper inspects the consumed resource model. Preserve
-all feasible lowering candidates until the return outcome selects one, then
-check and record that exact candidate in the source proof and generated
-certificate. The regression must distinguish branches that expose different
-model constructors, so accepting the first candidate or silently dropping an
-unselected postcondition cannot pass. Keep candidate selection bounded by the
-postcondition's produced alternatives; do not search unrelated ambient facts
-or resources.
-
-After that focused chunk, return to `arena_alloc`: replace the fixed `[2, 4)` transition with one
+Return to `arena_alloc`: replace the fixed `[2, 4)` transition with one
 parameterized by a retained prefix model. Keep the occupancy partition folded
 through the count-validation branches, open it for the scan/mark loops, restore
 it on failure, and on success return the old live prefix, exactly

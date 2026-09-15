@@ -1236,50 +1236,50 @@ fn function_claim_holds_on_prepared_path(
             let Ok(paths) = lowered else {
                 return false;
             };
-            !paths.is_empty()
-                && paths.into_iter().all(|path| {
-                    let obligations_hold = crate::instrumentation::measure_operation(
-                        function.name(),
-                        "contract claim",
-                        "obligation discharge",
-                        || {
-                            let obligation_holds = |obligation: &ProofObligation| {
-                                contract_endpoints_certify_loadability(
-                                    entry_state,
-                                    entry_resources,
-                                    post_state,
-                                    post_resources,
-                                    obligation.proposition(),
-                                    assumptions,
-                                ) || loadable_covered_by_fact(assumptions, obligation.proposition())
-                                    || forall_loadable_covered_by_fact(
-                                        assumptions,
-                                        obligation.proposition(),
-                                    )
-                                    || certification_proves_exists_obligation_from_facts(
-                                        assumptions,
-                                        obligation.proposition(),
-                                    )
-                                    || certification_proves_proposition(
-                                        assumptions,
-                                        obligation.proposition(),
-                                    )
-                            };
-                            path.obligations.iter().all(obligation_holds)
-                        },
-                    );
-                    // A lowering that folded the ensure to a constant truth
-                    // decided the claim on this path by evaluation alone;
-                    // every other form needs a matching completion.
-                    let proposition_holds = lowered_goal_is_constant_true(&path.proposition)
-                        || crate::instrumentation::measure_operation(
-                            function.name(),
-                            "contract claim",
-                            "completion match",
-                            || completion_certifies(&path.proposition),
-                        );
-                    obligations_hold && proposition_holds
-                })
+            let Some(path) = exactly_selected_spec_proposition_path(&paths, assumptions) else {
+                return false;
+            };
+            let obligations_hold = crate::instrumentation::measure_operation(
+                function.name(),
+                "contract claim",
+                "obligation discharge",
+                || {
+                    let obligation_holds = |obligation: &ProofObligation| {
+                        contract_endpoints_certify_loadability(
+                            entry_state,
+                            entry_resources,
+                            post_state,
+                            post_resources,
+                            obligation.proposition(),
+                            assumptions,
+                        ) || loadable_covered_by_fact(assumptions, obligation.proposition())
+                            || forall_loadable_covered_by_fact(
+                                assumptions,
+                                obligation.proposition(),
+                            )
+                            || certification_proves_exists_obligation_from_facts(
+                                assumptions,
+                                obligation.proposition(),
+                            )
+                            || certification_proves_proposition(
+                                assumptions,
+                                obligation.proposition(),
+                            )
+                    };
+                    path.obligations.iter().all(obligation_holds)
+                },
+            );
+            // A lowering that folded the ensure to a constant truth decided
+            // the claim on this path by evaluation alone; every other form
+            // needs a matching completion.
+            let proposition_holds = lowered_goal_is_constant_true(&path.proposition)
+                || crate::instrumentation::measure_operation(
+                    function.name(),
+                    "contract claim",
+                    "completion match",
+                    || completion_certifies(&path.proposition),
+                );
+            obligations_hold && proposition_holds
         }
         CFunctionContractClaimTarget::EnsureResource(index) => {
             let (Some(return_state), Some(post_state)) = (return_state, post_state) else {
@@ -1693,16 +1693,21 @@ pub fn c_function_ensure_goals(
     }) {
         return None;
     }
+    let selected = exactly_selected_spec_proposition_path(&paths, assumptions);
+    let paths = match selected {
+        Some(path) if paths.len() > 1 => std::slice::from_ref(path),
+        _ => paths.as_slice(),
+    };
     Some(
         paths
-            .into_iter()
+            .iter()
             .map(|path| {
                 let facts = path
                     .facts
                     .iter()
                     .map(|fact| fact.proposition().clone())
                     .collect();
-                (path.proposition, facts)
+                (path.proposition.clone(), facts)
             })
             .collect(),
     )
@@ -2267,6 +2272,81 @@ fn missing_function_contract_claim_keys(function: &CFunction) -> Vec<CFunctionCo
 #[cfg(test)]
 mod checked_proposition_index_tests {
     use super::*;
+
+    fn route(variable: u64, value: bool) -> Proposition {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(Variable(variable))),
+                Box::new(Bitvector32Term::Constant(1)),
+            ),
+            value,
+        )
+    }
+
+    fn lowering_candidate(marker: bool, facts: Vec<Proposition>) -> SpecPropositionPath {
+        SpecPropositionPath {
+            proposition: Proposition::ConditionIs(ConditionTerm::Constant(marker), true),
+            facts: facts.into_iter().map(ExecutionPureFact::new).collect(),
+            obligations: Vec::new(),
+            introductions: LoweringIntroductions::new(),
+        }
+    }
+
+    #[test]
+    fn outcome_facts_select_exactly_one_lowering_candidate() {
+        let selected_route = route(71_000, true);
+        let paths = vec![
+            lowering_candidate(false, vec![route(71_001, true)]),
+            lowering_candidate(true, vec![selected_route.clone()]),
+        ];
+        let assumptions = PureFactContext::new().assume_proposition(selected_route);
+
+        let selected = exactly_selected_spec_proposition_path(&paths, &assumptions)
+            .expect("the exact second candidate should be selected");
+        assert_eq!(selected.proposition, paths[1].proposition);
+    }
+
+    #[test]
+    fn outcome_selection_rejects_ambiguous_or_unrouted_candidates() {
+        let shared = route(71_010, true);
+        let assumptions = PureFactContext::new().assume_proposition(shared.clone());
+        let ambiguous = vec![
+            lowering_candidate(false, vec![shared.clone()]),
+            lowering_candidate(true, vec![shared]),
+        ];
+        assert!(exactly_selected_spec_proposition_path(&ambiguous, &assumptions).is_none());
+
+        let unrouted = vec![
+            lowering_candidate(false, Vec::new()),
+            lowering_candidate(true, Vec::new()),
+        ];
+        assert!(exactly_selected_spec_proposition_path(&unrouted, &assumptions).is_none());
+    }
+
+    #[test]
+    fn outcome_selection_work_is_independent_of_ambient_fact_count() {
+        let selected_route = route(71_020, true);
+        let paths = vec![
+            lowering_candidate(false, vec![route(71_021, true)]),
+            lowering_candidate(true, vec![selected_route.clone()]),
+            lowering_candidate(false, vec![route(71_022, true)]),
+        ];
+        let context = |unrelated: u64| {
+            (0..unrelated).fold(
+                PureFactContext::new().assume_proposition(selected_route.clone()),
+                |context, offset| context.assume_proposition(route(72_000 + offset, true)),
+            )
+        };
+        let small = context(8);
+        let large = context(2_048);
+        let (_, small_work) = crate::instrumentation::measure_deterministic_work(|| {
+            exactly_selected_spec_proposition_path(&paths, &small)
+        });
+        let (_, large_work) = crate::instrumentation::measure_deterministic_work(|| {
+            exactly_selected_spec_proposition_path(&paths, &large)
+        });
+        assert_eq!(small_work, large_work);
+    }
 
     fn fold(accumulator: Variable, item: Variable) -> IntegerTerm {
         IntegerTerm::range_fold(
