@@ -156,7 +156,9 @@ frame path expands every composition. Options:
 **D2. The definitional transition route.** The call-site route plans loans;
 the four reconstruction callers consume requirements definitionally so a
 state rebuilt around an application that already happened does not lend
-twice. Options:
+twice. (Implemented under W7' below; the audit found no site holding a
+call's transfer record, so the typed purpose and the agreement test are
+the whole of it.) Options:
 
 - *Rebuild from the record (chosen).* Where a checked
   `CFunctionResourceTransfer` exists for the application (certification's
@@ -323,9 +325,22 @@ one is documented at its definition.
 
 D2 is settled: rebuild from the record. Depends on W5' and W6'.
 
-- Implement D2. Replace the `plan_stable_views` boolean with a typed purpose;
-  rebuild from the transfer record where one exists; pin call-site and
-  reconstruction agreement.
+- Implement D2 (done 2026-09-14, `Name the two purposes of a contract
+  resource transition and pin their agreement`). The boolean is now
+  `ResourceTransitionPurpose::{CallSite, FunctionBoundary}`. The audit of
+  the four definitional callers (the two verified-body path executors, the
+  contract entry-state builder, and the outcome-through-contract applier)
+  found every one to be a whole-function judgment at the function's own
+  boundary, so no call-site transfer record exists for any of them to be
+  rebuilt from; the "rebuild from the record" half of D2 has no site. The
+  proof executor's exit rule picks the purpose from whether the path lent
+  at entry. Agreement is pinned by
+  `call_site_and_function_boundary_transitions_agree_on_the_callee_entry`:
+  for one interface with an owned range, a viewed range, and a consumed
+  token, both routes check in the same requirements with the same roles,
+  project the same effects, hand the callee the same authority, and leave
+  the caller the same unrelated frame; they differ only in the lend. This
+  closes the fix-views carry-over item about the definitional routes.
 - Retire or demote the surface footprint traversal
   (`collect_owned_resource_memory_segments` and its consumers in
   `function_contract_summary`): either delete it or make it a read-only

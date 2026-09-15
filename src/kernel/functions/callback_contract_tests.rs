@@ -216,7 +216,7 @@ fn resource_transition_retains_borrow_role_for_owned_entry_fact() {
         &PureFactContext::new(),
         &mut ExecutionBudget::default(),
         false,
-        false,
+        ResourceTransitionPurpose::FunctionBoundary,
     )
     .unwrap()
     .unwrap();
@@ -230,6 +230,143 @@ fn resource_transition_retains_borrow_role_for_owned_entry_fact() {
         transfer.borrowed_inputs[0].role,
         CResourceTransferRole::Borrow
     );
+}
+
+#[test]
+fn call_site_and_function_boundary_transitions_agree_on_the_callee_entry() {
+    let block = |name: &str| Pointer {
+        block: PointerBlock::Concrete(format!("local:purpose:{name}")),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let (owned, viewed) = (block("owned"), block("viewed"));
+    let range = |pointer: &Pointer| {
+        CMemoryRange::new(
+            pointer.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )
+    };
+    let segment = |name: &str| {
+        CMemorySegment::new(
+            CExpression::Variable(name.into()),
+            CExpression::Value(int32(0)),
+            CExpression::Value(int32(1)),
+        )
+    };
+    let function = c_function(
+        CType::Void,
+        "purpose_agreement",
+        vec![
+            c_parameter("p", CType::Int32Pointer),
+            c_parameter("q", CType::Int32Pointer),
+        ],
+        CStatement::Skip,
+    )
+    .with_contract(vec![], vec![], vec![], vec![], true)
+    .with_resource_summary(
+        vec![
+            CResourceSpec::owned_memory(segment("p")).with_role(CResourceTransferRole::Borrow),
+            CResourceSpec::viewed_memory(segment("q")),
+            CResourceSpec::token(CResourceAccessMode::Own, "spare".into(), vec![], vec![])
+                .with_role(CResourceTransferRole::Consume),
+        ],
+        vec![],
+    );
+    let resources = ResourceContext::new().unchecked_with_facts([
+        CResourceFact::own_memory(range(&owned)),
+        CResourceFact::own_memory(range(&viewed)),
+        CResourceFact::own_token("spare".into(), vec![]),
+        CResourceFact::own_token("unrelated".into(), vec![]),
+    ]);
+    let state = CState::new()
+        .with_local("p", CValue::pointer(owned.clone()))
+        .with_local("q", CValue::pointer(viewed.clone()))
+        .with_memory(
+            CMemory::new()
+                .with_block(owned.block.clone(), 4)
+                .with_block(viewed.block.clone(), 4),
+        )
+        .with_resource_context(resources);
+    let assumptions = PureFactContext::new();
+    let prepare = |purpose| {
+        prepare_contract_resource_transfer(
+            &state,
+            &state,
+            function.name(),
+            function.contract_interface(),
+            &assumptions,
+            &mut ExecutionBudget::default(),
+            false,
+            purpose,
+        )
+        .unwrap()
+        .unwrap()
+    };
+    let call_site = prepare(ResourceTransitionPurpose::CallSite);
+    let boundary = prepare(ResourceTransitionPurpose::FunctionBoundary);
+    assert!(call_site.stable_view_plan.is_some(), "a call site lends");
+    assert!(boundary.stable_view_plan.is_none(), "a boundary does not");
+
+    // The same requirements are checked in, with the same roles.
+    let facts = |checked: &[CCheckedResourceFact]| {
+        checked
+            .iter()
+            .map(|checked| (checked.fact.clone(), checked.role))
+            .collect::<BTreeSet<_>>()
+    };
+    assert_eq!(
+        facts(&call_site.borrowed_inputs),
+        facts(&boundary.borrowed_inputs)
+    );
+    assert_eq!(
+        facts(&call_site.consumed_inputs),
+        facts(&boundary.consumed_inputs)
+    );
+    assert_eq!(call_site.memory_effects, boundary.memory_effects);
+
+    // The callee enters with the same authority on either route: every
+    // declared requirement is satisfied, and the unrelated token stays with
+    // the caller on both.
+    for checked in call_site
+        .borrowed_inputs
+        .iter()
+        .chain(&call_site.consumed_inputs)
+    {
+        assert!(
+            call_site
+                .callee_resources
+                .satisfies_fact(&checked.fact, &assumptions),
+            "call site callee lacks {:?}",
+            checked.fact
+        );
+        assert!(
+            boundary
+                .callee_resources
+                .satisfies_fact(&checked.fact, &assumptions),
+            "boundary callee lacks {:?}",
+            checked.fact
+        );
+    }
+    let unrelated = CResourceFact::own_token("unrelated".into(), vec![]);
+    for transfer in [&call_site, &boundary] {
+        assert!(
+            !transfer
+                .callee_resources
+                .satisfies_fact(&unrelated, &assumptions)
+        );
+        assert!(
+            transfer
+                .caller_resources_after_requirements
+                .satisfies_fact(&unrelated, &assumptions)
+        );
+        assert!(
+            !transfer.caller_resources_after_requirements.satisfies_fact(
+                &CResourceFact::own_token("spare".into(), vec![]),
+                &assumptions
+            ),
+            "a consumed token leaves the caller on both routes"
+        );
+    }
 }
 
 #[test]
@@ -781,7 +918,7 @@ fn pure_callback_preparation_does_not_enumerate_the_resource_frame() {
             &PureFactContext::new(),
             &mut ExecutionBudget::default(),
             false,
-            false,
+            ResourceTransitionPurpose::FunctionBoundary,
         )
         .unwrap()
         .unwrap();
@@ -943,7 +1080,7 @@ fn checked_transition_projection_ignores_unrelated_caller_frame() {
                 &PureFactContext::new(),
                 &mut ExecutionBudget::default(),
                 false,
-                false,
+                ResourceTransitionPurpose::FunctionBoundary,
             )
             .unwrap()
             .unwrap();
@@ -1027,7 +1164,7 @@ fn checked_wrapper_projection_scales_with_used_members() {
                 &PureFactContext::new(),
                 &mut ExecutionBudget::default(),
                 false,
-                false,
+                ResourceTransitionPurpose::FunctionBoundary,
             )
             .unwrap()
             .unwrap();

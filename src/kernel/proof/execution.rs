@@ -5505,7 +5505,14 @@ impl ExecutionProofCore {
                     obligations,
                     &statement_assumptions,
                     &mut ExecutionBudget::default(),
-                    !candidate.loan_evidence().is_empty(),
+                    // A path that lent at entry recovers at exit; one that
+                    // entered from the contract's declared resources reads
+                    // the outcome through them definitionally.
+                    if candidate.loan_evidence().is_empty() {
+                        crate::kernel::functions::ResourceTransitionPurpose::FunctionBoundary
+                    } else {
+                        crate::kernel::functions::ResourceTransitionPurpose::CallSite
+                    },
                 ) {
                     Ok(Ok(exit)) => exit,
                     Ok(Err(error)) => (

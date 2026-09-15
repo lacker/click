@@ -3240,7 +3240,7 @@ fn contract_exit_rule_is_the_plain_outcome_without_resources() {
         Vec::new(),
         &PureFactContext::new(),
         &mut ExecutionBudget::default(),
-        false,
+        crate::kernel::functions::ResourceTransitionPurpose::FunctionBoundary,
     )
     .expect("no execution limit")
     .expect("no runtime error");

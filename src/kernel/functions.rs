@@ -1056,7 +1056,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                 &body_assumptions,
                 budget,
                 true,
-                false,
+                ResourceTransitionPurpose::FunctionBoundary,
             )? {
                 Ok(resource_transfer) => resource_transfer,
                 Err(error) => {
@@ -1277,7 +1277,7 @@ pub(super) fn execute_c_function_verification_paths(
                 &body_assumptions,
                 budget,
                 true,
-                false,
+                ResourceTransitionPurpose::FunctionBoundary,
             )? {
                 Ok(resource_transfer) => resource_transfer,
                 Err(error) => {
@@ -1634,7 +1634,7 @@ pub(super) fn execute_c_function_call_paths(
             &body_assumptions,
             budget,
             false,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )? {
             Ok(resource_transfer) => resource_transfer,
             Err(error) => {
@@ -2716,7 +2716,7 @@ fn prepare_verified_function_call<'a>(
                 &path_assumptions,
                 budget,
                 false,
-                true,
+                ResourceTransitionPurpose::CallSite,
             )
         },
     )? {
@@ -4930,7 +4930,7 @@ fn checked_access_mode_refinement_adapter(
         assumptions,
         budget,
         false,
-        true,
+        ResourceTransitionPurpose::CallSite,
     )? {
         Ok(transfer) => transfer,
         Err(_) => return Ok(Some(false)),
@@ -10323,7 +10323,7 @@ fn prepare_function_resource_transfer(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     preserve_explicit_representation: bool,
-    plan_stable_views: bool,
+    purpose: ResourceTransitionPurpose,
 ) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
     prepare_contract_resource_transfer(
         caller_state,
@@ -10333,7 +10333,7 @@ fn prepare_function_resource_transfer(
         assumptions,
         budget,
         preserve_explicit_representation,
-        plan_stable_views,
+        purpose,
     )
 }
 
@@ -10668,13 +10668,34 @@ fn composite_definition_facts_hold(
     Ok(true)
 }
 
-/// Prepares the resource transition of one contract application.
-///
-/// `plan_stable_views` says whether this transition is a call that lends the
-/// caller's authority: a call site plans, so the views it passes become loans
-/// the callee holds and recovery returns. The entry- and exit-state routes
-/// rebuild a state around an application that already happened and must not
-/// lend again, so they consume their requirements definitionally.
+/// Why a contract's resource transition is being prepared. The two purposes
+/// consume the same declared requirements from the same caller context and
+/// hand the callee the same authority; they differ only in whether the
+/// caller lends. `call_site_and_function_boundary_transitions_agree_on_the_callee_entry`
+/// pins that agreement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ResourceTransitionPurpose {
+    /// A call site: the caller lends its authority, so the views the callee
+    /// declares become loans of this application and recovery returns them.
+    CallSite,
+    /// A function's own boundary: a whole-function judgment executes,
+    /// certifies, or reads the body's outcome from the resources the contract
+    /// declares, consumed definitionally. The loan roots of its input views
+    /// come from the proof's entry construction
+    /// (`c_state_with_borrowed_contract_inputs`), never from this transition,
+    /// so nothing is lent twice; no call-site transfer record exists for
+    /// such a judgment to rebuild from.
+    FunctionBoundary,
+}
+
+impl ResourceTransitionPurpose {
+    fn lends(self) -> bool {
+        self == Self::CallSite
+    }
+}
+
+/// Prepares the resource transition of one contract application; see
+/// [`ResourceTransitionPurpose`] for the two routes.
 fn prepare_contract_resource_transfer(
     caller_state: &CState,
     callee_state: &CState,
@@ -10683,9 +10704,9 @@ fn prepare_contract_resource_transfer(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     preserve_explicit_representation: bool,
-    plan_stable_views: bool,
+    purpose: ResourceTransitionPurpose,
 ) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
-    if plan_stable_views
+    if purpose.lends()
         && caller_state.loan_ledger().is_some() != caller_state.loan_participant().is_some()
     {
         return Ok(Err(CRuntimeError::LoanRefusal(
@@ -10785,7 +10806,7 @@ fn prepare_contract_resource_transfer(
     // recursive resource into a missing-backing refusal and hide the
     // structural validation that is the real verdict on such a call. Such a
     // requirement is discharged by definitional expansion instead.
-    let empty_composite_views = if plan_stable_views {
+    let empty_composite_views = if purpose.lends() {
         checked_required_resources
             .iter()
             .filter(|requirement| {
@@ -10817,7 +10838,7 @@ fn prepare_contract_resource_transfer(
     // Neither group is backed by an owned occurrence of the caller's
     // partition, so neither carries a support and both stay on the
     // arithmetic comparison.
-    let mut checked_view_frontier = if plan_stable_views {
+    let mut checked_view_frontier = if purpose.lends() {
         intrinsic_read_views
             .iter()
             .chain(empty_composite_views.iter())
@@ -10837,7 +10858,7 @@ fn prepare_contract_resource_transfer(
     // definitional route. A token population protects no memory, so the
     // ledger has nothing to say about it; a population whose body owns memory
     // is still checked against the active loans after planning.
-    let population_quantity_requirements = if plan_stable_views {
+    let population_quantity_requirements = if purpose.lends() {
         checked_required_resources
             .iter()
             .filter(|requirement| requirement_is_population_quantity(requirement))
@@ -10856,7 +10877,7 @@ fn prepare_contract_resource_transfer(
     // the composite folded, so the expansion is not empty and the requirement
     // keeps its entry. The caller residual is still consumed definitionally
     // below.
-    let definitionally_empty_owned = if plan_stable_views {
+    let definitionally_empty_owned = if purpose.lends() {
         checked_required_resources
             .iter()
             .filter(|requirement| {
@@ -10885,7 +10906,7 @@ fn prepare_contract_resource_transfer(
         })
         .cloned()
         .collect::<Vec<_>>();
-    let mut planning_resources = if plan_stable_views {
+    let mut planning_resources = if purpose.lends() {
         candidate_planning_resources(
             caller_state.resources(),
             &stable_requirements,
@@ -10896,7 +10917,7 @@ fn prepare_contract_resource_transfer(
     } else {
         caller_state.resources().clone()
     };
-    let stable_view_plan = if plan_stable_views {
+    let stable_view_plan = if purpose.lends() {
         let (ledger, caller) = match (
             caller_state.loan_ledger().cloned(),
             caller_state.loan_participant(),
@@ -12496,7 +12517,7 @@ pub(super) fn prepare_function_contract_entry_state_with_values(
                 assumptions,
                 budget,
                 true,
-                false,
+                ResourceTransitionPurpose::FunctionBoundary,
             )
         },
     )? {
@@ -17807,7 +17828,7 @@ pub(super) fn contract_exit_outcome(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-    plan_stable_views: bool,
+    purpose: ResourceTransitionPurpose,
 ) -> ExecutionResult<
     Result<
         (
@@ -17867,7 +17888,7 @@ pub(super) fn contract_exit_outcome(
         assumptions,
         budget,
         true,
-        plan_stable_views,
+        purpose,
     )? {
         Ok(transfer) => transfer,
         Err(error) => return Ok(Err(error)),
@@ -17939,7 +17960,7 @@ pub(super) fn apply_verified_contract_resource_transition(
         assumptions,
         budget,
         true,
-        false,
+        ResourceTransitionPurpose::FunctionBoundary,
     )? {
         Ok(transfer) => transfer,
         Err(error) => return Ok(Err(error)),
@@ -18558,7 +18579,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("candidate transfer should run")
         .expect("candidate transfer should be accepted");
@@ -18636,7 +18657,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("composite transfer should run")
         .expect("composite transfer should be accepted");
@@ -18733,7 +18754,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("composite transfer should run")
         .map(|_| ())
@@ -18866,7 +18887,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("adapter transfer should run");
         (caller, transfer)
@@ -19012,7 +19033,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("materialized transfer should run")
         .expect("the caller's own frontier backs the viewed composite");
@@ -19586,7 +19607,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("candidate transfer should run")
         .expect("candidate transfer should be accepted");
@@ -19637,7 +19658,7 @@ mod stable_view_call_tests {
             &assumptions,
             &mut budget,
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("pair validation should not hit the execution budget")
         .expect_err("ledger-only caller must be refused");
@@ -19664,7 +19685,7 @@ mod stable_view_call_tests {
             &assumptions,
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("pair validation should not hit the execution budget")
         .expect_err("participant-only caller must be refused");
@@ -19691,7 +19712,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("candidate transfer should run")
         .expect("candidate transfer should be accepted");
@@ -19752,7 +19773,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("candidate transfer should run")
         .expect("candidate transfer should be accepted");
@@ -19783,7 +19804,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("outer transfer should run")
         .expect("outer transfer should be accepted");
@@ -19801,7 +19822,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("inner transfer should run")
         .expect("inner transfer should be accepted");
@@ -19907,7 +19928,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("outer transfer should run")
         .expect("outer transfer should be accepted");
@@ -19927,7 +19948,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("inner transfer should run")
         .expect("inner transfer should be accepted");
@@ -20012,7 +20033,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("candidate transfer should run")
         .expect("candidate transfer should be accepted");
@@ -20112,7 +20133,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("candidate transfer should run")
         .expect("candidate transfer should be accepted");
@@ -20677,7 +20698,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("outer transfer should run")
         .expect("outer transfer should be accepted");
@@ -20693,7 +20714,7 @@ mod stable_view_call_tests {
             &PureFactContext::new(),
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("stale binding check should run");
         assert!(matches!(
@@ -20871,7 +20892,7 @@ mod stable_view_call_tests {
             &assumptions,
             &mut ExecutionBudget::new(),
             true,
-            true,
+            ResourceTransitionPurpose::CallSite,
         )
         .expect("population transfer should run")
         .expect("a symbolic population quantity should not refuse the plan");
