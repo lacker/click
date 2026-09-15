@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (5)
+## P1: before launch (4)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -53,8 +53,9 @@ dependency marker, not a prescribed implementation order. An unsound rule is
 P1 whatever it is about: the claim is worthless if the verifier accepts false
 contracts, so soundness bugs come first even when rbtree does not exercise
 them. A gap that only a different program would hit is normally P2. The
-explicitly selected stable-views and basic-C++ milestones are also P1: they
-check the architecture before launch while rbtree remains the key demo.
+explicitly selected stable-views, basic-C++, and Bitcoin Core `MoneyRange`
+milestones are also P1: they check the architecture before launch while rbtree
+remains the key demo.
 
 Soundness and kernel shape:
 
@@ -63,12 +64,18 @@ Soundness and kernel shape:
 Program import and execution:
 
 - [Add basic C++ verification with references and scoped cleanup](basic-cpp-support.md)
+- [Verify Bitcoin Core `MoneyRange` under a supported Clang profile](bitcoin-core-money-range-cpp.md)
+
+The C++ dependency order is the basic language/frontend slice first, then the
+unchanged Bitcoin Core function under its real project profile. Stable-view and
+cleanup support needed by that first slice remain part of its P1 scope; general
+`goto`, multi-compiler support, and broad C++ coverage are not prerequisites.
 
 Specification and proof:
 
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
 
-## P2: after launch (27)
+## P2: after launch (26)
 
 - [Make `step` simple across a call precondition](simplify-step.md)
 - [Lower a dependent composite argument in every tactic position](dependent-composite-argument-in-tactics.md)
@@ -94,10 +101,6 @@ C language coverage:
 - [Model variadic functions](variadic-functions.md)
 - [Model concurrency and atomics](concurrency-and-atomics.md)
 - [Model signed eight-bit integers](signed-byte-integers.md)
-
-C++ project coverage:
-
-- [Verify Bitcoin Core `MoneyRange` under a supported Clang profile](bitcoin-core-money-range-cpp.md)
 
 Semantics and reasoning:
 

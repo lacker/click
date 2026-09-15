@@ -210,7 +210,8 @@ Additional focused regressions:
 - Existing C fixtures and `scripts/check.sh` pass. Delete this issue and its
   list entry when the implementation, regressions, and documentation land.
 
-Dependencies: stable borrowing from [the stable-views record](../docs/internals/stable-views.md), the existing
-shared call/resource transition machinery, and only the edge/scope support
-actually needed for normal cleanup. The general multi-target, goto, and Rust
-projects do not need to finish to deliver this slice.
+P1 dependencies owned within this issue: stable borrowing from [the stable-views
+record](../docs/internals/stable-views.md), the existing shared call/resource
+transition machinery, and only the edge/scope support actually needed for
+normal cleanup. The general multi-target, `goto`, and Rust projects do not need
+to finish to deliver this slice.

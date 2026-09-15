@@ -1,4 +1,4 @@
-# P2: Verify Bitcoin Core `MoneyRange` under a supported Clang profile
+# P1: Verify Bitcoin Core `MoneyRange` under a supported Clang profile
 
 ## Objective and violated invariant
 
@@ -16,11 +16,11 @@ declaration, its reachable constants and types, the actual compiler command,
 and the imported semantic artifact must remain tied to the pinned upstream
 source and profile.
 
-This is P2 because [basic-cpp-support.md](basic-cpp-support.md) owns the P1
-architecture milestone and its synthetic reference/cleanup regression. This
-issue is the first real-project integration and may extend that initial subset
-only where the unchanged Bitcoin function requires it; it does not expand the
-P1 launch claim to Bitcoin Core as a whole.
+This is P1 by user direction. [basic-cpp-support.md](basic-cpp-support.md)
+remains the preceding P1 architecture milestone and owns the synthetic
+reference/cleanup regression. This issue is the first real-project integration
+and may extend that initial subset only where the unchanged Bitcoin function
+requires it; it does not expand the P1 launch claim to Bitcoin Core as a whole.
 
 ## Pinned target and supported profile
 
@@ -109,7 +109,10 @@ continue using a stale semantic artifact.
   and its list entry when the upstream fixture, proof, regressions, and
   documentation land.
 
-Dependencies: [basic-cpp-support.md](basic-cpp-support.md). If the P1 schema
-cannot represent signed 64-bit aliases, imported `constexpr` integral globals,
-or a project compilation command, extend the shared frontend boundary rather
-than creating a Bitcoin-specific parser or verifier path.
+P1 dependency: [basic-cpp-support.md](basic-cpp-support.md), including the
+stable-view and cleanup machinery owned by that issue. If its schema cannot
+represent signed 64-bit aliases, imported `constexpr` integral globals, or a
+project compilation command, this issue extends the shared frontend boundary
+rather than creating a Bitcoin-specific parser or verifier path. General
+`goto`, multiple-compiler support, and broader C++ semantics remain P2 and do
+not block this target.
