@@ -116,3 +116,11 @@ project compilation command, this issue extends the shared frontend boundary
 rather than creating a Bitcoin-specific parser or verifier path. General
 `goto`, multiple-compiler support, and broader C++ semantics remain P2 and do
 not block this target.
+
+The first signed-64 stepping stone is now covered by the synthetic
+`int64-predicate` regression: one direct `typedef long CAmount`, a
+`const CAmount&`, the implicit promotion of `0`, a signed `>=`, and a `bool`
+return verify through the stored exception-enabled artifact. The remaining
+roadmap still starts with Bitcoin's real alias chain and `constexpr` constants,
+then adds `<=` and short-circuit `&&`; the stepping stone does not weaken those
+acceptance criteria or count as upstream verification.

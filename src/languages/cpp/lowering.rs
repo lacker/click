@@ -20,9 +20,9 @@ use super::{
 use crate::kernel::{
     CAggregateField, CAggregateLayout, CExpression, CFunction, CStatement, CType, LoadSourceId,
     LoadSourceOwnerId, c_add, c_assign, c_begin_aggregate_construction, c_call, c_call_assign,
-    c_cast, c_declare, c_declare_aggregate, c_function, c_if, c_int32_literal, c_parameter,
-    c_pointer_offset_bytes, c_return, c_seq, c_skip, c_typed_load_with_source, c_typed_store,
-    c_variable,
+    c_cast, c_declare, c_declare_aggregate, c_function, c_greater_equal, c_if, c_int32_literal,
+    c_parameter, c_pointer_offset_bytes, c_return, c_seq, c_skip, c_typed_load_with_source,
+    c_typed_store, c_variable,
 };
 
 /// One kernel function together with the immutable semantic artifact that
@@ -99,7 +99,24 @@ fn lower_function(import: &PreparedCppImport, source: &CppFunction) -> Result<CF
     };
     let body = context.lower_sequence(&source.body)?;
     let return_type = match &source.function_kind {
-        CppFunctionKind::Free => CType::Int32,
+        CppFunctionKind::Free if is_mutable_int32(&source.return_type) => CType::Int32,
+        CppFunctionKind::Free
+            if matches!(
+                source.return_type,
+                CppType::Boolean {
+                    bits: 8,
+                    is_const: false
+                }
+            ) =>
+        {
+            CType::Bool
+        }
+        CppFunctionKind::Free => {
+            return Err(format!(
+                "C++ function `{}` has a return type outside direct lowering",
+                source.name
+            ));
+        }
         CppFunctionKind::Constructor { .. } | CppFunctionKind::Destructor { .. } => CType::Void,
     };
     Ok(c_function(
@@ -122,6 +139,11 @@ fn lower_parameter(parameter: &CppPlace) -> Result<crate::kernel::CParameter, St
             Ok(c_parameter(parameter.name.clone(), CType::Int32Pointer)
                 .with_pointee_constant(is_const_int32(pointee)))
         }
+        CppType::LvalueReference { pointee } if is_const_int64(pointee) => Ok(c_parameter(
+            parameter.name.clone(),
+            CType::Int64Pointer,
+        )
+        .with_pointee_constant(true)),
         CppType::LvalueReference { pointee }
             if matches!(pointee.as_ref(), CppType::Record { .. }) =>
         {
@@ -419,6 +441,12 @@ impl LoweringContext<'_> {
                         }),
                     ))
                 }
+                (CppType::LvalueReference { pointee }, value_type)
+                    if is_const_int64(pointee) && is_mutable_int64(value_type) =>
+                {
+                    let pointer = self.lower_place(place)?;
+                    self.lower_typed_load(pointer, CType::Int64)
+                }
                 _ => Err("C++ load is outside direct bool/reference lowering".into()),
             },
             CppExpression::AddressOf {
@@ -456,6 +484,14 @@ impl LoweringContext<'_> {
                 }
                 self.lower_typed_load(pointer, field_type)
             }
+            CppExpression::IntegralCast {
+                value, value_type, ..
+            } if is_mutable_int32(value.value_type()) && is_mutable_int64(value_type) => {
+                Ok(c_cast(self.lower_expression(value)?, CType::Int64))
+            }
+            CppExpression::IntegralCast { .. } => {
+                Err("C++ integral cast is outside direct `int` to signed-64 lowering".into())
+            }
             CppExpression::Binary {
                 operator: CppBinaryOperator::Add,
                 left,
@@ -466,6 +502,22 @@ impl LoweringContext<'_> {
                 let left = self.lower_expression(left)?;
                 let right = self.lower_expression(right)?;
                 Ok(c_add(left, right))
+            }
+            CppExpression::Binary {
+                operator: CppBinaryOperator::GreaterEqual,
+                left,
+                right,
+                value_type:
+                    CppType::Boolean {
+                        bits: 8,
+                        is_const: false,
+                    },
+                ..
+            } if is_mutable_int64(left.value_type()) && is_mutable_int64(right.value_type()) => {
+                Ok(c_cast(
+                    c_greater_equal(self.lower_expression(left)?, self.lower_expression(right)?),
+                    CType::Bool,
+                ))
             }
             CppExpression::Binary { .. } => {
                 Err("C++ binary expression is outside direct `int` lowering".into())
@@ -662,6 +714,19 @@ fn is_mutable_int32(value_type: &CppType) -> bool {
             bits: 32,
             signed: true,
             is_const: false,
+            ..
+        }
+    )
+}
+
+fn is_mutable_int64(value_type: &CppType) -> bool {
+    matches!(
+        value_type,
+        CppType::Integer {
+            bits: 64,
+            signed: true,
+            is_const: false,
+            ..
         }
     )
 }
@@ -673,6 +738,19 @@ fn is_const_int32(value_type: &CppType) -> bool {
             bits: 32,
             signed: true,
             is_const: true,
+            ..
+        }
+    )
+}
+
+fn is_const_int64(value_type: &CppType) -> bool {
+    matches!(
+        value_type,
+        CppType::Integer {
+            bits: 64,
+            signed: true,
+            is_const: true,
+            ..
         }
     )
 }

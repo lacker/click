@@ -169,9 +169,40 @@ into C text. The `const-reference-alias` fixture writes through an `int&` and
 reads through an aliased `const int&`, using one explicit `owns` resource.
 C++ `const` restricts access through that reference; it does not create a Click
 `views` resource or imply that aliases cannot write. Supported parameters are
-currently by-value `bool`, `int&`, `const int&`, mutable `int*`, and a mutable
-reference to the one supported simple record type. Selected functions still
-return `int`.
+currently by-value `bool`, `int&`, `const int&`, mutable `int*`, one `const`
+signed-64 reference, and a mutable reference to the one supported simple record
+type. Selected functions return `int` or `bool`.
+
+The `int64-predicate` fixture is the first narrow bridge toward Bitcoin Core's
+`MoneyRange`: Clang retains the declaration identity and source span for a
+direct `typedef long CAmount`, lowers `const CAmount&` as a const `int64*`,
+retains the implicit `int`-to-signed-64 conversion of zero, and returns the
+Boolean result of signed `>=`. Its exact all-input contract states the result
+with a conditional expression and verifies offline:
+
+<!-- verified-example: tests/fixtures/cpp-verification/int64-predicate/money_nonnegative.click -->
+```click
+verifying "money_nonnegative.cpp";
+
+bool money_nonnegative(const int64* nValue) {
+    owns nValue[0..1];
+    ensures result == (if old(nValue[0]) >= 0i64 { 1 } else { 0 });
+} by {
+    if nValue[0] >= 0i64 {
+        execute();
+        simp();
+    } else {
+        execute();
+        simp();
+    }
+}
+```
+
+This slice deliberately does not yet accept a mutable signed-64 reference,
+unsigned 64-bit aliases, `<=`, `&&`, imported `constexpr` values, or retention
+of a complete alias chain such as Bitcoin's `CAmount` through `int64_t`. Those
+remain separate semantic increments rather than consequences of accepting one
+wide comparison.
 
 The `direct-call` fixture selects a caller and captures the transitive closure
 of definitions reached by discarded-result direct call statements. Each call

@@ -14,5 +14,5 @@ pub use schema::{
     CppBinaryOperator, CppCallArgument, CppCleanup, CppExceptionBehavior, CppExport, CppExpression,
     CppField, CppFieldInitializer, CppFieldReference, CppFunction, CppFunctionKind,
     CppFunctionReference, CppInitializer, CppPlace, CppPlaceReference, CppProfile, CppRecord,
-    CppSpan, CppStatement, CppType,
+    CppSpan, CppStatement, CppType, CppTypeAlias,
 };

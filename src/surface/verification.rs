@@ -4077,6 +4077,7 @@ pub(in crate::surface) fn parse_c_layouts(
                             bits: 32,
                             signed: true,
                             is_const: false,
+                            ..
                         } => C0Type::Int32,
                         crate::languages::cpp::CppType::Pointer { pointee }
                             if matches!(
@@ -4085,6 +4086,7 @@ pub(in crate::surface) fn parse_c_layouts(
                                     bits: 32,
                                     signed: true,
                                     is_const: false,
+                                    ..
                                 }
                             ) =>
                         {
@@ -5239,7 +5241,12 @@ fn cpp_function_interface(
             bits: 32,
             signed: true,
             is_const: false,
+            ..
         } => C0Type::Int32,
+        crate::languages::cpp::CppType::Boolean {
+            bits: 8,
+            is_const: false,
+        } => C0Type::Bool,
         _ => {
             return Err(ClickError::new(format!(
                 "C++ declaration `{}` has an unsupported return type",
@@ -5280,6 +5287,24 @@ fn cpp_function_interface(
                 )
                 .with_pointee_constant(*is_const))
             }
+            crate::languages::cpp::CppType::LvalueReference { pointee }
+                if matches!(
+                    pointee.as_ref(),
+                    crate::languages::cpp::CppType::Integer {
+                        bits: 64,
+                        signed: true,
+                        is_const: true,
+                        ..
+                    }
+                ) =>
+            {
+                Ok(syntax::C0Parameter::new(
+                    C0Type::Int64Pointer,
+                    parameter.name.clone(),
+                    None,
+                )
+                .with_pointee_constant(true))
+            }
             crate::languages::cpp::CppType::LvalueReference { pointee } => {
                 let crate::languages::cpp::CppType::Record { name, .. } = pointee.as_ref() else {
                     return Err(ClickError::new(format!(
@@ -5300,6 +5325,7 @@ fn cpp_function_interface(
                         bits: 32,
                         signed: true,
                         is_const: false,
+                        ..
                     }
                 ) =>
             {

@@ -118,7 +118,12 @@ and nested locals. An exception-enabled header fixture omits `noexcept`, locks
 the distinct Clang profile, and verifies offline under the artifact's
 `normal_only` guarantee. Its focused checks reject `throw`, `try`/`catch`, an
 unresolved reachable call, record/object use, and config/profile disagreement;
-they do not claim exception-path support. A pointer fixture passes `&value`
+they do not claim exception-path support. A signed-64 predicate fixture retains
+a direct `CAmount` typedef identity, imports `const CAmount&`, the implicit
+promotion of zero, signed `>=`, and a `bool` result, then verifies an exact
+all-input contract offline. Its false zero-boundary contract fails, while
+mutable and unsigned wide references, `<=`, and `&&` fail at the frontend
+boundary. A pointer fixture passes `&value`
 from an `int&` caller to a
 mutable `int*` helper, then checks dereference reads, a checked write, offline
 verification, and expansion/reverification. Removing memory ownership and a

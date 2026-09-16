@@ -21,6 +21,7 @@
 #include "clang/AST/RecordLayout.h"
 #include "clang/AST/Stmt.h"
 #include "clang/AST/StmtCXX.h"
+#include "clang/AST/TypeLoc.h"
 #include "clang/Basic/LangStandard.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Version.h"
@@ -174,7 +175,7 @@ public:
     profile["compilation_command"] = std::move(compilation_command);
 
     llvm::json::Object artifact;
-    artifact["schema"] = 13;
+    artifact["schema"] = 14;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["exception_behavior"] = "normal_only";
@@ -349,8 +350,11 @@ private:
         reference != nullptr &&
         !reference->getPointeeType().isVolatileQualified() &&
         !reference->getPointeeType().isRestrictQualified() &&
-        context_.hasSameType(reference->getPointeeType().getUnqualifiedType(),
-                             context_.IntTy);
+        (context_.hasSameType(reference->getPointeeType().getUnqualifiedType(),
+                              context_.IntTy) ||
+         (reference->getPointeeType()->isSignedIntegerType() &&
+          reference->getPointeeType().isConstQualified() &&
+          context_.getTypeSize(reference->getPointeeType()) == 64));
     const clang::CXXRecordDecl *record_reference = nullptr;
     if (reference != nullptr && !reference->getPointeeType().hasQualifiers()) {
       if (const auto *record_type =
@@ -373,14 +377,25 @@ private:
     if (!int_reference && record_reference == nullptr &&
         !mutable_int_pointer && !by_value_bool) {
       fail(parameter->getLocation(),
-           "the supported C++ parameter must be a by-value bool, int&, const int&, or mutable int* parameter, or a mutable simple-record reference parameter");
+           "the supported C++ parameter must be a by-value bool, int&, const int&, const signed-64 reference, or mutable int* parameter, or a mutable simple-record reference parameter");
       return std::nullopt;
     }
     if (record_reference != nullptr && !remember_record(record_reference)) {
       return std::nullopt;
     }
-    auto value_type =
-        lower_type(parameter->getType(), parameter->getLocation());
+    const clang::TypedefNameDecl *source_alias = nullptr;
+    if (const clang::TypeSourceInfo *source = parameter->getTypeSourceInfo()) {
+      for (clang::TypeLoc location = source->getTypeLoc(); !location.isNull();
+           location = location.getNextTypeLoc()) {
+        if (const auto alias_location =
+                location.getAs<clang::TypedefTypeLoc>()) {
+          source_alias = alias_location.getTypedefNameDecl();
+          break;
+        }
+      }
+    }
+    auto value_type = lower_type(parameter->getType(), parameter->getLocation(),
+                                 source_alias);
     if (!value_type) {
       return std::nullopt;
     }
@@ -395,10 +410,12 @@ private:
     return Json(std::move(result));
   }
 
-  std::optional<Json> lower_type(clang::QualType type,
-                                 clang::SourceLocation location) {
+  std::optional<Json>
+  lower_type(clang::QualType type, clang::SourceLocation location,
+             const clang::TypedefNameDecl *source_alias = nullptr) {
     if (const auto *reference = type->getAs<clang::LValueReferenceType>()) {
-      auto pointee = lower_type(reference->getPointeeType(), location);
+      auto pointee =
+          lower_type(reference->getPointeeType(), location, source_alias);
       if (!pointee) {
         return std::nullopt;
       }
@@ -443,9 +460,10 @@ private:
       result["is_const"] = type.isConstQualified();
       return Json(std::move(result));
     }
-    if (!context_.hasSameType(type.getUnqualifiedType(), context_.IntTy)) {
+    if (!context_.hasSameType(type.getUnqualifiedType(), context_.IntTy) &&
+        !(type->isSignedIntegerType() && context_.getTypeSize(type) == 64)) {
       fail(location,
-           "the supported C++ slice supports bool, int, int&, mutable int*, and one simple record-reference type");
+           "the supported C++ slice supports bool, int, signed 64-bit integers, references to those integers, mutable int*, and one simple record-reference type");
       return std::nullopt;
     }
     llvm::json::Object result;
@@ -453,6 +471,22 @@ private:
     result["bits"] = static_cast<std::int64_t>(context_.getTypeSize(type));
     result["signed"] = type->isSignedIntegerType();
     result["is_const"] = type.isConstQualified();
+    const clang::TypedefNameDecl *alias_declaration = source_alias;
+    if (alias_declaration == nullptr) {
+      if (const auto *alias =
+              llvm::dyn_cast<clang::TypedefType>(type.getTypePtr())) {
+        alias_declaration = alias->getDecl();
+      }
+    }
+    if (alias_declaration != nullptr) {
+      llvm::json::Object source_alias;
+      source_alias["declaration_id"] = declaration_id(alias_declaration);
+      source_alias["name"] = alias_declaration->getNameAsString();
+      source_alias["span"] = span(alias_declaration->getSourceRange());
+      result["source_alias"] = std::move(source_alias);
+    } else {
+      result["source_alias"] = nullptr;
+    }
     return Json(std::move(result));
   }
 
@@ -1144,6 +1178,19 @@ private:
     }
     if (const auto *cast =
             llvm::dyn_cast<clang::ImplicitCastExpr>(expression)) {
+      if (cast->getCastKind() == clang::CK_IntegralCast) {
+        auto value = lower_expression(cast->getSubExpr(), function);
+        auto value_type = lower_type(cast->getType(), cast->getExprLoc());
+        if (!value || !value_type) {
+          return std::nullopt;
+        }
+        llvm::json::Object result;
+        result["kind"] = "integral_cast";
+        result["value"] = std::move(*value);
+        result["value_type"] = std::move(*value_type);
+        result["span"] = span(cast->getSourceRange());
+        return Json(std::move(result));
+      }
       if (cast->getCastKind() != clang::CK_LValueToRValue) {
         fail(cast->getExprLoc(),
              "unsupported implicit conversion in the first C++ slice");
@@ -1235,12 +1282,14 @@ private:
     }
     if (const auto *binary =
             llvm::dyn_cast<clang::BinaryOperator>(expression)) {
-      if (binary->getOpcode() != clang::BO_Add) {
+      if (binary->getOpcode() != clang::BO_Add &&
+          binary->getOpcode() != clang::BO_GE) {
         fail(binary->getOperatorLoc(),
-             "unsupported binary operator in the first C++ slice");
+             "unsupported binary operator; this C++ slice supports int addition and signed 64-bit >= only");
         return std::nullopt;
       }
-      if (!context_.hasSameType(binary->getType().getUnqualifiedType(),
+      if (binary->getOpcode() == clang::BO_Add &&
+          !context_.hasSameType(binary->getType().getUnqualifiedType(),
                                 context_.IntTy)) {
         fail(binary->getOperatorLoc(),
              "the supported C++ slice does not include pointer arithmetic");
@@ -1254,7 +1303,8 @@ private:
       }
       llvm::json::Object result;
       result["kind"] = "binary";
-      result["operator"] = "add";
+      result["operator"] =
+          binary->getOpcode() == clang::BO_Add ? "add" : "greater_equal";
       result["left"] = std::move(*left);
       result["right"] = std::move(*right);
       result["value_type"] = std::move(*value_type);

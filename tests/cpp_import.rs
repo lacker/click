@@ -80,6 +80,10 @@ const CONDITIONAL_CONSTRUCTION_SOURCE: &str =
     include_str!("fixtures/cpp-verification/conditional-construction/conditional_restore.cpp");
 const CONDITIONAL_CONSTRUCTION_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/conditional-construction/conditional_restore.click");
+const INT64_PREDICATE_SOURCE: &str =
+    include_str!("fixtures/cpp-verification/int64-predicate/money_nonnegative.cpp");
+const INT64_PREDICATE_SIDECAR: &str =
+    include_str!("fixtures/cpp-verification/int64-predicate/money_nonnegative.click");
 
 struct Project {
     directory: PathBuf,
@@ -204,6 +208,17 @@ impl Project {
         .unwrap();
         project.write_exception_enabled_compilation_database();
         project.write_config_with_profile("header_increment", "selected.h", true);
+        project
+    }
+
+    fn int64_predicate() -> Self {
+        let project = Self::with_fixture(
+            "money_nonnegative.cpp",
+            "money_nonnegative",
+            INT64_PREDICATE_SOURCE,
+        );
+        project.write_exception_enabled_compilation_database();
+        project.write_config_with_profile("money_nonnegative", "money_nonnegative.cpp", true);
         project
     }
 
@@ -393,7 +408,7 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
     let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
-    assert_eq!(prepared.export().schema, 13);
+    assert_eq!(prepared.export().schema, 14);
     assert!(prepared.export().reachable_functions.is_empty());
     assert_eq!(prepared.logical_source(), "increment.cpp");
     assert_eq!(prepared.identity().len(), 64);
@@ -419,6 +434,7 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
                 bits: 32,
                 signed: true,
                 is_const: false,
+                source_alias: None,
             }),
         }
     );
@@ -657,6 +673,118 @@ fn exception_enabled_profile_verifies_a_checked_normal_only_header_graph() {
 }
 
 #[test]
+fn signed_int64_predicate_retains_alias_and_verifies_offline() {
+    let project = Project::int64_predicate();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, INT64_PREDICATE_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("export the signed-64 predicate");
+    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+
+    let import = load_import(&project.config()).expect("load the predicate artifact offline");
+    assert_eq!(import.export().schema, 14);
+    assert!(import.export().profile.exceptions);
+    assert!(!import.export().function.declared_noexcept);
+    assert!(matches!(
+        import.export().function.return_type,
+        CppType::Boolean {
+            bits: 8,
+            is_const: false
+        }
+    ));
+    let CppType::LvalueReference { pointee } = &import.export().function.parameters[0].value_type
+    else {
+        panic!("CAmount parameter did not retain reference type")
+    };
+    let CppType::Integer {
+        bits: 64,
+        signed: true,
+        is_const: true,
+        source_alias: Some(alias),
+    } = pointee.as_ref()
+    else {
+        panic!("CAmount parameter did not retain its signed-64 alias: {pointee:#?}")
+    };
+    assert_eq!(alias.name, "CAmount");
+    assert!(!alias.declaration_id.is_empty());
+    assert_eq!(alias.span.file, "money_nonnegative.cpp");
+    assert_eq!(alias.span.start_line, 1);
+    assert!(matches!(
+        import.export().function.body.as_slice(),
+        [CppStatement::Return {
+            value: CppExpression::Binary {
+                operator: CppBinaryOperator::GreaterEqual,
+                left,
+                right,
+                ..
+            },
+            ..
+        }] if matches!(left.as_ref(), CppExpression::Load { .. })
+            && matches!(right.as_ref(), CppExpression::IntegralCast { value, .. }
+                if matches!(value.as_ref(), CppExpression::IntegerLiteral { value, .. } if value == "0"))
+    ));
+
+    let lowered = lower_import(&import).expect("lower the predicate directly to the kernel");
+    assert_eq!(lowered.kernel_function().return_type(), CType::Bool);
+    assert_eq!(
+        lowered.kernel_function().parameters()[0].c_type(),
+        CType::Int64Pointer
+    );
+    assert!(lowered.kernel_function().parameters()[0].pointee_is_constant());
+
+    let click_project = read_click_project(&sidecar, INT64_PREDICATE_SIDECAR).unwrap();
+    verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify the signed-64 comparison through the offline artifact");
+
+    let false_source = INT64_PREDICATE_SIDECAR.replace(">= 0i64", "> 0i64");
+    let false_project = read_click_project(&sidecar, &false_source).unwrap();
+    let error = verify_cpp_prepared_project(&false_project, &import).unwrap_err();
+    assert!(
+        error.message().contains("unclosed goal"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn signed_int64_predicate_keeps_later_money_range_operators_outside_the_slice() {
+    let less_equal = Project::int64_predicate();
+    fs::write(
+        less_equal.source(),
+        INT64_PREDICATE_SOURCE.replace("nValue >= 0", "nValue <= 0"),
+    )
+    .unwrap();
+    let error = refresh_import(&less_equal.config()).unwrap_err();
+    assert!(error.contains("signed 64-bit >= only"), "{error}");
+
+    let conjunction = Project::int64_predicate();
+    fs::write(
+        conjunction.source(),
+        INT64_PREDICATE_SOURCE.replace("nValue >= 0", "nValue >= 0 && nValue <= 2100000000000000L"),
+    )
+    .unwrap();
+    let error = refresh_import(&conjunction.config()).unwrap_err();
+    assert!(error.contains("signed 64-bit >= only"), "{error}");
+
+    let unsigned = Project::int64_predicate();
+    fs::write(
+        unsigned.source(),
+        INT64_PREDICATE_SOURCE.replace("typedef long CAmount", "typedef unsigned long CAmount"),
+    )
+    .unwrap();
+    let error = refresh_import(&unsigned.config()).unwrap_err();
+    assert!(error.contains("const signed-64 reference"), "{error}");
+
+    let mutable = Project::int64_predicate();
+    fs::write(
+        mutable.source(),
+        INT64_PREDICATE_SOURCE.replace("const CAmount&", "CAmount&"),
+    )
+    .unwrap();
+    let error = refresh_import(&mutable.config()).unwrap_err();
+    assert!(error.contains("const signed-64 reference"), "{error}");
+}
+
+#[test]
 fn exception_enabled_profile_rejects_exception_and_object_semantics() {
     let throwing = Project::new();
     fs::write(
@@ -857,6 +985,7 @@ fn const_reference_preserves_qualification_and_may_alias_a_mutable_reference() {
                 bits: 32,
                 signed: true,
                 is_const: false,
+                source_alias: None,
             }),
         }
     );
@@ -867,6 +996,7 @@ fn const_reference_preserves_qualification_and_may_alias_a_mutable_reference() {
                 bits: 32,
                 signed: true,
                 is_const: true,
+                source_alias: None,
             }),
         }
     );
@@ -1160,7 +1290,7 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the call graph artifact offline");
-    assert_eq!(import.export().schema, 13);
+    assert_eq!(import.export().schema, 14);
     assert_eq!(import.export().function.name, "call_set_seven");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -1237,7 +1367,7 @@ fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the scalar-local artifact offline");
-    assert_eq!(import.export().schema, 13);
+    assert_eq!(import.export().schema, 14);
     assert_eq!(import.export().function.name, "relay_value");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -1351,7 +1481,7 @@ fn mutable_pointer_dereference_and_reference_address_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the pointer artifact offline");
-    assert_eq!(import.export().schema, 13);
+    assert_eq!(import.export().schema, 14);
     let caller = &import.export().function;
     assert_eq!(caller.name, "bump_reference");
     assert!(matches!(
@@ -1369,6 +1499,7 @@ fn mutable_pointer_dereference_and_reference_address_verify_offline() {
                 bits: 32,
                 signed: true,
                 is_const: false,
+                ..
             })
     ));
 
@@ -1488,7 +1619,7 @@ fn record_reference_member_loads_and_stores_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the record artifact offline");
-    assert_eq!(import.export().schema, 13);
+    assert_eq!(import.export().schema, 14);
     let [record] = import.export().records.as_slice() else {
         panic!("the referenced record layout was not captured")
     };
@@ -1590,7 +1721,7 @@ fn brace_initialized_local_aggregate_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the aggregate artifact offline");
-    assert_eq!(import.export().schema, 13);
+    assert_eq!(import.export().schema, 14);
     let [record] = import.export().records.as_slice() else {
         panic!("the local aggregate record layout was not captured")
     };
@@ -1690,7 +1821,7 @@ fn explicit_constructor_local_verifies_as_a_modular_call() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the constructor artifact offline");
-    assert_eq!(import.export().schema, 13);
+    assert_eq!(import.export().schema, 14);
     let [record] = import.export().records.as_slice() else {
         panic!("the constructed record layout was not captured")
     };
@@ -1825,7 +1956,7 @@ fn terminal_return_captures_value_before_checked_destructor_cleanup() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 13);
+    assert_eq!(import.export().schema, 14);
     let [record] = import.export().records.as_slice() else {
         panic!("the destructible record layout was not captured")
     };
@@ -1971,7 +2102,7 @@ fn every_return_after_construction_runs_the_checked_destructor() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 13);
+    assert_eq!(import.export().schema, 14);
     let destructor = import
         .export()
         .reachable_functions
@@ -2072,7 +2203,7 @@ fn two_constructed_objects_are_destroyed_in_reverse_order_on_every_return() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the ordered cleanup artifact offline");
-    assert_eq!(import.export().schema, 13);
+    assert_eq!(import.export().schema, 14);
     let [
         CppStatement::Declare { local: first, .. },
         CppStatement::Declare { local: second, .. },
@@ -2169,7 +2300,7 @@ fn nested_scope_destroys_its_object_on_return_and_fallthrough() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the nested-scope artifact offline");
-    assert_eq!(import.export().schema, 13);
+    assert_eq!(import.export().schema, 14);
     let destructor = import
         .export()
         .reachable_functions

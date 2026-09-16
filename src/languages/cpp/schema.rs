@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 13;
+pub(crate) const EXPORT_SCHEMA: u32 = 14;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -104,6 +104,7 @@ pub enum CppType {
         bits: u32,
         signed: bool,
         is_const: bool,
+        source_alias: Option<CppTypeAlias>,
     },
     LvalueReference {
         pointee: Box<CppType>,
@@ -119,6 +120,14 @@ pub enum CppType {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct CppTypeAlias {
+    pub declaration_id: String,
+    pub name: String,
+    pub span: CppSpan,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CppPlace {
     pub declaration_id: String,
     pub name: String,
@@ -130,6 +139,7 @@ pub struct CppPlace {
 #[serde(rename_all = "snake_case")]
 pub enum CppBinaryOperator {
     Add,
+    GreaterEqual,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -158,6 +168,11 @@ pub enum CppExpression {
     MemberLoad {
         object: CppPlaceReference,
         field: CppFieldReference,
+        value_type: CppType,
+        span: CppSpan,
+    },
+    IntegralCast {
+        value: Box<CppExpression>,
         value_type: CppType,
         span: CppSpan,
     },
@@ -555,7 +570,9 @@ impl CppFunction {
         }
         match &self.function_kind {
             CppFunctionKind::Free => {
-                require_int32(&self.return_type, false, "function return type")?;
+                if require_int32(&self.return_type, false, "function return type").is_err() {
+                    require_bool(&self.return_type, false, "function return type")?;
+                }
             }
             CppFunctionKind::Constructor {
                 record_declaration_id,
@@ -574,6 +591,7 @@ impl CppFunction {
                 validate_record_reference(records, record_declaration_id, record_name)?;
             }
         }
+        self.return_type.validate_aliases(logical_source)?;
         if !self.declared_noexcept
             && (!exceptions_enabled || !matches!(self.function_kind, CppFunctionKind::Free))
         {
@@ -602,7 +620,9 @@ impl CppFunction {
                     {
                         validate_record_reference(records, declaration_id, name)?;
                     } else {
-                        require_int32(pointee, true, "reference pointee")?;
+                        if require_int32(pointee, true, "reference pointee").is_err() {
+                            require_const_signed_int64(pointee, "reference pointee")?;
+                        }
                     }
                 }
                 CppType::Pointer { pointee } => {
@@ -630,6 +650,7 @@ impl CppFunction {
             if !names.insert(parameter.name.clone()) {
                 return Err(format!("duplicate C++ parameter name `{}`", parameter.name));
             }
+            parameter.value_type.validate_aliases(logical_source)?;
         }
         if let CppFunctionKind::Constructor {
             record_declaration_id,
@@ -714,6 +735,7 @@ impl CppFunction {
         if self.body.is_empty() {
             return Err("supported C++ function has no executable statements".into());
         }
+        validate_return_types(&self.body, &self.return_type)?;
         let mut aggregate_locals = 0;
         let mut destructible_locals = Vec::new();
         let mut nested_scopes = 0;
@@ -1027,7 +1049,9 @@ impl CppStatement {
             } => {
                 span.validate(logical_source)?;
                 value.validate(places, records, logical_source)?;
-                require_int32(value.value_type(), false, "return value")?;
+                if require_int32(value.value_type(), false, "return value").is_err() {
+                    require_bool(value.value_type(), false, "return value")?;
+                }
                 for cleanup in cleanups {
                     cleanup.validate(places, records, logical_source)?;
                 }
@@ -1232,6 +1256,7 @@ impl CppExpression {
             | Self::AddressOf { value_type, .. }
             | Self::Dereference { value_type, .. }
             | Self::MemberLoad { value_type, .. }
+            | Self::IntegralCast { value_type, .. }
             | Self::Binary { value_type, .. } => value_type,
         }
     }
@@ -1242,7 +1267,9 @@ impl CppExpression {
             Self::Load { place, .. } | Self::AddressOf { place, .. } => {
                 place.declaration_id == declaration_id
             }
-            Self::Dereference { pointer, .. } => pointer.references_place(declaration_id),
+            Self::Dereference { pointer, .. } | Self::IntegralCast { value: pointer, .. } => {
+                pointer.references_place(declaration_id)
+            }
             Self::MemberLoad { object, .. } => object.declaration_id == declaration_id,
             Self::Binary { left, right, .. } => {
                 left.references_place(declaration_id) || right.references_place(declaration_id)
@@ -1256,6 +1283,7 @@ impl CppExpression {
         records: &BTreeMap<String, &CppRecord>,
         logical_source: &str,
     ) -> Result<(), String> {
+        self.value_type().validate_aliases(logical_source)?;
         match self {
             Self::IntegerLiteral {
                 value,
@@ -1277,8 +1305,12 @@ impl CppExpression {
                 let place_type = validate_place_reference(place, places, logical_source)?;
                 match place_type {
                     CppType::LvalueReference { pointee } => {
-                        require_int32(pointee, true, "loaded reference pointee")?;
-                        require_int32(value_type, false, "loaded value type")
+                        if require_int32(pointee, true, "loaded reference pointee").is_ok() {
+                            require_int32(value_type, false, "loaded value type")
+                        } else {
+                            require_signed_int64(pointee, true, "loaded reference pointee")?;
+                            require_signed_int64(value_type, false, "loaded value type")
+                        }
                     }
                     CppType::Boolean { .. } => {
                         require_bool(place_type, false, "loaded parameter")?;
@@ -1344,7 +1376,18 @@ impl CppExpression {
                 }
                 Ok(())
             }
+            Self::IntegralCast {
+                value,
+                value_type,
+                span,
+            } => {
+                span.validate(logical_source)?;
+                value.validate(places, records, logical_source)?;
+                require_int32(value.value_type(), false, "integral cast operand")?;
+                require_signed_int64(value_type, false, "integral cast result")
+            }
             Self::Binary {
+                operator: CppBinaryOperator::Add,
                 left,
                 right,
                 value_type,
@@ -1357,6 +1400,20 @@ impl CppExpression {
                 right.validate(places, records, logical_source)?;
                 require_int32(left.value_type(), false, "binary left operand")?;
                 require_int32(right.value_type(), false, "binary right operand")
+            }
+            Self::Binary {
+                operator: CppBinaryOperator::GreaterEqual,
+                left,
+                right,
+                value_type,
+                span,
+            } => {
+                require_bool(value_type, false, "comparison result type")?;
+                span.validate(logical_source)?;
+                left.validate(places, records, logical_source)?;
+                right.validate(places, records, logical_source)?;
+                require_signed_int64(left.value_type(), false, "comparison left operand")?;
+                require_signed_int64(right.value_type(), false, "comparison right operand")
             }
         }
     }
@@ -1840,6 +1897,7 @@ fn validate_call_arguments(
                             bits: 32,
                             signed: true,
                             is_const: expected_const,
+                            ..
                         },
                     ) => matches!(
                         actual.as_ref(),
@@ -1847,6 +1905,7 @@ fn validate_call_arguments(
                             bits: 32,
                             signed: true,
                             is_const: actual_const,
+                            ..
                         } if *expected_const || !*actual_const
                     ),
                     _ => false,
@@ -1984,9 +2043,111 @@ fn require_int32(value: &CppType, allow_const: bool, label: &str) -> Result<(), 
             bits: 32,
             signed: true,
             is_const,
+            ..
         } if allow_const || !is_const => Ok(()),
         _ => Err(format!("{label} is outside the first C++ `int` slice")),
     }
+}
+
+fn require_signed_int64(value: &CppType, allow_const: bool, label: &str) -> Result<(), String> {
+    match value {
+        CppType::Integer {
+            bits: 64,
+            signed: true,
+            is_const,
+            ..
+        } if allow_const || !is_const => Ok(()),
+        _ => Err(format!(
+            "{label} is outside the supported C++ signed 64-bit slice"
+        )),
+    }
+}
+
+fn require_const_signed_int64(value: &CppType, label: &str) -> Result<(), String> {
+    match value {
+        CppType::Integer {
+            bits: 64,
+            signed: true,
+            is_const: true,
+            ..
+        } => Ok(()),
+        _ => Err(format!(
+            "{label} is outside the supported C++ `const` signed 64-bit slice"
+        )),
+    }
+}
+
+impl CppType {
+    fn validate_aliases(&self, logical_source: &str) -> Result<(), String> {
+        match self {
+            Self::Integer { source_alias, .. } => {
+                if let Some(alias) = source_alias {
+                    if alias.declaration_id.is_empty() || alias.name.is_empty() {
+                        return Err("C++ integer type alias is missing declaration identity".into());
+                    }
+                    alias.span.validate(logical_source)?;
+                }
+                Ok(())
+            }
+            Self::LvalueReference { pointee } | Self::Pointer { pointee } => {
+                pointee.validate_aliases(logical_source)
+            }
+            Self::Void | Self::Boolean { .. } | Self::Record { .. } => Ok(()),
+        }
+    }
+}
+
+fn same_scalar_type(left: &CppType, right: &CppType) -> bool {
+    match (left, right) {
+        (
+            CppType::Integer {
+                bits: left_bits,
+                signed: left_signed,
+                is_const: left_const,
+                ..
+            },
+            CppType::Integer {
+                bits: right_bits,
+                signed: right_signed,
+                is_const: right_const,
+                ..
+            },
+        ) => left_bits == right_bits && left_signed == right_signed && left_const == right_const,
+        (
+            CppType::Boolean {
+                bits: left_bits,
+                is_const: left_const,
+            },
+            CppType::Boolean {
+                bits: right_bits,
+                is_const: right_const,
+            },
+        ) => left_bits == right_bits && left_const == right_const,
+        _ => left == right,
+    }
+}
+
+fn validate_return_types(statements: &[CppStatement], return_type: &CppType) -> Result<(), String> {
+    for statement in statements {
+        match statement {
+            CppStatement::Return { value, .. }
+                if !same_scalar_type(value.value_type(), return_type) =>
+            {
+                return Err("C++ return value does not match the function return type".into());
+            }
+            CppStatement::Scope { body, .. } => validate_return_types(body, return_type)?,
+            CppStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                validate_return_types(then_branch, return_type)?;
+                validate_return_types(else_branch, return_type)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn require_mutable_int32_pointer(value: &CppType, label: &str) -> Result<(), String> {

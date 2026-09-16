@@ -1270,14 +1270,26 @@ fn function_claim_holds_on_prepared_path(
                 },
             );
             // A lowering that folded the ensure to a constant truth decided
-            // the claim on this path by evaluation alone; every other form
-            // needs a matching completion.
+            // the claim on this path by evaluation alone. A matching checked
+            // completion remains the normal proof route. As a final bounded
+            // fallback, retain the facts produced while lowering the ensure
+            // itself: conditional expressions can preserve an equivalent
+            // symbolic value instead of folding even when both sides are
+            // identical under those checked load and condition facts.
+            let path_assumptions =
+                assumptions_with_path_context(assumptions, &path.facts, &path.obligations);
             let proposition_holds = lowered_goal_is_constant_true(&path.proposition)
                 || crate::instrumentation::measure_operation(
                     function.name(),
                     "contract claim",
                     "completion match",
                     || completion_certifies(&path.proposition),
+                )
+                || crate::instrumentation::measure_operation(
+                    function.name(),
+                    "contract claim",
+                    "lowered proposition closure",
+                    || certification_proves_proposition(&path_assumptions, &path.proposition),
                 );
             obligations_hold && proposition_holds
         }
