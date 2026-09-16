@@ -19,10 +19,10 @@ use super::{
 };
 use crate::kernel::{
     CAggregateField, CAggregateLayout, CExpression, CFunction, CStatement, CType, LoadSourceId,
-    LoadSourceOwnerId, c_add, c_assign, c_begin_aggregate_construction, c_call, c_call_assign,
-    c_cast, c_declare, c_declare_aggregate, c_function, c_greater_equal, c_if, c_int32_literal,
-    c_int64_literal, c_less_equal, c_parameter, c_pointer_offset_bytes, c_return, c_seq, c_skip,
-    c_typed_load_with_source, c_typed_store, c_variable,
+    LoadSourceOwnerId, c_add, c_and, c_assign, c_begin_aggregate_construction, c_call,
+    c_call_assign, c_cast, c_declare, c_declare_aggregate, c_function, c_greater_equal, c_if,
+    c_int32_literal, c_int64_literal, c_less_equal, c_parameter, c_pointer_offset_bytes, c_return,
+    c_seq, c_skip, c_typed_load_with_source, c_typed_store, c_variable,
 };
 
 /// One kernel function together with the immutable semantic artifact that
@@ -538,6 +538,22 @@ impl LoweringContext<'_> {
                 Ok(c_add(left, right))
             }
             CppExpression::Binary {
+                operator: CppBinaryOperator::LogicalAnd,
+                left,
+                right,
+                value_type:
+                    CppType::Boolean {
+                        bits: 8,
+                        is_const: false,
+                    },
+                ..
+            } if is_mutable_bool(left.value_type()) && is_mutable_bool(right.value_type()) => {
+                Ok(c_cast(
+                    c_and(self.lower_expression(left)?, self.lower_expression(right)?),
+                    CType::Bool,
+                ))
+            }
+            CppExpression::Binary {
                 operator: CppBinaryOperator::LessEqual,
                 left,
                 right,
@@ -765,6 +781,16 @@ fn is_mutable_int32(value_type: &CppType) -> bool {
             signed: true,
             is_const: false,
             ..
+        }
+    )
+}
+
+fn is_mutable_bool(value_type: &CppType) -> bool {
+    matches!(
+        value_type,
+        CppType::Boolean {
+            bits: 8,
+            is_const: false
         }
     )
 }

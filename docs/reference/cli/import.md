@@ -220,13 +220,18 @@ validated `MAX_MONEY` value; it does not add runtime multiplication to the
 kernel boundary. A second selected function in that fixture imports signed
 64-bit `value <= MAX_MONEY`, retains the distinct Clang `<=` operator, and
 lowers it directly to the kernel's inclusive signed comparison.
+The third selection has the synthetic `value >= 0 && value <= MAX_MONEY`
+shape. It retains Clang's built-in logical-and node and both comparisons,
+then lowers to the kernel's left-to-right short-circuit operation with a
+`bool` result. Its exact inclusive-range contract verifies offline; a false
+upper-boundary contract fails.
 
 These fixtures do not claim the host C++ standard library: their header is a
 pinned input containing only the needed `int64_t` typedef. Mutable or
 non-`constexpr` globals, undeclared header dependencies, broader or unordered
 constant graphs, other constant expressions, mutable signed-64 references,
-unsigned 64-bit aliases, other relational operators, and `&&` remain outside
-the boundary.
+unsigned 64-bit aliases, other relational operators, `||`, overloaded logical
+operators, and non-Boolean `&&` operands remain outside the boundary.
 
 The `direct-call` fixture selects a caller and captures the transitive closure
 of definitions reached by discarded-result direct call statements. Each call

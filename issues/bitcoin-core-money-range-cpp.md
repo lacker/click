@@ -137,5 +137,9 @@ verifies a reference to `MAX_MONEY` offline.
 
 The same regression now selects and verifies `value <= MAX_MONEY` with the
 distinct Clang signed-64 less-equal node and a false equality-boundary check.
-The next semantic increment is short-circuit `&&`; the upstream Bitcoin fixture
-and its real toolchain dependency provenance remain required afterward.
+It also selects a synthetic `value >= 0 && value <= MAX_MONEY` function,
+retains Clang's built-in `bool && bool` node, and verifies the exact inclusive
+range contract offline with a false upper-boundary regression. This composes
+the required source-expression semantics, but does not yet verify upstream
+Bitcoin code. The next increment is the pinned upstream fixture and real
+toolchain dependency provenance.

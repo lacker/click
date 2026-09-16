@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 17;
+pub(crate) const EXPORT_SCHEMA: u32 = 18;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -163,6 +163,7 @@ pub enum CppBinaryOperator {
     Multiply,
     LessEqual,
     GreaterEqual,
+    LogicalAnd,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1540,6 +1541,20 @@ impl CppExpression {
                 right.validate(places, records, logical_source)?;
                 require_signed_int64(left.value_type(), false, "comparison left operand")?;
                 require_signed_int64(right.value_type(), false, "comparison right operand")
+            }
+            Self::Binary {
+                operator: CppBinaryOperator::LogicalAnd,
+                left,
+                right,
+                value_type,
+                span,
+            } => {
+                require_bool(value_type, false, "logical-and result type")?;
+                span.validate(logical_source)?;
+                left.validate(places, records, logical_source)?;
+                right.validate(places, records, logical_source)?;
+                require_bool(left.value_type(), false, "logical-and left operand")?;
+                require_bool(right.value_type(), false, "logical-and right operand")
             }
             Self::Binary {
                 operator: CppBinaryOperator::Multiply,

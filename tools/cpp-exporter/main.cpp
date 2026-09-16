@@ -198,7 +198,7 @@ public:
     profile["compilation_command"] = std::move(compilation_command);
 
     llvm::json::Object artifact;
-    artifact["schema"] = 17;
+    artifact["schema"] = 18;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["exception_behavior"] = "normal_only";
@@ -1474,9 +1474,10 @@ private:
       if (binary->getOpcode() != clang::BO_Add &&
           binary->getOpcode() != clang::BO_Mul &&
           binary->getOpcode() != clang::BO_LE &&
-          binary->getOpcode() != clang::BO_GE) {
+          binary->getOpcode() != clang::BO_GE &&
+          binary->getOpcode() != clang::BO_LAnd) {
         fail(binary->getOperatorLoc(),
-             "unsupported binary operator; this C++ slice supports int addition, checked constant multiplication, and signed 64-bit <= and >= only");
+             "unsupported binary operator; this C++ slice supports int addition, checked constant multiplication, signed 64-bit <= and >=, and built-in bool && bool only");
         return std::nullopt;
       }
       if (binary->getOpcode() == clang::BO_Mul && !allow_constant_multiply) {
@@ -1514,6 +1515,8 @@ private:
         result["operator"] = "multiply";
       } else if (binary->getOpcode() == clang::BO_LE) {
         result["operator"] = "less_equal";
+      } else if (binary->getOpcode() == clang::BO_LAnd) {
+        result["operator"] = "logical_and";
       } else {
         result["operator"] = "greater_equal";
       }

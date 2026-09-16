@@ -11,3 +11,7 @@ inline bool at_least_max_money(const CAmount& value) {
 inline bool at_most_max_money(const CAmount& value) {
     return value <= MAX_MONEY;
 }
+
+inline bool money_range(const CAmount& value) {
+    return value >= 0 && value <= MAX_MONEY;
+}
