@@ -2223,6 +2223,100 @@ fn increment_upper_bound_derivation_retains_its_exact_strict_premise() {
 }
 
 #[test]
+fn increment_upper_bound_uses_only_an_exact_direct_strict_edge() {
+    let value = Bitvector32Term::Variable(Variable(207_100));
+    let upper = Bitvector32Term::Variable(Variable(207_101));
+    let middle = Bitvector32Term::Variable(Variable(207_102));
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::add(value.clone(), Bitvector32Term::Constant(1)),
+            upper.clone(),
+        ),
+        true,
+    );
+    let premises = [
+        Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(value.clone(), upper.clone()),
+            true,
+        ),
+        Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(upper.clone(), value.clone()),
+            false,
+        ),
+        Proposition::ConditionIs(
+            ConditionTerm::signed_greater_than(upper.clone(), value.clone()),
+            true,
+        ),
+        Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(value.clone(), upper.clone()),
+            false,
+        ),
+    ];
+    for premise in premises {
+        let assumptions = PureFactContext::new().assume_proposition(premise.clone());
+        let derivation = assumptions
+            .derive_simp_proposition(&goal)
+            .expect("each normalized strict edge derives the increment bound");
+        let step = derivation
+            .int32_increment_upper_bound_step()
+            .expect("the direct rule retains its edge");
+        assert_eq!(step.premise(), &premise);
+        assert!(derivation.check(&assumptions));
+    }
+
+    let indirect = PureFactContext::new()
+        .assume_condition(
+            ConditionTerm::signed_less_than(value.clone(), middle.clone()),
+            true,
+        )
+        .assume_condition(ConditionTerm::signed_less_than(middle, upper.clone()), true);
+    assert!(
+        indirect
+            .exact_direct_order_step(&value, &upper, true)
+            .is_none()
+    );
+    assert!(!indirect.proves_atomic_for_derivation(&goal, true));
+}
+
+#[test]
+fn increment_upper_bound_direct_lookup_ignores_unrelated_order_facts() {
+    let value = Bitvector32Term::Variable(Variable(207_200));
+    let upper = Bitvector32Term::Variable(Variable(207_201));
+    let samples = [8, 16, 32, 64]
+        .into_iter()
+        .map(|size| {
+            let mut assumptions = PureFactContext::new();
+            for index in 0..size {
+                assumptions = assumptions.assume_condition(
+                    ConditionTerm::signed_less_than(
+                        Bitvector32Term::Variable(Variable(207_300 + index as u64)),
+                        Bitvector32Term::Variable(Variable(207_400 + index as u64)),
+                    ),
+                    true,
+                );
+            }
+            assumptions = assumptions.assume_condition(
+                ConditionTerm::signed_less_than(value.clone(), upper.clone()),
+                true,
+            );
+            // Measure the direct rule, not construction or other atomic arms.
+            let (step, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assumptions.exact_direct_order_step(&value, &upper, true)
+            });
+            assert!(step.is_some());
+            assert_eq!(work, 1, "the first indexed candidate is the direct edge");
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(2).saturating_add(1),
+            "direct order lookup depends on ambient facts: {samples:?}"
+        );
+    }
+}
+
+#[test]
 fn increment_constant_upper_bound_retains_its_exact_nonstrict_premise() {
     let value = Bitvector32Term::Variable(Variable(208_100));
     let direct = Proposition::ConditionIs(

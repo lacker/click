@@ -831,17 +831,7 @@ impl PureFactContext {
                 true,
             ) => incremented
                 .add_const_base(1)
-                .and_then(|base| {
-                    self.exact_signed_order_path_evidence(&base, upper, true)
-                        .and_then(|path| match path.as_slice() {
-                            [step]
-                                if step.strict && step.lower == base && step.upper == **upper =>
-                            {
-                                Some(step.clone())
-                            }
-                            _ => None,
-                        })
-                })
+                .and_then(|base| self.exact_direct_order_step(&base, upper, true))
                 .map(Box::new)
                 .map(AtomicPropositionDerivationEvidence::Int32IncrementUpperBound),
             _ => None,
@@ -2118,7 +2108,10 @@ impl PureFactContext {
         };
         candidates
             .into_iter()
-            .find(|(condition, truth)| self.condition_facts.get(condition) == Some(truth))
+            .find(|(condition, truth)| {
+                crate::instrumentation::record_deterministic_work(1);
+                self.condition_facts.get(condition) == Some(truth)
+            })
             .map(|(condition, truth)| SignedOrderDerivationStep {
                 lower: lower.clone(),
                 upper: upper.clone(),
