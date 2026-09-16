@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 18;
+pub(crate) const EXPORT_SCHEMA: u32 = 19;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -24,10 +24,21 @@ pub struct CppExport {
     pub reachable_functions: Vec<CppFunction>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CppExceptionBehavior {
+    #[default]
     NormalOnly,
+    ScalarInt32,
+}
+
+impl CppExceptionBehavior {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::NormalOnly => "normal_only",
+            Self::ScalarInt32 => "scalar_int32",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -315,6 +326,10 @@ pub enum CppStatement {
         cleanups: Vec<CppCleanup>,
         span: CppSpan,
     },
+    Throw {
+        value: CppExpression,
+        span: CppSpan,
+    },
     Scope {
         body: Vec<CppStatement>,
         cleanups: Vec<CppCleanup>,
@@ -349,6 +364,7 @@ impl CppExport {
         logical_source: &str,
         function: &str,
         expected_exceptions: bool,
+        expected_exception_behavior: CppExceptionBehavior,
         expected_dependencies: &[String],
     ) -> Result<(), String> {
         if self.schema != EXPORT_SCHEMA {
@@ -367,6 +383,14 @@ impl CppExport {
             return Err(format!(
                 "C++ export profile must match the configured Clang {STANDARD} profile for {TARGET} with RTTI disabled"
             ));
+        }
+        if self.exception_behavior != expected_exception_behavior
+            || (matches!(self.exception_behavior, CppExceptionBehavior::ScalarInt32)
+                && !self.profile.exceptions)
+        {
+            return Err(
+                "C++ exception behavior differs from the configured compiler profile".into(),
+            );
         }
         if !self.profile.frontend_version.contains(CLANG_VERSION) {
             return Err(format!(
@@ -492,6 +516,7 @@ impl CppExport {
                 &alias_sources,
                 &records,
                 self.profile.exceptions,
+                self.exception_behavior,
             )?;
             source.validate_constant_references(
                 logical_source,
@@ -671,6 +696,7 @@ impl CppFunction {
         alias_sources: &BTreeSet<String>,
         records: &BTreeMap<String, &CppRecord>,
         exceptions_enabled: bool,
+        exception_behavior: CppExceptionBehavior,
     ) -> Result<(), String> {
         if self.name.is_empty() || self.declaration_id.is_empty() {
             return Err("C++ function is missing declaration identity".into());
@@ -704,6 +730,13 @@ impl CppFunction {
         {
             return Err(format!(
                 "C++ function `{}` must declare noexcept outside the exception-enabled object-free profile",
+                self.name
+            ));
+        }
+        if matches!(exception_behavior, CppExceptionBehavior::ScalarInt32) && self.declared_noexcept
+        {
+            return Err(format!(
+                "C++ function `{}` declares noexcept, whose termination behavior is outside the scalar int32 exception profile",
                 self.name
             ));
         }
@@ -843,6 +876,11 @@ impl CppFunction {
             return Err("supported C++ function has no executable statements".into());
         }
         validate_return_types(&self.body, &self.return_type)?;
+        if matches!(exception_behavior, CppExceptionBehavior::NormalOnly)
+            && sequence_contains_throw(&self.body)
+        {
+            return Err("throw expressions are outside the normal-only C++ profile".into());
+        }
         let mut aggregate_locals = 0;
         let mut destructible_locals = Vec::new();
         let mut nested_scopes = 0;
@@ -1163,6 +1201,11 @@ impl CppStatement {
                     cleanup.validate(places, records, logical_source)?;
                 }
                 Ok(())
+            }
+            Self::Throw { value, span } => {
+                span.validate(logical_source)?;
+                value.validate(places, records, logical_source)?;
+                require_int32(value.value_type(), false, "exception payload")
             }
             Self::Scope { .. } => Err(
                 "the supported C++ slice permits one nested scope directly in a free-function body"
@@ -1714,6 +1757,19 @@ fn sequence_contains_return(statements: &[CppStatement]) -> bool {
     })
 }
 
+fn sequence_contains_throw(statements: &[CppStatement]) -> bool {
+    statements.iter().any(|statement| match statement {
+        CppStatement::Throw { .. } => true,
+        CppStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => sequence_contains_throw(then_branch) || sequence_contains_throw(else_branch),
+        CppStatement::Scope { body, .. } => sequence_contains_throw(body),
+        _ => false,
+    })
+}
+
 fn validate_return_cleanups(
     statements: &[CppStatement],
     function_name: &str,
@@ -1736,7 +1792,7 @@ fn validate_return_cleanups(
                 validate_return_cleanups(then_branch, function_name, locals)?;
                 validate_return_cleanups(else_branch, function_name, locals)?;
             }
-            CppStatement::Scope { .. } => {}
+            CppStatement::Scope { .. } | CppStatement::Throw { .. } => {}
             CppStatement::Declare { .. }
             | CppStatement::Assign { .. }
             | CppStatement::Store { .. }
@@ -1765,7 +1821,7 @@ fn return_cleanups_match(cleanups: &[CppCleanup], locals: &[CppPlace]) -> bool {
 impl CppStatement {
     fn always_returns(&self) -> bool {
         match self {
-            Self::Return { .. } => true,
+            Self::Return { .. } | Self::Throw { .. } => true,
             Self::If {
                 then_branch,
                 else_branch,
@@ -1991,7 +2047,8 @@ fn collect_calls<'a>(statements: &'a [CppStatement], calls: &mut Vec<CollectedCa
                     calls.push(CollectedCall::Destructor { object, callee });
                 }
             }
-            CppStatement::Assign { .. }
+            CppStatement::Throw { .. }
+            | CppStatement::Assign { .. }
             | CppStatement::Store { .. }
             | CppStatement::MemberStore { .. } => {}
         }
@@ -2246,7 +2303,8 @@ fn validate_statement_constant_references(
             }
             CppStatement::Assign { value, .. }
             | CppStatement::MemberStore { value, .. }
-            | CppStatement::Return { value, .. } => {
+            | CppStatement::Return { value, .. }
+            | CppStatement::Throw { value, .. } => {
                 value.validate_constant_references(
                     logical_source,
                     constants,

@@ -528,6 +528,21 @@ fn expand_cpp_prepared_claim_source_by_label_context(
                 );
             }
         }
+        for (index, ensure) in function.exceptional_ensures().iter().enumerate() {
+            let label = ensure.name().map_or_else(
+                || format!("{function_name}.exceptional_ensures_{index}"),
+                |name| format!("{function_name}.{name}"),
+            );
+            if label == claim_label {
+                return expand_cpp_prepared_claim_source_context(
+                    project,
+                    click_source,
+                    import,
+                    function_name,
+                    CProofClaim::ExceptionalEnsure(index),
+                );
+            }
+        }
     }
     Err(ClickError::new(format!(
         "could not locate C++ function claim `{claim_label}`"

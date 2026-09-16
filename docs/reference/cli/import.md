@@ -129,6 +129,21 @@ are rejected locally. Because the artifact contains the complete supported
 direct-call closure and has no throwing operation, ordinary verification may
 check its normal behavior without inventing an exceptional proof outcome.
 
+The separate `"exception_behavior": "scalar_int32"` config requires
+`"exceptions": true`. Its locked artifact may contain a source `throw` of a
+typed `int` payload in an object-free function; the importer lowers that node
+to Click's checked exceptional statement outcome. A Click `throws int32`
+signature must still declare the exception, and normal and exceptional
+postconditions are proved separately. Reachable direct calls can propagate
+that exception while normal scalar statements continue. This profile does not
+accept `try`/`catch`, destructible automatic objects, `noexcept` functions
+(whose termination behavior is not modeled), or exceptional resource transfer;
+it is not C++ unwinding support or an exception-ABI proof. Clang's typed
+source semantics and the compiler/runtime implementation remain the trust
+boundary. The config, artifact, and lock keep
+it distinct from both the exception-disabled baseline and exception-enabled
+`normal_only` profile.
+
 Loading through the C++ library boundary subsequently validates the translation
 unit, selected logical source, compilation database, lock, and typed artifact
 without locating or running Clang. This separation is intentional: compiler
@@ -240,8 +255,9 @@ retain their parameter identity, and all captured functions lower into the
 ordinary modular call environment. Each definition has its own sidecar
 contract and proof. The artifact rejects recursion, ambiguous reachable names,
 and missing definitions. Reachable functions that omit `noexcept` are accepted
-only in the exception-enabled, object-free, normal-only profile; the baseline
-profile continues to reject them.
+only in an exception-enabled, object-free profile; the baseline profile
+continues to reject them. Omitting `noexcept` does not itself declare a Click
+exception.
 
 The `scalar-local` fixture adds mutable automatic `int` locals declared directly
 in the function body. Each local requires an initializer, which may be an

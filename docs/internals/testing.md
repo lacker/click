@@ -118,8 +118,12 @@ and nested locals. An exception-enabled header fixture omits `noexcept`, locks
 the distinct Clang profile, and verifies offline under the artifact's
 `normal_only` guarantee. Its focused checks reject `throw`, `try`/`catch`, an
 unresolved reachable call, record/object use, and config/profile disagreement;
-they do not claim exception-path support. A signed-64 predicate fixture retains
-a direct `CAmount` typedef identity, imports `const CAmount&`, the implicit
+they do not claim exception-path support. A separate object-free `scalar_int32`
+fixture locks a typed source throw, verifies the helper's exceptional claim,
+and carries that outcome through a modular caller while its normal path
+continues. It rejects an undeclared or false exceptional claim and a non-int32
+payload. A signed-64 predicate fixture retains a direct `CAmount` typedef
+identity, imports `const CAmount&`, the implicit
 promotion of zero, signed `>=`, and a `bool` result, then verifies an exact
 all-input contract offline. Its false zero-boundary contract fails, while
 mutable and unsigned wide references and other relational operators fail at

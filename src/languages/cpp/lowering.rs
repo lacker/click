@@ -334,6 +334,9 @@ impl LoweringContext<'_> {
                 }
                 Ok(c_seq(result, c_return(c_variable(capture))))
             }
+            CppStatement::Throw { value, .. } => {
+                Ok(CStatement::Throw(self.lower_expression(value)?))
+            }
             CppStatement::Scope { body, cleanups, .. } => {
                 let mut result = self.lower_sequence(body)?;
                 for cleanup in cleanups {

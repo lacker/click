@@ -48,6 +48,7 @@ struct Options {
   std::string function;
   std::string source;
   std::string compilation_database;
+  std::string exception_behavior = "normal_only";
   std::string compilation_directory;
   std::string compilation_file;
   std::vector<std::string> compilation_command;
@@ -77,6 +78,12 @@ std::optional<Options> parse_options(int argc, const char **argv) {
       result.source = value;
     } else if (option == "--compilation-database") {
       result.compilation_database = value;
+    } else if (option == "--exception-behavior") {
+      if (value != "normal_only" && value != "scalar_int32") {
+        llvm::errs() << "error: unsupported exception behavior `" << value << "`\n";
+        return std::nullopt;
+      }
+      result.exception_behavior = value;
     } else {
       llvm::errs() << "error: unknown exporter option `" << option << "`\n";
       return std::nullopt;
@@ -101,6 +108,7 @@ public:
                    std::string compilation_directory,
                    std::string compilation_file,
                    std::vector<std::string> compilation_command,
+                   std::string exception_behavior,
                    ExportState &state)
       : context_(context), source_manager_(context.getSourceManager()),
         logical_source_(std::move(logical_source)),
@@ -108,7 +116,8 @@ public:
         selected_name_(std::move(selected_name)),
         compilation_directory_(std::move(compilation_directory)),
         compilation_file_(std::move(compilation_file)),
-        compilation_command_(std::move(compilation_command)), state_(state) {}
+        compilation_command_(std::move(compilation_command)),
+        exception_behavior_(std::move(exception_behavior)), state_(state) {}
 
   bool VisitFunctionDecl(clang::FunctionDecl *declaration) {
     if (!llvm::isa<clang::CXXMethodDecl>(declaration) &&
@@ -121,6 +130,11 @@ public:
   }
 
   void finish() {
+    if (exception_behavior_ == "scalar_int32" &&
+        !context_.getLangOpts().CXXExceptions) {
+      fail({}, "scalar int32 exception profile requires C++ exceptions enabled");
+      return;
+    }
     if (matches_.empty()) {
       fail({}, "selected function `" + selected_name_ + "` was not found");
       return;
@@ -198,10 +212,10 @@ public:
     profile["compilation_command"] = std::move(compilation_command);
 
     llvm::json::Object artifact;
-    artifact["schema"] = 18;
+    artifact["schema"] = 19;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
-    artifact["exception_behavior"] = "normal_only";
+    artifact["exception_behavior"] = exception_behavior_;
     artifact["logical_source"] = logical_source_;
     llvm::json::Array dependencies;
     for (const std::string &dependency : dependency_sources_) {
@@ -239,6 +253,11 @@ private:
     if (prototype == nullptr) {
       fail(declaration->getLocation(),
            "the supported C++ function must have a prototype");
+      return std::nullopt;
+    }
+    if (exception_behavior_ == "scalar_int32" && prototype->isNothrow()) {
+      fail(declaration->getLocation(),
+           "scalar int32 exception profile does not model noexcept termination");
       return std::nullopt;
     }
     if (!prototype->isNothrow() &&
@@ -546,9 +565,31 @@ private:
                                       bool allow_nested_scope) {
     if (const auto *throw_expression =
             llvm::dyn_cast<clang::CXXThrowExpr>(statement)) {
-      fail(throw_expression->getThrowLoc(),
-           "throw expressions are outside the normal-only C++ profile");
-      return std::nullopt;
+      if (exception_behavior_ != "scalar_int32") {
+        fail(throw_expression->getThrowLoc(),
+             "throw expressions are outside the normal-only C++ profile");
+        return std::nullopt;
+      }
+      const clang::Expr *payload = throw_expression->getSubExpr();
+      if (payload == nullptr) {
+        fail(throw_expression->getThrowLoc(),
+             "rethrow is outside the scalar int32 exception profile");
+        return std::nullopt;
+      }
+      if (!payload->getType()->isSpecificBuiltinType(clang::BuiltinType::Int)) {
+        fail(throw_expression->getThrowLoc(),
+             "scalar exception payload must have type int32");
+        return std::nullopt;
+      }
+      auto value = lower_expression(payload, function);
+      if (!value) {
+        return std::nullopt;
+      }
+      llvm::json::Object result;
+      result["kind"] = "throw";
+      result["value"] = std::move(*value);
+      result["span"] = span(throw_expression->getSourceRange());
+      return Json(std::move(result));
     }
     if (const auto *try_statement = llvm::dyn_cast<clang::CXXTryStmt>(statement)) {
       fail(try_statement->getTryLoc(),
@@ -1348,7 +1389,9 @@ private:
     if (const auto *throw_expression =
             llvm::dyn_cast<clang::CXXThrowExpr>(expression)) {
       fail(throw_expression->getThrowLoc(),
-           "throw expressions are outside the normal-only C++ profile");
+           exception_behavior_ == "scalar_int32"
+               ? "scalar int32 throws must be standalone statements"
+               : "throw expressions are outside the normal-only C++ profile");
       return std::nullopt;
     }
     if (const auto *parentheses =
@@ -2112,6 +2155,7 @@ private:
   std::string compilation_directory_;
   std::string compilation_file_;
   std::vector<std::string> compilation_command_;
+  std::string exception_behavior_;
   ExportState &state_;
   std::vector<clang::FunctionDecl *> matches_;
   std::unordered_set<const clang::FunctionDecl *> known_functions_;
@@ -2140,7 +2184,8 @@ public:
       : exporter_(context, options.logical_source, options.logical_source_path,
                   options.function,
                   options.compilation_directory, options.compilation_file,
-                  options.compilation_command, state) {}
+                  options.compilation_command, options.exception_behavior,
+                  state) {}
 
   void HandleTranslationUnit(clang::ASTContext &context) override {
     exporter_.TraverseDecl(context.getTranslationUnitDecl());

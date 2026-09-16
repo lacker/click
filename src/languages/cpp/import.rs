@@ -14,7 +14,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::schema::{CppExport, CppProfile, EXPORT_SCHEMA, LANGUAGE, STANDARD, TARGET};
+use super::schema::{
+    CppExceptionBehavior, CppExport, CppProfile, EXPORT_SCHEMA, LANGUAGE, STANDARD, TARGET,
+};
 use crate::languages::compiler_process::{CompilerLimits, run_compiler};
 
 const CONFIG_SCHEMA: u32 = 4;
@@ -60,6 +62,8 @@ struct Config {
     standard: String,
     target: String,
     exceptions: bool,
+    #[serde(default)]
+    exception_behavior: CppExceptionBehavior,
     rtti: bool,
     exporter: String,
     compilation_database: String,
@@ -146,6 +150,8 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
         source.to_string_lossy().into_owned(),
         "--compilation-database".into(),
         compilation_database.to_string_lossy().into_owned(),
+        "--exception-behavior".into(),
+        config.exception_behavior.as_str().into(),
     ];
     let output = run_compiler(
         &exporter,
@@ -336,6 +342,7 @@ fn decode_artifact(bytes: &[u8], config: &Config) -> Result<CppExport, String> {
         &config.logical_source,
         &config.function,
         config.exceptions,
+        config.exception_behavior,
         &config.dependencies,
     )?;
     Ok(export)
@@ -391,6 +398,10 @@ fn validate_config(config: &Config) -> Result<(), String> {
         return Err(format!(
             "C++ import config must use schema {CONFIG_SCHEMA}, Clang {STANDARD} for {TARGET}, with RTTI disabled"
         ));
+    }
+    if matches!(config.exception_behavior, CppExceptionBehavior::ScalarInt32) && !config.exceptions
+    {
+        return Err("scalar int32 exception import requires C++ exceptions enabled".into());
     }
     for (label, value) in [
         ("exporter", config.exporter.as_str()),

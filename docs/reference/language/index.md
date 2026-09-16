@@ -90,9 +90,9 @@ declares a nonthrowing interface.
 This first exceptional-contract slice is deliberately pure and direct. The
 exceptional family cannot carry resources or mutable effects, and named
 contracts, external contracts, callbacks, indirect calls, handlers, and
-unwinding do not yet support it. The C++ importer also still rejects source
-`throw` and `catch`; the exceptional outcome is currently an internal checked
-outcome used by direct modular summaries. A direct modular call whose normal
+unwinding do not yet support it. A separate, object-free C++ scalar-exception
+import profile accepts typed `throw int32`, but still rejects `try`/`catch` and
+automatic-object unwinding. A direct modular call whose normal
 continuation is a single return can certify both caller outcome families:
 
 <!-- verified-example: mdtests/exceptional_terminal_call.md -->
@@ -116,7 +116,7 @@ int32 caller(int32 x) throws int32 {
 ```
 
 This does not yet model handlers, unwinding, exceptional resource transfer, or
-C++ source `throw` and `catch`.
+C++ source `catch`.
 
 C functions may call themselves or participate in mutual recursion without a
 special Click keyword. Their ordinary contracts are the modular interfaces for
