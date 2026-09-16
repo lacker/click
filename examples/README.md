@@ -37,8 +37,9 @@ version and version-string bytes under the explicit kernel target.
 
 Current projects:
 
-- `basic-cpp/` verifies a small C++ reference mutation and an RAII guard that
-  restores its referent on both normal and early return, using Clang 19's
+- `basic-cpp/` verifies a small C++ reference mutation, an RAII guard that
+  restores its referent on both normal and early return, and a modular caller
+  that observes the captured result and restored memory, using Clang 19's
   compiler import.
 - `multifile-registry/` combines shared counters, same-named private statics,
   persistent local arrays, repeated includes, and a data-only translation unit.

@@ -336,6 +336,9 @@ destructor. It verifies the original two-path `Restore` example: the early path
 returns 7, the final path returns 9, and both restore the referenced integer to
 its entry value. A return before construction is rejected rather than assigned
 a cleanup for an object that is not alive.
+The `examples/basic-cpp/` project also selects a modular caller starting with
+41: either captured result is retained while the referenced cell is 41 after
+the call.
 
 The `reverse-destructor-order` fixture permits exactly two such top-level
 objects when both use the supported constructor and destructor. Both objects

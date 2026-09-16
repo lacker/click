@@ -7,11 +7,10 @@ consolidation uses `2ac83e6d`. The [probe record](borrow-probes/README.md)
 contains executable evidence, compiler versions, and reproduction commands.
 No C++ or Rust verification frontend is implemented by this document.
 
-The implementation backlogs are the P1
-[stable views](../docs/internals/stable-views.md) and P1
-[basic C++ support issue](../issues/basic-cpp-support.md). They own current
-acceptance criteria. This document owns the cross-language rationale and
-future investigations, so those decisions survive the eventual issue closures.
+The [stable-views record](../docs/internals/stable-views.md) and the completed
+[basic C++ example](../examples/basic-cpp/README.md) carry the implemented
+boundaries. This document owns the cross-language rationale and future
+investigations, so those decisions survive issue closure.
 
 ## Sequence: C++ first, Rust next
 
@@ -353,17 +352,16 @@ dump includes an implicit destructor on each return path. Thus C++ needs
 cleanup and object-lifetime semantics, but its references do not require
 imposing Rust's exclusive/shared borrow discipline on all C++ accesses.
 
-The proposed first C++ regression in
-[basic-cpp-support.md](../issues/basic-cpp-support.md) adds an explicit
-constructor and a destructor that restores the entry value. A temporary
+The delivered [basic C++ regression](../examples/basic-cpp/README.md) has an
+explicit constructor and a destructor that restores the entry value. A temporary
 header-free compiler probe returned 7/9 on the early/ordinary paths and left
 the caller's integer at 41 in both cases. It compiled and ran with the same
 Apple Clang 16 toolchain. Cross-target syntax/CFG inspection for x86-64 Linux
 also showed the initializer list and both implicit destructor calls.
-This checks the proposed example and compiler visibility, not a Click proof
-or completeness of the future exporter. The original C++ probe uses host
-headers; the new header-free reduction avoids treating host-header success
-as Linux target qualification.
+That initial compiler probe checked source visibility, not a Click proof or
+exporter completeness; the later checked example supplies the Click proof.
+The original C++ probe uses host headers; the header-free reduction avoids
+treating host-header success as Linux target qualification.
 
 The compiler probes use the local ARM64 macOS target; the Click probe uses
 Click's supported x86-64 Linux target. They establish structural semantic
@@ -383,9 +381,9 @@ distinctions, not cross-target layout agreement or source-to-machine refinement.
 4. Keep access-origin and loan checks beside storage lookup when changing
    memory-access interfaces. Rust borrow origins are still not distinguished
    for two accesses to the same address.
-5. Deliver the P1 basic C++ slice through a typed compiler import and checked
-   cleanup edges. Share this edge design with goto without waiting for full
-   goto or adding exception handling to the first milestone.
+5. Done: the basic C++ slice uses a typed compiler import and checked cleanup
+   edges, shared in design with goto without adding general jumps or exception
+   unwinding to that first milestone.
 
 Valid C aliasing was not a reason to keep views weak. The
 [ownership-only probe](borrow-probes/alias-owned.click) verifies the same C and

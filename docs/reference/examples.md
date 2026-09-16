@@ -10,8 +10,10 @@ Larger example projects live directly under `examples/`. They contain ordinary
 
 `examples/basic-cpp/` is the first C++ example project. Its small reference
 increment is a smoke test; `with_restore` proves that an RAII destructor
-restores the referenced value after either return path. The project's README
-gives the pinned compiler-import setup and ordinary verification commands.
+restores the referenced value after either return path; a modular caller
+starting with 41 proves the helper returns 7 or 9 while restoring 41. The
+project's README gives the pinned compiler-import setup and ordinary
+verification commands.
 
 `examples/multifile-registry/` verifies a registry across four C translation
 units and two headers. It covers shared updates, independent same-named private

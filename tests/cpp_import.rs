@@ -59,6 +59,9 @@ const TERMINAL_DESTRUCTOR_SIDECAR: &str =
 const EARLY_RETURN_DESTRUCTOR_SOURCE: &str = include_str!("../examples/basic-cpp/with_restore.cpp");
 const EARLY_RETURN_DESTRUCTOR_SIDECAR: &str =
     include_str!("../examples/basic-cpp/with_restore.click");
+const RESTORE_CALLER_SOURCE: &str = include_str!("../examples/basic-cpp/with_restore_caller.cpp");
+const RESTORE_CALLER_SIDECAR: &str =
+    include_str!("../examples/basic-cpp/with_restore_caller.click");
 const REVERSE_DESTRUCTOR_SOURCE: &str =
     include_str!("fixtures/cpp-verification/reverse-destructor-order/restore_twice.cpp");
 const REVERSE_DESTRUCTOR_SIDECAR: &str =
@@ -157,6 +160,14 @@ impl Project {
             "with_restore.cpp",
             "with_restore",
             EARLY_RETURN_DESTRUCTOR_SOURCE,
+        )
+    }
+
+    fn restore_caller() -> Self {
+        Self::with_fixture(
+            "with_restore_caller.cpp",
+            "call_with_restore",
+            RESTORE_CALLER_SOURCE,
         )
     }
 
@@ -3077,6 +3088,90 @@ fn every_return_after_construction_runs_the_checked_destructor() {
     let wrong_project = read_click_project(&sidecar, &wrong_early_result).unwrap();
     verify_cpp_prepared_project(&wrong_project, &import)
         .expect_err("cleanup must not overwrite the value captured by the early return");
+}
+
+#[test]
+fn modular_caller_observes_captured_result_and_restored_entry_value() {
+    assert!(
+        RESTORE_CALLER_SOURCE.starts_with(EARLY_RETURN_DESTRUCTOR_SOURCE),
+        "the caller fixture must preserve the original RAII source verbatim"
+    );
+    let project = Project::restore_caller();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, RESTORE_CALLER_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("export the RAII helper and its modular caller");
+    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+
+    let import = load_import(&project.config()).expect("load the caller artifact offline");
+    assert_eq!(import.export().function.name, "call_with_restore");
+    assert!(
+        import
+            .export()
+            .reachable_functions
+            .iter()
+            .any(|function| function.name == "with_restore"),
+        "the helper definition must be reachable from the selected caller"
+    );
+    let CppStatement::Declare {
+        initializer: CppInitializer::Call { callee, .. },
+        ..
+    } = &import.export().function.body[0]
+    else {
+        panic!("the caller must capture a resolved call result")
+    };
+    assert_eq!(callee.name, "with_restore");
+    let lowered = lower_import(&import).expect("lower the modular RAII call");
+    assert!(
+        contains_scalar_local_pipeline(
+            lowered.kernel_function().body(),
+            "captured",
+            "unused",
+            "with_restore"
+        )[..2]
+            .iter()
+            .all(|found| *found),
+        "the captured call must remain a checked kernel call assignment"
+    );
+
+    let click_project = read_click_project(&sidecar, RESTORE_CALLER_SIDECAR).unwrap();
+    verify_cpp_prepared_project(&click_project, &import)
+        .expect("the caller must receive 7 or 9 and still own an unchanged 41");
+    let execute = cpp_prepared_project_tactic_source_position(
+        &click_project,
+        &import,
+        "call_with_restore.contract",
+        0,
+    )
+    .unwrap();
+    let expanded = expand_cpp_prepared_project_tactic_source_at(
+        &click_project,
+        &import,
+        execute.line,
+        execute.column,
+    )
+    .expect("expand the caller's checked modular execution");
+    let rewritten = click_project.with_entry_source(expanded.clone());
+    verify_cpp_prepared_project(&rewritten, &import)
+        .expect("the expanded RAII caller proof must reverify");
+    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
+        .expect("retain the caller's original verification environment");
+    let next = cpp_prepared_project_tactic_source_position(
+        &rewritten,
+        &import,
+        "call_with_restore.contract",
+        0,
+    )
+    .unwrap();
+    session
+        .verify_at_project(&expanded, next.line, next.column)
+        .expect("retained audit session must accept the expanded RAII caller proof");
+
+    let false_restoration =
+        RESTORE_CALLER_SIDECAR.replace("ensures value[0] == 41;", "ensures value[0] == 42;");
+    fs::write(&sidecar, &false_restoration).unwrap();
+    let false_project = read_click_project(&sidecar, &false_restoration).unwrap();
+    verify_cpp_prepared_project(&false_project, &import)
+        .expect_err("the caller cannot claim a different post-call value");
 }
 
 #[test]

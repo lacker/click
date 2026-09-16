@@ -21,8 +21,8 @@ semantics that Click is meant to verify.
 Design the execution frontier and checked edges with the future language
 frontends in mind. The shared control-flow discussion is in
 [Supporting more languages](../design/supporting-more-languages.md#control-flow-goto-and-implicit-cleanup).
-The P1 [basic C++ slice](basic-cpp-support.md) needs implicit cleanup on
-ordinary scope exits and returns; it can land before general C goto.
+The delivered [basic C++ slice](../examples/basic-cpp/README.md) implements
+implicit cleanup on ordinary scope exits and returns without general C goto.
 
 A target label alone is not enough for every language. An edge may need
 checked scope-exit operations, object-lifetime changes, and a distinction
@@ -42,8 +42,8 @@ Before fixing the representation, check it against a forward C cleanup jump,
 a C++ RAII early return, and a Rust conditional-drop edge. These are design
 checks; this issue does not require implementing the other language frontends
 or exception handling. The control-flow demo owns the selected cross-call C++
-exception probe. Reuse cleanup-edge work from the basic C++ issue without
-introducing a dependency cycle between these issues.
+exception probe. Reuse the basic C++ cleanup-edge work without introducing a
+dependency cycle between the remaining issues.
 
 ## Violated invariant
 

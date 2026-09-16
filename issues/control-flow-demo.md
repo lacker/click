@@ -18,9 +18,9 @@ merely because a lexical scope ended. Rbtree remains the main launch demo.
 1. The P1 forward-cleanup slice of [goto.md](goto.md) supplies checked C labels,
    jumps, target resumption, and joins. It is required for this demo. General
    backward jumps and irreducible control flow remain P2.
-2. [basic-cpp-support.md](basic-cpp-support.md) supplies the typed C++ frontend,
-   object lifetimes, and normal scope cleanup. It remains a non-throwing slice
-   and can complete before this issue.
+2. The completed [basic C++ example](../examples/basic-cpp/README.md) supplies
+   the typed frontend, object lifetimes, and normal scope cleanup. Its baseline
+   profile remains a non-throwing slice.
 3. This issue adds the narrow cross-call exception model and proves both
    end-to-end cleanup programs. The same edge/state infrastructure should
    serve C jumps and C++ cleanup, with language-specific legality rules.
