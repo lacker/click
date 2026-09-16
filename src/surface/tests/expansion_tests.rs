@@ -11325,6 +11325,17 @@ fn matched_resource_dependent_clauses_expand_and_reverify() {
     assert!(expanded.contains("instantiate(forall"), "{expanded}");
     verify_c0_sources(&expanded, &c_sources)
         .expect("the expanded dependent resource proof should reverify");
+
+    let missing_bound = click_source.replacen("fact prefix <= capacity;", "", 1);
+    assert_ne!(missing_bound, click_source);
+    let refusal = verify_c0_sources(&missing_bound, &c_sources)
+        .expect_err("a dependent load must not borrow a missing scalar bound");
+    assert!(
+        refusal
+            .message
+            .contains("without a covering contained memory resource with current read authority"),
+        "missing scalar bound failed for an unrelated reason: {refusal:?}"
+    );
 }
 
 #[test]
