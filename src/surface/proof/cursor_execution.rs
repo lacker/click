@@ -2020,21 +2020,7 @@ fn execute_step_from_frontier_position_selecting_path(
             .position(|transition| matches!(transition.outcome, CStatementOutcome::Throw { .. }))
             .unwrap();
         let throw_transition = transitions.remove(throw_index);
-        let parent = execution.core.clone();
-        let mut exceptional = parent.clone();
-        exceptional.record_statement_transition_with_loan_evidence(
-            function,
-            arguments,
-            throw_transition.theorem.clone(),
-            throw_transition.context.clone(),
-            &throw_transition.execution_facts,
-            &throw_transition.obligations,
-            &throw_transition.loan_evidence,
-        ).map_err(|refusal| ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: exceptional call evidence was rejected: {}",
-            describe_evidence_refusal(&refusal, parameters, arguments)
-        )))?;
-        pending_exceptional_call = Some((split, root_facts, parent, exceptional, throw_transition));
+        pending_exceptional_call = Some((split, root_facts, throw_transition));
     }
     if transitions.len() != 1 {
         if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) {
@@ -2187,26 +2173,37 @@ fn execute_step_from_frontier_position_selecting_path(
         );
         restore_construction_snapshot_view(&mut execution.presentation.recorded_snapshots, restore);
     }
-    execution
-        .core
-        .record_statement_transition_with_loan_evidence(
-            function,
-            arguments,
-            transition.theorem.clone(),
-            transition.context.clone(),
-            &transition.execution_facts,
-            &transition.obligations,
-            &transition.loan_evidence,
-        )
-        .map_err(|refusal| {
-            ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` recorded statement evidence the proof object rejected: {}",
+    if let Some((split, root_facts, throw_transition)) = pending_exceptional_call {
+        let parent = execution.core.clone();
+        let branches = split
+            .record_branches(
+                &parent,
+                function,
+                arguments,
+                &current_state,
+                &step_statement,
+                &root_facts,
+                CallOutcomeArmEvidence {
+                    theorem: &transition.theorem,
+                    context: &transition.context,
+                    execution_facts: &transition.execution_facts,
+                    obligations: &transition.obligations,
+                    loan_evidence: &transition.loan_evidence,
+                },
+                CallOutcomeArmEvidence {
+                    theorem: &throw_transition.theorem,
+                    context: &throw_transition.context,
+                    execution_facts: &throw_transition.execution_facts,
+                    obligations: &throw_transition.obligations,
+                    loan_evidence: &throw_transition.loan_evidence,
+                },
+            )
+            .map_err(|refusal| ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: checked returned/threw call branch was rejected: {}",
                 describe_evidence_refusal(&refusal, parameters, arguments)
-            ))
-        })?;
-    if let Some((split, root_facts, parent, exceptional, throw_transition)) =
-        pending_exceptional_call
-    {
+            )))?;
+        execution.core = branches.returned;
+        let exceptional = branches.threw;
         let mut throw_facts = root_facts.clone();
         for fact in &throw_transition.path_facts {
             throw_facts = throw_facts.with_kernel_checked_fact(fact.clone());
@@ -2239,6 +2236,24 @@ fn execute_step_from_frontier_position_selecting_path(
         ).map_err(|reason| ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: checked call fork was rejected: {reason}"
         )))?;
+    } else {
+        execution
+            .core
+            .record_statement_transition_with_loan_evidence(
+                function,
+                arguments,
+                transition.theorem.clone(),
+                transition.context.clone(),
+                &transition.execution_facts,
+                &transition.obligations,
+                &transition.loan_evidence,
+            )
+            .map_err(|refusal| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` recorded statement evidence the proof object rejected: {}",
+                    describe_evidence_refusal(&refusal, parameters, arguments)
+                ))
+            })?;
     }
     // A direct memory-snapshot transport needs no surface `transport`
     // tactic, but its target still needs a stable source form for a

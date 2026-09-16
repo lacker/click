@@ -2831,6 +2831,24 @@ pub(crate) struct CheckedCallOutcomeSplit {
     exceptional_obligations: Vec<crate::kernel::ProofObligation>,
 }
 
+/// The two independently checked proof descendants of one direct call.
+/// Only `returned` may continue at the following statement; `threw` has
+/// already reached its terminal exceptional outcome. Neither descendant
+/// carries the other's running state or theorem trace.
+pub(crate) struct CheckedCallOutcomeBranches {
+    pub(crate) returned: ExecutionProofCore,
+    pub(crate) threw: ExecutionProofCore,
+}
+
+/// Evidence offered for one named arm of a checked direct-call split.
+pub(crate) struct CallOutcomeArmEvidence<'a> {
+    pub(crate) theorem: &'a Theorem,
+    pub(crate) context: &'a PureFactContext,
+    pub(crate) execution_facts: &'a [ExecutionPureFact],
+    pub(crate) obligations: &'a [crate::kernel::ProofObligation],
+    pub(crate) loan_evidence: &'a crate::kernel::loans::CheckedLoanCallEvidenceSequence,
+}
+
 #[derive(Debug)]
 pub(crate) enum CheckedCallOutcomeSplitError {
     Limit(ExecutionLimit),
@@ -2966,6 +2984,60 @@ impl CheckedCallOutcomeSplit {
                     outcome,
                 } if proved_state == state && proved_statement == statement && outcome == *expected
             )
+        })
+    }
+
+    /// Advance both call outcomes from the *same* parent into separate
+    /// checked traces. The witness certifies exhaustive `returned`/`threw`
+    /// coverage before either arm is accepted; each arm then independently
+    /// checks its source transition and premise context.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn record_branches(
+        &self,
+        parent: &ExecutionProofCore,
+        function: &CFunction,
+        arguments: &[CExpression],
+        state: &CState,
+        statement: &CStatement,
+        root_facts: &ProofFacts,
+        returned: CallOutcomeArmEvidence<'_>,
+        threw: CallOutcomeArmEvidence<'_>,
+    ) -> Result<CheckedCallOutcomeBranches, EvidenceRefusal> {
+        if !self.validates(
+            state,
+            statement,
+            root_facts,
+            returned.theorem,
+            threw.theorem,
+        ) {
+            return Err("call arms do not match the exhaustive returned/threw split".into());
+        }
+        let mut returned_core = parent.clone();
+        returned_core.record_statement_transition_with_loan_evidence(
+            function,
+            arguments,
+            returned.theorem.clone(),
+            returned.context.clone(),
+            returned.execution_facts,
+            returned.obligations,
+            returned.loan_evidence,
+        )?;
+        let mut threw_core = parent.clone();
+        threw_core.record_statement_transition_with_loan_evidence(
+            function,
+            arguments,
+            threw.theorem.clone(),
+            threw.context.clone(),
+            threw.execution_facts,
+            threw.obligations,
+            threw.loan_evidence,
+        )?;
+        if returned_core.evidence_completed || !threw_core.evidence_completed {
+            return Err("call arms did not reach returned and threw frontiers".into());
+        }
+        Ok(CheckedCallOutcomeBranches {
+            returned: returned_core,
+            threw: threw_core,
         })
     }
 }

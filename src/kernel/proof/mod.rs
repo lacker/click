@@ -23,12 +23,12 @@ pub(crate) mod term_rewrite;
 
 pub(crate) use branches::{BranchId, ProofBranch, ProofBranchState, ProofBranches, SplitId};
 pub(crate) use execution::{
-    CheckedBranchSplit, CheckedBranchSplitError, CheckedCallEvent, CheckedCallEvents,
-    CheckedCallOutcomeSplit, CheckedCallOutcomeSplitError, CheckedExecutionEvent,
-    CheckedProofCasePartition, EvidenceRefusal, ExecutionFrontier, ExecutionProofCore,
-    ExecutionRegionKind, FrontierPosition, LoopControlExit, OutcomeEvidenceFork,
-    ProofExecutionContinuation, ProofExecutionState, checked_branch_fact_is_available,
-    old_reference_state,
+    CallOutcomeArmEvidence, CheckedBranchSplit, CheckedBranchSplitError, CheckedCallEvent,
+    CheckedCallEvents, CheckedCallOutcomeSplit, CheckedCallOutcomeSplitError,
+    CheckedExecutionEvent, CheckedProofCasePartition, EvidenceRefusal, ExecutionFrontier,
+    ExecutionProofCore, ExecutionRegionKind, FrontierPosition, LoopControlExit,
+    OutcomeEvidenceFork, ProofExecutionContinuation, ProofExecutionState,
+    checked_branch_fact_is_available, old_reference_state,
 };
 #[allow(unused_imports)]
 pub(crate) use fact_keys::propositions_are_alpha_equal;

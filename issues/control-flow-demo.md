@@ -102,6 +102,13 @@ support is a stated trust boundary, not proof of an exception ABI implementation
 - Each normal or exceptional outcome retains its own facts, memory effects,
   resources, obligations, and supported lifetime/loan transitions. A caller
   may use only the claims for the outcome it actually receives.
+- A potentially throwing call is the proof branch point: its exhaustive
+  checked outcomes create separate `returned` and `threw` proof arms, with one
+  focused execution frontier and certificate per arm. A `try` region supplies
+  the target for the `threw` arm; it does not defer the split until the catch.
+  Expansion must retain both arm certificates, even when their postconditions
+  need different closing tactics. Do not merge those tactics into a
+  path-independent closer.
 - Make edges and cleanups certificate-visible with original source locations.
   Match handlers by the supported language rules; cannot-tell is not evidence
   that a call returns or that a particular handler catches its exception.
