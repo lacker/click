@@ -909,6 +909,7 @@ impl Renderer {
             crate::kernel::CStatementOutcome::Continue(_) => "continue",
             crate::kernel::CStatementOutcome::Jump { .. } => "jump",
             crate::kernel::CStatementOutcome::Return { .. } => "return",
+            crate::kernel::CStatementOutcome::Throw { .. } => "throw",
             crate::kernel::CStatementOutcome::VerificationDiverges => "verification-diverges",
             crate::kernel::CStatementOutcome::UndefinedBehavior(_) => "undefined-behavior",
             crate::kernel::CStatementOutcome::RuntimeError(_) => "runtime-error",
@@ -917,6 +918,7 @@ impl Renderer {
     fn function_outcome(&mut self, outcome: &crate::kernel::CFunctionOutcome) {
         self.push(match outcome {
             crate::kernel::CFunctionOutcome::Return { .. } => "return",
+            crate::kernel::CFunctionOutcome::Throw { .. } => "throw",
             crate::kernel::CFunctionOutcome::VerificationDiverges => "verification-diverges",
             crate::kernel::CFunctionOutcome::UndefinedBehavior(_) => "undefined-behavior",
             crate::kernel::CFunctionOutcome::RuntimeError(_) => "runtime-error",

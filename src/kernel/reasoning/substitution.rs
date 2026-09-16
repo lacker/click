@@ -931,6 +931,7 @@ pub(in crate::kernel) fn collect_c_statement_bound_variables(
         }
         CStatement::Assign { expression, .. }
         | CStatement::Return(expression)
+        | CStatement::Throw(expression)
         | CStatement::Assert {
             condition: expression,
             ..
@@ -1054,7 +1055,7 @@ pub(in crate::kernel) fn collect_statement_outcome_bound_variables(
         | CStatementOutcome::Jump { state, .. } => {
             collect_c_state_bound_variables(state, variables)
         }
-        CStatementOutcome::Return { value, state } => {
+        CStatementOutcome::Return { value, state } | CStatementOutcome::Throw { value, state } => {
             collect_c_value_bound_variables(value, variables);
             collect_c_state_bound_variables(state, variables);
         }
@@ -1069,7 +1070,7 @@ fn collect_function_outcome_bound_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match outcome {
-        CFunctionOutcome::Return { value, state } => {
+        CFunctionOutcome::Return { value, state } | CFunctionOutcome::Throw { value, state } => {
             collect_c_value_bound_variables(value, variables);
             collect_c_state_bound_variables(state, variables);
         }
@@ -2846,6 +2847,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
         CStatement::Return(expression) => CStatement::Return(
             substitute_bitvector_variable_in_c_expression(expression, from, to),
         ),
+        CStatement::Throw(expression) => CStatement::Throw(
+            substitute_bitvector_variable_in_c_expression(expression, from, to),
+        ),
         CStatement::Store { pointer, value } => CStatement::Store {
             pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
             value: substitute_bitvector_variable_in_c_expression(value, from, to),
@@ -3765,6 +3769,10 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement_outcome(
             value: substitute_bitvector_variable_in_c_value(value, from, to),
             state: substitute_bitvector_variable_in_c_state(state, from, to),
         },
+        CStatementOutcome::Throw { value, state } => CStatementOutcome::Throw {
+            value: substitute_bitvector_variable_in_c_value(value, from, to),
+            state: substitute_bitvector_variable_in_c_state(state, from, to),
+        },
         CStatementOutcome::VerificationDiverges => CStatementOutcome::VerificationDiverges,
         CStatementOutcome::UndefinedBehavior(kind) => {
             CStatementOutcome::UndefinedBehavior(kind.clone())
@@ -3780,6 +3788,10 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function_outcome(
 ) -> CFunctionOutcome {
     match outcome {
         CFunctionOutcome::Return { value, state } => CFunctionOutcome::Return {
+            value: substitute_bitvector_variable_in_c_value(value, from, to),
+            state: substitute_bitvector_variable_in_c_state(state, from, to),
+        },
+        CFunctionOutcome::Throw { value, state } => CFunctionOutcome::Throw {
             value: substitute_bitvector_variable_in_c_value(value, from, to),
             state: substitute_bitvector_variable_in_c_state(state, from, to),
         },
@@ -5931,6 +5943,9 @@ fn substitute_pointer_variable_in_c_statement(
         CStatement::Return(expression) => CStatement::Return(
             substitute_pointer_variable_in_c_expression(expression, from, to),
         ),
+        CStatement::Throw(expression) => CStatement::Throw(
+            substitute_pointer_variable_in_c_expression(expression, from, to),
+        ),
         CStatement::Store { pointer, value } => CStatement::Store {
             pointer: substitute_pointer_variable_in_c_expression(pointer, from, to),
             value: substitute_pointer_variable_in_c_expression(value, from, to),
@@ -6118,6 +6133,10 @@ fn substitute_pointer_variable_in_c_statement_outcome(
             value: substitute_pointer_variable_in_c_value(value, from, to),
             state: substitute_pointer_variable_in_c_state(state, from, to),
         },
+        CStatementOutcome::Throw { value, state } => CStatementOutcome::Throw {
+            value: substitute_pointer_variable_in_c_value(value, from, to),
+            state: substitute_pointer_variable_in_c_state(state, from, to),
+        },
         CStatementOutcome::VerificationDiverges => CStatementOutcome::VerificationDiverges,
         CStatementOutcome::UndefinedBehavior(kind) => {
             CStatementOutcome::UndefinedBehavior(kind.clone())
@@ -6133,6 +6152,10 @@ fn substitute_pointer_variable_in_c_function_outcome(
 ) -> CFunctionOutcome {
     match outcome {
         CFunctionOutcome::Return { value, state } => CFunctionOutcome::Return {
+            value: substitute_pointer_variable_in_c_value(value, from, to),
+            state: substitute_pointer_variable_in_c_state(state, from, to),
+        },
+        CFunctionOutcome::Throw { value, state } => CFunctionOutcome::Throw {
             value: substitute_pointer_variable_in_c_value(value, from, to),
             state: substitute_pointer_variable_in_c_state(state, from, to),
         },

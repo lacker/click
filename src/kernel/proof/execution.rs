@@ -3088,7 +3088,8 @@ fn statement_call_havoc_views(theorem: &Theorem) -> Vec<crate::kernel::SharedCMe
         | CStatementOutcome::Break(state)
         | CStatementOutcome::Continue(state)
         | CStatementOutcome::Jump { state, .. }
-        | CStatementOutcome::Return { state, .. } => state.memory(),
+        | CStatementOutcome::Return { state, .. }
+        | CStatementOutcome::Throw { state, .. } => state.memory(),
         CStatementOutcome::VerificationDiverges
         | CStatementOutcome::UndefinedBehavior(_)
         | CStatementOutcome::RuntimeError(_) => return Vec::new(),
@@ -3585,6 +3586,7 @@ fn check_evidence_events_with_call_events(
                     outcome @ (CStatementOutcome::Break(_)
                     | CStatementOutcome::Continue(_)
                     | CStatementOutcome::Return { .. }
+                    | CStatementOutcome::Throw { .. }
                     | CStatementOutcome::VerificationDiverges) => {
                         if tail.is_some() {
                             return None;
@@ -3698,7 +3700,9 @@ fn trace_completion(
                     | CStatementOutcome::Jump { .. } => {
                         fallthrough = None;
                     }
-                    CStatementOutcome::Return { .. } | CStatementOutcome::VerificationDiverges => {
+                    CStatementOutcome::Return { .. }
+                    | CStatementOutcome::Throw { .. }
+                    | CStatementOutcome::VerificationDiverges => {
                         // The path completes under the context its final
                         // theorem was proved under, recorded right after it.
                         let executed_under = match events.get(index + 1) {
@@ -4127,7 +4131,7 @@ impl ExecutionProofCore {
         };
         match outcome {
             CStatementOutcome::Normal(next_state) => self.evidence_state = Some(next_state),
-            CStatementOutcome::Return { state, .. } => {
+            CStatementOutcome::Return { state, .. } | CStatementOutcome::Throw { state, .. } => {
                 self.evidence_state = Some(state);
                 self.evidence_completed = true;
             }

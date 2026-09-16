@@ -152,6 +152,7 @@ pub(in crate::surface::proof) fn kernel_loop_by_index<'a>(
         | CStatement::Call { .. }
         | CStatement::HeapAllocate { .. }
         | CStatement::HeapFree { .. }
+        | CStatement::Throw(_)
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }

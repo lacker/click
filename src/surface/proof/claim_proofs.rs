@@ -2758,7 +2758,8 @@ pub(super) fn finish_ordered_proof<'a>(
                                     )),
                                     (
                                         None,
-                                        CFunctionOutcome::VerificationDiverges
+                                        CFunctionOutcome::Throw { .. }
+                                        | CFunctionOutcome::VerificationDiverges
                                         | CFunctionOutcome::UndefinedBehavior(_)
                                         | CFunctionOutcome::RuntimeError(_),
                                     ) => None,
@@ -3021,7 +3022,8 @@ pub(super) fn finish_ordered_proof<'a>(
                                     )),
                                     (
                                         None,
-                                        CFunctionOutcome::VerificationDiverges
+                                        CFunctionOutcome::Throw { .. }
+                                        | CFunctionOutcome::VerificationDiverges
                                         | CFunctionOutcome::UndefinedBehavior(_)
                                         | CFunctionOutcome::RuntimeError(_),
                                     ) => None,

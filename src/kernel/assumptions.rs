@@ -1508,7 +1508,8 @@ fn collect_term_memory_loads(
                 let _ = state;
                 Ok(())
             }
-            CStatementOutcome::Return { value, state } => {
+            CStatementOutcome::Return { value, state }
+            | CStatementOutcome::Throw { value, state } => {
                 let _ = state;
                 collect_cvalue_memory_loads(value, current_memory, loads, seen_integers)
             }
@@ -1517,7 +1518,8 @@ fn collect_term_memory_loads(
             | CStatementOutcome::RuntimeError(_) => Ok(()),
         },
         Term::CFunctionOutcome(outcome) => match outcome {
-            CFunctionOutcome::Return { value, state } => {
+            CFunctionOutcome::Return { value, state }
+            | CFunctionOutcome::Throw { value, state } => {
                 let _ = state;
                 collect_cvalue_memory_loads(value, current_memory, loads, seen_integers)
             }

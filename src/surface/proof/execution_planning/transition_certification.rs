@@ -515,7 +515,9 @@ fn statement_consults_conditions(state: &CState, statement: &CStatement) -> bool
         CStatement::Assign { name, expression } => {
             state.local_object_type(name) == Some(CType::UInt8) || expression_consults(expression)
         }
-        CStatement::Return(expression) => expression_consults(expression),
+        CStatement::Return(expression) | CStatement::Throw(expression) => {
+            expression_consults(expression)
+        }
         CStatement::Seq(first, second) => {
             statement_consults_conditions(state, first)
                 || statement_consults_conditions(state, second)
@@ -607,6 +609,7 @@ pub(in crate::surface::proof) fn statement_contains_call(statement: &CStatement)
         | CStatement::DeclareAggregate { .. }
         | CStatement::Assign { .. }
         | CStatement::Assert { .. }
+        | CStatement::Throw(_)
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }

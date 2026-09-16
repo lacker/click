@@ -1054,6 +1054,7 @@ fn advance_execution_proof_statement(
                 }
                 CStatementOutcome::Break(_)
                 | CStatementOutcome::Continue(_)
+                | CStatementOutcome::Throw { .. }
                 | CStatementOutcome::Return { .. } => {}
                 CStatementOutcome::VerificationDiverges => {}
                 CStatementOutcome::UndefinedBehavior(kind) => {

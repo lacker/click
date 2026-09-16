@@ -2174,7 +2174,8 @@ fn execute_step_from_frontier_position_selecting_path(
         | CStatementOutcome::Break(state)
         | CStatementOutcome::Continue(state)
         | CStatementOutcome::Jump { state, .. }
-        | CStatementOutcome::Return { state, .. } => Some(state.clone()),
+        | CStatementOutcome::Return { state, .. }
+        | CStatementOutcome::Throw { state, .. } => Some(state.clone()),
         CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => None,
         CStatementOutcome::VerificationDiverges => None,
     } {
@@ -2196,7 +2197,8 @@ fn execute_step_from_frontier_position_selecting_path(
                     | CStatementOutcome::Break(state)
                     | CStatementOutcome::Continue(state)
                     | CStatementOutcome::Jump { state, .. }
-                    | CStatementOutcome::Return { state, .. } => state.clone(),
+                    | CStatementOutcome::Return { state, .. }
+                    | CStatementOutcome::Throw { state, .. } => state.clone(),
                     CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_)
                     | CStatementOutcome::VerificationDiverges => unreachable!(),
@@ -2264,10 +2266,8 @@ fn execute_step_from_frontier_position_selecting_path(
                 }
             }
         }
-        CStatementOutcome::Return { .. } => {
-            if matches!(&outcome, CStatementOutcome::Return { .. }) {
-                record_completed_continuation_exits(&mut execution.core.frontier);
-            }
+        CStatementOutcome::Return { .. } | CStatementOutcome::Throw { .. } => {
+            record_completed_continuation_exits(&mut execution.core.frontier);
             let return_assumptions = assumptions_from_propositions(&successor_pure_facts);
             let (outcome, obligations) = c_function_outcome_from_statement_outcome(
                 &execution_start_state,
@@ -3174,6 +3174,7 @@ pub(super) fn describe_statement_head(statement: &CStatement) -> String {
             format!("assert({})", describe_c_expression(condition))
         }
         CStatement::Return(expression) => format!("return {}", describe_c_expression(expression)),
+        CStatement::Throw(expression) => format!("throw {}", describe_c_expression(expression)),
         CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
             format!(
                 "*{} = {}",

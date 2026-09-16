@@ -2935,7 +2935,9 @@ fn statement_outcome_memory(outcome: &CStatementOutcome) -> Option<&CMemory> {
         | CStatementOutcome::Break(state)
         | CStatementOutcome::Continue(state)
         | CStatementOutcome::Jump { state, .. } => Some(state.memory()),
-        CStatementOutcome::Return { state, .. } => Some(state.memory()),
+        CStatementOutcome::Return { state, .. } | CStatementOutcome::Throw { state, .. } => {
+            Some(state.memory())
+        }
         CStatementOutcome::VerificationDiverges
         | CStatementOutcome::UndefinedBehavior(_)
         | CStatementOutcome::RuntimeError(_) => None,
@@ -4252,10 +4254,17 @@ fn checked_loan_evidence_is_valid(
         let Some(outcome) = path_function_outcome(path) else {
             return false;
         };
-        let publishes_return_state = matches!(outcome, CFunctionOutcome::Return { .. });
+        let publishes_exit_state = matches!(
+            outcome,
+            CFunctionOutcome::Return { .. } | CFunctionOutcome::Throw { .. }
+        );
         if path.loan_evidence.is_empty() {
             return match outcome {
                 CFunctionOutcome::Return {
+                    state: return_state,
+                    ..
+                }
+                | CFunctionOutcome::Throw {
                     state: return_state,
                     ..
                 } => {
@@ -4265,7 +4274,7 @@ fn checked_loan_evidence_is_valid(
                         && checked.state.loan_bindings_are_consistent()
                         && state_loan_bindings_are_authorized(return_state, &checked.assumptions)
                 }
-                _ => !publishes_return_state,
+                _ => !publishes_exit_state,
             };
         }
         if !path.loan_evidence.is_valid() {
@@ -4290,12 +4299,9 @@ fn checked_loan_evidence_is_valid(
                 }
                 _ => (None, None),
             };
-        let CFunctionOutcome::Return {
-            state: return_state,
-            ..
-        } = outcome
-        else {
-            return true;
+        let return_state = match outcome {
+            CFunctionOutcome::Return { state, .. } | CFunctionOutcome::Throw { state, .. } => state,
+            _ => return true,
         };
         return_state.loan_ledger() == outer_recovered_ledger.as_ref()
             && return_state.loan_participant() == outer_recovered_participant

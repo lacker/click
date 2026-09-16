@@ -624,6 +624,9 @@ pub(super) fn describe_function_outcome(
                 describe_c_value(value, parameters, arguments)
             )
         }
+        CFunctionOutcome::Throw { value, .. } => {
+            format!("threw {}", describe_c_value(value, parameters, arguments))
+        }
         CFunctionOutcome::VerificationDiverges => "has no verified return frontier".to_string(),
         CFunctionOutcome::UndefinedBehavior(kind) => match kind {
             crate::kernel::CUndefinedBehavior::SignedOverflow => {
@@ -1521,6 +1524,9 @@ pub(super) fn describe_c_statement_head(statement: &CStatement) -> String {
         CStatement::Seq(first, _) => describe_c_statement_head(first),
         CStatement::Return(expression) => {
             format!("return {};", describe_c_expression(expression))
+        }
+        CStatement::Throw(expression) => {
+            format!("throw {};", describe_c_expression(expression))
         }
         CStatement::Store { pointer, value } => format!(
             "*{} = {};",

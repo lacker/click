@@ -1394,7 +1394,7 @@ fn c_statement_source_cost(statement: &CStatement) -> CSourceCost {
                 pending.push(first);
                 pending.push(second);
             }
-            CStatement::Return(expression) => {
+            CStatement::Return(expression) | CStatement::Throw(expression) => {
                 cost.add_expression(c_expression_source_steps(expression));
             }
             CStatement::Store { pointer, value }

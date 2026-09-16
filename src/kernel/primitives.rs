@@ -1793,6 +1793,9 @@ pub enum CStatement {
     /// frontiers as they advance through a block.
     Seq(Arc<CStatement>, Arc<CStatement>),
     Return(CExpression),
+    /// Produce a checked exceptional outcome. The first internal slice carries
+    /// one int32 payload; source-language handler matching lands separately.
+    Throw(CExpression),
     Store {
         pointer: CExpression,
         value: CExpression,
@@ -2850,6 +2853,11 @@ pub enum CStatementOutcome {
         value: CValue,
         state: CState,
     },
+    /// An exceptional transfer that has not yet been handled in this function.
+    Throw {
+        value: CValue,
+        state: CState,
+    },
     /// Internal to `CStatementVerifies`: the statement has no finite
     /// successor, but all of its finite prefixes have been checked.
     VerificationDiverges,
@@ -2860,6 +2868,11 @@ pub enum CStatementOutcome {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CFunctionOutcome {
     Return {
+        value: CValue,
+        state: CState,
+    },
+    /// An exceptional outcome crossing this function boundary.
+    Throw {
         value: CValue,
         state: CState,
     },

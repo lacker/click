@@ -68,7 +68,11 @@ exceptional outcome. An exceptional path must not vanish just because the
 selected contract lacks an exceptional guarantee.
 
 Select and document one exception-enabled C++20 compiler/import profile;
-preserve its distinction from the first C++ profile with exceptions disabled.
+preserve its distinction from both the first C++ profile with exceptions
+disabled and the exception-enabled `normal_only` compatibility profile. The
+configuration and locked artifact must name which behavior was selected; an
+exporter upgrade must not silently turn a normal-only import into a throwing
+one.
 Pin the throw/catch type, handler selection, exception payload transport,
 unwinding effects, and runtime assumptions. A scalar exception with a matching
 handler and non-throwing guards is sufficient. Compiler lowering/runtime
@@ -76,12 +80,39 @@ support is a stated trust boundary, not proof of an exception ABI implementation
 
 ## Required architecture and workflow
 
-- Give function contracts checked normal and exceptional outcomes, or an
-  equivalent explicit outcome representation. Each retains its own facts,
-  memory effects, resources, and supported lifetime/loan transitions.
+- Make the closed set of supported exceptional outcomes part of the verified
+  function signature. For the first probe, a function may declare at most one
+  `int32` exceptional payload. A function signature with no exceptional
+  outcome must prove that its body cannot throw; omission is not an unknown or
+  unconstrained exception specification. C++ source that merely omits
+  `noexcept` does not acquire a Click exceptional outcome.
+- Keep outcome declarations distinct from outcome claims. The signature
+  declares that an `int32` exception may cross the call boundary; ordinary
+  `ensures` constrain normal return, while a new exceptional postcondition
+  family constrains the payload and exceptional state. The exact surface
+  spelling is selected when that contract slice lands, but `throws` belongs
+  with the function signature rather than being itself a proposition to prove.
+  Callee certification must prove that every reachable body outcome belongs to
+  a declared signature outcome and satisfies that outcome's claims.
+- First add an internal checked `Throw { value, state }` statement/function
+  outcome and preserve it through sequence, branch, function, and direct-call
+  execution. Until exceptional signatures and contracts land, modular rule
+  formation/application must refuse throwing bodies, and the C++ importer must
+  continue rejecting `throw` and `try`/`catch`.
+- Each normal or exceptional outcome retains its own facts, memory effects,
+  resources, obligations, and supported lifetime/loan transitions. A caller
+  may use only the claims for the outcome it actually receives.
 - Make edges and cleanups certificate-visible with original source locations.
   Match handlers by the supported language rules; cannot-tell is not evidence
   that a call returns or that a particular handler catches its exception.
+- Use Clang's typed AST to identify the selected `throw`, `try`, exact scalar
+  handler type, payload binding, and constructed objects. The pinned Clang
+  source CFG exposes call-to-handler exceptional edges but does not place
+  automatic-object destructor calls on those edges. Maintain a checked lexical
+  constructed-object stack in the exporter, extending the existing normal
+  cleanup mechanism, rather than treating ABI landing pads or LLVM IR as the
+  proof input. Cross-check the selected probe against compiler lowering while
+  retaining the documented compiler/runtime trust boundary.
 - Keep C jump legality distinct from C++ initialization and cleanup legality.
   Preserve return-value capture before normal cleanup and exception transport
   across callee/caller boundaries.
@@ -101,6 +132,10 @@ support is a stated trust boundary, not proof of an exception ABI implementation
 - Forward goto primitives meet their own P1 criteria. The exceptional helper,
   caller, and destructor contracts are checked, and hostile certificates
   cannot omit an outcome or invent cleanup/resource recovery.
+- The checked function interface distinguishes declared exceptional outcomes
+  from their proved postconditions. A missing exceptional declaration rejects
+  a throwing body, and a declared but unproved or omitted exceptional path
+  cannot form a modular call rule.
 - A durable design record covers the edge/outcome model, supported exception
   profile, trust assumptions, and scaling evidence. `scripts/check.sh` passes;
   delete this issue and its list entry when all work lands.

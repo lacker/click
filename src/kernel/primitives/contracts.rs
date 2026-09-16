@@ -1224,6 +1224,11 @@ impl CFunction {
 
     pub fn opaque_contract_supported(&self) -> bool {
         self.contract_interface.opaque_contract_supported()
+            && !statement_contains_internal_throw(&self.body)
+    }
+
+    pub(crate) fn has_internal_exceptional_outcome(&self) -> bool {
+        statement_contains_internal_throw(&self.body)
     }
 
     pub fn composite_resource_definitions(&self) -> &[CCompositeResourceDefinition] {
@@ -1734,6 +1739,9 @@ impl CFunctionContract {
     }
 
     pub fn new(name: impl Into<String>, function: CFunction) -> Option<Self> {
+        if function.has_internal_exceptional_outcome() {
+            return None;
+        }
         let name = name.into();
         Self::from_interface_with_callee_name(
             name,
@@ -1833,6 +1841,45 @@ impl CFunctionContract {
     /// The body-independent interface selected by this nominal contract.
     pub fn interface(&self) -> &CFunctionContractInterface {
         &self.interface
+    }
+}
+
+fn statement_contains_internal_throw(statement: &CStatement) -> bool {
+    match statement {
+        CStatement::Throw(_) => true,
+        CStatement::ContinueWithStep { step } => statement_contains_internal_throw(step),
+        CStatement::Seq(first, second) => {
+            statement_contains_internal_throw(first) || statement_contains_internal_throw(second)
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            statement_contains_internal_throw(then_branch)
+                || statement_contains_internal_throw(else_branch)
+        }
+        CStatement::While { body, .. } => statement_contains_internal_throw(body),
+        CStatement::Switch { cases, .. } => cases
+            .iter()
+            .any(|case| statement_contains_internal_throw(&case.body)),
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Goto { .. }
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
+        | CStatement::CopyAggregate { .. }
+        | CStatement::Assign { .. }
+        | CStatement::CallAssign { .. }
+        | CStatement::Call { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Return(_)
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. }
+        | CStatement::Update { .. } => false,
     }
 }
 

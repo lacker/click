@@ -23,6 +23,11 @@ exception unwinding, and independently owned parents sharing a child.
 The forward goto cleanup dependency is implemented; general backward and
 irreducible jumps remain deferred. The control-flow demo still owns the narrow
 cross-call C++ exception probe. Normal C++ cleanup lands before that probe.
+The probe introduces internal exceptional execution outcomes first, then a
+closed exceptional set in the verified function signature and separate
+outcome-specific claims, and only then enables the selected C++ `throw` and
+matching `catch`. A missing Click exceptional signature means non-throwing;
+C++ source that merely omits `noexcept` does not infer one.
 Each milestone keeps a bounded support claim and uses the existing proof
 engine with deterministic scaling evidence. Close an issue only when its fix,
 regression coverage, and documentation land.

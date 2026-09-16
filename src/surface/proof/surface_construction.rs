@@ -868,7 +868,8 @@ pub(super) fn append_proof_step_for_operation(
                 | CStatementOutcome::Break(state)
                 | CStatementOutcome::Continue(state)
                 | CStatementOutcome::Jump { state, .. }
-                | CStatementOutcome::Return { state, .. } => Some(state),
+                | CStatementOutcome::Return { state, .. }
+                | CStatementOutcome::Throw { state, .. } => Some(state),
                 CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => {
                     None
                 }

@@ -7340,6 +7340,7 @@ fn statement_writes_aggregate_parameter(
         | CStatement::HeapAllocate { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Assert { .. }
+        | CStatement::Throw(_)
         | CStatement::Return(_) => {}
     }
 }
@@ -7812,7 +7813,9 @@ fn statement_outcome_state(outcome: &CStatementOutcome) -> Option<&CState> {
         | CStatementOutcome::Break(state)
         | CStatementOutcome::Continue(state)
         | CStatementOutcome::Jump { state, .. } => Some(state),
-        CStatementOutcome::Return { state, .. } => Some(state),
+        CStatementOutcome::Return { state, .. } | CStatementOutcome::Throw { state, .. } => {
+            Some(state)
+        }
         CStatementOutcome::VerificationDiverges
         | CStatementOutcome::UndefinedBehavior(_)
         | CStatementOutcome::RuntimeError(_) => None,
@@ -8805,8 +8808,9 @@ fn append_string_literal_loadable_facts(
     outcome: &CFunctionOutcome,
     facts: &mut Vec<ExecutionPureFact>,
 ) {
-    let CFunctionOutcome::Return { state, .. } = outcome else {
-        return;
+    let state = match outcome {
+        CFunctionOutcome::Return { state, .. } | CFunctionOutcome::Throw { state, .. } => state,
+        _ => return,
     };
     for literal in function.string_literals() {
         let base =
@@ -8946,7 +8950,7 @@ fn collect_c_memory_read_expressions(statement: &CStatement, reads: &mut Vec<CEx
             collect_c_memory_read_expressions(first, reads);
             collect_c_memory_read_expressions(second, reads);
         }
-        CStatement::Return(expression) => values(expression, reads),
+        CStatement::Return(expression) | CStatement::Throw(expression) => values(expression, reads),
         CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
             lvalue_address(pointer, reads);
             values(value, reads);
@@ -18285,6 +18289,19 @@ fn function_outcome_from_body_with_population_transition(
     argument_values: &[CValue],
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<(CFunctionOutcome, Vec<ProofObligation>)> {
+    if matches!(&outcome, CStatementOutcome::Throw { .. })
+        && (!function.resource_requires().is_empty()
+            || !function.resource_ensures().is_empty()
+            || !function.resource_constructors().is_empty())
+    {
+        return Ok((
+            CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                "exceptional outcomes with population transitions require an exceptional contract interface"
+                    .to_string(),
+            )),
+            obligations,
+        ));
+    }
     let CStatementOutcome::Return { value, mut state } = outcome else {
         return Ok(function_outcome_from_body(
             caller_state,
@@ -18347,6 +18364,20 @@ fn function_outcome_from_body_with_resource_transfer(
     Vec<ProofObligation>,
     Option<Arc<CheckedLoanCallEvidence>>,
 )> {
+    if matches!(&outcome, CStatementOutcome::Throw { .. })
+        && (!function.resource_requires().is_empty()
+            || !function.resource_ensures().is_empty()
+            || !function.resource_constructors().is_empty())
+    {
+        return Ok((
+            CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                "exceptional outcomes with resource transitions require an exceptional contract interface"
+                    .to_string(),
+            )),
+            obligations,
+            None,
+        ));
+    }
     let CStatementOutcome::Return { value, mut state } = outcome else {
         let (outcome, obligations) = function_outcome_from_body(
             caller_state,
@@ -18665,6 +18696,11 @@ pub(super) fn apply_verified_contract_resource_transition(
     };
     let statement_outcome = match outcome {
         CFunctionOutcome::Return { value, state } => CStatementOutcome::Return { value, state },
+        CFunctionOutcome::Throw { .. } => {
+            return Ok(Err(CRuntimeError::FunctionContract(
+                "exceptional outcomes require an exceptional contract interface".to_string(),
+            )));
+        }
         CFunctionOutcome::VerificationDiverges => {
             return Ok(Ok((CFunctionOutcome::VerificationDiverges, Vec::new())));
         }
@@ -18774,6 +18810,32 @@ pub(super) fn function_outcome_from_body(
             caller_state.next_local_lifetime = state.next_local_lifetime;
             (
                 CFunctionOutcome::Return {
+                    value,
+                    state: caller_state,
+                },
+                obligations,
+            )
+        }
+        CStatementOutcome::Throw { value, state } => {
+            let mut caller_state = caller_state.clone();
+            caller_state.set_memory(state.memory.clone());
+            if function.has_inline_body() {
+                let memory = caller_state.memory.clone();
+                caller_state.sync_scalar_locals_from_memory(&memory);
+            }
+            caller_state = caller_state
+                .with_loan_ledger(state.loan_ledger().cloned())
+                .with_loan_participant(state.loan_participant());
+            if return_resources.is_none() {
+                caller_state.instance_field_scope = state.instance_field_scope;
+            }
+            caller_state = caller_state
+                .with_resource_context(return_resources.cloned().unwrap_or(state.resources));
+            caller_state.counted_populations = state.counted_populations;
+            caller_state.next_local_frame = state.next_local_frame;
+            caller_state.next_local_lifetime = state.next_local_lifetime;
+            (
+                CFunctionOutcome::Throw {
                     value,
                     state: caller_state,
                 },

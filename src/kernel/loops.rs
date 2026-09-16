@@ -578,6 +578,7 @@ pub(super) fn execute_c_call_assign_paths(
                     CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
                 }
             }
+            CFunctionOutcome::Throw { value, state } => CStatementOutcome::Throw { value, state },
             CFunctionOutcome::VerificationDiverges => CStatementOutcome::VerificationDiverges,
             CFunctionOutcome::UndefinedBehavior(undefined_behavior) => {
                 CStatementOutcome::UndefinedBehavior(undefined_behavior)
@@ -622,6 +623,9 @@ pub(super) fn execute_c_call_paths(
         .map(|path| CStatementExecutionPath {
             outcome: match path.outcome {
                 CFunctionOutcome::Return { state, .. } => CStatementOutcome::Normal(state),
+                CFunctionOutcome::Throw { value, state } => {
+                    CStatementOutcome::Throw { value, state }
+                }
                 CFunctionOutcome::VerificationDiverges => CStatementOutcome::VerificationDiverges,
                 CFunctionOutcome::UndefinedBehavior(error) => {
                     CStatementOutcome::UndefinedBehavior(error)
@@ -662,6 +666,7 @@ pub(super) fn execute_c_call_paths(
     .map(|path| CStatementExecutionPath {
         outcome: match path.outcome {
             CFunctionOutcome::Return { state, .. } => CStatementOutcome::Normal(state),
+            CFunctionOutcome::Throw { value, state } => CStatementOutcome::Throw { value, state },
             CFunctionOutcome::VerificationDiverges => CStatementOutcome::VerificationDiverges,
             CFunctionOutcome::UndefinedBehavior(undefined_behavior) => {
                 CStatementOutcome::UndefinedBehavior(undefined_behavior)
@@ -718,6 +723,9 @@ fn execute_c_indirect_call_assign_paths(
                     } else {
                         CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
                     }
+                }
+                CFunctionOutcome::Throw { value, state } => {
+                    CStatementOutcome::Throw { value, state }
                 }
                 CFunctionOutcome::VerificationDiverges => CStatementOutcome::VerificationDiverges,
                 CFunctionOutcome::UndefinedBehavior(undefined_behavior) => {
@@ -1095,6 +1103,7 @@ pub(super) fn execute_c_statement_verification_paths(
                     | CStatementOutcome::Continue(_)
                     | CStatementOutcome::Jump { .. }
                     | CStatementOutcome::Return { .. }
+                    | CStatementOutcome::Throw { .. }
                     | CStatementOutcome::VerificationDiverges
                     | CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
@@ -1231,6 +1240,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 CStatement::HeapFree { .. } => "verification statement: heap free",
                 CStatement::Assert { .. } => "verification statement: assert",
                 CStatement::Return(_) => "verification statement: return",
+                CStatement::Throw(_) => "verification statement: throw",
                 CStatement::Store { .. } => "verification statement: store",
                 CStatement::TypedStore { .. } => "verification statement: typed store",
                 CStatement::Update { .. } => "verification statement: update",
@@ -3386,6 +3396,7 @@ pub(super) fn collect_loop_preservation_summary(
                         );
                     }
                     CStatementOutcome::Return { .. }
+                    | CStatementOutcome::Throw { .. }
                     | CStatementOutcome::Jump { .. }
                     | CStatementOutcome::VerificationDiverges
                     | CStatementOutcome::UndefinedBehavior(_)
@@ -5443,6 +5454,7 @@ pub(super) fn statement_may_write_memory(state: &CState, statement: &CStatement)
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. }
         | CStatement::Assert { .. }
+        | CStatement::Throw(_)
         | CStatement::Return(_) => false,
         CStatement::Assign { name, .. } => state.locals.is_global_object(name),
         CStatement::CallAssign { .. }
@@ -5550,6 +5562,7 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. }
         | CStatement::Assert { .. }
+        | CStatement::Throw(_)
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
@@ -5654,7 +5667,9 @@ pub(crate) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
         CStatement::Assert { condition, .. } => {
             collect_address_taken_in_expression(condition, names)
         }
-        CStatement::Return(expression) => collect_address_taken_in_expression(expression, names),
+        CStatement::Return(expression) | CStatement::Throw(expression) => {
+            collect_address_taken_in_expression(expression, names)
+        }
         CStatement::Store { pointer, value } => {
             collect_address_taken_in_expression(pointer, names);
             collect_address_taken_in_expression(value, names);

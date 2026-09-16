@@ -139,6 +139,15 @@ remaining [goto issue](../issues/goto.md) tracks general backward and
 irreducible jumps at P2. This does not expand the first non-throwing C++ slice
 or make it wait on exception support.
 
+For that later probe, exceptional behavior is part of the verified function
+interface: a closed `throws` set states which payload types may cross a modular
+call. Outcome-specific postconditions are separate proof claims. Omitting
+`noexcept` in C++ does not infer a Click exceptional signature, and omitting a
+Click exceptional signature means the body must prove non-throwing. The kernel
+first gains an internal exceptional outcome while the frontend continues to
+reject exception syntax; surface exceptional signatures and modular rules land
+before any end-to-end C++ exception acceptance.
+
 ## Shared resources and Rust borrowing
 
 Stable shared borrowing for ordinary memory shipped from the P1
@@ -433,6 +442,11 @@ For C++, follow normal cleanup with the selected scalar-exception probe in the
 control-flow demo. Broader object initialization/validity and storage reuse,
 class copy/move and temporaries, and exceptions during partial construction
 remain later work; they are not prerequisites of that narrow probe.
+Keep the exception-disabled object profile, exception-enabled `normal_only`
+compatibility profile, and scalar-exception probe profile distinct in locked
+import identity. The probe uses Clang's typed source semantics plus Click's
+checked constructed-object stack for cleanup; compiler ABI landing pads are
+not the proof representation.
 Template instantiation can use compiler-resolved definitions,
 but template syntax support is not a library proof. Virtual dispatch,
 inheritance/subobject identity, standard-library contracts, and concurrent

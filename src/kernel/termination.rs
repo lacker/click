@@ -407,7 +407,7 @@ fn structural_recursion_paths(
         CStatement::ContinueWithStep { step } => {
             structural_recursion_paths(step, function, measure, paths)
         }
-        CStatement::Return(_) => Ok(Vec::new()),
+        CStatement::Return(_) | CStatement::Throw(_) => Ok(Vec::new()),
         CStatement::Declare { name, .. } => Ok(paths
             .into_iter()
             .map(|mut path| {
@@ -1080,9 +1080,9 @@ fn statement_takes_address_of(statement: &CStatement, name: &str) -> bool {
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. } => false,
         CStatement::ContinueWithStep { step } => statement_takes_address_of(step, name),
-        CStatement::Assign { expression, .. } | CStatement::Return(expression) => {
-            escapes(expression)
-        }
+        CStatement::Assign { expression, .. }
+        | CStatement::Return(expression)
+        | CStatement::Throw(expression) => escapes(expression),
         CStatement::CallAssign { arguments, .. } | CStatement::Call { arguments, .. } => {
             arguments.iter().any(escapes)
         }
@@ -1203,6 +1203,7 @@ fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
         | CStatement::HeapAllocate { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Assert { .. }
+        | CStatement::Throw(_)
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
@@ -1249,6 +1250,7 @@ fn statement_declared_variables(statement: &CStatement, names: &mut BTreeSet<Str
         | CStatement::Call { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Assert { .. }
+        | CStatement::Throw(_)
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
@@ -1289,7 +1291,7 @@ fn recursion_paths(
         CStatement::ContinueWithStep { step } => {
             recursion_paths(step, measure, component, parameter_indices, lower_bounds)
         }
-        CStatement::Return(_) => Ok(Vec::new()),
+        CStatement::Return(_) | CStatement::Throw(_) => Ok(Vec::new()),
         CStatement::Break => Ok(Vec::new()),
         CStatement::Assign { name, .. } if name == measure => Err(error(format!(
             "termination measure `{measure}` is reassigned; this first implementation requires an unchanged function parameter"
@@ -1960,6 +1962,7 @@ fn check_loops(
         | CStatement::HeapAllocate { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Assert { .. }
+        | CStatement::Throw(_)
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }

@@ -874,6 +874,90 @@ fn call_assign_uses_function_environment() {
 }
 
 #[test]
+fn direct_call_propagates_internal_throw_and_skips_its_suffix() {
+    let thrower = c_function(
+        CType::Int32,
+        "thrower",
+        Vec::new(),
+        CStatement::Throw(c_int32_literal(7)),
+    );
+    let environment = CExecutionEnvironment::new().with_function(thrower);
+    let state = CState::new().with_local("result", int32(1));
+    let statement = c_seq(
+        c_call_assign("result", "thrower", Vec::new()),
+        c_return(c_variable("result")),
+    );
+    let theorem = prove_symbolic_c_execution_with_environment(
+        state.clone(),
+        statement.clone(),
+        PureFactContext::new(),
+        environment,
+        CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .expect("an internal throw should cross a body-executed call");
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CStatementExecutes {
+            state: state.clone(),
+            statement,
+            outcome: CStatementOutcome::Throw {
+                value: int32(7),
+                state,
+            },
+        }
+    );
+}
+
+#[test]
+fn internal_throw_is_int32_only_and_refused_as_an_opaque_contract() {
+    let throwing = c_function(
+        CType::Int32,
+        "throwing",
+        Vec::new(),
+        CStatement::Throw(c_int32_literal(7)),
+    );
+    assert!(!throwing.opaque_contract_supported());
+    assert!(CFunctionContract::new("Throwing", throwing.clone()).is_none());
+
+    let modular = prove_symbolic_c_execution_with_environment(
+        CState::new(),
+        c_call("throwing", Vec::new()),
+        PureFactContext::new(),
+        CExecutionEnvironment::new().with_function(throwing),
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    )
+    .expect("a throwing function should produce an explicit modular refusal");
+    assert!(
+        matches!(
+            modular.proposition(),
+            Proposition::CStatementVerifies {
+                outcome: CStatementOutcome::RuntimeError(
+                    CRuntimeError::UnsupportedOpaqueFunctionContract(name)
+                ),
+                ..
+            } if name == "throwing"
+        ),
+        "{:?}",
+        modular.proposition()
+    );
+
+    let theorem = prove_symbolic_c_execution(
+        CState::new(),
+        CStatement::Throw(c_pointer_value(Pointer::null())),
+        PureFactContext::new(),
+    )
+    .expect("a non-int32 throw should produce a checked type mismatch");
+    assert!(matches!(
+        theorem.proposition(),
+        Proposition::CStatementExecutes {
+            outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            ..
+        }
+    ));
+}
+
+#[test]
 fn loop_semantics_explicitly_select_verification_or_verified_rules() {
     let state = CState::new().with_local("i", int32(0));
     let statement = c_while_with_invariant_checks(

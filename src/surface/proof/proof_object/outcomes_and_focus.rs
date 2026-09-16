@@ -257,6 +257,11 @@ impl<'a> Proof<'a> {
             }
             let (result, state) = match path.outcome() {
                 CFunctionOutcome::Return { value, state } => (value.clone(), state.clone()),
+                CFunctionOutcome::Throw { .. } => {
+                    return Err(self.step_error(format!(
+                        "outcome goals do not yet support exceptional path {path_index}"
+                    )));
+                }
                 // A path proved non-returning owes no outcome judgment.
                 CFunctionOutcome::VerificationDiverges => continue,
                 CFunctionOutcome::UndefinedBehavior(_) | CFunctionOutcome::RuntimeError(_) => {

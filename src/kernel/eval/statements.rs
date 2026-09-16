@@ -2355,6 +2355,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                     | CStatementOutcome::Continue(_)
                     | CStatementOutcome::Jump { .. }
                     | CStatementOutcome::Return { .. }
+                    | CStatementOutcome::Throw { .. }
                     | CStatementOutcome::VerificationDiverges
                     | CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
@@ -2387,6 +2388,35 @@ pub(in crate::kernel) fn execute_c_statement_paths(
         }
         CStatement::Return(expression) => {
             execute_c_return_expression_paths(state, expression, assumptions, budget)?
+        }
+        CStatement::Throw(expression) => {
+            let mut paths = Vec::new();
+            for path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
+                let outcome = match path.outcome {
+                    CExpressionOutcome::Value(value @ CValue::Int32(_)) => {
+                        CStatementOutcome::Throw {
+                            value,
+                            state: state.clone(),
+                        }
+                    }
+                    CExpressionOutcome::Value(_) => {
+                        CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                    }
+                    CExpressionOutcome::UndefinedBehavior(error) => {
+                        CStatementOutcome::UndefinedBehavior(error)
+                    }
+                    CExpressionOutcome::RuntimeError(error) => {
+                        CStatementOutcome::RuntimeError(error)
+                    }
+                };
+                paths.push(CStatementExecutionPath {
+                    outcome,
+                    facts: path.facts,
+                    obligations: path.obligations,
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
+                });
+            }
+            paths
         }
         CStatement::Store { pointer, value } => execute_c_lvalue_assignment_paths(
             state,
@@ -2735,6 +2765,7 @@ fn execute_c_switch_suffix_paths(
             outcome @ (CStatementOutcome::Continue(_)
             | CStatementOutcome::Jump { .. }
             | CStatementOutcome::Return { .. }
+            | CStatementOutcome::Throw { .. }
             | CStatementOutcome::VerificationDiverges
             | CStatementOutcome::UndefinedBehavior(_)
             | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
@@ -2983,6 +3014,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
                                     });
                                 }
                                 outcome @ (CStatementOutcome::Return { .. }
+                                | CStatementOutcome::Throw { .. }
                                 | CStatementOutcome::Jump { .. }
                                 | CStatementOutcome::VerificationDiverges
                                 | CStatementOutcome::UndefinedBehavior(_)
