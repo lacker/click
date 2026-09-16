@@ -519,7 +519,7 @@ impl CheckedResourceRewrite {
                 .resources()
                 .owned_instance(instance.identity())
                 .is_some();
-            let (expected, allowed) = crate::kernel::rewrite_resource_instance_selecting_children(
+            let rewrite = crate::kernel::rewrite_resource_instance_selecting_children(
                 before_state,
                 instance,
                 definition,
@@ -528,6 +528,8 @@ impl CheckedResourceRewrite {
                 unfold,
                 selected_children.as_deref(),
             )?;
+            let expected = rewrite.state;
+            let allowed = rewrite.semantic_facts;
             let mut unchanged = after_state.clone();
             unchanged = unchanged.with_resource_context(before_state.resources.clone());
             if unchanged != *before_state {
@@ -1475,6 +1477,9 @@ pub(crate) struct CheckedProofCasePartition {
     /// certificate checking use the same premises without trusting surface
     /// bookkeeping.
     arm_additions: Vec<Vec<Proposition>>,
+    /// Ordered declaration correspondence, including clauses whose exact
+    /// proposition was already in the arm's fact store.
+    arm_body_clauses: Vec<Vec<crate::kernel::functions::ResourceBodyClauseRecord>>,
     /// Exact contradictions checked under that arm's canonical premises.
     excluded: Vec<Option<Proposition>>,
     /// Generative constructor witnesses are introduced only at their unchanged
@@ -1528,6 +1533,13 @@ impl CheckedProofCasePartition {
         self.case_facts.get(index)
     }
 
+    pub(crate) fn body_clauses_for_case(
+        &self,
+        index: usize,
+    ) -> Option<&[crate::kernel::functions::ResourceBodyClauseRecord]> {
+        self.arm_body_clauses.get(index).map(Vec::as_slice)
+    }
+
     pub(crate) fn facts_for_case(&self, index: usize) -> Option<ProofFacts> {
         let additions = self.arm_additions.get(index)?;
         Some(
@@ -1571,6 +1583,7 @@ impl CheckedProofCasePartition {
             root_facts: root_facts.clone(),
             case_facts: vec![then_fact.clone(), else_fact.clone()],
             arm_additions,
+            arm_body_clauses: vec![Vec::new(), Vec::new()],
             excluded: vec![None, None],
             witness_scope: None,
         }))
@@ -3788,7 +3801,7 @@ fn trace_completion(
                                 );
                             }
                         }
-                        let (checked_state, _) =
+                        let checked_state =
                             crate::kernel::rewrite_resource_instance_selecting_children(
                                 state,
                                 instance,
@@ -3800,7 +3813,8 @@ fn trace_completion(
                             )
                             .map_err(
                                 |_| "return fold body is not justified on this execution path",
-                            )?;
+                            )?
+                            .state;
                         if !checked_state
                             .resources
                             .same_exchange_from(&rewrite.after_state.resources, &state.resources)
@@ -4921,29 +4935,34 @@ impl ExecutionProofCore {
             return None;
         }
         let (case_facts, bindings): (Vec<_>, Vec<_>) = equations.into_iter().unzip();
-        let arm_additions = case_facts
+        let (arm_additions, arm_body_clauses): (Vec<_>, Vec<_>) = case_facts
             .iter()
             .map(|case| {
                 let mut arm_facts = facts.with_fact(case.clone());
+                let mut body_clauses = Vec::new();
                 if let (
                     Some(projection),
                     Proposition::Equal(Term::Algebraic(model), Term::Algebraic(constructor)),
                 ) = (matched_resource_field, case)
                 {
-                    for fact in crate::kernel::functions::matched_resource_instance_case_facts(
+                    body_clauses = crate::kernel::functions::matched_resource_instance_case_clauses(
                         &self.state,
                         projection,
                         model,
                         constructor,
                         definitions,
                         arm_facts.assumptions(),
-                    ) {
-                        arm_facts = arm_facts.with_fact(fact);
+                    );
+                    for clause in &body_clauses {
+                        arm_facts = arm_facts.with_fact(clause.proposition.clone());
                     }
                 }
-                arm_facts.introduced_since(facts).unwrap_or_default()
+                (
+                    arm_facts.introduced_since(facts).unwrap_or_default(),
+                    body_clauses,
+                )
             })
-            .collect();
+            .unzip();
         Some((
             Arc::new(CheckedProofCasePartition {
                 identity: Arc::new(()),
@@ -4951,6 +4970,7 @@ impl ExecutionProofCore {
                 excluded: vec![None; case_facts.len()],
                 case_facts,
                 arm_additions,
+                arm_body_clauses,
                 witness_scope: Some(self.state.clone()),
             }),
             bindings,
@@ -5278,7 +5298,7 @@ impl ExecutionProofCore {
         };
         // Compute the exchange in the retained C-body state, not the
         // caller-side projection used by postcondition expressions.
-        let (after_state, _) = crate::kernel::rewrite_resource_instance_selecting_children(
+        let after_state = crate::kernel::rewrite_resource_instance_selecting_children(
             &before_state,
             instance,
             definition,
@@ -5286,7 +5306,8 @@ impl ExecutionProofCore {
             before_facts.assumptions(),
             false,
             selected_children.as_deref(),
-        )?;
+        )?
+        .state;
         let rewrite = CheckedResourceRewrite::check_with_children(
             function,
             &before_state,

@@ -744,6 +744,145 @@ pub(in crate::surface) struct SelectedInstanceArm {
     bindings: Vec<AlgebraicValue>,
 }
 
+#[derive(Clone)]
+pub(in crate::surface) struct ResourceClausePresentation {
+    pub(in crate::surface) source: ClickProposition,
+    pub(in crate::surface) checked: crate::kernel::ResourceBodyClauseRecord,
+}
+
+impl ResourceClausePresentation {
+    pub(in crate::surface) fn matches_available_fact(&self, facts: &ProofFacts) -> bool {
+        let binder_matches = match &self.source {
+            ClickProposition::ForAll { name, .. } => self.checked.introductions.iter().any(
+                |introduction| {
+                    matches!(introduction, crate::kernel::LoweringIntroduction::WrittenUniversal { name: lowered, .. } if lowered == name)
+                },
+            ),
+            _ => true,
+        };
+        binder_matches && facts.contains_top_level(&self.checked.proposition)
+    }
+}
+
+/// Pair each checked declaration record with its Surface clause by the arm
+/// and ordinal retained by the kernel producer. This never searches the fact
+/// store or re-lowers a clause after materializing the body's cells. The
+/// caller supplies the lexical names bound by its proof `match`; an unfold
+/// without those names simply has no usable presentation for binding-relative
+/// clauses, while its kernel facts remain available.
+pub(in crate::surface) fn pair_instance_body_clause_presentations(
+    resource_environment: &ResourceEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    instance: &ResourceInstance,
+    records: &[crate::kernel::ResourceBodyClauseRecord],
+    function_values: &BTreeMap<String, CValue>,
+    proof_bindings: Option<&[String]>,
+) -> Result<Vec<ResourceClausePresentation>, ClickError> {
+    let Some(first) = records.first() else {
+        return Ok(Vec::new());
+    };
+    let Some(variant) = first.arm.as_deref() else {
+        return Ok(Vec::new());
+    };
+    let Some(definition) = resource_environment.get(instance.name()) else {
+        return Err(ClickError::new(
+            "resource body clause lost its source definition",
+        ));
+    };
+    let scopes = crate::surface::validation::resource_match_arm_scopes(
+        definition,
+        |name| {
+            click_function_environment
+                .algebraic_type_definitions
+                .get(name)
+        },
+        |name| resource_environment.get(name),
+    )?;
+    let Some((_, bindings, arm)) = scopes.into_iter().find(|(name, _, _)| name == variant) else {
+        return Err(ClickError::new(
+            "resource body clause names an unknown selected arm",
+        ));
+    };
+    let Some(source_facts) = arm.composite_body().map(|body| body.facts()) else {
+        return Err(ClickError::new("selected resource arm has no source body"));
+    };
+    if definition.parameters().len() != instance.arguments().len() {
+        return Err(ClickError::new(
+            "resource body clause argument count changed",
+        ));
+    }
+    if !bindings.is_empty() && proof_bindings.is_none_or(|names| names.len() != bindings.len()) {
+        return Ok(Vec::new());
+    }
+    let mut names_by_value = BTreeMap::<CValue, Option<String>>::new();
+    for (name, value) in function_values {
+        use std::collections::btree_map::Entry;
+        match names_by_value.entry(value.clone()) {
+            Entry::Vacant(slot) => {
+                slot.insert(Some(name.clone()));
+            }
+            Entry::Occupied(mut slot) => {
+                *slot.get_mut() = None;
+            }
+        }
+    }
+    let mut substitutions = BTreeMap::new();
+    for (parameter, argument) in definition.parameters().iter().zip(instance.arguments()) {
+        let Some(value) = argument.as_c_value() else {
+            return Err(ClickError::new(
+                "resource body clause has a non-C parameter",
+            ));
+        };
+        let expression = match names_by_value.get(value).and_then(Option::as_ref) {
+            Some(name) => ContractExpression::CFragment(CExpression::Variable(name.clone())),
+            None => ContractExpression::CFragment(CExpression::Value(value.clone())),
+        };
+        substitutions.insert(parameter.name().to_string(), expression);
+    }
+    if let Some(names) = proof_bindings {
+        for ((name, _), proof_name) in bindings.iter().zip(names) {
+            substitutions.insert(
+                name.clone(),
+                ContractExpression::Binding(proof_name.clone()),
+            );
+        }
+    }
+    let mut paired = Vec::with_capacity(records.len());
+    for record in records {
+        if record.arm.as_deref() != Some(variant) {
+            return Err(ClickError::new("resource body clause changed selected arm"));
+        }
+        let Some(source) = source_facts.get(record.ordinal) else {
+            return Err(ClickError::new(
+                "resource body clause ordinal is outside its arm",
+            ));
+        };
+        // The lowering producer retains the exact quantifier introduction
+        // chain even when the proposition was previously present. In
+        // particular, a quantified declaration must have a written binder
+        // in that chain; an unrelated equal fact is not its presentation.
+        if matches!(source, ClickProposition::ForAll { .. })
+            && !record.introductions.iter().any(|introduction| {
+                matches!(
+                    introduction,
+                    crate::kernel::LoweringIntroduction::WrittenUniversal { .. }
+                )
+            })
+        {
+            return Err(ClickError::new(
+                "resource body clause lost its quantifier binder",
+            ));
+        }
+        let source =
+            substitute_click_proposition(source, &substitutions).map_err(ClickError::new)?;
+        paired.push(ResourceClausePresentation {
+            source,
+            checked: record.clone(),
+        });
+    }
+    Ok(paired)
+}
+
 /// The arm scope holding exactly the memory clauses every possible arm owns.
 ///
 /// Not a decision of its own: it is handed the variants

@@ -16,6 +16,7 @@ pub(in crate::surface::proof) struct ExecutionMatchPlan {
     /// records the same path-aligned case identity.
     arm_case_source: Arc<ProofMatch>,
     case_indices: Vec<usize>,
+    matched_instance: Option<crate::kernel::ResourceInstance>,
     bindings: Vec<PersistentMap<String, ContractExpression>>,
     integer_bindings: Vec<PersistentMap<String, crate::kernel::SpecIntegerExpression>>,
     parent_locals: ProofLocals,
@@ -168,6 +169,13 @@ impl<'a> Proof<'a> {
             }
             _ => None,
         };
+        let matched_instance = matched_resource_field.as_ref().and_then(|projection| {
+            execution
+                .core
+                .state
+                .resource_instance_at_path(projection.identity, &projection.children)
+                .cloned()
+        });
         let values = parameter_values(context.parsed_function.parameters(), context.arguments)
             .map_err(|error| self.step_error(error.message))?;
         let array_refs = array_refs_for_parameters(
@@ -302,6 +310,7 @@ impl<'a> Proof<'a> {
             source: source.clone(),
             arm_case_source: Arc::new(source.clone()),
             case_indices,
+            matched_instance,
             bindings,
             integer_bindings,
             parent_locals,
@@ -385,10 +394,10 @@ impl<'a> Proof<'a> {
             .case_fact(plan.case_indices[index])
             .unwrap()
             .clone();
-        let tactic_index = match self.context.as_ref() {
-            ProofContext::Execution(context) => context.tactic_index,
-            _ => unreachable!(),
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            unreachable!();
         };
+        let tactic_index = context.tactic_index;
         // A constructor equation is an entry assumption of the whole function
         // only when the match ran before any C step. At a later frontier —
         // after a step, or inside a loop body — it holds on this path from the
@@ -410,10 +419,37 @@ impl<'a> Proof<'a> {
         };
         let tactic_offset = self.certificate().steps().len();
         let proof = self.with_kernel_state(state.with_locals(locals));
+        let function_values =
+            parameter_values(context.parsed_function.parameters(), context.arguments)?;
+        let clause_presentations = if let Some(instance) = plan.matched_instance.as_ref() {
+            crate::surface::proof::resources::pair_instance_body_clause_presentations(
+                context.resource_environment,
+                context.click_function_environment,
+                instance,
+                plan.partition
+                    .body_clauses_for_case(plan.case_indices[index])
+                    .unwrap_or_default(),
+                &function_values,
+                Some(&arm.bindings),
+            )?
+        } else {
+            Vec::new()
+        };
+        if clause_presentations
+            .iter()
+            .any(|clause| !clause.matches_available_fact(proof.facts()))
+        {
+            return Err(
+                self.step_error("resource match clause presentation lacks its checked fact")
+            );
+        }
         let (proof, result) = proof.edit_execution_presentation(|presentation| {
             presentation
                 .surface_propositions
                 .record_lowering(&surface, &case)?;
+            for clause in &clause_presentations {
+                presentation.resource_body_clauses.push(clause.clone());
+            }
             presentation.case_assumptions.push(CaseAssumption {
                 tactic_index,
                 condition: surface.clone(),

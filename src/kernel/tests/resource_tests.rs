@@ -519,7 +519,9 @@ fn stored_child_arguments_require_owned_memory() {
             Some(&children),
         )
     };
-    let (open, _) = rewrite(&state, &definition, &assumptions, true).unwrap();
+    let open = rewrite(&state, &definition, &assumptions, true)
+        .unwrap()
+        .state;
     rewrite(&open, &definition, &assumptions, false).unwrap();
     let mut unreadable = definition.clone();
     unreadable.matched.as_mut().unwrap().arms[1]
@@ -705,7 +707,7 @@ fn independent_children_kernel_consumes_names_and_accepts_replacements() {
                 Some(children),
             )
         };
-    let (open, _) = rewrite(&state, &instance, true, &children).unwrap();
+    let open = rewrite(&state, &instance, true, &children).unwrap().state;
     assert!(open.instance_field_scope.is_empty());
     assert!(open.resource_instance_fields(instance.identity()).is_none());
     assert!(
@@ -713,17 +715,19 @@ fn independent_children_kernel_consumes_names_and_accepts_replacements() {
             .is_none()
     );
     let left = open.owned_resource_instance(Variable(501)).unwrap().clone();
-    let (raw, _) = rewrite(&open, &left, true, &[]).unwrap();
+    let raw = rewrite(&open, &left, true, &[]).unwrap().state;
     assert!(raw.owned_resource_instance(left.identity()).is_none());
     assert!(rewrite(&raw, &instance, false, &children).is_err());
     let mut replacement = left.clone();
     replacement.identity = Variable(503);
-    let (replaced, _) = rewrite(&raw, &replacement, false, &[]).unwrap();
+    let replaced = rewrite(&raw, &replacement, false, &[]).unwrap().state;
     let selected = vec![
         ("left".into(), Variable(503)),
         ("right".into(), Variable(502)),
     ];
-    let (closed, _) = rewrite(&replaced, &instance, false, &selected).unwrap();
+    let closed = rewrite(&replaced, &instance, false, &selected)
+        .unwrap()
+        .state;
     assert_eq!(closed.resources(), state.resources());
     assert!(closed.instance_field_scope.is_empty());
     for bad in [
@@ -762,7 +766,7 @@ fn independent_children_kernel_work_ignores_unrelated_instances() {
                 .unchecked_with_fact(CResourceFact::own(CResource::Instance(unrelated)));
         }
         let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
-            let (open, _) = crate::kernel::rewrite_resource_instance_selecting_children(
+            let open = crate::kernel::rewrite_resource_instance_selecting_children(
                 &state,
                 &instance,
                 &definition,
@@ -771,7 +775,8 @@ fn independent_children_kernel_work_ignores_unrelated_instances() {
                 true,
                 Some(&children),
             )
-            .unwrap();
+            .unwrap()
+            .state;
             assert!(open.instance_field_scope.is_empty());
             crate::kernel::rewrite_resource_instance_selecting_children(
                 &open,
@@ -806,7 +811,7 @@ fn recursive_child_kernel_rejects_implicit_parent_handles() {
         ("left".into(), Variable(501)),
         ("right".into(), Variable(502)),
     ];
-    let (opened, _) = crate::kernel::rewrite_resource_instance_selecting_children(
+    let opened = crate::kernel::rewrite_resource_instance_selecting_children(
         &state,
         &instance,
         &definition,
@@ -815,7 +820,8 @@ fn recursive_child_kernel_rejects_implicit_parent_handles() {
         true,
         Some(&children),
     )
-    .unwrap();
+    .unwrap()
+    .state;
     assert!(
         opened
             .resource_instance_fields(instance.identity())
@@ -869,7 +875,7 @@ fn recursive_child_kernel_keeps_unknown_submodels_folded() {
         ("left".into(), Variable(501)),
         ("right".into(), Variable(502)),
     ];
-    let (open, _) = crate::kernel::rewrite_resource_instance_selecting_children(
+    let open = crate::kernel::rewrite_resource_instance_selecting_children(
         &state,
         &instance,
         &definition,
@@ -878,11 +884,12 @@ fn recursive_child_kernel_keeps_unknown_submodels_folded() {
         true,
         Some(&children),
     )
-    .unwrap();
+    .unwrap()
+    .state;
     let child = open.owned_resource_instance(Variable(501)).unwrap();
     assert_eq!(child.fields(), &[AlgebraicValue::Algebraic(unknown)]);
     assert!(rewrite_resource_instance(&open, child, &definition, &assumptions, true).is_err());
-    let (closed, _) = crate::kernel::rewrite_resource_instance_selecting_children(
+    let closed = crate::kernel::rewrite_resource_instance_selecting_children(
         &open,
         &instance,
         &definition,
@@ -891,7 +898,8 @@ fn recursive_child_kernel_keeps_unknown_submodels_folded() {
         false,
         Some(&children),
     )
-    .unwrap();
+    .unwrap()
+    .state;
     assert_eq!(closed.resources(), state.resources());
 }
 
@@ -4352,9 +4360,42 @@ fn matched_resource_integer_binding_is_checked_and_substituted() {
         Term::Algebraic(model),
         Term::Algebraic(constructor),
     ));
+    let selected = crate::kernel::rewrite_resource_instance_selecting_children(
+        &state,
+        &instance,
+        &definition,
+        std::slice::from_ref(&definition),
+        &assumptions,
+        true,
+        None,
+    )
+    .expect("the selected Integer constructor field should discharge its arm fact");
+    assert_eq!(selected.body_clauses.len(), 1);
+    assert_eq!(selected.body_clauses[0].arm.as_deref(), Some("Set"));
+    assert_eq!(selected.body_clauses[0].ordinal, 0);
+    let already_known = assumptions
+        .clone()
+        .assume_proposition(selected.body_clauses[0].proposition.clone());
+    let repeated = crate::kernel::rewrite_resource_instance_selecting_children(
+        &state,
+        &instance,
+        &definition,
+        std::slice::from_ref(&definition),
+        &already_known,
+        true,
+        None,
+    )
+    .expect("an already-known body clause still has declaration correspondence");
+    assert_eq!(repeated.body_clauses.len(), 1);
+    assert_eq!(
+        repeated.body_clauses[0].proposition,
+        selected.body_clauses[0].proposition
+    );
     assert!(
-        rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).is_ok(),
-        "the selected Integer constructor field should discharge its arm fact"
+        !repeated
+            .semantic_facts
+            .contains(&selected.body_clauses[0].proposition),
+        "the semantic delta must omit an existing clause without losing its record"
     );
 
     let mut malformed = definition.clone();

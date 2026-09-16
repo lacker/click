@@ -152,7 +152,7 @@ impl<'a> Proof<'a> {
                     .collect::<Result<Arc<[(String, Variable)]>, ClickError>>()
             })
             .transpose()?;
-        let (after, added) = crate::kernel::rewrite_resource_instance_selecting_children(
+        let rewrite = crate::kernel::rewrite_resource_instance_selecting_children(
             before,
             instance,
             definition,
@@ -162,9 +162,53 @@ impl<'a> Proof<'a> {
             selected_children.as_deref(),
         )
         .map_err(|refusal| self.step_error(refusal.describe()))?;
+        let clause_presentations = if unfold {
+            let source_bindings = rewrite.body_clauses.first().and_then(|clause| {
+                let variant = clause.arm.as_deref()?;
+                context
+                    .resource_environment
+                    .get(instance.name())?
+                    .composite_body()?
+                    .matched
+                    .as_ref()?
+                    .arms
+                    .iter()
+                    .find(|arm| arm.variant == variant)
+                    .map(|arm| arm.bindings.as_slice())
+            });
+            let in_scope = source_bindings.filter(|names| {
+                names.iter().all(|name| {
+                    self.state().locals().values.contains_key(name)
+                        || self.state().locals().integer_values.contains_key(name)
+                })
+            });
+            crate::surface::proof::resources::pair_instance_body_clause_presentations(
+                context.resource_environment,
+                context.click_function_environment,
+                instance,
+                &rewrite.body_clauses,
+                &parameter_values(context.parsed_function.parameters(), context.arguments)?,
+                in_scope,
+            )?
+        } else {
+            Vec::new()
+        };
+        let after = rewrite.state;
+        let added = rewrite.semantic_facts;
         let mut facts = self.facts().clone();
         for fact in &added {
             facts = facts.with_kernel_checked_fact(fact.clone());
+        }
+        if clause_presentations
+            .iter()
+            .any(|clause| !clause.matches_available_fact(&facts))
+        {
+            return Err(
+                self.step_error("resource unfold clause presentation lacks its checked fact")
+            );
+        }
+        for clause in clause_presentations {
+            execution.presentation.resource_body_clauses.push(clause);
         }
         // The unfold exposed this arm's cells; name them in the snapshot so
         // the body's facts and the C's own reads of those cells share one

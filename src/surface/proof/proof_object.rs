@@ -571,6 +571,12 @@ pub(in crate::surface::proof) struct ExecutionProofPresentation {
     /// kernel propositions, so premises can be written as the source wrote
     /// them.
     pub(in crate::surface::proof) surface_propositions: SurfacePropositionMap,
+    /// Declaration pairs returned by checked resource match/unfold. These
+    /// are deliberately not unqualified lookup hints: a later C store may
+    /// change the meaning of their written loads. Scoped citation is handled
+    /// by the subsequent presentation-boundary repair.
+    pub(in crate::surface::proof) resource_body_clauses:
+        PersistentSequence<crate::surface::proof::resources::ResourceClausePresentation>,
     /// Case assumptions introduced on this path by proof-level splits.
     pub(in crate::surface::proof) case_assumptions: PersistentSequence<CaseAssumption>,
     /// Frontier-local loop clauses, paired with the kernel-owned verified
@@ -732,6 +738,7 @@ impl ExecutionProofState {
             ExecutionProofPresentation {
                 recorded_snapshots,
                 surface_propositions,
+                resource_body_clauses: PersistentSequence::default(),
                 case_assumptions: PersistentSequence::default(),
                 frontier_loop_clauses: PersistentSequence::default(),
                 post_execution_tactics: PersistentSequence::default(),

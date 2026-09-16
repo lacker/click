@@ -13360,6 +13360,104 @@ impl From<ResourceRewriteRefusal> for &'static str {
     }
 }
 
+/// A declaration-level consequence of a selected resource body. This is not
+/// a fact-store delta: a clause remains here when its proposition was already
+/// known, so presentation can retain its exact binder and source ordinal.
+#[derive(Clone, Debug)]
+pub(crate) struct ResourceBodyClauseRecord {
+    pub(crate) arm: Option<String>,
+    pub(crate) ordinal: usize,
+    pub(crate) proposition: Proposition,
+    pub(crate) introductions: LoweringIntroductions,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResourceInstanceRewriteResult {
+    pub(crate) state: CState,
+    pub(crate) semantic_facts: Vec<Proposition>,
+    pub(crate) body_clauses: Vec<ResourceBodyClauseRecord>,
+}
+
+/// Lower one selected body in source order. A body clause is available to a
+/// later clause only after the selected resource justified it (unfold/match),
+/// or after the fold's existing facts established it. Routing facts for a
+/// conditional lowering must be stated in this exact accumulated context;
+/// other paths being impossible is not itself evidence for a survivor.
+#[allow(clippy::too_many_arguments)]
+fn lower_selected_resource_body_clauses(
+    evaluation: &CState,
+    source: &[SpecProposition],
+    arm: Option<&str>,
+    integer_bindings: &BTreeMap<Variable, IntegerTerm>,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    body_assumptions: &PureFactContext,
+    established_assumptions: Option<&PureFactContext>,
+    budget: &mut ExecutionBudget,
+) -> Result<Vec<ResourceBodyClauseRecord>, ResourceRewriteRefusal> {
+    let c_replacements = BTreeMap::new();
+    let algebraic_replacements = BTreeMap::new();
+    let mut rewrite = crate::kernel::proof::term_rewrite::TermRewrite::for_checked_typed_variables(
+        &c_replacements,
+        integer_bindings,
+        &algebraic_replacements,
+    );
+    rewrite.enable_registered_load_resolution();
+    rewrite
+        .reserve_spec_proposition_sources(source.iter())
+        .map_err(|_| "resource match Integer binding substitution exceeded its checked scope")?;
+    let mut context = body_assumptions.clone();
+    let mut records = Vec::with_capacity(source.len());
+    for (ordinal, clause) in source.iter().enumerate() {
+        crate::instrumentation::record_deterministic_work(1);
+        let clause = rewrite.spec_proposition(clause).map_err(
+            |_| "resource match Integer binding substitution exceeded its checked scope",
+        )?;
+        let paths = crate::kernel::spec::lower_spec_proposition_at_state_with_algebraic_bindings(
+            evaluation,
+            &clause,
+            None,
+            &context,
+            algebraic_bindings,
+            budget,
+        )
+        .map_err(|_| "could not evaluate instance body fact")?;
+        let path = crate::kernel::api::exactly_selected_spec_proposition_path(&paths, &context)
+            .ok_or("instance body fact needs an unsupported conditional proof")?;
+        if path
+            .facts
+            .iter()
+            .any(|fact| !required_obligation_is_exactly_discharged(&context, fact.proposition()))
+            || path.obligations.iter().any(|goal| {
+                !required_obligation_is_exactly_discharged(&context, goal.proposition())
+                    && !quantified_resource_fact_memory_obligation_is_discharged(
+                        &context,
+                        goal.proposition(),
+                    )
+            })
+        {
+            return Err("instance body fact needs an unsupported conditional proof".into());
+        }
+        if let Some(established) = established_assumptions
+            && !required_obligation_is_exactly_discharged(established, &path.proposition)
+        {
+            return Err(ResourceRewriteRefusal::BodyFactNotEstablished {
+                arm: arm.map(str::to_owned),
+                index: ordinal,
+                count: source.len(),
+            });
+        }
+        let record = ResourceBodyClauseRecord {
+            arm: arm.map(str::to_owned),
+            ordinal,
+            proposition: path.proposition.clone(),
+            introductions: path.introductions.clone(),
+        };
+        context = context.assume_proposition(path.proposition.clone());
+        records.push(record);
+    }
+    Ok(records)
+}
+
 /// Exchange one exclusive instance for its immediate memory body, or back.
 /// Memory-only bodies need no open token, including guarded/matched bodies.
 /// Recursive children require explicit independent child selections.
@@ -13371,7 +13469,7 @@ pub(crate) fn rewrite_resource_instance(
     assumptions: &PureFactContext,
     unfold: bool,
 ) -> Result<(CState, Vec<Proposition>), ResourceRewriteRefusal> {
-    rewrite_resource_instance_selecting_children(
+    let result = rewrite_resource_instance_selecting_children(
         state,
         instance,
         definition,
@@ -13379,7 +13477,8 @@ pub(crate) fn rewrite_resource_instance(
         assumptions,
         unfold,
         None,
-    )
+    )?;
+    Ok((result.state, result.semantic_facts))
 }
 
 /// The composite definition a matched arm's child names. A child of the
@@ -13477,7 +13576,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     assumptions: &PureFactContext,
     unfold: bool,
     selected_children: Option<&[(String, Variable)]>,
-) -> Result<(CState, Vec<Proposition>), ResourceRewriteRefusal> {
+) -> Result<ResourceInstanceRewriteResult, ResourceRewriteRefusal> {
     if definition.name() != instance.name()
         || definition.instance_schema.as_ref() != Some(instance.schema())
         || definition.recursive
@@ -13826,68 +13925,22 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     for fact in &facts {
         body_assumptions = body_assumptions.assume_proposition(fact.clone());
     }
-    let c_replacements = BTreeMap::new();
-    let algebraic_replacements = BTreeMap::new();
-    let mut fact_rewrite =
-        crate::kernel::proof::term_rewrite::TermRewrite::for_checked_typed_variables(
-            &c_replacements,
-            &integer_bindings,
-            &algebraic_replacements,
-        );
-    // A matched Integer binding may occur inside the pointer offset of a
-    // registered load in a body fact.  Resolve that selected load origin
-    // while rewriting the fact so the replacement is applied to the pointer
-    // and the result is re-minted in the same memory snapshot.  The checked
-    // TermRewrite path keeps the registry DAG bounded and rejects cycles.
-    fact_rewrite.enable_registered_load_resolution();
     let facts_to_rewrite = selected.map_or(&definition.facts, |arm| &arm.facts);
-    fact_rewrite
-        .reserve_spec_proposition_sources(facts_to_rewrite.iter())
-        .map_err(|_| "resource match Integer binding substitution exceeded its checked scope")?;
-    for (fact_index, fact) in facts_to_rewrite.iter().enumerate().filter(|_| active) {
-        let fact = fact_rewrite.spec_proposition(fact).map_err(
-            |_| "resource match Integer binding substitution exceeded its checked scope",
-        )?;
-        let paths = crate::kernel::spec::lower_spec_proposition_at_state_with_algebraic_bindings(
+    let body_clauses = if active {
+        lower_selected_resource_body_clauses(
             &evaluation,
-            &fact,
-            None,
-            &body_assumptions,
+            facts_to_rewrite,
+            selected.map(|arm| arm.variant.as_str()),
+            &integer_bindings,
             &algebraic_bindings,
+            &body_assumptions,
+            (!unfold).then_some(assumptions),
             &mut budget,
-        )
-        .map_err(|_| "could not evaluate instance body fact")?;
-        if paths.len() != 1 {
-            return Err("instance body fact needs an unsupported conditional proof".into());
-        }
-        let path = paths
-            .into_iter()
-            .next()
-            .ok_or("instance body fact produced no evaluation path")?;
-        if path.facts.iter().any(|fact| {
-            !required_obligation_is_exactly_discharged(&body_assumptions, fact.proposition())
-        }) || path.obligations.iter().any(|goal| {
-            !required_obligation_is_exactly_discharged(&body_assumptions, goal.proposition())
-                && !quantified_resource_fact_memory_obligation_is_discharged(
-                    &body_assumptions,
-                    goal.proposition(),
-                )
-        }) {
-            return Err("instance body fact needs an unsupported conditional proof".into());
-        }
-        let proposition = path.proposition;
-        // The fold prerequisite is a rewrite precondition with no obligation
-        // vector of its own; the exact routes decide it or the fold is
-        // refused with this diagnostic.
-        if !unfold && !required_obligation_is_exactly_discharged(assumptions, &proposition) {
-            return Err(ResourceRewriteRefusal::BodyFactNotEstablished {
-                arm: selected.map(|arm| arm.variant.clone()),
-                index: fact_index,
-                count: facts_to_rewrite.len(),
-            });
-        }
-        facts.push(proposition);
-    }
+        )?
+    } else {
+        Vec::new()
+    };
+    facts.extend(body_clauses.iter().map(|clause| clause.proposition.clone()));
     if unfold {
         // The arm this unfold opened is the one the premises standing here
         // leave, so the model fact that forced it is published with the
@@ -13909,7 +13962,20 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             ));
         }
     }
-    Ok((next, if unfold { facts } else { vec![] }))
+    let mut seen = BTreeSet::new();
+    let semantic_facts = if unfold {
+        facts
+            .into_iter()
+            .filter(|fact| !assumptions.states_required_goal(fact) && seen.insert(fact.clone()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Ok(ResourceInstanceRewriteResult {
+        state: next,
+        semantic_facts,
+        body_clauses,
+    })
 }
 
 fn quantified_resource_fact_memory_obligation_is_discharged(
@@ -13945,14 +14011,14 @@ fn quantified_resource_fact_memory_obligation_is_discharged(
 /// changes `state`.  The projection identifies one held instance directly;
 /// no ambient resource or premise scan is needed.  Any mismatch or unsupported
 /// body shape fails closed by publishing no facts.
-pub(in crate::kernel) fn matched_resource_instance_case_facts(
+pub(in crate::kernel) fn matched_resource_instance_case_clauses(
     state: &CState,
     projection: &ResourceFieldProjection,
     model: &AlgebraicTerm,
     constructor: &AlgebraicTerm,
     definitions: &[CCompositeResourceDefinition],
     assumptions: &PureFactContext,
-) -> Vec<Proposition> {
+) -> Vec<ResourceBodyClauseRecord> {
     if projection.at_entry {
         return Vec::new();
     }
@@ -14084,56 +14150,17 @@ pub(in crate::kernel) fn matched_resource_instance_case_facts(
         body_assumptions = body_assumptions.assume_proposition(fact);
     }
 
-    let c_replacements = BTreeMap::new();
-    let algebraic_replacements = BTreeMap::new();
-    let mut fact_rewrite =
-        crate::kernel::proof::term_rewrite::TermRewrite::for_checked_typed_variables(
-            &c_replacements,
-            &integer_bindings,
-            &algebraic_replacements,
-        );
-    fact_rewrite.enable_registered_load_resolution();
-    if fact_rewrite
-        .reserve_spec_proposition_sources(arm.facts.iter())
-        .is_err()
-    {
-        return Vec::new();
-    }
-    let mut facts = Vec::with_capacity(arm.facts.len());
-    for fact in &arm.facts {
-        crate::instrumentation::record_deterministic_work(1);
-        let Ok(fact) = fact_rewrite.spec_proposition(fact) else {
-            return Vec::new();
-        };
-        let Ok(paths) =
-            crate::kernel::spec::lower_spec_proposition_at_state_with_algebraic_bindings(
-                &evaluation,
-                &fact,
-                None,
-                &body_assumptions,
-                &algebraic_bindings,
-                &mut budget,
-            )
-        else {
-            return Vec::new();
-        };
-        let [path] = paths.as_slice() else {
-            return Vec::new();
-        };
-        if path.facts.iter().any(|fact| {
-            !required_obligation_is_exactly_discharged(&body_assumptions, fact.proposition())
-        }) || path.obligations.iter().any(|goal| {
-            !required_obligation_is_exactly_discharged(&body_assumptions, goal.proposition())
-                && !quantified_resource_fact_memory_obligation_is_discharged(
-                    &body_assumptions,
-                    goal.proposition(),
-                )
-        }) {
-            return Vec::new();
-        }
-        facts.push(path.proposition.clone());
-    }
-    facts
+    lower_selected_resource_body_clauses(
+        &evaluation,
+        &arm.facts,
+        Some(&arm.variant),
+        &integer_bindings,
+        &algebraic_bindings,
+        &body_assumptions,
+        None,
+        &mut budget,
+    )
+    .unwrap_or_default()
 }
 
 pub(in crate::kernel) fn selected_instance_match_arm<'a>(

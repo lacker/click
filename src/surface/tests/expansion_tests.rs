@@ -11300,6 +11300,34 @@ fn matched_resource_quantified_fact_expands_and_reverifies() {
 }
 
 #[test]
+fn matched_resource_dependent_clauses_expand_and_reverify() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/resource_match_dependent_clauses.md");
+    let markdown = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &markdown)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("dependent clause fixture should contain Click source");
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+
+    verify_c0_sources(click_source, &c_sources)
+        .expect("the matched dependent resource clauses should verify");
+    let expanded =
+        expand_c0_claim_source(click_source, &c_sources, "unchanged", CProofClaim::Grouped)
+            .expect("the matched dependent resource proof should expand");
+    assert!(expanded.contains("instantiate(forall"), "{expanded}");
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("the expanded dependent resource proof should reverify");
+}
+
+#[test]
 fn early_return_postcondition_path_selection_expands_and_reverifies() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/early_return_indexed_postcondition_path_selection.md");
