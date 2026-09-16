@@ -20,24 +20,49 @@ program exercises a different boundary in the same production proof engine.
 Small passing examples are necessary but insufficient evidence of scalability:
 this milestone also requires modular rules and deterministic scaling tests.
 
-## Existing foundation and scope
+## Current checkpoint and scope
 
-The first source-selection checkpoint is
+The source-selection checkpoint is
 [`design/concurrency-probes/fork_join.c`](../design/concurrency-probes/fork_join.c)
 with its [profile record](../design/concurrency-probes/README.md). It fixes an
 ordinary C11/POSIX program, compiler/target/API choices, and creation-failure
 paths before any thread rule or sidecar is written. The fixture is deliberately
 not yet listed as a verifying example; its source bytes are pinned by the
-examples gate. The new user-space profile and pthread rules remain work for
-this issue, not support already delivered by that checkpoint.
+examples gate.
+
+The declaration-only import checkpoint is complete. `CTarget` now distinguishes
+`x86_64-linux-userspace` from `x86_64-linux-kernel`, retaining this probe's
+LP64 and `-funsigned-char` choices without injecting `__KERNEL__`. The narrow
+modeled `<pthread.h>` declares `pthread_create` and `pthread_join` with a
+`void *(*)(void *)` worker callback and a `void **` join-result slot; modeled
+`<stddef.h>` supplies `NULL`. For the selected ABI, `pthread_t` is declared as
+`unsigned long`. `pthread_attr_t` is deliberately incomplete because the
+frozen program passes only null attributes. A regression parses the **unchanged**
+probe and checks the declaration shapes; the kernel-target regression rejects
+`<pthread.h>`. This work also added the C0 `void **` type, implicit assignment
+from `void *` to a named struct pointer, and discarded direct calls written
+`(void)call(...)`, all needed by that ordinary C source. These are source and
+type support, not thread semantics.
+
+Normal `click verify` still selects the kernel target. The modeled header is
+not a locked import of glibc headers, and no pthread external contract,
+checked spawn/join operation, scheduling/memory-model rule, worker proof,
+sidecar, or verified concurrency example has landed. In particular, the
+numeric representation of `pthread_t` grants no completion authority; only
+a checked success transition may create a joinable right. Do not present a
+successful parse or native compiler syntax check as race-freedom evidence.
 
 Build on the authority conservation, stable borrowing, observation support,
 and checked transitions in the [stable-views record](../docs/internals/stable-views.md).
 The two-context and mutex experiments in `src/kernel/tests/loan_model_tests.rs`
 are design evidence only; they do not implement concurrent C semantics.
 
-Before implementation, select and document one concrete C standard, supported
-compiler/target configuration, thread/mutex API, and supported atomic subset.
+Before claiming verification, lock and validate the selected compiler/header
+profile and make the user-space target available to normal verification.
+The selected C standard, target, thread/mutex API, and initial atomic subset
+are recorded in the probe profile, but its exact driver, opened headers,
+flags, and ABI observations are not yet locked into imports, certificates, or
+caches.
 Use a coherent C11-compatible account of ordinary accesses, data races, thread
 start/join, mutex synchronization, and release/acquire publication. Bind the
 profile and modeled API identities into imports, certificates, and caches.
@@ -58,6 +83,37 @@ and freeze them before writing the sidecars. Preserve source and provenance in
 the example projects. Synthetic examples are acceptable when identified as
 such. Do not add proof-only locals, branches, helper calls, identifier changes,
 or serial execution wrappers to make their proofs work.
+
+## Next implementation sequence
+
+1. Add a checked internal spawn/join transition with focused positive and
+   hostile kernel tests. On a nonzero `pthread_create` result, the parent keeps
+   its task resources and no child/right exists. On zero, exactly one child
+   receives the selected worker task and the parent receives one linear right
+   tied to the written `pthread_t`, callback, argument, and task. A valid
+   `pthread_join` consumes that right once, returns the worker's resources and
+   postcondition, and establishes the selected synchronization edge. The
+   worker runs in its own context; the parent follows ordinary return-status
+   branches, not simultaneous alternative execution frontiers or enumerated
+   schedules. Check the scoped valid-join-success assumption explicitly.
+2. Bind those rules to the *actual* imported pthread declarations and C call
+   sites. Lock the selected Linux user-space compiler/header inputs and ABI,
+   make that target selectable by the verifier, and include its identity in
+   certificates and incremental caches. Choose any surface notation only
+   after testing whether existing named callback contracts, conditional
+   resources, and call binders can unambiguously select the worker task and
+   success-only completion right. Do not add a proof-only spawn call that can
+   diverge from C execution.
+3. Prove the frozen worker once and then the three parent outcomes: first
+   create fails (four zeros), second create fails after the first succeeds
+   (join first, then `[11, 11, 0, 0]`), and both succeed (join both, then
+   `[11, 11, 22, 22]`). The worker task needs an exclusive output subrange and
+   a stable, lifetime-backed view of its stack job. Keep both job lifetimes
+   live until their associated joins. Add the shared-read-only companion and
+   the rejection cases below before moving the source into `examples/`.
+4. Extend the same checked framework to the mutex and release/acquire
+   programs, then establish the deterministic scaling and normal
+   verify/profile/expand/audit gates required below.
 
 ## Three required programs
 
