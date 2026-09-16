@@ -57,6 +57,9 @@ Then build the pinned exporter and explicitly refresh the local lock:
 scripts/build-cpp-exporter.sh
 cargo run --bin click -- import lock integrations/bitcoin-core-money-range/MoneyRange.click
 cargo run --bin click -- verify integrations/bitcoin-core-money-range/MoneyRange.click
+cargo run --bin click -- profile integrations/bitcoin-core-money-range/MoneyRange.click
+cargo run --bin click -- audit integrations/bitcoin-core-money-range/MoneyRange.click
+cargo run --bin click -- expand --claim MoneyRange.contract integrations/bitcoin-core-money-range/MoneyRange.click
 ```
 
 `MoneyRange.click.import.json` and the sidecar are versioned; this full-checkout
@@ -122,6 +125,12 @@ upstream function. It refuses to load the locked artifact after changes to
 configured profile. Selecting `MoneyRange` from a different upstream header
 fails refresh, and that rejected selector cannot load the old artifact.
 
+The gate profiles the complete upstream proof, resolves every profiled tactic
+to its sidecar location, and audits all 14 smart-tactic sites. Each site is
+expanded against the same locked import, the resulting certificate is checked
+by ordinary verification and a retained audit session, and the expanded
+claim has fewer smart sites. This covers the range contract and all four
+boundary theorems without invoking Clang during verification or expansion.
+
 This is one function under one Clang profile, not general Bitcoin Core or
-Linux binary verification. The broader P1 issue still owns full
-verify/expand/profile/audit agreement checks.
+Linux binary verification.

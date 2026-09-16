@@ -5,8 +5,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use click::cli::read_click_project;
+use click::instrumentation::{self, VerificationEvent};
 use click::languages::cpp::{load_import, refresh_import};
-use click::surface::verify_cpp_prepared_project;
+use click::surface::{
+    C0VerificationSession, cpp_prepared_project_smart_tactic_source_sites,
+    cpp_prepared_project_tactic_source_position, expand_cpp_prepared_project_claim_source_by_label,
+    expand_cpp_prepared_project_tactic_source_at, verify_cpp_prepared_project,
+};
 use sha2::{Digest, Sha256};
 
 const ARCHIVE: &[u8] =
@@ -165,8 +170,129 @@ fn pinned_upstream_money_range_reexports_and_verifies_in_normal_gate() {
         .expect("the upstream bound is imported from its C++ declaration");
     assert_eq!(max_money.evaluated_value, "2100000000000000");
     let project = read_click_project(&sidecar, SIDECAR).unwrap();
-    verify_cpp_prepared_project(&project, &imported)
-        .expect("verify the exact inclusive range contract and four boundary calls");
+    let (verification, profile) =
+        instrumentation::collect(|| verify_cpp_prepared_project(&project, &imported));
+    verification.expect("verify the exact inclusive range contract and four boundary calls");
+    let finished_claims = profile
+        .iter()
+        .filter_map(|event| match event {
+            VerificationEvent::ClaimFinished { key, .. } => Some(key.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !finished_claims.is_empty(),
+        "profile must observe checked claims"
+    );
+    assert!(
+        profile
+            .iter()
+            .any(|event| matches!(event, VerificationEvent::TacticFinished { .. }))
+    );
+
+    let sites = cpp_prepared_project_smart_tactic_source_sites(&project, &imported).unwrap();
+    assert_eq!(
+        sites.len(),
+        14,
+        "audit must cover every upstream smart tactic"
+    );
+    for event in &profile {
+        if let VerificationEvent::TacticFinished { tactic, .. } = event {
+            cpp_prepared_project_tactic_source_position(
+                &project,
+                &imported,
+                &tactic.claim,
+                tactic.source_index,
+            )
+            .expect("each profiled tactic must resolve to its upstream sidecar position");
+        }
+    }
+    for claim in [
+        "MoneyRange.contract",
+        "below_range_is_false.ensures_0",
+        "zero_is_in_range.ensures_0",
+        "max_money_is_in_range.ensures_0",
+        "above_range_is_false.ensures_0",
+    ] {
+        assert!(
+            sites.iter().any(|site| site.claim_label == claim),
+            "{claim} has no source-selectable smart tactic"
+        );
+        let profiled_claim = if claim.ends_with(".ensures_0") {
+            claim.replace(".ensures_0", ".contract")
+        } else {
+            claim.to_owned()
+        };
+        assert!(
+            profile.iter().any(|event| matches!(event,
+                VerificationEvent::TacticFinished { tactic, .. } if tactic.claim == profiled_claim
+            )),
+            "profile missed {claim}"
+        );
+    }
+    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&project, &imported)
+        .expect("start a retained audit session on the same import");
+    let expanded_contract = expand_cpp_prepared_project_claim_source_by_label(
+        &project,
+        &imported,
+        "MoneyRange.contract",
+    )
+    .expect("the documented claim expansion must use the locked upstream import");
+    verify_cpp_prepared_project(&project.with_entry_source(expanded_contract), &imported)
+        .expect("the documented expanded range claim must reverify");
+    for site in sites {
+        let claim = site.claim_label.as_str();
+        let position = cpp_prepared_project_tactic_source_position(
+            &project,
+            &imported,
+            claim,
+            site.source_index,
+        )
+        .expect("each upstream claim has a selectable tactic");
+        let profiled_claim = if claim.ends_with(".ensures_0") {
+            claim.replace(".ensures_0", ".contract")
+        } else {
+            claim.to_owned()
+        };
+        let profiled_position = cpp_prepared_project_tactic_source_position(
+            &project,
+            &imported,
+            &profiled_claim,
+            site.source_index,
+        )
+        .expect("the profiler must resolve the same upstream tactic location");
+        assert_eq!(profiled_position, position);
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &project,
+            &imported,
+            position.line,
+            position.column,
+        )
+        .expect("expand a tactic against the same locked import");
+        assert_ne!(expanded, SIDECAR);
+        let rewritten = project.with_entry_source(expanded.clone());
+        let remaining = cpp_prepared_project_smart_tactic_source_sites(&rewritten, &imported)
+            .expect("expanded proof remains source-inventoriable")
+            .into_iter()
+            .filter(|candidate| candidate.claim_label == claim)
+            .count();
+        let original = cpp_prepared_project_smart_tactic_source_sites(&project, &imported)
+            .unwrap()
+            .into_iter()
+            .filter(|candidate| candidate.claim_label == claim)
+            .count();
+        assert!(
+            remaining < original,
+            "expansion must remove the audited smart site"
+        );
+        verify_cpp_prepared_project(&rewritten, &imported)
+            .expect("expanded certificate must reverify against the upstream import");
+        let next = cpp_prepared_project_tactic_source_position(&rewritten, &imported, claim, 0)
+            .expect("the audited claim remains source-selectable");
+        session
+            .verify_at_project(&expanded, next.line, next.column)
+            .expect("audit session must accept the expanded certificate");
+    }
 
     let source_contract = SIDECAR
         .split_once("contract bool BelowRange")

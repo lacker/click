@@ -1296,10 +1296,16 @@ fn expand_cpp_prepared_tactic_source_at_context(
         None => parse_source_with_c_layouts_context(click_source, &sources)?,
     };
     let selected = locate_source_tactic_file(click_source, &file, line, column)?;
-    if matches!(selected.site, ProofSite::TheoremEnsure { .. }) {
-        return Err(ClickError::new(
-            "C++ prepared-input expansion currently selects function proofs",
-        ));
+    if let ProofSite::TheoremEnsure {
+        theorem_name,
+        ensure_index,
+    } = &selected.site
+    {
+        let verified = match project {
+            Some(project) => verify_click_project_theorem_context(project, &sources, theorem_name)?,
+            None => verify_click_theorems_with_context(click_source, &sources)?,
+        };
+        return rewrite_verified_pure_theorem(click_source, &verified, theorem_name, *ensure_index);
     }
     if let (
         ProofSite::FunctionClaim {
@@ -2436,7 +2442,10 @@ fn c0_tactic_source_position_file(
                 || format!("{}.ensures_{ensure_index}", theorem.name()),
                 |name| format!("{}.{name}", theorem.name()),
             );
-            if label != claim_label {
+            let execution_claim = theorem.executes.is_some()
+                && ensure_index == 0
+                && claim_label == format!("{}.contract", theorem.name());
+            if label != claim_label && !execution_claim {
                 continue;
             }
             let edit =

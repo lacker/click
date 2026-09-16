@@ -599,7 +599,7 @@ pub(in crate::surface) fn verify_click_prepared_project_theorem(
     verify_click_project_theorem_context(project, &sources, theorem_name)
 }
 
-fn verify_click_project_theorem_context(
+pub(in crate::surface) fn verify_click_project_theorem_context(
     project: &ClickProject,
     sources: &CSourceContext<'_>,
     theorem_name: &str,
@@ -651,6 +651,30 @@ fn verify_click_project_theorem_context(
             .chain(file.theorem_definitions().iter().cloned())
             .collect::<Vec<_>>(),
     );
+    if theorem.executes.is_some() {
+        let registry = std::sync::Arc::new(FunctionSourceRegistry::from_function_blocks(
+            &external_and_user_function_blocks,
+        )?);
+        let dependencies = standard_library_theorem_definitions()?
+            .iter()
+            .cloned()
+            .chain(
+                file.theorem_definitions()
+                    .iter()
+                    .take_while(|definition| definition.name() != theorem_name)
+                    .cloned(),
+            )
+            .collect::<Vec<_>>();
+        return verify_theorem_definitions(
+            &dependencies,
+            std::slice::from_ref(theorem),
+            &predicate_environment,
+            &click_function_environment,
+            Some(&function_environment),
+            &resource_environment,
+            registry,
+        );
+    }
     verify_concrete_theorem_definition(
         theorem,
         &predicate_environment,

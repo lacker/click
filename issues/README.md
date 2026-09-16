@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (9)
+## P1: before launch (8)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -53,7 +53,7 @@ dependency marker, not a prescribed implementation order. An unsound rule is
 P1 whatever it is about: the claim is worthless if the verifier accepts false
 contracts, so soundness bugs come first even when rbtree does not exercise
 them. A gap that only a different program would hit is normally P2. The
-explicitly selected stable-views, basic-C++, Bitcoin Core `MoneyRange`,
+explicitly selected stable-views, basic-C++,
 concurrency, byte-representation, control-flow, and shared-heap-graph milestones
 are also P1: they check the architecture before launch while rbtree remains
 the key demo. Each demo has a bounded support claim; broader language,
@@ -69,14 +69,15 @@ Soundness and kernel shape:
 Program import and execution:
 
 - [Add basic C++ verification with references and scoped cleanup](basic-cpp-support.md)
-- [Verify Bitcoin Core `MoneyRange` under a supported Clang profile](bitcoin-core-money-range-cpp.md)
 - [Verify a concurrency demo with threads, mutexes, and publication](concurrency-demo.md)
 - [Verify cleanup jumps and cross-call exception unwinding](control-flow-demo.md)
 
-The C++ dependency order is the basic language/frontend slice first, then the
-unchanged Bitcoin Core function under its real project profile. Stable-view and
-cleanup support needed by that first slice remain part of its P1 scope; general
-`goto`, multi-compiler support, and broad C++ coverage are not prerequisites.
+The basic C++ language/frontend slice remains P1. The unchanged Bitcoin Core
+`MoneyRange` function under its real Clang project profile is verified in
+[`integrations/bitcoin-core-money-range/`](../integrations/bitcoin-core-money-range/).
+Stable-view and cleanup support needed by the broader basic slice remain in
+its P1 scope; general `goto`, multi-compiler support, and broad C++ coverage
+are not prerequisites.
 
 The control-flow demo separately depends on the forward-cleanup goto slice and
 the basic C++ frontend/normal-cleanup slice. It adds narrow exception support;
