@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use click::cli::{CInput, read_c_inputs, read_click_project};
+use click::cli::{CInput, parse_mdtest, read_c_inputs, read_click_project};
 use click::kernel::{
     Bitvector32Term, CExpression, CFunctionOutcome, CMemory, CMemoryRange, CResourceFact, CState,
     CStatement, CType, CUndefinedBehavior, Pointer, PointerOffsetTerm, Proposition,
@@ -102,6 +102,7 @@ const CONSTEXPR_MAX_MONEY_RANGE_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/constexpr-max-money/money_range.click");
 const CONSTEXPR_MAX_MONEY_CSTDINT: &str =
     include_str!("fixtures/cpp-verification/constexpr-max-money/cstdint");
+const ONE_GUARD_UNWIND_MDTEST: &str = include_str!("../mdtests/cpp_one_guard_unwind.md");
 
 struct Project {
     directory: PathBuf,
@@ -1161,6 +1162,144 @@ fn scalar_int32_profile_rejects_unsupported_handler_shapes() {
         let project = Project::with_fixture("caller.cpp", "caller", &source);
         project.write_exception_enabled_compilation_database();
         project.write_config_with_exception_behavior("caller", "caller.cpp", true, "scalar_int32");
+        let error = refresh_import(&project.config())
+            .expect_err(&format!("{name} must not enter a locked artifact"));
+        assert!(error.contains(expected), "{name}: {error}");
+        assert!(
+            !project.artifact().exists(),
+            "{name} was unexpectedly locked"
+        );
+    }
+}
+
+#[test]
+fn scalar_int32_profile_unwinds_one_guard_and_requires_its_object_invariant() {
+    let mdtest = parse_mdtest(
+        Path::new("cpp_one_guard_unwind.md"),
+        ONE_GUARD_UNWIND_MDTEST,
+    )
+    .unwrap();
+    let cpp = mdtest.cpp_source.unwrap();
+    let sidecar_source = mdtest.click_source.unwrap();
+    let project = Project::with_fixture(&cpp.filename, &cpp.function, &cpp.source);
+    project.write_exception_enabled_compilation_database();
+    project.write_config_with_exception_behavior(&cpp.function, &cpp.filename, true, &cpp.profile);
+    refresh_import(&project.config()).expect("export a guard local to the try block");
+    let prepared = load_import(&project.config()).expect("load the guard artifact offline");
+    let [
+        CppStatement::TryCatchInt32 { try_body, .. },
+        CppStatement::Return { .. },
+    ] = prepared.export().function.body.as_slice()
+    else {
+        panic!("the source try/catch was not retained");
+    };
+    let [CppStatement::Scope { body, cleanups, .. }] = try_body.as_slice() else {
+        panic!("the guard's lifetime was not retained inside the try block");
+    };
+    assert!(matches!(
+        body.as_slice(),
+        [CppStatement::Declare { .. }, CppStatement::Call { .. }]
+    ));
+    assert!(matches!(
+        cleanups.as_slice(),
+        [CppCleanup::Destructor { .. }]
+    ));
+
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, &sidecar_source).unwrap();
+    fs::remove_file(&project.exporter).expect("verification must use the locked artifact");
+    let click_project = read_click_project(&sidecar, &sidecar_source).unwrap();
+    verify_cpp_prepared_project(&click_project, &prepared)
+        .expect("normal and caught exceptional paths must restore the original value");
+
+    let invariant = "    ensures separate(memory(object(self)), memory(self->pointer[0..1]));\n";
+    assert!(sidecar_source.contains(invariant));
+    let missing_invariant = sidecar_source.replacen(invariant, "", 1);
+    let missing_project = read_click_project(&sidecar, &missing_invariant).unwrap();
+    verify_cpp_prepared_project(&missing_project, &prepared)
+        .expect_err("the destructor precondition must need the constructor's invariant");
+}
+
+#[test]
+fn scalar_int32_profile_rejects_broader_guarded_try_shapes() {
+    let mdtest = parse_mdtest(
+        Path::new("cpp_one_guard_unwind.md"),
+        ONE_GUARD_UNWIND_MDTEST,
+    )
+    .unwrap();
+    let cpp = mdtest.cpp_source.unwrap();
+    let declaration = "        Restore guard(&value);\n        helper(should_throw);";
+    assert!(cpp.source.contains(declaration));
+    let cases = [
+        (
+            "two_guards",
+            "        Restore guard(&value);\n        Restore second(&value);\n        helper(should_throw);",
+            "requires exactly one destructible object",
+        ),
+        (
+            "late_guard",
+            "        helper(should_throw);\n        Restore guard(&value);",
+            "guard construction first",
+        ),
+        (
+            "return_inside_try",
+            "        Restore guard(&value);\n        return value;",
+            "return from a guarded try region",
+        ),
+    ];
+    for (name, replacement, expected) in cases {
+        let source = cpp.source.replacen(declaration, replacement, 1);
+        assert_ne!(source, cpp.source);
+        let project = Project::with_fixture(&cpp.filename, &cpp.function, &source);
+        project.write_exception_enabled_compilation_database();
+        project.write_config_with_exception_behavior(
+            &cpp.function,
+            &cpp.filename,
+            true,
+            &cpp.profile,
+        );
+        let error = refresh_import(&project.config())
+            .expect_err(&format!("{name} must not enter a locked artifact"));
+        assert!(error.contains(expected), "{name}: {error}");
+        assert!(
+            !project.artifact().exists(),
+            "{name} was unexpectedly locked"
+        );
+    }
+
+    let destructor = "~Restore() noexcept { *pointer = saved; }";
+    assert!(cpp.source.contains(destructor));
+    let throwing_destructor =
+        cpp.source
+            .replacen(destructor, "~Restore() noexcept { throw 7; }", 1);
+    let calling_destructor = format!(
+        "int destructor_helper();\n{}\nint destructor_helper() {{ throw 7; }}\n",
+        cpp.source.replacen(
+            destructor,
+            "~Restore() noexcept { destructor_helper(); *pointer = saved; }",
+            1,
+        )
+    );
+    for (name, source, expected) in [
+        (
+            "throwing_destructor",
+            throwing_destructor,
+            "has a non-throwing exception specification but can still throw",
+        ),
+        (
+            "calling_destructor",
+            calling_destructor,
+            "noexcept C++ object operation",
+        ),
+    ] {
+        let project = Project::with_fixture(&cpp.filename, &cpp.function, &source);
+        project.write_exception_enabled_compilation_database();
+        project.write_config_with_exception_behavior(
+            &cpp.function,
+            &cpp.filename,
+            true,
+            &cpp.profile,
+        );
         let error = refresh_import(&project.config())
             .expect_err(&format!("{name} must not enter a locked artifact"));
         assert!(error.contains(expected), "{name}: {error}");

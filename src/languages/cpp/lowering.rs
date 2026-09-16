@@ -13,9 +13,9 @@
 use std::collections::BTreeMap;
 
 use super::{
-    CppBinaryOperator, CppCallArgument, CppCleanup, CppConstant, CppExpression, CppFieldReference,
-    CppFunction, CppFunctionKind, CppInitializer, CppPlace, CppPlaceReference, CppRecord,
-    CppStatement, CppType, PreparedCppImport,
+    CppBinaryOperator, CppCallArgument, CppCleanup, CppConstant, CppExceptionBehavior,
+    CppExpression, CppFieldReference, CppFunction, CppFunctionKind, CppInitializer, CppPlace,
+    CppPlaceReference, CppRecord, CppStatement, CppType, PreparedCppImport,
 };
 use crate::kernel::{
     CAggregateField, CAggregateLayout, CExpression, CFunction, CStatement, CType, LoadSourceId,
@@ -102,6 +102,11 @@ fn lower_function(import: &PreparedCppImport, source: &CppFunction) -> Result<CF
             .collect(),
         next_load_occurrence: 0,
         return_capture_name: return_capture_name(source),
+        unwind_exception_name: fresh_internal_name(source, "__click_cpp_unwind_exception"),
+        unwind_cleanups: matches!(
+            import.export().exception_behavior,
+            CppExceptionBehavior::ScalarInt32
+        ),
     };
     let body = context.lower_sequence(&source.body)?;
     let return_type = match &source.function_kind {
@@ -173,6 +178,8 @@ struct LoweringContext<'a> {
     constants: BTreeMap<&'a str, &'a CppConstant>,
     next_load_occurrence: u32,
     return_capture_name: String,
+    unwind_exception_name: String,
+    unwind_cleanups: bool,
 }
 
 impl LoweringContext<'_> {
@@ -348,6 +355,27 @@ impl LoweringContext<'_> {
                 self.lower_sequence(handler)?,
             )),
             CppStatement::Scope { body, cleanups, .. } => {
+                if self.unwind_cleanups && !cleanups.is_empty() {
+                    let Some((construction, live_body)) = body.split_first() else {
+                        return Err("C++ unwind scope has no construction statement".into());
+                    };
+                    if !matches!(construction, CppStatement::Declare { .. }) {
+                        return Err("C++ unwind scope must begin with guard construction".into());
+                    }
+                    let construction = self.lower_statement(construction)?;
+                    let live_body = self.lower_sequence(live_body)?;
+                    let binding = self.unwind_exception_name.clone();
+                    let mut handler = c_skip();
+                    for cleanup in cleanups {
+                        handler = c_seq(handler, self.lower_cleanup(cleanup)?);
+                    }
+                    handler = c_seq(handler, CStatement::Throw(c_variable(binding.clone())));
+                    let mut live_body = c_try_catch_int32(live_body, binding, handler);
+                    for cleanup in cleanups {
+                        live_body = c_seq(live_body, self.lower_cleanup(cleanup)?);
+                    }
+                    return Ok(c_seq(construction, live_body));
+                }
                 let mut result = self.lower_sequence(body)?;
                 for cleanup in cleanups {
                     result = c_seq(result, self.lower_cleanup(cleanup)?);
@@ -718,6 +746,10 @@ impl LoweringContext<'_> {
 }
 
 fn return_capture_name(function: &CppFunction) -> String {
+    fresh_internal_name(function, "__click_cpp_return_value")
+}
+
+fn fresh_internal_name(function: &CppFunction, base: &str) -> String {
     let mut declared_places = Vec::new();
     collect_declared_places(&function.body, &mut declared_places);
     let names = function
@@ -726,7 +758,6 @@ fn return_capture_name(function: &CppFunction) -> String {
         .chain(declared_places)
         .map(|place| place.name.as_str())
         .collect::<std::collections::BTreeSet<_>>();
-    let base = "__click_cpp_return_value";
     if !names.contains(base) {
         return base.to_string();
     }

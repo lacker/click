@@ -488,7 +488,11 @@ impl CppExport {
         if self.records.len() > 1 {
             return Err("the first C++ object slice supports exactly one record type".into());
         }
-        if (self.profile.exceptions || self.profile.rtti) && !self.records.is_empty() {
+        if (self.profile.rtti
+            || (self.profile.exceptions
+                && matches!(self.exception_behavior, CppExceptionBehavior::NormalOnly)))
+            && !self.records.is_empty()
+        {
             return Err(
                 "the exception- or RTTI-enabled C++ profile is limited to an object-free normal-only graph"
                     .into(),
@@ -768,7 +772,9 @@ impl CppFunction {
                 self.name
             ));
         }
-        if matches!(exception_behavior, CppExceptionBehavior::ScalarInt32) && self.declared_noexcept
+        if matches!(exception_behavior, CppExceptionBehavior::ScalarInt32)
+            && self.declared_noexcept
+            && matches!(self.function_kind, CppFunctionKind::Free)
         {
             return Err(format!(
                 "C++ function `{}` declares noexcept, whose termination behavior is outside the scalar int32 exception profile",
@@ -916,11 +922,24 @@ impl CppFunction {
         {
             return Err("throw expressions are outside the normal-only C++ profile".into());
         }
+        if matches!(exception_behavior, CppExceptionBehavior::ScalarInt32)
+            && !matches!(self.function_kind, CppFunctionKind::Free)
+        {
+            let mut calls = Vec::new();
+            collect_calls(&self.body, &mut calls);
+            if sequence_contains_throw(&self.body) || !calls.is_empty() {
+                return Err(format!(
+                    "noexcept C++ object operation `{}` may not throw or call another function in the scalar int32 exception profile",
+                    self.name
+                ));
+            }
+        }
         let mut aggregate_locals = 0;
         let mut destructible_locals = Vec::new();
         let mut nested_scopes = 0;
         let mut nested_scope_outer_cleanup_counts = Vec::new();
         let mut has_conditional_cleanup_scope = false;
+        let mut has_exception_cleanup_scope = false;
         for statement in &self.body {
             if let CppStatement::Declare {
                 local,
@@ -1008,7 +1027,7 @@ impl CppFunction {
                     || !destructible_locals.is_empty()
                 {
                     return Err(
-                        "int32 try/catch requires the object-free scalar exception profile".into(),
+                        "int32 try/catch requires the scalar exception profile without outer destructible locals".into(),
                     );
                 }
                 span.validate(logical_source)?;
@@ -1026,8 +1045,45 @@ impl CppFunction {
                         binding.name
                     ));
                 }
-                for member in try_body {
-                    member.validate(&places, records, logical_source)?;
+                if let [
+                    CppStatement::Scope {
+                        body,
+                        cleanups,
+                        span,
+                    },
+                ] = try_body.as_slice()
+                {
+                    if nested_scopes != 0 || has_exception_cleanup_scope {
+                        return Err(format!(
+                            "C++ function `{}` may unwind exactly one guard in a try region",
+                            self.name
+                        ));
+                    }
+                    if sequence_contains_return(body) {
+                        return Err(
+                            "the first C++ unwind slice does not support return from a guarded try region".into(),
+                        );
+                    }
+                    if !matches!(body.first(), Some(CppStatement::Declare { .. })) {
+                        return Err(
+                            "the first C++ unwind slice requires guard construction first in the try region".into(),
+                        );
+                    }
+                    validate_nested_scope(
+                        body,
+                        cleanups,
+                        span,
+                        &places,
+                        &[],
+                        records,
+                        logical_source,
+                        &self.name,
+                    )?;
+                    has_exception_cleanup_scope = true;
+                } else {
+                    for member in try_body {
+                        member.validate(&places, records, logical_source)?;
+                    }
                 }
                 let mut handler_places = places.clone();
                 handler_places.insert(
@@ -1160,6 +1216,12 @@ impl CppFunction {
         {
             return Err(format!(
                 "C++ function `{}` may combine cleanup lifetimes only as one outer destructible object followed by one inner cleanup scope",
+                self.name
+            ));
+        }
+        if has_exception_cleanup_scope && nested_scopes != 0 {
+            return Err(format!(
+                "C++ function `{}` may unwind exactly one guard in a try region",
                 self.name
             ));
         }

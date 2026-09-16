@@ -265,6 +265,8 @@ public:
   }
 
 private:
+  enum class CleanupScopeKind { None, Conditional, Try };
+
   using Json = llvm::json::Value;
 
   struct LoweredCall {
@@ -290,7 +292,8 @@ private:
            "the supported C++ function must have a prototype");
       return std::nullopt;
     }
-    if (exception_behavior_ == "scalar_int32" && prototype->isNothrow()) {
+    if (exception_behavior_ == "scalar_int32" && prototype->isNothrow() &&
+        constructor == nullptr && destructor == nullptr) {
       fail(declaration->getLocation(),
            "scalar int32 exception profile does not model noexcept termination");
       return std::nullopt;
@@ -737,10 +740,13 @@ private:
         return std::nullopt;
       }
       auto condition = lower_expression(conditional->getCond(), function);
+      auto branch_scope = allow_nested_scope
+                              ? CleanupScopeKind::Conditional
+                              : CleanupScopeKind::None;
       auto then_branch =
-          lower_branch(conditional->getThen(), function, allow_nested_scope);
+          lower_branch(conditional->getThen(), function, branch_scope);
       auto else_branch =
-          lower_branch(conditional->getElse(), function, allow_nested_scope);
+          lower_branch(conditional->getElse(), function, branch_scope);
       if (!condition || !then_branch || !else_branch) {
         return std::nullopt;
       }
@@ -793,12 +799,14 @@ private:
     auto binding_type = lower_type(
         binding->getType(), binding->getLocation(),
         direct_source_alias(binding->getTypeSourceInfo()));
-    auto try_body = lower_branch(statement->getTryBlock(), function, false);
+    auto try_body =
+        lower_branch(statement->getTryBlock(), function, CleanupScopeKind::Try);
     if (!binding_type || !try_body) {
       return std::nullopt;
     }
     active_catch_binding_ = binding;
-    auto handler = lower_branch(handler_block, function, false);
+    auto handler =
+        lower_branch(handler_block, function, CleanupScopeKind::None);
     active_catch_binding_ = nullptr;
     if (!handler) {
       return std::nullopt;
@@ -1294,7 +1302,7 @@ private:
   std::optional<llvm::json::Array>
   lower_branch(const clang::Stmt *statement,
                const clang::FunctionDecl *function,
-               bool allow_cleanup_scope) {
+               CleanupScopeKind cleanup_scope) {
     llvm::json::Array result;
     if (statement == nullptr) {
       return result;
@@ -1319,8 +1327,11 @@ private:
         has_direct_destructible_object |=
             destructor != nullptr && !destructor->isImplicit();
       }
-      if (allow_cleanup_scope && has_direct_destructible_object) {
-        auto lowered = lower_scope(compound, function, true);
+      if (cleanup_scope != CleanupScopeKind::None &&
+          has_direct_destructible_object) {
+        auto lowered = lower_scope(
+            compound, function,
+            cleanup_scope == CleanupScopeKind::Conditional);
         if (!lowered) {
           return std::nullopt;
         }
@@ -1670,7 +1681,8 @@ private:
       fail({}, "the supported C++ record type must be complete");
       return false;
     }
-    if (context_.getLangOpts().CXXExceptions) {
+    if (context_.getLangOpts().CXXExceptions &&
+        exception_behavior_ != "scalar_int32") {
       fail(definition->getLocation(),
            "the exception-enabled C++ profile is limited to an object-free "
            "normal-only graph");

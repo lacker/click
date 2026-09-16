@@ -155,11 +155,19 @@ that exception while normal scalar statements continue. One object-free
 `try` with exactly one named by-value `catch (int name)` is also supported.
 The handler binds the thrown payload and resumes from the thrown state, so a
 caller can catch a verified helper's exception without declaring `throws`.
+One narrow unwinding case is also supported: a `try` block may construct one
+destructible automatic guard first, then call a potentially throwing helper.
+Its public, non-virtual constructor and destructor must be explicitly
+`noexcept`; the destructor runs on both normal and exceptional exits before
+the handler observes state. The constructor's Click contract must establish
+any object invariant required by the destructor, including separation from
+referenced caller memory. The `cpp_one_guard_unwind` mdtest verifies both
+outcomes and rejects a missing separation postcondition.
 The importer still rejects nested handlers, catch-all or non-`int` handlers,
-local declarations inside either block, destructible automatic objects,
-`noexcept` functions (whose termination behavior is not modeled), and
-exceptional resource transfer;
-it is not C++ unwinding support or an exception-ABI proof. Clang's typed
+other local declarations inside either block, multiple or late guards, returns
+from a guarded `try`, `noexcept` free functions (whose termination behavior is
+not modeled), and broader exceptional resource transfer. This is not general
+C++ unwinding support or an exception-ABI proof. Clang's typed
 source semantics and the compiler/runtime implementation remain the trust
 boundary. The config, artifact, and lock keep
 it distinct from both the exception-disabled baseline and exception-enabled
