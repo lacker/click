@@ -4130,41 +4130,41 @@ fn validate_direct_forward_gotos(
     body: &C0Statement,
 ) -> Result<BTreeMap<String, (crate::kernel::CControlTargetId, usize)>, C0SyntaxError> {
     fn first_control_position(statement: &C0Statement) -> Option<Option<SourcePosition>> {
-        match statement {
-            C0Statement::Goto { position, .. } | C0Statement::Label { position, .. } => {
-                Some(position.clone())
-            }
-            C0Statement::Seq(first, second) => {
-                first_control_position(first).or_else(|| first_control_position(second))
-            }
-            C0Statement::If {
-                then_branch,
-                else_branch,
-                ..
-            } => {
-                first_control_position(then_branch).or_else(|| first_control_position(else_branch))
-            }
-            C0Statement::While { body, .. } | C0Statement::DoWhile { body, .. } => {
-                first_control_position(body)
-            }
-            C0Statement::For {
-                initializer,
-                step,
-                body,
-                ..
-            } => first_control_position(initializer)
-                .or_else(|| first_control_position(body))
-                .or_else(|| first_control_position(step)),
-            C0Statement::Switch { cases, .. } => {
-                for case in cases {
-                    if let Some(position) = first_control_position(case.body()) {
-                        return Some(position);
-                    }
+        let mut pending = vec![statement];
+        while let Some(statement) = pending.pop() {
+            match statement {
+                C0Statement::Goto { position, .. } | C0Statement::Label { position, .. } => {
+                    return Some(position.clone());
                 }
-                None
+                C0Statement::Seq(first, second)
+                | C0Statement::If {
+                    then_branch: first,
+                    else_branch: second,
+                    ..
+                } => {
+                    pending.push(second);
+                    pending.push(first);
+                }
+                C0Statement::While { body, .. } | C0Statement::DoWhile { body, .. } => {
+                    pending.push(body);
+                }
+                C0Statement::For {
+                    initializer,
+                    step,
+                    body,
+                    ..
+                } => {
+                    pending.push(step);
+                    pending.push(body);
+                    pending.push(initializer);
+                }
+                C0Statement::Switch { cases, .. } => {
+                    pending.extend(cases.iter().rev().map(|case| case.body()));
+                }
+                _ => {}
             }
-            _ => None,
         }
+        None
     }
 
     let Some(control_position) = first_control_position(body) else {
