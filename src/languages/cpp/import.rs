@@ -148,6 +148,8 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
         config.function.clone(),
         "--source".into(),
         source.to_string_lossy().into_owned(),
+        "--dependency-root".into(),
+        working_directory.to_string_lossy().into_owned(),
         "--compilation-database".into(),
         compilation_database.to_string_lossy().into_owned(),
         "--exception-behavior".into(),
@@ -343,6 +345,7 @@ fn decode_artifact(bytes: &[u8], config: &Config) -> Result<CppExport, String> {
         &config.function,
         config.exceptions,
         config.exception_behavior,
+        config.rtti,
         &config.dependencies,
     )?;
     Ok(export)
@@ -393,10 +396,9 @@ fn validate_config(config: &Config) -> Result<(), String> {
         || config.language != LANGUAGE
         || config.standard != STANDARD
         || config.target != TARGET
-        || config.rtti
     {
         return Err(format!(
-            "C++ import config must use schema {CONFIG_SCHEMA}, Clang {STANDARD} for {TARGET}, with RTTI disabled"
+            "C++ import config must use schema {CONFIG_SCHEMA}, Clang {STANDARD} for {TARGET}"
         ));
     }
     if matches!(config.exception_behavior, CppExceptionBehavior::ScalarInt32) && !config.exceptions

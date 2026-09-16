@@ -548,6 +548,63 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 }
 
 #[test]
+fn out_of_tree_compilation_locks_dependency_root_and_rtti_profile() {
+    let project = Project::constexpr_coin();
+    let build = project.directory.join("build");
+    fs::create_dir(&build).unwrap();
+    let mut arguments = project.exception_enabled_compilation_arguments();
+    for argument in &mut arguments {
+        if argument == "-fno-rtti" {
+            *argument = "-frtti".into();
+        } else if argument == &project.source_name {
+            *argument = project.source().to_string_lossy().into_owned();
+        }
+    }
+    arguments.insert(1, format!("-I{}", project.directory.display()));
+    let database = serde_json::json!([{
+        "directory": build,
+        "file": project.source(),
+        "arguments": arguments,
+        "output": "fixture.o"
+    }]);
+    fs::write(
+        build.join("compile_commands.json"),
+        serde_json::to_vec_pretty(&database).unwrap(),
+    )
+    .unwrap();
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(project.config()).unwrap()).unwrap();
+    config["compilation_database"] = "build/compile_commands.json".into();
+    config["rtti"] = true.into();
+    fs::write(
+        project.config(),
+        serde_json::to_vec_pretty(&config).unwrap(),
+    )
+    .unwrap();
+
+    refresh_import(&project.config()).expect("export with out-of-tree build directory");
+    let prepared = load_import(&project.config()).expect("offline import");
+    assert!(prepared.export().profile.exceptions);
+    assert!(prepared.export().profile.rtti);
+    assert_eq!(prepared.export().dependencies, ["cstdint"]);
+    assert_eq!(
+        prepared.export().profile.compilation_directory,
+        build.to_string_lossy()
+    );
+
+    fs::write(
+        project.directory.join("cstdint"),
+        "typedef long int64_t;\n// changed\n",
+    )
+    .unwrap();
+    assert!(
+        load_import(&project.config())
+            .unwrap_err()
+            .contains("dependency inventory differs")
+    );
+}
+
+#[test]
 fn compilation_database_command_is_selected_locked_and_validated() {
     let project = Project::new();
     refresh_import(&project.config()).expect("export through the selected compilation command");

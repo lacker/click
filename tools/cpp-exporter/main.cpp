@@ -47,6 +47,7 @@ struct Options {
   std::string logical_source_path;
   std::string function;
   std::string source;
+  std::string dependency_root;
   std::string compilation_database;
   std::string exception_behavior = "normal_only";
   std::string compilation_directory;
@@ -76,6 +77,8 @@ std::optional<Options> parse_options(int argc, const char **argv) {
       result.function = value;
     } else if (option == "--source") {
       result.source = value;
+    } else if (option == "--dependency-root") {
+      result.dependency_root = value;
     } else if (option == "--compilation-database") {
       result.compilation_database = value;
     } else if (option == "--exception-behavior") {
@@ -91,10 +94,11 @@ std::optional<Options> parse_options(int argc, const char **argv) {
   }
   if (result.logical_source.empty() || result.logical_source_path.empty() ||
       result.function.empty() || result.source.empty() ||
+      result.dependency_root.empty() ||
       result.compilation_database.empty()) {
     llvm::errs()
         << "error: --logical-source, --logical-source-path, --function, "
-           "--source, and --compilation-database are required\n";
+           "--source, --dependency-root, and --compilation-database are required\n";
     return std::nullopt;
   }
   return result;
@@ -105,6 +109,7 @@ public:
   SemanticExporter(clang::ASTContext &context, std::string logical_source,
                    std::string logical_source_path,
                    std::string selected_name,
+                   std::string dependency_root,
                    std::string compilation_directory,
                    std::string compilation_file,
                    std::vector<std::string> compilation_command,
@@ -114,6 +119,7 @@ public:
         logical_source_(std::move(logical_source)),
         logical_source_path_(std::move(logical_source_path)),
         selected_name_(std::move(selected_name)),
+        dependency_root_(std::move(dependency_root)),
         compilation_directory_(std::move(compilation_directory)),
         compilation_file_(std::move(compilation_file)),
         compilation_command_(std::move(compilation_command)),
@@ -2092,7 +2098,7 @@ private:
       return std::nullopt;
     }
     const std::filesystem::path root = std::filesystem::canonical(
-        std::filesystem::path(compilation_directory_), error);
+        std::filesystem::path(dependency_root_), error);
     if (error) {
       return std::nullopt;
     }
@@ -2152,6 +2158,7 @@ private:
   std::string logical_source_;
   std::string logical_source_path_;
   std::string selected_name_;
+  std::string dependency_root_;
   std::string compilation_directory_;
   std::string compilation_file_;
   std::vector<std::string> compilation_command_;
@@ -2182,7 +2189,7 @@ public:
   ExportConsumer(clang::ASTContext &context, const Options &options,
                  ExportState &state)
       : exporter_(context, options.logical_source, options.logical_source_path,
-                  options.function,
+                  options.function, options.dependency_root,
                   options.compilation_directory, options.compilation_file,
                   options.compilation_command, options.exception_behavior,
                   state) {}

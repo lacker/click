@@ -1,0 +1,19 @@
+{
+  "schema": 4,
+  "language": "c++",
+  "standard": "c++20",
+  "target": "x86_64-unknown-linux-gnu",
+  "exceptions": true,
+  "rtti": true,
+  "exporter": "../../target/cpp-exporter/click-cpp-exporter",
+  "compilation_database": "inputs/bitcoin-build/compile_commands.json",
+  "working_directory": "inputs",
+  "source": "bitcoin-src/src/policy/feerate.cpp",
+  "logical_source": "bitcoin-src/src/consensus/amount.h",
+  "dependencies": [
+    "sysroot/usr/include/x86_64-linux-gnu/bits/stdint-intn.h",
+    "sysroot/usr/include/x86_64-linux-gnu/bits/types.h"
+  ],
+  "function": "MoneyRange",
+  "artifact": "MoneyRange.click-cpp.json"
+}

@@ -84,13 +84,21 @@ Its baseline import configuration explicitly sets `"language": "c++"`, the
 standard to `c++20`, target to `x86_64-unknown-linux-gnu`, exceptions and RTTI to false,
 and paths for the pinned exporter, compilation database, working directory,
 `.cpp` translation unit, logical source, selected function, and semantic
-artifact. `click import lock` executes the repository-owned Clang 19.1.7
+artifact. These booleans may also be true for an object-free, normal-only
+reachable graph; the observed Clang profile must match the configuration.
+`click import lock` executes the repository-owned Clang 19.1.7
 LibTooling exporter with that entry and records the database bytes, exact parsed
 command and directory, source, explicitly declared dependency files, exporter,
 semantic profile, artifact, and configuration identities. Reachable declaration
 spans outside the logical source must name one of those relative dependencies;
 refresh snapshots each dependency before and after export, and offline loading
 rejects any later content change.
+The configured working directory is also the dependency root: it may contain
+the project source tree and a Linux sysroot while the selected CMake
+compilation command runs in a separate build directory. Dependencies retain
+paths relative to that root, not to the build directory. The Bitcoin Core
+`MoneyRange` integration in `integrations/bitcoin-core-money-range/` uses this
+arrangement on macOS.
 
 ```json
 {
@@ -128,6 +136,8 @@ reachable `throw`, `try`/`catch`, unresolved calls, and every record/object use
 are rejected locally. Because the artifact contains the complete supported
 direct-call closure and has no throwing operation, ordinary verification may
 check its normal behavior without inventing an exceptional proof outcome.
+An RTTI-enabled profile is similarly allowed only for the currently supported
+object-free graph; this does not add `typeid` or `dynamic_cast` semantics.
 
 The separate `"exception_behavior": "scalar_int32"` config requires
 `"exceptions": true`. Its locked artifact may contain a source `throw` of a

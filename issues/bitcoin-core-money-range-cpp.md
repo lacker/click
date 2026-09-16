@@ -140,6 +140,16 @@ distinct Clang signed-64 less-equal node and a false equality-boundary check.
 It also selects a synthetic `value >= 0 && value <= MAX_MONEY` function,
 retains Clang's built-in `bool && bool` node, and verifies the exact inclusive
 range contract offline with a false upper-boundary regression. This composes
-the required source-expression semantics, but does not yet verify upstream
-Bitcoin code. The next increment is the pinned upstream fixture and real
-toolchain dependency provenance.
+the required source-expression semantics.
+
+The opt-in `integrations/bitcoin-core-money-range/` path now imports the
+unchanged v31.1 `MoneyRange` through a real `feerate.cpp` CMake command and
+verifies its range contract offline on a macOS host targeting x86-64 Linux.
+The working-directory dependency root can contain both the upstream checkout
+and Linux sysroot independently of the CMake build directory, and the observed
+exception- and RTTI-enabled object-free profile is accepted. The release
+commit, header/TU hashes, and sysroot package hashes are documented there.
+This is not yet the full acceptance regression: full transitive header/build
+input provenance, the four modular boundary callers, false-contract and stale
+import checks against the upstream fixture, and expansion/profile/audit checks
+remain to land before this issue can close.

@@ -365,6 +365,7 @@ impl CppExport {
         function: &str,
         expected_exceptions: bool,
         expected_exception_behavior: CppExceptionBehavior,
+        expected_rtti: bool,
         expected_dependencies: &[String],
     ) -> Result<(), String> {
         if self.schema != EXPORT_SCHEMA {
@@ -378,10 +379,10 @@ impl CppExport {
             || self.profile.standard != STANDARD
             || self.profile.target != TARGET
             || self.profile.exceptions != expected_exceptions
-            || self.profile.rtti
+            || self.profile.rtti != expected_rtti
         {
             return Err(format!(
-                "C++ export profile must match the configured Clang {STANDARD} profile for {TARGET} with RTTI disabled"
+                "C++ export profile must match the configured Clang {STANDARD} profile for {TARGET}"
             ));
         }
         if self.exception_behavior != expected_exception_behavior
@@ -453,9 +454,9 @@ impl CppExport {
         if self.records.len() > 1 {
             return Err("the first C++ object slice supports exactly one record type".into());
         }
-        if self.profile.exceptions && !self.records.is_empty() {
+        if (self.profile.exceptions || self.profile.rtti) && !self.records.is_empty() {
             return Err(
-                "the exception-enabled C++ profile is limited to an object-free normal-only graph"
+                "the exception- or RTTI-enabled C++ profile is limited to an object-free normal-only graph"
                     .into(),
             );
         }
