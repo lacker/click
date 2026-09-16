@@ -1685,7 +1685,7 @@ pub(super) fn execute_c_function_call_paths(
             CCallSemantics::ExecuteBodies => {}
             CCallSemantics::ApplyVerifiedRules => {
                 let Some(rule) = environment.get_verified_function_rule(function.name()) else {
-                    let error = if function.opaque_contract_supported() {
+                    let error = if function.verified_direct_contract_supported() {
                         CRuntimeError::MissingVerifiedFunctionRule(function.name().to_string())
                     } else {
                         CRuntimeError::UnsupportedOpaqueFunctionContract(
@@ -2009,6 +2009,26 @@ fn execute_verified_function_applications(
         }]);
     }
     let application = applications[0];
+    if applications
+        .iter()
+        .any(|application| !application.interface.exceptional_signature().is_empty())
+        && (applications.len() != 1
+            || selected_contract.is_some()
+            || resource_application.is_some()
+            || application.evidence.is_none_or(|function| {
+                !function.verified_direct_contract_supported()
+                    || function.contract_interface() != application.interface
+            }))
+    {
+        return Ok(vec![CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(
+                CRuntimeError::UnsupportedOpaqueFunctionContract(application.name.to_string()),
+            ),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+            loan_evidence: empty_checked_loan_evidence_sequence(),
+        }]);
+    }
     // Every named instance the callee declares must be bound by the selected
     // application. The check is one map lookup per declared binder, so an
     // unbound binder is refused here rather than transported silently.
@@ -2067,6 +2087,8 @@ fn execute_verified_function_applications(
         KernelVariableGenerator::fresh_for(budget.next_kernel_variable, existing_variables);
     let memory_identity = variables.next();
     let result_identity = variables.next();
+    let exceptional_payload_identity =
+        (!application.interface.exceptional_signature().is_empty()).then(|| variables.next());
     budget.next_kernel_variable = variables.next;
     let mut paths = Vec::new();
     'arguments: for arguments_path in evaluate_c_arguments_paths(
@@ -2198,6 +2220,24 @@ fn execute_verified_function_applications(
             });
             continue;
         }
+        let exceptional_path = if let Some(payload_identity) = exceptional_payload_identity {
+            Some(exceptional_verified_function_path(
+                caller_state,
+                interface,
+                evidence.expect("exceptional applications require direct body evidence"),
+                &argument_values,
+                &entry_state,
+                &entry_contract_state,
+                &transfer,
+                facts.clone(),
+                obligations.clone(),
+                &effective_assumptions,
+                payload_identity,
+                budget,
+            )?)
+        } else {
+            None
+        };
         let memory = if transfer.memory_effects.is_empty() {
             entry_state.memory.clone()
         } else {
@@ -2670,9 +2710,76 @@ fn execute_verified_function_applications(
                 })
                 .unwrap_or_else(empty_checked_loan_evidence_sequence),
         });
+        if let Some(exceptional_path) = exceptional_path {
+            paths.push(exceptional_path);
+        }
     }
     budget.check_path_width(paths.len())?;
     Ok(paths)
+}
+
+/// Builds the exceptional successor of the first body-certified modular-call
+/// slice. Entry checking and the unchanged post-memory are shared with the
+/// normal application, but the payload and certified facts are specific to
+/// this outcome. Keeping this path separate is what prevents ordinary
+/// `ensures` from becoming exceptional facts (and vice versa).
+fn exceptional_verified_function_path(
+    caller_state: &CState,
+    interface: &CFunctionContractInterface,
+    evidence: &CFunction,
+    argument_values: &[CValue],
+    entry_state: &CState,
+    entry_contract_state: &CState,
+    transfer: &CFunctionResourceTransfer,
+    mut facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    effective_assumptions: &PureFactContext,
+    payload_identity: Variable,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<CFunctionPath> {
+    debug_assert!(interface.verified_direct_contract_supported());
+    debug_assert!(interface.resource_requires().is_empty());
+    debug_assert!(interface.resource_ensures().is_empty());
+    debug_assert!(interface.resource_constructors().is_empty());
+    debug_assert!(transfer.memory_effects.is_empty());
+
+    let memory = entry_state.memory.clone();
+
+    let payload = symbolic_call_result(CType::Int32, payload_identity);
+    let mut post_state = entry_state.clone().with_memory(memory.clone());
+    post_state.locals.set_typed(
+        C_EXCEPTIONAL_RESULT_NAME.to_string(),
+        payload.clone(),
+        CType::Int32,
+    );
+    let post_contract_state =
+        with_contract_interface_argument_views(&post_state, interface, argument_values);
+    add_verified_function_ensure_facts_selected_with_interface(
+        &mut facts,
+        &obligations,
+        &post_contract_state,
+        entry_contract_state,
+        interface,
+        interface.exceptional_ensures().iter(),
+        effective_assumptions,
+        budget,
+    )?;
+
+    let mut throw_state = caller_state.clone();
+    throw_state.set_memory(memory);
+    throw_state.next_local_frame = post_state.next_local_frame;
+    throw_state.next_local_lifetime = post_state.next_local_lifetime;
+    let outcome = CFunctionOutcome::Throw {
+        value: payload,
+        state: throw_state,
+    };
+    append_string_literal_loadable_facts(evidence, &outcome, &mut facts);
+    Ok(CFunctionPath {
+        outcome,
+        facts,
+        obligations,
+        loan_evidence: empty_checked_loan_evidence_sequence(),
+    })
 }
 
 struct PreparedVerifiedFunctionCall<'a> {

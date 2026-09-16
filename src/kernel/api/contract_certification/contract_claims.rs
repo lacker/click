@@ -2174,7 +2174,7 @@ pub fn c_verified_function_rule(
     proofs: &[CVerifiedFunctionContractClaim],
 ) -> Option<CVerifiedFunctionRule> {
     if function.is_program_entry()
-        || !function.opaque_contract_supported()
+        || !function.verified_direct_contract_supported()
         || function.contract_claims().is_empty()
         || !function_contract_claims_are_complete(&function)
         || proofs.iter().any(|proof| proof.function != function)

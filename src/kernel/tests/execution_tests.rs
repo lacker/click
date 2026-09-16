@@ -911,7 +911,7 @@ fn direct_call_propagates_internal_throw_and_skips_its_suffix() {
 }
 
 #[test]
-fn internal_throw_is_int32_only_and_refused_as_an_opaque_contract() {
+fn internal_throw_is_int32_only_and_requires_a_verified_direct_rule() {
     let throwing = c_function(
         CType::Int32,
         "throwing",
@@ -920,6 +920,7 @@ fn internal_throw_is_int32_only_and_refused_as_an_opaque_contract() {
     )
     .with_int32_exceptional_outcome();
     assert!(!throwing.opaque_contract_supported());
+    assert!(throwing.verified_direct_contract_supported());
     assert!(CFunctionContract::new("Throwing", throwing.clone()).is_none());
 
     let declared_without_throw = c_function(
@@ -930,6 +931,7 @@ fn internal_throw_is_int32_only_and_refused_as_an_opaque_contract() {
     )
     .with_int32_exceptional_outcome();
     assert!(!declared_without_throw.opaque_contract_supported());
+    assert!(declared_without_throw.verified_direct_contract_supported());
     assert!(CFunctionContract::new("DeclaredWithoutThrow", declared_without_throw).is_none());
 
     let modular = prove_symbolic_c_execution_with_environment(
@@ -944,9 +946,7 @@ fn internal_throw_is_int32_only_and_refused_as_an_opaque_contract() {
         matches!(
             modular.proposition(),
             Proposition::CStatementVerifies {
-                outcome: CStatementOutcome::RuntimeError(
-                    CRuntimeError::UnsupportedOpaqueFunctionContract(name)
-                ),
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingVerifiedFunctionRule(name)),
                 ..
             } if name == "throwing"
         ),

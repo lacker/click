@@ -798,6 +798,30 @@ impl CFunctionContractInterface {
         self.opaque_contract_supported && self.exceptional_signature.is_empty()
     }
 
+    /// Whether this interface is representable by a body-certified direct
+    /// call rule. The first exceptional slice deliberately remains narrower
+    /// than ordinary opaque contracts: only the checked scalar channel and
+    /// pure clauses cross the boundary. Resource and mutable-effect transfer,
+    /// named contracts, external assumptions, and indirect application stay
+    /// on the normal-only `opaque_contract_supported` path.
+    pub(crate) fn verified_direct_contract_supported(&self) -> bool {
+        if self.exceptional_signature.is_empty() {
+            return self.opaque_contract_supported();
+        }
+        self.opaque_contract_supported
+            && self.exceptional_signature == CExceptionalSignature::Int32
+            && self.proof_parameters.is_empty()
+            && self.resource_requires.is_empty()
+            && self.resource_ensures.is_empty()
+            && self.resource_constructors.is_empty()
+            && self.contract_mutable.is_empty()
+            && !self.contract_effect_claim_required
+            && !self.resource_derived_mutable_frame
+            && !self.resource_derived_frame_mixed
+            && self.composite_resource_definitions.is_empty()
+            && self.predicate_unfoldings.is_empty()
+    }
+
     pub fn composite_resource_definitions(&self) -> &[CCompositeResourceDefinition] {
         &self.composite_resource_definitions
     }
@@ -1266,6 +1290,14 @@ impl CFunction {
     pub fn opaque_contract_supported(&self) -> bool {
         self.contract_interface.opaque_contract_supported()
             && !statement_contains_internal_throw(&self.body)
+    }
+
+    pub(crate) fn verified_direct_contract_supported(&self) -> bool {
+        self.contract_interface.verified_direct_contract_supported()
+            && (self.exceptional_signature().is_empty()
+                || self.exceptional_signature() == CExceptionalSignature::Int32)
+            && (!self.has_internal_exceptional_outcome()
+                || !self.exceptional_signature().is_empty())
     }
 
     pub(crate) fn has_internal_exceptional_outcome(&self) -> bool {

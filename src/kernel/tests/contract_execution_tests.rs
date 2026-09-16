@@ -1830,7 +1830,231 @@ fn declared_exceptional_path_certifies_its_payload_postcondition() {
     let proofs = c_verified_function_contract_claims(&function, &execution)
         .expect("the payload postcondition should certify");
     assert_eq!(proofs.len(), 3);
-    assert!(c_verified_function_rule(function, &proofs).is_none());
+    assert!(c_verified_function_rule(function, &proofs).is_some());
+}
+
+#[test]
+fn verified_exceptional_rule_produces_isolated_outcome_paths() {
+    let normal_ensure = SpecProposition::Comparison {
+        left: SpecExpression::CExpression(c_variable("result")),
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::Value(int32(5)),
+    };
+    let exceptional_ensure = SpecProposition::Comparison {
+        left: SpecExpression::CExpression(c_variable(C_EXCEPTIONAL_RESULT_NAME)),
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::Value(int32(7)),
+    };
+    let function = c_function(
+        CType::Int32,
+        "modular_maybe_throw",
+        vec![c_parameter("flag", CType::Int32)],
+        c_if(
+            c_equal(c_variable("flag"), c_int32_literal(0)),
+            c_return(c_int32_literal(5)),
+            CStatement::Throw(c_int32_literal(7)),
+        ),
+    )
+    .with_int32_exceptional_outcome()
+    .with_exceptional_ensures(vec![exceptional_ensure])
+    .with_contract(
+        Vec::new(),
+        vec![normal_ensure],
+        Vec::new(),
+        vec![
+            CFunctionContractClaim::body_safety(),
+            CFunctionContractClaim::ensure_proposition(0, 0),
+            CFunctionContractClaim::exceptional_ensure_proposition(0, 0),
+        ],
+        true,
+    );
+    let execution = certify_contract_with_kernel_artifacts(
+        CState::new(),
+        function.clone(),
+        vec![CExpression::Value(CValue::Int32(
+            Bitvector32Term::Variable(Variable(700_001)),
+        ))],
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+    let proofs = c_verified_function_contract_claims(&function, &execution)
+        .expect("both outcome families should certify");
+    let rule = c_verified_function_rule(function.clone(), &proofs)
+        .expect("a certified exceptional direct rule should form");
+    let environment = CExecutionEnvironment::new()
+        .with_function(function)
+        .with_verified_function_rule(rule);
+    let statement = c_seq(
+        c_call_assign(
+            "call_result",
+            "modular_maybe_throw",
+            vec![c_int32_literal(0)],
+        ),
+        c_seq(
+            c_assign("after", c_int32_literal(1)),
+            c_return(c_variable("call_result")),
+        ),
+    );
+    let modular = prove_symbolic_c_execution_paths_with_environment(
+        CState::new().with_local("after", int32(0)),
+        statement,
+        PureFactContext::new(),
+        environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+
+    assert_eq!(modular.paths().len(), 2);
+    let mut saw_return = false;
+    let mut saw_throw = false;
+    for path in modular.paths() {
+        let mut proposition = path.theorem().proposition();
+        while let Proposition::Implies(_, body) = proposition {
+            proposition = body;
+        }
+        let assumptions = assumptions_with_propositions(
+            &PureFactContext::new(),
+            &path
+                .facts()
+                .iter()
+                .map(|fact| fact.proposition().clone())
+                .collect::<Vec<_>>(),
+        );
+        match proposition {
+            Proposition::CStatementVerifies {
+                outcome: CStatementOutcome::Return { value, state },
+                ..
+            } => {
+                saw_return = true;
+                assert_eq!(state.locals().get("after"), Some(&int32(1)));
+                let CValue::Int32(value) = value else {
+                    panic!("normal result should be int32")
+                };
+                assert!(assumptions.proves(&Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(
+                        Box::new(value.clone()),
+                        Box::new(Bitvector32Term::Constant(5)),
+                    ),
+                    true,
+                )));
+                assert!(!assumptions.proves(&Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(
+                        Box::new(value.clone()),
+                        Box::new(Bitvector32Term::Constant(7)),
+                    ),
+                    true,
+                )));
+            }
+            Proposition::CStatementVerifies {
+                outcome: CStatementOutcome::Throw { value, state },
+                ..
+            } => {
+                saw_throw = true;
+                assert_eq!(state.locals().get("after"), Some(&int32(0)));
+                assert!(state.locals().get("call_result").is_none());
+                let CValue::Int32(value) = value else {
+                    panic!("exceptional payload should be int32")
+                };
+                assert!(assumptions.proves(&Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(
+                        Box::new(value.clone()),
+                        Box::new(Bitvector32Term::Constant(7)),
+                    ),
+                    true,
+                )));
+                assert!(!assumptions.proves(&Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(
+                        Box::new(value.clone()),
+                        Box::new(Bitvector32Term::Constant(5)),
+                    ),
+                    true,
+                )));
+            }
+            other => panic!("unexpected modular outcome: {other:?}"),
+        }
+    }
+    assert!(saw_return && saw_throw);
+}
+
+#[test]
+fn declared_exceptional_channel_does_not_vanish_without_an_exceptional_ensure() {
+    let function = c_function(
+        CType::Int32,
+        "unconstrained_exceptional_channel",
+        Vec::new(),
+        c_return(c_int32_literal(0)),
+    )
+    .with_int32_exceptional_outcome()
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+    let certification = certify_contract_with_kernel_artifacts(
+        CState::new(),
+        function.clone(),
+        Vec::new(),
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+    let proofs = c_verified_function_contract_claims(&function, &certification)
+        .expect("the declared channel needs no invented exceptional guarantee");
+    let rule = c_verified_function_rule(function.clone(), &proofs)
+        .expect("the body-certified direct rule should form");
+    let modular = prove_symbolic_c_execution_paths_with_environment(
+        CState::new(),
+        c_call("unconstrained_exceptional_channel", Vec::new()),
+        PureFactContext::new(),
+        CExecutionEnvironment::new()
+            .with_function(function)
+            .with_verified_function_rule(rule),
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+
+    assert_eq!(modular.paths().len(), 2);
+    assert!(modular.paths().iter().any(|path| {
+        let mut proposition = path.theorem().proposition();
+        while let Proposition::Implies(_, body) = proposition {
+            proposition = body;
+        }
+        matches!(
+            proposition,
+            Proposition::CStatementVerifies {
+                outcome: CStatementOutcome::Throw { .. },
+                ..
+            }
+        )
+    }));
+}
+
+#[test]
+fn exceptional_direct_rule_boundary_excludes_mutable_effects() {
+    let function = c_function(
+        CType::Int32,
+        "effectful_throw",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        CStatement::Throw(c_int32_literal(7)),
+    )
+    .with_int32_exceptional_outcome()
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        vec![CMemorySegment::new(
+            c_variable("p"),
+            c_int32_literal(0),
+            c_int32_literal(1),
+        )],
+        vec![CFunctionContractClaim::effect(0)],
+        true,
+    );
+
+    assert!(!function.verified_direct_contract_supported());
+    assert!(CFunctionContract::new("EffectfulThrow", function).is_none());
 }
 
 #[test]
@@ -1938,6 +2162,43 @@ fn false_or_missing_exceptional_postconditions_do_not_certify() {
             .expect("the omitted exceptional claim should be diagnosed"),
         vec![CFunctionContractClaimKey::ExceptionalEnsure(0)],
     );
+    let body_safety = c_verified_function_contract_claim(
+        &without_claim,
+        CFunctionContractClaimKey::BodySafety,
+        &missing_execution,
+    )
+    .expect("the safe body remains independently certified");
+    assert!(c_verified_function_rule(without_claim, &[body_safety]).is_none());
+}
+
+#[test]
+fn exceptional_direct_rule_boundary_excludes_resource_transitions() {
+    let function = c_function(
+        CType::Int32,
+        "resourceful_throw",
+        Vec::new(),
+        CStatement::Throw(c_int32_literal(7)),
+    )
+    .with_int32_exceptional_outcome()
+    .with_resource_summary(
+        vec![CResourceSpec::token(
+            CResourceAccessMode::View,
+            "borrowed".into(),
+            vec![],
+            vec![],
+        )],
+        Vec::new(),
+    )
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+
+    assert!(!function.verified_direct_contract_supported());
+    assert!(CFunctionContract::new("ResourcefulThrow", function).is_none());
 }
 
 #[test]
