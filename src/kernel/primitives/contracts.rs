@@ -698,6 +698,7 @@ impl CFunctionContractInterface {
             contract_requires: Vec::new(),
             contract_requirement_sources: ContractRequirementSources::default(),
             contract_ensures: Vec::new(),
+            exceptional_ensures: Vec::new(),
             contract_mutable: Vec::new(),
             contract_effect_claim_required: false,
             resource_derived_mutable_frame: false,
@@ -769,6 +770,10 @@ impl CFunctionContractInterface {
         &self.contract_ensures
     }
 
+    pub(crate) fn exceptional_ensures(&self) -> &[SpecProposition] {
+        &self.exceptional_ensures
+    }
+
     pub fn contract_mutable(&self) -> &[CMemorySegment] {
         &self.contract_mutable
     }
@@ -830,6 +835,7 @@ impl CFunctionContractInterface {
             && self.resource_constructors == other.resource_constructors
             && self.contract_requires == other.contract_requires
             && self.contract_ensures == other.contract_ensures
+            && self.exceptional_ensures == other.exceptional_ensures
             && self.contract_mutable == other.contract_mutable
             && self.contract_effect_claim_required == other.contract_effect_claim_required
             && self.resource_derived_mutable_frame == other.resource_derived_mutable_frame
@@ -1023,6 +1029,15 @@ impl CFunction {
     #[allow(dead_code)]
     pub(crate) fn with_int32_exceptional_outcome(mut self) -> Self {
         self.contract_interface.exceptional_signature = CExceptionalSignature::Int32;
+        self
+    }
+
+    /// Internal staging hook for the exceptional postcondition family. The
+    /// payload is available to these propositions through the kernel's
+    /// exceptional-result binding.
+    #[allow(dead_code)]
+    pub(crate) fn with_exceptional_ensures(mut self, ensures: Vec<SpecProposition>) -> Self {
+        self.contract_interface.exceptional_ensures = ensures;
         self
     }
 
@@ -1226,6 +1241,10 @@ impl CFunction {
 
     pub fn contract_ensures(&self) -> &[SpecProposition] {
         self.contract_interface.contract_ensures()
+    }
+
+    pub(crate) fn exceptional_ensures(&self) -> &[SpecProposition] {
+        self.contract_interface.exceptional_ensures()
     }
 
     pub fn contract_mutable(&self) -> &[CMemorySegment] {
@@ -1440,6 +1459,17 @@ impl CFunctionContractClaim {
         Self {
             key: CFunctionContractClaimKey::Ensure(source_index),
             target: CFunctionContractClaimTarget::EnsureResource(resource_index),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn exceptional_ensure_proposition(
+        source_index: usize,
+        contract_index: usize,
+    ) -> Self {
+        Self {
+            key: CFunctionContractClaimKey::ExceptionalEnsure(source_index),
+            target: CFunctionContractClaimTarget::ExceptionalEnsureProposition(contract_index),
         }
     }
 

@@ -1782,6 +1782,224 @@ fn verified_function_rule_rejects_unclaimed_contract_obligations() {
 }
 
 #[test]
+fn declared_exceptional_path_certifies_its_payload_postcondition() {
+    let normal_false = SpecProposition::Comparison {
+        left: SpecExpression::Value(int32(0)),
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::Value(int32(1)),
+    };
+    let exceptional_payload = SpecProposition::Comparison {
+        left: SpecExpression::CExpression(c_variable(C_EXCEPTIONAL_RESULT_NAME)),
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::Value(int32(7)),
+    };
+    let function = c_function(
+        CType::Int32,
+        "certified_throw",
+        Vec::new(),
+        CStatement::Throw(c_int32_literal(7)),
+    )
+    .with_int32_exceptional_outcome()
+    .with_exceptional_ensures(vec![exceptional_payload])
+    .with_contract(
+        Vec::new(),
+        vec![normal_false],
+        Vec::new(),
+        vec![
+            CFunctionContractClaim::body_safety(),
+            CFunctionContractClaim::ensure_proposition(0, 0),
+            CFunctionContractClaim::exceptional_ensure_proposition(0, 0),
+        ],
+        true,
+    );
+    let execution = certify_contract_with_kernel_artifacts(
+        CState::new(),
+        function.clone(),
+        Vec::new(),
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+
+    assert_eq!(
+        c_unverified_function_contract_claims(&function, &execution)
+            .expect("a declared exceptional path is a safe certification path"),
+        Vec::<CFunctionContractClaimKey>::new(),
+    );
+    let proofs = c_verified_function_contract_claims(&function, &execution)
+        .expect("the payload postcondition should certify");
+    assert_eq!(proofs.len(), 3);
+    assert!(c_verified_function_rule(function, &proofs).is_none());
+}
+
+#[test]
+fn exceptional_postconditions_apply_only_to_throw_outcomes() {
+    let exceptional_false = SpecProposition::Comparison {
+        left: SpecExpression::Value(int32(0)),
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::Value(int32(1)),
+    };
+    let function = c_function(
+        CType::Int32,
+        "ordinary_return_with_exceptional_family",
+        Vec::new(),
+        c_return(c_int32_literal(4)),
+    )
+    .with_int32_exceptional_outcome()
+    .with_exceptional_ensures(vec![exceptional_false])
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![CFunctionContractClaim::exceptional_ensure_proposition(0, 0)],
+        true,
+    );
+    let execution = certify_contract_with_kernel_artifacts(
+        CState::new(),
+        function.clone(),
+        Vec::new(),
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+
+    assert_eq!(
+        c_unverified_function_contract_claims(&function, &execution)
+            .expect("the complete return path should remain checkable"),
+        Vec::<CFunctionContractClaimKey>::new(),
+    );
+}
+
+#[test]
+fn false_or_missing_exceptional_postconditions_do_not_certify() {
+    let wrong_payload = SpecProposition::Comparison {
+        left: SpecExpression::CExpression(c_variable(C_EXCEPTIONAL_RESULT_NAME)),
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::Value(int32(8)),
+    };
+    let with_false_claim = c_function(
+        CType::Int32,
+        "wrong_exceptional_payload",
+        Vec::new(),
+        CStatement::Throw(c_int32_literal(7)),
+    )
+    .with_int32_exceptional_outcome()
+    .with_exceptional_ensures(vec![wrong_payload.clone()])
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![CFunctionContractClaim::exceptional_ensure_proposition(0, 0)],
+        true,
+    );
+    let false_execution = certify_contract_with_kernel_artifacts(
+        CState::new(),
+        with_false_claim.clone(),
+        Vec::new(),
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+    assert_eq!(
+        c_unverified_function_contract_claims(&with_false_claim, &false_execution)
+            .expect("the false exceptional claim should be diagnosed"),
+        vec![CFunctionContractClaimKey::ExceptionalEnsure(0)],
+    );
+
+    let without_claim = c_function(
+        CType::Int32,
+        "missing_exceptional_claim",
+        Vec::new(),
+        CStatement::Throw(c_int32_literal(7)),
+    )
+    .with_int32_exceptional_outcome()
+    .with_exceptional_ensures(vec![wrong_payload])
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+    let missing_execution = certify_contract_with_kernel_artifacts(
+        CState::new(),
+        without_claim.clone(),
+        Vec::new(),
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+    assert_eq!(
+        c_unverified_function_contract_claims(&without_claim, &missing_execution)
+            .expect("the omitted exceptional claim should be diagnosed"),
+        vec![CFunctionContractClaimKey::ExceptionalEnsure(0)],
+    );
+}
+
+#[test]
+fn exceptional_postconditions_observe_the_throw_state() {
+    let pointer = Pointer {
+        block: "exceptional-output".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let p = SpecExpression::CExpression(c_variable("p"));
+    let loadable = SpecProposition::MemoryLoadable {
+        memory: SpecMemory::Current,
+        base: p.clone(),
+        start: SpecExpression::Value(int32(0)),
+        end: SpecExpression::Value(int32(1)),
+        element_width: 4,
+    };
+    let claims_ten = SpecProposition::Comparison {
+        left: SpecExpression::MemoryLoad {
+            memory: SpecMemory::Current,
+            pointer: Box::new(p),
+            value_type: CType::Int32,
+        },
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::Value(int32(10)),
+    };
+    let function = c_function(
+        CType::Int32,
+        "wrong_exceptional_state",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        CStatement::Throw(c_int32_literal(7)),
+    )
+    .with_int32_exceptional_outcome()
+    .with_exceptional_ensures(vec![claims_ten])
+    .with_contract(
+        vec![loadable],
+        Vec::new(),
+        Vec::new(),
+        vec![CFunctionContractClaim::exceptional_ensure_proposition(0, 0)],
+        true,
+    );
+    let execution = certify_contract_with_kernel_artifacts(
+        CState::new().with_memory(
+            CMemory::new()
+                .with_block(pointer.block.clone(), 4)
+                .store(pointer.clone(), int32(9)),
+        ),
+        function.clone(),
+        vec![c_pointer_value(pointer)],
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+
+    assert_eq!(
+        c_unverified_function_contract_claims(&function, &execution)
+            .expect("the exceptional exit state should be available to claims"),
+        vec![CFunctionContractClaimKey::ExceptionalEnsure(0)],
+    );
+}
+
+#[test]
 fn contract_certification_does_not_accept_injected_opaque_predicate_facts() {
     let predicate = SpecProposition::Predicate {
         name: "positive".to_string(),

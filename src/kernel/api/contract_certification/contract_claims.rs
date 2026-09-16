@@ -613,7 +613,7 @@ struct CertifiedFunctionClaimPath {
     caller_state: CState,
     arguments: Vec<CExpression>,
     outcome: CFunctionOutcome,
-    return_state: Option<CState>,
+    exit_state: Option<CState>,
     entry_state: CState,
     required_resources: ResourceContext,
     checked_required_resources: Vec<crate::kernel::functions::CCheckedResourceFact>,
@@ -919,7 +919,7 @@ fn prepare_function_claim_path(
             caller_state: caller_state.clone(),
             arguments: arguments.to_vec(),
             outcome: outcome.clone(),
-            return_state: None,
+            exit_state: None,
             entry_state,
             required_resources,
             checked_required_resources,
@@ -930,33 +930,49 @@ fn prepare_function_claim_path(
             effect_facts,
         });
     }
-    let CFunctionOutcome::Return {
-        value,
-        state: return_state,
-    } = outcome
-    else {
-        return Err(format!("the certified path is not safe: {outcome:?}"));
+    let (value, raw_exit_state, exceptional) = match outcome {
+        CFunctionOutcome::Return { value, state } => (value, state, false),
+        CFunctionOutcome::Throw { value, state }
+            if function.exceptional_signature().permits(value) =>
+        {
+            (value, state, true)
+        }
+        _ => return Err(format!("the certified path is not safe: {outcome:?}")),
     };
-    let exit_memory =
-        crate::kernel::functions::function_exit_memory(caller_state, return_state, value, function);
-    let mut claim_return_state = return_state.clone();
-    claim_return_state.set_memory(exit_memory.clone());
+    let exit_memory = if exceptional {
+        raw_exit_state.memory().clone()
+    } else {
+        crate::kernel::functions::function_exit_memory(
+            caller_state,
+            raw_exit_state,
+            value,
+            function,
+        )
+    };
+    let mut claim_exit_state = raw_exit_state.clone();
+    claim_exit_state.set_memory(exit_memory.clone());
     let Some(post_resources) = expand_all_composite_resource_facts(
-        claim_return_state.resources(),
+        claim_exit_state.resources(),
         function.composite_resource_definitions(),
-        claim_return_state.memory(),
+        claim_exit_state.memory(),
         &assumptions,
     ) else {
-        return Err("the returned resource context cannot be expanded".to_string());
+        return Err("the exit resource context cannot be expanded".to_string());
     };
     let Ok(post_resource_facts) = post_resources.observable_facts(&assumptions) else {
-        return Err("the returned resource context is not observable".to_string());
+        return Err("the exit resource context is not observable".to_string());
     };
     let mut assumptions = assumptions_with_propositions(&assumptions, &post_resource_facts);
     let mut post_state = entry_state.clone().with_memory(exit_memory);
     post_state = post_state.with_resource_context(post_resources.clone());
-    post_state.counted_populations = return_state.counted_populations.clone();
-    if function.return_type() != CType::Void {
+    post_state.counted_populations = raw_exit_state.counted_populations.clone();
+    if exceptional {
+        post_state.locals.set_typed(
+            C_EXCEPTIONAL_RESULT_NAME.to_string(),
+            value.clone(),
+            CType::Int32,
+        );
+    } else if function.return_type() != CType::Void {
         post_state
             .locals
             .set_typed("result".to_string(), value.clone(), function.return_type());
@@ -1024,7 +1040,7 @@ fn prepare_function_claim_path(
         caller_state: caller_state.clone(),
         arguments: arguments.to_vec(),
         outcome: outcome.clone(),
-        return_state: Some(claim_return_state),
+        exit_state: Some(claim_exit_state),
         entry_state,
         required_resources,
         checked_required_resources,
@@ -1047,7 +1063,7 @@ fn function_claim_holds_on_prepared_path(
         caller_state,
         arguments,
         outcome,
-        return_state,
+        exit_state,
         entry_state,
         required_resources,
         checked_required_resources,
@@ -1060,11 +1076,27 @@ fn function_claim_holds_on_prepared_path(
     let mut budget = ExecutionBudget::default();
     match claim.target() {
         CFunctionContractClaimTarget::BodySafety => true,
-        CFunctionContractClaimTarget::EnsureProposition(index) => {
+        CFunctionContractClaimTarget::EnsureProposition(_index)
+        | CFunctionContractClaimTarget::ExceptionalEnsureProposition(_index) => {
             let (Some(post_state), Some(post_resources)) = (post_state, post_resources) else {
                 return true;
             };
-            let Some(ensure) = function.contract_ensures().get(*index) else {
+            let ensure = match (claim.target(), outcome) {
+                (
+                    CFunctionContractClaimTarget::EnsureProposition(index),
+                    CFunctionOutcome::Return { .. },
+                ) => function.contract_ensures().get(*index),
+                (
+                    CFunctionContractClaimTarget::ExceptionalEnsureProposition(index),
+                    CFunctionOutcome::Throw { .. },
+                ) => function.exceptional_ensures().get(*index),
+                (CFunctionContractClaimTarget::EnsureProposition(_), _)
+                | (CFunctionContractClaimTarget::ExceptionalEnsureProposition(_), _) => {
+                    return true;
+                }
+                _ => unreachable!("the enclosing match selects a proposition claim"),
+            };
+            let Some(ensure) = ensure else {
                 return false;
             };
             // A surface predicate ensure is stored operationally as its
@@ -1294,7 +1326,10 @@ fn function_claim_holds_on_prepared_path(
             obligations_hold && proposition_holds
         }
         CFunctionContractClaimTarget::EnsureResource(index) => {
-            let (Some(return_state), Some(post_state)) = (return_state, post_state) else {
+            if !matches!(outcome, CFunctionOutcome::Return { .. }) {
+                return true;
+            }
+            let (Some(exit_state), Some(post_state)) = (exit_state, post_state) else {
                 return true;
             };
             if *index >= function.resource_ensures().len() {
@@ -1321,10 +1356,10 @@ fn function_claim_holds_on_prepared_path(
             };
             expected.facts().iter().all(|fact| {
                 resource_context_satisfies_definitional_fact(
-                    return_state.resources(),
+                    exit_state.resources(),
                     fact,
                     function.composite_resource_definitions(),
-                    return_state.memory(),
+                    exit_state.memory(),
                     assumptions,
                 )
             })
@@ -1500,14 +1535,14 @@ fn function_claim_holds_on_prepared_path(
                 }
                 _ => true,
             });
-            let endpoint_matches = return_state.as_ref().is_none_or(|return_state| {
+            let endpoint_matches = exit_state.as_ref().is_none_or(|exit_state| {
                 c_effect_memories_definitionally_equal(
                     &effect_memory,
-                    return_state.memory(),
+                    exit_state.memory(),
                     assumptions,
                 ) || c_effect_memory_advances_over_internal_heap_state(
                     &effect_memory,
-                    return_state.memory(),
+                    exit_state.memory(),
                     entry_state.memory(),
                     assumptions,
                 )
@@ -1917,6 +1952,9 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
             let operation_name = match claim.target() {
                 CFunctionContractClaimTarget::BodySafety => "contract claim: body safety",
                 CFunctionContractClaimTarget::EnsureProposition(_) => "contract claim: proposition",
+                CFunctionContractClaimTarget::ExceptionalEnsureProposition(_) => {
+                    "contract claim: exceptional proposition"
+                }
                 CFunctionContractClaimTarget::EnsureResource(_) => "contract claim: resource",
                 CFunctionContractClaimTarget::Effect => "contract claim: effect",
             };
@@ -2224,6 +2262,14 @@ fn function_contract_claims_are_complete(function: &CFunction) -> bool {
                     if *claim_index == index
             )
         })
+    }) && (0..function.exceptional_ensures().len()).all(|index| {
+        claims.iter().any(|claim| {
+            matches!(
+                claim.target(),
+                CFunctionContractClaimTarget::ExceptionalEnsureProposition(claim_index)
+                    if *claim_index == index
+            )
+        })
     }) && (0..function.resource_ensures().len()).all(|index| {
         claims.iter().any(|claim| {
             matches!(
@@ -2254,6 +2300,17 @@ fn missing_function_contract_claim_keys(function: &CFunction) -> Vec<CFunctionCo
             )
         }) {
             missing.push(CFunctionContractClaimKey::Ensure(index));
+        }
+    }
+    for index in 0..function.exceptional_ensures().len() {
+        if !claims.iter().any(|claim| {
+            matches!(
+                claim.target(),
+                CFunctionContractClaimTarget::ExceptionalEnsureProposition(claim_index)
+                    if *claim_index == index
+            )
+        }) {
+            missing.push(CFunctionContractClaimKey::ExceptionalEnsure(index));
         }
     }
     for index in 0..function.resource_ensures().len() {

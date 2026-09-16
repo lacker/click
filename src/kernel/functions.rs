@@ -7854,13 +7854,18 @@ fn modified_by_value_aggregate_parameter_with_current_ensure(
     outcome: &CStatementOutcome,
     function: &CFunction,
 ) -> Option<String> {
+    let ensures = match outcome {
+        CStatementOutcome::Return { .. } => function.contract_ensures(),
+        CStatementOutcome::Throw { .. } => function.exceptional_ensures(),
+        _ => &[],
+    };
     function
         .parameters()
         .iter()
         .filter(|parameter| parameter.aggregate_layout().is_some())
         .find(|parameter| {
             aggregate_parameter_copy_changed(entry_state, outcome, parameter)
-                && function.contract_ensures().iter().any(|ensure| {
+                && ensures.iter().any(|ensure| {
                     spec_proposition_reads_current_parameter(ensure, parameter.name())
                 })
         })

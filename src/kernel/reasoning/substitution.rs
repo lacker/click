@@ -1172,6 +1172,7 @@ pub(in crate::kernel) fn collect_c_function_contract_interface_bound_variables(
         .contract_requires()
         .iter()
         .chain(interface.contract_ensures())
+        .chain(interface.exceptional_ensures())
     {
         collect_spec_proposition_bound_variables(proposition, variables);
     }
@@ -4034,6 +4035,11 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
         .collect();
     interface.contract_ensures = function
         .contract_ensures()
+        .iter()
+        .map(|proposition| substitute_bitvector_variable_in_spec_proposition(proposition, from, to))
+        .collect();
+    interface.exceptional_ensures = function
+        .exceptional_ensures()
         .iter()
         .map(|proposition| substitute_bitvector_variable_in_spec_proposition(proposition, from, to))
         .collect();
@@ -7235,6 +7241,11 @@ fn substitute_pointer_variable_in_c_function(
         .collect();
     interface.contract_ensures = function
         .contract_ensures()
+        .iter()
+        .map(|proposition| substitute_pointer_variable_in_spec_proposition(proposition, from, to))
+        .collect();
+    interface.exceptional_ensures = function
+        .exceptional_ensures()
         .iter()
         .map(|proposition| substitute_pointer_variable_in_spec_proposition(proposition, from, to))
         .collect();

@@ -24,6 +24,7 @@ fn normalize(interface: &CFunctionContractInterface) -> CFunctionContractInterfa
         .contract_requires
         .iter_mut()
         .chain(&mut interface.contract_ensures)
+        .chain(&mut interface.exceptional_ensures)
     {
         names.proposition(proposition);
     }

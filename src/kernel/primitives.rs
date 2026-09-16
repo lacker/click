@@ -2272,6 +2272,10 @@ pub struct CFunctionContractInterface {
     /// `requires` clause, or `None` for a generated definedness clause.
     pub(super) contract_requirement_sources: ContractRequirementSources,
     pub(crate) contract_ensures: Vec<SpecProposition>,
+    /// Postconditions for the exceptional channel. These are checked only at
+    /// `Throw` outcomes, where the kernel-only exceptional-result binding
+    /// names the declared payload. No source frontend exposes this carrier yet.
+    pub(crate) exceptional_ensures: Vec<SpecProposition>,
     /// Explicit checked effect information, or source-oriented metadata for
     /// resource-derived frames. Resource-derived memory authority is computed
     /// from the checked transition; this vector remains available to body and
@@ -2421,6 +2425,7 @@ pub enum CFunctionContractClaimKey {
     BodySafety,
     Effect(usize),
     Ensure(usize),
+    ExceptionalEnsure(usize),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2435,7 +2440,13 @@ pub enum CFunctionContractClaimTarget {
     Effect,
     EnsureProposition(usize),
     EnsureResource(usize),
+    ExceptionalEnsureProposition(usize),
 }
+
+/// Kernel-only binding used while lowering an exceptional postcondition.
+/// A future surface syntax may choose its own binder spelling and lower it to
+/// this name, just as ordinary postconditions lower their result binding.
+pub(crate) const C_EXCEPTIONAL_RESULT_NAME: &str = "__click_exception";
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CFunctionSpecification {

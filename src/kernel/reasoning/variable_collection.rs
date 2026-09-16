@@ -1565,6 +1565,7 @@ pub(in crate::kernel) fn collect_c_function_contract_interface_bitvector_variabl
         .contract_requires()
         .iter()
         .chain(interface.contract_ensures())
+        .chain(interface.exceptional_ensures())
     {
         collect_spec_proposition_bitvector_variables(proposition, variables);
     }
