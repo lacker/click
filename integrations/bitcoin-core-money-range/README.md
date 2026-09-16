@@ -116,7 +116,12 @@ the reference's owned cell unchanged. These are proof-level callers: they
 introduce no C++ wrapper, alternate implementation, or verifier-specific
 build flag.
 
+The gate also rejects an exclusive upper-bound claim against the unchanged
+upstream function. It refuses to load the locked artifact after changes to
+`amount.h`, a transitive Linux header, the CMake compile command, or the
+configured profile. Selecting `MoneyRange` from a different upstream header
+fails refresh, and that rejected selector cannot load the old artifact.
+
 This is one function under one Clang profile, not general Bitcoin Core or
-Linux binary verification. The broader P1 issue still owns false-contract
-and stale-import regressions against this upstream fixture, and the full
-verify/expand/profile/audit checks.
+Linux binary verification. The broader P1 issue still owns full
+verify/expand/profile/audit agreement checks.

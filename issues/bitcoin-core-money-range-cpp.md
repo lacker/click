@@ -163,6 +163,10 @@ Four one-call `executes MoneyRange` theorems now use the checked upstream
 contract as a modular call boundary at `-1`, `0`, `MAX_MONEY`, and
 `MAX_MONEY + 1`. They establish false, true, true, and false and return the
 referenced cell unchanged without a C++ wrapper definition or altered source.
-False-contract and stale-import checks
-against this upstream fixture, plus expansion/profile/audit checks, remain
-before this issue can close.
+The upstream gate now rejects an exclusive upper-bound claim at
+`MoneyRange.contract` itself, rather than only in a dependent boundary
+theorem. It also rejects changed upstream and transitive headers, a changed
+CMake command, a changed profile, and a selector pointed at the wrong
+upstream header; restoring each input reloads the original lock. Full
+verify/expand/profile/audit agreement checks remain before this issue can
+close.

@@ -167,5 +167,101 @@ fn pinned_upstream_money_range_reexports_and_verifies_in_normal_gate() {
     let project = read_click_project(&sidecar, SIDECAR).unwrap();
     verify_cpp_prepared_project(&project, &imported)
         .expect("verify the exact inclusive range contract and four boundary calls");
+
+    let source_contract = SIDECAR
+        .split_once("contract bool BelowRange")
+        .expect("the modular boundary contracts follow MoneyRange")
+        .0;
+    let false_source = source_contract.replace(
+        "if old(nValue[0]) <= 2100000000000000i64",
+        "if old(nValue[0]) < 2100000000000000i64",
+    );
+    assert_ne!(false_source, source_contract);
+    fs::write(&sidecar, &false_source).unwrap();
+    let false_project = read_click_project(&sidecar, &false_source).unwrap();
+    let false_error = verify_cpp_prepared_project(&false_project, &imported)
+        .expect_err("an exclusive upper bound must not prove the upstream function");
+    assert!(
+        false_error.message().contains("MoneyRange.contract")
+            && false_error.message().contains("unclosed goal"),
+        "{}",
+        false_error.message()
+    );
+    fs::write(&sidecar, SIDECAR).unwrap();
+
+    let amount_bytes = fs::read(&amount).unwrap();
+    let mut changed_amount = amount_bytes.clone();
+    changed_amount.push(b'\n');
+    fs::write(&amount, changed_amount).unwrap();
+    let changed_header = load_import(&config_path).unwrap_err();
+    assert!(
+        changed_header.contains("C++ logical source differs"),
+        "{changed_header}"
+    );
+    fs::write(&amount, amount_bytes).unwrap();
+    load_import(&config_path).expect("restoring upstream bytes restores the locked import");
+
+    let transitive = root.join("sysroot/usr/include/c++/12/limits");
+    let transitive_bytes = fs::read(&transitive).unwrap();
+    let mut changed_transitive = transitive_bytes.clone();
+    changed_transitive.push(b'\n');
+    fs::write(&transitive, changed_transitive).unwrap();
+    let changed_dependency = load_import(&config_path).unwrap_err();
+    assert!(
+        changed_dependency.contains("C++ preprocessor input inventory differs"),
+        "{changed_dependency}"
+    );
+    fs::write(&transitive, transitive_bytes).unwrap();
+    load_import(&config_path).expect("restoring a transitive header restores the locked import");
+
+    let database_path = root.join("compile_commands.json");
+    let database_bytes = fs::read_to_string(&database_path).unwrap();
+    let changed_database = database_bytes.replace("-std=c++20", "-std=c++17");
+    assert_ne!(changed_database, database_bytes);
+    fs::write(&database_path, changed_database).unwrap();
+    let changed_command = load_import(&config_path).unwrap_err();
+    assert!(
+        changed_command.contains("C++ compilation database differs"),
+        "{changed_command}"
+    );
+    fs::write(&database_path, database_bytes).unwrap();
+    load_import(&config_path).expect("restoring the CMake command restores the locked import");
+
+    let config_bytes = fs::read(&config_path).unwrap();
+    let mut wrong_profile: serde_json::Value = serde_json::from_slice(&config_bytes).unwrap();
+    wrong_profile["rtti"] = serde_json::json!(false);
+    fs::write(
+        &config_path,
+        serde_json::to_vec_pretty(&wrong_profile).unwrap(),
+    )
+    .unwrap();
+    let changed_profile = load_import(&config_path).unwrap_err();
+    assert!(
+        changed_profile.contains("C++ import lock does not match the import config"),
+        "{changed_profile}"
+    );
+    fs::write(&config_path, &config_bytes).unwrap();
+
+    let mut wrong_location: serde_json::Value = serde_json::from_slice(&config_bytes).unwrap();
+    wrong_location["logical_source"] = serde_json::json!("bitcoin-src/src/policy/feerate.h");
+    fs::write(
+        &config_path,
+        serde_json::to_vec_pretty(&wrong_location).unwrap(),
+    )
+    .unwrap();
+    let wrong_location_error = refresh_import(&config_path)
+        .expect_err("MoneyRange must not resolve to a different upstream header");
+    assert!(
+        wrong_location_error.contains("selected function `MoneyRange` was not found"),
+        "{wrong_location_error}"
+    );
+    let stale_selector = load_import(&config_path)
+        .expect_err("a rejected selector must not load the old semantic artifact");
+    assert!(
+        stale_selector.contains("C++ import lock does not match the import config"),
+        "{stale_selector}"
+    );
+    fs::write(&config_path, config_bytes).unwrap();
+    load_import(&config_path).expect("the original selector and lock remain valid");
     fs::remove_dir_all(root).unwrap();
 }
