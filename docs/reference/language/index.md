@@ -70,6 +70,32 @@ Checked undefined behavior, resource authority, and declared write footprints
 remain safety properties of every finite execution prefix, including prefixes
 of an execution that never returns.
 
+A function may declare one checked exceptional result channel by placing
+`throws int32` after its parameter list. Its `exceptional ensures` clauses are
+a separate postcondition family, and the thrown payload is named `exception`:
+
+<!-- verified-example: mdtests/exceptional_contracts.md -->
+```click
+int32 parse(int32 x) throws int32 {
+    ensures result == x;
+    exceptional ensures exception == 7;
+}
+```
+
+Ordinary `ensures` is owed only by normal returns and may use `result`;
+`exceptional ensures` is owed only by throws and may use `exception`. Neither
+payload name is available in the opposite family. Omitting `throws int32`
+declares a nonthrowing interface.
+
+This first exceptional-contract slice is deliberately pure and direct. The
+exceptional family cannot carry resources or mutable effects, and named
+contracts, external contracts, callbacks, indirect calls, handlers, and
+unwinding do not yet support it. The C++ importer also still rejects source
+`throw` and `catch`; the exceptional outcome is currently an internal checked
+outcome used by direct modular summaries. A call that exposes both its normal
+and exceptional successors still needs the forthcoming call-frontier proof
+split before a surface proof can traverse both paths.
+
 C functions may call themselves or participate in mutual recursion without a
 special Click keyword. Their ordinary contracts are the modular interfaces for
 recursive calls. Click checks all functions in the selected call-graph

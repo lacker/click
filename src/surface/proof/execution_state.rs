@@ -539,6 +539,9 @@ pub(super) fn proof_site_for_claims(
     } else {
         match claims {
             [FunctionClaimRef::Ensure(index, _)] => CProofClaim::Ensure(*index),
+            [FunctionClaimRef::ExceptionalEnsure(index, _)] => {
+                CProofClaim::ExceptionalEnsure(*index)
+            }
             _ => return None,
         }
     };

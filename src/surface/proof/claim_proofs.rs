@@ -676,10 +676,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_auto(
     function_source_registry: Arc<FunctionSourceRegistry>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let mut tactics = vec![ProofTactic::SmartExecute];
-    if claims
-        .iter()
-        .any(|claim| matches!(claim, FunctionClaimRef::Ensure(_, _)))
-    {
+    if !claims.is_empty() {
         tactics.push(ProofTactic::Simp);
     }
 
@@ -920,28 +917,57 @@ fn kernel_claim_goal(
     assumptions: &PureFactContext,
     unfolded_predicates: &[String],
 ) -> Option<(Proposition, Vec<Proposition>)> {
-    let FunctionClaimRef::Ensure(source_index, _) = claim;
-    let contract_index = function
-        .contract_claims()
-        .iter()
-        .find_map(
-            |contract_claim| match (contract_claim.key(), contract_claim.target()) {
-                (
-                    CFunctionContractClaimKey::Ensure(index),
-                    CFunctionContractClaimTarget::EnsureProposition(contract_index),
-                ) if index == source_index => Some(*contract_index),
-                _ => None,
-            },
-        )?;
-    let mut goals = crate::kernel::c_function_ensure_goals(
-        function,
-        contract_index,
-        pre_state,
-        arguments,
-        outcome,
-        assumptions,
-        unfolded_predicates,
-    )?;
+    let mut goals = match claim {
+        FunctionClaimRef::Ensure(source_index, _) => {
+            let contract_index =
+                function
+                    .contract_claims()
+                    .iter()
+                    .find_map(|contract_claim| {
+                        match (contract_claim.key(), contract_claim.target()) {
+                            (
+                                CFunctionContractClaimKey::Ensure(index),
+                                CFunctionContractClaimTarget::EnsureProposition(contract_index),
+                            ) if index == source_index => Some(*contract_index),
+                            _ => None,
+                        }
+                    })?;
+            crate::kernel::c_function_ensure_goals(
+                function,
+                contract_index,
+                pre_state,
+                arguments,
+                outcome,
+                assumptions,
+                unfolded_predicates,
+            )?
+        }
+        FunctionClaimRef::ExceptionalEnsure(source_index, _) => {
+            let contract_index =
+                function
+                    .contract_claims()
+                    .iter()
+                    .find_map(|contract_claim| {
+                        match (contract_claim.key(), contract_claim.target()) {
+                            (
+                                CFunctionContractClaimKey::ExceptionalEnsure(index),
+                                CFunctionContractClaimTarget::ExceptionalEnsureProposition(
+                                    contract_index,
+                                ),
+                            ) if index == source_index => Some(*contract_index),
+                            _ => None,
+                        }
+                    })?;
+            crate::kernel::c_function_exceptional_ensure_goals(
+                function,
+                contract_index,
+                pre_state,
+                arguments,
+                outcome,
+                assumptions,
+            )?
+        }
+    };
     if goals.len() != 1 {
         return None;
     }
@@ -1020,7 +1046,10 @@ fn begin_outcome_existence_proof<'a>(
             if closures[claim_index].is_closed() {
                 return None;
             }
-            let FunctionClaimRef::Ensure(_, ensure_clause) = claim;
+            if !claim.applies_to(outcome) {
+                return None;
+            }
+            let ensure_clause = claim.clause();
             let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
                 return None;
             };
@@ -1102,7 +1131,7 @@ fn close_claim_directly_from_outcome<'a>(
             "`ensures {surface}` failed for `{claim_label}` path {path_index}: {reason}"
         ))))
     };
-    if !matches!(outcome, CFunctionOutcome::Return { .. }) {
+    if !claim.applies_to(outcome) {
         return failure(describe_function_outcome(outcome, parameters, arguments));
     }
     let root = outcome_root
@@ -1773,7 +1802,16 @@ pub(super) fn finish_ordered_proof<'a>(
                         "path certificate working-set construction",
                         || {
                             (
-                                vec![ClaimClosure::default(); claims.len()],
+                                claims
+                                    .iter()
+                                    .map(|claim| {
+                                        if claim.is_vacuous_for(&outcome) {
+                                            ClaimClosure::by_exact_check()
+                                        } else {
+                                            ClaimClosure::default()
+                                        }
+                                    })
+                                    .collect::<Vec<_>>(),
                                 vec![None::<Proposition>; claims.len()],
                                 vec![None::<Proposition>; claims.len()],
                                 path_requirements.clone(),
@@ -2689,7 +2727,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 if !resource_transition_applied
                                     && matches!(outcome, CFunctionOutcome::Return { .. })
                                     && claims.iter().enumerate().any(|(index, claim)| {
-                                        let FunctionClaimRef::Ensure(_, clause) = claim;
+                                        let clause = claim.clause();
                                         !closures[index].is_closed()
                                             && matches!(clause.ensure(), Ensure::Resource(_))
                                     })
@@ -2769,7 +2807,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     if closures[claim_index].is_closed() {
                                         continue;
                                     }
-                                    let FunctionClaimRef::Ensure(_, ensure_clause) = claim;
+                                    let ensure_clause = claim.clause();
                                     if let Ensure::Resource(resource) = ensure_clause.ensure() {
                                         if prove_ensure_resource(
                                             &function_claim_label(
@@ -3033,7 +3071,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     if closures[claim_index].is_closed() {
                                         continue;
                                     }
-                                    let FunctionClaimRef::Ensure(_, ensure_clause) = claim;
+                                    let ensure_clause = claim.clause();
                                     if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
                                         if matches!(post_tactic, PostExecutionTactic::Both(_)) {
                                             return Err(ClickError::new(
@@ -3359,7 +3397,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     if closures[claim_index].is_closed() {
                                         continue;
                                     }
-                                    let FunctionClaimRef::Ensure(_, ensure_clause) = claim;
+                                    let ensure_clause = claim.clause();
                                     let Ensure::Proposition(surface_goal) = ensure_clause.ensure()
                                     else {
                                         continue;
@@ -3687,10 +3725,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                 // the empty Proof transition instead of
                                 // constructing a legacy exit context solely to
                                 // discover an empty pending set.
-                                if claims.iter().enumerate().all(|(claim_index, claim)| {
-                                    closures[claim_index].is_closed()
-                                        || !matches!(claim, FunctionClaimRef::Ensure(_, _))
-                                }) {
+                                if claims
+                                    .iter()
+                                    .enumerate()
+                                    .all(|(claim_index, _)| closures[claim_index].is_closed())
+                                {
                                     continue;
                                 }
                                 // Grouped proofs forbid top-level existence
@@ -3701,6 +3740,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                 // attempt's memo footprint rolls back with
                                 // it.
                                 if let CFunctionOutcome::Return {
+                                    value: result,
+                                    state: post_state,
+                                }
+                                | CFunctionOutcome::Throw {
                                     value: result,
                                     state: post_state,
                                 } = &outcome
@@ -3729,7 +3772,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             continue;
                                         }
                                         {
-                                            let FunctionClaimRef::Ensure(_, ensure_clause) = claim;
+                                            let ensure_clause = claim.clause();
                                             {
                                                 match ensure_clause.ensure() {
                                                     Ensure::Proposition(surface_goal) => {
@@ -4196,11 +4239,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                     if closures[claim_index].is_closed() {
                                         continue;
                                     }
-                                    let (Some(root), FunctionClaimRef::Ensure(_, ensure_clause)) =
-                                        (outcome_proof.as_ref(), claim)
-                                    else {
+                                    let Some(root) = outcome_proof.as_ref() else {
                                         continue;
                                     };
+                                    let ensure_clause = claim.clause();
                                     let Ensure::Proposition(surface_goal) = ensure_clause.ensure()
                                     else {
                                         continue;
@@ -4340,9 +4382,8 @@ pub(super) fn finish_ordered_proof<'a>(
                             // that closure does not reach.
                             let claim_label =
                                 function_claim_label(function_block.signature().name(), claim);
-                            if let (Some(root), FunctionClaimRef::Ensure(_, ensure_clause)) =
-                                (outcome_proof.as_ref(), claim)
-                                && let Ensure::Proposition(surface_goal) = ensure_clause.ensure()
+                            if let Some(root) = outcome_proof.as_ref()
+                                && let Ensure::Proposition(surface_goal) = claim.clause().ensure()
                             {
                                 match close_claim_directly_from_outcome(
                                     root,
@@ -4373,24 +4414,21 @@ pub(super) fn finish_ordered_proof<'a>(
                             }
                             // A resource ensure or an effect claim is an exact
                             // check against the path's outcome, not a proof.
-                            let exact = match claim {
-                                FunctionClaimRef::Ensure(_, ensure_clause) => {
-                                    match ensure_clause.ensure() {
-                                        Ensure::Resource(resource) => Some(prove_ensure_resource(
-                                            &claim_label,
-                                            path_index,
-                                            &path.execution_facts(),
-                                            &path_requirements,
-                                            resource,
-                                            ensure_clause.borrowed(),
-                                            parsed_function.parameters(),
-                                            arguments,
-                                            pre_state,
-                                            &outcome,
-                                        )),
-                                        Ensure::Proposition(_) => None,
-                                    }
-                                }
+                            let ensure_clause = claim.clause();
+                            let exact = match ensure_clause.ensure() {
+                                Ensure::Resource(resource) => Some(prove_ensure_resource(
+                                    &claim_label,
+                                    path_index,
+                                    &path.execution_facts(),
+                                    &path_requirements,
+                                    resource,
+                                    ensure_clause.borrowed(),
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    pre_state,
+                                    &outcome,
+                                )),
+                                Ensure::Proposition(_) => None,
                             };
                             match exact {
                                 Some(Ok(())) => {
@@ -4574,20 +4612,10 @@ pub(super) fn finish_ordered_proof<'a>(
                     surface_post_tactics_by_path.push(path_surface_post_tactics);
                     let implicitly_closable = path_deferred_capture_tactics.is_empty()
                         || (!require_explicit_closers
-                            && claims
-                                .iter()
-                                .enumerate()
-                                .all(|(claim_index, claim)| match claim {
-                                    FunctionClaimRef::Ensure(_, ensure_clause)
-                                        if matches!(
-                                            ensure_clause.ensure(),
-                                            Ensure::Proposition(_)
-                                        ) =>
-                                    {
-                                        closures[claim_index].is_closed()
-                                    }
-                                    _ => true,
-                                }));
+                            && claims.iter().enumerate().all(|(claim_index, claim)| {
+                                !matches!(claim.clause().ensure(), Ensure::Proposition(_))
+                                    || closures[claim_index].is_closed()
+                            }));
                     if visits_selected_capture {
                         implicit_closure_by_path.push(implicitly_closable);
                         deferred_capture_tactics_by_path.push(path_deferred_capture_tactics);

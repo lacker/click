@@ -60,7 +60,7 @@ pub(super) fn bounded_execution_tactic_candidates(
     claim: &FunctionClaimRef<'_>,
 ) -> Vec<Vec<ProofTactic>> {
     match claim {
-        FunctionClaimRef::Ensure(_, _) => {
+        FunctionClaimRef::Ensure(_, _) | FunctionClaimRef::ExceptionalEnsure(_, _) => {
             vec![vec![ProofTactic::SmartExecuteAllPaths, ProofTactic::Simp]]
         }
     }
@@ -80,7 +80,7 @@ pub(super) fn auto_loop_verification_tactic_candidates(
     let base = vec![ProofTactic::SmartExecute];
 
     match claim {
-        FunctionClaimRef::Ensure(_, _) => {
+        FunctionClaimRef::Ensure(_, _) | FunctionClaimRef::ExceptionalEnsure(_, _) => {
             let mut simp = base;
             simp.push(ProofTactic::Simp);
             vec![simp]

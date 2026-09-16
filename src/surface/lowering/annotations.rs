@@ -257,6 +257,7 @@ type FunctionContractSummary = (
     Vec<SpecProposition>,
     Vec<Option<usize>>,
     Vec<SpecProposition>,
+    Vec<SpecProposition>,
     Vec<CMemorySegment>,
     Vec<CFunctionContractClaim>,
     bool,
@@ -616,6 +617,7 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
         contract_requires,
         contract_requirement_sources,
         contract_ensures,
+        exceptional_ensures,
         contract_mutable,
         contract_claims,
         opaque_contract_supported,
@@ -722,7 +724,7 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
             .to_kernel_aggregate_layout();
         function = function.with_return_aggregate_layout(layout);
     }
-    let function = function
+    let mut function = function
         .with_global_variables(parsed_kernel_function.global_variables().to_vec())
         .with_global_arrays(parsed_kernel_function.global_arrays().to_vec())
         .with_global_aggregates(parsed_kernel_function.global_aggregates().to_vec())
@@ -759,6 +761,11 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
             opaque_contract_supported,
         )
         .with_contract_requirement_sources(contract_requirement_sources);
+    if function_block.signature().exceptional_type().is_some() {
+        function = function
+            .with_int32_exceptional_outcome()
+            .with_exceptional_ensures(exceptional_ensures);
+    }
     let function = if resource_derived_mutable_frame {
         let function = function.with_resource_derived_mutable_frame();
         if !function_block.is_external()
@@ -1375,6 +1382,30 @@ pub(in crate::surface) fn function_contract_summary(
         }
     }
 
+    let mut exceptional_ensures = Vec::new();
+    let mut exceptional_context = context.clone();
+    exceptional_context.values.remove(&"result".to_string());
+    exceptional_context.values.insert(
+        "exception".to_string(),
+        SpecExpression::CExpression(CExpression::Variable(
+            crate::kernel::C_EXCEPTIONAL_RESULT_NAME.to_string(),
+        )),
+    );
+    for clause in function_block.exceptional_ensures() {
+        let Ensure::Proposition(proposition) = clause.ensure() else {
+            opaque_contract_supported = false;
+            continue;
+        };
+        if !proposition_supported_in_opaque_contract(proposition) {
+            opaque_contract_supported = false;
+            continue;
+        }
+        match lowerer.click_proposition_to_spec_proposition(proposition, &exceptional_context) {
+            Ok(proposition) => exceptional_ensures.push(proposition),
+            Err(_) => opaque_contract_supported = false,
+        }
+    }
+
     let mut mutable = Vec::new();
     {
         if let Some(startup) = &parsed_function.program_entry_state {
@@ -1391,7 +1422,9 @@ pub(in crate::surface) fn function_contract_summary(
             }));
         }
     }
-    let claims = if function_block.ensures().is_empty() {
+    let claims = if function_block.ensures().is_empty()
+        && function_block.exceptional_ensures().is_empty()
+    {
         vec![CFunctionContractClaim::body_safety()]
     } else {
         let mut proposition_index = 0;
@@ -1413,12 +1446,19 @@ pub(in crate::surface) fn function_contract_summary(
                 }
             });
         }
+        for (source_index, _ensure) in function_block.exceptional_ensures().iter().enumerate() {
+            claims.push(CFunctionContractClaim::exceptional_ensure_proposition(
+                source_index,
+                source_index,
+            ));
+        }
         claims
     };
     Ok((
         requires,
         contract_requirement_sources,
         ensures,
+        exceptional_ensures,
         mutable,
         claims,
         opaque_contract_supported,

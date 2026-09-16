@@ -6,6 +6,7 @@ use super::*;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CProofClaim {
     Ensure(usize),
+    ExceptionalEnsure(usize),
     Grouped,
 }
 
@@ -1634,6 +1635,10 @@ fn select_expansion_theorem<'a>(
             matches_function(theorem)
                 && matches!(theorem.claim, VerifiedClaim::Ensure { index: found, .. } if found == index)
         }),
+        CProofClaim::ExceptionalEnsure(index) => verified.iter().find(|theorem| {
+            matches_function(theorem)
+                && matches!(theorem.claim, VerifiedClaim::ExceptionalEnsure { index: found, .. } if found == index)
+        }),
         CProofClaim::Grouped => verified
             .iter()
             .find(|theorem| {
@@ -1748,14 +1753,18 @@ fn find_function(tokens: &[SourceToken], name: &str) -> Result<FunctionSource, C
             continue;
         }
         let parameters_close = matching_delimiter(tokens, index + 1, "(", ")")?;
-        if tokens
+        let body_open = if tokens
             .get(parameters_close + 1)
             .map(|token| token.text.as_str())
-            != Some("{")
+            == Some("throws")
         {
+            parameters_close + 3
+        } else {
+            parameters_close + 1
+        };
+        if tokens.get(body_open).map(|token| token.text.as_str()) != Some("{") {
             continue;
         }
-        let body_open = parameters_close + 1;
         let body_close = matching_delimiter(tokens, body_open, "{", "}")?;
         return Ok(FunctionSource {
             body_open,
@@ -1814,7 +1823,19 @@ fn find_ensure_proof_edit(
         match tokens[index].text.as_str() {
             "{" => depth += 1,
             "}" => depth -= 1,
-            "ensures" | "owns" | "produces" if depth == 0 => {
+            "ensures"
+                if depth == 0
+                    && tokens
+                        .get(index.wrapping_sub(1))
+                        .map(|token| token.text.as_str())
+                        != Some("exceptional") =>
+            {
+                if found == wanted {
+                    return find_proof_edit_after(tokens, index, body_close);
+                }
+                found += 1;
+            }
+            "owns" | "produces" if depth == 0 => {
                 if found == wanted {
                     return find_proof_edit_after(tokens, index, body_close);
                 }
@@ -1826,6 +1847,38 @@ fn find_ensure_proof_edit(
     }
     Err(ClickError::new(format!(
         "could not locate source ensure {wanted}"
+    )))
+}
+
+fn find_exceptional_ensure_proof_edit(
+    tokens: &[SourceToken],
+    body_open: usize,
+    body_close: usize,
+    wanted: usize,
+) -> Result<ProofSourceEdit, ClickError> {
+    let mut depth = 0;
+    let mut found = 0;
+    let mut index = body_open + 1;
+    while index < body_close {
+        match tokens[index].text.as_str() {
+            "{" => depth += 1,
+            "}" => depth -= 1,
+            "exceptional"
+                if depth == 0
+                    && tokens.get(index + 1).map(|token| token.text.as_str())
+                        == Some("ensures") =>
+            {
+                if found == wanted {
+                    return find_proof_edit_after(tokens, index + 1, body_close);
+                }
+                found += 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    Err(ClickError::new(format!(
+        "could not locate source exceptional ensure {wanted}"
     )))
 }
 
@@ -1923,12 +1976,20 @@ fn find_claim_proof_edit(
     function: &FunctionSource,
     claim: CProofClaim,
 ) -> Result<ProofSourceEdit, ClickError> {
-    let CProofClaim::Ensure(index) = claim else {
-        return Err(ClickError::new(format!(
+    match claim {
+        CProofClaim::Ensure(index) => {
+            find_ensure_proof_edit(tokens, function.body_open, function.body_close, index)
+        }
+        CProofClaim::ExceptionalEnsure(index) => find_exceptional_ensure_proof_edit(
+            tokens,
+            function.body_open,
+            function.body_close,
+            index,
+        ),
+        CProofClaim::Grouped => Err(ClickError::new(format!(
             "could not locate source clause for {claim:?}"
-        )));
-    };
-    find_ensure_proof_edit(tokens, function.body_open, function.body_close, index)
+        ))),
+    }
 }
 
 /// An explicit expansion request threaded through one verification run.
@@ -2142,6 +2203,22 @@ fn locate_source_tactic_file(
         }
         for (index, ensure) in function_block.ensures().iter().enumerate() {
             let claim = CProofClaim::Ensure(index);
+            let edit = find_claim_proof_edit(&tokens, &function, claim)?;
+            if let Some(found) = locate_tactic_in_proof(
+                &tokens,
+                &edit,
+                ensure.proof(),
+                wanted,
+                ProofSite::FunctionClaim {
+                    function_name: function_name.to_string(),
+                    claim,
+                },
+            )? {
+                return Ok(found);
+            }
+        }
+        for (index, ensure) in function_block.exceptional_ensures().iter().enumerate() {
+            let claim = CProofClaim::ExceptionalEnsure(index);
             let edit = find_claim_proof_edit(&tokens, &function, claim)?;
             if let Some(found) = locate_tactic_in_proof(
                 &tokens,
@@ -2423,17 +2500,35 @@ fn c0_tactic_source_position_file(
                     );
                     (label == claim_label).then_some((CProofClaim::Ensure(index), ensure.proof()))
                 })
+                .or_else(|| {
+                    function_block
+                        .exceptional_ensures()
+                        .iter()
+                        .enumerate()
+                        .find_map(|(index, ensure)| {
+                            let label = ensure.name().map_or_else(
+                                || format!("{function_name}.exceptional_ensures_{index}"),
+                                |name| format!("{function_name}.{name}"),
+                            );
+                            (label == claim_label)
+                                .then_some((CProofClaim::ExceptionalEnsure(index), ensure.proof()))
+                        })
+                })
         };
         let Some((claim, proof)) = selected else {
             continue;
         };
         let fallback = match claim {
             CProofClaim::Grouped => tokens[function.body_close].span.start,
-            CProofClaim::Ensure(_) => find_claim_clause_offset(&tokens, &function, claim)?,
+            CProofClaim::Ensure(_) | CProofClaim::ExceptionalEnsure(_) => {
+                find_claim_clause_offset(&tokens, &function, claim)?
+            }
         };
         let proof_span = match claim {
             CProofClaim::Grouped => Some(find_grouped_proof_span(&tokens, &function)?),
-            CProofClaim::Ensure(_) => find_claim_proof_span(&tokens, &function, claim).ok(),
+            CProofClaim::Ensure(_) | CProofClaim::ExceptionalEnsure(_) => {
+                find_claim_proof_span(&tokens, &function, claim).ok()
+            }
         };
         return proof_source_position(
             click_source,
@@ -2495,12 +2590,7 @@ fn find_claim_clause_offset(
     function: &FunctionSource,
     claim: CProofClaim,
 ) -> Result<usize, ClickError> {
-    let CProofClaim::Ensure(index) = claim else {
-        return Err(ClickError::new(format!(
-            "could not locate source clause for {claim:?}"
-        )));
-    };
-    Ok(find_ensure_proof_edit(tokens, function.body_open, function.body_close, index)?.selector())
+    Ok(find_claim_proof_edit(tokens, function, claim)?.selector())
 }
 
 fn find_loop_phase_proof_span(

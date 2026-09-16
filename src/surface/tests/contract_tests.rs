@@ -1,6 +1,118 @@
 use super::*;
 
 #[test]
+fn exceptional_contracts_publish_distinct_claim_families() {
+    let c_source = r#"
+            int32 helper(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "helper.c";
+
+            int32 helper(int32 x) throws int32 {
+                ensures result == x;
+                exceptional ensures exception == 7;
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("helper.c", c_source)])
+        .expect("a nonthrowing body should vacuously certify its exceptional family");
+    assert!(
+        verified
+            .iter()
+            .any(|theorem| matches!(&theorem.claim, VerifiedClaim::Ensure { .. }))
+    );
+    assert!(
+        verified
+            .iter()
+            .any(|theorem| matches!(&theorem.claim, VerifiedClaim::ExceptionalEnsure { .. }))
+    );
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("helper.c", c_source)],
+        "helper",
+        CProofClaim::ExceptionalEnsure(0),
+    )
+    .expect("the exceptional claim should have an independently expandable proof site");
+    verify_c0_sources(&expanded, &[("helper.c", c_source)])
+        .expect("the expanded exceptional claim should reverify");
+}
+
+#[test]
+fn exceptional_contract_bindings_are_family_specific() {
+    let c_source = "int32 identity(int32 x) { return x; }";
+    for (source, expected) in [
+        (
+            r#"
+                verifying "identity.c";
+                int32 identity(int32 x) {
+                    exceptional ensures exception == 7;
+                }
+            "#,
+            "requires `throws int32`",
+        ),
+        (
+            r#"
+                verifying "identity.c";
+                int32 identity(int32 x) throws int32 {
+                    exceptional ensures result == x;
+                }
+            "#,
+            "`result` is not available",
+        ),
+        (
+            r#"
+                verifying "identity.c";
+                int32 identity(int32 x) throws int32 {
+                    ensures exception == 7;
+                }
+            "#,
+            "`exception` is available only",
+        ),
+        (
+            r#"
+                verifying "identity.c";
+                int32 identity(int32 x) throws uint32 {
+                    ensures result == x;
+                }
+            "#,
+            "payload type must be `int32`",
+        ),
+        (
+            r#"
+                abstract resource token(x: int32);
+                verifying "identity.c";
+                int32 identity(int32 x) throws int32 {
+                    owns token(x);
+                    exceptional ensures exception == 7;
+                }
+            "#,
+            "with resources or mutable effects",
+        ),
+    ] {
+        let error = verify_c0_sources(source, &[("identity.c", c_source)])
+            .expect_err("invalid exceptional surface contract must be rejected");
+        assert!(
+            error.message().contains(expected),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    let external = r#"
+        extern int32 identity(int32 x) throws int32 {
+            exceptional ensures exception == 7;
+        }
+    "#;
+    let error = verify_c0_sources(external, &[])
+        .expect_err("external exceptional contracts remain outside this slice");
+    assert!(
+        error.message().contains("external exceptional contracts"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn verifies_simple_postcondition_with_proof_tactics() {
     let c_source = r#"
             int32 identity(int32 x) {

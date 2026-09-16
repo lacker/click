@@ -464,6 +464,7 @@ mod tests {
                         pointee_constant: false,
                     })
                     .collect(),
+                exceptional_type: None,
                 declared_loadable_bytes: Vec::new(),
             },
             external: true,
@@ -480,6 +481,7 @@ mod tests {
             structural_clauses: Vec::new(),
             constructs: Vec::new(),
             ensures: Vec::new(),
+            exceptional_ensures: Vec::new(),
             requirement_source_clauses: Vec::new(),
             ensure_source_clauses: Vec::new(),
             grouped_proof: None,

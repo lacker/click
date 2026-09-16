@@ -1760,6 +1760,83 @@ pub fn c_function_ensure_goals(
     )
 }
 
+/// Lowers one exceptional postcondition at a checked throwing outcome. The
+/// exceptional family observes the thrown `int32` through the kernel's
+/// reserved payload binding and observes the state at the throw boundary.
+/// Returning outcomes do not owe an exceptional postcondition.
+pub(crate) fn c_function_exceptional_ensure_goals(
+    function: &CFunction,
+    contract_index: usize,
+    caller_state: &CState,
+    arguments: &[CExpression],
+    outcome: &CFunctionOutcome,
+    assumptions: &PureFactContext,
+) -> Option<Vec<(Proposition, Vec<Proposition>)>> {
+    let ensure = function.exceptional_ensures().get(contract_index)?;
+    let CFunctionOutcome::Throw {
+        value,
+        state: throw_state,
+    } = outcome
+    else {
+        return None;
+    };
+    let mut entry_state = c_function_entry_state(caller_state, function, arguments)?;
+    let expanded_entry_resources = expand_all_composite_resource_facts(
+        entry_state.resources(),
+        function.composite_resource_definitions(),
+        entry_state.memory(),
+        assumptions,
+    )?;
+    entry_state = entry_state.with_resource_context(expanded_entry_resources);
+    let mut post_state = entry_state
+        .clone()
+        .with_memory(throw_state.memory().clone());
+    post_state.counted_populations = throw_state.counted_populations.clone();
+    post_state.locals.set_typed(
+        C_EXCEPTIONAL_RESULT_NAME.to_string(),
+        value.clone(),
+        CType::Int32,
+    );
+    let lowering_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .defer_non_exact_loadability_obligations();
+    let mut budget = ExecutionBudget::default();
+    let paths = lower_spec_proposition_at_state_with_loop_entry(
+        &post_state,
+        ensure,
+        Some(&entry_state),
+        &lowering_assumptions,
+        &mut budget,
+    )
+    .ok()?;
+    if paths.iter().any(|path| {
+        path.obligations
+            .iter()
+            .any(|obligation| super::c_loadability_obligation_impossible(obligation.proposition()))
+    }) {
+        return None;
+    }
+    let selected = exactly_selected_spec_proposition_path(&paths, assumptions);
+    let paths = match selected {
+        Some(path) if paths.len() > 1 => std::slice::from_ref(path),
+        _ => paths.as_slice(),
+    };
+    Some(
+        paths
+            .iter()
+            .map(|path| {
+                let facts = path
+                    .facts
+                    .iter()
+                    .map(|fact| fact.proposition().clone())
+                    .collect();
+                (path.proposition.clone(), facts)
+            })
+            .collect(),
+    )
+}
+
 pub fn c_verified_function_contract_claims(
     function: &CFunction,
     contract_execution: &CFunctionContractExecution,
@@ -2225,7 +2302,7 @@ pub(crate) fn c_recursive_function_contract_hypothesis(
     function: CFunction,
 ) -> Option<CVerifiedFunctionRule> {
     (!function.is_program_entry()
-        && function.opaque_contract_supported()
+        && function.verified_direct_contract_supported()
         && !function.contract_claims().is_empty()
         && function_contract_claims_are_complete(&function))
     .then_some(CVerifiedFunctionRule { function })

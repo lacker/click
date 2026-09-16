@@ -1187,6 +1187,7 @@ fn locked_cpp_function_verifies_through_the_shared_sidecar_path_offline() {
             .iter()
             .map(|theorem| match theorem.claim {
                 VerifiedClaim::Ensure { index, .. } => index,
+                VerifiedClaim::ExceptionalEnsure { index, .. } => index,
             })
             .collect::<Vec<_>>(),
         vec![0, 1, 2],
@@ -1252,6 +1253,7 @@ fn locked_cpp_branch_and_early_return_verify_through_the_shared_sidecar_path() {
             .iter()
             .map(|theorem| match theorem.claim {
                 VerifiedClaim::Ensure { index, .. } => index,
+                VerifiedClaim::ExceptionalEnsure { index, .. } => index,
             })
             .collect::<Vec<_>>(),
         vec![0, 1, 2, 0, 1, 2],
@@ -1343,6 +1345,7 @@ fn const_reference_preserves_qualification_and_may_alias_a_mutable_reference() {
             .iter()
             .map(|theorem| match theorem.claim {
                 VerifiedClaim::Ensure { index, .. } => index,
+                VerifiedClaim::ExceptionalEnsure { index, .. } => index,
             })
             .collect::<Vec<_>>(),
         vec![0, 1, 2],
@@ -2482,6 +2485,7 @@ fn every_return_after_construction_runs_the_checked_destructor() {
         .iter()
         .map(|theorem| match theorem.claim {
             VerifiedClaim::Ensure { index, .. } => index,
+            VerifiedClaim::ExceptionalEnsure { index, .. } => index,
         })
         .collect::<Vec<_>>();
     assert!(

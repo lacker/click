@@ -336,7 +336,9 @@ fn expand_top_level_tactic_for_test(
     let function = find_function(&tokens, function_name)?;
     let proof = match claim {
         CProofClaim::Grouped => find_grouped_proof_span(&tokens, &function)?,
-        CProofClaim::Ensure(_) => find_claim_proof_span(&tokens, &function, claim)?,
+        CProofClaim::Ensure(_) | CProofClaim::ExceptionalEnsure(_) => {
+            find_claim_proof_span(&tokens, &function, claim)?
+        }
     };
     let span = find_tactic_span(&tokens, &proof, tactic_index)?;
     let position = position_at_offset(click_source, span.start);

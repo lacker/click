@@ -2851,6 +2851,19 @@ fn verify_c0_sources_with_context(
                                             || format!("{key:?}"),
                                             |ensure| format!("{key:?} = {ensure:?}"),
                                         ),
+                                    Some(
+                                        CFunctionContractClaimTarget::ExceptionalEnsureProposition(
+                                            index,
+                                        ),
+                                    ) => contract_function
+                                        .exceptional_ensures()
+                                        .get(*index)
+                                        .map_or_else(
+                                            || format!("{key:?}"),
+                                            |ensure| {
+                                                format!("{key:?} = exceptional ensures {ensure:?}")
+                                            },
+                                        ),
                                     Some(CFunctionContractClaimTarget::EnsureResource(index)) => {
                                         contract_function
                                             .resource_ensures()
@@ -2885,6 +2898,9 @@ fn verify_c0_sources_with_context(
                         match &verified.claim {
                             VerifiedClaim::Ensure { index, .. } => {
                                 CFunctionContractClaimKey::Ensure(*index)
+                            }
+                            VerifiedClaim::ExceptionalEnsure { index, .. } => {
+                                CFunctionContractClaimKey::ExceptionalEnsure(*index)
                             }
                         }
                     } else {
@@ -3047,6 +3063,10 @@ pub(in crate::surface) fn tactic_expansion_required_functions(
             .and_then(SourceProof::tactics),
         CProofClaim::Ensure(index) => function_block
             .ensures()
+            .get(index)
+            .and_then(|clause| clause.proof().tactics()),
+        CProofClaim::ExceptionalEnsure(index) => function_block
+            .exceptional_ensures()
             .get(index)
             .and_then(|clause| clause.proof().tactics()),
     }
@@ -5424,6 +5444,7 @@ pub(in crate::surface) fn build_function_environment(
                     contract_requires,
                     contract_requirement_sources,
                     contract_ensures,
+                    exceptional_ensures,
                     contract_mutable,
                     contract_claims,
                     opaque_supported,
@@ -5439,7 +5460,7 @@ pub(in crate::surface) fn build_function_environment(
                     .requires()
                     .iter()
                     .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_)));
-                let function = function
+                let mut function = function
                     .to_kernel_function()
                     .with_resource_summary(resource_requires, resource_ensures)
                     .with_resource_constructors(resource_constructors)
@@ -5457,6 +5478,11 @@ pub(in crate::surface) fn build_function_environment(
                         opaque_supported,
                     )
                     .with_contract_requirement_sources(contract_requirement_sources);
+                if function_block.signature().exceptional_type().is_some() {
+                    function = function
+                        .with_int32_exceptional_outcome()
+                        .with_exceptional_ensures(exceptional_ensures);
+                }
                 if resource_derived_mutable_frame {
                     function.with_resource_derived_mutable_frame()
                 } else {
@@ -6206,6 +6232,10 @@ pub(in crate::surface) fn function_claim_label(
         FunctionClaimRef::Ensure(index, ensure) => match ensure.name() {
             Some(name) => format!("{function_name}.{name}"),
             None => format!("{function_name}.ensures_{index}"),
+        },
+        FunctionClaimRef::ExceptionalEnsure(index, ensure) => match ensure.name() {
+            Some(name) => format!("{function_name}.{name}"),
+            None => format!("{function_name}.exceptional_ensures_{index}"),
         },
     }
 }

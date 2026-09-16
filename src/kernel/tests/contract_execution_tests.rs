@@ -1822,6 +1822,29 @@ fn declared_exceptional_path_certifies_its_payload_postcondition() {
         CFunctionContractExecutionMode::VerifyLoops,
     );
 
+    let throw_outcome = CFunctionOutcome::Throw {
+        value: int32(7),
+        state: CState::new(),
+    };
+    let goals = c_function_exceptional_ensure_goals(
+        &function,
+        0,
+        &CState::new(),
+        &[],
+        &throw_outcome,
+        &PureFactContext::new(),
+    )
+    .expect("the exceptional payload should lower at the throw boundary");
+    assert_eq!(goals.len(), 1);
+    assert!(
+        matches!(
+            &goals[0].0,
+            Proposition::ConditionIs(ConditionTerm::Constant(true), true)
+        ),
+        "unexpected exceptional goal: {:?}",
+        goals[0].0
+    );
+
     assert_eq!(
         c_unverified_function_contract_claims(&function, &execution)
             .expect("a declared exceptional path is a safe certification path"),

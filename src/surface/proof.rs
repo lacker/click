@@ -2075,18 +2075,51 @@ pub(super) fn proof_source_tactic_count(proof: &SourceProof) -> usize {
 #[derive(Clone, Copy)]
 pub(super) enum FunctionClaimRef<'a> {
     Ensure(usize, &'a EnsureClause),
+    ExceptionalEnsure(usize, &'a EnsureClause),
 }
 
 impl<'a> FunctionClaimRef<'a> {
     pub(super) fn proof(self) -> &'a SourceProof {
         match self {
-            Self::Ensure(_, clause) => clause.proof(),
+            Self::Ensure(_, clause) | Self::ExceptionalEnsure(_, clause) => clause.proof(),
         }
+    }
+
+    pub(super) fn clause(self) -> &'a EnsureClause {
+        match self {
+            Self::Ensure(_, clause) | Self::ExceptionalEnsure(_, clause) => clause,
+        }
+    }
+
+    pub(super) fn applies_to(self, outcome: &CFunctionOutcome) -> bool {
+        matches!(
+            (self, outcome),
+            (Self::Ensure(_, _), CFunctionOutcome::Return { .. })
+                | (
+                    Self::ExceptionalEnsure(_, _),
+                    CFunctionOutcome::Throw { .. }
+                )
+        )
+    }
+
+    pub(super) fn is_vacuous_for(self, outcome: &CFunctionOutcome) -> bool {
+        matches!(
+            (self, outcome),
+            (Self::Ensure(_, _), CFunctionOutcome::Throw { .. })
+                | (
+                    Self::ExceptionalEnsure(_, _),
+                    CFunctionOutcome::Return { .. }
+                )
+        )
     }
 
     fn verified_claim(self) -> VerifiedClaim {
         match self {
             Self::Ensure(index, clause) => VerifiedClaim::Ensure {
+                index,
+                clause: clause.clone(),
+            },
+            Self::ExceptionalEnsure(index, clause) => VerifiedClaim::ExceptionalEnsure {
                 index,
                 clause: clause.clone(),
             },
@@ -2100,6 +2133,13 @@ pub(super) fn function_claims(function_block: &FunctionBlock) -> Vec<FunctionCla
         .iter()
         .enumerate()
         .map(|(index, clause)| FunctionClaimRef::Ensure(index, clause))
+        .chain(
+            function_block
+                .exceptional_ensures()
+                .iter()
+                .enumerate()
+                .map(|(index, clause)| FunctionClaimRef::ExceptionalEnsure(index, clause)),
+        )
         .collect()
 }
 

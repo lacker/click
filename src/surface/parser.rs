@@ -1859,6 +1859,7 @@ impl Parser {
         let mut decreases = None;
         let mut constructs = Vec::new();
         let mut ensures = Vec::new();
+        let mut exceptional_ensures = Vec::new();
         // A local of struct-pointer type is a memory base in this function's
         // proof just as a parameter is. The signature wins a shared spelling.
         for (name, struct_name) in self
@@ -2078,14 +2079,50 @@ impl Parser {
                 }
                 Some("ensures") => {
                     let ensure = self.parse_ensure_clause()?;
+                    if let Ensure::Proposition(proposition) = ensure.ensure() {
+                        let mut variables = BTreeSet::new();
+                        collect_current_proposition_variables(proposition, &mut variables);
+                        if variables.contains("exception") {
+                            return Err(self.error(
+                                "`exception` is available only in an `exceptional ensures` clause",
+                            ));
+                        }
+                    }
                     ensures.push(
+                        apply_contract_lets_to_ensure_clause(ensure, &contract_lets)
+                            .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some("exceptional") => {
+                    if signature.exceptional_type().is_none() {
+                        return Err(self.error(format!(
+                            "`exceptional ensures` requires `throws int32` in the signature of `{}`",
+                            signature.name()
+                        )));
+                    }
+                    self.position += 1;
+                    self.expect_ident_spelling("ensures")?;
+                    let ensure = self.parse_ensure_clause_after_keyword()?;
+                    let Ensure::Proposition(proposition) = ensure.ensure() else {
+                        return Err(
+                            self.error("exceptional postconditions must be pure propositions")
+                        );
+                    };
+                    let mut variables = BTreeSet::new();
+                    collect_current_proposition_variables(proposition, &mut variables);
+                    if variables.contains("result") {
+                        return Err(self.error(
+                            "`result` is not available in an `exceptional ensures` clause; use `exception` for the thrown payload",
+                        ));
+                    }
+                    exceptional_ensures.push(
                         apply_contract_lets_to_ensure_clause(ensure, &contract_lets)
                             .map_err(|message| self.error(message))?,
                     );
                 }
                 Some(keyword) => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `constructs`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `constructs`, `ensures`, `exceptional ensures`, or `}}` in `{}`, got `{keyword}`",
                         signature.name()
                     )));
                 }
@@ -2102,6 +2139,7 @@ impl Parser {
             let proof = self.parse_by_clause()?;
             if ensures
                 .iter()
+                .chain(exceptional_ensures.iter())
                 .any(|clause| !matches!(clause.proof(), SourceProof::Default))
             {
                 return Err(self.error(
@@ -2117,11 +2155,30 @@ impl Parser {
                 || grouped_proof.is_some()
                 || ensures
                     .iter()
+                    .chain(exceptional_ensures.iter())
                     .any(|ensure| !matches!(ensure.proof(), SourceProof::Default)))
         {
             return Err(
                 self.error("external function contracts cannot carry proof or decreases clauses")
             );
+        }
+        if external && signature.exceptional_type().is_some() {
+            return Err(
+                self.error("external exceptional contracts are not supported in this slice")
+            );
+        }
+        if signature.exceptional_type().is_some()
+            && (!constructs.is_empty()
+                || requires
+                    .iter()
+                    .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_)))
+                || ensures
+                    .iter()
+                    .any(|ensure| matches!(ensure.ensure(), Ensure::Resource(_))))
+        {
+            return Err(self.error(
+                "exceptional contracts with resources or mutable effects are not supported in this slice",
+            ));
         }
         self.current_struct_params = previous_struct_params;
         self.current_resource_bindings = previous_resource_bindings;
@@ -2193,6 +2250,7 @@ impl Parser {
             structural_clauses: Vec::new(),
             constructs,
             ensures,
+            exceptional_ensures,
             ensure_source_clauses,
             grouped_proof,
         })
@@ -2256,13 +2314,34 @@ impl Parser {
         } else {
             parsed_return_type.c_type
         };
-        let name = match self.pending_contract_name.take() {
+        let pending_contract_name = self.pending_contract_name.take();
+        let is_named_contract = pending_contract_name.is_some();
+        let name = match pending_contract_name {
             Some(name) => name,
             None => self.expect_ident("function name")?,
         };
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
+        let exceptional_type = if self.peek_ident() == Some("throws") {
+            self.position += 1;
+            let parsed = self.parse_type()?;
+            if parsed.constant
+                || parsed.pointee_constant
+                || parsed.struct_name.is_some()
+                || parsed.c_type != C0Type::Int32
+            {
+                return Err(self.error("the exceptional payload type must be `int32`"));
+            }
+            if is_named_contract {
+                return Err(
+                    self.error("named exceptional contracts are not supported in this slice")
+                );
+            }
+            Some(C0Type::Int32)
+        } else {
+            None
+        };
         let struct_params = parsed_parameters.struct_params;
         let struct_array_params = parsed_parameters.struct_array_params;
 
@@ -2272,6 +2351,7 @@ impl Parser {
                 return_pointee_constant: parsed_return_type.pointee_constant,
                 name,
                 parameters: parsed_parameters.parameters,
+                exceptional_type,
                 declared_loadable_bytes: parsed_parameters.declared_loadable_bytes,
             },
             struct_params,
@@ -3298,7 +3378,12 @@ impl Parser {
     }
 
     fn parse_ensure_clause(&mut self) -> Result<EnsureClause, ClickError> {
-        Ok(self.parse_ensure_clause_with_execution_scope(None)?.0)
+        self.expect_ident_spelling("ensures")?;
+        self.parse_ensure_clause_after_keyword()
+    }
+
+    fn parse_ensure_clause_after_keyword(&mut self) -> Result<EnsureClause, ClickError> {
+        Ok(self.parse_ensure_clause_body(None)?.0)
     }
 
     /// Parse one `ensures` clause, returning the conclusion's `as` instance
@@ -3308,6 +3393,13 @@ impl Parser {
         execution_names: Option<&BTreeSet<String>>,
     ) -> Result<(EnsureClause, Vec<(String, String)>), ClickError> {
         self.expect_ident_spelling("ensures")?;
+        self.parse_ensure_clause_body(execution_names)
+    }
+
+    fn parse_ensure_clause_body(
+        &mut self,
+        execution_names: Option<&BTreeSet<String>>,
+    ) -> Result<(EnsureClause, Vec<(String, String)>), ClickError> {
         let name = if matches!(self.peek(), Some(Token::Ident(_)))
             && self.peek_next() == Some(&Token::Colon)
         {

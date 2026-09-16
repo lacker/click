@@ -966,6 +966,7 @@ pub struct FunctionBlock {
     structural_clauses: Vec<StructuralClause>,
     constructs: Vec<ResourceClause>,
     ensures: Vec<EnsureClause>,
+    exceptional_ensures: Vec<EnsureClause>,
     /// As `requirement_source_clauses`, for `ensures`.
     ensure_source_clauses: Vec<usize>,
     grouped_proof: Option<SourceProof>,
@@ -1020,6 +1021,9 @@ pub struct FunctionSignature {
     return_pointee_constant: bool,
     name: String,
     parameters: Vec<FunctionParameter>,
+    /// The payload type of the function's declared exceptional outcome.
+    /// This surface slice currently accepts only `throws int32`.
+    exceptional_type: Option<C0Type>,
     /// Byte spans declared by sized array parameter spellings
     /// (`int32 p[2]`), used to certify requirement side-obligations.
     declared_loadable_bytes: Vec<(String, u32)>,
@@ -5099,6 +5103,7 @@ pub struct VerifiedPureTheorem {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VerifiedClaim {
     Ensure { index: usize, clause: EnsureClause },
+    ExceptionalEnsure { index: usize, clause: EnsureClause },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -5482,6 +5487,10 @@ impl FunctionBlock {
         &self.ensures
     }
 
+    pub fn exceptional_ensures(&self) -> &[EnsureClause] {
+        &self.exceptional_ensures
+    }
+
     pub fn grouped_proof(&self) -> Option<&SourceProof> {
         self.grouped_proof.as_ref()
     }
@@ -5534,6 +5543,7 @@ impl FunctionSignature {
             return_pointee_constant: false,
             name: name.into(),
             parameters,
+            exceptional_type: None,
             declared_loadable_bytes: Vec::new(),
         }
     }
@@ -5561,6 +5571,10 @@ impl FunctionSignature {
 
     pub fn parameters(&self) -> &[FunctionParameter] {
         &self.parameters
+    }
+
+    pub fn exceptional_type(&self) -> Option<C0Type> {
+        self.exceptional_type
     }
 }
 
@@ -6005,7 +6019,8 @@ impl VerifiedCTheorem {
 
     pub fn ensure_clause(&self) -> Option<&EnsureClause> {
         match &self.claim {
-            VerifiedClaim::Ensure { clause, .. } => Some(clause),
+            VerifiedClaim::Ensure { clause, .. }
+            | VerifiedClaim::ExceptionalEnsure { clause, .. } => Some(clause),
         }
     }
 }
