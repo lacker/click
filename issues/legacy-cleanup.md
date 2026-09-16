@@ -3,15 +3,14 @@
 ## Priority and relationship to arena work
 
 P2 architectural cleanup. This issue is worthwhile but is not a prerequisite
-for resuming [arena ownership](arena-resource-ownership.md).
-[Prover bugs](prover-bugs.md) owns the concrete arena blockers, including
-resource/invariant fact correspondence, exact premise presentation, the
-non-progressing atomic extraction retry, mid-execution `have`, and the direct
-increment-bound lookup. Do not duplicate those fixes here or expand that
-issue's completion criteria to include this migration.
+for resuming [arena ownership](arena-resource-ownership.md). The targeted
+arena prover repairs have landed: resource/invariant fact correspondence,
+exact premise presentation, the non-progressing atomic extraction retry,
+mid-execution `have`, and the direct increment-bound lookup. Do not duplicate
+those fixes here. The remaining symbolic allocation proof belongs to the arena
+issue.
 
-Prefer to implement this issue after the prover-bugs changes have landed,
-because both touch proof APIs. The work packages below are sequential green
+The work packages below are sequential green
 commits, not a request to rewrite the entire verifier at once. If one of these
 paths independently exhibits a tooling failure, the affected work becomes a
 blocker under `AGENTS.md`; that does not promote every cleanup package.
@@ -280,8 +279,8 @@ Tests: two invariants with one preceding helper have, mixed explicit/arithmetic
 bodies, duplicate invariant spellings with distinct clause positions, and
 expanding then re-expanding initialization. The helper must execute once, not
 once per invariant; the expanded proof must be a fixed point and must not
-multiply sibling proof bodies. This package does not redo the preservation
-fact-correspondence repair owned by `prover-bugs.md`.
+multiply sibling proof bodies. This package does not redo the already-landed
+preservation fact-correspondence repair.
 
 ## Inventory and work package E: misleading counters and documentation
 
