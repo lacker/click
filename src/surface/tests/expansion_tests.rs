@@ -1287,6 +1287,40 @@ fn callback_branch_ground_premises_verify_expand_and_recheck() {
 }
 
 #[test]
+fn serialized_loop_premises_reject_a_changed_snapshot_or_polarity() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/loop_stable_invariant_export.md");
+    let fixture = crate::cli::read_mdtest(&path).unwrap();
+    let source = fixture.click_source.as_deref().unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let expanded =
+        expand_c0_claim_source(source, &sources, "fill_tail", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).expect("serialized loop proof must reverify");
+
+    let original = "extract(at(statement(3).entry, i) <= at(statement(3).entry, n));";
+    assert!(expanded.contains(original), "{expanded}");
+    for corrupted in [
+        expanded.replacen(
+            original,
+            "extract(at(loop(0).exit, i) <= at(statement(3).entry, n));",
+            1,
+        ),
+        expanded.replacen(
+            original,
+            "extract(not at(statement(3).entry, i) <= at(statement(3).entry, n));",
+            1,
+        ),
+    ] {
+        verify_c0_sources(&corrupted, &sources)
+            .expect_err("a changed serialized premise cannot reverify");
+    }
+}
+
+#[test]
 fn return_population_proofs_expand_without_effect_clauses() {
     for (fixture_name, functions) in [
         (
@@ -11297,6 +11331,17 @@ fn matched_resource_quantified_fact_expands_and_reverifies() {
     assert!(expanded.contains("fold(zero_prefix(buffer)"), "{expanded}");
     verify_c0_sources(&expanded, &c_sources)
         .expect("the expanded matched quantified resource proof should reverify");
+
+    let selected =
+        "instantiate(forall (k: int32) { 0 <= k and k < end implies buffer->data[k] == 0 }, 0)";
+    assert!(expanded.contains(selected), "{expanded}");
+    let changed_binder_body = expanded.replacen(
+        selected,
+        "instantiate(forall (k: int32) { 0 <= k and k < end implies buffer->data[0] == 0 }, 0)",
+        1,
+    );
+    verify_c0_sources(&changed_binder_body, &c_sources)
+        .expect_err("a serialized instantiation must retain the selected universal body");
 }
 
 #[test]

@@ -5,11 +5,12 @@ use crate::surface::planning::proposition_search::PropositionSearch;
 /// The producer-owned portion of a checked loop transition that can be
 /// associated with declared invariant checks.
 ///
-/// Verified loop rules emit effect summaries first, invariant facts in
-/// declaration order, and then the false-guard facts.  Callers consume only
-/// as many entries as there are invariant checks.  In particular, this walks
-/// the statement's exact output delta rather than reconstructing that delta
-/// by comparing the successor against an ambient proof context.
+/// Verified loop rules emit effect summaries first, distinct invariant facts
+/// in declaration order, and then the false-guard facts. Duplicate clauses
+/// may share one semantic fact in this delta, so callers must retain their
+/// separate declaration correspondence. In particular,
+/// this walks the statement's exact output delta rather than reconstructing
+/// that delta by comparing the successor against an ambient proof context.
 pub(in crate::surface::proof) fn loop_invariant_export_facts(
     introduced_facts: &[Proposition],
 ) -> impl Iterator<Item = &Proposition> {

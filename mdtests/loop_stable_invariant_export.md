@@ -1,7 +1,8 @@
 # Stable loop invariants retain their declared export position
 
 A loop invariant that is already available before the loop still occupies its
-declared position in the verified loop rule's exported invariant vector. An
+declared position in the verified loop rule's exported invariant vector. A
+duplicate declaration keeps its own position as well. An
 unrelated sibling fact is also present in the ambient context but is not
 mistaken for an invariant export.
 
@@ -32,6 +33,8 @@ int32 fill_tail(int32 p[], int32 n, int32 untouched[]) {
     step();
     loop {
         invariant n <= 10;
+        invariant n <= 10;
+        invariant i >= 1 and i <= n;
         invariant i >= 1 and i <= n;
 
         initialize by simp;

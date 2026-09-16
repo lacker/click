@@ -2,6 +2,37 @@ use super::*;
 use crate::kernel::LoweringIntroduction;
 use crate::surface::planning::proposition_search::PropositionSearch;
 
+/// A candidate citation is usable only if its spelling denotes the selected
+/// semantic premise at the location where the emitted certificate will run.
+/// A presentation map may contain this spelling for other (even available)
+/// propositions, so it is deliberately not consulted here.
+fn check_selected_premise_spelling(
+    selected: &Proposition,
+    surface: &ClickProposition,
+    lower_at_output: impl FnOnce(&ClickProposition) -> Result<Proposition, String>,
+) -> Result<(), ClickError> {
+    let lowered = lower_at_output(surface).map_err(ClickError::new)?;
+    let selected_key = crate::kernel::proof::proposition_identity_key(selected);
+    let lowered_key = crate::kernel::proof::proposition_identity_key(&lowered);
+    // This key retains exact load snapshots and free binders without walking
+    // a CState. Resource-relation atoms do not contain a CState and keep
+    // their ordinary exact structural comparison.
+    let matches = (selected_key.is_some() && selected_key == lowered_key)
+        || (matches!(
+            selected,
+            Proposition::CResourceSeparate { .. }
+                | Proposition::CResourceContains { .. }
+                | Proposition::CMemoryDisjoint { .. }
+        ) && lowered == *selected);
+    if matches {
+        Ok(())
+    } else {
+        Err(ClickError::new(format!(
+            "selected premise spelling denotes a different fact at this proof location: {lowered:?}"
+        )))
+    }
+}
+
 pub(super) fn surface_logical_children(
     goal: &ClickProposition,
     conjunction: bool,
@@ -553,7 +584,23 @@ pub(super) fn lower_surface_atomic_derivation(
                     Some(point) => surface_at_snapshot(&surface, point)?,
                     None => surface,
                 };
-                premise_pairs.push((premise, surface));
+                match check_selected_premise_spelling(&premise, &surface, |surface| {
+                    lower_fixed_state_proposition(
+                        surface,
+                        available,
+                        parameters,
+                        arguments,
+                        view.old_reference_state(state),
+                        state,
+                        None,
+                        view.recorded_snapshots,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                }) {
+                    Ok(()) => premise_pairs.push((premise, surface)),
+                    Err(error) => unexpressed_premises.push((premise, error)),
+                }
             }
             Err(error) => unexpressed_premises.push((premise, error)),
         }
@@ -618,30 +665,14 @@ pub(super) fn lower_surface_atomic_derivation(
     .is_ok_and(|goal| normalizes_context_free(&goal));
     drop(_normalization_span);
     let availability_kind = |pairs: &[(Proposition, ClickProposition)]| {
-        let surface_premises = pairs
+        let selected_premises = pairs
             .iter()
-            .map(|(_, surface)| {
-                view.surface_propositions
-                    .available_kernel(surface, available)
-                    .cloned()
-                    .map(Ok)
-                    .unwrap_or_else(|| {
-                        lower_fixed_state_proposition(
-                            surface,
-                            available,
-                            parameters,
-                            arguments,
-                            view.old_reference_state(state),
-                            state,
-                            None,
-                            view.recorded_snapshots,
-                            predicate_environment,
-                            click_function_environment,
-                        )
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .ok()?;
+            // Pair creation already checked each spelling against its exact
+            // semantic proposition. Candidate planners only select from
+            // those pairs; validation must retain their kernel members, not
+            // resolve the surfaces through an ambient presentation map.
+            .map(|(kernel, _)| kernel.clone())
+            .collect::<Vec<_>>();
         crate::instrumentation::measure_operation(
             "have",
             "atomic derivation lowering",
@@ -649,7 +680,7 @@ pub(super) fn lower_surface_atomic_derivation(
             || {
                 check_atomic_premise_derivation_goal(
                     &lowered_conclusion,
-                    surface_premises,
+                    selected_premises,
                     &lowered_conclusion,
                     available,
                 )
@@ -6282,4 +6313,87 @@ pub(super) fn public_local_result_surface(
             if contract_expression_mentions_c_local(left, &parameter_names)
                 || contract_expression_mentions_c_local(right, &parameter_names)
     )
+}
+
+#[cfg(test)]
+mod selected_premise_tests {
+    use super::*;
+    use crate::kernel::{PointerBlock, PointerOffsetTerm, Sort, Variable};
+
+    #[test]
+    fn a_historical_presentation_cannot_replace_the_selected_premise() {
+        let surface = ClickProposition::PredicateCall {
+            name: "fact".to_string(),
+            arguments: Vec::new(),
+        };
+        let selected = Proposition::ConditionIs(ConditionTerm::Variable(Variable(1)), true);
+        let historical = Proposition::ConditionIs(ConditionTerm::Variable(Variable(2)), true);
+        let mut presentations = SurfacePropositionMap::default();
+        presentations.record_lowering(&surface, &selected).unwrap();
+        presentations
+            .record_lowering(&surface, &historical)
+            .unwrap();
+        assert_eq!(
+            presentations.available_kernel(&surface, std::slice::from_ref(&historical)),
+            Some(&historical),
+        );
+        assert!(check_selected_premise_spelling(&selected, &surface, |_| Ok(historical)).is_err());
+    }
+
+    #[test]
+    fn selected_spelling_rejects_snapshot_binder_and_polarity_changes() {
+        let surface = ClickProposition::PredicateCall {
+            name: "fact".to_string(),
+            arguments: Vec::new(),
+        };
+        let selected = Proposition::ConditionIs(ConditionTerm::Variable(Variable(1)), true);
+        assert!(
+            check_selected_premise_spelling(&selected, &surface, |_| Ok(selected.clone())).is_ok()
+        );
+        let wrong_polarity = Proposition::ConditionIs(ConditionTerm::Variable(Variable(1)), false);
+        assert!(
+            check_selected_premise_spelling(&selected, &surface, |_| Ok(wrong_polarity)).is_err()
+        );
+
+        let quantified = |var, free| Proposition::ForAll {
+            var: Variable(var),
+            sort: Sort::Bitvector32,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::Variable(Variable(free)),
+                true,
+            )),
+        };
+        assert!(
+            check_selected_premise_spelling(&quantified(1, 1), &surface, |_| Ok(quantified(2, 2)))
+                .is_ok(),
+            "renaming only a bound variable preserves the semantic premise",
+        );
+        assert!(
+            check_selected_premise_spelling(&quantified(1, 3), &surface, |_| Ok(quantified(2, 4)))
+                .is_err()
+        );
+
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let load_fact = |marker| {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::MemoryLoad(
+                        crate::kernel::intern_c_memory(CMemory::new().with_block(marker, 0)),
+                        Box::new(pointer.clone()),
+                    )),
+                    Box::new(Bitvector32Term::Constant(1)),
+                ),
+                true,
+            )
+        };
+        assert!(
+            check_selected_premise_spelling(&load_fact("before"), &surface, |_| Ok(load_fact(
+                "after"
+            )))
+            .is_err()
+        );
+    }
 }

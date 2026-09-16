@@ -191,6 +191,37 @@ fn loop_invariant_surfaces(
         })
 }
 
+/// Pair the kernel's selected loop-head clauses with generated spellings that
+/// explicitly read the iteration-entry snapshot. The written, unqualified
+/// clauses retain their source meaning in the enclosing presentation map.
+fn record_loop_entry_invariants(
+    surface_propositions: &mut SurfacePropositionMap,
+    invariant_surfaces: &[ClickProposition],
+    preservation: &crate::kernel::CLoopPreservationContext,
+    statement_index: usize,
+) -> Result<Vec<ClickProposition>, ClickError> {
+    if invariant_surfaces.len() != preservation.invariant_propositions().len() {
+        return Err(ClickError::new(
+            "loop-head invariant results do not align with declared clauses",
+        ));
+    }
+    invariant_surfaces
+        .iter()
+        .zip(preservation.invariant_propositions())
+        .map(|(surface, kernel)| {
+            let anchored = surface_at_snapshot(
+                surface,
+                &ProgramPointRef {
+                    region: CodeRegionRef::Statement(statement_index),
+                    kind: ProgramPointKind::Entry,
+                },
+            )?;
+            surface_propositions.record_lowering(&anchored, kernel)?;
+            Ok(anchored)
+        })
+        .collect()
+}
+
 /// How a written `initialize by { ... }` script divides into the steps that
 /// belong to the whole phase and the steps that belong to one invariant.
 ///
@@ -979,6 +1010,14 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
         ProgramPointKind::Entry,
         preservation.loop_entry_state().clone(),
     );
+    let invariant_surfaces = loop_invariant_surfaces(environment, loop_index, &claim_label)?;
+    let mut surface_propositions = environment.surface_propositions.clone();
+    record_loop_entry_invariants(
+        &mut surface_propositions,
+        &invariant_surfaces,
+        preservation,
+        loop_body_statement_index,
+    )?;
     let root = Proof::for_execution_frontier(
         &claim_label,
         0,
@@ -986,7 +1025,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
             preservation.state().clone(),
             frontier,
             recorded_snapshots,
-            environment.surface_propositions.clone(),
+            surface_propositions,
             PersistentSequence::default(),
         ),
         pure_facts.to_vec(),
@@ -1210,39 +1249,35 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         .iter()
         .map(|surface| (*surface).clone())
         .collect::<Vec<_>>();
+    loop_head_premises.extend(record_loop_entry_invariants(
+        &mut surface_propositions,
+        &invariant_surfaces,
+        preservation,
+        loop_body_statement_index,
+    )?);
+    if !do_while
+        && let Ok(lowered) = lower_fixed_state_proposition(
+            &loop_condition,
+            pure_facts,
+            environment.parsed_function.parameters(),
+            environment.arguments,
+            environment.initial_state,
+            preservation.state(),
+            None,
+            &recorded_snapshots,
+            environment.predicate_environment,
+            environment.click_function_environment,
+        )
     {
-        let surfaces = if do_while {
-            invariant_surfaces.iter().collect::<Vec<_>>()
-        } else {
-            invariant_surfaces
-                .iter()
-                .chain(std::iter::once(&loop_condition))
-                .collect::<Vec<_>>()
-        };
-        for surface in surfaces {
-            if let Ok(lowered) = lower_fixed_state_proposition(
-                surface,
-                pure_facts,
-                environment.parsed_function.parameters(),
-                environment.arguments,
-                environment.initial_state,
-                preservation.state(),
-                None,
-                &recorded_snapshots,
-                environment.predicate_environment,
-                environment.click_function_environment,
-            ) {
-                let surface = surface_at_snapshot(
-                    surface,
-                    &ProgramPointRef {
-                        region: CodeRegionRef::Statement(loop_body_statement_index),
-                        kind: ProgramPointKind::Entry,
-                    },
-                )?;
-                surface_propositions.record_lowering(&surface, &lowered)?;
-                loop_head_premises.push(surface);
-            }
-        }
+        let surface = surface_at_snapshot(
+            &loop_condition,
+            &ProgramPointRef {
+                region: CodeRegionRef::Statement(loop_body_statement_index),
+                kind: ProgramPointKind::Entry,
+            },
+        )?;
+        surface_propositions.record_lowering(&surface, &lowered)?;
+        loop_head_premises.push(surface);
     }
     if let Some(bundle) = constants.invariant_body_context.as_mut() {
         Arc::make_mut(bundle).loop_head_premises = loop_head_premises;

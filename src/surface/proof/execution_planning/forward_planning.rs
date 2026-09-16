@@ -988,12 +988,21 @@ fn advance_execution_proof_statement(
                     {
                         let mut invariant_targets =
                             loop_invariant_export_facts(&transition.introduced_facts);
+                        let mut mapped_invariants = Vec::new();
                         for surface in loop_clause.items().iter().map(StructuralItem::proposition) {
-                            let target = invariant_targets.next().ok_or_else(|| {
-                                ClickError::new(format!(
-                                    "execution proof traversal loop({loop_index}) omitted an exported fact for an invariant"
-                                ))
-                            })?;
+                            let target = if let Some((_, target)) = mapped_invariants
+                                .iter()
+                                .find(|(mapped_surface, _)| *mapped_surface == surface)
+                            {
+                                *target
+                            } else {
+                                invariant_targets.next().ok_or_else(|| {
+                                    ClickError::new(format!(
+                                        "execution proof traversal loop({loop_index}) omitted an exported fact for an invariant"
+                                    ))
+                                })?
+                            };
+                            mapped_invariants.push((surface, target));
                             let exit_surface = surface_at_snapshot(surface, &exit_point)?;
                             surface_propositions.record_lowering(&exit_surface, target)?;
                         }

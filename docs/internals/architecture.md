@@ -33,6 +33,14 @@ spans. Validation builds a
 `C0VerificationSession`, which owns checked declarations and function blocks.
 Lowering records the relationship between surface propositions and kernel
 propositions so diagnostics and expansion can return to source language.
+Those records are presentation hints, not evidence that a fact is available.
+Loop-head lowering returns one selected proposition per declared invariant,
+including duplicates, separately from the new-fact delta. A preservation
+proof records generated iteration-entry spellings against those selected
+propositions in its local scope; an unqualified source spelling continues to
+lower against the current C state. Certificate generation checks a candidate
+spelling at its output location and validates the selected kernel premise,
+never whichever available fact happens to share that spelling.
 
 The kernel's persistent `ProofObject` owns typed obligations, facts, symbolic
 C execution, resources, focus, and checked successor authority. A

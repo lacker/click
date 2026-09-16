@@ -357,6 +357,7 @@ impl<'a, T: Clone + Ord> IntoIterator for &'a PersistentOrderedSet<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn suffix_since_rejects_a_diverged_prefix() {
@@ -389,5 +390,31 @@ mod tests {
             vec![9999, 9998, 9997]
         );
         assert_eq!(sequence.recent(20_000).len(), 10_000);
+    }
+
+    #[test]
+    fn forked_clause_history_clones_only_its_final_output() {
+        struct Counted(usize, Arc<AtomicUsize>);
+        impl Clone for Counted {
+            fn clone(&self) -> Self {
+                self.1.fetch_add(1, Ordering::Relaxed);
+                Self(self.0, self.1.clone())
+            }
+        }
+
+        for size in [8, 32, 128, 512] {
+            let clones = Arc::new(AtomicUsize::new(0));
+            let mut history = PersistentSequence::default();
+            for index in 0..size {
+                let mut next_path = history.clone();
+                next_path.push(Counted(index, clones.clone()));
+                history = next_path;
+            }
+            assert_eq!(clones.load(Ordering::Relaxed), 0);
+            let output = history.iter().cloned().collect::<Vec<_>>();
+            assert_eq!(output.len(), size);
+            assert_eq!(output.last().map(|value| value.0), Some(size - 1));
+            assert_eq!(clones.load(Ordering::Relaxed), size);
+        }
     }
 }

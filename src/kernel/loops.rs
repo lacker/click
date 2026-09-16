@@ -2679,7 +2679,7 @@ fn execute_c_while_exit_paths(
         budget,
     )?;
     let mut has_live_iteration = false;
-    for (invariant_facts, invariant_obligations) in &invariant_contexts {
+    for (invariant_facts, invariant_obligations, _) in &invariant_contexts {
         if do_while
             || !assume_condition_truthiness(
                 &guard_state,
@@ -2720,7 +2720,7 @@ fn execute_c_while_exit_paths(
         .chain(candidate_exit_entries)
         .collect::<Vec<_>>();
     if initial_may_exit {
-        for (invariant_facts, invariant_obligations) in invariant_contexts {
+        for (invariant_facts, invariant_obligations, _) in invariant_contexts {
             let condition_contexts = assume_condition_truthiness(
                 &guard_state,
                 condition,
@@ -3111,7 +3111,7 @@ pub(super) fn collect_loop_preservation_summary(
         .cloned()
         .map(ExecutionPureFact::new)
         .collect::<Vec<_>>();
-    for (invariant_facts, invariant_obligations) in assume_invariant_checks(
+    for (invariant_facts, invariant_obligations, _) in assume_invariant_checks(
         top_state,
         loop_entry_state,
         invariant_checks,
@@ -3848,7 +3848,7 @@ fn with_selected_arm_views(
     // Two invariant readings would be two different premise sets, and a
     // published arm must be the one every reading selects. One reading is the
     // ordinary case; anything else publishes nothing.
-    let [(facts, obligations)] = contexts.as_slice() else {
+    let [(facts, obligations, _)] = contexts.as_slice() else {
         return Ok(state.clone());
     };
     let head_assumptions = assumptions_with_path_context(assumptions, facts, obligations);
@@ -4941,11 +4941,24 @@ pub(super) fn assume_invariant_checks(
     prefix_facts: &[ExecutionPureFact],
     prefix_obligations: &[ProofObligation],
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<(Vec<ExecutionPureFact>, Vec<ProofObligation>)>> {
-    let mut contexts = vec![(prefix_facts.to_vec(), prefix_obligations.to_vec())];
+) -> ExecutionResult<
+    Vec<(
+        Vec<ExecutionPureFact>,
+        Vec<ProofObligation>,
+        crate::kernel::proof::PersistentSequence<Proposition>,
+    )>,
+> {
+    // Each lowering path forks this declaration history. Keep its prefix
+    // persistent so a loop with many explicit invariants does not clone the
+    // whole preceding clause vector at every declaration.
+    let mut contexts = vec![(
+        prefix_facts.to_vec(),
+        prefix_obligations.to_vec(),
+        crate::kernel::proof::PersistentSequence::default(),
+    )];
     for check in invariant_checks {
         let mut next_contexts = Vec::new();
-        for (facts, obligations) in contexts {
+        for (facts, obligations, invariant_propositions) in contexts {
             let effective_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
             for path in lower_spec_proposition_at_state_with_loop_entry(
@@ -4970,16 +4983,22 @@ pub(super) fn assume_invariant_checks(
                 // used for that derivation may belong to an earlier snapshot
                 // and are not a substitute for this loop's hypothesis after
                 // havoc.
-                if assumptions.proves_exact(&path.proposition) {
+                let mut invariant_propositions = invariant_propositions.clone();
+                invariant_propositions.push(path.proposition.clone());
+                if assumptions.proves_exact(&path.proposition)
+                    || facts
+                        .iter()
+                        .any(|fact| fact.proposition() == &path.proposition)
+                {
                     if !facts
                         .iter()
                         .any(|fact| fact.proposition() == &path.proposition)
                     {
                         facts.push(ExecutionPureFact::new(path.proposition));
                     }
-                    next_contexts.push((facts, obligations));
+                    next_contexts.push((facts, obligations, invariant_propositions));
                 } else if add_path_fact(&mut facts, assumptions, path.proposition).is_some() {
-                    next_contexts.push((facts, obligations));
+                    next_contexts.push((facts, obligations, invariant_propositions));
                 }
             }
         }
