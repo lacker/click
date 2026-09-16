@@ -410,6 +410,12 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
             collect_c_statement_bitvector_variables(first, variables);
             collect_c_statement_bitvector_variables(second, variables);
         }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            collect_c_statement_bitvector_variables(try_body, variables);
+            collect_c_statement_bitvector_variables(handler, variables);
+        }
         CStatement::Store { pointer, value } => {
             collect_c_expression_bitvector_variables(pointer, variables);
             collect_c_expression_bitvector_variables(value, variables);

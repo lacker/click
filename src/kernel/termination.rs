@@ -471,6 +471,24 @@ fn structural_recursion_paths(
             measure,
             structural_recursion_paths(first, function, measure, paths)?,
         ),
+        CStatement::TryCatchInt32 {
+            try_body,
+            binding,
+            handler,
+        } => {
+            let mut handler_paths = paths.clone();
+            for path in &mut handler_paths {
+                path.aliases.remove(binding);
+            }
+            let mut result = structural_recursion_paths(try_body, function, measure, paths)?;
+            result.extend(structural_recursion_paths(
+                handler,
+                function,
+                measure,
+                handler_paths,
+            )?);
+            Ok(result)
+        }
         CStatement::If {
             condition,
             then_branch,
@@ -1099,6 +1117,11 @@ fn statement_takes_address_of(statement: &CStatement, name: &str) -> bool {
         CStatement::Seq(first, second) => {
             statement_takes_address_of(first, name) || statement_takes_address_of(second, name)
         }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            statement_takes_address_of(try_body, name) || statement_takes_address_of(handler, name)
+        }
         CStatement::If {
             condition,
             then_branch,
@@ -1175,6 +1198,12 @@ fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
             statement_calls(first, calls);
             statement_calls(second, calls);
         }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            statement_calls(try_body, calls);
+            statement_calls(handler, calls);
+        }
         CStatement::If {
             then_branch,
             else_branch,
@@ -1225,6 +1254,15 @@ fn statement_declared_variables(statement: &CStatement, names: &mut BTreeSet<Str
         CStatement::Seq(first, second) => {
             statement_declared_variables(first, names);
             statement_declared_variables(second, names);
+        }
+        CStatement::TryCatchInt32 {
+            try_body,
+            binding,
+            handler,
+        } => {
+            statement_declared_variables(try_body, names);
+            names.insert(binding.clone());
+            statement_declared_variables(handler, names);
         }
         CStatement::If {
             then_branch,
@@ -1369,6 +1407,25 @@ fn recursion_paths(
             parameter_indices,
             recursion_paths(first, measure, component, parameter_indices, lower_bounds)?,
         ),
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            let mut paths = recursion_paths(
+                try_body,
+                measure,
+                component,
+                parameter_indices,
+                lower_bounds.clone(),
+            )?;
+            paths.extend(recursion_paths(
+                handler,
+                measure,
+                component,
+                parameter_indices,
+                lower_bounds,
+            )?);
+            Ok(paths)
+        }
         CStatement::If {
             condition,
             then_branch,
@@ -1912,6 +1969,15 @@ fn check_loops(
             check_loops(then_branch, supplied, certified, function_name, next_index)?
                 && check_loops(else_branch, supplied, certified, function_name, next_index)?,
         ),
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            let try_terminates =
+                check_loops(try_body, supplied, certified, function_name, next_index)?;
+            let handler_terminates =
+                check_loops(handler, supplied, certified, function_name, next_index)?;
+            Ok(try_terminates && handler_terminates)
+        }
         CStatement::While { body, .. } => {
             let index = *next_index;
             *next_index += 1;

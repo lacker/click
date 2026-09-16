@@ -122,7 +122,12 @@ they do not claim exception-path support. A separate object-free `scalar_int32`
 fixture locks a typed source throw, verifies the helper's exceptional claim,
 and carries that outcome through a modular caller while its normal path
 continues. It rejects an undeclared or false exceptional claim and a non-int32
-payload. A signed-64 predicate fixture retains a direct `CAmount` typedef
+payload. Kernel-only handler regressions now check that an exact int32 catch
+binds the exceptional payload and thrown state across a verified modular call,
+while normal returns bypass the handler and a throw from the handler escapes.
+The binding must be fresh, so it cannot replace an existing local. The C++
+exporter still rejects source `try`/`catch`; handler import and object unwinding
+are separate steps. A signed-64 predicate fixture retains a direct `CAmount` typedef
 identity, imports `const CAmount&`, the implicit
 promotion of zero, signed `>=`, and a `bool` result, then verifies an exact
 all-input contract offline. Its false zero-boundary contract fails, while

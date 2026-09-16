@@ -1821,6 +1821,13 @@ pub enum CStatement {
     /// Produce a checked exceptional outcome. The first internal slice carries
     /// one int32 payload; source-language handler matching lands separately.
     Throw(CExpression),
+    /// Catch an int32 exceptional outcome from `try_body` and bind its payload
+    /// for the handler. Other outcomes retain their original path and state.
+    TryCatchInt32 {
+        try_body: Box<CStatement>,
+        binding: String,
+        handler: Box<CStatement>,
+    },
     Store {
         pointer: CExpression,
         value: CExpression,

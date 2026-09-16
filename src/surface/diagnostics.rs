@@ -1528,6 +1528,9 @@ pub(super) fn describe_c_statement_head(statement: &CStatement) -> String {
         CStatement::Throw(expression) => {
             format!("throw {};", describe_c_expression(expression))
         }
+        CStatement::TryCatchInt32 { binding, .. } => {
+            format!("try ... catch (int {binding})")
+        }
         CStatement::Store { pointer, value } => format!(
             "*{} = {};",
             describe_c_expression(pointer),

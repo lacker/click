@@ -148,6 +148,13 @@ first gains an internal exceptional outcome while the frontend continues to
 reject exception syntax; surface exceptional signatures and modular rules land
 before any end-to-end C++ exception acceptance.
 
+The object-free scalar profile now imports direct `throw int32`. A checked
+kernel-only exact-int32 handler receives the payload and state from a direct or
+modular throw and leaves normal/other terminal outcomes alone. The exporter
+still rejects C++ source `try`/`catch`, and the kernel handler does not yet
+represent automatic-object unwinding; neither boundary should be inferred from
+the internal regression.
+
 ## Shared resources and Rust borrowing
 
 Stable shared borrowing for ordinary memory shipped from the P1

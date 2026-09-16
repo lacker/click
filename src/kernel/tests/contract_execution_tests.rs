@@ -2052,6 +2052,116 @@ fn verified_exceptional_rule_produces_isolated_outcome_paths() {
 }
 
 #[test]
+fn verified_exceptional_call_enters_int32_handler_with_only_exceptional_claims() {
+    let function = c_function(
+        CType::Int32,
+        "throwing_helper",
+        Vec::new(),
+        CStatement::Throw(c_int32_literal(7)),
+    )
+    .with_int32_exceptional_outcome()
+    .with_exceptional_ensures(vec![SpecProposition::Comparison {
+        left: SpecExpression::CExpression(c_variable(C_EXCEPTIONAL_RESULT_NAME)),
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::Value(int32(7)),
+    }])
+    .with_contract(
+        Vec::new(),
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("result")),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::Value(int32(99)),
+        }],
+        Vec::new(),
+        vec![
+            CFunctionContractClaim::body_safety(),
+            CFunctionContractClaim::ensure_proposition(0, 0),
+            CFunctionContractClaim::exceptional_ensure_proposition(0, 0),
+        ],
+        true,
+    );
+    let execution = certify_contract_with_kernel_artifacts(
+        CState::new(),
+        function.clone(),
+        Vec::new(),
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+    let proofs = c_verified_function_contract_claims(&function, &execution)
+        .expect("the helper's exceptional claim should certify");
+    let rule = c_verified_function_rule(function.clone(), &proofs)
+        .expect("the fully checked helper should form a direct rule");
+    let statement = c_try_catch_int32(
+        c_seq(
+            c_call("throwing_helper", Vec::new()),
+            c_return(c_int32_literal(99)),
+        ),
+        "caught",
+        c_return(c_variable("caught")),
+    );
+    let paths = prove_symbolic_c_execution_paths_with_environment(
+        CState::new(),
+        statement,
+        PureFactContext::new(),
+        CExecutionEnvironment::new()
+            .with_function(function)
+            .with_verified_function_rule(rule),
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+    assert_eq!(paths.paths().len(), 2);
+    let mut saw_normal = false;
+    let mut saw_caught = false;
+    for path in paths.paths() {
+        let mut proposition = path.theorem().proposition();
+        while let Proposition::Implies(_, body) = proposition {
+            proposition = body;
+        }
+        let Proposition::CStatementVerifies {
+            outcome: CStatementOutcome::Return { value, state },
+            ..
+        } = proposition
+        else {
+            panic!("both modular outcomes should return: {proposition:?}");
+        };
+        if state.locals().get("caught").is_none() {
+            saw_normal = true;
+            assert_eq!(value, &int32(99));
+            continue;
+        }
+        saw_caught = true;
+        assert_eq!(state.locals().get("caught"), Some(value));
+        let CValue::Int32(value) = value else {
+            panic!("caught payload should be int32");
+        };
+        let assumptions = assumptions_with_propositions(
+            &PureFactContext::new(),
+            &path
+                .facts()
+                .iter()
+                .map(|fact| fact.proposition().clone())
+                .collect::<Vec<_>>(),
+        );
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(value.clone()),
+                Box::new(Bitvector32Term::Constant(7)),
+            ),
+            true,
+        )));
+        assert!(!assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(value.clone()),
+                Box::new(Bitvector32Term::Constant(99)),
+            ),
+            true,
+        )));
+    }
+    assert!(saw_normal && saw_caught);
+}
+
+#[test]
 fn declared_exceptional_channel_does_not_vanish_without_an_exceptional_ensure() {
     let function = c_function(
         CType::Int32,

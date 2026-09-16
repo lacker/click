@@ -523,6 +523,12 @@ fn statement_consults_conditions(state: &CState, statement: &CStatement) -> bool
             statement_consults_conditions(state, first)
                 || statement_consults_conditions(state, second)
         }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            statement_consults_conditions(state, try_body)
+                || statement_consults_conditions(state, handler)
+        }
         CStatement::CallAssign { .. }
         | CStatement::Call { .. }
         | CStatement::HeapAllocate { .. }
@@ -592,6 +598,9 @@ pub(in crate::surface::proof) fn statement_contains_call(statement: &CStatement)
         CStatement::Seq(first, second) => {
             statement_contains_call(first) || statement_contains_call(second)
         }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => statement_contains_call(try_body) || statement_contains_call(handler),
         CStatement::If {
             then_branch,
             else_branch,

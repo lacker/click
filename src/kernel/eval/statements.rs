@@ -2418,6 +2418,62 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             }
             paths
         }
+        CStatement::TryCatchInt32 {
+            try_body,
+            binding,
+            handler,
+        } => {
+            let mut paths = Vec::new();
+            for try_path in execute_c_statement_paths(
+                state,
+                try_body,
+                assumptions,
+                environment,
+                execution_semantics,
+                budget,
+            )? {
+                if let CStatementOutcome::Throw {
+                    value: value @ CValue::Int32(_),
+                    state: thrown_state,
+                } = &try_path.outcome
+                {
+                    if thrown_state.locals.bindings.contains_key(binding) {
+                        paths.push(CStatementExecutionPath {
+                            outcome: CStatementOutcome::RuntimeError(
+                                CRuntimeError::FunctionContract(format!(
+                                    "int32 handler binding `{binding}` is not fresh"
+                                )),
+                            ),
+                            facts: try_path.facts,
+                            obligations: try_path.obligations,
+                            loan_evidence: try_path.loan_evidence,
+                        });
+                        continue;
+                    }
+                    let bound_handler = c_seq(
+                        c_declare(binding.clone(), CType::Int32),
+                        c_seq(
+                            c_assign(binding.clone(), CExpression::Value(value.clone())),
+                            (**handler).clone(),
+                        ),
+                    );
+                    paths.extend(execute_c_statement_paths_with_prefix(
+                        thrown_state,
+                        &bound_handler,
+                        assumptions,
+                        environment,
+                        execution_semantics,
+                        &try_path.facts,
+                        &try_path.obligations,
+                        &try_path.loan_evidence,
+                        budget,
+                    )?);
+                } else {
+                    paths.push(try_path);
+                }
+            }
+            paths
+        }
         CStatement::Store { pointer, value } => execute_c_lvalue_assignment_paths(
             state,
             &CExpression::Load(Box::new(pointer.clone())),

@@ -3361,6 +3361,7 @@ pub(super) fn describe_statement_head(statement: &CStatement) -> String {
         }
         CStatement::Return(expression) => format!("return {}", describe_c_expression(expression)),
         CStatement::Throw(expression) => format!("throw {}", describe_c_expression(expression)),
+        CStatement::TryCatchInt32 { binding, .. } => format!("try ... catch (int {binding})"),
         CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
             format!(
                 "*{} = {}",

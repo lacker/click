@@ -1241,6 +1241,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 CStatement::Assert { .. } => "verification statement: assert",
                 CStatement::Return(_) => "verification statement: return",
                 CStatement::Throw(_) => "verification statement: throw",
+                CStatement::TryCatchInt32 { .. } => "verification statement: int32 handler",
                 CStatement::Store { .. } => "verification statement: store",
                 CStatement::TypedStore { .. } => "verification statement: typed store",
                 CStatement::Update { .. } => "verification statement: update",
@@ -5487,6 +5488,12 @@ pub(super) fn statement_may_write_memory(state: &CState, statement: &CStatement)
         CStatement::Seq(first, second) => {
             statement_may_write_memory(state, first) || statement_may_write_memory(state, second)
         }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            statement_may_write_memory(state, try_body)
+                || statement_may_write_memory(state, handler)
+        }
         CStatement::If {
             then_branch,
             else_branch,
@@ -5606,6 +5613,15 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
             collect_loop_modified_locals(first, names);
             collect_loop_modified_locals(second, names);
         }
+        CStatement::TryCatchInt32 {
+            try_body,
+            binding,
+            handler,
+        } => {
+            collect_loop_modified_locals(try_body, names);
+            names.insert(binding.clone());
+            collect_loop_modified_locals(handler, names);
+        }
         CStatement::If {
             then_branch,
             else_branch,
@@ -5710,6 +5726,12 @@ pub(crate) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
         CStatement::Seq(first, second) => {
             collect_address_taken_locals(first, names);
             collect_address_taken_locals(second, names);
+        }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            collect_address_taken_locals(try_body, names);
+            collect_address_taken_locals(handler, names);
         }
         CStatement::If {
             condition,

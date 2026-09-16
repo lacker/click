@@ -1935,6 +1935,12 @@ fn statement_contains_internal_throw(statement: &CStatement) -> bool {
         CStatement::Seq(first, second) => {
             statement_contains_internal_throw(first) || statement_contains_internal_throw(second)
         }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            statement_contains_internal_throw(try_body)
+                || statement_contains_internal_throw(handler)
+        }
         CStatement::If {
             then_branch,
             else_branch,

@@ -1394,6 +1394,12 @@ fn c_statement_source_cost(statement: &CStatement) -> CSourceCost {
                 pending.push(first);
                 pending.push(second);
             }
+            CStatement::TryCatchInt32 {
+                try_body, handler, ..
+            } => {
+                pending.push(try_body);
+                pending.push(handler);
+            }
             CStatement::Return(expression) | CStatement::Throw(expression) => {
                 cost.add_expression(c_expression_source_steps(expression));
             }

@@ -951,6 +951,12 @@ pub(in crate::kernel) fn collect_c_statement_bound_variables(
             collect_c_statement_bound_variables(first, variables);
             collect_c_statement_bound_variables(second, variables);
         }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            collect_c_statement_bound_variables(try_body, variables);
+            collect_c_statement_bound_variables(handler, variables);
+        }
         CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
             collect_c_expression_bound_variables(pointer, variables);
             collect_c_expression_bound_variables(value, variables);
@@ -2851,6 +2857,19 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
         CStatement::Throw(expression) => CStatement::Throw(
             substitute_bitvector_variable_in_c_expression(expression, from, to),
         ),
+        CStatement::TryCatchInt32 {
+            try_body,
+            binding,
+            handler,
+        } => CStatement::TryCatchInt32 {
+            try_body: Box::new(substitute_bitvector_variable_in_c_statement(
+                try_body, from, to,
+            )),
+            binding: binding.clone(),
+            handler: Box::new(substitute_bitvector_variable_in_c_statement(
+                handler, from, to,
+            )),
+        },
         CStatement::Store { pointer, value } => CStatement::Store {
             pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
             value: substitute_bitvector_variable_in_c_expression(value, from, to),
@@ -5952,6 +5971,19 @@ fn substitute_pointer_variable_in_c_statement(
         CStatement::Throw(expression) => CStatement::Throw(
             substitute_pointer_variable_in_c_expression(expression, from, to),
         ),
+        CStatement::TryCatchInt32 {
+            try_body,
+            binding,
+            handler,
+        } => CStatement::TryCatchInt32 {
+            try_body: Box::new(substitute_pointer_variable_in_c_statement(
+                try_body, from, to,
+            )),
+            binding: binding.clone(),
+            handler: Box::new(substitute_pointer_variable_in_c_statement(
+                handler, from, to,
+            )),
+        },
         CStatement::Store { pointer, value } => CStatement::Store {
             pointer: substitute_pointer_variable_in_c_expression(pointer, from, to),
             value: substitute_pointer_variable_in_c_expression(value, from, to),

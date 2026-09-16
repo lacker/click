@@ -1499,6 +1499,20 @@ pub fn c_if(
     }
 }
 
+/// Handle a checked int32 exceptional outcome, binding its payload only on
+/// the caught path. Normal and other terminal outcomes bypass the handler.
+pub fn c_try_catch_int32(
+    try_body: CStatement,
+    binding: impl Into<String>,
+    handler: CStatement,
+) -> CStatement {
+    CStatement::TryCatchInt32 {
+        try_body: Box::new(try_body),
+        binding: binding.into(),
+        handler: Box::new(handler),
+    }
+}
+
 pub fn c_while(
     condition: CExpression,
     invariant: Vec<Proposition>,

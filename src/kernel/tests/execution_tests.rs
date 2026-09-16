@@ -911,6 +911,161 @@ fn direct_call_propagates_internal_throw_and_skips_its_suffix() {
 }
 
 #[test]
+fn int32_handler_receives_payload_and_thrown_state_across_a_call() {
+    let thrower = c_function(
+        CType::Int32,
+        "thrower",
+        Vec::new(),
+        CStatement::Throw(c_int32_literal(7)),
+    )
+    .with_int32_exceptional_outcome();
+    let environment = CExecutionEnvironment::new().with_function(thrower);
+    let state = CState::new().with_local("x", int32(1));
+    let statement = c_try_catch_int32(
+        c_seq(
+            c_assign("x", c_int32_literal(9)),
+            c_seq(c_call("thrower", Vec::new()), c_return(c_int32_literal(99))),
+        ),
+        "caught",
+        c_return(c_variable("caught")),
+    );
+    let theorem = prove_symbolic_c_execution_with_environment(
+        state,
+        statement,
+        PureFactContext::new(),
+        environment,
+        CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .expect("the checked handler should execute from the thrown state");
+    let Proposition::CStatementExecutes {
+        outcome: CStatementOutcome::Return { value, state },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("expected a caught return: {:?}", theorem.proposition());
+    };
+    assert_eq!(value, &int32(7));
+    assert_eq!(state.locals.get("x"), Some(&int32(9)));
+    assert_eq!(state.locals.get("caught"), Some(&int32(7)));
+}
+
+#[test]
+fn int32_handler_does_not_run_on_normal_or_return_paths() {
+    let initial = CState::new().with_local("x", int32(1));
+    let normal = c_seq(
+        c_try_catch_int32(
+            c_assign("x", c_int32_literal(9)),
+            "caught",
+            c_return(c_int32_literal(99)),
+        ),
+        c_return(c_variable("x")),
+    );
+    let theorem = prove_symbolic_c_execution(initial.clone(), normal, PureFactContext::new())
+        .expect("a normal try body should bypass the handler");
+    assert!(matches!(
+        theorem.proposition(),
+        Proposition::CStatementExecutes {
+            outcome: CStatementOutcome::Return {
+                value: CValue::Int32(Bitvector32Term::Constant(9)),
+                ..
+            },
+            ..
+        }
+    ));
+    let returning = c_try_catch_int32(
+        c_return(c_int32_literal(3)),
+        "caught",
+        c_return(c_int32_literal(99)),
+    );
+    let theorem = prove_symbolic_c_execution(initial, returning, PureFactContext::new())
+        .expect("a return from the try body should bypass the handler");
+    assert!(matches!(
+        theorem.proposition(),
+        Proposition::CStatementExecutes {
+            outcome: CStatementOutcome::Return {
+                value: CValue::Int32(Bitvector32Term::Constant(3)),
+                ..
+            },
+            ..
+        }
+    ));
+}
+
+#[test]
+fn throw_from_int32_handler_escapes_instead_of_being_recaught() {
+    let statement = c_try_catch_int32(
+        CStatement::Throw(c_int32_literal(7)),
+        "caught",
+        CStatement::Throw(c_variable("caught")),
+    );
+    let theorem = prove_symbolic_c_execution(CState::new(), statement, PureFactContext::new())
+        .expect("a handler throw should escape the same handler");
+    assert!(matches!(
+        theorem.proposition(),
+        Proposition::CStatementExecutes {
+            outcome: CStatementOutcome::Throw {
+                value: CValue::Int32(Bitvector32Term::Constant(7)),
+                ..
+            },
+            ..
+        }
+    ));
+}
+
+#[test]
+fn int32_handler_rejects_a_binding_that_would_replace_a_live_local() {
+    let statement = c_try_catch_int32(
+        CStatement::Throw(c_int32_literal(7)),
+        "live",
+        c_return(c_variable("live")),
+    );
+    let theorem = prove_symbolic_c_execution(
+        CState::new().with_local("live", int32(11)),
+        statement,
+        PureFactContext::new(),
+    )
+    .expect("a colliding catch binding must be rejected, not overwrite the local");
+    assert!(matches!(
+        theorem.proposition(),
+        Proposition::CStatementExecutes {
+            outcome: CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
+            ..
+        } if message.contains("handler binding `live` is not fresh")
+    ));
+}
+
+#[test]
+fn caught_throw_satisfies_a_nonthrowing_function_signature() {
+    let function = c_function(
+        CType::Int32,
+        "fully_handled",
+        Vec::new(),
+        c_try_catch_int32(
+            CStatement::Throw(c_int32_literal(7)),
+            "caught",
+            c_return(c_variable("caught")),
+        ),
+    );
+    let theorem = prove_symbolic_c_function_execution(
+        CState::new(),
+        function,
+        Vec::new(),
+        PureFactContext::new(),
+    )
+    .expect("a fully caught body should be a nonthrowing function");
+    assert!(matches!(
+        theorem.proposition(),
+        Proposition::CFunctionExecutes {
+            outcome: CFunctionOutcome::Return {
+                value: CValue::Int32(Bitvector32Term::Constant(7)),
+                ..
+            },
+            ..
+        }
+    ));
+}
+
+#[test]
 fn internal_throw_is_int32_only_and_requires_a_verified_direct_rule() {
     let throwing = c_function(
         CType::Int32,

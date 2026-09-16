@@ -7428,6 +7428,12 @@ fn statement_writes_aggregate_parameter(
                 unknown_write,
             );
         }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            statement_writes_aggregate_parameter(try_body, parameter_name, writes, unknown_write);
+            statement_writes_aggregate_parameter(handler, parameter_name, writes, unknown_write);
+        }
         CStatement::ContinueWithStep { step } => {
             statement_writes_aggregate_parameter(step, parameter_name, writes, unknown_write);
         }
@@ -9068,6 +9074,12 @@ fn collect_c_memory_read_expressions(statement: &CStatement, reads: &mut Vec<CEx
         CStatement::Seq(first, second) => {
             collect_c_memory_read_expressions(first, reads);
             collect_c_memory_read_expressions(second, reads);
+        }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            collect_c_memory_read_expressions(try_body, reads);
+            collect_c_memory_read_expressions(handler, reads);
         }
         CStatement::Return(expression) | CStatement::Throw(expression) => values(expression, reads),
         CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
