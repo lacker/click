@@ -198,7 +198,7 @@ public:
     profile["compilation_command"] = std::move(compilation_command);
 
     llvm::json::Object artifact;
-    artifact["schema"] = 16;
+    artifact["schema"] = 17;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["exception_behavior"] = "normal_only";
@@ -1473,9 +1473,10 @@ private:
             llvm::dyn_cast<clang::BinaryOperator>(expression)) {
       if (binary->getOpcode() != clang::BO_Add &&
           binary->getOpcode() != clang::BO_Mul &&
+          binary->getOpcode() != clang::BO_LE &&
           binary->getOpcode() != clang::BO_GE) {
         fail(binary->getOperatorLoc(),
-             "unsupported binary operator; this C++ slice supports int addition, checked constant multiplication, and signed 64-bit >= only");
+             "unsupported binary operator; this C++ slice supports int addition, checked constant multiplication, and signed 64-bit <= and >= only");
         return std::nullopt;
       }
       if (binary->getOpcode() == clang::BO_Mul && !allow_constant_multiply) {
@@ -1507,11 +1508,15 @@ private:
       }
       llvm::json::Object result;
       result["kind"] = "binary";
-      result["operator"] = binary->getOpcode() == clang::BO_Add
-                               ? "add"
-                               : binary->getOpcode() == clang::BO_Mul
-                                     ? "multiply"
-                                     : "greater_equal";
+      if (binary->getOpcode() == clang::BO_Add) {
+        result["operator"] = "add";
+      } else if (binary->getOpcode() == clang::BO_Mul) {
+        result["operator"] = "multiply";
+      } else if (binary->getOpcode() == clang::BO_LE) {
+        result["operator"] = "less_equal";
+      } else {
+        result["operator"] = "greater_equal";
+      }
       result["left"] = std::move(*left);
       result["right"] = std::move(*right);
       result["value_type"] = std::move(*value_type);

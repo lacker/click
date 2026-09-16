@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 16;
+pub(crate) const EXPORT_SCHEMA: u32 = 17;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -161,6 +161,7 @@ pub struct CppPlace {
 pub enum CppBinaryOperator {
     Add,
     Multiply,
+    LessEqual,
     GreaterEqual,
 }
 
@@ -1520,6 +1521,13 @@ impl CppExpression {
                 require_int32(right.value_type(), false, "binary right operand")
             }
             Self::Binary {
+                operator: CppBinaryOperator::LessEqual,
+                left,
+                right,
+                value_type,
+                span,
+            }
+            | Self::Binary {
                 operator: CppBinaryOperator::GreaterEqual,
                 left,
                 right,

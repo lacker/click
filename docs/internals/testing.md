@@ -122,8 +122,9 @@ they do not claim exception-path support. A signed-64 predicate fixture retains
 a direct `CAmount` typedef identity, imports `const CAmount&`, the implicit
 promotion of zero, signed `>=`, and a `bool` result, then verifies an exact
 all-input contract offline. Its false zero-boundary contract fails, while
-mutable and unsigned wide references, `<=`, and `&&` fail at the frontend
-boundary. A constexpr fixture locks a fixture-owned `<cstdint>` dependency,
+mutable and unsigned wide references, other relational operators, and `&&`
+fail at the frontend boundary. A constexpr fixture locks a fixture-owned
+`<cstdint>` dependency,
 retains the two-link `CAmount`/`int64_t` alias chain, and imports one leaf
 `static constexpr` signed-64 constant by declaration identity. Its exact
 all-input comparison verifies offline; dependency tampering, an undeclared
@@ -131,7 +132,9 @@ dependency, mutable storage, and a non-leaf initializer fail locally. A second
 fixture retains the ordered `COIN`/`MAX_MONEY` graph, validates the one signed
 64-bit multiplication against Clang's evaluated value, and verifies a
 `MAX_MONEY` comparison offline. It rejects a third constant, a different
-initializer operator, and runtime multiplication. A pointer fixture passes
+initializer operator, and runtime multiplication. A second selection verifies
+the inclusive signed-64 `value <= MAX_MONEY` upper bound and rejects a false
+equality boundary. A pointer fixture passes
 `&value` from an `int&` caller to a mutable `int*` helper, then checks
 dereference reads, a checked write, offline
 verification, and expansion/reverification. Removing memory ownership and a

@@ -217,13 +217,16 @@ declaration identities and the signed-64 multiplication tree, requires `COIN`
 to precede `MAX_MONEY`, recomputes the result with checked multiplication, and
 compares it with Clang's evaluated value. Direct lowering still substitutes the
 validated `MAX_MONEY` value; it does not add runtime multiplication to the
-kernel boundary.
+kernel boundary. A second selected function in that fixture imports signed
+64-bit `value <= MAX_MONEY`, retains the distinct Clang `<=` operator, and
+lowers it directly to the kernel's inclusive signed comparison.
 
 These fixtures do not claim the host C++ standard library: their header is a
 pinned input containing only the needed `int64_t` typedef. Mutable or
 non-`constexpr` globals, undeclared header dependencies, broader or unordered
 constant graphs, other constant expressions, mutable signed-64 references,
-unsigned 64-bit aliases, `<=`, and `&&` remain outside the boundary.
+unsigned 64-bit aliases, other relational operators, and `&&` remain outside
+the boundary.
 
 The `direct-call` fixture selects a caller and captures the transitive closure
 of definitions reached by discarded-result direct call statements. Each call

@@ -133,6 +133,9 @@ identity without claiming ambient standard-library support.
 The synthetic `constexpr-max-money` regression now imports the ordered
 two-node dependency `MAX_MONEY = 21000000 * COIN`, retains its multiplication
 tree, checks its signed-64 value independently of Clang's stored result, and
-verifies a reference to `MAX_MONEY` offline. The next semantic increment is the
-signed `<=` comparison used by `MoneyRange`; short-circuit `&&` and the upstream
-Bitcoin fixture remain required afterward.
+verifies a reference to `MAX_MONEY` offline.
+
+The same regression now selects and verifies `value <= MAX_MONEY` with the
+distinct Clang signed-64 less-equal node and a false equality-boundary check.
+The next semantic increment is short-circuit `&&`; the upstream Bitcoin fixture
+and its real toolchain dependency provenance remain required afterward.
