@@ -61,11 +61,12 @@ impl<S, O> DerefMut for PropositionObligation<S, O> {
     }
 }
 
-/// Surface-independent result-aware state for one checked function outcome.
+/// Surface-independent payload-aware state for one checked function outcome.
 #[derive(Clone)]
 pub(crate) struct OutcomeProofCore {
     pub(crate) result: Arc<CValue>,
     pub(crate) state: SharedValue<CState>,
+    pub(crate) is_exceptional: bool,
     pub(crate) effect_facts: Arc<Vec<ExecutionPureFact>>,
     pub(crate) execution_pure_facts: Arc<Vec<ExecutionPureFact>>,
     pub(crate) requirement_facts: Arc<Vec<Proposition>>,

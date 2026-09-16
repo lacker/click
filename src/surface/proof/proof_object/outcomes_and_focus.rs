@@ -49,9 +49,12 @@ impl<'a> Proof<'a> {
         let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
             return Err(self.step_error("an outcome snapshot requires a focused outcome goal"));
         };
-        Ok(CFunctionOutcome::Return {
-            value: (*goal.data.core.result).clone(),
-            state: (*goal.data.core.state).clone(),
+        let value = (*goal.data.core.result).clone();
+        let state = (*goal.data.core.state).clone();
+        Ok(if goal.data.core.is_exceptional {
+            CFunctionOutcome::Throw { value, state }
+        } else {
+            CFunctionOutcome::Return { value, state }
         })
     }
 
@@ -61,8 +64,10 @@ impl<'a> Proof<'a> {
         &self,
         outcome: &CFunctionOutcome,
     ) -> Result<Self, ClickError> {
-        let CFunctionOutcome::Return { value, state } = outcome else {
-            return Err(self.step_error("an outcome snapshot requires a return outcome"));
+        let (value, state) = match outcome {
+            CFunctionOutcome::Return { value, state }
+            | CFunctionOutcome::Throw { value, state } => (value, state),
+            _ => return Err(self.step_error("an outcome snapshot requires a completed outcome")),
         };
         let outcome_data = match self.focused_obligation() {
             Some(Obligation::FunctionOutcome(goal)) => goal.data.as_ref(),
@@ -74,6 +79,9 @@ impl<'a> Proof<'a> {
             }
         };
         let mut data = outcome_data.clone();
+        if data.core.is_exceptional != matches!(outcome, CFunctionOutcome::Throw { .. }) {
+            return Err(self.step_error("an outcome snapshot cannot change its outcome family"));
+        }
         // Resource-producing post-execution tactics can replace the outcome
         // state after this goal was derived. Carry that persistent snapshot
         // root forward; otherwise later
@@ -193,7 +201,7 @@ impl<'a> Proof<'a> {
 
     /// Derives the typed function-outcome goal set from a function-exit
     /// frontier: the successor retires the focused branch frontier goal and opens
-    /// one outcome goal per feasible checked returning path, in the checked
+    /// one outcome goal per feasible checked return or throw path, in the checked
     /// execution's deterministic path order. Candidate paths whose exact
     /// facts contradict the enclosing proof facts contribute no goal.
     ///
@@ -255,9 +263,9 @@ impl<'a> Proof<'a> {
             {
                 continue;
             }
-            let (result, state) = match path.outcome() {
-                CFunctionOutcome::Return { value, state } => (value.clone(), state.clone()),
-                CFunctionOutcome::Throw { value, state } => (value.clone(), state.clone()),
+            let (result, state, is_exceptional) = match path.outcome() {
+                CFunctionOutcome::Return { value, state } => (value.clone(), state.clone(), false),
+                CFunctionOutcome::Throw { value, state } => (value.clone(), state.clone(), true),
                 // A path proved non-returning owes no outcome judgment.
                 CFunctionOutcome::VerificationDiverges => continue,
                 CFunctionOutcome::UndefinedBehavior(_) | CFunctionOutcome::RuntimeError(_) => {
@@ -282,6 +290,7 @@ impl<'a> Proof<'a> {
                         OutcomeProofCore {
                             result: Arc::new(result),
                             state: state.into(),
+                            is_exceptional,
                             effect_facts: Arc::new(execution_facts),
                             execution_pure_facts: Arc::new(path.facts().to_vec()),
                             requirement_facts: requirement_facts.clone(),

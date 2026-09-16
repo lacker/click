@@ -2015,10 +2015,13 @@ fn execute_verified_function_applications(
         && (applications.len() != 1
             || selected_contract.is_some()
             || resource_application.is_some()
-            || application.evidence.is_none_or(|function| {
-                !function.verified_direct_contract_supported()
-                    || function.contract_interface() != application.interface
-            }))
+            || application
+                .evidence
+                .or(application.storage)
+                .is_none_or(|function| {
+                    !function.verified_direct_contract_supported()
+                        || function.contract_interface() != application.interface
+                }))
     {
         return Ok(vec![CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(
@@ -2221,10 +2224,12 @@ fn execute_verified_function_applications(
             continue;
         }
         let exceptional_path = if let Some(payload_identity) = exceptional_payload_identity {
-            Some(exceptional_verified_function_path(
+            Some(exceptional_direct_function_path(
                 caller_state,
                 interface,
-                evidence.expect("exceptional applications require direct body evidence"),
+                evidence
+                    .or(storage)
+                    .expect("exceptional applications require a direct function declaration"),
                 &argument_values,
                 &entry_state,
                 &entry_contract_state,
@@ -2718,12 +2723,14 @@ fn execute_verified_function_applications(
     Ok(paths)
 }
 
-/// Builds the exceptional successor of the first body-certified modular-call
-/// slice. Entry checking and the unchanged post-memory are shared with the
+/// Builds the exceptional successor of a direct modular call. Its function
+/// declaration supplies storage identity, not necessarily body evidence:
+/// targeted proofs may assume an unselected callee's checked interface.
+/// Entry checking and the unchanged post-memory are shared with the
 /// normal application, but the payload and certified facts are specific to
 /// this outcome. Keeping this path separate is what prevents ordinary
 /// `ensures` from becoming exceptional facts (and vice versa).
-fn exceptional_verified_function_path(
+fn exceptional_direct_function_path(
     caller_state: &CState,
     interface: &CFunctionContractInterface,
     evidence: &CFunction,

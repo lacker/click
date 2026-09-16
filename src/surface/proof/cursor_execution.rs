@@ -1680,7 +1680,7 @@ fn execute_step_from_frontier_position_selecting_path(
         )?;
         return Ok(Vec::new());
     }
-    let step_statement = source_statement;
+    let mut step_statement = source_statement;
     if function_environment.selected_call_contract.is_some()
         && !statement_contains_call(&step_statement)
     {
@@ -1759,6 +1759,8 @@ fn execute_step_from_frontier_position_selecting_path(
     let construction_snapshot_overrides = construction_snapshot_overrides.unwrap_or_default();
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
+    let next_opaque_call_before_step = execution.core.next_opaque_call;
+    let next_kernel_variable_before_step = execution.core.next_kernel_variable;
     let mut transitions = certified_statement_transitions(
         &current_state,
         available_pure_facts,
@@ -1777,15 +1779,80 @@ fn execute_step_from_frontier_position_selecting_path(
     if let Some(selected_path_fact) = selected_path_fact {
         transitions.retain(|transition| transition.path_facts.contains(selected_path_fact));
     }
-    if transitions.len() > 1
+    // A direct call can have one continuing normal outcome and one terminal
+    // throw. If its only continuation is a return, prove that exact two-node
+    // source suffix as one checked statement theorem family. Keep this
+    // deliberately constant-size: a step must not scan or execute an
+    // unrelated remainder of the function to discover a join.
+    if selected_path_fact.is_none()
+        && matches!(
+            step_statement,
+            CStatement::Call { .. } | CStatement::CallAssign { .. }
+        )
+        && matches!(
+            execution.core.frontier.region,
+            ExecutionRegionKind::Function
+        )
+        && execution.core.frontier.continuations.is_empty()
+        && transitions.len() == 2
         && transitions
             .iter()
-            .all(|transition| matches!(transition.outcome, CStatementOutcome::Return { .. }))
+            .filter(|transition| matches!(transition.outcome, CStatementOutcome::Normal(_)))
+            .count()
+            == 1
+        && transitions
+            .iter()
+            .filter(|transition| matches!(transition.outcome, CStatementOutcome::Throw { .. }))
+            .count()
+            == 1
+        && let Some(tail @ CStatement::Return(_)) = remaining.as_ref()
     {
-        // A single source return can have several valid operational outcomes,
-        // notably when it returns an unresolved malloc result. This is not C
-        // control flow and needs no proof-level case split: all successors
-        // complete the function at the same statement boundary.
+        let whole_suffix = c_seq(step_statement.clone(), tail.clone());
+        let mut next_opaque_call = next_opaque_call_before_step;
+        let mut next_kernel_variable = next_kernel_variable_before_step;
+        let (suffix_transitions, _) = certified_statement_transitions(
+            &current_state,
+            available_pure_facts,
+            &whole_suffix,
+            function_environment,
+            Some(proof_context.predicate_environment),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &transition_label,
+            &mut next_opaque_call,
+            &mut next_kernel_variable,
+            prerequisite_policy,
+            fact_transport_policy,
+            context,
+        )?;
+        if suffix_transitions.len() == 2
+            && suffix_transitions
+                .iter()
+                .filter(|transition| matches!(transition.outcome, CStatementOutcome::Return { .. }))
+                .count()
+                == 1
+            && suffix_transitions
+                .iter()
+                .filter(|transition| matches!(transition.outcome, CStatementOutcome::Throw { .. }))
+                .count()
+                == 1
+        {
+            step_statement = whole_suffix;
+            transitions = suffix_transitions;
+            execution.core.next_opaque_call = next_opaque_call;
+            execution.core.next_kernel_variable = next_kernel_variable;
+        }
+    }
+    if transitions.len() > 1
+        && transitions.iter().all(|transition| {
+            matches!(
+                transition.outcome,
+                CStatementOutcome::Return { .. } | CStatementOutcome::Throw { .. }
+            )
+        })
+    {
+        // One checked source operation can have several completed outcomes,
+        // including a terminal direct call followed by a return.
+        // Preserve every theorem and its own outcome for final certification.
         if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
             && let Some(construction) = construction.as_mut()
         {

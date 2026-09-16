@@ -1,6 +1,93 @@
 use super::*;
 
 #[test]
+fn modular_exceptional_call_completes_both_caller_claim_families() {
+    let c_source = r#"
+        int32 helper(int32 x) { return x; }
+        int32 caller(int32 x) { return helper(x); }
+    "#;
+    let click_source = r#"
+        verifying "calls.c";
+        int32 helper(int32 x) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 7;
+        }
+        int32 caller(int32 x) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 7;
+        }
+    "#;
+    verify_c0_sources(click_source, &[("calls.c", c_source)])
+        .expect("normal and exceptional caller claims must verify");
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("calls.c", c_source)],
+        "caller",
+        CProofClaim::ExceptionalEnsure(0),
+    )
+    .expect("the caller's exceptional claim must expand");
+    verify_c0_sources(&expanded, &[("calls.c", c_source)])
+        .expect("the expanded exceptional caller proof must verify");
+}
+
+#[test]
+fn modular_exceptional_call_rejects_a_false_caller_claim() {
+    let c_source = r#"
+        int32 helper(int32 x) { return x; }
+        int32 caller(int32 x) { return helper(x); }
+    "#;
+    let click_source = r#"
+        verifying "calls.c";
+        int32 helper(int32 x) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 7;
+        }
+        int32 caller(int32 x) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 8;
+        }
+    "#;
+    let error = verify_c0_sources(click_source, &[("calls.c", c_source)])
+        .expect_err("the callee's exceptional fact cannot prove a false caller claim");
+    assert!(
+        error.message().contains("exceptional_ensures_0"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn targeted_exceptional_caller_assumes_but_does_not_certify_an_unselected_callee() {
+    let c_source = r#"
+        int32 helper(int32 x) { return x + 1; }
+        int32 caller(int32 x) { return helper(x); }
+    "#;
+    let click_source = r#"
+        verifying "calls.c";
+        int32 helper(int32 x) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 7;
+        }
+        int32 caller(int32 x) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 7;
+        }
+    "#;
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("calls.c", c_source)],
+        "caller",
+        CProofClaim::ExceptionalEnsure(0),
+    )
+    .expect("targeted expansion may assume the callee interface");
+    let error = verify_c0_sources(&expanded, &[("calls.c", c_source)])
+        .expect_err("whole-file verification must still certify the callee body");
+    assert!(
+        error.message().contains("helper.ensures_0"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn exceptional_contracts_publish_distinct_claim_families() {
     let c_source = r#"
             int32 helper(int32 x) {

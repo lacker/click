@@ -92,9 +92,20 @@ exceptional family cannot carry resources or mutable effects, and named
 contracts, external contracts, callbacks, indirect calls, handlers, and
 unwinding do not yet support it. The C++ importer also still rejects source
 `throw` and `catch`; the exceptional outcome is currently an internal checked
-outcome used by direct modular summaries. A call that exposes both its normal
-and exceptional successors still needs the forthcoming call-frontier proof
-split before a surface proof can traverse both paths.
+outcome used by direct modular summaries. A direct modular call whose normal
+continuation is a single return can certify both caller outcome families:
+
+<!-- verified-example: mdtests/exceptional_terminal_call.md -->
+```click
+int32 caller(int32 x) throws int32 {
+    ensures result == x;
+    exceptional ensures exception == 7;
+}
+```
+
+More general normal continuations and handlers still need a call-frontier
+proof split; this terminal case does not consume the rest of the function in
+one proof step.
 
 C functions may call themselves or participate in mutual recursion without a
 special Click keyword. Their ordinary contracts are the modular interfaces for
