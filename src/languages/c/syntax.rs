@@ -9956,7 +9956,66 @@ impl Parser {
         })
     }
 
+    /// Keep common straight-line statements off the large fallback dispatcher.
+    /// This matters for callers that deliberately parse on a small stack.
+    #[inline(never)]
     fn parse_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
+        if matches!(self.peek(), Some(Token::Ident(_)))
+            && self.peek_next().is_some_and(Token::is_scalar_update)
+        {
+            let statement = self.parse_scalar_update_statement("statement")?;
+            self.expect(Token::Semicolon)?;
+            return Ok(statement);
+        }
+        if self.peek_ident() == Some("return") {
+            return self.parse_return_statement();
+        }
+        self.parse_statement_slow()
+    }
+
+    fn parse_return_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
+        self.position += 1;
+        let expression = if self.peek() == Some(&Token::Semicolon) {
+            C0Expression::Void
+        } else if self.current_return_struct_name.is_some() {
+            self.parse_expression_allow_direct_aggregate()?
+        } else {
+            self.parse_expression()?
+        };
+        self.validate_struct_pointer_assignment(
+            self.current_return_pointer_struct_name.as_ref(),
+            Some(self.current_return_type),
+            &expression,
+        )?;
+        self.reject_discarded_const_pointer(
+            self.current_return_type,
+            self.current_return_pointee_constant,
+            &expression,
+        )?;
+        // Check wide-to-int representability at the return statement,
+        // where the proof can discharge its bounds from call facts.
+        // Deferring this conversion until function finalization leaves
+        // those obligations outside the statement proof frontier.
+        let expression = if self.current_return_type == C0Type::Int32
+            && matches!(
+                self.source_expression_type(&expression),
+                Some(C0Type::Int64 | C0Type::UInt64)
+            ) {
+            C0Expression::Cast {
+                expression: Box::new(expression),
+                c_type: C0Type::Int32,
+                struct_name: None,
+                pointee_volatile: false,
+                pointee_constant: false,
+            }
+        } else {
+            expression
+        };
+        self.expect(Token::Semicolon)?;
+        Ok(C0Statement::Return(expression))
+    }
+
+    fn parse_statement_slow(&mut self) -> Result<C0Statement, C0SyntaxError> {
         match self.peek() {
             Some(Token::Semicolon) => {
                 self.position += 1;
@@ -10003,11 +10062,6 @@ impl Parser {
             Some(Token::Ident(_)) if self.peek_ident() == Some("static") => {
                 self.parse_static_local_declaration()
             }
-            Some(Token::Ident(_)) if self.peek_next().is_some_and(Token::is_scalar_update) => {
-                let statement = self.parse_scalar_update_statement("statement")?;
-                self.expect(Token::Semicolon)?;
-                Ok(statement)
-            }
             Some(Token::PlusPlus | Token::MinusMinus) => {
                 let statement = if self.prefix_starts_memory_lvalue() {
                     let prefix = self.next();
@@ -10036,47 +10090,7 @@ impl Parser {
             }
             Some(Token::Ident(_)) if self.is_type_start() => self.parse_local_declaration(),
             Some(Token::Ident(_)) => match self.peek_ident() {
-                Some("return") => {
-                    self.position += 1;
-                    let expression = if self.peek() == Some(&Token::Semicolon) {
-                        C0Expression::Void
-                    } else if self.current_return_struct_name.is_some() {
-                        self.parse_expression_allow_direct_aggregate()?
-                    } else {
-                        self.parse_expression()?
-                    };
-                    self.validate_struct_pointer_assignment(
-                        self.current_return_pointer_struct_name.as_ref(),
-                        Some(self.current_return_type),
-                        &expression,
-                    )?;
-                    self.reject_discarded_const_pointer(
-                        self.current_return_type,
-                        self.current_return_pointee_constant,
-                        &expression,
-                    )?;
-                    // Check wide-to-int representability at the return statement,
-                    // where the proof can discharge its bounds from call facts.
-                    // Deferring this conversion until function finalization leaves
-                    // those obligations outside the statement proof frontier.
-                    let expression = if self.current_return_type == C0Type::Int32
-                        && matches!(
-                            self.source_expression_type(&expression),
-                            Some(C0Type::Int64 | C0Type::UInt64)
-                        ) {
-                        C0Expression::Cast {
-                            expression: Box::new(expression),
-                            c_type: C0Type::Int32,
-                            struct_name: None,
-                            pointee_volatile: false,
-                            pointee_constant: false,
-                        }
-                    } else {
-                        expression
-                    };
-                    self.expect(Token::Semicolon)?;
-                    Ok(C0Statement::Return(expression))
-                }
+                Some("return") => self.parse_return_statement(),
                 Some("break") => self.parse_loop_control_statement(false),
                 Some("continue") => self.parse_loop_control_statement(true),
                 Some("goto") => {
