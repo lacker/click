@@ -96,6 +96,145 @@ fn invariant_bundle_leaf_fixture() -> (Proposition, Proposition) {
 }
 
 #[test]
+fn atomic_conjunct_extraction_requires_exact_selected_premise_on_small_stack() {
+    std::thread::Builder::new()
+        .name("atomic-extract-progress-small-stack".into())
+        .stack_size(1792 * 1024)
+        .spawn(|| {
+            let parsed_function = syntax::parse_function("int32 read(int32 p[1]) { return 0; }")
+                .expect("test pointer function should parse");
+            let predicates = PredicateEnvironment::new(&[]);
+            let functions = ClickFunctionEnvironment::new(&[]);
+            let theorems = TheoremEnvironment::new(&[]);
+            let pointer = Pointer {
+                block: "atomic-extract-cell".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            let old_memory = CMemory::new().with_block("atomic-extract-cell", 4).store(
+                pointer.clone(),
+                CValue::Int32(Bitvector32Term::Variable(Variable(8_000_100))),
+            );
+            let current_memory = old_memory.clone().store(
+                pointer.clone(),
+                CValue::Int32(Bitvector32Term::Variable(Variable(8_000_101))),
+            );
+            let old_state = CState::new().with_memory(old_memory);
+            let current_state = CState::new().with_memory(current_memory);
+            let arguments = vec![CExpression::Value(CValue::pointer(pointer))];
+            let surface = ClickProposition::Comparison {
+                left: ContractExpression::Index(
+                    Box::new(ContractExpression::CFragment(CExpression::Variable(
+                        "p".to_string(),
+                    ))),
+                    Box::new(ContractExpression::IntegerLiteral("0".to_string())),
+                ),
+                operator: ComparisonOperator::LessEqual,
+                right: ContractExpression::CFragment(CExpression::Value(int32(9))),
+            };
+            let snapshots = RecordedSnapshots::new();
+            let lower_at = |state: &CState| {
+                lower_fixed_state_proposition_with_assumptions(
+                    &surface,
+                    &PureFactContext::new(),
+                    parsed_function.parameters(),
+                    &arguments,
+                    &old_state,
+                    state,
+                    None,
+                    &snapshots,
+                    &predicates,
+                    &functions,
+                )
+                .expect("the selected load bound should lower")
+            };
+            let old_leaf = lower_at(&old_state);
+            let current_leaf = lower_at(&current_state);
+            assert_ne!(old_leaf, current_leaf);
+
+            let old_sibling = indexed_fact(8_000_102);
+            let current_sibling = indexed_fact(8_000_103);
+            let facts = vec![
+                Proposition::And(Box::new(old_leaf.clone()), Box::new(old_sibling)),
+                Proposition::And(Box::new(current_leaf), Box::new(current_sibling)),
+            ];
+            let mut stale_surfaces = SurfacePropositionMap::default();
+            stale_surfaces
+                .record_lowering(&surface, &old_leaf)
+                .expect("the resource body should retain its old lowering");
+            let stale = Proof::for_fixed_state_goal(
+                "stale atomic conjunct extraction",
+                0,
+                &facts,
+                old_leaf.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &old_state,
+                &current_state,
+                &snapshots,
+                &stale_surfaces,
+                &predicates,
+                &functions,
+                &theorems,
+                &[],
+                &[],
+            );
+            let (_, stale_derivation, _, _) = stale
+                .selected_simp_derivation(false)
+                .expect("the old resource leaf should be selected from its conjunction");
+            let selected_pairs = vec![(old_leaf.clone(), surface.clone())];
+            assert!(
+                stale
+                    .extract_special_conjunct_premises(&stale_derivation, &selected_pairs)
+                    .is_err(),
+                "extracting the current spelling must not count as producing the selected old leaf"
+            );
+            assert!(
+                stale
+                    .extract_special_conjunct_premises(&stale_derivation, &selected_pairs)
+                    .is_err(),
+                "a retry must remain a prompt miss rather than accumulating extraction steps"
+            );
+            assert!(
+                stale.try_typed_atomic_simp_closure().is_none(),
+                "the stale selected candidate must fail without recursively extracting"
+            );
+            assert!(stale.certificate().steps().is_empty());
+
+            let mut exact_surfaces = SurfacePropositionMap::default();
+            exact_surfaces
+                .record_lowering(&surface, &old_leaf)
+                .expect("the exact resource leaf should retain its source spelling");
+            let exact = Proof::for_fixed_state_goal(
+                "exact atomic conjunct extraction",
+                0,
+                std::slice::from_ref(&facts[0]),
+                old_leaf.clone(),
+                parsed_function.parameters(),
+                &arguments,
+                &old_state,
+                &old_state,
+                &snapshots,
+                &exact_surfaces,
+                &predicates,
+                &functions,
+                &theorems,
+                &[],
+                &[],
+            );
+            let sibling = exact.clone();
+            let closed = exact
+                .try_typed_atomic_simp_closure()
+                .expect("the exact selected leaf should extract and close the goal");
+            assert!(closed.is_complete());
+            assert_eq!(closed.certificate().steps(), &[ProofStep::Extract(surface)]);
+            assert!(sibling.certificate().steps().is_empty());
+        })
+        .expect("the atomic extraction small-stack test should start")
+        .join()
+        .expect("atomic extraction must not overflow the small stack");
+}
+
+#[test]
 fn shared_mid_execution_have_retains_checked_facts_path_locally() {
     let original = ExecutionProofState::at_entry(
         CState::new(),

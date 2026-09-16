@@ -1251,30 +1251,42 @@ impl<'a> Proof<'a> {
                 .selected_simp_derivation_with_surfaces(exclude_exact_goal, introduced_surfaces)?;
             anchored_pairs = premise_pairs;
             let premise_pairs = &anchored_pairs;
-            if let Some(extracted) = self.extract_special_conjunct_premises(&derivation)
-                && let Some(closed) = extracted.try_typed_atomic_simp_closure()
-            {
-                return Some(closed);
-            }
-            self.check_typed_atomic_simp_candidate(
-                &goal,
-                &derivation,
-                premise_pairs,
-                fixed_state_application_closes_goal,
-            )
-            .or_else(|| self.try_selected_equality_rewrite_chain(premise_pairs))
-            .or_else(|| self.try_selected_predecessor_upper_bound(&goal, premise_pairs))
-            .or_else(|| self.try_selected_constant_bound_weakening(&goal, &derivation))
-            .or_else(|| {
-                self.surface_goal().and_then(|surface_goal| {
-                    self.try_selected_unchanged_load_forall_goal(surface_goal, premise_pairs)
-                        .or_else(|| {
-                            self.try_selected_forall_goal(&goal, surface_goal, premise_pairs)
-                        })
+            let typed_atomic =
+                match self.extract_special_conjunct_premises(&derivation, premise_pairs) {
+                    Ok(Some(extracted)) if extracted.is_complete() => Some(extracted),
+                    Ok(Some(extracted)) => extracted.check_typed_atomic_simp_candidate(
+                        &goal,
+                        &derivation,
+                        premise_pairs,
+                        fixed_state_application_closes_goal,
+                    ),
+                    Ok(None) => self.check_typed_atomic_simp_candidate(
+                        &goal,
+                        &derivation,
+                        premise_pairs,
+                        fixed_state_application_closes_goal,
+                    ),
+                    Err(()) => self.check_typed_atomic_simp_candidate(
+                        &goal,
+                        &derivation,
+                        premise_pairs,
+                        fixed_state_application_closes_goal,
+                    ),
+                };
+            typed_atomic
+                .or_else(|| self.try_selected_equality_rewrite_chain(premise_pairs))
+                .or_else(|| self.try_selected_predecessor_upper_bound(&goal, premise_pairs))
+                .or_else(|| self.try_selected_constant_bound_weakening(&goal, &derivation))
+                .or_else(|| {
+                    self.surface_goal().and_then(|surface_goal| {
+                        self.try_selected_unchanged_load_forall_goal(surface_goal, premise_pairs)
+                            .or_else(|| {
+                                self.try_selected_forall_goal(&goal, surface_goal, premise_pairs)
+                            })
+                    })
                 })
-            })
-            .or_else(|| self.try_selected_forall_instantiation(&goal, premise_pairs))
-            .or_else(|| self.try_selected_disjunction_cases(premise_pairs))
+                .or_else(|| self.try_selected_forall_instantiation(&goal, premise_pairs))
+                .or_else(|| self.try_selected_disjunction_cases(premise_pairs))
         })();
         if let Some(atomic) = atomic {
             return Ok(Some(atomic));
@@ -4269,45 +4281,96 @@ impl<'a> Proof<'a> {
         // constructing a certificate.  This keeps certificate premises
         // top-level and preserves the source spelling/snapshot that produced
         // the resource fact.
-        if let Some(extracted) = self.extract_special_conjunct_premises(&derivation) {
-            return extracted.try_typed_atomic_simp_closure();
+        match self.extract_special_conjunct_premises(&derivation, &premise_pairs) {
+            Ok(Some(extracted)) if extracted.is_complete() => Some(extracted),
+            Ok(Some(extracted)) => extracted.check_typed_atomic_simp_candidate(
+                &goal,
+                &derivation,
+                &premise_pairs,
+                fixed_state_application_closes_goal,
+            ),
+            Ok(None) => self.check_typed_atomic_simp_candidate(
+                &goal,
+                &derivation,
+                &premise_pairs,
+                fixed_state_application_closes_goal,
+            ),
+            Err(()) => self.check_typed_atomic_simp_candidate(
+                &goal,
+                &derivation,
+                &premise_pairs,
+                fixed_state_application_closes_goal,
+            ),
         }
-        self.check_typed_atomic_simp_candidate(
-            &goal,
-            &derivation,
-            &premise_pairs,
-            fixed_state_application_closes_goal,
-        )
     }
 
-    fn extract_special_conjunct_premises(
+    pub(super) fn extract_special_conjunct_premises(
         &self,
         derivation: &PropositionDerivation,
-    ) -> Option<Self> {
-        let surface_facts = match self.context.as_ref() {
-            ProofContext::Pure(context) => &context.theorem_context.surface_requirements,
-            ProofContext::FixedState(context) => context.surface_propositions,
+        premise_pairs: &[(Proposition, ClickProposition)],
+    ) -> Result<Option<Self>, ()> {
+        let exact_sources = premise_pairs
+            .iter()
+            .map(|(kernel, surface)| (kernel, surface))
+            .collect::<BTreeMap<_, _>>();
+        let (surface_facts, premise_anchor) = match self.context.as_ref() {
+            ProofContext::Pure(context) => (&context.theorem_context.surface_requirements, None),
+            ProofContext::FixedState(context) => {
+                (context.surface_propositions, context.premise_anchor.clone())
+            }
             ProofContext::Execution(_) => match self.focused_outcome_data() {
-                Some(data) => &data.surface_propositions,
-                None => &self.execution()?.presentation.surface_propositions,
+                Some(data) => (&data.surface_propositions, data.premise_anchor.clone()),
+                None => {
+                    let execution = self.execution().ok_or(())?;
+                    (
+                        &execution.presentation.surface_propositions,
+                        frontier_premise_anchor(execution),
+                    )
+                }
             },
         };
         let mut proof = self.clone();
         let mut extracted = false;
         for premise in derivation.context_premises().iter() {
+            check_verification_deadline().map_err(|_| ())?;
             if proof.facts().contains_top_level(premise)
                 || !proof.facts().contains_proper_conjunct(premise)
             {
                 continue;
             }
-            // Resolve through the surface map's exact/snapshot-blind indexes;
-            // never materialize or scan the complete proof-fact history.
-            let source = proof.available_surface_fact(surface_facts, None, premise);
-            let source = source?;
-            proof = proof.apply_step(ProofStep::Extract(source)).ok()?;
+            // The selected derivation and its exact Surface correspondence
+            // are one candidate. Do not resolve the spelling again after a
+            // checked transition: at an execution outcome the same written
+            // load may then denote a different memory snapshot.
+            let source = exact_sources
+                .get(premise)
+                .copied()
+                .cloned()
+                .or_else(|| {
+                    proof.available_surface_fact(surface_facts, premise_anchor.as_ref(), premise)
+                })
+                .or_else(|| {
+                    premise_anchor
+                        .as_ref()
+                        .and_then(|_| proof.available_surface_fact(surface_facts, None, premise))
+                })
+                .ok_or(())?;
+            let successor = proof
+                .apply_step(ProofStep::Extract(source))
+                .map_err(|_| ())?;
+            // `extract(source)` proves only the proposition to which `source`
+            // lowers in this successor's context. A stale presentation record
+            // can therefore make the step succeed without publishing the
+            // exact premise selected above. Exact top-level membership is the
+            // progress measure; polarity or snapshot conversion requires its
+            // own checked proof step rather than being assumed here.
+            if !successor.checked_facts().contains(premise) {
+                return Err(());
+            }
+            proof = successor;
             extracted = true;
         }
-        extracted.then_some(proof)
+        Ok(extracted.then_some(proof))
     }
 
     /// Searches from exactly the Surface premises named by `simp() using`.
