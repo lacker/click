@@ -4,9 +4,12 @@ This tree holds example projects that are larger than a single mdtest snippet.
 Name directories after the domain and proof question, not after whether they are
 "real" or "mini".
 
-Each example project should contain ordinary `.c` files and one or more
-`.click` sidecars. The `tests/examples.rs` integration test verifies every
-sidecar against the C files in the same directory.
+Each example project should contain ordinary `.c` or `.cpp` files and one or
+more `.click` sidecars. The `tests/examples.rs` integration test verifies every
+sidecar against its source. Compiler-import examples also include an
+`*.click.import.json` configuration; a project-local `prepare.py`, when
+present, prepares portable local inputs such as a compilation database before
+the gate refreshes the import and verifies it.
 
 Most fixtures should stay small. Keep everything directly under `examples/`
 unless there is a concrete reason to add hierarchy.
@@ -15,8 +18,8 @@ unless there is a concrete reason to add hierarchy.
 
 Examples have three distinct provenance classes:
 
-- **Synthetic** fixtures are C written for this repository to isolate a
-  language or proof-model question. Their C should still remain fixed while a
+- **Synthetic** fixtures are C or C++ written for this repository to isolate a
+  language or proof-model question. Their source should still remain fixed while a
   proof is repaired, but they are not evidence that Click accepts unchanged
   third-party source.
 - **C0 transcriptions** are semantics-preserving translations of identified C
@@ -34,6 +37,9 @@ version and version-string bytes under the explicit kernel target.
 
 Current projects:
 
+- `basic-cpp/` verifies a small C++ reference mutation and an RAII guard that
+  restores its referent on both normal and early return, using Clang 19's
+  compiler import.
 - `multifile-registry/` combines shared counters, same-named private statics,
   persistent local arrays, repeated includes, and a data-only translation unit.
 - `sequence-transform/` fixes small array copy, concatenation, reversal, and

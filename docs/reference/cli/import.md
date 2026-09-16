@@ -181,7 +181,7 @@ declaration identities and source spans are not discarded.
 The first proof-facing interface uses existing Surface Click pointer syntax
 for the reference's one-cell mutable view:
 
-<!-- verified-example: tests/fixtures/cpp-verification/increment/increment.click -->
+<!-- verified-example: examples/basic-cpp/increment.click -->
 ```click
 verifying "increment.cpp";
 

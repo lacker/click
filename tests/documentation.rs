@@ -398,9 +398,11 @@ fn normative_technical_examples_are_backed_by_verification_fixtures() {
             let is_cpp_integration_fixture = fixture
                 .starts_with("tests/fixtures/cpp-verification/")
                 && fixture.ends_with(".click");
-            if !is_mdtest && !is_cpp_integration_fixture {
+            let is_cpp_example =
+                fixture.starts_with("examples/basic-cpp/") && fixture.ends_with(".click");
+            if !is_mdtest && !is_cpp_integration_fixture && !is_cpp_example {
                 failures.push(format!(
-                    "{}:{}: verified example must name an mdtests/*.md or C++ integration fixture: {fixture}",
+                    "{}:{}: verified example must name an mdtests/*.md, C++ integration fixture, or C++ example: {fixture}",
                     page.display(),
                     index + 1
                 ));
@@ -433,12 +435,17 @@ fn normative_technical_examples_are_backed_by_verification_fixtures() {
                 );
                 let cpp_import_tests = fs::read_to_string(root().join("tests/cpp_import.rs"))
                     .expect("read C++ integration tests");
-                let include_path = fixture
-                    .strip_prefix("tests/")
-                    .expect("C++ fixture lives below tests/");
+                let include_path = if is_cpp_example {
+                    format!("../{fixture}")
+                } else {
+                    fixture
+                        .strip_prefix("tests/")
+                        .expect("C++ fixture lives below tests/")
+                        .to_string()
+                };
                 assert!(
-                    cpp_import_tests.contains(include_path),
-                    "{fixture}: C++ integration fixture must be included by tests/cpp_import.rs"
+                    cpp_import_tests.contains(&include_path),
+                    "{fixture}: C++ proof must be included by tests/cpp_import.rs"
                 );
             }
             if *line == "```c" {

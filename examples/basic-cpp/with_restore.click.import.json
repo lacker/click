@@ -1,0 +1,17 @@
+{
+  "schema": 6,
+  "language": "c++",
+  "standard": "c++20",
+  "target": "x86_64-unknown-linux-gnu",
+  "exceptions": false,
+  "exception_behavior": "normal_only",
+  "rtti": false,
+  "exporter": "../../target/cpp-exporter/click-cpp-exporter",
+  "compilation_database": "compile_commands.json",
+  "working_directory": ".",
+  "source": "with_restore.cpp",
+  "logical_source": "with_restore.cpp",
+  "dependencies": [],
+  "function": "with_restore",
+  "artifact": "with_restore.click-cpp.json"
+}

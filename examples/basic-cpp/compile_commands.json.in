@@ -1,0 +1,14 @@
+[
+  {
+    "directory": "@PROJECT_ROOT@",
+    "file": "increment.cpp",
+    "arguments": ["clang++", "-x", "c++", "-std=c++20", "--target=x86_64-unknown-linux-gnu", "-fno-exceptions", "-fno-rtti", "-funsigned-char", "-ffreestanding", "-nostdinc", "-nostdinc++", "-c", "increment.cpp", "-o", "increment.o"],
+    "output": "increment.o"
+  },
+  {
+    "directory": "@PROJECT_ROOT@",
+    "file": "with_restore.cpp",
+    "arguments": ["clang++", "-x", "c++", "-std=c++20", "--target=x86_64-unknown-linux-gnu", "-fno-exceptions", "-fno-rtti", "-funsigned-char", "-ffreestanding", "-nostdinc", "-nostdinc++", "-Wno-reorder-ctor", "-c", "with_restore.cpp", "-o", "with_restore.o"],
+    "output": "with_restore.o"
+  }
+]

@@ -21,8 +21,8 @@ use click::surface::{
     expand_cpp_prepared_project_tactic_source_at, verify_cpp_prepared_project,
 };
 
-const SOURCE: &str = include_str!("fixtures/cpp-verification/increment/increment.cpp");
-const SIDECAR: &str = include_str!("fixtures/cpp-verification/increment/increment.click");
+const SOURCE: &str = include_str!("../examples/basic-cpp/increment.cpp");
+const SIDECAR: &str = include_str!("../examples/basic-cpp/increment.click");
 const BRANCH_SOURCE: &str = include_str!("fixtures/cpp-verification/branch-return/choose.cpp");
 const BRANCH_SIDECAR: &str = include_str!("fixtures/cpp-verification/branch-return/choose.click");
 const CONST_REFERENCE_SOURCE: &str =
@@ -56,10 +56,9 @@ const TERMINAL_DESTRUCTOR_SOURCE: &str =
     include_str!("fixtures/cpp-verification/terminal-destructor/capture.cpp");
 const TERMINAL_DESTRUCTOR_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/terminal-destructor/capture.click");
-const EARLY_RETURN_DESTRUCTOR_SOURCE: &str =
-    include_str!("fixtures/cpp-verification/early-return-destructor/with_restore.cpp");
+const EARLY_RETURN_DESTRUCTOR_SOURCE: &str = include_str!("../examples/basic-cpp/with_restore.cpp");
 const EARLY_RETURN_DESTRUCTOR_SIDECAR: &str =
-    include_str!("fixtures/cpp-verification/early-return-destructor/with_restore.click");
+    include_str!("../examples/basic-cpp/with_restore.click");
 const REVERSE_DESTRUCTOR_SOURCE: &str =
     include_str!("fixtures/cpp-verification/reverse-destructor-order/restore_twice.cpp");
 const REVERSE_DESTRUCTOR_SIDECAR: &str =
