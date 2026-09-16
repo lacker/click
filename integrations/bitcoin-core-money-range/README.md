@@ -59,16 +59,56 @@ cargo run --bin click -- import lock integrations/bitcoin-core-money-range/Money
 cargo run --bin click -- verify integrations/bitcoin-core-money-range/MoneyRange.click
 ```
 
-`MoneyRange.click.import.json` and the sidecar are versioned; the checkout,
-sysroot, compilation database, semantic artifact, and lock remain local. The
-lock binds the selected command, exact source and header bytes, all textual
-headers Clang opened (including sysroot and Clang resource headers), the
-resolved target of each path, exporter, and observed semantic profile. Once locked,
-verification loads the artifact offline without invoking Clang. A different
-checkout location or toolchain command requires an explicit refresh.
+`MoneyRange.click.import.json` and the sidecar are versioned; this full-checkout
+workflow's checkout, sysroot, compilation database, semantic artifact, and lock
+remain local. The lock binds the selected command, exact source and header
+bytes, all textual headers Clang opened (including sysroot and Clang resource
+headers), the resolved target of each path, exporter, and observed semantic
+profile. Once locked, verification loads the artifact offline without invoking
+Clang. A different checkout location or toolchain command requires an explicit
+refresh.
+
+## Hermetic gate fixture
+
+The normal `scripts/check.sh` gate also re-exports and verifies this same
+`MoneyRange` sidecar without a network or a local Bitcoin checkout. Its
+[`input-closure.tar.gz`](input-closure.tar.gz) contains only the 15 Bitcoin
+files and 292 Linux sysroot headers observed by the pinned import, plus source
+and package notices. The Bitcoin bytes were checked against the exact v31.1
+Git tree; every sysroot header was matched to a member of one of the five
+SHA-256-pinned Debian packages above. The gate checks the archive digest,
+the unchanged selected header and translation unit, the 320-file Clang input
+inventory, and re-runs semantic export and proof verification with Clang
+19.1.7. No hand-copied function or precomputed semantic artifact is used.
+
+[`feerate-command.json.in`](feerate-command.json.in) is the selected command
+from the real Bitcoin CMake-generated compilation database, with only the
+checkout/build/sysroot paths and pinned Clang executable/resource paths
+relocated for the test machine. [`fixture-provenance.json`](fixture-provenance.json)
+records the release commit, original database and import-lock identities,
+archive digest, and source, package, and originating Clang executable hashes.
+The gate does not rerun Bitcoin's whole CMake configuration; that remains the
+opt-in full-checkout workflow above. It also does not build or run Bitcoin.
+
+To regenerate the hermetic fixture after creating the local lock above, put
+the five downloaded `.deb` archives in `inputs/packages` under the short names
+shown in the table (for example `libc6-dev.deb`), then run:
+
+```sh
+python3 integrations/bitcoin-core-money-range/make-fixture.py \
+  --bitcoin-src integrations/bitcoin-core-money-range/inputs/bitcoin-src \
+  --sysroot integrations/bitcoin-core-money-range/inputs/sysroot \
+  --packages integrations/bitcoin-core-money-range/inputs/packages \
+  --lock integrations/bitcoin-core-money-range/MoneyRange.click.import.json.lock \
+  --compilation-database integrations/bitcoin-core-money-range/inputs/bitcoin-build/compile_commands.json
+```
+
+Regeneration checks the Git tree, local source bytes, Debian archives and
+extracted header bytes, originating Clang executable, and selected compile
+flags before changing the checked-in closure. A changed archive also requires
+deliberately updating the pinned digest in the gate test after review.
 
 This is one function under one Clang profile, not general Bitcoin Core or
-Linux binary verification. The broader P1 issue still owns a durable upstream
-fixture and release/build-input provenance beyond the selected command, boundary
-callers, false-contract regressions, and the full verify/expand/profile/audit
-checks.
+Linux binary verification. The broader P1 issue still owns the four modular
+boundary callers, false-contract and stale-import regressions against this
+upstream fixture, and the full verify/expand/profile/audit checks.

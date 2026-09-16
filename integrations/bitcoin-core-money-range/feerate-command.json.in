@@ -1,0 +1,8 @@
+[
+  {
+    "directory": "@ROOT@/bitcoin-build/src",
+    "command": "@CLANGXX@ --target=x86_64-unknown-linux-gnu --sysroot=@ROOT@/sysroot -DBOOST_ALL_NO_LIB -DBOOST_MULTI_INDEX_DISABLE_SERIALIZATION -DBOOST_NO_CXX98_FUNCTION_BASE -I@ROOT@/bitcoin-build/src -I@ROOT@/bitcoin-src/src -I@ROOT@/bitcoin-src/src/univalue/include -I@ROOT@/bitcoin-src/src/secp256k1/include -resource-dir=@RESOURCE_DIR@ -nostdinc++ -isystem @ROOT@/sysroot/usr/include/c++/12 -isystem @ROOT@/sysroot/usr/include/x86_64-linux-gnu/c++/12 -isystem @ROOT@/sysroot/usr/include/x86_64-linux-gnu -O2 -g -std=c++20 -fmacro-prefix-map=@ROOT@/bitcoin-src/src=. -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -Wstack-protector -fstack-protector-all -fcf-protection=full -fstack-clash-protection -Wall -Wextra -Wgnu -Wformat -Wformat-security -Wvla -Wshadow-field -Wthread-safety -Wloop-analysis -Wredundant-decls -Wunused-member-function -Wdate-time -Wconditional-uninitialized -Woverloaded-virtual -Wsuggest-override -Wimplicit-fallthrough -Wunreachable-code -Wdocumentation -Wself-assign -Wundef -Wno-unused-parameter -o CMakeFiles/bitcoin_common.dir/policy/feerate.cpp.o -c @ROOT@/bitcoin-src/src/policy/feerate.cpp ",
+    "file": "@ROOT@/bitcoin-src/src/policy/feerate.cpp",
+    "output": "src/CMakeFiles/bitcoin_common.dir/policy/feerate.cpp.o"
+  }
+]

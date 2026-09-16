@@ -153,7 +153,12 @@ The import lock now also hashes every textually lexed header in that real
 translation unit, including Clang resource and Linux sysroot headers, and
 rejects changed contents or symlink targets during offline loading. Hidden
 input modes such as response files, PCH, modules, and VFS overlays fail
-refresh. This is not yet the full acceptance regression: a durable upstream
-fixture and release/build-input provenance, the four modular boundary callers,
-false-contract and stale-import checks against the upstream fixture, and
-expansion/profile/audit checks remain before this issue can close.
+refresh. The normal gate now also regenerates the semantic import and verifies
+the range contract from a hermetic closure of the unchanged v31.1 files and
+the observed Linux header inputs. The closure generator checks the exact Git
+tree, pinned Debian package members, original Clang executable, and selected
+CMake command; the fixture records the original database/lock identity and
+rejects archive drift in the gate. The full CMake configuration remains opt-in.
+The four modular boundary callers, false-contract and stale-import checks
+against this upstream fixture, and expansion/profile/audit checks remain
+before this issue can close.

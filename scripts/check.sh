@@ -65,4 +65,4 @@ cargo nextest run --lib --bins --test documentation --test condition_transport_a
 # proof budget. Their output is not captured: each fixture prints a line when
 # it starts and when it finishes, so a stall is visible as it happens and
 # named.
-cargo nextest run --test mdtests --test examples --test compiler_import --test cpp_import --test-threads 1 --no-capture "$@"
+cargo nextest run --test mdtests --test examples --test compiler_import --test cpp_import --test bitcoin_core_money_range --test-threads 1 --no-capture "$@"

@@ -1,0 +1,17 @@
+{
+  "bitcoin_commit": "9be056a8a72b624dae9623b2f7bded92c2a21c91",
+  "amount_sha256": "624a30c64528ce9873a1e440039cd261db81deecf14ed3003c171f7c2039ca50",
+  "feerate_sha256": "a339052701a35a484a6d84e83d257ae643da2e2b635ccf105b44edf2f2ba30e8",
+  "packages_sha256": {
+    "libc6-dev": "0218fc2befcd784c1b0c6292c0a137ce89fad054efaa579ad083bee0f2c01aae",
+    "linux-libc-dev": "8bb258735b9dffbb111da778ebdd024750878e435ffd9dfcadcb6762ede6b4cf",
+    "libstdc++-12-dev": "d28def6c23630432b57cb38a4c2fd67a79d4e0484027386ca6e8d6005c3d7a73",
+    "libgcc-12-dev": "d720259380a84f2ffc6fe516eff5cbe9c8a005138e8d6a5748747ba4b3404a82",
+    "libboost1.74-dev": "ba14fe04d7f138f874bd3ab3a20c4fd1e9f654e271449b8f3e48d20f942dbb93"
+  },
+  "original_compilation_database_sha256": "4e05f91c2b952df4f2b129b7396905e9fe56d00287160842904a4116799be829",
+  "source_lock_identity": "6552230b6f93c1d81c0344523d624088e3962899c7fddfd0397b0cc09461aa38",
+  "origin_clang_sha256": "70c41308c6b84806a1e60b86b074ab4ad1e70ff692c4064ce79978bb101dd875",
+  "input_file_count": 311,
+  "input_closure_sha256": "fceeaef86784f820339f6dc3fc24992eb9c6bcf52edccbf6b7869d79296a3c7d"
+}
