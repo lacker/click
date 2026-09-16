@@ -61,7 +61,7 @@ concurrency, and graph coverage remain P2.
 
 Soundness and kernel shape:
 
-- [Eliminate prover bugs and legacy proof fallbacks](prover-bugs.md)
+- [Repair the prover boundaries blocking symbolic arena allocation](prover-bugs.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 - [Verify byte representation copying and pointer preservation](byte-representation-demo.md)
 - [Verify independently owned parents sharing a heap child](shared-heap-graph-demo.md)
@@ -88,7 +88,7 @@ Specification and proof:
 
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
 
-## P2: after launch (26)
+## P2: after launch (27)
 
 - [Make `step` simple across a call precondition](simplify-step.md)
 - [Lower a dependent composite argument in every tactic position](dependent-composite-argument-in-tactics.md)
@@ -123,6 +123,7 @@ Semantics and reasoning:
 
 Proof language and tooling:
 
+- [Finish the remaining proof-driver migration](legacy-cleanup.md)
 - [Extend modules and imports beyond the delivered rbtree slice](specification-imports.md)
 - [Parse built-in expressions consistently on either side of comparisons](built-in-comparison-parsing.md)
 - [Preserve source context when expansion writes to another directory](expansion-output-source-context.md)
