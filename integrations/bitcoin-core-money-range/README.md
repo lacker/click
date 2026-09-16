@@ -108,7 +108,15 @@ extracted header bytes, originating Clang executable, and selected compile
 flags before changing the checked-in closure. A changed archive also requires
 deliberately updating the pinned digest in the gate test after review.
 
+The sidecar also contains four one-call, modular `executes MoneyRange`
+proofs. They apply the verified upstream function contract to an arbitrary
+`const CAmount&` whose value is respectively `-1`, `0`, `MAX_MONEY`, or
+`MAX_MONEY + 1`, and establish false, true, true, or false while returning
+the reference's owned cell unchanged. These are proof-level callers: they
+introduce no C++ wrapper, alternate implementation, or verifier-specific
+build flag.
+
 This is one function under one Clang profile, not general Bitcoin Core or
-Linux binary verification. The broader P1 issue still owns the four modular
-boundary callers, false-contract and stale-import regressions against this
-upstream fixture, and the full verify/expand/profile/audit checks.
+Linux binary verification. The broader P1 issue still owns false-contract
+and stale-import regressions against this upstream fixture, and the full
+verify/expand/profile/audit checks.

@@ -159,6 +159,10 @@ the observed Linux header inputs. The closure generator checks the exact Git
 tree, pinned Debian package members, original Clang executable, and selected
 CMake command; the fixture records the original database/lock identity and
 rejects archive drift in the gate. The full CMake configuration remains opt-in.
-The four modular boundary callers, false-contract and stale-import checks
-against this upstream fixture, and expansion/profile/audit checks remain
+Four one-call `executes MoneyRange` theorems now use the checked upstream
+contract as a modular call boundary at `-1`, `0`, `MAX_MONEY`, and
+`MAX_MONEY + 1`. They establish false, true, true, and false and return the
+referenced cell unchanged without a C++ wrapper definition or altered source.
+False-contract and stale-import checks
+against this upstream fixture, plus expansion/profile/audit checks, remain
 before this issue can close.

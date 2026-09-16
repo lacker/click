@@ -157,8 +157,15 @@ fn pinned_upstream_money_range_reexports_and_verifies_in_normal_gate() {
     );
     assert_eq!(imported.export().profile.standard, "c++20");
     assert_eq!(imported.export().profile.target, "x86_64-unknown-linux-gnu");
+    let max_money = imported
+        .export()
+        .constants
+        .iter()
+        .find(|constant| constant.name == "MAX_MONEY")
+        .expect("the upstream bound is imported from its C++ declaration");
+    assert_eq!(max_money.evaluated_value, "2100000000000000");
     let project = read_click_project(&sidecar, SIDECAR).unwrap();
     verify_cpp_prepared_project(&project, &imported)
-        .expect("verify the exact inclusive range contract against Bitcoin v31.1");
+        .expect("verify the exact inclusive range contract and four boundary calls");
     fs::remove_dir_all(root).unwrap();
 }
