@@ -1671,6 +1671,17 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Selects the edge of the one supported checked call/handler split.
+    /// The label was derived from the exact source shape and checked outcome
+    /// when the outcome goal was created, not from a user assertion.
+    pub(in crate::surface::proof) fn checked_call_returned(&self) -> Result<bool, ClickError> {
+        self.focused_outcome_data()
+            .and_then(|data| data.call_returned)
+            .ok_or_else(|| {
+                self.step_error("`call_outcomes` requires a checked returned/threw call edge")
+            })
+    }
+
     /// Decides one explicit post-execution `if` from the focused branch outcome's
     /// exact fact context. The syntax driver may use the returned polarity to
     /// choose which source arm to visit, but it cannot manufacture a fact or

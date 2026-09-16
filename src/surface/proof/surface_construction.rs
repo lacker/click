@@ -1778,7 +1778,7 @@ pub(super) fn append_proof_step_for_operation(
                 .path_choices
                 .push(SurfacePathChoice {
                     occurrence: *occurrence,
-                    condition,
+                    selector: SurfacePathSelector::Proposition(condition),
                     value: *value,
                     tactic_offset: construction.proof_certificate_builder.steps.len(),
                 });

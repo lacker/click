@@ -43,11 +43,29 @@ fn select_checked_post_execution_tactics<'a>(
                     .checked_outcome_if_value(condition)?;
                 choices.push(SurfacePathChoice {
                     occurrence: deferred.source_index,
-                    condition: condition.clone(),
+                    selector: SurfacePathSelector::Proposition(condition.clone()),
                     value,
                     tactic_offset: selected.len(),
                 });
                 let arm = if value { then_tactics } else { else_tactics };
+                select_checked_post_execution_tactics(proof, arm, selected, choices)?;
+            }
+            PostExecutionTactic::CallOutcomes {
+                returned_tactics,
+                threw_tactics,
+            } => {
+                let returned = proof.checked_call_returned()?;
+                choices.push(SurfacePathChoice {
+                    occurrence: deferred.source_index,
+                    selector: SurfacePathSelector::CallOutcome,
+                    value: returned,
+                    tactic_offset: selected.len(),
+                });
+                let arm = if returned {
+                    returned_tactics
+                } else {
+                    threw_tactics
+                };
                 select_checked_post_execution_tactics(proof, arm, selected, choices)?;
             }
             _ => selected.push(deferred),
@@ -91,13 +109,17 @@ fn collect_post_execution_if_have_indices<'a>(
     indices: &mut BTreeSet<usize>,
 ) {
     for deferred in tactics {
-        let PostExecutionTactic::If {
-            then_tactics,
-            else_tactics,
-            ..
-        } = &deferred.tactic
-        else {
-            continue;
+        let (then_tactics, else_tactics) = match &deferred.tactic {
+            PostExecutionTactic::If {
+                then_tactics,
+                else_tactics,
+                ..
+            } => (then_tactics, else_tactics),
+            PostExecutionTactic::CallOutcomes {
+                returned_tactics,
+                threw_tactics,
+            } => (returned_tactics, threw_tactics),
+            _ => continue,
         };
         for arm in [then_tactics, else_tactics] {
             for nested in arm {
@@ -105,7 +127,7 @@ fn collect_post_execution_if_have_indices<'a>(
                     PostExecutionTactic::Have(_) => {
                         indices.insert(nested.tactic_index);
                     }
-                    PostExecutionTactic::If { .. } => {
+                    PostExecutionTactic::If { .. } | PostExecutionTactic::CallOutcomes { .. } => {
                         collect_post_execution_if_have_indices(std::iter::once(nested), indices);
                     }
                     _ => {}
@@ -1404,6 +1426,11 @@ pub(super) fn finish_ordered_proof<'a>(
                 "`{proof_label}` execution proof must reach function exit with `step()`, `execute()`, or `execute()`"
             ))
         })?;
+        let call_edges = proof_execution
+            .presentation
+            .call_outcome_edges
+            .as_ref()
+            .filter(|edges| edges.len() == execution.paths().len());
         if execution.paths().is_empty() {
             return Err(ClickError::new(format!(
                 "execution proof could not prove any complete execution path for `{proof_label}`"
@@ -3583,7 +3610,8 @@ pub(super) fn finish_ordered_proof<'a>(
                                     );
                                 }
                             }
-                            PostExecutionTactic::If { .. } => unreachable!(
+                            PostExecutionTactic::If { .. }
+                            | PostExecutionTactic::CallOutcomes { .. } => unreachable!(
                                 "post-execution branch selection must flatten control nodes before checking leaf tactics"
                             ),
                             PostExecutionTactic::Simp => {
@@ -4655,14 +4683,15 @@ pub(super) fn finish_ordered_proof<'a>(
         // where cross-context synthesis will place the surface `if`.
         // Appending them by execution-branch leaf would graft one case's
         // closers onto execution paths the case excluded.
-        let append_surface_tactics =
-            |steps: &mut Vec<ProofStep>, path_tactics: &[Vec<ProofTactic>]| -> Result<(), String> {
-                if retained_surface.path_choices.is_empty() {
-                    append_surface_tactics_by_leaf(steps, path_tactics)
-                } else {
-                    append_surface_tactics_flat(steps, path_tactics)
-                }
-            };
+        let append_surface_tactics = |steps: &mut Vec<ProofStep>,
+                                      path_tactics: &[Vec<ProofTactic>]|
+         -> Result<(), String> {
+            if retained_surface.path_choices.is_empty() {
+                append_surface_tactics_by_leaf(steps, path_tactics, call_edges.map(Vec::as_slice))
+            } else {
+                append_surface_tactics_flat(steps, path_tactics)
+            }
+        };
         if proof_context.constants.grouped_contract {
             let mut expanded = retained_surface.clone();
             if surface_post_choices_by_path
@@ -4872,7 +4901,7 @@ mod tests {
         let choices = [true, true, false, false].map(|value| {
             vec![SurfacePathChoice {
                 occurrence: 7,
-                condition: condition.clone(),
+                selector: SurfacePathSelector::Proposition(condition.clone()),
                 value,
                 tactic_offset: 1,
             }]

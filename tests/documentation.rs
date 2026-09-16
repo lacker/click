@@ -828,7 +828,9 @@ fn every_tactic_form_has_a_checked_positive_fixture() {
 
     for (id, (path, needle)) in fixtures {
         assert!(
-            path.starts_with("mdtests/") || path.starts_with("src/surface/tests/"),
+            path.starts_with("mdtests/")
+                || path.starts_with("src/surface/tests/")
+                || path == "tests/cpp_import.rs",
             "tactic fixture `{id}` must use an ordinary checked test source: {path}"
         );
         let fixture = fs::read_to_string(root().join(&path))

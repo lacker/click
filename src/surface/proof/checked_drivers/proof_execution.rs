@@ -112,7 +112,8 @@ pub(in crate::surface::proof) fn internal_proof_first_index(
         InternalProofNode::Open { index, .. }
         | InternalProofNode::Match { index, .. }
         | InternalProofNode::If { index, .. }
-        | InternalProofNode::Branch { index, .. } => Some(*index),
+        | InternalProofNode::Branch { index, .. }
+        | InternalProofNode::CallOutcomes { index, .. } => Some(*index),
     }
 }
 
@@ -223,6 +224,16 @@ fn checked_execution_region_end_at(
             }))
         .then_some(CheckedExecutionRegionEnd::FunctionExit),
         InternalProofNode::Done => Some(initial),
+        InternalProofNode::CallOutcomes {
+            returned_branch,
+            threw_branch,
+            continuation,
+            ..
+        } => (initial == CheckedExecutionRegionEnd::FunctionExit
+            && deferred_post_execution_region(returned_branch).is_some()
+            && deferred_post_execution_region(threw_branch).is_some())
+        .then(|| checked_execution_region_end_at(continuation, depth + 1, initial))
+        .flatten(),
         // A linear run continues the region it is in; the control node it
         // ends at is the next level.
         InternalProofNode::Linear {
@@ -371,6 +382,22 @@ fn checked_execution_region_contains_source_at(
             source_index: branch_source_index,
             then_branch,
             else_branch,
+            continuation,
+            ..
+        } => {
+            *branch_source_index == source_index
+                || checked_execution_region_contains_source_at(then_branch, source_index, depth + 1)
+                || checked_execution_region_contains_source_at(else_branch, source_index, depth + 1)
+                || checked_execution_region_contains_source_at(
+                    continuation,
+                    source_index,
+                    depth + 1,
+                )
+        }
+        InternalProofNode::CallOutcomes {
+            source_index: branch_source_index,
+            returned_branch: then_branch,
+            threw_branch: else_branch,
             continuation,
             ..
         } => {
@@ -541,6 +568,26 @@ fn deferred_post_execution_region(
                     condition: condition.clone(),
                     then_tactics: deferred_post_execution_region(then_branch)?,
                     else_tactics: deferred_post_execution_region(else_branch)?,
+                },
+                surface_recorded: false,
+            }];
+            deferred.extend(deferred_post_execution_region(continuation)?);
+            Some(deferred)
+        }
+        InternalProofNode::CallOutcomes {
+            index,
+            source_index,
+            returned_branch,
+            threw_branch,
+            continuation,
+        } => {
+            let mut deferred = vec![DeferredPostExecutionTactic {
+                lexical_bindings: None,
+                tactic_index: *index,
+                source_index: *source_index,
+                tactic: PostExecutionTactic::CallOutcomes {
+                    returned_tactics: deferred_post_execution_region(returned_branch)?,
+                    threw_tactics: deferred_post_execution_region(threw_branch)?,
                 },
                 surface_recorded: false,
             }];
@@ -1106,6 +1153,34 @@ fn try_check_structural_function_proof_inner<'a>(
                 } else {
                     continuation
                 };
+            }
+            InternalProofNode::CallOutcomes {
+                index,
+                source_index,
+                returned_branch,
+                threw_branch,
+                continuation,
+            } => {
+                if !proof.is_at_function_exit() {
+                    return decline();
+                }
+                let Some(returned_tactics) = deferred_post_execution_region(returned_branch) else {
+                    return decline();
+                };
+                let Some(threw_tactics) = deferred_post_execution_region(threw_branch) else {
+                    return decline();
+                };
+                proof = proof.defer_post_execution_source_tactic(
+                    *index,
+                    *source_index,
+                    PostExecutionTactic::CallOutcomes {
+                        returned_tactics,
+                        threw_tactics,
+                    },
+                    staged_expansion_capture.as_mut(),
+                )?;
+                saw_structure = true;
+                current = continuation;
             }
             InternalProofNode::If {
                 index,
@@ -1722,6 +1797,9 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 Some((*index, "branch")),
             )
         }
+        InternalProofNode::CallOutcomes { .. } => Err(ClickError::new(
+            "`call_outcomes` is available only after function execution, not in a loop preservation proof",
+        )),
         InternalProofNode::Open {
             index,
             source_index,
@@ -2445,6 +2523,41 @@ fn advance_focused_execution_region<'a>(
                 return decline();
             };
             let proof = scope.join()?.restore_execution_tactic_attribution(&owner)?;
+            advance_focused_execution_region(
+                proof,
+                enclosing_record,
+                continuation,
+                expansion_capture,
+                proof_site,
+                owning_source_index,
+                depth + 1,
+            )
+        }
+        InternalProofNode::CallOutcomes {
+            index,
+            source_index,
+            returned_branch,
+            threw_branch,
+            continuation,
+        } => {
+            if !proof.is_at_function_exit() {
+                return decline();
+            }
+            let Some(returned_tactics) = deferred_post_execution_region(returned_branch) else {
+                return decline();
+            };
+            let Some(threw_tactics) = deferred_post_execution_region(threw_branch) else {
+                return decline();
+            };
+            let proof = proof.defer_post_execution_source_tactic(
+                *index,
+                *source_index,
+                PostExecutionTactic::CallOutcomes {
+                    returned_tactics,
+                    threw_tactics,
+                },
+                expansion_capture.as_deref_mut(),
+            )?;
             advance_focused_execution_region(
                 proof,
                 enclosing_record,

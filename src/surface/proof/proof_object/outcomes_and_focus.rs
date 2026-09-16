@@ -225,6 +225,11 @@ impl<'a> Proof<'a> {
         let checked = execution.core.frontier.execution().ok_or_else(|| {
             self.step_error("outcome goals require execution to have reached function exit")
         })?;
+        let call_edges = execution
+            .presentation
+            .call_outcome_edges
+            .as_ref()
+            .filter(|edges| edges.len() == checked.paths().len());
         let branch_state = &self.focused_branch().expect("focused branch exists").state;
         let frontier_snapshot = branch_state.execution.clone();
         let frontier_unfolds = branch_state.unfolded_predicates.clone();
@@ -305,6 +310,7 @@ impl<'a> Proof<'a> {
                             premise_anchor: frontier_anchor.clone(),
                             requirement_surfaces: requirement_surfaces.clone(),
                             branch_decisions: provenance.branch_decisions,
+                            call_returned: call_edges.map(|edges| edges[path_index]),
                         },
                     )),
                 ),

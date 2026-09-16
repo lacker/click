@@ -1887,6 +1887,7 @@ fn validate_pure_theorem_tactics(
                 validate_pure_theorem_proof(theorem_name, &proof_have.proof)?;
             }
             ProofTactic::Branch(_)
+            | ProofTactic::CallOutcomes(_)
             | ProofTactic::Loop(_)
             | ProofTactic::Open(_)
             | ProofTactic::Mark(_) => {
@@ -1943,6 +1944,7 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::Cases(_) => "cases",
         ProofTactic::Both(_) => "both",
         ProofTactic::Branch(_) => "branch",
+        ProofTactic::CallOutcomes(_) => "call_outcomes",
         ProofTactic::Loop(_) => "loop",
         ProofTactic::ObserveResource(_) => "observe",
         ProofTactic::Witness(_) => "witness",

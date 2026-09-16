@@ -4427,6 +4427,21 @@ impl Parser {
                 else_tactics,
             }));
         }
+        if name == "call_outcomes" {
+            self.expect(Token::LBrace)?;
+            self.expect_ident_spelling("returned")?;
+            let returned_tactics = self.parse_possibly_empty_tactic_block()?;
+            self.expect_ident_spelling("threw")?;
+            let threw_tactics = self.parse_possibly_empty_tactic_block()?;
+            self.expect(Token::RBrace)?;
+            if self.peek() == Some(&Token::Semicolon) {
+                self.position += 1;
+            }
+            return Ok(ProofTactic::CallOutcomes(ProofCallOutcomes {
+                returned_tactics,
+                threw_tactics,
+            }));
+        }
         if name == "loop" {
             let label = if self.peek_ident() == Some("as") {
                 self.position += 1;

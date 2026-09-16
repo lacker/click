@@ -339,6 +339,12 @@ pub enum CppStatement {
         value: CppExpression,
         span: CppSpan,
     },
+    TryCatchInt32 {
+        try_body: Vec<CppStatement>,
+        binding: CppPlace,
+        handler: Vec<CppStatement>,
+        span: CppSpan,
+    },
     Scope {
         body: Vec<CppStatement>,
         cleanups: Vec<CppCleanup>,
@@ -990,6 +996,47 @@ impl CppFunction {
                         local.name
                     ));
                 }
+            } else if let CppStatement::TryCatchInt32 {
+                try_body,
+                binding,
+                handler,
+                span,
+            } = statement
+            {
+                if !matches!(exception_behavior, CppExceptionBehavior::ScalarInt32)
+                    || !matches!(self.function_kind, CppFunctionKind::Free)
+                    || !destructible_locals.is_empty()
+                {
+                    return Err(
+                        "int32 try/catch requires the object-free scalar exception profile".into(),
+                    );
+                }
+                span.validate(logical_source)?;
+                binding.span.validate(logical_source)?;
+                if binding.declaration_id.is_empty() || binding.name.is_empty() {
+                    return Err("C++ catch binding is missing declaration identity".into());
+                }
+                require_int32(&binding.value_type, false, "catch binding")?;
+                binding.value_type.validate_aliases_in(alias_sources)?;
+                if places.contains_key(&binding.declaration_id)
+                    || !names.insert(binding.name.clone())
+                {
+                    return Err(format!(
+                        "C++ catch binding `{}` shadows another supported place",
+                        binding.name
+                    ));
+                }
+                for member in try_body {
+                    member.validate(&places, records, logical_source)?;
+                }
+                let mut handler_places = places.clone();
+                handler_places.insert(
+                    binding.declaration_id.clone(),
+                    (binding.name.clone(), binding.value_type.clone()),
+                );
+                for member in handler {
+                    member.validate(&handler_places, records, logical_source)?;
+                }
             } else if let CppStatement::Scope {
                 body,
                 cleanups,
@@ -1235,6 +1282,9 @@ impl CppStatement {
                 span.validate(logical_source)?;
                 value.validate(places, records, logical_source)?;
                 require_int32(value.value_type(), false, "exception payload")
+            }
+            Self::TryCatchInt32 { .. } => {
+                Err("nested C++ try/catch is outside the scalar int32 profile".into())
             }
             Self::Scope { .. } => Err(
                 "the supported C++ slice permits one nested scope directly in a free-function body"
@@ -1652,6 +1702,21 @@ fn find_declared_place<'a>(
                     return Some(local);
                 }
             }
+            CppStatement::TryCatchInt32 {
+                try_body,
+                binding,
+                handler,
+                ..
+            } => {
+                if binding.declaration_id == declaration_id {
+                    return Some(binding);
+                }
+                if let Some(local) = find_declared_place(try_body, declaration_id)
+                    .or_else(|| find_declared_place(handler, declaration_id))
+                {
+                    return Some(local);
+                }
+            }
             CppStatement::If {
                 then_branch,
                 else_branch,
@@ -1782,6 +1847,9 @@ fn sequence_contains_return(statements: &[CppStatement]) -> bool {
             ..
         } => sequence_contains_return(then_branch) || sequence_contains_return(else_branch),
         CppStatement::Scope { body, .. } => sequence_contains_return(body),
+        CppStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => sequence_contains_return(try_body) || sequence_contains_return(handler),
         _ => false,
     })
 }
@@ -1795,6 +1863,9 @@ fn sequence_contains_throw(statements: &[CppStatement]) -> bool {
             ..
         } => sequence_contains_throw(then_branch) || sequence_contains_throw(else_branch),
         CppStatement::Scope { body, .. } => sequence_contains_throw(body),
+        CppStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => sequence_contains_throw(try_body) || sequence_contains_throw(handler),
         _ => false,
     })
 }
@@ -1822,6 +1893,12 @@ fn validate_return_cleanups(
                 validate_return_cleanups(else_branch, function_name, locals)?;
             }
             CppStatement::Scope { .. } | CppStatement::Throw { .. } => {}
+            CppStatement::TryCatchInt32 {
+                try_body, handler, ..
+            } => {
+                validate_return_cleanups(try_body, function_name, locals)?;
+                validate_return_cleanups(handler, function_name, locals)?;
+            }
             CppStatement::Declare { .. }
             | CppStatement::Assign { .. }
             | CppStatement::Store { .. }
@@ -1857,6 +1934,9 @@ impl CppStatement {
                 ..
             } => sequence_always_returns(then_branch) && sequence_always_returns(else_branch),
             Self::Scope { body, .. } => sequence_always_returns(body),
+            Self::TryCatchInt32 {
+                try_body, handler, ..
+            } => sequence_always_returns(try_body) && sequence_always_returns(handler),
             Self::Declare { .. }
             | Self::Assign { .. }
             | Self::Store { .. }
@@ -2069,6 +2149,12 @@ fn collect_calls<'a>(statements: &'a [CppStatement], calls: &mut Vec<CollectedCa
                     let CppCleanup::Destructor { object, callee, .. } = cleanup;
                     calls.push(CollectedCall::Destructor { object, callee });
                 }
+            }
+            CppStatement::TryCatchInt32 {
+                try_body, handler, ..
+            } => {
+                collect_calls(try_body, calls);
+                collect_calls(handler, calls);
             }
             CppStatement::Return { cleanups, .. } => {
                 for cleanup in cleanups {
@@ -2355,6 +2441,22 @@ fn validate_statement_constant_references(
             CppStatement::Scope { body, .. } => {
                 validate_statement_constant_references(
                     body,
+                    logical_source,
+                    constants,
+                    referenced_constants,
+                )?;
+            }
+            CppStatement::TryCatchInt32 {
+                try_body, handler, ..
+            } => {
+                validate_statement_constant_references(
+                    try_body,
+                    logical_source,
+                    constants,
+                    referenced_constants,
+                )?;
+                validate_statement_constant_references(
+                    handler,
                     logical_source,
                     constants,
                     referenced_constants,
@@ -2761,6 +2863,12 @@ fn validate_return_types(statements: &[CppStatement], return_type: &CppType) -> 
                 return Err("C++ return value does not match the function return type".into());
             }
             CppStatement::Scope { body, .. } => validate_return_types(body, return_type)?,
+            CppStatement::TryCatchInt32 {
+                try_body, handler, ..
+            } => {
+                validate_return_types(try_body, return_type)?;
+                validate_return_types(handler, return_type)?;
+            }
             CppStatement::If {
                 then_branch,
                 else_branch,

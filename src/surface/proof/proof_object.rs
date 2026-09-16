@@ -594,6 +594,10 @@ pub(in crate::surface::proof) struct ExecutionProofPresentation {
     /// finalization; joins carry each arm's suffix.
     pub(in crate::surface::proof) post_execution_tactics:
         PersistentSequence<DeferredPostExecutionTactic>,
+    /// Checked direct-call edge order for the narrow terminal int32 handler
+    /// split. This is path-routing presentation, not proof evidence: each
+    /// selected outcome retains its own kernel-checked theorem and goal.
+    pub(in crate::surface::proof) call_outcome_edges: Option<Vec<bool>>,
     /// The path's surface record: certificate-visible certificate facts, the
     /// premise anchor, and proof-level case choices.
     pub(in crate::surface::proof) surface_record: SurfaceRecord,
@@ -750,6 +754,7 @@ impl ExecutionProofState {
                 case_assumptions: PersistentSequence::default(),
                 frontier_loop_clauses: PersistentSequence::default(),
                 post_execution_tactics: PersistentSequence::default(),
+                call_outcome_edges: None,
                 surface_record: SurfaceRecord::default(),
                 invariant_closer_step: Default::default(),
                 region_simp: None,
@@ -1003,6 +1008,9 @@ pub(in crate::surface::proof) struct OutcomeProofPresentation {
     pub(in crate::surface::proof) requirement_surfaces:
         Arc<PersistentMap<Proposition, ClickProposition>>,
     branch_decisions: PersistentSequence<ExecutionBranchDecision>,
+    /// The checked edge of a single supported call inside an int32 handler.
+    /// `true` is `returned`; `false` is `threw` and entered the handler.
+    call_returned: Option<bool>,
 }
 
 pub(in crate::surface::proof) type OutcomeProofData =

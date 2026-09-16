@@ -1006,6 +1006,162 @@ fn scalar_int32_profile_propagates_a_modular_throw_past_a_normal_call_continuati
 }
 
 #[test]
+fn scalar_int32_profile_catches_a_modular_throw_with_a_typed_payload() {
+    let project = Project::with_fixture(
+        "caller.cpp",
+        "caller",
+        "int helper(bool should_throw) {\n\
+             if (should_throw) { throw 7; }\n\
+             return 7;\n\
+         }\n\
+         int caller(bool should_throw) {\n\
+             try { helper(should_throw); }\n\
+             catch (int caught) { return caught; }\n\
+             return 7;\n\
+         }\n",
+    );
+    project.write_exception_enabled_compilation_database();
+    project.write_config_with_exception_behavior("caller", "caller.cpp", true, "scalar_int32");
+    refresh_import(&project.config()).expect("export the exact scalar handler");
+    let prepared = load_import(&project.config()).expect("load the typed handler offline");
+    let [
+        CppStatement::TryCatchInt32 {
+            binding,
+            try_body,
+            handler,
+            ..
+        },
+        CppStatement::Return { .. },
+    ] = prepared.export().function.body.as_slice()
+    else {
+        panic!("the source try/catch was not retained as a typed handler");
+    };
+    assert_eq!(binding.name, "caught");
+    assert!(matches!(
+        binding.value_type,
+        CppType::Integer {
+            bits: 32,
+            signed: true,
+            is_const: false,
+            ..
+        }
+    ));
+    assert!(matches!(try_body.as_slice(), [CppStatement::Call { .. }]));
+    assert!(matches!(handler.as_slice(), [CppStatement::Return { .. }]));
+
+    let sidecar_source = "verifying \"caller.cpp\";\n\
+        int32 helper(bool should_throw) throws int32 {\n\
+            ensures result == 7;\n\
+            exceptional ensures exception == 7;\n\
+        }\n\
+        int32 caller(bool should_throw) {\n\
+            ensures result == 7;\n\
+        }\n";
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, sidecar_source).unwrap();
+    fs::remove_file(&project.exporter).expect("verification must use the locked artifact");
+    let click_project = read_click_project(&sidecar, sidecar_source).unwrap();
+    verify_cpp_prepared_project(&click_project, &prepared)
+        .expect("a caught modular throw should satisfy a nonthrowing caller signature");
+    let expanded = expand_cpp_prepared_project_claim_source_by_label(
+        &click_project,
+        &prepared,
+        "caller.ensures_0",
+    )
+    .expect("expand the handler proof");
+    let returned_proof = expanded
+        .split_once("returned {")
+        .and_then(|(_, rest)| rest.split_once("threw {"))
+        .map(|(returned, _)| returned)
+        .expect("the expansion must keep a returned certificate");
+    let threw_proof = expanded
+        .split_once("threw {")
+        .map(|(_, threw)| threw)
+        .expect("the expansion must keep a threw certificate");
+    assert!(
+        expanded.contains("call_outcomes {")
+            && returned_proof.contains("normalize();")
+            && threw_proof.contains("assumption();")
+            && !threw_proof.contains("normalize();")
+            && !expanded.contains("trivial();"),
+        "distinct exact path closers should retain returned/threw certificates: {expanded}"
+    );
+    let rewritten = click_project.with_entry_source(expanded.clone());
+    verify_cpp_prepared_project(&rewritten, &prepared)
+        .expect("the expanded handler proof must reverify");
+    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&rewritten, &prepared)
+        .expect("retain the expanded handler environment");
+    let site =
+        cpp_prepared_project_tactic_source_position(&rewritten, &prepared, "caller.ensures_0", 0)
+            .expect("locate the expanded handler proof");
+    session
+        .verify_at_project(&expanded, site.line, site.column)
+        .expect("retained audit must accept the handler proof");
+
+    let mut false_claim = sidecar_source.to_string();
+    let caller_claim = false_claim
+        .rfind("ensures result == 7;")
+        .expect("caller claim");
+    false_claim.replace_range(
+        caller_claim..caller_claim + "ensures result == 7;".len(),
+        "ensures result == 8;",
+    );
+    assert_ne!(false_claim, sidecar_source);
+    let false_project = read_click_project(&sidecar, &false_claim).unwrap();
+    verify_cpp_prepared_project(&false_project, &prepared)
+        .expect_err("the handler cannot prove a false result claim");
+}
+
+#[test]
+fn scalar_int32_profile_rejects_unsupported_handler_shapes() {
+    let cases = [
+        (
+            "catch_all",
+            "try { throw 7; } catch (...) { return 7; }",
+            "named by-value `int` binding",
+        ),
+        (
+            "bool_binding",
+            "try { throw 7; } catch (bool caught) { return 7; }",
+            "named by-value `int` binding",
+        ),
+        (
+            "multiple_handlers",
+            "try { throw 7; } catch (int caught) { return caught; } catch (...) { return 7; }",
+            "exactly one handler",
+        ),
+        (
+            "try_local",
+            "try { int local = 7; throw local; } catch (int caught) { return caught; }",
+            "automatic C++ locals are currently supported only in the function body",
+        ),
+        (
+            "handler_local",
+            "try { throw 7; } catch (int caught) { int local = caught; return local; }",
+            "automatic C++ locals are currently supported only in the function body",
+        ),
+        (
+            "nested_handler",
+            "try { try { throw 7; } catch (int inner) { return inner; } } catch (int caught) { return caught; }",
+            "nested try/catch is outside the scalar int32 exception profile",
+        ),
+    ];
+    for (name, handler, expected) in cases {
+        let source = format!("int caller() {{ {handler} return 7; }}\n");
+        let project = Project::with_fixture("caller.cpp", "caller", &source);
+        project.write_exception_enabled_compilation_database();
+        project.write_config_with_exception_behavior("caller", "caller.cpp", true, "scalar_int32");
+        let error = refresh_import(&project.config())
+            .expect_err(&format!("{name} must not enter a locked artifact"));
+        assert!(error.contains(expected), "{name}: {error}");
+        assert!(
+            !project.artifact().exists(),
+            "{name} was unexpectedly locked"
+        );
+    }
+}
+
+#[test]
 fn scalar_int32_profile_rejects_a_non_int32_exception_payload() {
     let disabled = Project::new();
     disabled.write_config_with_exception_behavior(

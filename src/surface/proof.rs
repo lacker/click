@@ -1072,6 +1072,12 @@ mod certificate_tests {
                 else_branch,
                 continuation,
                 ..
+            }
+            | InternalProofNode::CallOutcomes {
+                returned_branch: then_branch,
+                threw_branch: else_branch,
+                continuation,
+                ..
             } => {
                 let mut coordinates = linear_tactic_coordinates(then_branch);
                 coordinates.extend(linear_tactic_coordinates(else_branch));
@@ -1651,6 +1657,13 @@ enum InternalProofNode {
         else_branch: Box<InternalProofNode>,
         continuation: Box<InternalProofNode>,
     },
+    CallOutcomes {
+        index: usize,
+        source_index: usize,
+        returned_branch: Box<InternalProofNode>,
+        threw_branch: Box<InternalProofNode>,
+        continuation: Box<InternalProofNode>,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -1743,6 +1756,13 @@ fn set_generated_proof_source_index(node: &mut InternalProofNode, owning_source_
             else_branch,
             continuation,
             ..
+        }
+        | InternalProofNode::CallOutcomes {
+            source_index,
+            returned_branch: then_branch,
+            threw_branch: else_branch,
+            continuation,
+            ..
         } => {
             *source_index = owning_source_index;
             set_generated_proof_source_index(then_branch, owning_source_index);
@@ -1812,6 +1832,13 @@ fn detach_generated_suffix_from_source_indices(
             else_branch,
             continuation,
             ..
+        }
+        | InternalProofNode::CallOutcomes {
+            index,
+            source_index,
+            returned_branch: then_branch,
+            threw_branch: else_branch,
+            continuation,
         } => {
             if *index >= first_generated_tactic_index {
                 *source_index = usize::MAX;
@@ -1833,6 +1860,7 @@ fn build_internal_proof_at(
             tactic,
             ProofTactic::If(_)
                 | ProofTactic::Branch(_)
+                | ProofTactic::CallOutcomes(_)
                 | ProofTactic::Open(_)
                 | ProofTactic::Match(_)
         )
@@ -1914,6 +1942,28 @@ fn build_internal_proof_at(
                     &proof_branch.else_tactics,
                     index + 1,
                     source_index + 1 + then_width,
+                )?),
+                continuation: Box::new(build_internal_proof_at(
+                    &tactics[control_index + 1..],
+                    index + 1,
+                    source_index + source_tactic_width(control_tactic),
+                )?),
+            }
+        }
+        ProofTactic::CallOutcomes(outcomes) => {
+            let returned_width = source_tactic_count(&outcomes.returned_tactics);
+            InternalProofNode::CallOutcomes {
+                index,
+                source_index,
+                returned_branch: Box::new(build_internal_proof_at(
+                    &outcomes.returned_tactics,
+                    index + 1,
+                    source_index + 1,
+                )?),
+                threw_branch: Box::new(build_internal_proof_at(
+                    &outcomes.threw_tactics,
+                    index + 1,
+                    source_index + 1 + returned_width,
                 )?),
                 continuation: Box::new(build_internal_proof_at(
                     &tactics[control_index + 1..],
@@ -2007,6 +2057,10 @@ fn source_tactic_width(tactic: &ProofTactic) -> usize {
             1 + source_tactic_count(&proof_branch.then_tactics)
                 + source_tactic_count(&proof_branch.else_tactics)
         }
+        ProofTactic::CallOutcomes(outcomes) => {
+            1 + source_tactic_count(&outcomes.returned_tactics)
+                + source_tactic_count(&outcomes.threw_tactics)
+        }
         ProofTactic::Open(proof_open) => 1 + source_tactic_count(&proof_open.tactics),
         ProofTactic::Loop(clause) => {
             1 + clause
@@ -2055,6 +2109,12 @@ fn internal_proof_contains_source_index(node: &InternalProofNode, wanted: usize)
         | InternalProofNode::Branch {
             then_branch,
             else_branch,
+            continuation,
+            ..
+        }
+        | InternalProofNode::CallOutcomes {
+            returned_branch: then_branch,
+            threw_branch: else_branch,
             continuation,
             ..
         } => {
@@ -3038,6 +3098,11 @@ fn tactic_contains_frontier_loop(tactic: &ProofTactic) -> bool {
             .then_tactics
             .iter()
             .chain(&proof_branch.else_tactics)
+            .any(tactic_contains_frontier_loop),
+        ProofTactic::CallOutcomes(outcomes) => outcomes
+            .returned_tactics
+            .iter()
+            .chain(&outcomes.threw_tactics)
             .any(tactic_contains_frontier_loop),
         ProofTactic::Both(both) => both
             .left_tactics

@@ -1054,7 +1054,7 @@ impl<'a> Proof<'a> {
                     .path_choices
                     .push(SurfacePathChoice {
                         occurrence: tactic_index,
-                        condition: condition.clone(),
+                        selector: SurfacePathSelector::Proposition(condition.clone()),
                         value,
                         tactic_offset,
                     });

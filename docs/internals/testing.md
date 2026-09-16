@@ -125,9 +125,11 @@ continues. It rejects an undeclared or false exceptional claim and a non-int32
 payload. Kernel-only handler regressions now check that an exact int32 catch
 binds the exceptional payload and thrown state across a verified modular call,
 while normal returns bypass the handler and a throw from the handler escapes.
-The binding must be fresh, so it cannot replace an existing local. The C++
-exporter still rejects source `try`/`catch`; handler import and object unwinding
-are separate steps. A signed-64 predicate fixture retains a direct `CAmount` typedef
+The binding must be fresh, so it cannot replace an existing local. A separate
+C++ importer fixture locks one source `try`/`catch (int name)` over a modular
+helper call and checks ordinary verification, expansion/reverification, audit,
+and rejection of a false result claim. The importer still rejects object
+unwinding and unsupported handler forms. A signed-64 predicate fixture retains a direct `CAmount` typedef
 identity, imports `const CAmount&`, the implicit
 promotion of zero, signed `>=`, and a `bool` result, then verifies an exact
 all-input contract offline. Its false zero-boundary contract fails, while

@@ -151,9 +151,14 @@ typed `int` payload in an object-free function; the importer lowers that node
 to Click's checked exceptional statement outcome. A Click `throws int32`
 signature must still declare the exception, and normal and exceptional
 postconditions are proved separately. Reachable direct calls can propagate
-that exception while normal scalar statements continue. This profile does not
-accept `try`/`catch`, destructible automatic objects, `noexcept` functions
-(whose termination behavior is not modeled), or exceptional resource transfer;
+that exception while normal scalar statements continue. One object-free
+`try` with exactly one named by-value `catch (int name)` is also supported.
+The handler binds the thrown payload and resumes from the thrown state, so a
+caller can catch a verified helper's exception without declaring `throws`.
+The importer still rejects nested handlers, catch-all or non-`int` handlers,
+local declarations inside either block, destructible automatic objects,
+`noexcept` functions (whose termination behavior is not modeled), and
+exceptional resource transfer;
 it is not C++ unwinding support or an exception-ABI proof. Clang's typed
 source semantics and the compiler/runtime implementation remain the trust
 boundary. The config, artifact, and lock keep

@@ -422,6 +422,16 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             line(output, &"    ".repeat(indent + 1), "}");
             line(output, &prefix, "}");
         }
+        ProofTactic::CallOutcomes(outcomes) => {
+            line(output, &prefix, "call_outcomes {");
+            line(output, &"    ".repeat(indent + 1), "returned {");
+            write_tactics(output, &outcomes.returned_tactics, indent + 2);
+            line(output, &"    ".repeat(indent + 1), "}");
+            line(output, &"    ".repeat(indent + 1), "threw {");
+            write_tactics(output, &outcomes.threw_tactics, indent + 2);
+            line(output, &"    ".repeat(indent + 1), "}");
+            line(output, &prefix, "}");
+        }
         ProofTactic::Loop(loop_clause) => {
             line(
                 output,

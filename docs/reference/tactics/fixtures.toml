@@ -173,6 +173,11 @@ path = "mdtests/simple_tactics.md"
 needle = "assumption();"
 
 [[form]]
+id = "call-outcomes"
+path = "tests/cpp_import.rs"
+needle = "call_outcomes {"
+
+[[form]]
 id = "extract"
 path = "src/surface/tests/tactic_tests/logical_tactics.rs"
 needle = "extract(k == k);"

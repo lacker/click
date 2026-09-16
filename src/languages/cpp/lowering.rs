@@ -22,7 +22,7 @@ use crate::kernel::{
     LoadSourceOwnerId, c_add, c_and, c_assign, c_begin_aggregate_construction, c_call,
     c_call_assign, c_cast, c_declare, c_declare_aggregate, c_function, c_greater_equal, c_if,
     c_int32_literal, c_int64_literal, c_less_equal, c_parameter, c_pointer_offset_bytes, c_return,
-    c_seq, c_skip, c_typed_load_with_source, c_typed_store, c_variable,
+    c_seq, c_skip, c_try_catch_int32, c_typed_load_with_source, c_typed_store, c_variable,
 };
 
 /// One kernel function together with the immutable semantic artifact that
@@ -337,6 +337,16 @@ impl LoweringContext<'_> {
             CppStatement::Throw { value, .. } => {
                 Ok(CStatement::Throw(self.lower_expression(value)?))
             }
+            CppStatement::TryCatchInt32 {
+                try_body,
+                binding,
+                handler,
+                ..
+            } => Ok(c_try_catch_int32(
+                self.lower_sequence(try_body)?,
+                binding.name.clone(),
+                self.lower_sequence(handler)?,
+            )),
             CppStatement::Scope { body, cleanups, .. } => {
                 let mut result = self.lower_sequence(body)?;
                 for cleanup in cleanups {
@@ -734,6 +744,16 @@ fn collect_declared_places<'a>(statements: &'a [CppStatement], places: &mut Vec<
         match statement {
             CppStatement::Declare { local, .. } => places.push(local),
             CppStatement::Scope { body, .. } => collect_declared_places(body, places),
+            CppStatement::TryCatchInt32 {
+                try_body,
+                binding,
+                handler,
+                ..
+            } => {
+                collect_declared_places(try_body, places);
+                places.push(binding);
+                collect_declared_places(handler, places);
+            }
             CppStatement::If {
                 then_branch,
                 else_branch,

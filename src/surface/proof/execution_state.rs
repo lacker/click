@@ -654,9 +654,15 @@ pub(super) fn resume_deferred_tactic_expansion_capture(
 #[derive(Clone)]
 pub(super) struct SurfacePathChoice {
     pub(super) occurrence: usize,
-    pub(super) condition: ClickProposition,
+    pub(super) selector: SurfacePathSelector,
     pub(super) value: bool,
     pub(super) tactic_offset: usize,
+}
+
+#[derive(Clone, PartialEq)]
+pub(super) enum SurfacePathSelector {
+    Proposition(ClickProposition),
+    CallOutcome,
 }
 
 impl ProofCertificateBuilder {
@@ -769,6 +775,13 @@ pub(super) fn append_surface_step_to_leaves(steps: &mut Vec<ProofStep>, step: Pr
     {
         append_surface_step_to_leaves(then_proof.steps_mut(), step.clone());
         append_surface_step_to_leaves(else_proof.steps_mut(), step);
+    } else if let Some(ProofStep::CallOutcomes {
+        returned_proof,
+        threw_proof,
+    }) = steps.last_mut()
+    {
+        append_surface_step_to_leaves(returned_proof.steps_mut(), step.clone());
+        append_surface_step_to_leaves(threw_proof.steps_mut(), step);
     } else {
         steps.push(step);
     }
@@ -872,6 +885,7 @@ fn match_arm_selection(
 pub(super) fn append_surface_tactics_by_leaf(
     steps: &mut Vec<ProofStep>,
     path_tactics: &[Vec<ProofTactic>],
+    call_edges: Option<&[bool]>,
 ) -> Result<(), String> {
     let path_steps = path_tactics
         .iter()
@@ -881,9 +895,6 @@ pub(super) fn append_surface_tactics_by_leaf(
                 .map_err(|error| format!("path contained a non-simple tactic: {error:?}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    // Distinct C execution paths do not necessarily correspond to distinct
-    // surface proof branches.  When every path produced the same certificate,
-    // it is path-independent and belongs on every existing surface leaf.
     if let Some(common) = path_steps.first()
         && path_steps.iter().all(|path| path == common)
     {
@@ -891,6 +902,40 @@ pub(super) fn append_surface_tactics_by_leaf(
             append_surface_step_to_leaves(steps, step.clone());
         }
         return Ok(());
+    }
+    if let Some([first, second]) = call_edges
+        && first != second
+        && path_steps.len() == 2
+    {
+        let returned_steps = &path_steps[usize::from(!*first)];
+        let threw_steps = &path_steps[usize::from(*first)];
+        if let Some(ProofStep::CallOutcomes {
+            returned_proof,
+            threw_proof,
+        }) = steps.last_mut()
+        {
+            returned_proof
+                .steps_mut()
+                .extend(returned_steps.iter().cloned());
+            threw_proof.steps_mut().extend(threw_steps.iter().cloned());
+            return Ok(());
+        }
+        if !matches!(
+            steps.last(),
+            Some(ProofStep::If { .. } | ProofStep::Match { .. })
+        ) {
+            steps.push(ProofStep::CallOutcomes {
+                returned_proof: Box::new(
+                    ProofCertificate::from_steps(returned_steps.clone())
+                        .map_err(|error| error.message().to_string())?,
+                ),
+                threw_proof: Box::new(
+                    ProofCertificate::from_steps(threw_steps.clone())
+                        .map_err(|error| error.message().to_string())?,
+                ),
+            });
+            return Ok(());
+        }
     }
 
     pub(super) fn append(
@@ -1164,7 +1209,7 @@ pub(super) fn synthesize_surface_paths(
             .ok_or_else(|| "only some certified paths contain a branch condition".to_string())?
             .clone();
         if choice.occurrence != first_choice.occurrence
-            || choice.condition != first_choice.condition
+            || choice.selector != first_choice.selector
             || choice.tactic_offset != first_choice.tactic_offset
             || path.steps.get(..choice.tactic_offset) != Some(prefix.as_slice())
         {
@@ -1194,16 +1239,24 @@ pub(super) fn synthesize_surface_paths(
     }
 
     let mut steps = prefix;
-    steps.push(ProofStep::If {
-        condition: first_choice.condition,
-        then_proof: Box::new(
-            ProofCertificate::from_steps(synthesize_surface_paths(then_paths)?)
-                .map_err(|error| error.message().to_string())?,
-        ),
-        else_proof: Box::new(
-            ProofCertificate::from_steps(synthesize_surface_paths(else_paths)?)
-                .map_err(|error| error.message().to_string())?,
-        ),
+    let then_proof = Box::new(
+        ProofCertificate::from_steps(synthesize_surface_paths(then_paths)?)
+            .map_err(|error| error.message().to_string())?,
+    );
+    let else_proof = Box::new(
+        ProofCertificate::from_steps(synthesize_surface_paths(else_paths)?)
+            .map_err(|error| error.message().to_string())?,
+    );
+    steps.push(match first_choice.selector {
+        SurfacePathSelector::Proposition(condition) => ProofStep::If {
+            condition,
+            then_proof,
+            else_proof,
+        },
+        SurfacePathSelector::CallOutcome => ProofStep::CallOutcomes {
+            returned_proof: then_proof,
+            threw_proof: else_proof,
+        },
     });
     Ok(steps)
 }
@@ -1257,6 +1310,10 @@ pub(super) enum PostExecutionTactic {
         then_tactics: Vec<DeferredPostExecutionTactic>,
         else_tactics: Vec<DeferredPostExecutionTactic>,
     },
+    CallOutcomes {
+        returned_tactics: Vec<DeferredPostExecutionTactic>,
+        threw_tactics: Vec<DeferredPostExecutionTactic>,
+    },
     Simp,
 }
 
@@ -1276,6 +1333,29 @@ pub(super) struct DeferredPostExecutionTactic {
 #[cfg(test)]
 mod proof_fact_store_tests {
     use super::*;
+
+    #[test]
+    fn call_outcome_closers_keep_independent_certificates() {
+        let mut steps = vec![ProofStep::Step];
+        append_surface_tactics_by_leaf(
+            &mut steps,
+            &[vec![ProofTactic::Normalize], vec![ProofTactic::Assumption]],
+            Some(&[true, false]),
+        )
+        .unwrap();
+        let [
+            ProofStep::Step,
+            ProofStep::CallOutcomes {
+                returned_proof,
+                threw_proof,
+            },
+        ] = steps.as_slice()
+        else {
+            panic!("distinct call edges must retain a structured certificate");
+        };
+        assert_eq!(returned_proof.steps(), &[ProofStep::Normalize]);
+        assert_eq!(threw_proof.steps(), &[ProofStep::Assumption]);
+    }
 
     fn fact(value: bool) -> Proposition {
         Proposition::ConditionIs(ConditionTerm::Constant(value), true)
@@ -1527,6 +1607,7 @@ pub(super) fn post_execution_tactic_timing(
         PostExecutionTactic::ArithmeticCertificate(_) => ("arithmetic_certificate", "simple"),
         PostExecutionTactic::Rewrite(_) => ("rewrite", "simple"),
         PostExecutionTactic::If { .. } => ("if", "control"),
+        PostExecutionTactic::CallOutcomes { .. } => ("call_outcomes", "control"),
     }
 }
 

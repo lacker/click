@@ -464,7 +464,7 @@ impl<'a> Proof<'a> {
                     .path_choices
                     .push(SurfacePathChoice {
                         occurrence: tactic_index,
-                        condition: surface,
+                        selector: SurfacePathSelector::Proposition(surface),
                         value: true,
                         tactic_offset,
                     });

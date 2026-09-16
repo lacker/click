@@ -1780,15 +1780,19 @@ fn execute_step_from_frontier_position_selecting_path(
         transitions.retain(|transition| transition.path_facts.contains(selected_path_fact));
     }
     let mut pending_exceptional_call = None;
+    let mut call_outcome_edges = None;
     // A direct call can have one continuing normal outcome and one terminal
-    // throw. If its only continuation is a return, prove that exact two-node
-    // source suffix as one checked statement theorem family. Keep this
-    // deliberately constant-size: a step must not scan or execute an
-    // unrelated remainder of the function to discover a join.
+    // throw. An int32 try/catch can similarly have one continuing normal
+    // outcome and one terminal handler return. If the only continuation is a
+    // return, prove that exact two-node source suffix as one checked statement
+    // theorem family. Keep this constant-size: a step must not scan or
+    // execute an unrelated remainder of the function to discover a join.
     if selected_path_fact.is_none()
         && matches!(
             step_statement,
-            CStatement::Call { .. } | CStatement::CallAssign { .. }
+            CStatement::Call { .. }
+                | CStatement::CallAssign { .. }
+                | CStatement::TryCatchInt32 { .. }
         )
         && matches!(
             execution.core.frontier.region,
@@ -1801,11 +1805,18 @@ fn execute_step_from_frontier_position_selecting_path(
             .filter(|transition| matches!(transition.outcome, CStatementOutcome::Normal(_)))
             .count()
             == 1
-        && transitions
-            .iter()
-            .filter(|transition| matches!(transition.outcome, CStatementOutcome::Throw { .. }))
-            .count()
-            == 1
+        && transitions.iter().any(|transition| {
+            matches!(
+                (&step_statement, &transition.outcome),
+                (
+                    CStatement::Call { .. } | CStatement::CallAssign { .. },
+                    CStatementOutcome::Throw { .. }
+                ) | (
+                    CStatement::TryCatchInt32 { .. },
+                    CStatementOutcome::Return { .. }
+                )
+            )
+        })
         && let Some(tail @ CStatement::Return(_)) = remaining.as_ref()
     {
         let whole_suffix = c_seq(step_statement.clone(), tail.clone());
@@ -1826,17 +1837,52 @@ fn execute_step_from_frontier_position_selecting_path(
             context,
         )?;
         if suffix_transitions.len() == 2
-            && suffix_transitions
-                .iter()
-                .filter(|transition| matches!(transition.outcome, CStatementOutcome::Return { .. }))
-                .count()
-                == 1
-            && suffix_transitions
-                .iter()
-                .filter(|transition| matches!(transition.outcome, CStatementOutcome::Throw { .. }))
-                .count()
-                == 1
+            && suffix_transitions.iter().all(|transition| {
+                matches!(
+                    (&step_statement, &transition.outcome),
+                    (
+                        CStatement::Call { .. } | CStatement::CallAssign { .. },
+                        CStatementOutcome::Return { .. } | CStatementOutcome::Throw { .. }
+                    ) | (
+                        CStatement::TryCatchInt32 { .. },
+                        CStatementOutcome::Return { .. }
+                    )
+                )
+            })
+            && (matches!(step_statement, CStatement::TryCatchInt32 { .. })
+                || suffix_transitions
+                    .iter()
+                    .filter(|transition| {
+                        matches!(transition.outcome, CStatementOutcome::Throw { .. })
+                    })
+                    .count()
+                    == 1)
         {
+            if let CStatement::TryCatchInt32 {
+                try_body, handler, ..
+            } = &step_statement
+                && matches!(
+                    try_body.as_ref(),
+                    CStatement::Call { .. } | CStatement::CallAssign { .. }
+                )
+                && matches!(handler.as_ref(), CStatement::Return(_))
+            {
+                let edges = transitions
+                    .iter()
+                    .map(|transition| match transition.outcome {
+                        CStatementOutcome::Normal(_) => Some(true),
+                        CStatementOutcome::Return { .. } => Some(false),
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>();
+                // The kernel's Seq evaluator emits each first-statement path
+                // in order, replacing only its continuing path with the tail's
+                // descendants. With one descendant per edge, this order is
+                // unchanged in `suffix_transitions`.
+                call_outcome_edges = edges.filter(|edges| {
+                    edges.len() == 2 && edges.iter().filter(|returned| **returned).count() == 1
+                });
+            }
             step_statement = whole_suffix;
             transitions = suffix_transitions;
             execution.core.next_opaque_call = next_opaque_call;
@@ -1959,6 +2005,7 @@ fn execute_step_from_frontier_position_selecting_path(
             arguments.to_vec(),
             completed_outcomes,
         );
+        execution.presentation.call_outcome_edges = call_outcome_edges;
         let execution_state = execution_start_state.clone();
         set_function_exit_execution(
             &mut execution.core.frontier,

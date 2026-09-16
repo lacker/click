@@ -187,6 +187,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "both",
     "bounded_execute",
     "branch",
+    "call_outcomes",
     "by",
     "byte_offset",
     "c",
@@ -2774,6 +2775,7 @@ pub enum ProofTactic {
     Cases(ProofCases),
     Both(ProofBoth),
     Branch(ProofBranch),
+    CallOutcomes(ProofCallOutcomes),
     Loop(StructuralClause),
     ObserveResource(ResourceClause),
     ConstructResource(ResourceClause),
@@ -2865,6 +2867,7 @@ pub enum ControlTactic {
     Cases,
     StructuralInduct,
     Branch,
+    CallOutcomes,
     Loop,
 }
 
@@ -3009,6 +3012,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "branch",
         syntax: "branch",
+        class: "control",
+    },
+    PublicTacticForm {
+        id: "call-outcomes",
+        syntax: "call_outcomes { returned { ... } threw { ... } }",
         class: "control",
     },
     PublicTacticForm {
@@ -3260,6 +3268,10 @@ pub enum ProofStep {
         then_proof: Box<ProofCertificate>,
         else_proof: Box<ProofCertificate>,
     },
+    CallOutcomes {
+        returned_proof: Box<ProofCertificate>,
+        threw_proof: Box<ProofCertificate>,
+    },
     Loop(CertificateStructuralClause),
 }
 
@@ -3290,6 +3302,8 @@ pub enum CertificatePathSegment {
     OpenBody,
     ThenBranch,
     ElseBranch,
+    ReturnedBranch,
+    ThrewBranch,
     LeftCase,
     RightCase,
     InductionArm(usize),
@@ -3417,6 +3431,10 @@ impl ProofCertificate {
                     then_proof: left_proof,
                     else_proof: right_proof,
                     ..
+                }
+                | ProofStep::CallOutcomes {
+                    returned_proof: left_proof,
+                    threw_proof: right_proof,
                 } => {
                     pending.extend(left_proof.steps.iter());
                     pending.extend(right_proof.steps.iter());
@@ -3655,6 +3673,22 @@ impl ProofStep {
                         .collect(),
                 )),
             },
+            ProofTactic::CallOutcomes(proof_outcomes) => Self::CallOutcomes {
+                returned_proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_outcomes
+                        .returned_tactics
+                        .iter()
+                        .map(Self::from_validated_tactic)
+                        .collect(),
+                )),
+                threw_proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_outcomes
+                        .threw_tactics
+                        .iter()
+                        .map(Self::from_validated_tactic)
+                        .collect(),
+                )),
+            },
             ProofTactic::Loop(clause) => Self::Loop(CertificateStructuralClause {
                 region: clause.region,
                 label: clause.label.clone(),
@@ -3824,6 +3858,13 @@ impl ProofStep {
                 then_tactics: then_proof.to_proof_tactics(),
                 else_tactics: else_proof.to_proof_tactics(),
             }),
+            Self::CallOutcomes {
+                returned_proof,
+                threw_proof,
+            } => ProofTactic::CallOutcomes(ProofCallOutcomes {
+                returned_tactics: returned_proof.to_proof_tactics(),
+                threw_tactics: threw_proof.to_proof_tactics(),
+            }),
             Self::Loop(clause) => ProofTactic::Loop(StructuralClause {
                 region: clause.region,
                 label: clause.label.clone(),
@@ -3881,6 +3922,8 @@ impl CertificateError {
                 CertificatePathSegment::OpenBody => "open scope".to_string(),
                 CertificatePathSegment::ThenBranch => "then branch".to_string(),
                 CertificatePathSegment::ElseBranch => "else branch".to_string(),
+                CertificatePathSegment::ReturnedBranch => "returned branch".to_string(),
+                CertificatePathSegment::ThrewBranch => "threw branch".to_string(),
                 CertificatePathSegment::LeftCase => "left case".to_string(),
                 CertificatePathSegment::RightCase => "right case".to_string(),
                 CertificatePathSegment::InductionArm(index) => format!("induction arm {index}"),
@@ -3964,6 +4007,7 @@ fn certificate_step_class(step: &ProofStep) -> TacticClass {
         ProofStep::Match { .. } => TacticClass::Control(ControlTactic::Match),
         ProofStep::StructuralInduct { .. } => TacticClass::Control(ControlTactic::StructuralInduct),
         ProofStep::Branch { .. } => TacticClass::Control(ControlTactic::Branch),
+        ProofStep::CallOutcomes { .. } => TacticClass::Control(ControlTactic::CallOutcomes),
         ProofStep::Loop(_) => TacticClass::Control(ControlTactic::Loop),
     }
 }
@@ -4160,6 +4204,22 @@ fn validate_certificate_tactics(
                         else_result
                     }
                 }
+                TacticClass::Control(ControlTactic::CallOutcomes) => {
+                    let ProofTactic::CallOutcomes(outcomes) = tactic else {
+                        unreachable!("tactic class and variant must agree")
+                    };
+                    path.push(CertificatePathSegment::ReturnedBranch);
+                    let returned = validate_certificate_tactics(&outcomes.returned_tactics, path);
+                    path.pop();
+                    if returned.is_err() {
+                        returned
+                    } else {
+                        path.push(CertificatePathSegment::ThrewBranch);
+                        let threw = validate_certificate_tactics(&outcomes.threw_tactics, path);
+                        path.pop();
+                        threw
+                    }
+                }
                 TacticClass::Control(ControlTactic::Loop) => {
                     let ProofTactic::Loop(loop_clause) = tactic else {
                         unreachable!("tactic class and variant must agree")
@@ -4265,6 +4325,7 @@ impl ProofTactic {
             Self::Cases(_) => TacticClass::Control(ControlTactic::Cases),
             Self::Both(_) => TacticClass::Control(ControlTactic::Both),
             Self::Branch(_) => TacticClass::Control(ControlTactic::Branch),
+            Self::CallOutcomes(_) => TacticClass::Control(ControlTactic::CallOutcomes),
             Self::Loop(_) => TacticClass::Control(ControlTactic::Loop),
         }
     }
@@ -4343,6 +4404,13 @@ pub struct ProofBranch {
     ensuring: Option<Vec<ProofAssertion>>,
     then_tactics: Vec<ProofTactic>,
     else_tactics: Vec<ProofTactic>,
+}
+
+/// Explicit proof arms for the checked edge of one potentially throwing call.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofCallOutcomes {
+    pub returned_tactics: Vec<ProofTactic>,
+    pub threw_tactics: Vec<ProofTactic>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

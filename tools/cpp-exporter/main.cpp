@@ -627,9 +627,17 @@ private:
       return Json(std::move(result));
     }
     if (const auto *try_statement = llvm::dyn_cast<clang::CXXTryStmt>(statement)) {
-      fail(try_statement->getTryLoc(),
-           "try/catch is outside the normal-only C++ profile");
-      return std::nullopt;
+      if (exception_behavior_ != "scalar_int32") {
+        fail(try_statement->getTryLoc(),
+             "try/catch is outside the normal-only C++ profile");
+        return std::nullopt;
+      }
+      if (!allow_nested_scope) {
+        fail(try_statement->getTryLoc(),
+             "nested try/catch is outside the scalar int32 exception profile");
+        return std::nullopt;
+      }
+      return lower_try_catch_int32(try_statement, function);
     }
     if (const auto *declaration = llvm::dyn_cast<clang::DeclStmt>(statement)) {
       if (!allow_local_declaration) {
@@ -760,6 +768,52 @@ private:
     result["callee"] = std::move(lowered->callee);
     result["arguments"] = std::move(lowered->arguments);
     result["span"] = std::move(lowered->span);
+    return Json(std::move(result));
+  }
+
+  std::optional<Json>
+  lower_try_catch_int32(const clang::CXXTryStmt *statement,
+                        const clang::FunctionDecl *function) {
+    if (statement->getNumHandlers() != 1) {
+      fail(statement->getTryLoc(),
+           "scalar int32 try/catch requires exactly one handler");
+      return std::nullopt;
+    }
+    const clang::CXXCatchStmt *catch_statement = statement->getHandler(0);
+    const clang::VarDecl *binding = catch_statement->getExceptionDecl();
+    const auto *handler_block = llvm::dyn_cast<clang::CompoundStmt>(
+        catch_statement->getHandlerBlock());
+    if (binding == nullptr || binding->getName().empty() ||
+        !context_.hasSameType(binding->getType(), context_.IntTy) ||
+        handler_block == nullptr) {
+      fail(catch_statement->getCatchLoc(),
+           "scalar int32 handler requires one named by-value `int` binding");
+      return std::nullopt;
+    }
+    auto binding_type = lower_type(
+        binding->getType(), binding->getLocation(),
+        direct_source_alias(binding->getTypeSourceInfo()));
+    auto try_body = lower_branch(statement->getTryBlock(), function, false);
+    if (!binding_type || !try_body) {
+      return std::nullopt;
+    }
+    active_catch_binding_ = binding;
+    auto handler = lower_branch(handler_block, function, false);
+    active_catch_binding_ = nullptr;
+    if (!handler) {
+      return std::nullopt;
+    }
+    llvm::json::Object place;
+    place["declaration_id"] = declaration_id(binding);
+    place["name"] = binding->getNameAsString();
+    place["value_type"] = std::move(*binding_type);
+    place["span"] = span(binding->getSourceRange());
+    llvm::json::Object result;
+    result["kind"] = "try_catch_int32";
+    result["try_body"] = std::move(*try_body);
+    result["binding"] = std::move(place);
+    result["handler"] = std::move(*handler);
+    result["span"] = span(statement->getSourceRange());
     return Json(std::move(result));
   }
 
@@ -2005,7 +2059,9 @@ private:
     const bool supported_local =
         variable != nullptr && !supported_parameter &&
         variable->hasLocalStorage() && !variable->isStaticLocal();
-    if (place == nullptr || place->getDeclContext() != expected_function ||
+    if (place == nullptr ||
+        (place->getDeclContext() != expected_function &&
+         place != active_catch_binding_) ||
         (!supported_parameter && !supported_local)) {
       fail(expression->getExprLoc(),
            "the supported C++ slice can access only current function parameters and automatic locals");
@@ -2192,6 +2248,7 @@ private:
   std::string compilation_file_;
   std::vector<std::string> compilation_command_;
   std::string exception_behavior_;
+  const clang::VarDecl *active_catch_binding_ = nullptr;
   ExportState &state_;
   std::vector<clang::FunctionDecl *> matches_;
   std::unordered_set<const clang::FunctionDecl *> known_functions_;
