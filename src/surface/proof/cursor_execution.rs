@@ -1779,6 +1779,7 @@ fn execute_step_from_frontier_position_selecting_path(
     if let Some(selected_path_fact) = selected_path_fact {
         transitions.retain(|transition| transition.path_facts.contains(selected_path_fact));
     }
+    let mut pending_exceptional_call = None;
     // A direct call can have one continuing normal outcome and one terminal
     // throw. If its only continuation is a return, prove that exact two-node
     // source suffix as one checked statement theorem family. Keep this
@@ -1944,6 +1945,13 @@ fn execute_step_from_frontier_position_selecting_path(
             );
             completed_outcomes.push((outcome, completed_execution_facts, obligations));
         }
+        for pending in execution.core.complete_pending_exceptional_calls() {
+            completed_outcomes.push((
+                pending.outcome,
+                pending.execution_facts,
+                pending.obligations,
+            ));
+        }
         let state: &mut CState = &mut execution.core.state;
         let completed = c_function_execution_candidates_from_outcomes(
             execution_start_state.clone(),
@@ -1967,6 +1975,66 @@ fn execute_step_from_frontier_position_selecting_path(
             .presentation
             .record_generated_load_source_events(&generated_load_source_events);
         return Ok(common_introduced_facts);
+    }
+    if selected_path_fact.is_none()
+        && matches!(
+            step_statement,
+            CStatement::Call { .. } | CStatement::CallAssign { .. }
+        )
+        && matches!(
+            execution.core.frontier.region,
+            ExecutionRegionKind::Function
+        )
+        && execution.core.frontier.continuations.is_empty()
+        && transitions.len() == 2
+        && transitions
+            .iter()
+            .filter(|transition| matches!(transition.outcome, CStatementOutcome::Normal(_)))
+            .count()
+            == 1
+        && transitions
+            .iter()
+            .filter(|transition| matches!(transition.outcome, CStatementOutcome::Throw { .. }))
+            .count()
+            == 1
+    {
+        let root_facts = ProofFacts::from_ordered(available_pure_facts);
+        let split = CheckedCallOutcomeSplit::check(
+            current_state.clone(),
+            step_statement.clone(),
+            &root_facts,
+            function_environment,
+            next_opaque_call_before_step,
+            next_kernel_variable_before_step,
+        )
+        .map_err(|error| match error {
+            CheckedCallOutcomeSplitError::Limit(limit) => ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: call outcome split hit execution limit {limit:?}"
+            )),
+            CheckedCallOutcomeSplitError::InvalidEvidence => ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: call outcomes lack an exhaustive checked split"
+            )),
+        })?;
+        let throw_index = transitions
+            .iter()
+            .position(|transition| matches!(transition.outcome, CStatementOutcome::Throw { .. }))
+            .unwrap();
+        let throw_transition = transitions.remove(throw_index);
+        let parent = execution.core.clone();
+        let mut exceptional = parent.clone();
+        exceptional.record_statement_transition_with_loan_evidence(
+            function,
+            arguments,
+            throw_transition.theorem.clone(),
+            throw_transition.context.clone(),
+            &throw_transition.execution_facts,
+            &throw_transition.obligations,
+            &throw_transition.loan_evidence,
+        ).map_err(|refusal| ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: exceptional call evidence was rejected: {}",
+            describe_evidence_refusal(&refusal, parameters, arguments)
+        )))?;
+        pending_exceptional_call = Some((split, root_facts, parent, exceptional, throw_transition));
     }
     if transitions.len() != 1 {
         if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) {
@@ -2136,7 +2204,42 @@ fn execute_step_from_frontier_position_selecting_path(
                 describe_evidence_refusal(&refusal, parameters, arguments)
             ))
         })?;
-    let state: &mut CState = &mut execution.core.state;
+    if let Some((split, root_facts, parent, exceptional, throw_transition)) =
+        pending_exceptional_call
+    {
+        let mut throw_facts = root_facts.clone();
+        for fact in &throw_transition.path_facts {
+            throw_facts = throw_facts.with_kernel_checked_fact(fact.clone());
+        }
+        let return_assumptions = throw_facts.assumptions();
+        let (outcome, obligations) = c_function_outcome_from_statement_outcome(
+            &execution_start_state,
+            function,
+            throw_transition.outcome,
+            throw_transition.obligations,
+            return_assumptions,
+        );
+        let mut execution_facts = throw_transition.execution_facts;
+        append_execution_effect_facts(&mut execution_facts, &parent.effect_facts);
+        execution.core.record_pending_exceptional_call(
+            &split,
+            &parent,
+            function,
+            &execution_start_state,
+            &current_state,
+            &step_statement,
+            &root_facts,
+            &transition.theorem,
+            &throw_transition.theorem,
+            &exceptional,
+            outcome,
+            execution_facts,
+            obligations,
+            throw_facts,
+        ).map_err(|reason| ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: checked call fork was rejected: {reason}"
+        )))?;
+    }
     // A direct memory-snapshot transport needs no surface `transport`
     // tactic, but its target still needs a stable source form for a
     // later proof step. Record that form during both planning and
@@ -2300,7 +2403,7 @@ fn execute_step_from_frontier_position_selecting_path(
             };
             *available_pure_facts = successor_pure_facts;
             execution.core.frontier.execution_start_state = Some(execution_start_state);
-            *state = next_state.clone();
+            execution.core.state = next_state.clone().into();
             match remaining {
                 Some(remaining) => {
                     execution.core.frontier.position = FrontierPosition::StatementEntry {
@@ -2348,11 +2451,19 @@ fn execute_step_from_frontier_position_selecting_path(
                 &mut completed_execution_facts,
                 &execution.core.effect_facts,
             );
+            let mut completed_outcomes = vec![(outcome, completed_execution_facts, obligations)];
+            for pending in execution.core.complete_pending_exceptional_calls() {
+                completed_outcomes.push((
+                    pending.outcome,
+                    pending.execution_facts,
+                    pending.obligations,
+                ));
+            }
             let completed = c_function_execution_candidates_from_outcomes(
                 execution_start_state.clone(),
                 function.clone(),
                 arguments.to_vec(),
-                vec![(outcome, completed_execution_facts, obligations)],
+                completed_outcomes,
             );
             let execution_state = execution_start_state.clone();
             set_function_exit_execution(
@@ -2364,7 +2475,7 @@ fn execute_step_from_frontier_position_selecting_path(
                 completed,
             )?;
             execution.core.frontier.next_statement_index = source_region.continuation_node;
-            *state = execution_state;
+            execution.core.state = execution_state.into();
         }
         CStatementOutcome::Break(next_state) | CStatementOutcome::Continue(next_state) => {
             // The control statement's own successor facts are this path's:
@@ -2376,7 +2487,7 @@ fn execute_step_from_frontier_position_selecting_path(
             // own continuation.
             *available_pure_facts = successor_pure_facts;
             execution.core.frontier.execution_start_state = Some(execution_start_state);
-            *state = next_state;
+            execution.core.state = next_state.into();
         }
         CStatementOutcome::Jump {
             target,
@@ -2396,7 +2507,7 @@ fn execute_step_from_frontier_position_selecting_path(
                 ProgramPointKind::Entry,
                 next_state.clone(),
             );
-            *state = next_state;
+            execution.core.state = next_state.into();
         }
         CStatementOutcome::VerificationDiverges => {
             let mut completed_execution_facts = execution_pure_facts;
@@ -2404,15 +2515,23 @@ fn execute_step_from_frontier_position_selecting_path(
                 &mut completed_execution_facts,
                 &execution.core.effect_facts,
             );
+            let mut completed_outcomes = vec![(
+                CFunctionOutcome::VerificationDiverges,
+                completed_execution_facts,
+                transition_obligations,
+            )];
+            for pending in execution.core.complete_pending_exceptional_calls() {
+                completed_outcomes.push((
+                    pending.outcome,
+                    pending.execution_facts,
+                    pending.obligations,
+                ));
+            }
             let completed = c_function_execution_candidates_from_outcomes(
                 execution_start_state.clone(),
                 function.clone(),
                 arguments.to_vec(),
-                vec![(
-                    CFunctionOutcome::VerificationDiverges,
-                    completed_execution_facts,
-                    transition_obligations,
-                )],
+                completed_outcomes,
             );
             let execution_state = execution_start_state.clone();
             set_function_exit_execution(
@@ -2424,7 +2543,7 @@ fn execute_step_from_frontier_position_selecting_path(
                 completed,
             )?;
             execution.core.frontier.next_statement_index = source_region.continuation_node;
-            *state = execution_state;
+            execution.core.state = execution_state.into();
         }
         CStatementOutcome::UndefinedBehavior(kind) => {
             let outcome = CFunctionOutcome::UndefinedBehavior(kind);

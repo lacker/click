@@ -103,9 +103,20 @@ int32 caller(int32 x) throws int32 {
 }
 ```
 
-More general normal continuations and handlers still need a call-frontier
-proof split; this terminal case does not consume the rest of the function in
-one proof step.
+A checked call-outcome fork also lets the normal successor continue through
+later scalar assignments and C branches while retaining the call's separate
+exceptional exit. No new Click tactic is needed:
+
+<!-- verified-example: mdtests/exceptional_call_continuation.md -->
+```click
+int32 caller(int32 x) throws int32 {
+    ensures result == x;
+    exceptional ensures exception == 7;
+}
+```
+
+This does not yet model handlers, unwinding, exceptional resource transfer, or
+C++ source `throw` and `catch`.
 
 C functions may call themselves or participate in mutual recursion without a
 special Click keyword. Their ordinary contracts are the modular interfaces for

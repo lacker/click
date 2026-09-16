@@ -1,6 +1,170 @@
 use super::*;
 
 #[test]
+fn modular_exceptional_call_continues_through_a_normal_assignment() {
+    let c_source = r#"
+        int32 helper(int32 x) { return x; }
+        int32 caller(int32 x) {
+            int32 y = helper(x);
+            y = x;
+            return y;
+        }
+    "#;
+    let click_source = r#"
+        verifying "calls.c";
+        int32 helper(int32 x) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 7;
+        }
+        int32 caller(int32 x) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 7;
+        }
+    "#;
+    verify_c0_sources(click_source, &[("calls.c", c_source)])
+        .expect("the normal call successor must continue while its throw successor exits");
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("calls.c", c_source)],
+        "caller",
+        CProofClaim::ExceptionalEnsure(0),
+    )
+    .expect("the exceptional caller claim must expand across the call fork");
+    verify_c0_sources(&expanded, &[("calls.c", c_source)])
+        .expect("the expanded call fork must reverify");
+}
+
+#[test]
+fn successive_modular_exceptional_calls_keep_each_throw_path() {
+    let c_source = r#"
+        int32 helper(int32 x) { return x; }
+        int32 caller(int32 x) {
+            int32 y = helper(x);
+            y = helper(y);
+            return y;
+        }
+    "#;
+    let click_source = r#"
+        verifying "calls.c";
+        int32 helper(int32 x) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 7;
+        }
+        int32 caller(int32 x) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 7;
+        }
+    "#;
+    verify_c0_sources(click_source, &[("calls.c", c_source)])
+        .expect("both call sites must retain their exceptional paths");
+}
+
+#[test]
+fn exceptional_call_before_a_normal_branch_retains_its_exit() {
+    let c_source = r#"
+        int32 helper(int32 x) { return x; }
+        int32 caller(int32 x, int32 flag) {
+            int32 y = helper(x);
+            if (flag) { y = x; } else { y = x; }
+            return y;
+        }
+    "#;
+    let click_source = r#"
+        verifying "calls.c";
+        int32 helper(int32 x) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 7;
+        }
+        int32 caller(int32 x, int32 flag) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 7;
+        }
+    "#;
+    verify_c0_sources(click_source, &[("calls.c", c_source)])
+        .expect("a later normal branch must not drop the call's throw exit");
+}
+
+#[test]
+fn exceptional_call_before_two_returning_normal_arms_retains_its_exit() {
+    let c_source = r#"
+        int32 helper(int32 x) { return x; }
+        int32 caller(int32 x, int32 flag) {
+            int32 y = helper(x);
+            if (flag) { return y; } else { return x; }
+        }
+    "#;
+    let click_source = r#"
+        verifying "calls.c";
+        int32 helper(int32 x) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 7;
+        }
+        int32 caller(int32 x, int32 flag) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 7;
+        }
+    "#;
+    verify_c0_sources(click_source, &[("calls.c", c_source)])
+        .expect("a checked branch join must retain the earlier exceptional exit");
+}
+
+#[test]
+fn nonterminal_exceptional_call_rejects_a_false_caller_claim() {
+    let c_source = r#"
+        int32 helper(int32 x) { return x; }
+        int32 caller(int32 x) {
+            int32 y = helper(x);
+            y = x;
+            return y;
+        }
+    "#;
+    let click_source = r#"
+        verifying "calls.c";
+        int32 helper(int32 x) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 7;
+        }
+        int32 caller(int32 x) throws int32 {
+            ensures result == x;
+            exceptional ensures exception == 8;
+        }
+    "#;
+    let error = verify_c0_sources(click_source, &[("calls.c", c_source)])
+        .expect_err("the normal continuation must not contaminate the throw claim");
+    assert!(
+        error.message().contains("exceptional_ensures_0"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn nonterminal_call_cannot_drop_an_unconstrained_exception() {
+    let c_source = r#"
+        int32 helper(int32 x) { return x; }
+        int32 caller(int32 x) {
+            int32 y = helper(x);
+            y = x;
+            return y;
+        }
+    "#;
+    let click_source = r#"
+        verifying "calls.c";
+        int32 helper(int32 x) throws int32 {
+            ensures result == x;
+        }
+        int32 caller(int32 x) {
+            ensures result == x;
+        }
+    "#;
+    let error = verify_c0_sources(click_source, &[("calls.c", c_source)])
+        .expect_err("the caller's omitted throws clause cannot hide the callee's throw");
+    assert!(
+        error.message().contains("caller"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn modular_exceptional_call_completes_both_caller_claim_families() {
     let c_source = r#"
         int32 helper(int32 x) { return x; }

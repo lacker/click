@@ -249,6 +249,11 @@ impl<'a> Proof<'a> {
         let requirement_surfaces = Arc::new(requirement_surfaces);
         let mut goals = Vec::new();
         for (path_index, path) in checked.paths().iter().enumerate() {
+            let mut facts = execution
+                .core
+                .pending_exceptional_pure_facts(path_index)
+                .cloned()
+                .unwrap_or_else(|| self.facts().clone());
             // One checked statement may produce several candidate outcomes.
             // The enclosing Proof facts select the feasible successors; an
             // exact contradictory path fact cannot become a typed outcome
@@ -259,7 +264,7 @@ impl<'a> Proof<'a> {
             if path
                 .facts()
                 .iter()
-                .any(|fact| self.facts().directly_conflicts_with(fact.proposition()))
+                .any(|fact| facts.directly_conflicts_with(fact.proposition()))
             {
                 continue;
             }
@@ -277,7 +282,6 @@ impl<'a> Proof<'a> {
             // The goal owns the path-local pure facts. Effect-region facts
             // stay in the execution snapshot and are consumed only by the
             // checked fixed-state operations that explicitly cross effects.
-            let mut facts = self.facts().clone();
             for fact in path.facts() {
                 facts = facts.with_kernel_checked_fact(fact.proposition().clone());
             }

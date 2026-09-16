@@ -1909,19 +1909,70 @@ fn verified_exceptional_rule_produces_isolated_outcome_paths() {
     let environment = CExecutionEnvironment::new()
         .with_function(function)
         .with_verified_function_rule(rule);
+    let call_statement = c_call_assign(
+        "call_result",
+        "modular_maybe_throw",
+        vec![c_int32_literal(0)],
+    );
+    let call_state = CState::new().with_local("after", int32(0));
+    let call_root = crate::kernel::proof::ProofFacts::from_ordered(&[]);
+    let call_split = crate::kernel::proof::CheckedCallOutcomeSplit::check(
+        call_state.clone(),
+        call_statement.clone(),
+        &call_root,
+        &environment,
+        0,
+        0,
+    )
+    .expect("the direct call must have exactly two checked outcome successors");
+    let call_paths = prove_symbolic_c_execution_paths_with_environment(
+        call_state.clone(),
+        call_statement.clone(),
+        PureFactContext::new(),
+        environment.clone(),
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+    let mut normal = None;
+    let mut exceptional = None;
+    for path in call_paths.paths() {
+        match crate::kernel::api::proof_evidence_conclusion(path.theorem()) {
+            Proposition::CStatementVerifies {
+                outcome: CStatementOutcome::Normal(_),
+                ..
+            } => normal = Some(path.theorem()),
+            Proposition::CStatementVerifies {
+                outcome: CStatementOutcome::Throw { .. },
+                ..
+            } => exceptional = Some(path.theorem()),
+            other => panic!("unexpected call successor: {other:?}"),
+        }
+    }
+    let normal = normal.expect("normal successor");
+    let exceptional = exceptional.expect("exceptional successor");
+    assert!(call_split.validates(
+        &call_state,
+        &call_statement,
+        &call_root,
+        normal,
+        exceptional,
+    ));
+    assert!(!call_split.validates(&call_state, &call_statement, &call_root, normal, normal,));
+    assert!(!call_split.validates(
+        &call_state,
+        &c_return(c_variable("call_result")),
+        &call_root,
+        normal,
+        exceptional,
+    ));
     let statement = c_seq(
-        c_call_assign(
-            "call_result",
-            "modular_maybe_throw",
-            vec![c_int32_literal(0)],
-        ),
+        call_statement,
         c_seq(
             c_assign("after", c_int32_literal(1)),
             c_return(c_variable("call_result")),
         ),
     );
     let modular = prove_symbolic_c_execution_paths_with_environment(
-        CState::new().with_local("after", int32(0)),
+        call_state,
         statement,
         PureFactContext::new(),
         environment,

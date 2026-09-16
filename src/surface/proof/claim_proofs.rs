@@ -1559,6 +1559,10 @@ pub(super) fn finish_ordered_proof<'a>(
                     let mut path_grouped_surface_closers = Vec::new();
                     let mut path_surface_post_tactics = Vec::new();
                     let mut path_deferred_capture_tactics = Vec::new();
+                    let path_base_facts = proof_execution
+                        .core
+                        .pending_exceptional_pure_facts(path_index)
+                        .map_or_else(|| pure_facts.clone(), ProofFacts::to_vec);
                     let missing_obligations = crate::instrumentation::measure_operation(
                         function_block.signature().name(),
                         &proof_label,
@@ -1567,7 +1571,10 @@ pub(super) fn finish_ordered_proof<'a>(
                             path.obligations()
                                 .iter()
                                 .filter(|obligation| {
-                                    !exact_fact_is_available(obligation.proposition(), &pure_facts)
+                                    !exact_fact_is_available(
+                                        obligation.proposition(),
+                                        &path_base_facts,
+                                    )
                                 })
                                 .cloned()
                                 .collect::<Vec<_>>()
@@ -1578,7 +1585,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             "execution proof failed for `{proof_label}` path {path_index}: {}",
                             describe_missing_proof_obligations(
                                 &missing_obligations,
-                                &pure_facts,
+                                &path_base_facts,
                                 pre_state.resources().facts(),
                                 parsed_function.parameters(),
                                 arguments,
@@ -1593,7 +1600,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             "path fact working-set construction",
                             || {
                                 let outcome = path.outcome().clone();
-                                let mut path_requirements = pure_facts.clone();
+                                let mut path_requirements = path_base_facts.clone();
                                 path_requirements.extend(
                                     path.facts().iter().map(|fact| fact.proposition().clone()),
                                 );
