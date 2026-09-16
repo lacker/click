@@ -13,16 +13,16 @@
 use std::collections::BTreeMap;
 
 use super::{
-    CppBinaryOperator, CppCallArgument, CppCleanup, CppExpression, CppFieldReference, CppFunction,
-    CppFunctionKind, CppInitializer, CppPlace, CppPlaceReference, CppRecord, CppStatement, CppType,
-    PreparedCppImport,
+    CppBinaryOperator, CppCallArgument, CppCleanup, CppConstant, CppExpression, CppFieldReference,
+    CppFunction, CppFunctionKind, CppInitializer, CppPlace, CppPlaceReference, CppRecord,
+    CppStatement, CppType, PreparedCppImport,
 };
 use crate::kernel::{
     CAggregateField, CAggregateLayout, CExpression, CFunction, CStatement, CType, LoadSourceId,
     LoadSourceOwnerId, c_add, c_assign, c_begin_aggregate_construction, c_call, c_call_assign,
     c_cast, c_declare, c_declare_aggregate, c_function, c_greater_equal, c_if, c_int32_literal,
-    c_parameter, c_pointer_offset_bytes, c_return, c_seq, c_skip, c_typed_load_with_source,
-    c_typed_store, c_variable,
+    c_int64_literal, c_parameter, c_pointer_offset_bytes, c_return, c_seq, c_skip,
+    c_typed_load_with_source, c_typed_store, c_variable,
 };
 
 /// One kernel function together with the immutable semantic artifact that
@@ -94,6 +94,12 @@ fn lower_function(import: &PreparedCppImport, source: &CppFunction) -> Result<CF
             .iter()
             .map(|record| (record.declaration_id.as_str(), record))
             .collect(),
+        constants: import
+            .export()
+            .constants
+            .iter()
+            .map(|constant| (constant.declaration_id.as_str(), constant))
+            .collect(),
         next_load_occurrence: 0,
         return_capture_name: return_capture_name(source),
     };
@@ -164,6 +170,7 @@ struct LoweringContext<'a> {
     function_name: &'a str,
     places: BTreeMap<&'a str, &'a CppPlace>,
     records: BTreeMap<&'a str, &'a CppRecord>,
+    constants: BTreeMap<&'a str, &'a CppConstant>,
     next_load_occurrence: u32,
     return_capture_name: String,
 }
@@ -391,6 +398,33 @@ impl LoweringContext<'_> {
             }
             CppExpression::IntegerLiteral { .. } => {
                 Err("C++ integer literal is outside direct `int` lowering".into())
+            }
+            CppExpression::ConstantReference { constant, .. } => {
+                let resolved = self
+                    .constants
+                    .get(constant.declaration_id.as_str())
+                    .ok_or_else(|| {
+                        format!(
+                            "C++ lowering found unknown constant declaration `{}`",
+                            constant.declaration_id
+                        )
+                    })?;
+                if resolved.name != constant.name {
+                    return Err(format!(
+                        "C++ constant declaration `{}` changed name during lowering",
+                        constant.declaration_id
+                    ));
+                }
+                resolved
+                    .evaluated_value
+                    .parse::<i64>()
+                    .map(c_int64_literal)
+                    .map_err(|_| {
+                        format!(
+                            "C++ constant `{}` has unsupported evaluated value `{}`",
+                            resolved.name, resolved.evaluated_value
+                        )
+                    })
             }
             CppExpression::Load {
                 place, value_type, ..

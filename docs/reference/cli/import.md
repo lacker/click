@@ -86,12 +86,15 @@ and paths for the pinned exporter, compilation database, working directory,
 `.cpp` translation unit, logical source, selected function, and semantic
 artifact. `click import lock` executes the repository-owned Clang 19.1.7
 LibTooling exporter with that entry and records the database bytes, exact parsed
-command and directory, source, exporter, semantic profile, artifact, and
-configuration identities.
+command and directory, source, explicitly declared dependency files, exporter,
+semantic profile, artifact, and configuration identities. Reachable declaration
+spans outside the logical source must name one of those relative dependencies;
+refresh snapshots each dependency before and after export, and offline loading
+rejects any later content change.
 
 ```json
 {
-  "schema": 3,
+  "schema": 4,
   "language": "c++",
   "standard": "c++20",
   "target": "x86_64-unknown-linux-gnu",
@@ -102,6 +105,7 @@ configuration identities.
   "working_directory": ".",
   "source": "increment.cpp",
   "logical_source": "increment.cpp",
+  "dependencies": [],
   "function": "increment",
   "artifact": "increment.cpp.click-cpp.json"
 }
@@ -198,11 +202,23 @@ bool money_nonnegative(const int64* nValue) {
 }
 ```
 
-This slice deliberately does not yet accept a mutable signed-64 reference,
-unsigned 64-bit aliases, `<=`, `&&`, imported `constexpr` values, or retention
-of a complete alias chain such as Bitcoin's `CAmount` through `int64_t`. Those
-remain separate semantic increments rather than consequences of accepting one
-wide comparison.
+The next `constexpr-coin` fixture includes a pinned fixture-owned `<cstdint>`,
+retains the ordered `CAmount` to `int64_t` alias chain across that locked
+dependency, and imports one namespace-scope `static constexpr CAmount COIN =
+100000000`. A reference to `COIN` carries its Clang declaration identity while
+direct lowering uses its checked signed-64 evaluated value. The artifact also
+retains the literal initializer and rejects disagreement between it and the
+evaluated value. Offline loading needs neither Clang nor the exporter, but it
+does rehash the declared header dependency.
+
+This is deliberately a leaf-constant slice. It does not claim the host C++
+standard library: the regression's header is a pinned input containing only
+the needed `int64_t` typedef. Mutable or non-`constexpr` globals, undeclared
+header dependencies, non-literal and dependent initializers, multiple reachable
+constants, mutable signed-64 references, unsigned 64-bit aliases, `<=`, and
+`&&` remain outside the boundary. In particular, `MAX_MONEY = 21000000 * COIN`
+is the next constant-expression increment rather than an accidental consequence
+of importing `COIN`.
 
 The `direct-call` fixture selects a caller and captures the transitive closure
 of definitions reached by discarded-result direct call statements. Each call

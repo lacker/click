@@ -4,6 +4,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <system_error>
 #include <unordered_map>
@@ -147,6 +148,14 @@ public:
       }
       reachable_functions.push_back(std::move(*reachable));
     }
+    llvm::json::Array constants;
+    for (const clang::VarDecl *constant : constant_definitions_) {
+      auto lowered = lower_constant(constant, selected);
+      if (!lowered) {
+        return;
+      }
+      constants.push_back(std::move(*lowered));
+    }
     llvm::json::Array records;
     for (const clang::CXXRecordDecl *record : record_definitions_) {
       auto lowered = lower_record(record);
@@ -175,11 +184,17 @@ public:
     profile["compilation_command"] = std::move(compilation_command);
 
     llvm::json::Object artifact;
-    artifact["schema"] = 14;
+    artifact["schema"] = 15;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["exception_behavior"] = "normal_only";
     artifact["logical_source"] = logical_source_;
+    llvm::json::Array dependencies;
+    for (const std::string &dependency : dependency_sources_) {
+      dependencies.push_back(dependency);
+    }
+    artifact["dependencies"] = std::move(dependencies);
+    artifact["constants"] = std::move(constants);
     artifact["records"] = std::move(records);
     artifact["function"] = std::move(*function);
     artifact["reachable_functions"] = std::move(reachable_functions);
@@ -383,17 +398,8 @@ private:
     if (record_reference != nullptr && !remember_record(record_reference)) {
       return std::nullopt;
     }
-    const clang::TypedefNameDecl *source_alias = nullptr;
-    if (const clang::TypeSourceInfo *source = parameter->getTypeSourceInfo()) {
-      for (clang::TypeLoc location = source->getTypeLoc(); !location.isNull();
-           location = location.getNextTypeLoc()) {
-        if (const auto alias_location =
-                location.getAs<clang::TypedefTypeLoc>()) {
-          source_alias = alias_location.getTypedefNameDecl();
-          break;
-        }
-      }
-    }
+    const clang::TypedefNameDecl *source_alias =
+        direct_source_alias(parameter->getTypeSourceInfo());
     auto value_type = lower_type(parameter->getType(), parameter->getLocation(),
                                  source_alias);
     if (!value_type) {
@@ -408,6 +414,20 @@ private:
       return std::nullopt;
     }
     return Json(std::move(result));
+  }
+
+  const clang::TypedefNameDecl *
+  direct_source_alias(const clang::TypeSourceInfo *source) const {
+    if (source == nullptr) {
+      return nullptr;
+    }
+    for (clang::TypeLoc location = source->getTypeLoc(); !location.isNull();
+         location = location.getNextTypeLoc()) {
+      if (const auto alias_location = location.getAs<clang::TypedefTypeLoc>()) {
+        return alias_location.getTypedefNameDecl();
+      }
+    }
+    return nullptr;
   }
 
   std::optional<Json>
@@ -478,15 +498,31 @@ private:
         alias_declaration = alias->getDecl();
       }
     }
-    if (alias_declaration != nullptr) {
+    llvm::json::Array source_aliases;
+    std::unordered_set<const clang::TypedefNameDecl *> seen_aliases;
+    while (alias_declaration != nullptr) {
+      alias_declaration = alias_declaration->getCanonicalDecl();
+      if (!seen_aliases.insert(alias_declaration).second) {
+        fail(alias_declaration->getLocation(),
+             "C++ type alias chain contains a cycle");
+        return std::nullopt;
+      }
       llvm::json::Object source_alias;
       source_alias["declaration_id"] = declaration_id(alias_declaration);
       source_alias["name"] = alias_declaration->getNameAsString();
-      source_alias["span"] = span(alias_declaration->getSourceRange());
-      result["source_alias"] = std::move(source_alias);
-    } else {
-      result["source_alias"] = nullptr;
+      source_alias["span"] = alias_span(alias_declaration->getSourceRange());
+      if (!state_.error.empty()) {
+        return std::nullopt;
+      }
+      source_aliases.push_back(std::move(source_alias));
+      const clang::TypedefNameDecl *next_alias =
+          direct_source_alias(alias_declaration->getTypeSourceInfo());
+      if (next_alias == alias_declaration) {
+        next_alias = nullptr;
+      }
+      alias_declaration = next_alias;
     }
+    result["source_aliases"] = std::move(source_aliases);
     return Json(std::move(result));
   }
 
@@ -1164,6 +1200,109 @@ private:
     return result;
   }
 
+  bool remember_constant(const clang::VarDecl *constant) {
+    const clang::VarDecl *definition =
+        constant == nullptr ? nullptr : constant->getDefinition();
+    if (definition == nullptr) {
+      fail({}, "reachable C++ constant has no definition");
+      return false;
+    }
+    definition = definition->getCanonicalDecl();
+    if (!is_in_logical_source(definition->getLocation())) {
+      fail(definition->getLocation(),
+           "reachable C++ constants must be declared in the selected source");
+      return false;
+    }
+    if (!definition->isConstexpr() ||
+        definition->getStorageClass() != clang::SC_Static ||
+        !definition->hasGlobalStorage()) {
+      fail(definition->getLocation(),
+           "reachable C++ constants must be namespace-scope static constexpr declarations");
+      return false;
+    }
+    const clang::QualType type = definition->getType();
+    if (!type.isConstQualified() || !type->isSignedIntegerType() ||
+        context_.getTypeSize(type) != 64) {
+      fail(definition->getLocation(),
+           "reachable C++ constants must have const signed 64-bit type");
+      return false;
+    }
+    if (known_constants_.insert(definition).second) {
+      if (!constant_definitions_.empty()) {
+        fail(definition->getLocation(),
+             "the first C++ constant slice supports exactly one reachable constant");
+        return false;
+      }
+      constant_definitions_.push_back(definition);
+    }
+    return true;
+  }
+
+  std::optional<Json>
+  lower_constant(const clang::VarDecl *constant,
+                 const clang::FunctionDecl *function) {
+    const clang::Expr *initializer = constant->getInit();
+    if (initializer == nullptr ||
+        !llvm::isa<clang::IntegerLiteral>(initializer->IgnoreParenImpCasts())) {
+      fail(constant->getLocation(),
+           "the first C++ constant slice requires one integer literal initializer");
+      return std::nullopt;
+    }
+    auto value_type =
+        lower_type(constant->getType(), constant->getLocation(),
+                   direct_source_alias(constant->getTypeSourceInfo()));
+    auto lowered_initializer = lower_expression(initializer, function);
+    const clang::APValue *evaluated = constant->evaluateValue();
+    if (!value_type || !lowered_initializer || evaluated == nullptr ||
+        !evaluated->isInt()) {
+      if (state_.error.empty()) {
+        fail(constant->getLocation(),
+             "Clang could not evaluate the supported C++ constant");
+      }
+      return std::nullopt;
+    }
+    llvm::SmallString<32> evaluated_value;
+    evaluated->getInt().toString(evaluated_value, 10);
+    llvm::json::Object result;
+    result["declaration_id"] = declaration_id(constant);
+    result["name"] = constant->getNameAsString();
+    result["value_type"] = std::move(*value_type);
+    result["initializer"] = std::move(*lowered_initializer);
+    result["evaluated_value"] = evaluated_value.str().str();
+    result["span"] = span(constant->getSourceRange());
+    if (!state_.error.empty()) {
+      return std::nullopt;
+    }
+    return Json(std::move(result));
+  }
+
+  std::optional<Json>
+  lower_constant_reference(const clang::DeclRefExpr *reference,
+                           const clang::ImplicitCastExpr *cast) {
+    const auto *constant =
+        llvm::dyn_cast<clang::VarDecl>(reference->getDecl());
+    if (!remember_constant(constant)) {
+      return std::nullopt;
+    }
+    auto value_type = lower_type(cast->getType(), cast->getExprLoc());
+    if (!value_type) {
+      return std::nullopt;
+    }
+    llvm::json::Object constant_reference;
+    constant_reference["declaration_id"] = declaration_id(constant);
+    constant_reference["name"] = constant->getNameAsString();
+    constant_reference["span"] = span(reference->getSourceRange());
+    llvm::json::Object result;
+    result["kind"] = "constant_reference";
+    result["constant"] = std::move(constant_reference);
+    result["value_type"] = std::move(*value_type);
+    result["span"] = span(cast->getSourceRange());
+    if (!state_.error.empty()) {
+      return std::nullopt;
+    }
+    return Json(std::move(result));
+  }
+
   std::optional<Json> lower_expression(const clang::Expr *expression,
                                        const clang::FunctionDecl *function) {
     if (const auto *throw_expression =
@@ -1202,6 +1341,13 @@ private:
       }
       llvm::json::Object result;
       const clang::Expr *source = cast->getSubExpr()->IgnoreParens();
+      if (const auto *reference = llvm::dyn_cast<clang::DeclRefExpr>(source);
+          reference != nullptr &&
+          llvm::isa<clang::VarDecl>(reference->getDecl()) &&
+          !llvm::isa<clang::ParmVarDecl>(reference->getDecl()) &&
+          llvm::cast<clang::VarDecl>(reference->getDecl())->hasGlobalStorage()) {
+        return lower_constant_reference(reference, cast);
+      }
       if (const auto *member = llvm::dyn_cast<clang::MemberExpr>(source)) {
         auto lowered = lower_member(member, function);
         if (!lowered) {
@@ -1780,6 +1926,77 @@ private:
     return Json(std::move(result));
   }
 
+  Json alias_span(clang::SourceRange range) {
+    clang::SourceLocation begin =
+        source_manager_.getSpellingLoc(range.getBegin());
+    clang::SourceLocation end = source_manager_.getSpellingLoc(range.getEnd());
+    if (is_in_logical_source(begin) && is_in_logical_source(end)) {
+      return span(range);
+    }
+    auto dependency = dependency_source(begin);
+    auto end_dependency = dependency_source(end);
+    if (!dependency || !end_dependency || *dependency != *end_dependency) {
+      fail(begin,
+           "reachable C++ alias declarations must stay within one declared dependency source");
+      return Json(nullptr);
+    }
+    clang::SourceLocation after = clang::Lexer::getLocForEndOfToken(
+        end, 0, source_manager_, context_.getLangOpts());
+    const clang::PresumedLoc start = source_manager_.getPresumedLoc(begin);
+    const clang::PresumedLoc finish = source_manager_.getPresumedLoc(after);
+    if (start.isInvalid() || finish.isInvalid()) {
+      fail(begin, "Clang could not resolve an alias declaration span");
+      return Json(nullptr);
+    }
+    dependency_sources_.insert(*dependency);
+    llvm::json::Object result;
+    result["file"] = *dependency;
+    result["start_line"] = static_cast<std::int64_t>(start.getLine());
+    result["start_column"] = static_cast<std::int64_t>(start.getColumn());
+    result["end_line"] = static_cast<std::int64_t>(finish.getLine());
+    result["end_column"] = static_cast<std::int64_t>(finish.getColumn());
+    return Json(std::move(result));
+  }
+
+  std::optional<std::string>
+  dependency_source(clang::SourceLocation location) const {
+    const clang::SourceLocation spelling =
+        source_manager_.getSpellingLoc(location);
+    if (!spelling.isValid()) {
+      return std::nullopt;
+    }
+    const llvm::StringRef filename = source_manager_.getFilename(spelling);
+    if (filename.empty()) {
+      return std::nullopt;
+    }
+    std::filesystem::path candidate(filename.str());
+    if (candidate.is_relative()) {
+      candidate = std::filesystem::path(compilation_directory_) / candidate;
+    }
+    std::error_code error;
+    const std::filesystem::path canonical =
+        std::filesystem::canonical(candidate, error);
+    if (error) {
+      return std::nullopt;
+    }
+    const std::filesystem::path root = std::filesystem::canonical(
+        std::filesystem::path(compilation_directory_), error);
+    if (error) {
+      return std::nullopt;
+    }
+    const std::filesystem::path relative =
+        std::filesystem::relative(canonical, root, error);
+    if (error || relative.empty() || relative.is_absolute()) {
+      return std::nullopt;
+    }
+    for (const auto &component : relative) {
+      if (component == "..") {
+        return std::nullopt;
+      }
+    }
+    return relative.generic_string();
+  }
+
   bool is_in_logical_source(clang::SourceLocation location) const {
     const clang::SourceLocation spelling =
         source_manager_.getSpellingLoc(location);
@@ -1832,6 +2049,9 @@ private:
   std::vector<const clang::FunctionDecl *> reachable_definitions_;
   std::unordered_set<const clang::CXXRecordDecl *> known_records_;
   std::vector<const clang::CXXRecordDecl *> record_definitions_;
+  std::set<std::string> dependency_sources_;
+  std::unordered_set<const clang::VarDecl *> known_constants_;
+  std::vector<const clang::VarDecl *> constant_definitions_;
   std::unordered_set<const clang::FunctionDecl *>
       functions_with_aggregate_local_;
   std::unordered_set<const clang::FunctionDecl *> functions_with_nested_scope_;

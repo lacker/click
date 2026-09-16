@@ -1,9 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 14;
+pub(crate) const EXPORT_SCHEMA: u32 = 15;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -17,6 +17,8 @@ pub struct CppExport {
     pub profile: CppProfile,
     pub exception_behavior: CppExceptionBehavior,
     pub logical_source: String,
+    pub dependencies: Vec<String>,
+    pub constants: Vec<CppConstant>,
     pub records: Vec<CppRecord>,
     pub function: CppFunction,
     pub reachable_functions: Vec<CppFunction>,
@@ -104,7 +106,7 @@ pub enum CppType {
         bits: u32,
         signed: bool,
         is_const: bool,
-        source_alias: Option<CppTypeAlias>,
+        source_aliases: Vec<CppTypeAlias>,
     },
     LvalueReference {
         pointee: Box<CppType>,
@@ -121,6 +123,25 @@ pub enum CppType {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CppTypeAlias {
+    pub declaration_id: String,
+    pub name: String,
+    pub span: CppSpan,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CppConstant {
+    pub declaration_id: String,
+    pub name: String,
+    pub value_type: CppType,
+    pub initializer: CppExpression,
+    pub evaluated_value: String,
+    pub span: CppSpan,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CppConstantReference {
     pub declaration_id: String,
     pub name: String,
     pub span: CppSpan,
@@ -147,6 +168,11 @@ pub enum CppBinaryOperator {
 pub enum CppExpression {
     IntegerLiteral {
         value: String,
+        value_type: CppType,
+        span: CppSpan,
+    },
+    ConstantReference {
+        constant: CppConstantReference,
         value_type: CppType,
         span: CppSpan,
     },
@@ -320,6 +346,7 @@ impl CppExport {
         logical_source: &str,
         function: &str,
         expected_exceptions: bool,
+        expected_dependencies: &[String],
     ) -> Result<(), String> {
         if self.schema != EXPORT_SCHEMA {
             return Err(format!(
@@ -369,6 +396,23 @@ impl CppExport {
                 self.logical_source
             ));
         }
+        if self.dependencies != expected_dependencies {
+            return Err(format!(
+                "C++ export dependencies {:?} differ from configured dependencies {:?}",
+                self.dependencies, expected_dependencies
+            ));
+        }
+        let mut alias_sources = BTreeSet::from([logical_source.to_string()]);
+        let mut previous_dependency: Option<&str> = None;
+        for dependency in &self.dependencies {
+            if !valid_relative_source_path(dependency)
+                || previous_dependency.is_some_and(|previous| previous >= dependency.as_str())
+            {
+                return Err("C++ export dependencies must be unique sorted relative paths".into());
+            }
+            previous_dependency = Some(dependency);
+            alias_sources.insert(dependency.clone());
+        }
         if self.function.name != function {
             return Err(format!(
                 "C++ export resolved `{}` instead of selected function `{function}`",
@@ -402,10 +446,35 @@ impl CppExport {
             }
         }
 
+        if self.constants.len() > 1 {
+            return Err(
+                "the first C++ constant slice supports exactly one reachable constant".into(),
+            );
+        }
+        let mut constants = BTreeMap::new();
+        for constant in &self.constants {
+            constant.validate(logical_source, &alias_sources)?;
+            if constants
+                .insert(constant.declaration_id.clone(), constant)
+                .is_some()
+            {
+                return Err(format!(
+                    "duplicate C++ constant declaration identity `{}`",
+                    constant.declaration_id
+                ));
+            }
+        }
+
         let mut functions = BTreeMap::new();
         let mut names = BTreeMap::new();
         for source in std::iter::once(&self.function).chain(&self.reachable_functions) {
-            source.validate(logical_source, &records, self.profile.exceptions)?;
+            source.validate(
+                logical_source,
+                &alias_sources,
+                &records,
+                self.profile.exceptions,
+            )?;
+            source.validate_constant_references(logical_source, &constants)?;
             if functions
                 .insert(source.declaration_id.clone(), source)
                 .is_some()
@@ -562,6 +631,7 @@ impl CppFunction {
     fn validate(
         &self,
         logical_source: &str,
+        alias_sources: &BTreeSet<String>,
         records: &BTreeMap<String, &CppRecord>,
         exceptions_enabled: bool,
     ) -> Result<(), String> {
@@ -650,7 +720,7 @@ impl CppFunction {
             if !names.insert(parameter.name.clone()) {
                 return Err(format!("duplicate C++ parameter name `{}`", parameter.name));
             }
-            parameter.value_type.validate_aliases(logical_source)?;
+            parameter.value_type.validate_aliases_in(alias_sources)?;
         }
         if let CppFunctionKind::Constructor {
             record_declaration_id,
@@ -1252,6 +1322,7 @@ impl CppExpression {
     pub(crate) fn value_type(&self) -> &CppType {
         match self {
             Self::IntegerLiteral { value_type, .. }
+            | Self::ConstantReference { value_type, .. }
             | Self::Load { value_type, .. }
             | Self::AddressOf { value_type, .. }
             | Self::Dereference { value_type, .. }
@@ -1263,7 +1334,7 @@ impl CppExpression {
 
     fn references_place(&self, declaration_id: &str) -> bool {
         match self {
-            Self::IntegerLiteral { .. } => false,
+            Self::IntegerLiteral { .. } | Self::ConstantReference { .. } => false,
             Self::Load { place, .. } | Self::AddressOf { place, .. } => {
                 place.declaration_id == declaration_id
             }
@@ -1295,6 +1366,18 @@ impl CppExpression {
                     .map_err(|_| format!("unsupported C++ integer literal `{value}`"))?;
                 require_int32(value_type, false, "integer literal type")?;
                 span.validate(logical_source)
+            }
+            Self::ConstantReference {
+                constant,
+                value_type,
+                span,
+            } => {
+                span.validate(logical_source)?;
+                constant.span.validate(logical_source)?;
+                if constant.declaration_id.is_empty() || constant.name.is_empty() {
+                    return Err("C++ constant reference is missing declaration identity".into());
+                }
+                require_signed_int64(value_type, false, "constant reference type")
             }
             Self::Load {
                 place,
@@ -1931,6 +2014,225 @@ fn validate_call_arguments(
     Ok(())
 }
 
+impl CppConstant {
+    fn validate(
+        &self,
+        logical_source: &str,
+        alias_sources: &BTreeSet<String>,
+    ) -> Result<(), String> {
+        if self.declaration_id.is_empty() || self.name.is_empty() {
+            return Err("C++ constant is missing declaration identity".into());
+        }
+        self.span.validate(logical_source)?;
+        require_const_signed_int64(&self.value_type, "constant type")?;
+        self.value_type.validate_aliases_in(alias_sources)?;
+        validate_leaf_int64_initializer(&self.initializer, logical_source)?;
+        require_signed_int64(
+            self.initializer.value_type(),
+            true,
+            "constant initializer type",
+        )?;
+        let evaluated = self
+            .evaluated_value
+            .parse::<i64>()
+            .map_err(|_| format!("unsupported C++ constant value `{}`", self.evaluated_value))?;
+        if evaluate_leaf_int64_initializer(&self.initializer)? != evaluated {
+            return Err(format!(
+                "C++ constant `{}` initializer disagrees with its evaluated value",
+                self.name
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn validate_leaf_int64_initializer(
+    expression: &CppExpression,
+    logical_source: &str,
+) -> Result<(), String> {
+    let CppExpression::IntegralCast {
+        value,
+        value_type,
+        span,
+    } = expression
+    else {
+        return Err("the first C++ constant slice requires one integral cast initializer".into());
+    };
+    span.validate(logical_source)?;
+    let CppExpression::IntegerLiteral {
+        value: literal,
+        value_type: literal_type,
+        span: literal_span,
+    } = value.as_ref()
+    else {
+        return Err("the first C++ constant slice requires one integer literal".into());
+    };
+    literal_span.validate(logical_source)?;
+    literal
+        .parse::<i32>()
+        .map_err(|_| format!("unsupported C++ integer literal `{literal}`"))?;
+    require_int32(literal_type, false, "constant literal type")?;
+    require_signed_int64(value_type, true, "constant integral cast result")
+}
+
+fn evaluate_leaf_int64_initializer(expression: &CppExpression) -> Result<i64, String> {
+    match expression {
+        CppExpression::IntegralCast { value, .. } => Ok(i64::from(evaluate_int32_literal(value)?)),
+        _ => Err("the first C++ constant slice requires one integral cast initializer".into()),
+    }
+}
+
+fn evaluate_int32_literal(expression: &CppExpression) -> Result<i32, String> {
+    let CppExpression::IntegerLiteral { value, .. } = expression else {
+        return Err("the first C++ constant slice requires one integer literal".into());
+    };
+    value
+        .parse::<i32>()
+        .map_err(|_| format!("unsupported C++ integer literal `{value}`"))
+}
+
+impl CppFunction {
+    fn validate_constant_references(
+        &self,
+        logical_source: &str,
+        constants: &BTreeMap<String, &CppConstant>,
+    ) -> Result<(), String> {
+        validate_statement_constant_references(&self.body, logical_source, constants)
+    }
+}
+
+fn validate_statement_constant_references(
+    statements: &[CppStatement],
+    logical_source: &str,
+    constants: &BTreeMap<String, &CppConstant>,
+) -> Result<(), String> {
+    for statement in statements {
+        match statement {
+            CppStatement::Declare { initializer, .. } => {
+                initializer.validate_constant_references(logical_source, constants)?;
+            }
+            CppStatement::Assign { value, .. }
+            | CppStatement::MemberStore { value, .. }
+            | CppStatement::Return { value, .. } => {
+                value.validate_constant_references(logical_source, constants)?;
+            }
+            CppStatement::Store { pointer, value, .. } => {
+                pointer.validate_constant_references(logical_source, constants)?;
+                value.validate_constant_references(logical_source, constants)?;
+            }
+            CppStatement::Scope { body, .. } => {
+                validate_statement_constant_references(body, logical_source, constants)?;
+            }
+            CppStatement::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                condition.validate_constant_references(logical_source, constants)?;
+                validate_statement_constant_references(then_branch, logical_source, constants)?;
+                validate_statement_constant_references(else_branch, logical_source, constants)?;
+            }
+            CppStatement::Call { arguments, .. } => {
+                for argument in arguments {
+                    argument.validate_constant_references(logical_source, constants)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+impl CppInitializer {
+    fn validate_constant_references(
+        &self,
+        logical_source: &str,
+        constants: &BTreeMap<String, &CppConstant>,
+    ) -> Result<(), String> {
+        match self {
+            Self::Value { value } => value.validate_constant_references(logical_source, constants),
+            Self::Call { arguments, .. } | Self::Constructor { arguments, .. } => {
+                for argument in arguments {
+                    argument.validate_constant_references(logical_source, constants)?;
+                }
+                Ok(())
+            }
+            Self::Aggregate { fields, .. } => {
+                for field in fields {
+                    field
+                        .value
+                        .validate_constant_references(logical_source, constants)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl CppCallArgument {
+    fn validate_constant_references(
+        &self,
+        logical_source: &str,
+        constants: &BTreeMap<String, &CppConstant>,
+    ) -> Result<(), String> {
+        match self {
+            Self::Value { value } => value.validate_constant_references(logical_source, constants),
+            Self::Reference { .. } => Ok(()),
+        }
+    }
+}
+
+impl CppExpression {
+    fn validate_constant_references(
+        &self,
+        logical_source: &str,
+        constants: &BTreeMap<String, &CppConstant>,
+    ) -> Result<(), String> {
+        match self {
+            Self::ConstantReference {
+                constant,
+                value_type,
+                ..
+            } => {
+                constant.span.validate(logical_source)?;
+                let resolved = constants.get(&constant.declaration_id).ok_or_else(|| {
+                    format!(
+                        "C++ expression refers to unknown constant declaration `{}`",
+                        constant.declaration_id
+                    )
+                })?;
+                if resolved.name != constant.name {
+                    return Err(format!(
+                        "C++ constant declaration `{}` is named `{}`, not `{}`",
+                        constant.declaration_id, resolved.name, constant.name
+                    ));
+                }
+                if !same_unqualified_integer_type(&resolved.value_type, value_type) {
+                    return Err(format!(
+                        "C++ constant reference `{}` has a mismatched value type",
+                        constant.name
+                    ));
+                }
+                Ok(())
+            }
+            Self::Dereference { pointer, .. } => {
+                pointer.validate_constant_references(logical_source, constants)
+            }
+            Self::IntegralCast { value, .. } => {
+                value.validate_constant_references(logical_source, constants)
+            }
+            Self::Binary { left, right, .. } => {
+                left.validate_constant_references(logical_source, constants)?;
+                right.validate_constant_references(logical_source, constants)
+            }
+            Self::IntegerLiteral { .. }
+            | Self::Load { .. }
+            | Self::AddressOf { .. }
+            | Self::MemberLoad { .. } => Ok(()),
+        }
+    }
+}
+
 impl CppSpan {
     fn validate(&self, logical_source: &str) -> Result<(), String> {
         if self.file != logical_source
@@ -1944,6 +2246,32 @@ impl CppSpan {
         }
         Ok(())
     }
+
+    fn validate_in(&self, sources: &BTreeSet<String>) -> Result<(), String> {
+        if !sources.contains(&self.file)
+            || self.start_line == 0
+            || self.start_column == 0
+            || self.end_line == 0
+            || self.end_column == 0
+            || (self.end_line, self.end_column) < (self.start_line, self.start_column)
+        {
+            return Err(format!("invalid C++ source span in `{}`", self.file));
+        }
+        Ok(())
+    }
+}
+
+fn valid_relative_source_path(value: &str) -> bool {
+    let path = Path::new(value);
+    !value.is_empty()
+        && !value.as_bytes().contains(&0)
+        && !path.is_absolute()
+        && path.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
 }
 
 fn validate_place_reference<'a>(
@@ -2079,22 +2407,48 @@ fn require_const_signed_int64(value: &CppType, label: &str) -> Result<(), String
 
 impl CppType {
     fn validate_aliases(&self, logical_source: &str) -> Result<(), String> {
+        self.validate_aliases_in(&BTreeSet::from([logical_source.to_string()]))
+    }
+
+    fn validate_aliases_in(&self, sources: &BTreeSet<String>) -> Result<(), String> {
         match self {
-            Self::Integer { source_alias, .. } => {
-                if let Some(alias) = source_alias {
+            Self::Integer { source_aliases, .. } => {
+                let mut identities = BTreeSet::new();
+                for alias in source_aliases {
                     if alias.declaration_id.is_empty() || alias.name.is_empty() {
                         return Err("C++ integer type alias is missing declaration identity".into());
                     }
-                    alias.span.validate(logical_source)?;
+                    if !identities.insert(alias.declaration_id.as_str()) {
+                        return Err("C++ integer type alias chain contains a cycle".into());
+                    }
+                    alias.span.validate_in(sources)?;
                 }
                 Ok(())
             }
             Self::LvalueReference { pointee } | Self::Pointer { pointee } => {
-                pointee.validate_aliases(logical_source)
+                pointee.validate_aliases_in(sources)
             }
             Self::Void | Self::Boolean { .. } | Self::Record { .. } => Ok(()),
         }
     }
+}
+
+fn same_unqualified_integer_type(left: &CppType, right: &CppType) -> bool {
+    matches!(
+        (left, right),
+        (
+            CppType::Integer {
+                bits: left_bits,
+                signed: left_signed,
+                ..
+            },
+            CppType::Integer {
+                bits: right_bits,
+                signed: right_signed,
+                ..
+            }
+        ) if left_bits == right_bits && left_signed == right_signed
+    )
 }
 
 fn same_scalar_type(left: &CppType, right: &CppType) -> bool {

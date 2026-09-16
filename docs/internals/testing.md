@@ -123,7 +123,12 @@ a direct `CAmount` typedef identity, imports `const CAmount&`, the implicit
 promotion of zero, signed `>=`, and a `bool` result, then verifies an exact
 all-input contract offline. Its false zero-boundary contract fails, while
 mutable and unsigned wide references, `<=`, and `&&` fail at the frontend
-boundary. A pointer fixture passes `&value`
+boundary. A constexpr fixture locks a fixture-owned `<cstdint>` dependency,
+retains the two-link `CAmount`/`int64_t` alias chain, and imports one leaf
+`static constexpr` signed-64 constant by declaration identity. Its exact
+all-input comparison verifies offline; dependency tampering, an undeclared
+dependency, mutable storage, and a non-leaf initializer fail locally. A pointer
+fixture passes `&value`
 from an `int&` caller to a
 mutable `int*` helper, then checks dereference reads, a checked write, offline
 verification, and expansion/reverification. Removing memory ownership and a

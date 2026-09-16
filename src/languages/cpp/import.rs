@@ -17,10 +17,11 @@ use sha2::{Digest, Sha256};
 use super::schema::{CppExport, CppProfile, EXPORT_SCHEMA, LANGUAGE, STANDARD, TARGET};
 use crate::languages::compiler_process::{CompilerLimits, run_compiler};
 
-const CONFIG_SCHEMA: u32 = 3;
+const CONFIG_SCHEMA: u32 = 4;
 const MAX_CONFIG_BYTES: usize = 1 << 20;
 const MAX_COMPILATION_DATABASE_BYTES: usize = 16 << 20;
 const MAX_SOURCE_BYTES: usize = 1 << 20;
+const MAX_DEPENDENCIES: usize = 64;
 const MAX_EXPORTER_BYTES: usize = 64 << 20;
 const MAX_ARTIFACT_BYTES: usize = 8 << 20;
 const MAX_DIAGNOSTIC_BYTES: usize = 64 << 10;
@@ -65,6 +66,7 @@ struct Config {
     working_directory: String,
     source: String,
     logical_source: String,
+    dependencies: Vec<String>,
     function: String,
     artifact: String,
     #[serde(skip)]
@@ -80,6 +82,7 @@ struct Lock {
     compilation_database_sha256: String,
     source_sha256: String,
     logical_source_sha256: String,
+    dependencies: BTreeMap<String, String>,
     artifact_sha256: String,
     artifact_bytes: usize,
     profile: CppProfile,
@@ -111,6 +114,7 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
     }
     let source = resolve_source(&config, &working_directory)?;
     let logical_source = resolve_logical_source(&config, &working_directory)?;
+    let dependencies = resolve_dependencies(&config, &working_directory)?;
     reject_output_collisions(
         config_path,
         &config,
@@ -118,6 +122,7 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
         &logical_source,
         &exporter,
         &compilation_database,
+        &dependencies,
     )?;
 
     let exporter_bytes = read_stable(&exporter, MAX_EXPORTER_BYTES, "C++ exporter")?;
@@ -129,6 +134,7 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
     let source_before = read_stable(&source, MAX_SOURCE_BYTES, "C++ source")?;
     let logical_source_before =
         read_stable(&logical_source, MAX_SOURCE_BYTES, "C++ logical source")?;
+    let dependency_bytes_before = read_dependencies(&dependencies)?;
     let arguments = vec![
         "--logical-source".into(),
         config.logical_source.clone(),
@@ -167,6 +173,9 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
     {
         return Err("C++ logical source changed during semantic export".into());
     }
+    if read_dependencies(&dependencies)? != dependency_bytes_before {
+        return Err("C++ dependency changed during semantic export".into());
+    }
     if read_stable(&exporter, MAX_EXPORTER_BYTES, "C++ exporter")? != exporter_bytes {
         return Err("C++ exporter changed during semantic export".into());
     }
@@ -185,12 +194,17 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
     let compilation_database_sha256 = hex_digest(&compilation_database_before);
     let source_sha256 = hex_digest(&source_before);
     let logical_source_sha256 = hex_digest(&logical_source_before);
+    let dependency_digests = dependency_bytes_before
+        .iter()
+        .map(|(path, bytes)| (path.clone(), hex_digest(bytes)))
+        .collect::<BTreeMap<_, _>>();
     let artifact_sha256 = hex_digest(&output.stdout);
     let identity = semantic_identity(
         &config_sha256,
         &compilation_database_sha256,
         &source_sha256,
         &logical_source_sha256,
+        &dependency_digests,
         &exporter_sha256,
         &artifact_sha256,
         &export.profile,
@@ -202,6 +216,7 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
         compilation_database_sha256,
         source_sha256,
         logical_source_sha256,
+        dependencies: dependency_digests,
         artifact_sha256,
         artifact_bytes: output.stdout.len(),
         profile: export.profile,
@@ -271,6 +286,14 @@ fn load_import_inner(config_path: &Path) -> Result<PreparedCppImport, String> {
     if lock.logical_source_sha256 != hex_digest(&logical_source_bytes) {
         return Err("C++ logical source differs from the import lock; refresh it".into());
     }
+    let dependencies = resolve_dependencies(&config, &working_directory)?;
+    let dependency_digests = read_dependencies(&dependencies)?
+        .into_iter()
+        .map(|(path, bytes)| (path, hex_digest(&bytes)))
+        .collect::<BTreeMap<_, _>>();
+    if lock.dependencies != dependency_digests {
+        return Err("C++ dependency inventory differs from the import lock; refresh it".into());
+    }
     let artifact = read_stable(
         &artifact_path(&config)?,
         MAX_ARTIFACT_BYTES,
@@ -288,6 +311,7 @@ fn load_import_inner(config_path: &Path) -> Result<PreparedCppImport, String> {
         &lock.compilation_database_sha256,
         &lock.source_sha256,
         &lock.logical_source_sha256,
+        &lock.dependencies,
         &lock.exporter_sha256,
         &lock.artifact_sha256,
         &lock.profile,
@@ -308,7 +332,12 @@ fn load_import_inner(config_path: &Path) -> Result<PreparedCppImport, String> {
 fn decode_artifact(bytes: &[u8], config: &Config) -> Result<CppExport, String> {
     let export: CppExport = serde_json::from_slice(bytes)
         .map_err(|error| format!("parse C++ semantic artifact: {error}"))?;
-    export.validate(&config.logical_source, &config.function, config.exceptions)?;
+    export.validate(
+        &config.logical_source,
+        &config.function,
+        config.exceptions,
+        &config.dependencies,
+    )?;
     Ok(export)
 }
 
@@ -317,6 +346,7 @@ fn semantic_identity(
     compilation_database_sha256: &str,
     source_sha256: &str,
     logical_source_sha256: &str,
+    dependencies: &BTreeMap<String, String>,
     exporter_sha256: &str,
     artifact_sha256: &str,
     profile: &CppProfile,
@@ -324,11 +354,12 @@ fn semantic_identity(
     let encoded = serde_json::to_vec(&(
         CONFIG_SCHEMA,
         EXPORT_SCHEMA,
-        "click-cpp-semantic-import-v3",
+        "click-cpp-semantic-import-v4",
         config_sha256,
         compilation_database_sha256,
         source_sha256,
         logical_source_sha256,
+        dependencies,
         exporter_sha256,
         artifact_sha256,
         profile,
@@ -378,6 +409,17 @@ fn validate_config(config: &Config) -> Result<(), String> {
     validate_relative_path(&config.compilation_database, "compilation database")?;
     validate_relative_path(&config.logical_source, "logical source")?;
     validate_relative_path(&config.artifact, "artifact")?;
+    let mut previous_dependency: Option<&str> = None;
+    for dependency in &config.dependencies {
+        validate_relative_path(dependency, "dependency")?;
+        if dependency.is_empty()
+            || dependency.as_bytes().contains(&0)
+            || previous_dependency.is_some_and(|previous| previous >= dependency.as_str())
+        {
+            return Err("C++ dependencies must be unique sorted relative paths".into());
+        }
+        previous_dependency = Some(dependency);
+    }
     if Path::new(&config.source)
         .extension()
         .and_then(|value| value.to_str())
@@ -464,6 +506,39 @@ fn resolve_logical_source(config: &Config, working_directory: &Path) -> Result<P
     )
 }
 
+fn resolve_dependencies(
+    config: &Config,
+    working_directory: &Path,
+) -> Result<Vec<(String, PathBuf)>, String> {
+    if config.dependencies.len() > MAX_DEPENDENCIES {
+        return Err("C++ dependency inventory exceeds its bound".into());
+    }
+    config
+        .dependencies
+        .iter()
+        .map(|dependency| {
+            let path = resolve_input(working_directory, dependency, "C++ dependency")?;
+            if !path.starts_with(working_directory) {
+                return Err(format!(
+                    "C++ dependency `{dependency}` escapes the configured working directory"
+                ));
+            }
+            Ok((dependency.clone(), path))
+        })
+        .collect()
+}
+
+fn read_dependencies(
+    dependencies: &[(String, PathBuf)],
+) -> Result<BTreeMap<String, Vec<u8>>, String> {
+    dependencies
+        .iter()
+        .map(|(name, path)| {
+            read_stable(path, MAX_SOURCE_BYTES, "C++ dependency").map(|bytes| (name.clone(), bytes))
+        })
+        .collect()
+}
+
 fn artifact_path(config: &Config) -> Result<PathBuf, String> {
     validate_relative_path(&config.artifact, "artifact")?;
     Ok(config.directory.join(&config.artifact))
@@ -491,6 +566,7 @@ fn reject_output_collisions(
     logical_source: &Path,
     exporter: &Path,
     compilation_database: &Path,
+    dependencies: &[(String, PathBuf)],
 ) -> Result<(), String> {
     let config_path = absolute_path(config_path)?;
     let artifact = artifact_path(config)?;
@@ -506,6 +582,13 @@ fn reject_output_collisions(
             if output == input {
                 return Err(format!(
                     "C++ {output_label} output collides with the {input_label} input"
+                ));
+            }
+        }
+        for (_, dependency) in dependencies {
+            if output == dependency {
+                return Err(format!(
+                    "C++ {output_label} output collides with a dependency input"
                 ));
             }
         }

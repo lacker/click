@@ -120,7 +120,15 @@ not block this target.
 The first signed-64 stepping stone is now covered by the synthetic
 `int64-predicate` regression: one direct `typedef long CAmount`, a
 `const CAmount&`, the implicit promotion of `0`, a signed `>=`, and a `bool`
-return verify through the stored exception-enabled artifact. The remaining
-roadmap still starts with Bitcoin's real alias chain and `constexpr` constants,
-then adds `<=` and short-circuit `&&`; the stepping stone does not weaken those
-acceptance criteria or count as upstream verification.
+return verify through the stored exception-enabled artifact. That stepping
+stone does not weaken the remaining acceptance criteria or count as upstream
+verification.
+
+The next synthetic `constexpr-coin` regression now retains an ordered
+`CAmount` to `int64_t` alias chain across an explicitly locked fixture header
+and imports one referenced leaf `static constexpr CAmount COIN = 100000000`.
+This establishes dependency provenance and named compile-time declaration
+identity without claiming ambient standard-library support. The next constant
+increment is the reachable dependency expression `MAX_MONEY = 21000000 *
+COIN`; multiplication, multiple/dependent constants, `<=`, `&&`, and the
+upstream Bitcoin fixture remain required afterward.
