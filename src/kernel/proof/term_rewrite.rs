@@ -2587,6 +2587,71 @@ impl<'a> TermRewrite<'a> {
         Some(value)
     }
 
+    fn rewrite_bitvector_match_iota(
+        &mut self,
+        scrutinee: &AlgebraicTerm,
+        arms: &[AlgebraicBitvectorMatchArm],
+    ) -> Option<Bitvector32Term> {
+        let fields = scrutinee.checked_constructor_fields()?;
+        let AlgebraicTermNode::Constructor { variant, .. } = &scrutinee.node else {
+            return None;
+        };
+        let arm = arms.iter().find(|arm| arm.variant == *variant)?;
+        let schema = scrutinee
+            .algebraic_type
+            .variants
+            .iter()
+            .find(|schema| schema.name == *variant)?;
+        if arm.bindings.len() != fields.len() {
+            return None;
+        }
+        let mut c_replacements = BTreeMap::new();
+        let mut integer_replacements = BTreeMap::new();
+        let mut algebraic_replacements = BTreeMap::new();
+        for ((binding, field), expected) in arm.bindings.iter().zip(fields).zip(&schema.fields) {
+            if field.value_type() != *expected {
+                return None;
+            }
+            let (carrier, variable) = typed_binding_variable(expected, binding)?;
+            let duplicate = match (carrier, field) {
+                (BindingCarrier::C, AlgebraicValue::C(value)) => {
+                    let replacement = typed_c_replacement(value)?;
+                    c_replacements.insert(variable, replacement).is_some()
+                }
+                (BindingCarrier::Integer, AlgebraicValue::Integer(value)) => integer_replacements
+                    .insert(variable, value.clone())
+                    .is_some(),
+                (BindingCarrier::Algebraic, AlgebraicValue::Algebraic(value)) => {
+                    algebraic_replacements
+                        .insert(variable, value.clone())
+                        .is_some()
+                }
+                _ => return None,
+            };
+            if duplicate {
+                return None;
+            }
+        }
+        let mut field_rewrite = TermRewrite::for_typed_variables(
+            &c_replacements,
+            &integer_replacements,
+            &algebraic_replacements,
+        );
+        let value = field_rewrite.bits(&arm.body);
+        self.changed |= field_rewrite.changed;
+        self.unsupported_integer_scope |= field_rewrite.unsupported_integer_scope;
+        self.integer_work_exhausted |= field_rewrite.integer_work_exhausted;
+        #[cfg(test)]
+        {
+            self.visits += field_rewrite.visits;
+        }
+        if self.unsupported_integer_scope || self.integer_work_exhausted {
+            return None;
+        }
+        self.changed = true;
+        Some(value)
+    }
+
     fn rewrite_match_bindings(
         &mut self,
         bindings: &mut [AlgebraicValue],
@@ -3588,6 +3653,10 @@ impl<'a> TermRewrite<'a> {
                         body,
                     });
                 }
+                if let Some(value) = self.rewrite_bitvector_match_iota(&scrutinee, &rewritten_arms)
+                {
+                    return value;
+                }
                 Bitvector32Term::AlgebraicMatch {
                     scrutinee: Box::new(scrutinee),
                     arms: rewritten_arms,
@@ -4473,6 +4542,71 @@ mod tests {
         assert!(matches!(
             malformed_binding_output,
             IntegerTerm::AlgebraicMatch { .. }
+        ));
+    }
+
+    #[test]
+    fn bitvector_match_iota_rewrites_constructor_after_scrutinee_substitution() {
+        let scrutinee_variable = Variable(9950);
+        let bound = Variable(9951);
+        let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![AlgebraicVariantType {
+            name: "Wrapped".into(),
+            fields: vec![AlgebraicValueType::C(CType::Int32)],
+        }]
+        .into();
+        let algebraic_type = AlgebraicType {
+            rigid: false,
+            name: "MachineIota".into(),
+            arguments: vec![],
+            variants: variants.clone(),
+            schemas: std::sync::Arc::new(AlgebraicSchemas::new(BTreeMap::from([(
+                AlgebraicValueType::Algebraic {
+                    name: "MachineIota".into(),
+                    arguments: vec![],
+                },
+                variants,
+            )]))),
+        };
+        let scrutinee = AlgebraicTerm {
+            algebraic_type: algebraic_type.clone(),
+            node: AlgebraicTermNode::Variable(scrutinee_variable),
+        };
+        let constructor = AlgebraicTerm {
+            algebraic_type,
+            node: AlgebraicTermNode::Constructor {
+                variant: "Wrapped".into(),
+                fields: vec![AlgebraicValue::C(CValue::Int32(Bitvector32Term::Constant(
+                    7,
+                )))],
+            },
+        };
+        let goal = Bitvector32Term::AlgebraicMatch {
+            scrutinee: Box::new(scrutinee.clone()),
+            arms: vec![AlgebraicBitvectorMatchArm {
+                variant: "Wrapped".into(),
+                bindings: vec![AlgebraicValue::C(CValue::Int32(Bitvector32Term::Variable(
+                    bound,
+                )))],
+                body: Bitvector32Term::Variable(bound),
+            }],
+        };
+        let mut rewrite = TermRewrite::new(&scrutinee, &constructor);
+        assert_eq!(rewrite.bits(&goal), Bitvector32Term::Constant(7));
+        assert!(rewrite.changed);
+
+        let malformed = AlgebraicTerm {
+            algebraic_type: constructor.algebraic_type.clone(),
+            node: AlgebraicTermNode::Constructor {
+                variant: "Wrapped".into(),
+                fields: vec![AlgebraicValue::C(CValue::Int64(Bitvector32Term::Constant(
+                    7,
+                )))],
+            },
+        };
+        let mut malformed_rewrite = TermRewrite::new(&scrutinee, &malformed);
+        assert!(matches!(
+            malformed_rewrite.bits(&goal),
+            Bitvector32Term::AlgebraicMatch { .. }
         ));
     }
 

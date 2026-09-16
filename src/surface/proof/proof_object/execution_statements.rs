@@ -3,19 +3,6 @@
 use super::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
 
-pub(super) fn retain_mid_execution_have_facts(
-    execution: &mut ExecutionProofState,
-    facts: &[Proposition],
-) {
-    for fact in facts {
-        execution.presentation.surface_record.retained_have_facts = execution
-            .presentation
-            .surface_record
-            .retained_have_facts
-            .with_kernel_checked_fact(fact.clone());
-    }
-}
-
 /// Names the ranking members a ranked loop's bundle carries, so an explicit
 /// `preserve by` body written before the `decreases` clause existed reports
 /// what it now has to close instead of only that the bundle stayed open.
@@ -1549,88 +1536,6 @@ impl<'a> Proof<'a> {
             presentation.surface_record.last_step_entry = construction.last_step_entry;
         })?;
         Ok(proof)
-    }
-
-    /// The mid-execution `have` for a bounded region path, applied through
-    /// the one shared have law when the Proof-native nested scope declines.
-    /// The law records its own surface certificate and lowerings.
-    pub(in crate::surface::proof) fn apply_mid_execution_have(
-        &self,
-        expansion_capture: Option<&mut ExpansionCapture>,
-        have: &ProofHave,
-        tactic_index: usize,
-        source_index: usize,
-    ) -> Result<Self, ClickError> {
-        let mut expansion_capture = expansion_capture;
-        let ProofContext::Execution(context) = self.context.as_ref() else {
-            return Err(self.step_error("`have` requires an execution-frontier proof"));
-        };
-        let tactic_context = context.with_tactic_index(tactic_index);
-        self.require_execution_frontier("`have`")?;
-        let mut execution = self
-            .execution()
-            .cloned()
-            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        let mut facts = self.facts().to_vec();
-        let base_facts = facts.len();
-        let capture_this_tactic = begin_tactic_expansion_capture(
-            expansion_capture.as_deref_mut(),
-            source_index,
-            &execution.presentation.expansion,
-            context.constants.proof_site.as_ref(),
-        );
-        let smart_certificate = check_mid_execution_have(
-            have,
-            &mut execution,
-            &tactic_context,
-            &mut facts,
-            &self.state.locals().values,
-        )?;
-        if capture_this_tactic {
-            // The tactic's expansion is the law's own surface certificate.
-            let expansion = ProofCertificateBuilder {
-                steps: smart_certificate.steps().to_vec(),
-                ..ProofCertificateBuilder::default()
-            };
-            finish_tactic_expansion_capture(expansion_capture, &expansion, false);
-        }
-        let added = facts[base_facts..].to_vec();
-        let mut proof_facts = self.facts().clone();
-        for fact in &added {
-            proof_facts = proof_facts.with_kernel_checked_fact(fact.clone());
-        }
-        // This fallback law must publish the same persistent, path-local
-        // provenance as a nested ProofScope::join. A later retained
-        // statement retry may rely on this have, but not on ambient facts.
-        retain_mid_execution_have_facts(&mut execution, &added);
-        // Retain the checked `have` as provenance: a smart body keeps the
-        // law's selected surface operations; an explicit body keeps its own
-        // script. Expansion serializes this node, never the aftermath.
-        let have_step = match smart_certificate.steps() {
-            // The law's surface certificate is already the complete checked
-            // form, including the `have` wrapper when it selected one.
-            [step @ ProofStep::Have { .. }] => step.clone(),
-            _ => ProofStep::Have {
-                proposition: have.proposition.clone(),
-                proof: Box::new(smart_certificate),
-            },
-        };
-        let state = self
-            .state
-            .publish_checked_frontier_transition(proof_facts, execution, added, Vec::new())
-            .map_err(|error| self.execution_update_error("`have`", error))?;
-        Ok(Self {
-            site: self.site.clone(),
-            context: self.context.clone(),
-            state,
-            node: Arc::new(ProofNode {
-                parent: Some(self.node.clone()),
-                step: Some(Arc::new(have_step)),
-                focused_branch: self.focused_branch_id(),
-                depth: self.node.depth,
-                split_branches: Vec::new(),
-            }),
-        })
     }
 
     /// Records where the checked `close_invariants` tactic sat, so the

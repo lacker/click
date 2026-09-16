@@ -41,6 +41,14 @@ thread_local! {
     static FINALIZATION_VIEW_CONSTRUCTIONS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
+    static CHECKED_HAVE_OPERATIONS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
+#[cfg(test)]
+fn take_checked_have_operations() -> usize {
+    CHECKED_HAVE_OPERATIONS.with(|count| count.replace(0))
 }
 
 #[cfg(test)]
@@ -1787,6 +1795,10 @@ impl<'a> Proof<'a> {
                     "{operation} cannot advance C execution inside a proposition proof"
                 ))
             })
+    }
+
+    pub(in crate::surface::proof) fn claim_label(&self) -> &str {
+        self.context.claim_label()
     }
 
     /// Names the failing step by where the user wrote it: the source tactic

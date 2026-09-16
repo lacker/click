@@ -327,15 +327,22 @@ fn is_pointer_relation(p: &Proposition) -> bool {
     )
 }
 fn is_signed_scalar_bound(p: &Proposition) -> bool {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right),
+        true,
+    ) = p
+    else {
+        return false;
+    };
     matches!(
-        p,
-        Proposition::ConditionIs(
-            ConditionTerm::Bitvector32SignedLessThan(_, _)
-                | ConditionTerm::Bitvector32SignedLessEqual(_, _)
-                | ConditionTerm::Bitvector32SignedGreaterThan(_, _)
-                | ConditionTerm::Bitvector32SignedGreaterEqual(_, _),
-            true
-        )
+        left.as_ref(),
+        Bitvector32Term::Variable(_) | Bitvector32Term::Constant(_)
+    ) && matches!(
+        right.as_ref(),
+        Bitvector32Term::Variable(_) | Bitvector32Term::Constant(_)
     )
 }
 fn is_bitvector64_equality(p: &Proposition) -> bool {

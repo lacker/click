@@ -1150,6 +1150,17 @@ impl<'a> Proof<'a> {
             scope.succeed();
             return Ok(Some(proof));
         }
+        if let Some(execution) = self.execution()
+            && let Some(anchor) = frontier_premise_anchor(execution)
+            && let Some(surface_goal) = self.surface_goal()
+            && let Ok(source) =
+                surface_at_snapshot(surface_goal, &SnapshotSelector::ProgramPoint(anchor))
+            && let Ok(proof) = self.apply_step(ProofStep::Extract(source))
+            && proof.is_complete()
+        {
+            scope.succeed();
+            return Ok(Some(proof));
+        }
         let result = self.try_simp_closure_after_direct(false)?;
         if result.is_some() {
             scope.succeed();
@@ -1274,6 +1285,7 @@ impl<'a> Proof<'a> {
                     ),
                 };
             typed_atomic
+                .or_else(|| self.try_selected_pointer_inequality_rewrite(&goal, premise_pairs))
                 .or_else(|| self.try_selected_equality_rewrite_chain(premise_pairs))
                 .or_else(|| self.try_selected_predecessor_upper_bound(&goal, premise_pairs))
                 .or_else(|| self.try_selected_constant_bound_weakening(&goal, &derivation))
@@ -3130,15 +3142,19 @@ impl<'a> Proof<'a> {
         loop {
             let goal = proof.goal()?.clone();
             let allows_chain = matches!(goal, Proposition::ConditionIs(_, _))
+                || matches!(goal, Proposition::CResourceSeparate { .. })
                 || matches!(
                     goal,
                     Proposition::Equal(Term::Algebraic(_), Term::Algebraic(_))
                 );
             let mut refinement = None;
             let goal_variable_count = crate::kernel::proposition_variables(&goal).len();
-            let equalities = proof
-                .facts()
-                .bitvector_equalities_mentioning(&goal)
+            let equality_candidates = if matches!(goal, Proposition::CResourceSeparate { .. }) {
+                proof.facts().load_equalities_mentioning(&goal)
+            } else {
+                proof.facts().bitvector_equalities_mentioning(&goal)
+            };
+            let equalities = equality_candidates
                 .into_iter()
                 .chain(proof.facts().algebraic_equalities_mentioning(&goal));
             for equality in equalities {
@@ -3171,7 +3187,8 @@ impl<'a> Proof<'a> {
                 // denoting it, so only the orientation is open here.
                 let reverse = reverse_surface_equality(&surface);
                 for oriented in std::iter::once(surface).chain(reverse) {
-                    let Ok(rewritten) = proof.apply_step(ProofStep::Rewrite(oriented)) else {
+                    let rewrite = proof.apply_step(ProofStep::Rewrite(oriented));
+                    let Ok(rewritten) = rewrite else {
                         continue;
                     };
                     if let Some(closed) = rewritten
@@ -3251,6 +3268,7 @@ impl<'a> Proof<'a> {
                     kernel,
                     Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
                         | Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(_, _), true)
+                        | Proposition::ConditionIs(ConditionTerm::PointerEqual(_, _), true)
                         | Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), true)
                         | Proposition::Equal(Term::Algebraic(_), Term::Algebraic(_))
                 )
@@ -4381,6 +4399,23 @@ impl<'a> Proof<'a> {
         &self,
         surfaces: &[ClickProposition],
     ) -> Option<Self> {
+        if matches!(self.goal(), Some(Proposition::CMemoryLoadable { .. }))
+            && let Some(surface_goal) = self.surface_goal()
+        {
+            for source in surfaces
+                .iter()
+                .filter(|surface| matches!(surface, ClickProposition::Loadable { .. }))
+            {
+                if let Ok(closed) = self.apply_step(ProofStep::TransportUsing {
+                    source: source.clone(),
+                    target: surface_goal.clone(),
+                    premises: surfaces.to_vec(),
+                }) && closed.is_complete()
+                {
+                    return Some(closed);
+                }
+            }
+        }
         // A named restricted premise may be a leaf of one exact available
         // conjunction (commonly after `unfold(predicate)`). Materialize that
         // leaf through the checked `extract` transition before
@@ -4423,6 +4458,25 @@ impl<'a> Proof<'a> {
                 .then_some((kernel, surface.clone()))
             })
             .collect::<Option<Vec<_>>>()?;
+        // A listed implication and its listed antecedent justify extracting
+        // the consequent. Keep this route explicitly tied to `using`, rather
+        // than allowing an unrelated ambient implication to discharge it.
+        if premise_pairs.iter().any(|(premise, _)| {
+            matches!(premise, Proposition::Implies(antecedent, consequent)
+                if consequent.as_ref() == goal
+                    && premise_pairs.iter().any(|(selected, _)| selected == antecedent.as_ref()))
+        }) && let Some(surface_goal) = proof.surface_goal()
+            && let Ok(extracted) = proof.apply_step(ProofStep::Extract(surface_goal.clone()))
+        {
+            if extracted.is_complete() {
+                return Some(extracted);
+            }
+            if let Ok(closed) = extracted.apply_step(ProofStep::Assumption)
+                && closed.is_complete()
+            {
+                return Some(closed);
+            }
+        }
         if !crate::kernel::proof::term_rewrite::TermRewrite::conditional_guards(goal).is_empty() {
             let conditions = premise_pairs
                 .iter()
@@ -4498,6 +4552,60 @@ impl<'a> Proof<'a> {
             // close directly. An arbitrary ambient `assumption` must remain
             // invisible through this explicitly restricted boundary.
             .or_else(|| proof.try_typed_atomic_simp_from_selected_premises(&premise_pairs))
+    }
+
+    fn try_selected_pointer_inequality_rewrite(
+        &self,
+        goal: &Proposition,
+        premises: &[(Proposition, ClickProposition)],
+    ) -> Option<Self> {
+        if !matches!(
+            goal,
+            Proposition::ConditionIs(ConditionTerm::PointerEqual(_, _), false)
+        ) {
+            return None;
+        }
+        for (kernel, source) in premises {
+            if !matches!(
+                kernel,
+                Proposition::ConditionIs(ConditionTerm::PointerEqual(_, _), true)
+            ) {
+                continue;
+            }
+            let deanchored = match source {
+                ClickProposition::Comparison {
+                    left:
+                        ContractExpression::At {
+                            selector: left_selector,
+                            expression: left,
+                        },
+                    operator: ComparisonOperator::Equal,
+                    right:
+                        ContractExpression::At {
+                            selector: right_selector,
+                            expression: right,
+                        },
+                } if left_selector == right_selector => Some(ClickProposition::Comparison {
+                    left: left.as_ref().clone(),
+                    operator: ComparisonOperator::Equal,
+                    right: right.as_ref().clone(),
+                }),
+                _ => None,
+            };
+            for spelling in std::iter::once(source.clone()).chain(deanchored) {
+                for oriented in
+                    std::iter::once(spelling.clone()).chain(reverse_surface_equality(&spelling))
+                {
+                    let Ok(rewritten) = self.apply_step(ProofStep::Rewrite(oriented)) else {
+                        continue;
+                    };
+                    if let Ok(Some(closed)) = rewritten.try_direct_logical_closure() {
+                        return Some(closed);
+                    }
+                }
+            }
+        }
+        None
     }
 
     pub(super) fn check_typed_atomic_simp_candidate(
@@ -4999,13 +5107,13 @@ impl<'a> Proof<'a> {
                 *declined = Some(LinearScriptDecline::Step(index));
                 return Ok(None);
             }
-            // The theorem can close the goal before a written rewrite suffix.
-            // Retain that completed application as a checked have, keeping the
-            // outer goal open so the suffix is checked rather than discarded.
+            // A theorem can close the goal before a written suffix. Retain
+            // that completed application as a checked have, keeping the
+            // outer goal open so every remaining explicit step is checked.
             let retain_application = matches!(tactic, ProofTactic::ApplyTheoremUsing { .. })
-                && tactics
-                    .get(index + 1)
-                    .is_some_and(|next| matches!(next, ProofTactic::Rewrite(_)));
+                && tactics.get(index + 1).is_some_and(|next| {
+                    !matches!(next, ProofTactic::Assumption | ProofTactic::Simp)
+                });
             let before_application = retain_application.then(|| proof.clone());
             match tactic {
                 ProofTactic::ApplyTheorem(application) => {

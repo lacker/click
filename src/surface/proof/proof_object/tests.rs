@@ -235,48 +235,6 @@ fn atomic_conjunct_extraction_requires_exact_selected_premise_on_small_stack() {
 }
 
 #[test]
-fn shared_mid_execution_have_retains_checked_facts_path_locally() {
-    let original = ExecutionProofState::at_entry(
-        CState::new(),
-        ExecutionFrontier::default(),
-        RecordedSnapshots::new(),
-        SurfacePropositionMap::default(),
-        PersistentSequence::default(),
-    );
-    let first = indexed_fact(7);
-    let second = indexed_fact(11);
-    let mut advanced = original.clone();
-
-    execution_statements::retain_mid_execution_have_facts(
-        &mut advanced,
-        &[first.clone(), second.clone(), first.clone()],
-    );
-
-    assert!(
-        advanced
-            .presentation
-            .surface_record
-            .retained_have_facts
-            .contains(&first)
-    );
-    assert!(
-        advanced
-            .presentation
-            .surface_record
-            .retained_have_facts
-            .contains(&second)
-    );
-    assert!(
-        !original
-            .presentation
-            .surface_record
-            .retained_have_facts
-            .contains(&first),
-        "retaining a fallback have must not mutate a sibling path"
-    );
-}
-
-#[test]
 fn invariant_bundle_closure_descends_surface_free_both_and_intro_and_rechecks() {
     let (loadable, fold_equality) = invariant_bundle_leaf_fixture();
     let goal = Proposition::And(
@@ -1676,6 +1634,131 @@ fn smart_have_scope_and_explicit_step_scale_with_local_output() {
         );
         assert!(root.certificate().steps().is_empty());
     }
+}
+
+#[test]
+fn execution_have_indexes_only_its_delta_and_scales_with_history() {
+    let click_file = crate::surface::parse(
+        "int32 idle() { ensures reflexive: result == result by { assumption(); } }",
+    )
+    .expect("test contract should parse");
+    let function_block = &click_file.function_blocks()[0];
+    let parsed_function =
+        syntax::parse_function("int32 idle() { return 0; }").expect("test C function should parse");
+    let function = parsed_function.to_kernel_function();
+    let function_environment = CExecutionEnvironment::new();
+    let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment =
+        ClickFunctionEnvironment::new(click_file.click_function_definitions());
+    let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+    let make_root = |size: u32| {
+        Proof::for_execution_frontier(
+            "execution have scaling",
+            0,
+            ExecutionProofState::at_entry(
+                CState::new(),
+                ExecutionFrontier::default(),
+                RecordedSnapshots::new(),
+                SurfacePropositionMap::default(),
+                PersistentSequence::default(),
+            ),
+            (0..size).map(indexed_fact).collect(),
+            ExecutionProofConstants {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..ExecutionProofConstants::default()
+            },
+            function_block,
+            &function,
+            &parsed_function,
+            &[],
+            &function_environment,
+            &resource_environment,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+        )
+    };
+    let reflexive = |value: u32| ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(int32(value))),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::CFragment(CExpression::Value(int32(value))),
+    };
+    let explicit = [ProofTactic::Normalize];
+    let mut prefix_baseline = None;
+    for size in [8_u32, 16, 32, 64] {
+        let root = make_root(size);
+        let sibling = root.clone();
+        let proposition = reflexive(1000);
+        crate::kernel::proof::take_fact_entry_counts();
+        take_checked_have_operations();
+        let joined = root
+            .begin_have(proposition.clone())
+            .expect("execution have should open")
+            .try_authoritative_linear_script(&explicit)
+            .expect("explicit body should check")
+            .expect("normalization should close the nested goal")
+            .join()
+            .expect("completed have should join");
+        let entries = crate::kernel::proof::take_fact_entry_counts();
+        let operations = take_checked_have_operations();
+        assert_eq!(entries.1, 0, "size {size} materialized ambient facts");
+        assert_eq!(
+            (entries, operations),
+            *prefix_baseline.get_or_insert((entries, operations)),
+            "size {size} changed have work with unrelated prefix facts"
+        );
+        assert_eq!(joined.certificate().steps().len(), 1);
+        assert!(sibling.certificate().steps().is_empty());
+        assert_eq!(sibling.facts().fact_count(), size as usize);
+    }
+
+    for count in [8_usize, 16, 32, 64] {
+        let mut proof = make_root(8);
+        crate::kernel::proof::take_fact_entry_counts();
+        take_checked_have_operations();
+        for value in 0..count {
+            proof = proof
+                .begin_have(reflexive(value as u32 + 2000))
+                .expect("next have should open")
+                .try_authoritative_linear_script(&explicit)
+                .expect("next explicit body should check")
+                .expect("next normalization should close")
+                .join()
+                .expect("next have should join");
+        }
+        let (indexed, materialized) = crate::kernel::proof::take_fact_entry_counts();
+        let operations = take_checked_have_operations();
+        assert_eq!(materialized, 0, "{count} haves materialized history");
+        assert!(indexed <= count, "{count} haves indexed {indexed} entries");
+        assert!(
+            operations <= 3 * count,
+            "{count} haves checked {operations} operations"
+        );
+        assert_eq!(proof.certificate().steps().len(), count);
+    }
+
+    let root = make_root(8);
+    let outer = root.begin_have(reflexive(3000)).expect("outer have opens");
+    let inner = outer
+        .begin_have(reflexive(3001))
+        .expect("nested have opens");
+    let inner = inner
+        .try_authoritative_linear_script(&explicit)
+        .expect("nested body checks")
+        .expect("nested body closes");
+    let outer = outer
+        .join_nested(inner)
+        .expect("nested have joins its parent");
+    let outer = outer
+        .apply_step(ProofStep::Normalize)
+        .expect("outer goal still closes independently");
+    let joined = outer.join().expect("outer have joins execution");
+    assert!(
+        matches!(joined.certificate().steps(), [ProofStep::Have { proof, .. }]
+        if matches!(proof.steps(), [ProofStep::Have { .. }, ProofStep::Normalize]))
+    );
+    assert!(root.certificate().steps().is_empty());
 }
 
 #[test]

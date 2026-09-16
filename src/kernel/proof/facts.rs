@@ -12,6 +12,20 @@ use std::collections::{BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+#[cfg(test)]
+thread_local! {
+    static INDEXED_FACT_ENTRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static MATERIALIZED_FACT_ENTRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_fact_entry_counts() -> (usize, usize) {
+    (
+        INDEXED_FACT_ENTRIES.with(|count| count.replace(0)),
+        MATERIALIZED_FACT_ENTRIES.with(|count| count.replace(0)),
+    )
+}
+
 /// Persistent semantic fact state shared by every checked proof kind.
 ///
 /// The exact index serves local proof-step queries and `assumptions` retains
@@ -267,6 +281,8 @@ impl ProofFacts {
             if top_level_exact.contains(fact) {
                 continue;
             }
+            #[cfg(test)]
+            INDEXED_FACT_ENTRIES.with(|count| count.set(count.get() + 1));
             ordered.push(fact.clone());
             top_level_exact = top_level_exact.with_value(fact.clone());
             by_quantified_equivalence = index_quantified_fact(by_quantified_equivalence, fact);
@@ -375,6 +391,8 @@ impl ProofFacts {
         if self.top_level_exact.contains(&fact) {
             return self.clone();
         }
+        #[cfg(test)]
+        INDEXED_FACT_ENTRIES.with(|count| count.set(count.get() + 1));
         let mut exact = self.exact.clone();
         let mut proper_conjuncts = self.proper_conjuncts.clone();
         let mut by_snapshot_blind = self.by_snapshot_blind.clone();
@@ -1016,7 +1034,7 @@ impl ProofFacts {
     /// Like [`Self::bitvector_equalities_mentioning`], also returning indexed
     /// pointer-offset equalities between scaled offsets, for the pointer side
     /// of the load-variable chain bridge.
-    fn load_equalities_mentioning(&self, proposition: &Proposition) -> Vec<Proposition> {
+    pub(crate) fn load_equalities_mentioning(&self, proposition: &Proposition) -> Vec<Proposition> {
         self.indexed_load_equalities_mentioning(proposition)
             .into_iter()
             .map(|fact| fact.as_ref().clone())
@@ -1106,6 +1124,8 @@ impl ProofFacts {
                 ordered.push(fact.clone());
             }
         }
+        #[cfg(test)]
+        MATERIALIZED_FACT_ENTRIES.with(|count| count.set(count.get() + ordered.len()));
         ordered
     }
 
@@ -1323,6 +1343,13 @@ fn collect_proposition_algebraic_terms(
             collect_algebraic_term_roots(left, terms);
             collect_algebraic_term_roots(right, terms);
         }
+        Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), _) => {
+            for value in [left.as_ref(), right.as_ref()] {
+                if let Bitvector32Term::AlgebraicMatch { scrutinee, .. } = value {
+                    collect_algebraic_term_roots(scrutinee, terms);
+                }
+            }
+        }
         Proposition::Not(body)
         | Proposition::ForAll { body, .. }
         | Proposition::Exists { body, .. } => collect_proposition_algebraic_terms(body, terms),
@@ -1424,6 +1451,30 @@ fn collect_proposition_bitvector_atoms(
     match proposition {
         Proposition::ConditionIs(condition, _) => {
             collect_condition_bitvector_atoms(condition, atoms)
+        }
+        Proposition::CResourceSeparate { left, right } => {
+            for resource in [left, right] {
+                if let CResource::Memory(range) = resource {
+                    collect_pointer_offset_bitvector_atoms(&range.base.offset, atoms);
+                    collect_bitvector_atoms(&range.start, atoms);
+                    collect_bitvector_atoms(&range.end, atoms);
+                }
+            }
+        }
+        Proposition::CMemoryDisjoint {
+            left_base,
+            left_start,
+            left_end,
+            right_base,
+            right_start,
+            right_end,
+        } => {
+            for base in [left_base, right_base] {
+                collect_pointer_offset_bitvector_atoms(&base.offset, atoms);
+            }
+            for bound in [left_start, left_end, right_start, right_end] {
+                collect_bitvector_atoms(bound, atoms);
+            }
         }
         Proposition::ForAll { body, .. }
         | Proposition::Exists { body, .. }

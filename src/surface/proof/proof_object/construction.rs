@@ -450,52 +450,7 @@ impl<'a> Proof<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::surface::proof) fn for_fixed_state_surface_goal_with_requirements(
-        claim_label: &'a str,
-        tactic_index: usize,
-        available: &'a [Proposition],
-        goal: Proposition,
-        surface_goal: ClickProposition,
-        parameters: &'a [syntax::C0Parameter],
-        arguments: &'a [CExpression],
-        pre_state: &'a CState,
-        state: &'a CState,
-        result: Option<&'a CValue>,
-        premise_anchor: Option<&ProgramPointRef>,
-        recorded_snapshots: &'a RecordedSnapshots,
-        surface_propositions: &'a SurfacePropositionMap,
-        predicate_environment: &'a PredicateEnvironment,
-        click_function_environment: &'a ClickFunctionEnvironment,
-        theorem_environment: &'a TheoremEnvironment,
-        unfolded_predicates: &'a [String],
-        effect_facts: &'a [ExecutionPureFact],
-        original_requirements: &'a [Requirement],
-        requirement_label_indices: &'a BTreeMap<String, usize>,
-    ) -> Self {
-        Self::for_fixed_state_goal_with_requirements_inner(
-            claim_label,
-            tactic_index,
-            available,
-            |context| OpenBranch::surface_proposition_in(context, goal, surface_goal),
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            result,
-            premise_anchor,
-            recorded_snapshots,
-            surface_propositions,
-            predicate_environment,
-            click_function_environment,
-            theorem_environment,
-            unfolded_predicates,
-            effect_facts,
-            original_requirements,
-            requirement_label_indices,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     pub(super) fn for_fixed_state_goal_with_requirements_inner(
         claim_label: &'a str,
         tactic_index: usize,

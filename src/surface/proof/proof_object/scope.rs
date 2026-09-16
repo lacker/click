@@ -7,6 +7,10 @@ impl<'a> ProofScope<'a> {
         self.body.is_complete()
     }
 
+    pub(in crate::surface::proof) fn goal(&self) -> Option<&Proposition> {
+        self.body.goal()
+    }
+
     #[cfg(test)]
     pub(in crate::surface::proof) fn body(&self) -> &Proof<'a> {
         &self.body
@@ -581,6 +585,22 @@ impl<'a> ProofScope<'a> {
         Ok(Some(next))
     }
 
+    pub(in crate::surface::proof) fn try_authoritative_linear_script_reporting(
+        &self,
+        tactics: &[ProofTactic],
+        declined: &mut Option<crate::surface::proof::smart_closures::LinearScriptDecline>,
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(body) = self
+            .body
+            .try_authoritative_linear_script_reporting(tactics, declined)?
+        else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        next.body = body;
+        Ok(Some(next))
+    }
+
     /// Applies a planner-selected recursive script inside this owned scope,
     /// retaining the checked body descendant without materializing a
     /// certificate.
@@ -613,6 +633,8 @@ impl<'a> ProofScope<'a> {
     /// Closes a completed nested proof and makes its checked proposition
     /// available in the enclosing proof while retaining the exact body.
     pub(in crate::surface::proof) fn join(self) -> Result<Proof<'a>, ClickError> {
+        #[cfg(test)]
+        CHECKED_HAVE_OPERATIONS.with(|count| count.set(count.get() + 1));
         self.join_inner()
     }
 

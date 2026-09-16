@@ -1915,69 +1915,6 @@ enum PremiseForm {
     ExactlyAvailable,
 }
 
-/// Selects a Surface-expressible operation plan for a smart `have`/`simp` at
-/// the current proof state. The caller must apply this plan to `Proof`; the
-/// planner result itself has no semantic authority.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn construct_smart_have_plan(
-    view: ExecutionView<'_>,
-    state: &CState,
-    available: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    have: &ProofHave,
-    // `have.proposition` with the enclosing proof's lexical bindings
-    // materialized, which is the form this plan must lower.
-    goal_surface: &ClickProposition,
-    claim_label: &str,
-    tactic_index: usize,
-    unfolded_predicates: &[String],
-    checked_goal: &Proposition,
-    lexical_bindings: &crate::persistent::PersistentMap<String, ContractExpression>,
-) -> Result<(Proposition, SourceProof), ClickError> {
-    let planning_span =
-        crate::instrumentation::OperationTiming::new("have", claim_label, "smart have planning");
-    let (fact, evidence) = plan_smart_have_in_current_state(
-        have,
-        claim_label,
-        tactic_index,
-        available,
-        parameters,
-        arguments,
-        view.old_reference_state(state),
-        state,
-        view.recorded_snapshots,
-        view.surface_propositions,
-        predicate_environment,
-        click_function_environment,
-        unfolded_predicates,
-        Some(checked_goal),
-        lexical_bindings,
-    )?;
-    drop(planning_span);
-    let _construction_span = crate::instrumentation::OperationTiming::new(
-        "have",
-        claim_label,
-        "smart have operation materialization",
-    );
-    let proof = surface_smart_have_proof(
-        view,
-        state,
-        available,
-        parameters,
-        arguments,
-        predicate_environment,
-        click_function_environment,
-        have,
-        goal_surface,
-        &evidence,
-        unfolded_predicates,
-    )?;
-    Ok((fact, proof))
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn surface_smart_have_proof(
     view: ExecutionView<'_>,
