@@ -15,15 +15,18 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::schema::{
-    CppExceptionBehavior, CppExport, CppProfile, EXPORT_SCHEMA, LANGUAGE, STANDARD, TARGET,
+    CppExceptionBehavior, CppExport, CppPreprocessorFile, CppProfile, EXPORT_SCHEMA, LANGUAGE,
+    MAX_PREPROCESSOR_FILES, STANDARD, TARGET,
 };
 use crate::languages::compiler_process::{CompilerLimits, run_compiler};
 
-const CONFIG_SCHEMA: u32 = 4;
+const CONFIG_SCHEMA: u32 = 6;
 const MAX_CONFIG_BYTES: usize = 1 << 20;
 const MAX_COMPILATION_DATABASE_BYTES: usize = 16 << 20;
 const MAX_SOURCE_BYTES: usize = 1 << 20;
 const MAX_DEPENDENCIES: usize = 64;
+const MAX_PREPROCESSOR_FILE_BYTES: usize = 4 << 20;
+const MAX_PREPROCESSOR_TOTAL_BYTES: usize = 128 << 20;
 const MAX_EXPORTER_BYTES: usize = 64 << 20;
 const MAX_ARTIFACT_BYTES: usize = 8 << 20;
 const MAX_DIAGNOSTIC_BYTES: usize = 64 << 10;
@@ -87,10 +90,18 @@ struct Lock {
     source_sha256: String,
     logical_source_sha256: String,
     dependencies: BTreeMap<String, String>,
+    preprocessor_files: BTreeMap<String, LockedPreprocessorFile>,
     artifact_sha256: String,
     artifact_bytes: usize,
     profile: CppProfile,
     identity: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LockedPreprocessorFile {
+    canonical_path: String,
+    sha256: String,
 }
 
 pub fn refresh_import(config_path: &Path) -> Result<(), String> {
@@ -155,48 +166,54 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
         "--exception-behavior".into(),
         config.exception_behavior.as_str().into(),
     ];
-    let output = run_compiler(
+    let check_inputs = || -> Result<(), String> {
+        if read_stable(&source, MAX_SOURCE_BYTES, "C++ source")? != source_before {
+            return Err("C++ source changed during semantic export".into());
+        }
+        if read_stable(&logical_source, MAX_SOURCE_BYTES, "C++ logical source")?
+            != logical_source_before
+        {
+            return Err("C++ logical source changed during semantic export".into());
+        }
+        if read_dependencies(&dependencies)? != dependency_bytes_before {
+            return Err("C++ dependency changed during semantic export".into());
+        }
+        if read_stable(&exporter, MAX_EXPORTER_BYTES, "C++ exporter")? != exporter_bytes {
+            return Err("C++ exporter changed during semantic export".into());
+        }
+        if read_stable(
+            &compilation_database,
+            MAX_COMPILATION_DATABASE_BYTES,
+            "C++ compilation database",
+        )? != compilation_database_before
+        {
+            return Err("C++ compilation database changed during semantic export".into());
+        }
+        Ok(())
+    };
+    let artifact = run_cpp_exporter(
         &exporter,
         &arguments,
         &working_directory,
-        &BTreeMap::new(),
-        CompilerLimits {
-            timeout: Duration::from_secs(10),
-            max_stdout_bytes: MAX_ARTIFACT_BYTES,
-            max_stderr_bytes: MAX_DIAGNOSTIC_BYTES,
-        },
-    )
-    .map_err(|error| format!("export C++ source `{}`: {error}", config.logical_source))?;
-    if !output.stderr.is_empty() {
-        return Err(format!(
-            "C++ exporter emitted diagnostics: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        &config.logical_source,
+    )?;
+    check_inputs()?;
+    let export = decode_artifact(&artifact, &config)?;
+    let preprocessor_files_before = read_preprocessor_files(&export.preprocessor_files)?;
+    let repeated = run_cpp_exporter(
+        &exporter,
+        &arguments,
+        &working_directory,
+        &config.logical_source,
+    )?;
+    check_inputs()?;
+    if repeated != artifact {
+        return Err("C++ semantic export changed while locking preprocessor inputs".into());
     }
-    if read_stable(&source, MAX_SOURCE_BYTES, "C++ source")? != source_before {
-        return Err("C++ source changed during semantic export".into());
+    let preprocessor_files_after = read_preprocessor_files(&export.preprocessor_files)?;
+    if preprocessor_files_before != preprocessor_files_after {
+        return Err("C++ preprocessor input changed during semantic export".into());
     }
-    if read_stable(&logical_source, MAX_SOURCE_BYTES, "C++ logical source")?
-        != logical_source_before
-    {
-        return Err("C++ logical source changed during semantic export".into());
-    }
-    if read_dependencies(&dependencies)? != dependency_bytes_before {
-        return Err("C++ dependency changed during semantic export".into());
-    }
-    if read_stable(&exporter, MAX_EXPORTER_BYTES, "C++ exporter")? != exporter_bytes {
-        return Err("C++ exporter changed during semantic export".into());
-    }
-    if read_stable(
-        &compilation_database,
-        MAX_COMPILATION_DATABASE_BYTES,
-        "C++ compilation database",
-    )? != compilation_database_before
-    {
-        return Err("C++ compilation database changed during semantic export".into());
-    }
-
-    let export = decode_artifact(&output.stdout, &config)?;
     let config_sha256 = hex_digest(&config_bytes);
     let exporter_sha256 = hex_digest(&exporter_bytes);
     let compilation_database_sha256 = hex_digest(&compilation_database_before);
@@ -206,13 +223,14 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
         .iter()
         .map(|(path, bytes)| (path.clone(), hex_digest(bytes)))
         .collect::<BTreeMap<_, _>>();
-    let artifact_sha256 = hex_digest(&output.stdout);
+    let artifact_sha256 = hex_digest(&artifact);
     let identity = semantic_identity(
         &config_sha256,
         &compilation_database_sha256,
         &source_sha256,
         &logical_source_sha256,
         &dependency_digests,
+        &preprocessor_files_after,
         &exporter_sha256,
         &artifact_sha256,
         &export.profile,
@@ -225,8 +243,9 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
         source_sha256,
         logical_source_sha256,
         dependencies: dependency_digests,
+        preprocessor_files: preprocessor_files_after,
         artifact_sha256,
-        artifact_bytes: output.stdout.len(),
+        artifact_bytes: artifact.len(),
         profile: export.profile,
         identity,
     };
@@ -237,8 +256,35 @@ fn refresh_import_inner(config_path: &Path) -> Result<(), String> {
         return Err("C++ import lock exceeds its size limit".into());
     }
 
-    atomic_write(&artifact_path(&config)?, &output.stdout)?;
+    atomic_write(&artifact_path(&config)?, &artifact)?;
     atomic_write(&lock_path(config_path)?, &lock_bytes)
+}
+
+fn run_cpp_exporter(
+    exporter: &Path,
+    arguments: &[String],
+    working_directory: &Path,
+    logical_source: &str,
+) -> Result<Vec<u8>, String> {
+    let output = run_compiler(
+        exporter,
+        arguments,
+        working_directory,
+        &BTreeMap::new(),
+        CompilerLimits {
+            timeout: Duration::from_secs(10),
+            max_stdout_bytes: MAX_ARTIFACT_BYTES,
+            max_stderr_bytes: MAX_DIAGNOSTIC_BYTES,
+        },
+    )
+    .map_err(|error| format!("export C++ source `{logical_source}`: {error}"))?;
+    if !output.stderr.is_empty() {
+        return Err(format!(
+            "C++ exporter emitted diagnostics: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(output.stdout)
 }
 
 pub fn load_import(config_path: &Path) -> Result<PreparedCppImport, String> {
@@ -314,12 +360,18 @@ fn load_import_inner(config_path: &Path) -> Result<PreparedCppImport, String> {
     if lock.profile != export.profile {
         return Err("C++ semantic artifact profile differs from the import lock".into());
     }
+    if lock.preprocessor_files != read_preprocessor_files(&export.preprocessor_files)? {
+        return Err(
+            "C++ preprocessor input inventory differs from the import lock; refresh it".into(),
+        );
+    }
     let identity = semantic_identity(
         &lock.config_sha256,
         &lock.compilation_database_sha256,
         &lock.source_sha256,
         &lock.logical_source_sha256,
         &lock.dependencies,
+        &lock.preprocessor_files,
         &lock.exporter_sha256,
         &lock.artifact_sha256,
         &lock.profile,
@@ -357,6 +409,7 @@ fn semantic_identity(
     source_sha256: &str,
     logical_source_sha256: &str,
     dependencies: &BTreeMap<String, String>,
+    preprocessor_files: &BTreeMap<String, LockedPreprocessorFile>,
     exporter_sha256: &str,
     artifact_sha256: &str,
     profile: &CppProfile,
@@ -364,12 +417,13 @@ fn semantic_identity(
     let encoded = serde_json::to_vec(&(
         CONFIG_SCHEMA,
         EXPORT_SCHEMA,
-        "click-cpp-semantic-import-v4",
+        "click-cpp-semantic-import-v6",
         config_sha256,
         compilation_database_sha256,
         source_sha256,
         logical_source_sha256,
         dependencies,
+        preprocessor_files,
         exporter_sha256,
         artifact_sha256,
         profile,
@@ -550,6 +604,56 @@ fn read_dependencies(
             read_stable(path, MAX_SOURCE_BYTES, "C++ dependency").map(|bytes| (name.clone(), bytes))
         })
         .collect()
+}
+
+fn read_preprocessor_files(
+    files: &[CppPreprocessorFile],
+) -> Result<BTreeMap<String, LockedPreprocessorFile>, String> {
+    if files.is_empty() || files.len() > MAX_PREPROCESSOR_FILES {
+        return Err("C++ preprocessor file inventory exceeds its bound".into());
+    }
+    let mut total_bytes = 0usize;
+    let mut result = BTreeMap::new();
+    for file in files {
+        let accessed = Path::new(&file.accessed_path);
+        let canonical = accessed.canonicalize().map_err(|error| {
+            format!(
+                "resolve C++ preprocessor input `{}`: {error}",
+                accessed.display()
+            )
+        })?;
+        if canonical != Path::new(&file.canonical_path) {
+            return Err(format!(
+                "C++ preprocessor input `{}` changed its resolved target; refresh it",
+                file.accessed_path
+            ));
+        }
+        let bytes = read_stable(
+            &canonical,
+            MAX_PREPROCESSOR_FILE_BYTES,
+            "C++ preprocessor input",
+        )?;
+        total_bytes = total_bytes
+            .checked_add(bytes.len())
+            .ok_or("C++ preprocessor file inventory exceeds its byte bound")?;
+        if total_bytes > MAX_PREPROCESSOR_TOTAL_BYTES {
+            return Err("C++ preprocessor file inventory exceeds its byte bound".into());
+        }
+        if accessed.canonicalize().ok().as_deref() != Some(canonical.as_path()) {
+            return Err(format!(
+                "C++ preprocessor input `{}` changed its resolved target while being read",
+                file.accessed_path
+            ));
+        }
+        result.insert(
+            file.accessed_path.clone(),
+            LockedPreprocessorFile {
+                canonical_path: file.canonical_path.clone(),
+                sha256: hex_digest(&bytes),
+            },
+        );
+    }
+    Ok(result)
 }
 
 fn artifact_path(config: &Config) -> Result<PathBuf, String> {

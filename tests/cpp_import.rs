@@ -443,7 +443,7 @@ impl Project {
         exception_behavior: &str,
     ) {
         let config = serde_json::json!({
-            "schema": 4,
+            "schema": 6,
             "language": "c++",
             "standard": "c++20",
             "target": "x86_64-unknown-linux-gnu",
@@ -495,7 +495,7 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
     let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
-    assert_eq!(prepared.export().schema, 19);
+    assert_eq!(prepared.export().schema, 20);
     assert!(prepared.export().reachable_functions.is_empty());
     assert_eq!(prepared.logical_source(), "increment.cpp");
     assert_eq!(prepared.identity().len(), 64);
@@ -605,6 +605,71 @@ fn out_of_tree_compilation_locks_dependency_root_and_rtti_profile() {
 }
 
 #[test]
+fn every_opened_header_is_locked_even_outside_the_reachable_graph() {
+    let project = Project::new();
+    let header = project.directory.join("prelude.h");
+    fs::write(&header, "#define PRELUDE 1\n").unwrap();
+    fs::write(
+        project.source(),
+        format!("#include \"prelude.h\"\n{SOURCE}"),
+    )
+    .unwrap();
+
+    refresh_import(&project.config()).expect("lock all opened headers");
+    let prepared = load_import(&project.config()).expect("load unmodified header");
+    assert!(prepared.export().dependencies.is_empty());
+    let canonical_header = header.canonicalize().unwrap();
+    assert!(
+        prepared
+            .export()
+            .preprocessor_files
+            .iter()
+            .any(|file| { file.canonical_path == canonical_header.to_string_lossy() })
+    );
+
+    fs::write(&header, "#define PRELUDE 2\n").unwrap();
+    assert!(
+        load_import(&project.config())
+            .unwrap_err()
+            .contains("preprocessor input inventory differs")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn opened_header_symlink_target_is_locked() {
+    use std::os::unix::fs::symlink;
+
+    let project = Project::new();
+    let header = project.directory.join("prelude.h");
+    let first = project.directory.join("first.h");
+    let second = project.directory.join("second.h");
+    fs::write(&first, "#define PRELUDE 1\n").unwrap();
+    fs::write(&second, "#define PRELUDE 1\n").unwrap();
+    symlink(&first, &header).unwrap();
+    fs::write(
+        project.source(),
+        format!("#include \"prelude.h\"\n{SOURCE}"),
+    )
+    .unwrap();
+
+    refresh_import(&project.config()).expect("lock symlinked header");
+    let prepared = load_import(&project.config()).expect("load original target");
+    assert!(prepared.export().preprocessor_files.iter().any(|file| {
+        file.accessed_path.ends_with("/prelude.h")
+            && file.canonical_path == first.canonicalize().unwrap().to_string_lossy()
+    }));
+
+    fs::remove_file(&header).unwrap();
+    symlink(&second, &header).unwrap();
+    assert!(
+        load_import(&project.config())
+            .unwrap_err()
+            .contains("changed its resolved target")
+    );
+}
+
+#[test]
 fn compilation_database_command_is_selected_locked_and_validated() {
     let project = Project::new();
     refresh_import(&project.config()).expect("export through the selected compilation command");
@@ -664,6 +729,19 @@ fn compilation_database_command_is_selected_locked_and_validated() {
     let error = refresh_import(&wrong_driver.config()).unwrap_err();
     assert!(error.contains("pinned Clang driver"), "{error}");
     assert!(!wrong_driver.artifact().exists());
+
+    for untracked in ["@flags.rsp", "-include-pch", "-ivfsoverlay"] {
+        let project = Project::new();
+        let mut command = project.compilation_arguments();
+        command.insert(1, untracked.into());
+        project.write_compilation_database_commands(&[command]);
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(
+            error.contains("untracked preprocessor input mode"),
+            "{error}"
+        );
+        assert!(!project.artifact().exists());
+    }
 
     let wrong_standard = Project::new();
     let command = wrong_standard
@@ -982,7 +1060,7 @@ fn signed_int64_predicate_retains_alias_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the predicate artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     assert!(import.export().profile.exceptions);
     assert!(!import.export().function.declared_noexcept);
     assert!(matches!(
@@ -1097,7 +1175,7 @@ fn constexpr_coin_retains_alias_chain_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the constexpr artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     assert_eq!(import.export().dependencies, ["cstdint"]);
     let CppType::LvalueReference { pointee } = &import.export().function.parameters[0].value_type
     else {
@@ -1208,7 +1286,7 @@ fn constexpr_max_money_retains_checked_dependency_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the dependent artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     let [coin, max_money] = import.export().constants.as_slice() else {
         panic!("COIN and MAX_MONEY were not captured as one ordered dependency")
     };
@@ -1269,7 +1347,7 @@ fn signed_int64_less_equal_verifies_max_money_upper_bound_offline() {
     fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the upper-bound artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     let [coin, max_money] = import.export().constants.as_slice() else {
         panic!("the upper-bound artifact lost the MAX_MONEY dependency graph")
     };
@@ -1315,7 +1393,7 @@ fn built_in_cpp_logical_and_verifies_inclusive_money_range_offline() {
     fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the range artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     let [coin, max_money] = import.export().constants.as_slice() else {
         panic!("the range artifact lost the ordered MAX_MONEY dependency graph")
     };
@@ -1941,7 +2019,7 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the call graph artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     assert_eq!(import.export().function.name, "call_set_seven");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -2018,7 +2096,7 @@ fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the scalar-local artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     assert_eq!(import.export().function.name, "relay_value");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -2132,7 +2210,7 @@ fn mutable_pointer_dereference_and_reference_address_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the pointer artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     let caller = &import.export().function;
     assert_eq!(caller.name, "bump_reference");
     assert!(matches!(
@@ -2270,7 +2348,7 @@ fn record_reference_member_loads_and_stores_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the record artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     let [record] = import.export().records.as_slice() else {
         panic!("the referenced record layout was not captured")
     };
@@ -2372,7 +2450,7 @@ fn brace_initialized_local_aggregate_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the aggregate artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     let [record] = import.export().records.as_slice() else {
         panic!("the local aggregate record layout was not captured")
     };
@@ -2472,7 +2550,7 @@ fn explicit_constructor_local_verifies_as_a_modular_call() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the constructor artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     let [record] = import.export().records.as_slice() else {
         panic!("the constructed record layout was not captured")
     };
@@ -2607,7 +2685,7 @@ fn terminal_return_captures_value_before_checked_destructor_cleanup() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     let [record] = import.export().records.as_slice() else {
         panic!("the destructible record layout was not captured")
     };
@@ -2753,7 +2831,7 @@ fn every_return_after_construction_runs_the_checked_destructor() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     let destructor = import
         .export()
         .reachable_functions
@@ -2855,7 +2933,7 @@ fn two_constructed_objects_are_destroyed_in_reverse_order_on_every_return() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the ordered cleanup artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     let [
         CppStatement::Declare { local: first, .. },
         CppStatement::Declare { local: second, .. },
@@ -2952,7 +3030,7 @@ fn nested_scope_destroys_its_object_on_return_and_fallthrough() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the nested-scope artifact offline");
-    assert_eq!(import.export().schema, 19);
+    assert_eq!(import.export().schema, 20);
     let destructor = import
         .export()
         .reachable_functions

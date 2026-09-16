@@ -1,5 +1,5 @@
 {
-  "schema": 4,
+  "schema": 6,
   "language": "c++",
   "standard": "c++20",
   "target": "x86_64-unknown-linux-gnu",

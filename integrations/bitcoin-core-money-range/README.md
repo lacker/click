@@ -61,13 +61,14 @@ cargo run --bin click -- verify integrations/bitcoin-core-money-range/MoneyRange
 
 `MoneyRange.click.import.json` and the sidecar are versioned; the checkout,
 sysroot, compilation database, semantic artifact, and lock remain local. The
-lock binds the selected command, exact source and header bytes, reachable
-`int64_t` alias headers, exporter, and observed semantic profile. Once locked,
+lock binds the selected command, exact source and header bytes, all textual
+headers Clang opened (including sysroot and Clang resource headers), the
+resolved target of each path, exporter, and observed semantic profile. Once locked,
 verification loads the artifact offline without invoking Clang. A different
 checkout location or toolchain command requires an explicit refresh.
 
 This is one function under one Clang profile, not general Bitcoin Core or
-Linux binary verification. The import currently inventories reachable alias
-declarations, not every transitively included header. The broader P1 issue
-still owns complete build-input provenance, boundary callers, false-contract
-regressions, and the full verify/expand/profile/audit checks.
+Linux binary verification. The broader P1 issue still owns a durable upstream
+fixture and release/build-input provenance beyond the selected command, boundary
+callers, false-contract regressions, and the full verify/expand/profile/audit
+checks.

@@ -3,6 +3,7 @@
 #include <limits>
 #include <filesystem>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -31,6 +32,8 @@
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Index/USRGeneration.h"
 #include "clang/Lex/Lexer.h"
+#include "clang/Lex/PPCallbacks.h"
+#include "clang/Lex/Preprocessor.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/JSONCompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
@@ -41,6 +44,7 @@
 namespace {
 
 constexpr const char *kClangVersion = "19.1.7";
+constexpr std::size_t kMaxPreprocessorFiles = 4096;
 
 struct Options {
   std::string logical_source;
@@ -58,6 +62,7 @@ struct Options {
 struct ExportState {
   std::optional<llvm::json::Value> artifact;
   std::string error;
+  std::map<std::string, std::string> preprocessor_files;
 };
 
 std::optional<Options> parse_options(int argc, const char **argv) {
@@ -102,6 +107,21 @@ std::optional<Options> parse_options(int argc, const char **argv) {
     return std::nullopt;
   }
   return result;
+}
+
+bool has_untracked_preprocessor_input(const std::string &argument) {
+  // Textual includes are inventoried by PreprocessorFiles. These modes can
+  // supply AST or file contents without a corresponding lexed-file callback.
+  return (!argument.empty() && argument.front() == '@') ||
+         argument == "-Xclang" || argument == "-Xpreprocessor" ||
+         argument.rfind("-include-pch", 0) == 0 ||
+         argument.rfind("-include-pth", 0) == 0 ||
+         argument.rfind("-ivfsoverlay", 0) == 0 ||
+         argument.rfind("-fmodules", 0) == 0 ||
+         argument.rfind("-fcxx-modules", 0) == 0 ||
+         argument.rfind("-fmodule-", 0) == 0 ||
+         argument.rfind("-fprebuilt-module-path", 0) == 0 ||
+         argument.rfind("-fplugin", 0) == 0;
 }
 
 class SemanticExporter : public clang::RecursiveASTVisitor<SemanticExporter> {
@@ -218,7 +238,7 @@ public:
     profile["compilation_command"] = std::move(compilation_command);
 
     llvm::json::Object artifact;
-    artifact["schema"] = 19;
+    artifact["schema"] = 20;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["exception_behavior"] = exception_behavior_;
@@ -228,6 +248,15 @@ public:
       dependencies.push_back(dependency);
     }
     artifact["dependencies"] = std::move(dependencies);
+    llvm::json::Array preprocessor_files;
+    for (const auto &[accessed_path, canonical_path] :
+         state_.preprocessor_files) {
+      llvm::json::Object file;
+      file["accessed_path"] = accessed_path;
+      file["canonical_path"] = canonical_path;
+      preprocessor_files.push_back(std::move(file));
+    }
+    artifact["preprocessor_files"] = std::move(preprocessor_files);
     artifact["constants"] = std::move(constants);
     artifact["records"] = std::move(records);
     artifact["function"] = std::move(*function);
@@ -2203,6 +2232,53 @@ private:
   SemanticExporter exporter_;
 };
 
+class PreprocessorFiles : public clang::PPCallbacks {
+public:
+  PreprocessorFiles(clang::SourceManager &source_manager,
+                    std::string compilation_directory, ExportState &state)
+      : source_manager_(source_manager),
+        compilation_directory_(std::move(compilation_directory)), state_(state) {}
+
+  void LexedFileChanged(clang::FileID file_id,
+                        LexedFileChangeReason reason,
+                        clang::SrcMgr::CharacteristicKind,
+                        clang::FileID, clang::SourceLocation) override {
+    if (reason != LexedFileChangeReason::EnterFile || !state_.error.empty()) {
+      return;
+    }
+    auto entry = source_manager_.getFileEntryRefForID(file_id);
+    if (!entry) {
+      return; // Clang's built-in and command-line buffers are not files.
+    }
+    std::filesystem::path accessed(entry->getNameAsRequested().str());
+    if (accessed.is_relative()) {
+      accessed = std::filesystem::path(compilation_directory_) / accessed;
+    }
+    accessed = accessed.lexically_normal();
+    std::error_code error;
+    const std::filesystem::path canonical =
+        std::filesystem::canonical(accessed, error);
+    if (error) {
+      state_.error = "error: resolve preprocessor input `" +
+                     accessed.generic_string() + "`: " + error.message();
+      return;
+    }
+    const auto [it, inserted] = state_.preprocessor_files.emplace(
+        accessed.generic_string(), canonical.generic_string());
+    if (!inserted && it->second != canonical.generic_string()) {
+      state_.error = "error: preprocessor input `" +
+                     accessed.generic_string() + "` changed its target";
+    } else if (state_.preprocessor_files.size() > kMaxPreprocessorFiles) {
+      state_.error = "error: C++ preprocessor file inventory exceeds its bound";
+    }
+  }
+
+private:
+  clang::SourceManager &source_manager_;
+  std::string compilation_directory_;
+  ExportState &state_;
+};
+
 class ExportAction : public clang::ASTFrontendAction {
 public:
   ExportAction(const Options &options, ExportState &state)
@@ -2211,6 +2287,10 @@ public:
   std::unique_ptr<clang::ASTConsumer>
   CreateASTConsumer(clang::CompilerInstance &compiler,
                     llvm::StringRef) override {
+    compiler.getPreprocessor().addPPCallbacks(
+        std::make_unique<PreprocessorFiles>(compiler.getSourceManager(),
+                                            options_.compilation_directory,
+                                            state_));
     return std::make_unique<ExportConsumer>(compiler.getASTContext(), options_,
                                             state_);
   }
@@ -2281,6 +2361,14 @@ int main(int argc, const char **argv) {
                     "pinned Clang driver, not `"
                  << command.CommandLine.front() << "`\n";
     return 2;
+  }
+  for (const std::string &argument : command.CommandLine) {
+    if (has_untracked_preprocessor_input(argument)) {
+      llvm::errs() << "error: selected C++ compilation command has untracked "
+                      "preprocessor input mode `"
+                   << argument << "`\n";
+      return 2;
+    }
   }
   options->compilation_directory = command.Directory;
   options->compilation_file = command.Filename;

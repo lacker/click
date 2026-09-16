@@ -149,7 +149,11 @@ The working-directory dependency root can contain both the upstream checkout
 and Linux sysroot independently of the CMake build directory, and the observed
 exception- and RTTI-enabled object-free profile is accepted. The release
 commit, header/TU hashes, and sysroot package hashes are documented there.
-This is not yet the full acceptance regression: full transitive header/build
-input provenance, the four modular boundary callers, false-contract and stale
-import checks against the upstream fixture, and expansion/profile/audit checks
-remain to land before this issue can close.
+The import lock now also hashes every textually lexed header in that real
+translation unit, including Clang resource and Linux sysroot headers, and
+rejects changed contents or symlink targets during offline loading. Hidden
+input modes such as response files, PCH, modules, and VFS overlays fail
+refresh. This is not yet the full acceptance regression: a durable upstream
+fixture and release/build-input provenance, the four modular boundary callers,
+false-contract and stale-import checks against the upstream fixture, and
+expansion/profile/audit checks remain before this issue can close.

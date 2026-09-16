@@ -88,11 +88,15 @@ artifact. These booleans may also be true for an object-free, normal-only
 reachable graph; the observed Clang profile must match the configuration.
 `click import lock` executes the repository-owned Clang 19.1.7
 LibTooling exporter with that entry and records the database bytes, exact parsed
-command and directory, source, explicitly declared dependency files, exporter,
-semantic profile, artifact, and configuration identities. Reachable declaration
-spans outside the logical source must name one of those relative dependencies;
-refresh snapshots each dependency before and after export, and offline loading
-rejects any later content change.
+command and directory, source, explicitly declared reachable-declaration
+dependencies, every file Clang lexes while preprocessing the translation unit,
+exporter, semantic profile, artifact, and configuration identities. Reachable
+declaration spans outside the logical source must name one of the relative
+dependencies. The broader preprocessor inventory also covers headers whose
+declarations are not lowered. For each opened file the lock records its
+accessed path, resolved target, and content hash. Refresh repeats the export
+across a bounded inventory snapshot; offline loading rejects changed contents
+or symlink targets without running Clang.
 The configured working directory is also the dependency root: it may contain
 the project source tree and a Linux sysroot while the selected CMake
 compilation command runs in a separate build directory. Dependencies retain
@@ -102,7 +106,7 @@ arrangement on macOS.
 
 ```json
 {
-  "schema": 4,
+  "schema": 6,
   "language": "c++",
   "standard": "c++20",
   "target": "x86_64-unknown-linux-gnu",
@@ -125,8 +129,10 @@ exception, and RTTI profile. Missing or ambiguous entries and mismatched driver
 or semantic profiles fail refresh locally. When `logical_source` names a
 header, the importer resolves and hashes that file separately from the `.cpp`
 translation unit. Offline loading rejects a missing or modified selected
-header. Capturing other transitively included headers is not yet part of this
-slice.
+header. Textually included project, sysroot, and Clang resource headers are
+inventoried even when they lie outside the configured dependency root.
+Response files, PCH, modules, VFS overlays, and arbitrary Clang pass-through
+options are rejected because their hidden inputs are not inventoried.
 
 For a compilation command with exceptions enabled, the config instead sets
 `"exceptions": true`; the observed Clang profile must agree. The semantic

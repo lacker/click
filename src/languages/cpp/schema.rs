@@ -3,7 +3,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 19;
+pub(crate) const EXPORT_SCHEMA: u32 = 20;
+pub(crate) const MAX_PREPROCESSOR_FILES: usize = 4096;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -18,10 +19,18 @@ pub struct CppExport {
     pub exception_behavior: CppExceptionBehavior,
     pub logical_source: String,
     pub dependencies: Vec<String>,
+    pub preprocessor_files: Vec<CppPreprocessorFile>,
     pub constants: Vec<CppConstant>,
     pub records: Vec<CppRecord>,
     pub function: CppFunction,
     pub reachable_functions: Vec<CppFunction>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CppPreprocessorFile {
+    pub accessed_path: String,
+    pub canonical_path: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -429,6 +438,25 @@ impl CppExport {
                 "C++ export dependencies {:?} differ from configured dependencies {:?}",
                 self.dependencies, expected_dependencies
             ));
+        }
+        if self.preprocessor_files.is_empty()
+            || self.preprocessor_files.len() > MAX_PREPROCESSOR_FILES
+        {
+            return Err("C++ export has an invalid preprocessor file inventory size".into());
+        }
+        let mut previous_file: Option<&str> = None;
+        for file in &self.preprocessor_files {
+            if !Path::new(&file.accessed_path).is_absolute()
+                || !Path::new(&file.canonical_path).is_absolute()
+                || file.accessed_path.as_bytes().contains(&0)
+                || file.canonical_path.as_bytes().contains(&0)
+                || previous_file.is_some_and(|previous| previous >= file.accessed_path.as_str())
+            {
+                return Err(
+                    "C++ export preprocessor files must be sorted unique absolute paths".into(),
+                );
+            }
+            previous_file = Some(&file.accessed_path);
         }
         let mut alias_sources = BTreeSet::from([logical_source.to_string()]);
         let mut previous_dependency: Option<&str> = None;
