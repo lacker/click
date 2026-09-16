@@ -40,6 +40,33 @@ mod resource_frame_substitution_tests {
     use super::*;
 
     #[test]
+    fn unrelated_binder_preserves_nested_offset_snapshot() {
+        let base = CMemory::new();
+        let metadata = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Add(
+                Box::new(PointerOffsetTerm::Add(
+                    Box::new(PointerOffsetTerm::Int32Scaled {
+                        value: Box::new(Bitvector32Term::Variable(Variable(100_000))),
+                        byte_width: 4,
+                    }),
+                    Box::new(PointerOffsetTerm::Constant(8)),
+                )),
+                Box::new(PointerOffsetTerm::Constant(4)),
+            ),
+        };
+        let snapshot = crate::kernel::intern_c_memory(
+            base.store(metadata, CValue::Int32(Bitvector32Term::Constant(7))),
+        );
+        let rewritten = substitute_bitvector_variable_in_shared_memory(
+            &snapshot,
+            Variable(2_000_000),
+            &Bitvector32Term::Variable(Variable(3_200_000)),
+        );
+        assert_eq!(rewritten.arena_id(), snapshot.arena_id());
+    }
+
+    #[test]
     fn state_substitutions_preserve_the_exact_loan_ledger_root() {
         let ledger = crate::kernel::loans::LoanLedger::new();
         let participant = ledger.fresh_participant().expect("participant identity");
@@ -4912,26 +4939,57 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_pointer_offset(
     from: Variable,
     to: &Bitvector32Term,
 ) -> PointerOffsetTerm {
+    substitute_bitvector_variable_in_pointer_offset_cow(offset, from, to).into_owned()
+}
+
+/// Keep an unchanged pointer spelling intact. Rebuilding every `Add` through
+/// the normalizing constructor changes an otherwise untouched memory cell's
+/// key, which in turn mints a different snapshot for a binder rename that did
+/// not occur anywhere in that cell.
+fn substitute_bitvector_variable_in_pointer_offset_cow<'a>(
+    offset: &'a PointerOffsetTerm,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> std::borrow::Cow<'a, PointerOffsetTerm> {
+    use std::borrow::Cow;
     match offset {
-        PointerOffsetTerm::Constant(value) => PointerOffsetTerm::Constant(*value),
-        PointerOffsetTerm::Variable(variable) => PointerOffsetTerm::Variable(*variable),
-        PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
-            substitute_bitvector_variable_in_pointer_offset(left, from, to),
-            substitute_bitvector_variable_in_pointer_offset(right, from, to),
-        ),
-        PointerOffsetTerm::Int32Scaled { value, byte_width } => PointerOffsetTerm::scale_int32(
-            substitute_bitvector_variable(value, from, to),
-            *byte_width,
-        ),
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => Cow::Borrowed(offset),
+        PointerOffsetTerm::Add(left, right) => {
+            let left = substitute_bitvector_variable_in_pointer_offset_cow(left, from, to);
+            let right = substitute_bitvector_variable_in_pointer_offset_cow(right, from, to);
+            if matches!((&left, &right), (Cow::Borrowed(_), Cow::Borrowed(_))) {
+                Cow::Borrowed(offset)
+            } else {
+                Cow::Owned(PointerOffsetTerm::add(
+                    left.into_owned(),
+                    right.into_owned(),
+                ))
+            }
+        }
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+            let rewritten = substitute_bitvector_variable(value, from, to);
+            if rewritten == **value {
+                Cow::Borrowed(offset)
+            } else {
+                Cow::Owned(PointerOffsetTerm::scale_int32(rewritten, *byte_width))
+            }
+        }
         PointerOffsetTerm::Int64Scaled {
             value,
             byte_width,
             unsigned,
-        } => PointerOffsetTerm::scale_int64(
-            substitute_bitvector_variable(value, from, to),
-            *byte_width,
-            *unsigned,
-        ),
+        } => {
+            let rewritten = substitute_bitvector_variable(value, from, to);
+            if rewritten == **value {
+                Cow::Borrowed(offset)
+            } else {
+                Cow::Owned(PointerOffsetTerm::scale_int64(
+                    rewritten,
+                    *byte_width,
+                    *unsigned,
+                ))
+            }
+        }
     }
 }
 

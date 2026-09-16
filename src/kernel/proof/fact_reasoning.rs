@@ -1113,6 +1113,65 @@ mod tests {
     }
 
     #[test]
+    fn quantified_registered_load_renames_binder_without_renaming_unrelated_snapshot() {
+        let nested_cell = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Add(
+                Box::new(PointerOffsetTerm::Add(
+                    Box::new(PointerOffsetTerm::Int32Scaled {
+                        value: Box::new(Bitvector32Term::Variable(Variable(100_000))),
+                        byte_width: 4,
+                    }),
+                    Box::new(PointerOffsetTerm::Constant(8)),
+                )),
+                Box::new(PointerOffsetTerm::Constant(4)),
+            ),
+        };
+        let memory = intern_c_memory(CMemory::new().store(
+            nested_cell.clone(),
+            CValue::Int32(Bitvector32Term::Constant(7)),
+        ));
+        let quantified = |snapshot: &crate::kernel::SharedCMemory, binder: Variable| {
+            let pointer = Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(Bitvector32Term::Variable(binder)),
+                    byte_width: 4,
+                },
+            };
+            let load = load_variable_for_cell_with_origin(snapshot, &pointer, snapshot);
+            Proposition::ForAll {
+                var: binder,
+                sort: Sort::CInt32,
+                body: Box::new(Proposition::ConditionIs(
+                    ConditionTerm::equal(
+                        Bitvector32Term::Variable(load),
+                        Bitvector32Term::Constant(7),
+                    ),
+                    true,
+                )),
+            }
+        };
+        let available = quantified(&memory, Variable(3_200_000));
+        let requested = quantified(&memory, Variable(2_000_000));
+        assert!(
+            ProofFacts::from_ordered(&[available])
+                .matching_quantified_fact(&requested)
+                .is_some()
+        );
+        let changed = intern_c_memory(
+            memory
+                .as_ref()
+                .clone()
+                .store(nested_cell, CValue::Int32(Bitvector32Term::Constant(9))),
+        );
+        assert!(!quantified_binder_equivalent(
+            &requested,
+            &quantified(&changed, Variable(3_200_000)),
+        ));
+    }
+
+    #[test]
     fn quantified_nested_matching_work_is_linear_and_context_indexed() {
         let nested = |depth: usize, base: u64| {
             let mut p = Proposition::ConditionIs(
