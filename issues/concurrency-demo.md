@@ -22,6 +22,15 @@ this milestone also requires modular rules and deterministic scaling tests.
 
 ## Existing foundation and scope
 
+The first source-selection checkpoint is
+[`design/concurrency-probes/fork_join.c`](../design/concurrency-probes/fork_join.c)
+with its [profile record](../design/concurrency-probes/README.md). It fixes an
+ordinary C11/POSIX program, compiler/target/API choices, and creation-failure
+paths before any thread rule or sidecar is written. The fixture is deliberately
+not yet listed as a verifying example; its source bytes are pinned by the
+examples gate. The new user-space profile and pthread rules remain work for
+this issue, not support already delivered by that checkpoint.
+
 Build on the authority conservation, stable borrowing, observation support,
 and checked transitions in the [stable-views record](../docs/internals/stable-views.md).
 The two-context and mutex experiments in `src/kernel/tests/loan_model_tests.rs`

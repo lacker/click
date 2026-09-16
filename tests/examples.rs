@@ -157,6 +157,18 @@ fn rbtree_insert_frontier_remains_explicit_and_uses_the_shared_model() {
     );
 }
 
+#[test]
+fn concurrency_fork_join_source_is_fixed_before_thread_rules() {
+    let source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("design/concurrency-probes/fork_join.c");
+    let bytes = fs::read(&source).expect("the frozen fork/join C source exists");
+    assert_eq!(
+        hex_digest(sha256(&bytes)),
+        "818486bb827c4ae7c7ad5638fd75bb0bb12fd7fb9796babaa2111f594609e9a6",
+        "the concurrency proof must use the selected C source unchanged"
+    );
+}
+
 fn run_example_in_thread(project: &Path) -> Result<(), String> {
     let project = project.to_path_buf();
     std::thread::Builder::new()
