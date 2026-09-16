@@ -202,7 +202,7 @@ bool money_nonnegative(const int64* nValue) {
 }
 ```
 
-The next `constexpr-coin` fixture includes a pinned fixture-owned `<cstdint>`,
+The `constexpr-coin` fixture includes a pinned fixture-owned `<cstdint>`,
 retains the ordered `CAmount` to `int64_t` alias chain across that locked
 dependency, and imports one namespace-scope `static constexpr CAmount COIN =
 100000000`. A reference to `COIN` carries its Clang declaration identity while
@@ -211,14 +211,19 @@ retains the literal initializer and rejects disagreement between it and the
 evaluated value. Offline loading needs neither Clang nor the exporter, but it
 does rehash the declared header dependency.
 
-This is deliberately a leaf-constant slice. It does not claim the host C++
-standard library: the regression's header is a pinned input containing only
-the needed `int64_t` typedef. Mutable or non-`constexpr` globals, undeclared
-header dependencies, non-literal and dependent initializers, multiple reachable
-constants, mutable signed-64 references, unsigned 64-bit aliases, `<=`, and
-`&&` remain outside the boundary. In particular, `MAX_MONEY = 21000000 * COIN`
-is the next constant-expression increment rather than an accidental consequence
-of importing `COIN`.
+The `constexpr-max-money` fixture extends that boundary to exactly one ordered
+constant dependency: `MAX_MONEY = 21000000 * COIN`. The artifact retains both
+declaration identities and the signed-64 multiplication tree, requires `COIN`
+to precede `MAX_MONEY`, recomputes the result with checked multiplication, and
+compares it with Clang's evaluated value. Direct lowering still substitutes the
+validated `MAX_MONEY` value; it does not add runtime multiplication to the
+kernel boundary.
+
+These fixtures do not claim the host C++ standard library: their header is a
+pinned input containing only the needed `int64_t` typedef. Mutable or
+non-`constexpr` globals, undeclared header dependencies, broader or unordered
+constant graphs, other constant expressions, mutable signed-64 references,
+unsigned 64-bit aliases, `<=`, and `&&` remain outside the boundary.
 
 The `direct-call` fixture selects a caller and captures the transitive closure
 of definitions reached by discarded-result direct call statements. Each call

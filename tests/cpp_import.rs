@@ -90,6 +90,12 @@ const CONSTEXPR_COIN_SIDECAR: &str =
     include_str!("fixtures/cpp-verification/constexpr-coin/at_least_one_coin.click");
 const CONSTEXPR_COIN_CSTDINT: &str =
     include_str!("fixtures/cpp-verification/constexpr-coin/cstdint");
+const CONSTEXPR_MAX_MONEY_SOURCE: &str =
+    include_str!("fixtures/cpp-verification/constexpr-max-money/at_least_max_money.cpp");
+const CONSTEXPR_MAX_MONEY_SIDECAR: &str =
+    include_str!("fixtures/cpp-verification/constexpr-max-money/at_least_max_money.click");
+const CONSTEXPR_MAX_MONEY_CSTDINT: &str =
+    include_str!("fixtures/cpp-verification/constexpr-max-money/cstdint");
 
 struct Project {
     directory: PathBuf,
@@ -239,6 +245,23 @@ impl Project {
         project.dependencies.push("cstdint".into());
         project.write_exception_enabled_compilation_database_with_local_include();
         project.write_config_with_profile("at_least_one_coin", "at_least_one_coin.cpp", true);
+        project
+    }
+
+    fn constexpr_max_money() -> Self {
+        let mut project = Self::with_fixture(
+            "at_least_max_money.cpp",
+            "at_least_max_money",
+            CONSTEXPR_MAX_MONEY_SOURCE,
+        );
+        fs::write(
+            project.directory.join("cstdint"),
+            CONSTEXPR_MAX_MONEY_CSTDINT,
+        )
+        .unwrap();
+        project.dependencies.push("cstdint".into());
+        project.write_exception_enabled_compilation_database_with_local_include();
+        project.write_config_with_profile("at_least_max_money", "at_least_max_money.cpp", true);
         project
     }
 
@@ -440,7 +463,7 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
     let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
-    assert_eq!(prepared.export().schema, 15);
+    assert_eq!(prepared.export().schema, 16);
     assert!(prepared.export().reachable_functions.is_empty());
     assert_eq!(prepared.logical_source(), "increment.cpp");
     assert_eq!(prepared.identity().len(), 64);
@@ -713,7 +736,7 @@ fn signed_int64_predicate_retains_alias_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the predicate artifact offline");
-    assert_eq!(import.export().schema, 15);
+    assert_eq!(import.export().schema, 16);
     assert!(import.export().profile.exceptions);
     assert!(!import.export().function.declared_noexcept);
     assert!(matches!(
@@ -828,7 +851,7 @@ fn constexpr_coin_retains_alias_chain_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the constexpr artifact offline");
-    assert_eq!(import.export().schema, 15);
+    assert_eq!(import.export().schema, 16);
     assert_eq!(import.export().dependencies, ["cstdint"]);
     let CppType::LvalueReference { pointee } = &import.export().function.parameters[0].value_type
     else {
@@ -915,7 +938,10 @@ fn constexpr_coin_rejects_unlocked_mutable_and_nonleaf_constants() {
     )
     .unwrap();
     let error = refresh_import(&nonleaf.config()).unwrap_err();
-    assert!(error.contains("one integer literal initializer"), "{error}");
+    assert!(
+        error.contains("literal leaf or one dependent multiplication"),
+        "{error}"
+    );
 
     let mut unlocked = Project::constexpr_coin();
     unlocked.dependencies.clear();
@@ -923,6 +949,105 @@ fn constexpr_coin_rejects_unlocked_mutable_and_nonleaf_constants() {
     let error = refresh_import(&unlocked.config()).unwrap_err();
     assert!(
         error.contains("differ from configured dependencies"),
+        "{error}"
+    );
+}
+
+#[test]
+fn constexpr_max_money_retains_checked_dependency_and_verifies_offline() {
+    let project = Project::constexpr_max_money();
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, CONSTEXPR_MAX_MONEY_SIDECAR).unwrap();
+    refresh_import(&project.config()).expect("export the dependent constexpr predicate");
+    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+
+    let import = load_import(&project.config()).expect("load the dependent artifact offline");
+    assert_eq!(import.export().schema, 16);
+    let [coin, max_money] = import.export().constants.as_slice() else {
+        panic!("COIN and MAX_MONEY were not captured as one ordered dependency")
+    };
+    assert_eq!(coin.name, "COIN");
+    assert_eq!(coin.evaluated_value, "100000000");
+    assert_eq!(max_money.name, "MAX_MONEY");
+    assert_eq!(max_money.evaluated_value, "2100000000000000");
+    assert!(matches!(
+        &max_money.initializer,
+        CppExpression::Binary {
+            operator: CppBinaryOperator::Multiply,
+            left,
+            right,
+            ..
+        } if matches!(left.as_ref(), CppExpression::IntegralCast { value, .. }
+            if matches!(value.as_ref(), CppExpression::IntegerLiteral { value, .. }
+                if value == "21000000"))
+            && matches!(right.as_ref(), CppExpression::ConstantReference { constant, .. }
+                if constant.declaration_id == coin.declaration_id && constant.name == "COIN")
+    ));
+    assert!(matches!(
+        import.export().function.body.as_slice(),
+        [CppStatement::Return {
+            value: CppExpression::Binary {
+                operator: CppBinaryOperator::GreaterEqual,
+                right,
+                ..
+            },
+            ..
+        }] if matches!(right.as_ref(), CppExpression::ConstantReference { constant, .. }
+            if constant.declaration_id == max_money.declaration_id
+                && constant.name == "MAX_MONEY")
+    ));
+
+    let lowered = lower_import(&import).expect("lower the dependent constexpr predicate");
+    assert_eq!(lowered.kernel_function().return_type(), CType::Bool);
+    let click_project = read_click_project(&sidecar, CONSTEXPR_MAX_MONEY_SIDECAR).unwrap();
+    verify_cpp_prepared_project(&click_project, &import)
+        .expect("verify the dependent constexpr comparison offline");
+
+    let false_source =
+        CONSTEXPR_MAX_MONEY_SIDECAR.replace(">= 2100000000000000i64", "> 2100000000000000i64");
+    let false_project = read_click_project(&sidecar, &false_source).unwrap();
+    let error = verify_cpp_prepared_project(&false_project, &import).unwrap_err();
+    assert!(
+        error.message().contains("unclosed goal"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn constexpr_max_money_rejects_broader_constant_and_runtime_arithmetic() {
+    let addition = Project::constexpr_max_money();
+    fs::write(
+        addition.source(),
+        CONSTEXPR_MAX_MONEY_SOURCE.replace("21000000 * COIN", "21000000 + COIN"),
+    )
+    .unwrap();
+    let error = refresh_import(&addition.config()).unwrap_err();
+    assert!(
+        error.contains("literal leaf or one dependent multiplication"),
+        "{error}"
+    );
+
+    let third = Project::constexpr_max_money();
+    let source = CONSTEXPR_MAX_MONEY_SOURCE
+        .replace(
+            "static constexpr CAmount MAX_MONEY = 21000000 * COIN;",
+            "static constexpr CAmount MAX_MONEY = 21000000 * COIN;\nstatic constexpr CAmount TOO_MUCH = 2 * MAX_MONEY;",
+        )
+        .replace("value >= MAX_MONEY", "value >= TOO_MUCH");
+    fs::write(third.source(), source).unwrap();
+    let error = refresh_import(&third.config()).unwrap_err();
+    assert!(error.contains("at most two reachable constants"), "{error}");
+
+    let runtime_multiply = Project::constexpr_max_money();
+    fs::write(
+        runtime_multiply.source(),
+        CONSTEXPR_MAX_MONEY_SOURCE.replace("value >= MAX_MONEY", "value >= MAX_MONEY * 1"),
+    )
+    .unwrap();
+    let error = refresh_import(&runtime_multiply.config()).unwrap_err();
+    assert!(
+        error.contains("multiplication is supported only in a checked constant initializer"),
         "{error}"
     );
 }
@@ -1433,7 +1558,7 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the call graph artifact offline");
-    assert_eq!(import.export().schema, 15);
+    assert_eq!(import.export().schema, 16);
     assert_eq!(import.export().function.name, "call_set_seven");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -1510,7 +1635,7 @@ fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the scalar-local artifact offline");
-    assert_eq!(import.export().schema, 15);
+    assert_eq!(import.export().schema, 16);
     assert_eq!(import.export().function.name, "relay_value");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -1624,7 +1749,7 @@ fn mutable_pointer_dereference_and_reference_address_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the pointer artifact offline");
-    assert_eq!(import.export().schema, 15);
+    assert_eq!(import.export().schema, 16);
     let caller = &import.export().function;
     assert_eq!(caller.name, "bump_reference");
     assert!(matches!(
@@ -1762,7 +1887,7 @@ fn record_reference_member_loads_and_stores_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the record artifact offline");
-    assert_eq!(import.export().schema, 15);
+    assert_eq!(import.export().schema, 16);
     let [record] = import.export().records.as_slice() else {
         panic!("the referenced record layout was not captured")
     };
@@ -1864,7 +1989,7 @@ fn brace_initialized_local_aggregate_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the aggregate artifact offline");
-    assert_eq!(import.export().schema, 15);
+    assert_eq!(import.export().schema, 16);
     let [record] = import.export().records.as_slice() else {
         panic!("the local aggregate record layout was not captured")
     };
@@ -1964,7 +2089,7 @@ fn explicit_constructor_local_verifies_as_a_modular_call() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the constructor artifact offline");
-    assert_eq!(import.export().schema, 15);
+    assert_eq!(import.export().schema, 16);
     let [record] = import.export().records.as_slice() else {
         panic!("the constructed record layout was not captured")
     };
@@ -2099,7 +2224,7 @@ fn terminal_return_captures_value_before_checked_destructor_cleanup() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 15);
+    assert_eq!(import.export().schema, 16);
     let [record] = import.export().records.as_slice() else {
         panic!("the destructible record layout was not captured")
     };
@@ -2245,7 +2370,7 @@ fn every_return_after_construction_runs_the_checked_destructor() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 15);
+    assert_eq!(import.export().schema, 16);
     let destructor = import
         .export()
         .reachable_functions
@@ -2346,7 +2471,7 @@ fn two_constructed_objects_are_destroyed_in_reverse_order_on_every_return() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the ordered cleanup artifact offline");
-    assert_eq!(import.export().schema, 15);
+    assert_eq!(import.export().schema, 16);
     let [
         CppStatement::Declare { local: first, .. },
         CppStatement::Declare { local: second, .. },
@@ -2443,7 +2568,7 @@ fn nested_scope_destroys_its_object_on_return_and_fallthrough() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the nested-scope artifact offline");
-    assert_eq!(import.export().schema, 15);
+    assert_eq!(import.export().schema, 16);
     let destructor = import
         .export()
         .reachable_functions

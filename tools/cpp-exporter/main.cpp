@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <filesystem>
@@ -148,6 +149,19 @@ public:
       }
       reachable_functions.push_back(std::move(*reachable));
     }
+    for (std::size_t index = 0; index < constant_definitions_.size(); ++index) {
+      if (!discover_constant_dependencies(
+              constant_definitions_[index]->getInit())) {
+        return;
+      }
+    }
+    std::stable_sort(
+        constant_definitions_.begin(), constant_definitions_.end(),
+        [this](const clang::VarDecl *left, const clang::VarDecl *right) {
+          return source_manager_.isBeforeInTranslationUnit(
+              source_manager_.getExpansionLoc(left->getLocation()),
+              source_manager_.getExpansionLoc(right->getLocation()));
+        });
     llvm::json::Array constants;
     for (const clang::VarDecl *constant : constant_definitions_) {
       auto lowered = lower_constant(constant, selected);
@@ -184,7 +198,7 @@ public:
     profile["compilation_command"] = std::move(compilation_command);
 
     llvm::json::Object artifact;
-    artifact["schema"] = 15;
+    artifact["schema"] = 16;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["exception_behavior"] = "normal_only";
@@ -1228,12 +1242,33 @@ private:
       return false;
     }
     if (known_constants_.insert(definition).second) {
-      if (!constant_definitions_.empty()) {
+      if (constant_definitions_.size() >= 2) {
         fail(definition->getLocation(),
-             "the first C++ constant slice supports exactly one reachable constant");
+             "the supported C++ constant slice permits at most two reachable constants");
         return false;
       }
       constant_definitions_.push_back(definition);
+    }
+    return true;
+  }
+
+  bool discover_constant_dependencies(const clang::Stmt *statement) {
+    if (statement == nullptr) {
+      fail({}, "reachable C++ constant has no initializer");
+      return false;
+    }
+    if (const auto *reference = llvm::dyn_cast<clang::DeclRefExpr>(statement)) {
+      if (const auto *variable =
+              llvm::dyn_cast<clang::VarDecl>(reference->getDecl());
+          variable != nullptr && variable->hasGlobalStorage() &&
+          !remember_constant(variable)) {
+        return false;
+      }
+    }
+    for (const clang::Stmt *child : statement->children()) {
+      if (!discover_constant_dependencies(child)) {
+        return false;
+      }
     }
     return true;
   }
@@ -1242,16 +1277,20 @@ private:
   lower_constant(const clang::VarDecl *constant,
                  const clang::FunctionDecl *function) {
     const clang::Expr *initializer = constant->getInit();
-    if (initializer == nullptr ||
-        !llvm::isa<clang::IntegerLiteral>(initializer->IgnoreParenImpCasts())) {
+    const clang::Expr *semantic =
+        initializer == nullptr ? nullptr : initializer->IgnoreParenImpCasts();
+    const auto *binary = llvm::dyn_cast_or_null<clang::BinaryOperator>(semantic);
+    if (semantic == nullptr ||
+        (!llvm::isa<clang::IntegerLiteral>(semantic) &&
+         (binary == nullptr || binary->getOpcode() != clang::BO_Mul))) {
       fail(constant->getLocation(),
-           "the first C++ constant slice requires one integer literal initializer");
+           "supported C++ constants require a literal leaf or one dependent multiplication");
       return std::nullopt;
     }
     auto value_type =
         lower_type(constant->getType(), constant->getLocation(),
                    direct_source_alias(constant->getTypeSourceInfo()));
-    auto lowered_initializer = lower_expression(initializer, function);
+    auto lowered_initializer = lower_expression(initializer, function, true);
     const clang::APValue *evaluated = constant->evaluateValue();
     if (!value_type || !lowered_initializer || evaluated == nullptr ||
         !evaluated->isInt()) {
@@ -1304,7 +1343,8 @@ private:
   }
 
   std::optional<Json> lower_expression(const clang::Expr *expression,
-                                       const clang::FunctionDecl *function) {
+                                       const clang::FunctionDecl *function,
+                                       bool allow_constant_multiply = false) {
     if (const auto *throw_expression =
             llvm::dyn_cast<clang::CXXThrowExpr>(expression)) {
       fail(throw_expression->getThrowLoc(),
@@ -1313,12 +1353,14 @@ private:
     }
     if (const auto *parentheses =
             llvm::dyn_cast<clang::ParenExpr>(expression)) {
-      return lower_expression(parentheses->getSubExpr(), function);
+      return lower_expression(parentheses->getSubExpr(), function,
+                              allow_constant_multiply);
     }
     if (const auto *cast =
             llvm::dyn_cast<clang::ImplicitCastExpr>(expression)) {
       if (cast->getCastKind() == clang::CK_IntegralCast) {
-        auto value = lower_expression(cast->getSubExpr(), function);
+        auto value = lower_expression(cast->getSubExpr(), function,
+                                      allow_constant_multiply);
         auto value_type = lower_type(cast->getType(), cast->getExprLoc());
         if (!value || !value_type) {
           return std::nullopt;
@@ -1359,7 +1401,8 @@ private:
       } else if (const auto *dereference =
               llvm::dyn_cast<clang::UnaryOperator>(source);
           dereference != nullptr && dereference->getOpcode() == clang::UO_Deref) {
-        auto pointer = lower_expression(dereference->getSubExpr(), function);
+        auto pointer = lower_expression(dereference->getSubExpr(), function,
+                                        allow_constant_multiply);
         if (!pointer) {
           return std::nullopt;
         }
@@ -1429,9 +1472,15 @@ private:
     if (const auto *binary =
             llvm::dyn_cast<clang::BinaryOperator>(expression)) {
       if (binary->getOpcode() != clang::BO_Add &&
+          binary->getOpcode() != clang::BO_Mul &&
           binary->getOpcode() != clang::BO_GE) {
         fail(binary->getOperatorLoc(),
-             "unsupported binary operator; this C++ slice supports int addition and signed 64-bit >= only");
+             "unsupported binary operator; this C++ slice supports int addition, checked constant multiplication, and signed 64-bit >= only");
+        return std::nullopt;
+      }
+      if (binary->getOpcode() == clang::BO_Mul && !allow_constant_multiply) {
+        fail(binary->getOperatorLoc(),
+             "C++ multiplication is supported only in a checked constant initializer");
         return std::nullopt;
       }
       if (binary->getOpcode() == clang::BO_Add &&
@@ -1441,16 +1490,28 @@ private:
              "the supported C++ slice does not include pointer arithmetic");
         return std::nullopt;
       }
-      auto left = lower_expression(binary->getLHS(), function);
-      auto right = lower_expression(binary->getRHS(), function);
+      if (binary->getOpcode() == clang::BO_Mul &&
+          (!binary->getType()->isSignedIntegerType() ||
+           context_.getTypeSize(binary->getType()) != 64)) {
+        fail(binary->getOperatorLoc(),
+             "supported C++ constant multiplication must produce signed 64-bit");
+        return std::nullopt;
+      }
+      auto left = lower_expression(binary->getLHS(), function,
+                                   allow_constant_multiply);
+      auto right = lower_expression(binary->getRHS(), function,
+                                    allow_constant_multiply);
       auto value_type = lower_type(binary->getType(), binary->getExprLoc());
       if (!left || !right || !value_type) {
         return std::nullopt;
       }
       llvm::json::Object result;
       result["kind"] = "binary";
-      result["operator"] =
-          binary->getOpcode() == clang::BO_Add ? "add" : "greater_equal";
+      result["operator"] = binary->getOpcode() == clang::BO_Add
+                               ? "add"
+                               : binary->getOpcode() == clang::BO_Mul
+                                     ? "multiply"
+                                     : "greater_equal";
       result["left"] = std::move(*left);
       result["right"] = std::move(*right);
       result["value_type"] = std::move(*value_type);

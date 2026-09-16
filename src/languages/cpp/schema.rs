@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const EXPORT_SCHEMA: u32 = 15;
+pub(crate) const EXPORT_SCHEMA: u32 = 16;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -160,6 +160,7 @@ pub struct CppPlace {
 #[serde(rename_all = "snake_case")]
 pub enum CppBinaryOperator {
     Add,
+    Multiply,
     GreaterEqual,
 }
 
@@ -446,14 +447,15 @@ impl CppExport {
             }
         }
 
-        if self.constants.len() > 1 {
+        if self.constants.len() > 2 {
             return Err(
-                "the first C++ constant slice supports exactly one reachable constant".into(),
+                "the supported C++ constant slice permits at most two reachable constants".into(),
             );
         }
         let mut constants = BTreeMap::new();
+        let mut constant_dependencies = BTreeMap::new();
         for constant in &self.constants {
-            constant.validate(logical_source, &alias_sources)?;
+            let dependency = constant.validate(logical_source, &alias_sources, &constants)?;
             if constants
                 .insert(constant.declaration_id.clone(), constant)
                 .is_some()
@@ -463,10 +465,25 @@ impl CppExport {
                     constant.declaration_id
                 ));
             }
+            constant_dependencies.insert(constant.declaration_id.clone(), dependency);
+        }
+        if self.constants.len() == 2 {
+            let [leaf, dependent] = self.constants.as_slice() else {
+                unreachable!()
+            };
+            if constant_dependencies[&leaf.declaration_id].is_some()
+                || constant_dependencies[&dependent.declaration_id].as_deref()
+                    != Some(leaf.declaration_id.as_str())
+            {
+                return Err(
+                    "two C++ constants must be one leaf followed by its direct dependent".into(),
+                );
+            }
         }
 
         let mut functions = BTreeMap::new();
         let mut names = BTreeMap::new();
+        let mut referenced_constants = BTreeSet::new();
         for source in std::iter::once(&self.function).chain(&self.reachable_functions) {
             source.validate(
                 logical_source,
@@ -474,7 +491,11 @@ impl CppExport {
                 &records,
                 self.profile.exceptions,
             )?;
-            source.validate_constant_references(logical_source, &constants)?;
+            source.validate_constant_references(
+                logical_source,
+                &constants,
+                &mut referenced_constants,
+            )?;
             if functions
                 .insert(source.declaration_id.clone(), source)
                 .is_some()
@@ -491,6 +512,20 @@ impl CppExport {
                     source.declaration_id, source.name
                 ));
             }
+        }
+        let mut reachable_constants = referenced_constants.clone();
+        let mut pending = referenced_constants.into_iter().collect::<Vec<_>>();
+        while let Some(declaration_id) = pending.pop() {
+            if let Some(Some(dependency)) = constant_dependencies.get(&declaration_id)
+                && reachable_constants.insert(dependency.clone())
+            {
+                pending.push(dependency.clone());
+            }
+        }
+        if reachable_constants != constants.keys().cloned().collect() {
+            return Err(
+                "C++ export contains a constant outside the selected function graph".into(),
+            );
         }
 
         for record in &self.records {
@@ -1498,6 +1533,12 @@ impl CppExpression {
                 require_signed_int64(left.value_type(), false, "comparison left operand")?;
                 require_signed_int64(right.value_type(), false, "comparison right operand")
             }
+            Self::Binary {
+                operator: CppBinaryOperator::Multiply,
+                ..
+            } => {
+                Err("C++ multiplication is supported only in a checked constant initializer".into())
+            }
         }
     }
 }
@@ -2019,73 +2060,131 @@ impl CppConstant {
         &self,
         logical_source: &str,
         alias_sources: &BTreeSet<String>,
-    ) -> Result<(), String> {
+        prior_constants: &BTreeMap<String, &CppConstant>,
+    ) -> Result<Option<String>, String> {
         if self.declaration_id.is_empty() || self.name.is_empty() {
             return Err("C++ constant is missing declaration identity".into());
         }
         self.span.validate(logical_source)?;
         require_const_signed_int64(&self.value_type, "constant type")?;
         self.value_type.validate_aliases_in(alias_sources)?;
-        validate_leaf_int64_initializer(&self.initializer, logical_source)?;
-        require_signed_int64(
-            self.initializer.value_type(),
-            true,
-            "constant initializer type",
-        )?;
+        let (dependency, initializer_value) =
+            validate_int64_initializer(&self.initializer, logical_source, prior_constants)?;
         let evaluated = self
             .evaluated_value
             .parse::<i64>()
             .map_err(|_| format!("unsupported C++ constant value `{}`", self.evaluated_value))?;
-        if evaluate_leaf_int64_initializer(&self.initializer)? != evaluated {
+        if initializer_value != evaluated {
             return Err(format!(
                 "C++ constant `{}` initializer disagrees with its evaluated value",
                 self.name
             ));
         }
-        Ok(())
+        Ok(dependency)
     }
 }
 
-fn validate_leaf_int64_initializer(
+fn validate_int64_initializer(
     expression: &CppExpression,
     logical_source: &str,
-) -> Result<(), String> {
-    let CppExpression::IntegralCast {
+    prior_constants: &BTreeMap<String, &CppConstant>,
+) -> Result<(Option<String>, i64), String> {
+    match expression {
+        CppExpression::IntegralCast {
+            value,
+            value_type,
+            span,
+        } => {
+            span.validate(logical_source)?;
+            require_signed_int64(value_type, true, "constant integral cast result")?;
+            Ok((
+                None,
+                i64::from(evaluate_int32_literal(value, logical_source)?),
+            ))
+        }
+        CppExpression::Binary {
+            operator: CppBinaryOperator::Multiply,
+            left,
+            right,
+            value_type,
+            span,
+        } => {
+            span.validate(logical_source)?;
+            require_signed_int64(value_type, false, "constant multiplication result")?;
+            let CppExpression::IntegralCast {
+                value: literal,
+                value_type: cast_type,
+                span: cast_span,
+            } = left.as_ref()
+            else {
+                return Err(
+                    "dependent C++ constant multiplication must cast one integer literal".into(),
+                );
+            };
+            cast_span.validate(logical_source)?;
+            require_signed_int64(cast_type, false, "constant multiplication left operand")?;
+            let multiplier = i64::from(evaluate_int32_literal(literal, logical_source)?);
+            let CppExpression::ConstantReference {
+                constant,
+                value_type: reference_type,
+                span: reference_span,
+            } = right.as_ref()
+            else {
+                return Err(
+                    "dependent C++ constant multiplication must reference one prior constant"
+                        .into(),
+                );
+            };
+            reference_span.validate(logical_source)?;
+            constant.span.validate(logical_source)?;
+            let dependency = prior_constants
+                .get(&constant.declaration_id)
+                .ok_or_else(|| {
+                    format!(
+                        "C++ constant initializer refers to unknown or later declaration `{}`",
+                        constant.declaration_id
+                    )
+                })?;
+            if dependency.name != constant.name {
+                return Err(format!(
+                    "C++ constant declaration `{}` is named `{}`, not `{}`",
+                    constant.declaration_id, dependency.name, constant.name
+                ));
+            }
+            if !same_unqualified_integer_type(&dependency.value_type, reference_type) {
+                return Err(format!(
+                    "C++ constant reference `{}` has a mismatched value type",
+                    constant.name
+                ));
+            }
+            let dependency_value = dependency.evaluated_value.parse::<i64>().map_err(|_| {
+                format!(
+                    "unsupported C++ constant value `{}`",
+                    dependency.evaluated_value
+                )
+            })?;
+            let evaluated = multiplier.checked_mul(dependency_value).ok_or_else(|| {
+                "supported C++ constant multiplication overflows signed 64-bit".to_string()
+            })?;
+            Ok((Some(constant.declaration_id.clone()), evaluated))
+        }
+        _ => Err(
+            "supported C++ constants require a literal leaf or one dependent multiplication".into(),
+        ),
+    }
+}
+
+fn evaluate_int32_literal(expression: &CppExpression, logical_source: &str) -> Result<i32, String> {
+    let CppExpression::IntegerLiteral {
         value,
         value_type,
         span,
     } = expression
     else {
-        return Err("the first C++ constant slice requires one integral cast initializer".into());
+        return Err("supported C++ constant cast requires one integer literal".into());
     };
     span.validate(logical_source)?;
-    let CppExpression::IntegerLiteral {
-        value: literal,
-        value_type: literal_type,
-        span: literal_span,
-    } = value.as_ref()
-    else {
-        return Err("the first C++ constant slice requires one integer literal".into());
-    };
-    literal_span.validate(logical_source)?;
-    literal
-        .parse::<i32>()
-        .map_err(|_| format!("unsupported C++ integer literal `{literal}`"))?;
-    require_int32(literal_type, false, "constant literal type")?;
-    require_signed_int64(value_type, true, "constant integral cast result")
-}
-
-fn evaluate_leaf_int64_initializer(expression: &CppExpression) -> Result<i64, String> {
-    match expression {
-        CppExpression::IntegralCast { value, .. } => Ok(i64::from(evaluate_int32_literal(value)?)),
-        _ => Err("the first C++ constant slice requires one integral cast initializer".into()),
-    }
-}
-
-fn evaluate_int32_literal(expression: &CppExpression) -> Result<i32, String> {
-    let CppExpression::IntegerLiteral { value, .. } = expression else {
-        return Err("the first C++ constant slice requires one integer literal".into());
-    };
+    require_int32(value_type, false, "constant literal type")?;
     value
         .parse::<i32>()
         .map_err(|_| format!("unsupported C++ integer literal `{value}`"))
@@ -2096,8 +2195,14 @@ impl CppFunction {
         &self,
         logical_source: &str,
         constants: &BTreeMap<String, &CppConstant>,
+        referenced_constants: &mut BTreeSet<String>,
     ) -> Result<(), String> {
-        validate_statement_constant_references(&self.body, logical_source, constants)
+        validate_statement_constant_references(
+            &self.body,
+            logical_source,
+            constants,
+            referenced_constants,
+        )
     }
 }
 
@@ -2105,23 +2210,45 @@ fn validate_statement_constant_references(
     statements: &[CppStatement],
     logical_source: &str,
     constants: &BTreeMap<String, &CppConstant>,
+    referenced_constants: &mut BTreeSet<String>,
 ) -> Result<(), String> {
     for statement in statements {
         match statement {
             CppStatement::Declare { initializer, .. } => {
-                initializer.validate_constant_references(logical_source, constants)?;
+                initializer.validate_constant_references(
+                    logical_source,
+                    constants,
+                    referenced_constants,
+                )?;
             }
             CppStatement::Assign { value, .. }
             | CppStatement::MemberStore { value, .. }
             | CppStatement::Return { value, .. } => {
-                value.validate_constant_references(logical_source, constants)?;
+                value.validate_constant_references(
+                    logical_source,
+                    constants,
+                    referenced_constants,
+                )?;
             }
             CppStatement::Store { pointer, value, .. } => {
-                pointer.validate_constant_references(logical_source, constants)?;
-                value.validate_constant_references(logical_source, constants)?;
+                pointer.validate_constant_references(
+                    logical_source,
+                    constants,
+                    referenced_constants,
+                )?;
+                value.validate_constant_references(
+                    logical_source,
+                    constants,
+                    referenced_constants,
+                )?;
             }
             CppStatement::Scope { body, .. } => {
-                validate_statement_constant_references(body, logical_source, constants)?;
+                validate_statement_constant_references(
+                    body,
+                    logical_source,
+                    constants,
+                    referenced_constants,
+                )?;
             }
             CppStatement::If {
                 condition,
@@ -2129,13 +2256,31 @@ fn validate_statement_constant_references(
                 else_branch,
                 ..
             } => {
-                condition.validate_constant_references(logical_source, constants)?;
-                validate_statement_constant_references(then_branch, logical_source, constants)?;
-                validate_statement_constant_references(else_branch, logical_source, constants)?;
+                condition.validate_constant_references(
+                    logical_source,
+                    constants,
+                    referenced_constants,
+                )?;
+                validate_statement_constant_references(
+                    then_branch,
+                    logical_source,
+                    constants,
+                    referenced_constants,
+                )?;
+                validate_statement_constant_references(
+                    else_branch,
+                    logical_source,
+                    constants,
+                    referenced_constants,
+                )?;
             }
             CppStatement::Call { arguments, .. } => {
                 for argument in arguments {
-                    argument.validate_constant_references(logical_source, constants)?;
+                    argument.validate_constant_references(
+                        logical_source,
+                        constants,
+                        referenced_constants,
+                    )?;
                 }
             }
         }
@@ -2148,20 +2293,29 @@ impl CppInitializer {
         &self,
         logical_source: &str,
         constants: &BTreeMap<String, &CppConstant>,
+        referenced_constants: &mut BTreeSet<String>,
     ) -> Result<(), String> {
         match self {
-            Self::Value { value } => value.validate_constant_references(logical_source, constants),
+            Self::Value { value } => {
+                value.validate_constant_references(logical_source, constants, referenced_constants)
+            }
             Self::Call { arguments, .. } | Self::Constructor { arguments, .. } => {
                 for argument in arguments {
-                    argument.validate_constant_references(logical_source, constants)?;
+                    argument.validate_constant_references(
+                        logical_source,
+                        constants,
+                        referenced_constants,
+                    )?;
                 }
                 Ok(())
             }
             Self::Aggregate { fields, .. } => {
                 for field in fields {
-                    field
-                        .value
-                        .validate_constant_references(logical_source, constants)?;
+                    field.value.validate_constant_references(
+                        logical_source,
+                        constants,
+                        referenced_constants,
+                    )?;
                 }
                 Ok(())
             }
@@ -2174,9 +2328,12 @@ impl CppCallArgument {
         &self,
         logical_source: &str,
         constants: &BTreeMap<String, &CppConstant>,
+        referenced_constants: &mut BTreeSet<String>,
     ) -> Result<(), String> {
         match self {
-            Self::Value { value } => value.validate_constant_references(logical_source, constants),
+            Self::Value { value } => {
+                value.validate_constant_references(logical_source, constants, referenced_constants)
+            }
             Self::Reference { .. } => Ok(()),
         }
     }
@@ -2187,6 +2344,7 @@ impl CppExpression {
         &self,
         logical_source: &str,
         constants: &BTreeMap<String, &CppConstant>,
+        referenced_constants: &mut BTreeSet<String>,
     ) -> Result<(), String> {
         match self {
             Self::ConstantReference {
@@ -2213,17 +2371,20 @@ impl CppExpression {
                         constant.name
                     ));
                 }
+                referenced_constants.insert(constant.declaration_id.clone());
                 Ok(())
             }
-            Self::Dereference { pointer, .. } => {
-                pointer.validate_constant_references(logical_source, constants)
-            }
+            Self::Dereference { pointer, .. } => pointer.validate_constant_references(
+                logical_source,
+                constants,
+                referenced_constants,
+            ),
             Self::IntegralCast { value, .. } => {
-                value.validate_constant_references(logical_source, constants)
+                value.validate_constant_references(logical_source, constants, referenced_constants)
             }
             Self::Binary { left, right, .. } => {
-                left.validate_constant_references(logical_source, constants)?;
-                right.validate_constant_references(logical_source, constants)
+                left.validate_constant_references(logical_source, constants, referenced_constants)?;
+                right.validate_constant_references(logical_source, constants, referenced_constants)
             }
             Self::IntegerLiteral { .. }
             | Self::Load { .. }
@@ -2562,6 +2723,67 @@ mod tests {
         }
     }
 
+    fn signed_integer(bits: u32, is_const: bool) -> CppType {
+        CppType::Integer {
+            bits,
+            signed: true,
+            is_const,
+            source_aliases: Vec::new(),
+        }
+    }
+
+    fn coin_constant() -> CppConstant {
+        CppConstant {
+            declaration_id: "coin".into(),
+            name: "COIN".into(),
+            value_type: signed_integer(64, true),
+            initializer: CppExpression::IntegralCast {
+                value: Box::new(CppExpression::IntegerLiteral {
+                    value: "100000000".into(),
+                    value_type: signed_integer(32, false),
+                    span: cleanup_span(),
+                }),
+                value_type: signed_integer(64, true),
+                span: cleanup_span(),
+            },
+            evaluated_value: "100000000".into(),
+            span: cleanup_span(),
+        }
+    }
+
+    fn max_money_constant(evaluated_value: &str) -> CppConstant {
+        CppConstant {
+            declaration_id: "max_money".into(),
+            name: "MAX_MONEY".into(),
+            value_type: signed_integer(64, true),
+            initializer: CppExpression::Binary {
+                operator: CppBinaryOperator::Multiply,
+                left: Box::new(CppExpression::IntegralCast {
+                    value: Box::new(CppExpression::IntegerLiteral {
+                        value: "21000000".into(),
+                        value_type: signed_integer(32, false),
+                        span: cleanup_span(),
+                    }),
+                    value_type: signed_integer(64, false),
+                    span: cleanup_span(),
+                }),
+                right: Box::new(CppExpression::ConstantReference {
+                    constant: CppConstantReference {
+                        declaration_id: "coin".into(),
+                        name: "COIN".into(),
+                        span: cleanup_span(),
+                    },
+                    value_type: signed_integer(64, false),
+                    span: cleanup_span(),
+                }),
+                value_type: signed_integer(64, false),
+                span: cleanup_span(),
+            },
+            evaluated_value: evaluated_value.into(),
+            span: cleanup_span(),
+        }
+    }
+
     #[test]
     fn schema_refuses_unknown_fields() {
         let input = br#"{"schema":1,"surprise":1}"#;
@@ -2586,5 +2808,31 @@ mod tests {
             &[cleanup_for(&first), cleanup_for(&second)],
             &locals
         ));
+    }
+
+    #[test]
+    fn dependent_constant_requires_prior_identity_and_matching_checked_value() {
+        let coin = coin_constant();
+        let prior = BTreeMap::from([(coin.declaration_id.clone(), &coin)]);
+        let sources = BTreeSet::from(["fixture.cpp".to_string()]);
+        assert_eq!(
+            max_money_constant("2100000000000000")
+                .validate("fixture.cpp", &sources, &prior)
+                .unwrap(),
+            Some("coin".into())
+        );
+
+        let error = max_money_constant("2100000000000000")
+            .validate("fixture.cpp", &sources, &BTreeMap::new())
+            .unwrap_err();
+        assert!(error.contains("unknown or later declaration"), "{error}");
+
+        let error = max_money_constant("2099999999999999")
+            .validate("fixture.cpp", &sources, &prior)
+            .unwrap_err();
+        assert!(
+            error.contains("disagrees with its evaluated value"),
+            "{error}"
+        );
     }
 }

@@ -124,11 +124,15 @@ return verify through the stored exception-enabled artifact. That stepping
 stone does not weaken the remaining acceptance criteria or count as upstream
 verification.
 
-The next synthetic `constexpr-coin` regression now retains an ordered
+The synthetic `constexpr-coin` regression retains an ordered
 `CAmount` to `int64_t` alias chain across an explicitly locked fixture header
 and imports one referenced leaf `static constexpr CAmount COIN = 100000000`.
 This establishes dependency provenance and named compile-time declaration
-identity without claiming ambient standard-library support. The next constant
-increment is the reachable dependency expression `MAX_MONEY = 21000000 *
-COIN`; multiplication, multiple/dependent constants, `<=`, `&&`, and the
-upstream Bitcoin fixture remain required afterward.
+identity without claiming ambient standard-library support.
+
+The synthetic `constexpr-max-money` regression now imports the ordered
+two-node dependency `MAX_MONEY = 21000000 * COIN`, retains its multiplication
+tree, checks its signed-64 value independently of Clang's stored result, and
+verifies a reference to `MAX_MONEY` offline. The next semantic increment is the
+signed `<=` comparison used by `MoneyRange`; short-circuit `&&` and the upstream
+Bitcoin fixture remain required afterward.
