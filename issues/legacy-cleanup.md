@@ -2,13 +2,15 @@
 
 ## Priority and relationship to arena work
 
-P2 architectural cleanup. This issue is worthwhile but is not a prerequisite
-for resuming [arena ownership](arena-resource-ownership.md). The targeted
-arena prover repairs have landed: resource/invariant fact correspondence,
-exact premise presentation, the non-progressing atomic extraction retry,
-mid-execution `have`, and the direct increment-bound lookup. Do not duplicate
-those fixes here. The remaining symbolic allocation proof belongs to the arena
-issue.
+P1 proof-driver migration and tooling correctness. The legacy execution and
+fallback paths keep causing inconsistent proof behavior and can make ordinary
+verification disagree with the checked proof boundary, so this cleanup is
+required before launch. It is not a prerequisite for resuming [arena
+ownership](arena-resource-ownership.md): the targeted arena prover repairs have
+landed—resource/invariant fact correspondence, exact premise presentation, the
+non-progressing atomic extraction retry, mid-execution `have`, and the direct
+increment-bound lookup. Do not duplicate those fixes here. The remaining
+symbolic allocation proof belongs to the arena issue.
 
 The work packages below are sequential green
 commits, not a request to rewrite the entire verifier at once. If one of these

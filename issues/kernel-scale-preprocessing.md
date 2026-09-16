@@ -622,7 +622,7 @@ because one implementation package landed.
 ## References
 
 - [Supported translation units and preprocessing](../docs/reference/language/c0.md#supported-expressions-and-statements)
-- [GNU C extensions](gnu-c-extensions.md)
+- [Supported GNU C forms](../docs/reference/language/c0.md#supported-expressions-and-statements)
 - [Multiple compilers and targets](multiple-compilers.md)
 - [Linux rbtree inline helpers](linux-rbtree-inline-helpers.md)
 - [Testing and tooling failure workflow](../docs/internals/testing.md)

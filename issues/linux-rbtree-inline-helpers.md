@@ -60,5 +60,6 @@ verifier-friendly macro bodies, or bless forged output.
   contract (no downloads inside the gate, no silent skips).
 
 Related: [kernel-scale-preprocessing.md](kernel-scale-preprocessing.md)
-(importer, manifest, retained C semantics, and fixture provisioning) and
-[gnu-c-extensions.md](gnu-c-extensions.md) (GNU form semantics).
+(importer, manifest, retained C semantics, and fixture provisioning) and the
+[supported GNU C forms](../docs/reference/language/c0.md#supported-expressions-and-statements)
+(GNU form semantics).

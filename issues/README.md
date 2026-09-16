@@ -88,7 +88,11 @@ Specification and proof:
 
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
 
-## P2: after launch (27)
+Proof language and tooling:
+
+- [Finish the remaining proof-driver migration](legacy-cleanup.md)
+
+## P2: after launch (26)
 
 - [Make `step` simple across a call precondition](simplify-step.md)
 - [Lower a dependent composite argument in every tactic position](dependent-composite-argument-in-tactics.md)
@@ -123,7 +127,6 @@ Semantics and reasoning:
 
 Proof language and tooling:
 
-- [Finish the remaining proof-driver migration](legacy-cleanup.md)
 - [Extend modules and imports beyond the delivered rbtree slice](specification-imports.md)
 - [Parse built-in expressions consistently on either side of comparisons](built-in-comparison-parsing.md)
 - [Preserve source context when expansion writes to another directory](expansion-output-source-context.md)
