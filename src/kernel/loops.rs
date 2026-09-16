@@ -2343,6 +2343,7 @@ fn fresh_loop_local_value(
         CType::Float32 => CValue::Float32(Bitvector32Term::Variable(variables.next())),
         CType::Float64 => CValue::Float64(Bitvector32Term::Variable(variables.next())),
         CType::VoidPointer
+        | CType::VoidPointerPointer
         | CType::Int16Pointer
         | CType::UInt16Pointer
         | CType::Int32Pointer
@@ -5337,7 +5338,7 @@ pub(super) fn havoc_loop_modified_locals(
         let value = match c_type {
             CType::Void => continue,
             CType::Bool => CValue::Bool(Bitvector32Term::Variable(variables.next())),
-            CType::VoidPointer => {
+            CType::VoidPointer | CType::VoidPointerPointer => {
                 CValue::typed_pointer(Pointer::symbolic(variables.next()), c_type)
             }
             CType::Int16 => int16(Bitvector32Term::Variable(variables.next())),

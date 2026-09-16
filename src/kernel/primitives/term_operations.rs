@@ -2405,7 +2405,8 @@ impl CType {
                     | CType::Float32PointerPointer
                     | CType::Float64PointerPointer
                     | CType::Float32Array(_)
-                    | CType::Float64Array(_) => {
+                    | CType::Float64Array(_)
+                    | CType::VoidPointerPointer => {
                         return None;
                     }
                 } + if constant { 20 } else { 0 },
@@ -2472,8 +2473,9 @@ impl CType {
             Self::UInt64Pointer => Some(Self::UInt64PointerPointer),
             Self::Float32Pointer => Some(Self::Float32PointerPointer),
             Self::Float64Pointer => Some(Self::Float64PointerPointer),
+            Self::VoidPointer => Some(Self::VoidPointerPointer),
             Self::Void
-            | Self::VoidPointer
+            | Self::VoidPointerPointer
             | Self::Int16PointerPointer
             | Self::UInt16PointerPointer
             | Self::Int32PointerPointer
@@ -2539,6 +2541,7 @@ impl CType {
             Self::Void => 0,
             Self::Bool => 1,
             Self::VoidPointer => C_POINTER_BYTE_WIDTH,
+            Self::VoidPointerPointer => C_POINTER_BYTE_WIDTH,
             Self::Int16 => 2,
             Self::Int32 => 4,
             Self::UInt8 => 1,
@@ -2579,6 +2582,7 @@ impl CType {
 
     pub fn pointee_type(self) -> Option<Self> {
         match self {
+            Self::VoidPointerPointer => Some(Self::VoidPointer),
             Self::Int16Pointer => Some(Self::Int16),
             Self::Int32Pointer => Some(Self::Int32),
             Self::UInt8Pointer => Some(Self::UInt8),

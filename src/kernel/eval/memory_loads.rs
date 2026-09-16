@@ -2584,7 +2584,8 @@ pub(in crate::kernel) fn symbolic_load_value(
         CType::UInt64 => Some(memory.symbolic_uint64_load(pointer)),
         CType::Float32 => Some(memory.symbolic_float32_load(pointer)),
         CType::Float64 => Some(memory.symbolic_float64_load(pointer)),
-        CType::Int16Pointer
+        CType::VoidPointerPointer
+        | CType::Int16Pointer
         | CType::UInt16Pointer
         | CType::Int32Pointer
         | CType::UInt8Pointer

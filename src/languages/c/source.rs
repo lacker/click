@@ -149,8 +149,8 @@ impl MacroDefinition {
     }
 }
 
-fn target_macros() -> BTreeMap<String, MacroDefinition> {
-    super::target::CTarget::SUPPORTED
+fn target_macros(target: super::target::CTarget) -> BTreeMap<String, MacroDefinition> {
+    target
         .predefined_macros()
         .iter()
         .map(|&(name, value)| {
@@ -218,9 +218,17 @@ struct ConditionalFrame {
 /// supported object-like and bounded function-like macro definitions are
 /// accepted.
 pub fn local_include_paths(source_path: &str, source: &str) -> Result<Vec<String>, CSourceError> {
+    local_include_paths_for_target(source_path, source, super::target::CTarget::SUPPORTED)
+}
+
+pub fn local_include_paths_for_target(
+    source_path: &str,
+    source: &str,
+    target: super::target::CTarget,
+) -> Result<Vec<String>, CSourceError> {
     let source = splice_source_lines(source);
     let analysis = analyze_source(source_path, &source)?;
-    collect_local_include_paths(source_path, &analysis)
+    collect_local_include_paths(source_path, &analysis, target)
 }
 
 /// Expands all project-local quoted includes reachable from `root_path`.
@@ -228,6 +236,14 @@ pub fn local_include_paths(source_path: &str, source: &str) -> Result<Vec<String
 pub fn expand_includes<'a>(
     root_path: &str,
     sources: &BTreeMap<&'a str, &'a str>,
+) -> Result<ExpandedCSource, CSourceError> {
+    expand_includes_for_target(root_path, sources, super::target::CTarget::SUPPORTED)
+}
+
+pub fn expand_includes_for_target<'a>(
+    root_path: &str,
+    sources: &BTreeMap<&'a str, &'a str>,
+    target: super::target::CTarget,
 ) -> Result<ExpandedCSource, CSourceError> {
     let root_source = lookup_source(sources, root_path).ok_or_else(|| {
         CSourceError::new(
@@ -239,7 +255,7 @@ pub fn expand_includes<'a>(
     let mut dependencies = BTreeSet::new();
     let mut stack = Vec::new();
     let mut expanded_once = BTreeSet::new();
-    let mut macros = target_macros();
+    let mut macros = target_macros(target);
     let mut defined_macros = macros.keys().cloned().collect();
     let mut expanded = String::new();
     let mut line_map = ExpandedLineMap::empty();
@@ -248,6 +264,7 @@ pub fn expand_includes<'a>(
         root_path,
         root_source,
         sources,
+        target,
         &mut stack,
         &mut dependencies,
         &mut expanded_once,
@@ -290,10 +307,27 @@ fn push_blank_line(expanded: &mut String, line_map: &mut ExpandedLineMap) {
     line_map.push(None);
 }
 
+fn unsupported_system_header(
+    source_path: &str,
+    line_number: usize,
+    header: &str,
+    target: super::target::CTarget,
+) -> CSourceError {
+    CSourceError::new(
+        source_path,
+        line_number,
+        format!(
+            "system header `<{header}>` is not supported for {}",
+            target.name()
+        ),
+    )
+}
+
 fn expand_source<'a>(
     source_path: &str,
     source: &str,
     sources: &BTreeMap<&'a str, &'a str>,
+    target: super::target::CTarget,
     stack: &mut Vec<String>,
     dependencies: &mut BTreeSet<String>,
     expanded_once: &mut BTreeSet<String>,
@@ -424,6 +458,7 @@ fn expand_source<'a>(
                     &included_path,
                     included_source,
                     sources,
+                    target,
                     stack,
                     dependencies,
                     expanded_once,
@@ -437,14 +472,40 @@ fn expand_source<'a>(
             }
             SourceDirective::Include(_) => push_blank_line(expanded, line_map),
             SourceDirective::SystemInclude(header) if active != ConditionalTruth::False => {
-                if !matches!(header.as_str(), "stdint.h" | "inttypes.h" | "stdbool.h") {
-                    return Err(CSourceError::new(
-                        source_path,
-                        line_number,
-                        format!(
-                            "system header `<{header}>` is not supported; only the integer type spellings from `<stdint.h>`, `<inttypes.h>`, and `<stdbool.h>` are modeled"
-                        ),
-                    ));
+                match (target, header.as_str()) {
+                    (_, "stdint.h" | "inttypes.h" | "stdbool.h") => {}
+                    (super::target::CTarget::X86_64LinuxUserspace, "stddef.h") => {
+                        macros.insert(
+                            "NULL".into(),
+                            MacroDefinition::ObjectLike("((void*)0)".into()),
+                        );
+                        defined_macros.insert("NULL".into());
+                    }
+                    (super::target::CTarget::X86_64LinuxUserspace, "pthread.h") => {
+                        expand_source(
+                            "<pthread.h>",
+                            include_str!("modeled_pthread.h"),
+                            sources,
+                            target,
+                            stack,
+                            dependencies,
+                            expanded_once,
+                            macros,
+                            defined_macros,
+                            Some((source_path, line_number)),
+                            expanded,
+                            line_map,
+                            origin_names,
+                        )?;
+                    }
+                    _ => {
+                        return Err(unsupported_system_header(
+                            source_path,
+                            line_number,
+                            header,
+                            target,
+                        ));
+                    }
                 }
                 push_blank_line(expanded, line_map);
             }
@@ -508,9 +569,10 @@ fn expand_source<'a>(
 fn collect_local_include_paths(
     source_path: &str,
     analysis: &SourceAnalysis,
+    target: super::target::CTarget,
 ) -> Result<Vec<String>, CSourceError> {
     let mut includes = Vec::new();
-    let mut macros = target_macros();
+    let mut macros = target_macros(target);
     let mut defined_macros = macros.keys().cloned().collect();
     let mut conditional_stack = Vec::new();
     let mut active = ConditionalTruth::True;
@@ -593,14 +655,24 @@ fn collect_local_include_paths(
             }
             SourceDirective::Include(_) => {}
             SourceDirective::SystemInclude(header) if active != ConditionalTruth::False => {
-                if !matches!(header.as_str(), "stdint.h" | "inttypes.h" | "stdbool.h") {
-                    return Err(CSourceError::new(
-                        source_path,
-                        line_number,
-                        format!(
-                            "system header `<{header}>` is not supported; only the integer type spellings from `<stdint.h>`, `<inttypes.h>`, and `<stdbool.h>` are modeled"
-                        ),
-                    ));
+                match (target, header.as_str()) {
+                    (_, "stdint.h" | "inttypes.h" | "stdbool.h") => {}
+                    (super::target::CTarget::X86_64LinuxUserspace, "stddef.h") => {
+                        macros.insert(
+                            "NULL".into(),
+                            MacroDefinition::ObjectLike("((void*)0)".into()),
+                        );
+                        defined_macros.insert("NULL".into());
+                    }
+                    (super::target::CTarget::X86_64LinuxUserspace, "pthread.h") => {}
+                    _ => {
+                        return Err(unsupported_system_header(
+                            source_path,
+                            line_number,
+                            header,
+                            target,
+                        ));
+                    }
                 }
             }
             SourceDirective::SystemInclude(_) => {}
@@ -1119,8 +1191,10 @@ fn parse_directive(
                     ));
                 };
                 let header = &rest[1..end];
-                if matches!(header, "stdint.h" | "inttypes.h" | "stdbool.h")
-                    && trailing_comments_only(&rest[end + 1..])
+                if matches!(
+                    header,
+                    "stdint.h" | "inttypes.h" | "stdbool.h" | "stddef.h" | "pthread.h"
+                ) && trailing_comments_only(&rest[end + 1..])
                 {
                     return Ok(Some(SourceDirective::SystemInclude(header.to_string())));
                 }
@@ -1132,7 +1206,7 @@ fn parse_directive(
                     ));
                 }
                 return Ok(Some(SourceDirective::Unsupported(format!(
-                    "system header `<{header}>` is not supported; only the integer type spellings from `<stdint.h>` and `<inttypes.h>` are modeled"
+                    "system header `<{header}>` is not supported"
                 ))));
             }
             return Err(CSourceError::new(

@@ -1771,6 +1771,9 @@ pub enum C0Type {
     /// cannot be indexed, dereferenced, or used in pointer arithmetic until
     /// an explicit conversion supplies a modeled object type.
     VoidPointer,
+    /// Opaque pointer to a `void *` result slot. The declaration model keeps
+    /// its exact type without assuming that pthread_join writes through it.
+    VoidPointerPointer,
     Int16,
     Int32,
     UInt8,
@@ -1825,7 +1828,7 @@ impl CAbi {
         match (self, c_type) {
             (Self::Lp64, C0Type::Void) => (0, 1),
             (Self::Lp64, C0Type::Bool) => (1, 1),
-            (Self::Lp64, C0Type::VoidPointer) => (8, 8),
+            (Self::Lp64, C0Type::VoidPointer | C0Type::VoidPointerPointer) => (8, 8),
             (Self::Lp64, C0Type::Int16) => (2, 2),
             (Self::Lp64, C0Type::Int32) => (4, 4),
             (Self::Lp64, C0Type::Char | C0Type::UInt8) => (1, 1),
@@ -3302,6 +3305,7 @@ impl C0Type {
         matches!(
             self,
             Self::VoidPointer
+                | Self::VoidPointerPointer
                 | Self::Int32Pointer
                 | Self::Int16Pointer
                 | Self::UInt16Pointer
@@ -3389,6 +3393,7 @@ impl C0Type {
             Self::UInt64PointerPointer => Some(Self::UInt64Pointer),
             Self::Float32PointerPointer => Some(Self::Float32Pointer),
             Self::Float64PointerPointer => Some(Self::Float64Pointer),
+            Self::VoidPointerPointer => Some(Self::VoidPointer),
             Self::Void
             | Self::VoidPointer
             | Self::Bool
@@ -3428,8 +3433,9 @@ impl C0Type {
             Self::UInt64Pointer => Self::UInt64PointerPointer,
             Self::Float32Pointer => Self::Float32PointerPointer,
             Self::Float64Pointer => Self::Float64PointerPointer,
+            Self::VoidPointer => Self::VoidPointerPointer,
             Self::Void
-            | Self::VoidPointer
+            | Self::VoidPointerPointer
             | Self::Bool
             | Self::Int16PointerPointer
             | Self::UInt16PointerPointer
@@ -3461,6 +3467,7 @@ impl C0Type {
             Self::Void => crate::kernel::CType::Void,
             Self::Bool => crate::kernel::CType::Bool,
             Self::VoidPointer => crate::kernel::CType::VoidPointer,
+            Self::VoidPointerPointer => crate::kernel::CType::VoidPointerPointer,
             Self::Int16 => crate::kernel::CType::Int16,
             Self::Int32 => crate::kernel::CType::Int32,
             Self::Char => crate::kernel::CType::UInt8,
@@ -5856,6 +5863,16 @@ pub(crate) struct C0FunctionHeader {
 }
 
 impl C0FunctionHeader {
+    #[cfg(test)]
+    pub(crate) fn return_type(&self) -> C0Type {
+        self.return_type
+    }
+
+    #[cfg(test)]
+    pub(crate) fn parameters(&self) -> &[C0Parameter] {
+        &self.parameters
+    }
+
     pub(crate) fn linkage_name(&self) -> &str {
         &self.name
     }
@@ -9306,12 +9323,9 @@ impl Parser {
                 C0Type::Float32Pointer => C0Type::Float32PointerPointer,
                 C0Type::Float64Pointer => C0Type::Float64PointerPointer,
                 C0Type::Void => C0Type::VoidPointer,
-                C0Type::VoidPointer => {
-                    return Err(
-                        self.error_at_previous("pointer depth beyond `**` is not supported")
-                    );
-                }
+                C0Type::VoidPointer => C0Type::VoidPointerPointer,
                 C0Type::Int16PointerPointer
+                | C0Type::VoidPointerPointer
                 | C0Type::UInt16PointerPointer
                 | C0Type::Int32PointerPointer
                 | C0Type::CharPointerPointer
@@ -10020,6 +10034,21 @@ impl Parser {
             Some(Token::Semicolon) => {
                 self.position += 1;
                 Ok(C0Statement::Skip)
+            }
+            // Discarding a direct call's result is an ordinary C expression
+            // statement. Preserve the call while omitting its unused value.
+            Some(Token::LParen)
+                if self.peek_next() == Some(&Token::Ident("void".to_string()))
+                    && self.tokens.get(self.position + 2) == Some(&Token::RParen) =>
+            {
+                self.position += 3;
+                let function_name = self.expect_ident("function name after `(void)`")?;
+                let arguments = self.parse_call_arguments(Some(&function_name))?;
+                self.expect(Token::Semicolon)?;
+                Ok(C0Statement::Call {
+                    function_name: self.resolve_function_name(&function_name),
+                    arguments,
+                })
             }
             Some(Token::Star) => {
                 let statement = self.parse_memory_lvalue_statement("statement", None)?;
@@ -15997,6 +16026,11 @@ impl Parser {
         expression: &C0Expression,
     ) -> Result<(), C0SyntaxError> {
         if matches!(expression, C0Expression::Int32Literal(0)) {
+            return Ok(());
+        }
+        // C permits assignment from an object-erased void pointer to an
+        // object pointer without an explicit cast (C11 6.3.2.3).
+        if self.source_expression_type(expression) == Some(C0Type::VoidPointer) {
             return Ok(());
         }
         match self.struct_pointer_name(expression) {

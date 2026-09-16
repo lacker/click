@@ -47,7 +47,7 @@ pub(in crate::surface) fn initial_call_state(
                     Bitvector32Term::Variable(Variable(arguments.len() as u64)),
                 )));
             }
-            C0Type::VoidPointer => {
+            C0Type::VoidPointer | C0Type::VoidPointerPointer => {
                 arguments.push(c_typed_pointer_value(
                     Pointer {
                         block: PointerBlock::ExternalArgument,

@@ -501,6 +501,7 @@ pub(super) fn click_type_from_algebraic_value_type(
             CType::Void => C0Type::Void,
             CType::Bool => C0Type::Bool,
             CType::VoidPointer => C0Type::VoidPointer,
+            CType::VoidPointerPointer => C0Type::VoidPointerPointer,
             CType::Int16 => C0Type::Int16,
             CType::Int32 => C0Type::Int32,
             CType::UInt8 => C0Type::UInt8,
@@ -1234,7 +1235,7 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                 C0Type::Bool => {
                     crate::kernel::bool_value(Bitvector32Term::Variable(Variable(index as u64)))
                 }
-                C0Type::VoidPointer => CValue::typed_pointer(
+                C0Type::VoidPointer | C0Type::VoidPointerPointer => CValue::typed_pointer(
                     Pointer {
                         block: PointerBlock::ExternalArgument,
                         offset: scale_int32_offset(
@@ -1244,7 +1245,7 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                             1,
                         ),
                     },
-                    CType::VoidPointer,
+                    c_type.to_kernel_type(),
                 ),
                 C0Type::Int16 => CValue::Int16(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::Int32 => CValue::Int32(Bitvector32Term::Variable(Variable(index as u64))),

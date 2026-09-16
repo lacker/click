@@ -541,6 +541,9 @@ pub enum CType {
     /// It is valid for identity-preserving casts and comparisons, but not for
     /// dereference, indexing, or pointer arithmetic.
     VoidPointer,
+    /// Pointer to an opaque object-pointer slot, needed to retain the exact
+    /// `pthread_join` result parameter type even in null-only calls.
+    VoidPointerPointer,
     Int16,
     Int32,
     UInt8,

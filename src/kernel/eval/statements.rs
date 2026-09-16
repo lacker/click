@@ -3186,7 +3186,7 @@ pub(in crate::kernel) fn declare_local(
     let byte_width = match c_type {
         CType::Void => unreachable!("void local objects are not supported"),
         CType::Bool => 1,
-        CType::VoidPointer => C_POINTER_BYTE_WIDTH,
+        CType::VoidPointer | CType::VoidPointerPointer => C_POINTER_BYTE_WIDTH,
         CType::Int16 | CType::UInt16 => 2,
         CType::Int32 => 4,
         CType::Int64 | CType::UInt64 | CType::Float64 => 8,

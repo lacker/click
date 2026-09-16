@@ -3856,6 +3856,7 @@ fn c_parameter_type_spelling(parameter: &CParameter) -> String {
         CType::Void => "void",
         CType::Bool => "bool",
         CType::VoidPointer => "void*",
+        CType::VoidPointerPointer => "void**",
         CType::Int16 => "int16",
         CType::Int32 => "int32",
         CType::UInt8 => "uint8",
@@ -8722,7 +8723,9 @@ pub(crate) fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue 
     match c_type {
         CType::Void => CValue::Void,
         CType::Bool => crate::kernel::bool_value(Bitvector32Term::Variable(variable)),
-        CType::VoidPointer => CValue::typed_pointer(Pointer::symbolic(variable), c_type),
+        CType::VoidPointer | CType::VoidPointerPointer => {
+            CValue::typed_pointer(Pointer::symbolic(variable), c_type)
+        }
         CType::Int16 => CValue::Int16(Bitvector32Term::Variable(variable)),
         CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
         CType::UInt8 => CValue::UInt8(Bitvector32Term::Variable(variable)),
@@ -10269,7 +10272,8 @@ fn zero_aggregate_fields(
             | CType::Float32Array(_)
             | CType::Float64Array(_)
             | CType::Void
-            | CType::VoidPointer => {
+            | CType::VoidPointer
+            | CType::VoidPointerPointer => {
                 continue;
             }
             CType::Int16Pointer

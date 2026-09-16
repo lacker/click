@@ -826,7 +826,7 @@ fn abstract_c_state_for_join_across_with_policy(
                     Bitvector32Term::Constant(1),
                     Bitvector32Term::Constant(0),
                 )),
-                CType::VoidPointer => {
+                CType::VoidPointer | CType::VoidPointerPointer => {
                     CValue::typed_pointer(Pointer::symbolic(variables.next()), *c_type)
                 }
                 CType::Int16 => int16(Bitvector32Term::Variable(variables.next())),

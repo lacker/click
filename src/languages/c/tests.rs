@@ -1,6 +1,77 @@
 use super::*;
 
 #[test]
+fn modeled_userspace_pthread_declarations_parse_the_frozen_probe() {
+    let frozen = include_str!("../../../design/concurrency-probes/fork_join.c");
+    let sources = std::collections::BTreeMap::from([("fork_join.c", frozen)]);
+    let expanded = source::expand_includes_for_target(
+        "fork_join.c",
+        &sources,
+        target::CTarget::X86_64LinuxUserspace,
+    )
+    .expect("the narrow user-space headers should expand");
+    let unit = syntax::parse_translation_unit_for_source(
+        expanded.source(),
+        "fork_join.c",
+        expanded.line_map(),
+    )
+    .expect("the unchanged pthread probe should parse");
+    let create = &unit.function_declarations["pthread_create"];
+    assert_eq!(create.return_type(), syntax::C0Type::Int32);
+    assert_eq!(create.parameters().len(), 4);
+    assert_eq!(
+        create.parameters()[0].c_type(),
+        syntax::C0Type::UInt64Pointer
+    );
+    assert_eq!(
+        create.parameters()[1].c_type(),
+        syntax::C0Type::Int32Pointer
+    );
+    assert!(matches!(
+        create.parameters()[2].c_type(),
+        syntax::C0Type::FunctionPointer(_)
+    ));
+    assert_eq!(create.parameters()[3].c_type(), syntax::C0Type::VoidPointer);
+    assert_eq!(
+        create.parameters()[1].struct_name(),
+        Some("__click_pthread_attr")
+    );
+    assert!(create.parameters()[1].pointee_is_constant());
+    let callback = create.parameters()[2]
+        .function_pointer_signature()
+        .expect("pthread start routine signature");
+    assert_eq!(callback.return_type(), syntax::C0Type::VoidPointer);
+    assert_eq!(callback.parameters().len(), 1);
+    assert_eq!(
+        callback.parameters()[0].c_type(),
+        syntax::C0Type::VoidPointer
+    );
+    let join = &unit.function_declarations["pthread_join"];
+    assert_eq!(join.return_type(), syntax::C0Type::Int32);
+    assert_eq!(
+        join.parameters()
+            .iter()
+            .map(|p| p.c_type())
+            .collect::<Vec<_>>(),
+        vec![syntax::C0Type::UInt64, syntax::C0Type::VoidPointerPointer]
+    );
+    assert_eq!(unit.functions.len(), 2);
+}
+
+#[test]
+fn pthread_projection_is_not_a_kernel_header() {
+    let sources = std::collections::BTreeMap::from([("probe.c", "#include <pthread.h>\n")]);
+    let error =
+        source::expand_includes_for_target("probe.c", &sources, target::CTarget::X86_64LinuxKernel)
+            .expect_err("the kernel profile must not silently import pthread declarations");
+    assert!(
+        error
+            .to_string()
+            .contains("not supported for x86_64-linux-kernel")
+    );
+}
+
+#[test]
 fn direct_forward_goto_lowers_to_an_indexed_kernel_target() {
     let function =
         syntax::parse_function("int32 f(void) { int32 x; goto done; x = 9; done: return x; }")

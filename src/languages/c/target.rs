@@ -10,6 +10,9 @@ use super::syntax::CAbi;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum CTarget {
     X86_64LinuxKernel,
+    /// C11/POSIX user space with the same LP64 and unsigned-char layout, but
+    /// without the Linux kernel's `__KERNEL__` predefine.
+    X86_64LinuxUserspace,
 }
 
 impl CTarget {
@@ -18,24 +21,25 @@ impl CTarget {
     pub const fn name(self) -> &'static str {
         match self {
             Self::X86_64LinuxKernel => "x86_64-linux-kernel",
+            Self::X86_64LinuxUserspace => "x86_64-linux-userspace",
         }
     }
 
     pub const fn abi(self) -> CAbi {
         match self {
-            Self::X86_64LinuxKernel => CAbi::Lp64,
+            Self::X86_64LinuxKernel | Self::X86_64LinuxUserspace => CAbi::Lp64,
         }
     }
 
     pub const fn char_bits(self) -> u32 {
         match self {
-            Self::X86_64LinuxKernel => 8,
+            Self::X86_64LinuxKernel | Self::X86_64LinuxUserspace => 8,
         }
     }
 
     pub const fn plain_char_is_signed(self) -> bool {
         match self {
-            Self::X86_64LinuxKernel => false,
+            Self::X86_64LinuxKernel | Self::X86_64LinuxUserspace => false,
         }
     }
 
@@ -64,6 +68,30 @@ impl CTarget {
                 ("__unix", "1"),
                 ("unix", "1"),
                 ("__KERNEL__", "1"),
+                ("__BYTE_ORDER__", "1234"),
+                ("__ORDER_LITTLE_ENDIAN__", "1234"),
+                ("__ORDER_BIG_ENDIAN__", "4321"),
+            ],
+            Self::X86_64LinuxUserspace => &[
+                ("__CHAR_UNSIGNED__", "1"),
+                ("__CHAR_BIT__", "8"),
+                ("__SIZEOF_POINTER__", "8"),
+                ("__SIZEOF_LONG__", "8"),
+                ("__SIZEOF_INT__", "4"),
+                ("__SIZEOF_SHORT__", "2"),
+                ("__SIZEOF_LONG_LONG__", "8"),
+                ("__LP64__", "1"),
+                ("_LP64", "1"),
+                ("__x86_64__", "1"),
+                ("__x86_64", "1"),
+                ("__amd64__", "1"),
+                ("__amd64", "1"),
+                ("__linux__", "1"),
+                ("__linux", "1"),
+                ("linux", "1"),
+                ("__unix__", "1"),
+                ("__unix", "1"),
+                ("unix", "1"),
                 ("__BYTE_ORDER__", "1234"),
                 ("__ORDER_LITTLE_ENDIAN__", "1234"),
                 ("__ORDER_BIG_ENDIAN__", "4321"),
@@ -97,6 +125,20 @@ mod tests {
             theorems
                 .iter()
                 .all(|theorem| theorem.target() == CTarget::SUPPORTED)
+        );
+    }
+
+    #[test]
+    fn userspace_profile_never_injects_kernel_predefines() {
+        let target = CTarget::X86_64LinuxUserspace;
+        assert_eq!(target.abi(), CAbi::Lp64);
+        assert_eq!(target.char_bits(), 8);
+        assert!(!target.plain_char_is_signed());
+        assert!(
+            !target
+                .predefined_macros()
+                .iter()
+                .any(|(name, _)| *name == "__KERNEL__")
         );
     }
 }
