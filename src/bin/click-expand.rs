@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use click::cli::{
     CInput, DEFAULT_EXPANSION_TIME_LIMIT, looks_like_mdtest, parse_duration, parse_source_location,
-    read_c_inputs, read_click_project, read_mdtest, source_refs,
+    prepare_mdtest_inputs, read_c_inputs, read_click_project, read_mdtest, source_refs,
 };
 use click::surface::{
     ClickProject, c0_prepared_project_smart_tactic_source_sites,
@@ -190,7 +190,12 @@ fn run_mdtest(arguments: &Arguments) -> Result<String, String> {
             arguments.click_path.display()
         )
     })?;
-    let inputs = CInput::Bundle(mdtest.c_sources.clone());
+    let inputs = prepare_mdtest_inputs(&mdtest)?;
+    let project = if matches!(inputs, CInput::PreparedCpp(_)) {
+        Some(read_click_project(&arguments.click_path, click_source)?)
+    } else {
+        None
+    };
     let (claim, expanded) = generate_expansion(arguments.time_limit, || {
         let selection = match &arguments.selection {
             Selection::Tactic { line, column } => Selection::Tactic {
@@ -199,9 +204,15 @@ fn run_mdtest(arguments: &Arguments) -> Result<String, String> {
             },
             Selection::Claim(claim) => Selection::Claim(claim.clone()),
         };
-        expand_selection(None, click_source, &inputs, &selection)
+        expand_selection(project.as_ref(), click_source, &inputs, &selection)
     })?;
-    verify_expansion(None, &expanded, &inputs, &claim, arguments.time_limit)?;
+    verify_expansion(
+        project.as_ref(),
+        &expanded,
+        &inputs,
+        &claim,
+        arguments.time_limit,
+    )?;
     mdtest.replace_click_source(&markdown, &expanded)
 }
 
@@ -564,6 +575,19 @@ fn atomic_replace(path: &Path, contents: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cpp_mdtest_expansion_rechecks_the_imported_source() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mdtests/cpp_scalar_catch.md");
+        let arguments = parse_arguments(
+            ["--claim", "caller.ensures_0", path.to_str().unwrap()].map(str::to_string),
+        )
+        .unwrap();
+        let expanded = run(&arguments).expect("expand and reverify C++ mdtest");
+        assert!(expanded.contains("call_outcomes {"));
+        let parsed = click::cli::parse_mdtest(&path, &expanded).unwrap();
+        assert_eq!(parsed.cpp_source.unwrap().filename, "caller.cpp");
+    }
 
     #[test]
     fn resource_pattern_exit_simp_expansion_checks() {

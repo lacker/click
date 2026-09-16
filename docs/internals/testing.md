@@ -419,6 +419,18 @@ fail: expected diagnostic substring
 ```
 
 Use mdtests for focused language, lowering, proof, and diagnostic behavior.
+For a focused C++ case, replace the C fence with exactly one C++ translation
+unit and name the function selected for semantic import. For example, the
+fence metadata can be `cpp filename=caller.cpp function=caller
+profile=scalar_int32`; keep the usual Click and expected-result blocks.
+
+`profile=normal_only` uses the exception-disabled baseline; `scalar_int32`
+enables typed `int` throw/catch. The mdtest gate and the profile, expand, and
+audit commands prepare the same locked C++ semantic import in a temporary
+directory. Run `scripts/build-cpp-exporter.sh` first when using those commands
+outside `scripts/check.sh`, or set `CLICK_CPP_EXPORTER` to the pinned exporter.
+The C++ and C fences cannot be mixed in one mdtest. See
+`mdtests/cpp_scalar_catch.md` for a real exception path.
 
 ## Example project tests
 
@@ -498,7 +510,7 @@ Pass one sidecar, one example-project directory, the complete `examples`
 directory, one markdown test, or a directory of them. Direct sidecar profiling
 is useful for the sibling `.expanded.click` artifact printed by the expansion
 workflow. An mdtest is profiled from its embedded
-` ```c ` and ` ```click ` blocks using the same extraction the mdtests gate
+` ```c ` or ` ```cpp ` and ` ```click ` blocks using the same preparation the mdtests gate
 uses, and reported locations point into the markdown file. Quarantine does not
 apply — a quarantined mdtest is exactly the one worth profiling. The two modes
 are told apart by shape: example projects win whenever a Click sidecar is found

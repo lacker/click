@@ -722,6 +722,8 @@ pub fn files_with_extension(directory: &Path, extension: &str) -> Result<Vec<Pat
 pub struct MdTest {
     /// `(filename, source)` for every ```c block, in file order.
     pub c_sources: Vec<(String, String)>,
+    /// The compiler-imported C++ translation unit, when this is a C++ mdtest.
+    pub cpp_source: Option<CppMdTestSource>,
     /// The single ```click block, if the file has one.
     pub click_source: Option<String>,
     /// The one-based line in the `.md` file where the ```click block's first
@@ -730,6 +732,16 @@ pub struct MdTest {
     pub click_start_line: usize,
     /// The ```expect block, if the file has one.
     pub expectation: Option<MdTestExpectation>,
+}
+
+/// A deliberately small C++ mdtest profile: one translation unit and one
+/// selected function, imported through the pinned compiler frontend.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CppMdTestSource {
+    pub filename: String,
+    pub function: String,
+    pub profile: String,
+    pub source: String,
 }
 
 impl MdTest {
@@ -800,6 +812,7 @@ pub enum MdTestExpectation {
 pub fn parse_mdtest(path: &Path, source: &str) -> Result<MdTest, String> {
     let mut mdtest = MdTest {
         c_sources: Vec::new(),
+        cpp_source: None,
         click_source: None,
         click_start_line: 1,
         expectation: None,
@@ -846,6 +859,27 @@ pub fn parse_mdtest(path: &Path, source: &str) -> Result<MdTest, String> {
                 }
                 mdtest.c_sources.push((filename, body));
             }
+            Some(BlockKind::Cpp {
+                filename,
+                function,
+                profile,
+            }) => {
+                if mdtest
+                    .cpp_source
+                    .replace(CppMdTestSource {
+                        filename,
+                        function,
+                        profile,
+                        source: body,
+                    })
+                    .is_some()
+                {
+                    return Err(format!(
+                        "`{}` has more than one ```cpp block",
+                        path.display()
+                    ));
+                }
+            }
             Some(BlockKind::Click) => {
                 if mdtest.click_source.replace(body).is_some() {
                     return Err(format!(
@@ -868,6 +902,13 @@ pub fn parse_mdtest(path: &Path, source: &str) -> Result<MdTest, String> {
         }
     }
 
+    if mdtest.cpp_source.is_some() && !mdtest.c_sources.is_empty() {
+        return Err(format!(
+            "`{}` mixes ```c and ```cpp source blocks",
+            path.display()
+        ));
+    }
+
     Ok(mdtest)
 }
 
@@ -878,8 +919,111 @@ pub fn read_mdtest(path: &Path) -> Result<MdTest, String> {
     parse_mdtest(path, &source)
 }
 
+/// Prepares the source representation consumed by every mdtest driver. C++
+/// fences go through the same locked semantic import as ordinary C++ sidecars;
+/// they never fall back to the C parser.
+pub fn prepare_mdtest_inputs(mdtest: &MdTest) -> Result<CInput, String> {
+    let Some(cpp) = &mdtest.cpp_source else {
+        return Ok(CInput::Bundle(mdtest.c_sources.clone()));
+    };
+    static NEXT_MDTEST_IMPORT: AtomicUsize = AtomicUsize::new(0);
+    let directory = std::env::temp_dir().join(format!(
+        "click-cpp-mdtest-{}-{}",
+        std::process::id(),
+        NEXT_MDTEST_IMPORT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&directory)
+        .map_err(|error| format!("failed to create C++ mdtest directory: {error}"))?;
+    struct RemoveDirectory(PathBuf);
+    impl Drop for RemoveDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let _guard = RemoveDirectory(directory.clone());
+    let exporter = std::env::var_os("CLICK_CPP_EXPORTER")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/cpp-exporter/click-cpp-exporter")
+        });
+    let exporter = fs::canonicalize(&exporter).map_err(|error| {
+        format!(
+            "C++ mdtests need the pinned exporter at `{}` ({error}); run scripts/build-cpp-exporter.sh or set CLICK_CPP_EXPORTER",
+            exporter.display()
+        )
+    })?;
+    fs::write(directory.join(&cpp.filename), &cpp.source)
+        .map_err(|error| format!("failed to materialize C++ mdtest source: {error}"))?;
+    let exceptions = cpp.profile == "scalar_int32";
+    let arguments = vec![
+        "clang++",
+        "-x",
+        "c++",
+        "-std=c++20",
+        "--target=x86_64-unknown-linux-gnu",
+        if exceptions {
+            "-fexceptions"
+        } else {
+            "-fno-exceptions"
+        },
+        "-fno-rtti",
+        "-funsigned-char",
+        "-ffreestanding",
+        "-nostdinc",
+        "-nostdinc++",
+        "-c",
+        &cpp.filename,
+        "-o",
+        "fixture.o",
+    ];
+    let database = serde_json::json!([{
+        "directory": directory,
+        "file": cpp.filename,
+        "arguments": arguments,
+        "output": "fixture.o"
+    }]);
+    fs::write(
+        directory.join("compile_commands.json"),
+        serde_json::to_vec_pretty(&database).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("failed to materialize C++ compilation database: {error}"))?;
+    let config = serde_json::json!({
+        "schema": 6,
+        "language": "c++",
+        "standard": "c++20",
+        "target": "x86_64-unknown-linux-gnu",
+        "exceptions": exceptions,
+        "exception_behavior": cpp.profile,
+        "rtti": false,
+        "exporter": exporter,
+        "compilation_database": "compile_commands.json",
+        "working_directory": ".",
+        "source": cpp.filename,
+        "logical_source": cpp.filename,
+        "dependencies": [],
+        "function": cpp.function,
+        "artifact": "fixture.click-cpp.json"
+    });
+    let config_path = directory.join("fixture.click.import.json");
+    fs::write(
+        &config_path,
+        serde_json::to_vec_pretty(&config).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("failed to materialize C++ import config: {error}"))?;
+    crate::languages::cpp::refresh_import(&config_path)?;
+    let import = crate::languages::cpp::load_import(&config_path)?;
+    Ok(CInput::PreparedCpp(import))
+}
+
 enum BlockKind {
-    C { filename: String },
+    C {
+        filename: String,
+    },
+    Cpp {
+        filename: String,
+        function: String,
+        profile: String,
+    },
     Click,
     Expect,
 }
@@ -912,6 +1056,59 @@ fn block_kind(path: &Path, line: usize, info: &str) -> Result<Option<BlockKind>,
             }
             Ok(Some(BlockKind::C {
                 filename: filename.to_string(),
+            }))
+        }
+        "cpp" => {
+            let attributes = parts.collect::<Vec<_>>();
+            let [filename, function, profile] = attributes.as_slice() else {
+                return Err(format!(
+                    "`{}` has invalid C++ fence at line {line}: expected `cpp filename=NAME.cpp function=NAME profile=normal_only|scalar_int32`",
+                    path.display()
+                ));
+            };
+            let filename = filename.strip_prefix("filename=").ok_or_else(|| {
+                format!(
+                    "`{}` has invalid C++ filename at line {line}",
+                    path.display()
+                )
+            })?;
+            if !filename.ends_with(".cpp")
+                || Path::new(filename)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    != Some(filename)
+                || filename == ".cpp"
+            {
+                return Err(format!(
+                    "`{}` has invalid C++ filename `{filename}` at line {line}: use a local .cpp basename",
+                    path.display()
+                ));
+            }
+            let function = function
+                .strip_prefix("function=")
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    format!(
+                        "`{}` has invalid C++ function at line {line}",
+                        path.display()
+                    )
+                })?;
+            let profile = profile.strip_prefix("profile=").ok_or_else(|| {
+                format!(
+                    "`{}` has invalid C++ profile at line {line}",
+                    path.display()
+                )
+            })?;
+            if !matches!(profile, "normal_only" | "scalar_int32") {
+                return Err(format!(
+                    "`{}` has unsupported C++ profile `{profile}` at line {line}",
+                    path.display()
+                ));
+            }
+            Ok(Some(BlockKind::Cpp {
+                filename: filename.to_string(),
+                function: function.to_string(),
+                profile: profile.to_string(),
             }))
         }
         "click" | "expect" => {
@@ -1205,11 +1402,27 @@ mod tests {
             "```c\nint main() {}\n```\n",
             "```c filename=\nint main() {}\n```\n",
             "```c filename=a.c extra\nint main() {}\n```\n",
+            "```cpp filename=demo.cpp function=demo\nint demo() {}\n```\n",
+            "```cpp filename=../demo.cpp function=demo profile=normal_only\nint demo() {}\n```\n",
+            "```cpp filename=demo.cpp function=demo profile=unknown\nint demo() {}\n```\n",
             "```click extra\nverifying a.c;\n```\n",
             "```expect extra\npass\n```\n",
         ] {
             assert!(parse_mdtest(path, source).is_err(), "{source}");
         }
+    }
+
+    #[test]
+    fn mdtest_cpp_fence_selects_a_single_imported_translation_unit() {
+        let path = Path::new("cpp.md");
+        let source = "```cpp filename=demo.cpp function=demo profile=scalar_int32\nint demo() { throw 7; }\n```\n```click\nverifying \"demo.cpp\";\n```\n```expect\npass\n```\n";
+        let mdtest = parse_mdtest(path, source).unwrap();
+        assert_eq!(mdtest.c_sources, Vec::new());
+        assert_eq!(mdtest.cpp_source.unwrap().profile, "scalar_int32");
+        let mixed = "```c filename=demo.c\nint demo();\n```\n```cpp filename=demo.cpp function=demo profile=normal_only\nint demo();\n```\n";
+        assert!(parse_mdtest(path, mixed).is_err());
+        let duplicate = "```cpp filename=a.cpp function=a profile=normal_only\nint a();\n```\n```cpp filename=b.cpp function=b profile=normal_only\nint b();\n```\n";
+        assert!(parse_mdtest(path, duplicate).is_err());
     }
 
     #[test]

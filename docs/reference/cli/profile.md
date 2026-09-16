@@ -13,8 +13,9 @@ usage: click profile [OPTIONS] <sidecar.click|example-project|examples-directory
 ## Target selection
 
 `TARGET` can be a sidecar, example project, examples directory, mdtest, or
-mdtests directory. An mdtest is loaded from its fenced C and Click blocks with
-the same extraction used by the mdtest gate. Profiling ignores quarantine so a
+mdtests directory. An mdtest is loaded from its fenced C or C++ and Click blocks
+with the same preparation used by the mdtest gate. C++ fences use the pinned
+compiler importer. Profiling ignores quarantine so a
 specific quarantined fixture can be diagnosed. Each selected project receives
 its own deadline and report.
 

@@ -1,9 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use click::cli::{MdTestExpectation, read_click_project, read_mdtest, run_parallel};
+use click::cli::{
+    CInput, MdTestExpectation, prepare_mdtest_inputs, read_click_project, read_mdtest,
+    run_parallel, source_refs,
+};
 use click::instrumentation::{self, ContractFallback};
-use click::surface::{verify_c0_project, verify_c0_sources};
+use click::surface::{verify_c0_project, verify_c0_sources, verify_cpp_prepared_project};
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
@@ -149,21 +152,24 @@ fn run_mdtest(path: &Path) -> Result<(), String> {
         .click_source
         .as_deref()
         .ok_or_else(|| format!("`{}` is missing a ```click block", path.display()))?;
-    let c_sources = mdtest
-        .c_sources
-        .iter()
-        .map(|(filename, source)| (filename.as_str(), source.as_str()))
-        .collect::<Vec<_>>();
+    let inputs = prepare_mdtest_inputs(&mdtest)?;
     let expectation = mdtest
         .expectation
         .as_ref()
         .ok_or_else(|| format!("`{}` is missing a ```expect block", path.display()))?;
 
-    let result = if click_source.contains("import \"") {
-        let project = read_click_project(path, click_source)?;
-        verify_c0_project(&project, &c_sources)
-    } else {
-        verify_c0_sources(click_source, &c_sources)
+    let has_imports = click_source.contains("import \"");
+    let result = match &inputs {
+        CInput::Bundle(sources) if has_imports => {
+            let project = read_click_project(path, click_source)?;
+            verify_c0_project(&project, &source_refs(sources))
+        }
+        CInput::Bundle(sources) => verify_c0_sources(click_source, &source_refs(sources)),
+        CInput::PreparedCpp(import) => {
+            let project = read_click_project(path, click_source)?;
+            verify_cpp_prepared_project(&project, import)
+        }
+        CInput::Prepared(_) => unreachable!("mdtests have no C compiler-import fence"),
     };
     match (expectation, result) {
         (MdTestExpectation::Pass, Ok(_)) => {}

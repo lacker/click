@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use click::cli::{
     CInput, DEFAULT_EXPANSION_TIME_LIMIT, DEFAULT_SIMPLE_TACTIC_LIMIT, DEFAULT_SMART_TACTIC_LIMIT,
     MdTestExpectation, files_with_extension, find_mdtests, find_projects, format_duration,
-    format_fractional_duration, looks_like_mdtest, parse_duration, read_c_inputs,
-    read_click_project, read_mdtest, shell_quote, source_refs,
+    format_fractional_duration, looks_like_mdtest, parse_duration, prepare_mdtest_inputs,
+    read_c_inputs, read_click_project, read_mdtest, shell_quote, source_refs,
 };
 use click::instrumentation::{self, ActiveVerificationWork, TacticEvent, VerificationEvent};
 use click::surface::{
@@ -36,8 +36,8 @@ const DEFAULT_TOP_ATTRIBUTION_ROWS: usize = 8;
 const USAGE: &str = "\
 usage: click profile [OPTIONS] <sidecar.click|example-project|examples-directory|mdtest.md|mdtests-directory>
 
-An mdtest is profiled from its embedded ```c and ```click blocks, using the
-same extraction the mdtests gate uses. Quarantine does not apply: any mdtest
+An mdtest is profiled from its embedded ```c or ```cpp and ```click blocks,
+using the same source preparation the mdtests gate uses. Quarantine does not apply: any mdtest
 can be profiled, which is the point when diagnosing a slow one.
 
 Verify first. Use profile for optimization only after the selected proof
@@ -1375,10 +1375,10 @@ struct ProfiledSource {
 fn load_profiled_source(path: &Path) -> Result<ProfiledSource, String> {
     if looks_like_mdtest(path) {
         let mdtest = read_mdtest(path)?;
+        let inputs = prepare_mdtest_inputs(&mdtest)?;
         let click_source = mdtest
             .click_source
             .ok_or_else(|| format!("mdtest `{}` has no ```click block", path.display()))?;
-        let c_sources = mdtest.c_sources;
         let has_imports = !click_import_sites(&click_source)
             .map_err(|error| {
                 format!(
@@ -1388,14 +1388,14 @@ fn load_profiled_source(path: &Path) -> Result<ProfiledSource, String> {
                 )
             })?
             .is_empty();
-        let project = if has_imports {
+        let project = if has_imports || matches!(inputs, CInput::PreparedCpp(_)) {
             Some(read_click_project(path, &click_source)?)
         } else {
             None
         };
         return Ok(ProfiledSource {
             click_source,
-            inputs: CInput::Bundle(c_sources),
+            inputs,
             project,
             line_offset: mdtest.click_start_line.saturating_sub(1),
         });
@@ -1516,22 +1516,28 @@ use rendering::{render_expansion_command, render_profiles, render_profiles_with_
 /// known-broken test can still be timed; anything else is a real failure.
 fn verify_mdtest(path: &Path) -> Result<(), String> {
     let mdtest = read_mdtest(path)?;
+    let inputs = prepare_mdtest_inputs(&mdtest)?;
     let click_source = mdtest
         .click_source
         .as_deref()
         .ok_or_else(|| format!("mdtest `{}` has no ```click block", path.display()))?;
-    let c_sources = source_refs(&mdtest.c_sources);
     if instrumentation::enabled() {
         instrumentation::emit(VerificationEvent::Source(path.to_path_buf()));
     }
-    let result = if click_import_sites(click_source)
+    let has_imports = !click_import_sites(click_source)
         .map_err(|error| error.message().to_string())?
-        .is_empty()
-    {
-        verify_c0_sources(click_source, &c_sources)
-    } else {
-        let project = read_click_project(path, click_source)?;
-        verify_c0_project(&project, &c_sources)
+        .is_empty();
+    let result = match &inputs {
+        CInput::Bundle(sources) if has_imports => {
+            let project = read_click_project(path, click_source)?;
+            verify_c0_project(&project, &source_refs(sources))
+        }
+        CInput::Bundle(sources) => verify_c0_sources(click_source, &source_refs(sources)),
+        CInput::PreparedCpp(import) => {
+            let project = read_click_project(path, click_source)?;
+            verify_cpp_prepared_project(&project, import)
+        }
+        CInput::Prepared(_) => unreachable!("mdtests have no C compiler-import fence"),
     };
     match (mdtest.expectation.as_ref(), result) {
         (Some(MdTestExpectation::FailContains(expected)), Err(error)) => {

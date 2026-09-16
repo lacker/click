@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use click::cli::{
     self, CInput, MdTestExpectation, files_with_extension, find_mdtests, find_projects,
-    format_duration, looks_like_mdtest, parse_duration, read_c_inputs, read_click_project,
-    shell_quote, source_refs,
+    format_duration, looks_like_mdtest, parse_duration, prepare_mdtest_inputs, read_c_inputs,
+    read_click_project, shell_quote, source_refs,
 };
 use click::surface::{
     C0VerificationSession, ClickProject, SourcePosition, c0_incremental_selection,
@@ -707,6 +707,7 @@ fn load_audit_source_from_text(
 ) -> Result<AuditSource, String> {
     if looks_like_mdtest(path) {
         let mdtest = cli::parse_mdtest(path, &container_source)?;
+        let inputs = prepare_mdtest_inputs(&mdtest)?;
         let click_source = mdtest
             .click_source
             .clone()
@@ -720,7 +721,7 @@ fn load_audit_source_from_text(
                 )
             })?
             .is_empty();
-        let project = if !has_imports {
+        let project = if !has_imports && !matches!(inputs, CInput::PreparedCpp(_)) {
             None
         } else {
             Some(read_click_project(path, &click_source)?)
@@ -729,7 +730,7 @@ fn load_audit_source_from_text(
             container_source,
             click_source,
             c_sources: mdtest.c_sources.clone(),
-            inputs: CInput::Bundle(mdtest.c_sources.clone()),
+            inputs,
             project,
             line_offset: mdtest.click_start_line.saturating_sub(1),
             mdtest: Some(mdtest),

@@ -504,6 +504,16 @@ fn markdown_inventory_and_expansion_use_container_coordinates() {
 }
 
 #[test]
+fn cpp_mdtest_audit_inventories_imported_semantics() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mdtests/cpp_scalar_catch.md");
+    let source = load_audit_source(&path).expect("prepare C++ mdtest for audit");
+    assert!(matches!(source.inputs, CInput::PreparedCpp(_)));
+    assert!(source.project.is_some());
+    let sites = inventory_sites(&[path]).expect("inventory C++ smart proof sites");
+    assert!(sites.iter().any(|site| site.claim == "caller.ensures_0"));
+}
+
+#[test]
 fn branched_expansion_reaches_the_audit_fixed_point() {
     let directory =
         std::env::temp_dir().join(format!("click-audit-branched-paths-{}", std::process::id()));
