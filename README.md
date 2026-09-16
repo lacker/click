@@ -81,6 +81,9 @@ worktree (`scripts/tools.sh`), so the gate never installs it.
 
 High-value entry points:
 
+- [Upstream integrations](integrations/README.md): bounded, reproducible
+  claims about unchanged projects, currently including Bitcoin Core's
+  `MoneyRange` function.
 - [What Click proves](docs/concepts/what-click-proves.md): the starting point
   for readers new to Click.
 - [Specification state](docs/concepts/spec-state.md): current
