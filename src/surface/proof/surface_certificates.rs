@@ -497,6 +497,16 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
     }
+    let proof_bindings = view.proof_bindings.map(|bindings| {
+        bindings
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect::<BTreeMap<_, _>>()
+    });
+    let resolve_proof_bindings = |surface: &ClickProposition| match &proof_bindings {
+        Some(bindings) => substitute_click_proposition(surface, bindings),
+        None => Ok(surface.clone()),
+    };
     let mut premise_pairs = Vec::new();
     let mut unexpressed_premises = Vec::new();
     let premise_synthesis_span = crate::instrumentation::OperationTiming::new(
@@ -585,8 +595,9 @@ pub(super) fn lower_surface_atomic_derivation(
                     None => surface,
                 };
                 match check_selected_premise_spelling(&premise, &surface, |surface| {
+                    let resolved = resolve_proof_bindings(surface)?;
                     lower_fixed_state_proposition(
-                        surface,
+                        &resolved,
                         available,
                         parameters,
                         arguments,
@@ -627,7 +638,7 @@ pub(super) fn lower_surface_atomic_derivation(
     // reads to tell a node the spec wrote from one lowering inserted.
     let (lowered_conclusion, conclusion_introductions) =
         lower_fixed_state_proposition_with_assumptions_recording_introductions(
-            &conclusion,
+            &resolve_proof_bindings(&conclusion).map_err(ClickError::new)?,
             &assumptions_from_propositions(available),
             parameters,
             arguments,
@@ -651,7 +662,7 @@ pub(super) fn lower_surface_atomic_derivation(
         "derivation lowering: context-free normalization check",
     );
     let surface_normalizes_context_free = lower_fixed_state_proposition(
-        &conclusion,
+        &resolve_proof_bindings(&conclusion).map_err(ClickError::new)?,
         &facts_for_direct_surface_lowering(available),
         parameters,
         arguments,

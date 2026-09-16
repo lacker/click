@@ -797,7 +797,8 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
             recorded_snapshots,
             &planning_surface,
             None,
-        ),
+        )
+        .with_proof_bindings(surface_local_scope),
         state,
         available,
         parameters,

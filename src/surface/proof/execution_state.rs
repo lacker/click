@@ -1542,6 +1542,9 @@ pub(super) struct ExecutionView<'a> {
     pub(super) surface_propositions: &'a SurfacePropositionMap,
     pub(super) effect_facts: &'a [ExecutionPureFact],
     function_entry_state: Option<&'a CState>,
+    /// Lexical names available where this certificate is emitted. They are
+    /// presentation hints, never proof authority.
+    pub(super) proof_bindings: Option<&'a PersistentMap<String, ContractExpression>>,
 }
 
 impl<'a> ExecutionView<'a> {
@@ -1584,6 +1587,15 @@ impl<'a> ExecutionView<'a> {
             surface_propositions,
             effect_facts,
             function_entry_state,
+            proof_bindings: None,
         }
+    }
+
+    pub(super) fn with_proof_bindings(
+        mut self,
+        bindings: &'a PersistentMap<String, ContractExpression>,
+    ) -> Self {
+        self.proof_bindings = Some(bindings);
+        self
     }
 }

@@ -447,6 +447,54 @@ fn checked_surface_comparison_fact_in_state_with_availability(
         .as_ref()
         .is_ok_and(&fact_is_available)
     };
+    // The ordinary inverse synthesis sees C variables, but a proof `match`
+    // arm's scalar is a fresh kernel variable. Reconstruct its lexical name
+    // only at this selected-premise site. A candidate is accepted solely when
+    // scoped lowering recovers an available, matching semantic fact.
+    if let Some(bindings) = view.proof_bindings {
+        let binding_values = bindings
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let mut names = BTreeMap::<Variable, Option<String>>::new();
+        for (name, expression) in bindings.iter() {
+            if let ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(variable),
+            ))) = expression
+            {
+                names
+                    .entry(*variable)
+                    .and_modify(|name| *name = None)
+                    .or_insert_with(|| Some(name.clone()));
+            }
+        }
+        let names = names
+            .into_iter()
+            .filter_map(|(variable, name)| name.map(|name| (variable, name)))
+            .collect::<BTreeMap<_, _>>();
+        if !names.is_empty()
+            && let Some(surface) = synthesize_surface_proposition_with_bound_variable_names(
+                kernel, parameters, arguments, state, &names,
+            )
+            && let Ok(resolved) = substitute_click_proposition(&surface, &binding_values)
+            && let Ok(lowered) = lower_fixed_state_proposition_with_assumptions(
+                &resolved,
+                assumptions,
+                parameters,
+                arguments,
+                view.old_reference_state(state),
+                state,
+                None,
+                view.recorded_snapshots,
+                predicate_environment,
+                click_function_environment,
+            )
+            && lowered == *kernel
+            && fact_is_available(&lowered)
+        {
+            return Ok(surface);
+        }
+    }
     // A snapshot-indexed form paired with this exact available kernel fact
     // is checkable through the recorded-snapshot map. Requiring
     // it to lower again against the current heap would incorrectly demand that
@@ -2261,4 +2309,148 @@ pub(super) fn surface_smart_have_certificate(
             "smart `have` produced an invalid certificate: {error:?}"
         ))
     })
+}
+
+#[cfg(test)]
+mod proof_binding_tests {
+    use super::*;
+
+    #[test]
+    fn selected_match_bound_comparison_uses_only_its_checked_lexical_scope() {
+        let variable = Variable(4_000_000);
+        let fact = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessEqual(
+                Box::new(Bitvector32Term::Constant(0)),
+                Box::new(Bitvector32Term::Variable(variable)),
+            ),
+            true,
+        );
+        let binding = |variable| {
+            PersistentMap::default().with_inserted(
+                "prefix".to_string(),
+                ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                    Bitvector32Term::Variable(variable),
+                ))),
+            )
+        };
+        let scope = binding(variable);
+        let other_scope = binding(Variable(4_000_001));
+        let ambiguous_scope = scope.with_inserted(
+            "other".to_string(),
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(variable),
+            ))),
+        );
+        let frontier = ExecutionFrontier::default();
+        let snapshots = RecordedSnapshots::new();
+        let surfaces = SurfacePropositionMap::default();
+        let state = CState::new();
+        let predicates = PredicateEnvironment::new(&[]);
+        let functions = ClickFunctionEnvironment::new(&[]);
+        let select = |bindings: Option<&PersistentMap<String, ContractExpression>>| {
+            let view = ExecutionView::new(&frontier, &[], &snapshots, &surfaces, None);
+            let view = match bindings {
+                Some(bindings) => view.with_proof_bindings(bindings),
+                None => view,
+            };
+            checked_surface_comparison_fact_in_state(
+                view,
+                &fact,
+                SurfaceFactMatch::CanonicalExact,
+                std::slice::from_ref(&fact),
+                &[],
+                &[],
+                &state,
+                &predicates,
+                &functions,
+            )
+        };
+        let selected = select(Some(&scope)).expect("the bound scalar has a source spelling");
+        assert_eq!(
+            selected,
+            ClickProposition::Comparison {
+                left: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                    Bitvector32Term::Constant(0),
+                ))),
+                operator: ComparisonOperator::LessEqual,
+                right: ContractExpression::CFragment(CExpression::Variable("prefix".to_string(),)),
+            }
+        );
+        let derivation = assumptions_from_propositions(std::slice::from_ref(&fact))
+            .derive_simp_atomic_proposition(&fact)
+            .expect("the available comparison has a selected derivation");
+        let view = ExecutionView::new(&frontier, &[], &snapshots, &surfaces, None)
+            .with_proof_bindings(&scope);
+        let (_, certificate) = lower_surface_atomic_derivation(
+            view,
+            &derivation,
+            Some(&selected),
+            None,
+            std::slice::from_ref(&fact),
+            &[],
+            &[],
+            &state,
+            &predicates,
+            &functions,
+        )
+        .expect("the selected premise has a source certificate");
+        let SourceProof::Script(tactics) = certificate else {
+            panic!("the bound comparison must have a simple certificate");
+        };
+        let wrong_view = ExecutionView::new(&frontier, &[], &snapshots, &surfaces, None)
+            .with_proof_bindings(&other_scope);
+        assert!(
+            lower_surface_atomic_derivation(
+                wrong_view,
+                &derivation,
+                Some(&selected),
+                None,
+                std::slice::from_ref(&fact),
+                &[],
+                &[],
+                &state,
+                &predicates,
+                &functions,
+            )
+            .is_err(),
+            "a certificate must not reuse the same spelling in another arm"
+        );
+        let theorems = TheoremEnvironment::new(&[]);
+        let root = Proof::for_fixed_state_surface_goal(
+            "matched prefix",
+            0,
+            std::slice::from_ref(&fact),
+            fact.clone(),
+            selected,
+            &[],
+            &[],
+            &state,
+            &state,
+            &snapshots,
+            &surfaces,
+            &predicates,
+            &functions,
+            &theorems,
+            &[],
+            &[],
+        )
+        .with_surface_local_scope(&scope);
+        assert!(
+            root.try_authoritative_linear_script(&tactics)
+                .expect("the lexical certificate must check")
+                .is_some_and(|proof| proof.is_complete())
+        );
+        assert!(
+            select(None).is_err(),
+            "a fresh kernel variable is not source syntax"
+        );
+        assert!(
+            select(Some(&other_scope)).is_err(),
+            "a reused spelling must not cite another match arm's variable"
+        );
+        assert!(
+            select(Some(&ambiguous_scope)).is_err(),
+            "two names for one binding need an explicit source choice"
+        );
+    }
 }

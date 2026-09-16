@@ -451,6 +451,11 @@ Three standing rules keep the boundary where the 2026-09 cleanup left it.
   lookup that reached no spelling still reaches none. Every other premise
   keeps the cheap recorded-pair route, because re-lowering every candidate
   costs a smart `have` about half its real-time budget again.
+  A fixed-state certificate inside a proof `match` also retains that site's
+  lexical bindings. If a selected comparison has no recorded spelling, it may
+  reconstruct a match-bound scalar name, but only when lowering that name in
+  the same scope yields the exact available kernel premise. The emitted proof
+  keeps the source name, never the kernel's fresh variable spelling.
 
 The target invariants are:
 
