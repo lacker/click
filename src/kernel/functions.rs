@@ -18289,6 +18289,9 @@ fn function_outcome_from_body_with_population_transition(
     argument_values: &[CValue],
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<(CFunctionOutcome, Vec<ProofObligation>)> {
+    if let Some(error) = exceptional_outcome_declaration_error(function, &outcome) {
+        return Ok((CFunctionOutcome::RuntimeError(error), obligations));
+    }
     if matches!(&outcome, CStatementOutcome::Throw { .. })
         && (!function.resource_requires().is_empty()
             || !function.resource_ensures().is_empty()
@@ -18364,6 +18367,9 @@ fn function_outcome_from_body_with_resource_transfer(
     Vec<ProofObligation>,
     Option<Arc<CheckedLoanCallEvidence>>,
 )> {
+    if let Some(error) = exceptional_outcome_declaration_error(function, &outcome) {
+        return Ok((CFunctionOutcome::RuntimeError(error), obligations, None));
+    }
     if matches!(&outcome, CStatementOutcome::Throw { .. })
         && (!function.resource_requires().is_empty()
             || !function.resource_ensures().is_empty()
@@ -18817,6 +18823,15 @@ pub(super) fn function_outcome_from_body(
             )
         }
         CStatementOutcome::Throw { value, state } => {
+            if !function.exceptional_signature().permits(&value) {
+                return (
+                    CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                        "{} produced an exceptional outcome not declared by its signature",
+                        function.name()
+                    ))),
+                    obligations,
+                );
+            }
             let mut caller_state = caller_state.clone();
             caller_state.set_memory(state.memory.clone());
             if function.has_inline_body() {
@@ -18863,6 +18878,21 @@ pub(super) fn function_outcome_from_body(
             (CFunctionOutcome::RuntimeError(error), obligations)
         }
     }
+}
+
+fn exceptional_outcome_declaration_error(
+    function: &CFunction,
+    outcome: &CStatementOutcome,
+) -> Option<CRuntimeError> {
+    let CStatementOutcome::Throw { value, .. } = outcome else {
+        return None;
+    };
+    (!function.exceptional_signature().permits(value)).then(|| {
+        CRuntimeError::FunctionContract(format!(
+            "{} produced an exceptional outcome not declared by its signature",
+            function.name()
+        ))
+    })
 }
 
 impl From<u32> for Bitvector32Term {

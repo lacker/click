@@ -2342,6 +2342,20 @@ impl CType {
         return_constant: bool,
         parameters: &[(Self, bool)],
     ) -> CallbackSignature {
+        Self::qualified_function_pointer_signature_with_exceptional_outcome(
+            return_type,
+            return_constant,
+            parameters,
+            CExceptionalSignature::None,
+        )
+    }
+
+    pub(crate) fn qualified_function_pointer_signature_with_exceptional_outcome(
+        return_type: Self,
+        return_constant: bool,
+        parameters: &[(Self, bool)],
+        exceptional_signature: CExceptionalSignature,
+    ) -> CallbackSignature {
         // Exact base-42 digits: twenty-one modeled types, each with a pointee-const
         // bit. The leading one distinguishes arities. Fourteen digits plus
         // the sentinel use fewer than 76 bits, preserving the 13-parameter
@@ -2411,6 +2425,13 @@ impl CType {
             };
             signature = signature * 42 + parameter_code;
         }
+        // Ordinary callback signatures occupy fewer than 76 bits. Reserve a
+        // high bit for the closed int32 exceptional channel so existing
+        // non-throwing encodings remain stable and cannot collide with it.
+        let signature = match exceptional_signature {
+            CExceptionalSignature::None => signature,
+            CExceptionalSignature::Int32 => signature | (1u128 << 79),
+        };
         CallbackSignature::from_encoded(signature)
     }
 

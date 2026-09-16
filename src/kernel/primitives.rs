@@ -611,6 +611,31 @@ impl std::fmt::Debug for CallbackSignature {
     }
 }
 
+/// The exceptional result channel declared by a function signature.
+///
+/// This is deliberately kernel-internal until the surface language has a
+/// settled way to spell exceptional contracts.  The closed representation
+/// prevents body execution from silently inventing new exceptional payload
+/// types in the meantime.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) enum CExceptionalSignature {
+    #[default]
+    None,
+    // Staged for kernel callers before any source importer can construct it.
+    #[allow(dead_code)]
+    Int32,
+}
+
+impl CExceptionalSignature {
+    pub(crate) fn is_empty(self) -> bool {
+        self == Self::None
+    }
+
+    pub(crate) fn permits(self, value: &CValue) -> bool {
+        matches!((self, value), (Self::Int32, CValue::Int32(_)))
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CLValue {
     pub(super) storage: CLValueStorage,
@@ -2234,6 +2259,7 @@ pub struct CFunctionContractInterface {
     pub(crate) return_type: CType,
     pub(crate) return_pointee_constant: bool,
     pub(crate) return_aggregate_layout: Option<CAggregateLayout>,
+    pub(crate) exceptional_signature: CExceptionalSignature,
     pub(crate) parameters: Vec<CParameter>,
     /// Explicit resource-instance binders introduced by a named contract.
     /// These are part of the application interface, not a body assumption.

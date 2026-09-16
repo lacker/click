@@ -90,3 +90,29 @@ fn callback_signature_codes_cannot_overlap_adjacent_types() {
         CallbackSignature::UNSPECIFIED
     );
 }
+
+#[test]
+fn exceptional_outcome_is_part_of_callback_signature_identity() {
+    let ordinary = c_function(
+        CType::Int32,
+        "ordinary",
+        vec![c_parameter("value", CType::Int32)],
+        c_return(c_variable("value")),
+    );
+    let exceptional = ordinary.clone().with_int32_exceptional_outcome();
+
+    assert_ne!(
+        ordinary.function_pointer_type(),
+        exceptional.function_pointer_type()
+    );
+    assert!(
+        !ordinary
+            .contract_interface()
+            .exactly_matches(exceptional.contract_interface())
+    );
+    assert!(
+        !ordinary
+            .contract_interface()
+            .has_compatible_signature_and_composite_vocabulary(exceptional.contract_interface())
+    );
+}

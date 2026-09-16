@@ -880,7 +880,8 @@ fn direct_call_propagates_internal_throw_and_skips_its_suffix() {
         "thrower",
         Vec::new(),
         CStatement::Throw(c_int32_literal(7)),
-    );
+    )
+    .with_int32_exceptional_outcome();
     let environment = CExecutionEnvironment::new().with_function(thrower);
     let state = CState::new().with_local("result", int32(1));
     let statement = c_seq(
@@ -916,9 +917,20 @@ fn internal_throw_is_int32_only_and_refused_as_an_opaque_contract() {
         "throwing",
         Vec::new(),
         CStatement::Throw(c_int32_literal(7)),
-    );
+    )
+    .with_int32_exceptional_outcome();
     assert!(!throwing.opaque_contract_supported());
     assert!(CFunctionContract::new("Throwing", throwing.clone()).is_none());
+
+    let declared_without_throw = c_function(
+        CType::Int32,
+        "declared_without_throw",
+        Vec::new(),
+        c_return(c_int32_literal(0)),
+    )
+    .with_int32_exceptional_outcome();
+    assert!(!declared_without_throw.opaque_contract_supported());
+    assert!(CFunctionContract::new("DeclaredWithoutThrow", declared_without_throw).is_none());
 
     let modular = prove_symbolic_c_execution_with_environment(
         CState::new(),
@@ -954,6 +966,30 @@ fn internal_throw_is_int32_only_and_refused_as_an_opaque_contract() {
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             ..
         }
+    ));
+}
+
+#[test]
+fn function_execution_rejects_an_undeclared_exceptional_outcome() {
+    let function = c_function(
+        CType::Int32,
+        "undeclared_throw",
+        Vec::new(),
+        CStatement::Throw(c_int32_literal(7)),
+    );
+    let theorem = prove_symbolic_c_function_execution(
+        CState::new(),
+        function,
+        Vec::new(),
+        PureFactContext::new(),
+    )
+    .expect("an undeclared throw should produce a checked contract error");
+    assert!(matches!(
+        theorem.proposition(),
+        Proposition::CFunctionExecutes {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
+            ..
+        } if message == "undeclared_throw produced an exceptional outcome not declared by its signature"
     ));
 }
 

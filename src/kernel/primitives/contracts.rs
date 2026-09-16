@@ -689,6 +689,7 @@ impl CFunctionContractInterface {
             return_type,
             return_pointee_constant: false,
             return_aggregate_layout: None,
+            exceptional_signature: CExceptionalSignature::None,
             parameters,
             proof_parameters: Default::default(),
             resource_requires: Vec::new(),
@@ -722,6 +723,10 @@ impl CFunctionContractInterface {
 
     pub fn parameters(&self) -> &[CParameter] {
         &self.parameters
+    }
+
+    pub(crate) fn exceptional_signature(&self) -> CExceptionalSignature {
+        self.exceptional_signature
     }
 
     pub(crate) fn proof_parameters(&self) -> &[CResourceSpec] {
@@ -785,7 +790,7 @@ impl CFunctionContractInterface {
     }
 
     pub fn opaque_contract_supported(&self) -> bool {
-        self.opaque_contract_supported
+        self.opaque_contract_supported && self.exceptional_signature.is_empty()
     }
 
     pub fn composite_resource_definitions(&self) -> &[CCompositeResourceDefinition] {
@@ -797,15 +802,18 @@ impl CFunctionContractInterface {
     }
 
     pub(crate) fn function_pointer_type(&self) -> CType {
-        CType::FunctionPointer(CType::qualified_function_pointer_signature(
-            self.return_type(),
-            self.return_pointee_is_constant(),
-            &self
-                .parameters()
-                .iter()
-                .map(|parameter| (parameter.c_type(), parameter.pointee_is_constant()))
-                .collect::<Vec<_>>(),
-        ))
+        CType::FunctionPointer(
+            CType::qualified_function_pointer_signature_with_exceptional_outcome(
+                self.return_type(),
+                self.return_pointee_is_constant(),
+                &self
+                    .parameters()
+                    .iter()
+                    .map(|parameter| (parameter.c_type(), parameter.pointee_is_constant()))
+                    .collect::<Vec<_>>(),
+                self.exceptional_signature(),
+            ),
+        )
     }
 
     /// Compare exactly the semantic interface, including normalized resource
@@ -814,6 +822,7 @@ impl CFunctionContractInterface {
         self.return_type == other.return_type
             && self.return_pointee_constant == other.return_pointee_constant
             && self.return_aggregate_layout == other.return_aggregate_layout
+            && self.exceptional_signature == other.exceptional_signature
             && self.parameters == other.parameters
             && self.proof_parameters == other.proof_parameters
             && self.resource_requires == other.resource_requires
@@ -841,6 +850,7 @@ impl CFunctionContractInterface {
         self.return_type == other.return_type
             && self.return_pointee_constant == other.return_pointee_constant
             && self.return_aggregate_layout == other.return_aggregate_layout
+            && self.exceptional_signature == other.exceptional_signature
             && self.parameters.len() == other.parameters.len()
             && self
                 .parameters
@@ -1008,6 +1018,14 @@ impl CFunction {
         self
     }
 
+    /// Internal staging hook for importers and tests. No source frontend opts
+    /// into the exceptional channel yet.
+    #[allow(dead_code)]
+    pub(crate) fn with_int32_exceptional_outcome(mut self) -> Self {
+        self.contract_interface.exceptional_signature = CExceptionalSignature::Int32;
+        self
+    }
+
     pub fn with_contract(
         mut self,
         requires: Vec<SpecProposition>,
@@ -1172,6 +1190,10 @@ impl CFunction {
 
     pub(crate) fn function_pointer_type(&self) -> CType {
         self.contract_interface.function_pointer_type()
+    }
+
+    pub(crate) fn exceptional_signature(&self) -> CExceptionalSignature {
+        self.contract_interface.exceptional_signature()
     }
 
     pub fn body(&self) -> &CStatement {
