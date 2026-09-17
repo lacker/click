@@ -2851,7 +2851,10 @@ fn verify_c0_sources_with_context(
                         )));
                     }
                 }
-                if !loop_measures.is_empty() {
+                // As in `c_function_termination_plans`, a `diverges` function
+                // never requests whole-function termination evidence, even
+                // when some of its loops are ranked.
+                if !loop_measures.is_empty() && !function_block.signature.diverges() {
                     let executing_name = executing_function_name(
                         &termination_kernel_names,
                         function_block.signature.name(),
@@ -3848,6 +3851,13 @@ pub(in crate::surface) fn c_function_termination_plans(
     let mut requested = BTreeSet::new();
     for function in file.function_blocks() {
         if function.is_external() {
+            continue;
+        }
+        // A `diverges` function declares that it may not return, so it never
+        // asks for whole-function termination evidence. Its ranked loops keep
+        // their back-edge ranking members, which lowering reads from the loop
+        // clause rather than from a plan.
+        if function.signature().diverges() {
             continue;
         }
         let selected = selected_functions

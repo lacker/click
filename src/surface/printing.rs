@@ -437,11 +437,16 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 output,
                 &prefix,
                 &format!(
-                    "loop{} {{",
+                    "loop{}{} {{",
                     loop_clause
                         .label()
                         .map(|label| format!(" as {label}"))
-                        .unwrap_or_default()
+                        .unwrap_or_default(),
+                    if loop_clause.diverges() {
+                        " diverges"
+                    } else {
+                        ""
+                    }
                 ),
             );
             let body_prefix = "    ".repeat(indent + 1);

@@ -2237,6 +2237,34 @@ impl Parser {
                 "exceptional contracts with resources or mutable effects are not supported in this slice",
             ));
         }
+        // `diverges` says the function may not return, so it cannot also ask
+        // for the termination evidence a `decreases` clause requests, and
+        // every loop that says it may not exit needs the function to say so.
+        if signature.diverges() && decreases.is_some() {
+            return Err(self.error(format!(
+                "`{}` is declared `diverges` and cannot also carry a function-level `decreases` clause",
+                signature.name()
+            )));
+        }
+        if !signature.diverges() {
+            let mut loop_clauses = Vec::new();
+            if let Some(proof) = &grouped_proof {
+                proof.collect_termination_loop_clauses(&mut loop_clauses);
+            }
+            for ensure in ensures.iter().chain(exceptional_ensures.iter()) {
+                ensure
+                    .proof()
+                    .collect_termination_loop_clauses(&mut loop_clauses);
+            }
+            if let Some(clause) = loop_clauses.iter().find(|clause| clause.diverges()) {
+                return Err(self.error(format!(
+                    "{} in `{}` is declared `diverges`, so `{}` must be declared `diverges` too",
+                    loop_clause_description(clause.label()),
+                    signature.name(),
+                    signature.name()
+                )));
+            }
+        }
         self.current_struct_params = previous_struct_params;
         self.current_void_pointer_params = previous_void_pointer_params;
         let parameter_struct_casts = std::mem::replace(
@@ -2405,6 +2433,19 @@ impl Parser {
         } else {
             None
         };
+        // `diverges` is contextual: only the position right after the
+        // parameter list, or right after a `throws` payload type, gives the
+        // spelling its meaning. The order is fixed so one signature has one
+        // spelling.
+        let diverges = if self.peek_ident() == Some("diverges") {
+            self.position += 1;
+            true
+        } else {
+            false
+        };
+        if diverges && self.peek_ident() == Some("throws") {
+            return Err(self.error("`throws` must come before `diverges` in a signature"));
+        }
         let struct_params = parsed_parameters.struct_params;
         let struct_array_params = parsed_parameters.struct_array_params;
 
@@ -2415,6 +2456,7 @@ impl Parser {
                 name,
                 parameters: parsed_parameters.parameters,
                 exceptional_type,
+                diverges,
                 declared_loadable_bytes: parsed_parameters.declared_loadable_bytes,
             },
             struct_params,
@@ -4512,6 +4554,14 @@ impl Parser {
             } else {
                 None
             };
+            // A loop has no signature, so its `diverges` marker sits on the
+            // head, where the signature marker sits for a function.
+            let diverges = if self.peek_ident() == Some("diverges") {
+                self.position += 1;
+                true
+            } else {
+                false
+            };
             self.expect(Token::LBrace)?;
             let mut items = Vec::new();
             let mut resources = Vec::new();
@@ -4550,6 +4600,12 @@ impl Parser {
                     if decreases.is_some() {
                         return Err(self.error("duplicate loop `decreases` clause"));
                     }
+                    if diverges {
+                        return Err(self.error(format!(
+                            "{} is declared `diverges` and cannot also carry a `decreases` clause",
+                            loop_clause_description(label.as_deref())
+                        )));
+                    }
                     decreases = Some(self.parse_termination_measure()?);
                     self.expect(Token::Semicolon)?;
                     continue;
@@ -4576,7 +4632,7 @@ impl Parser {
             if self.peek() == Some(&Token::Semicolon) {
                 self.position += 1;
             }
-            if items.is_empty() && decreases.is_none() && resources.is_empty() {
+            if items.is_empty() && decreases.is_none() && resources.is_empty() && !diverges {
                 return Err(self
                     .error("`loop` block must contain at least one item or a `decreases` clause"));
             }
@@ -4586,6 +4642,7 @@ impl Parser {
                 region: CodeRegion::Loop(usize::MAX),
                 label,
                 decreases,
+                diverges,
                 items,
                 resources,
                 initialize_proof,
@@ -8283,6 +8340,15 @@ impl Parser {
 
     fn error(&self, message: impl Into<String>) -> ClickError {
         self.error_at(self.here(), message)
+    }
+}
+
+/// How a diagnostic names one `loop` clause. A loop has no signature, so its
+/// own label is the only name it can carry at parse time.
+fn loop_clause_description(label: Option<&str>) -> String {
+    match label {
+        Some(label) => format!("the loop `{label}`"),
+        None => "the loop".to_string(),
     }
 }
 

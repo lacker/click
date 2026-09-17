@@ -1849,15 +1849,13 @@ fn find_function(tokens: &[SourceToken], name: &str) -> Result<FunctionSource, C
             continue;
         }
         let parameters_close = matching_delimiter(tokens, index + 1, "(", ")")?;
-        let body_open = if tokens
-            .get(parameters_close + 1)
-            .map(|token| token.text.as_str())
-            == Some("throws")
-        {
-            parameters_close + 3
-        } else {
-            parameters_close + 1
-        };
+        let mut body_open = parameters_close + 1;
+        if tokens.get(body_open).map(|token| token.text.as_str()) == Some("throws") {
+            body_open += 2;
+        }
+        if tokens.get(body_open).map(|token| token.text.as_str()) == Some("diverges") {
+            body_open += 1;
+        }
         if tokens.get(body_open).map(|token| token.text.as_str()) != Some("{") {
             continue;
         }

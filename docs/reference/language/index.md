@@ -301,6 +301,35 @@ ordinary `ensures` continue to use partial correctness and do not silently
 depend on it. A perpetual service loop should therefore have an invariant but
 no `decreases` clause.
 
+The `diverges` marker lets that loop say so in the contract instead of leaving
+it to the reader. It sits after the parameter list, beside `throws` and after
+it when a signature carries both, and on a `loop` head, which has no signature
+of its own:
+
+<!-- verified-example: mdtests/diverges_perpetual_loop.md -->
+```click
+int32 wait_for_zero(int32 x) diverges {
+    ensures result == 1;
+} by {
+    loop diverges {
+        invariant x == x;
+    }
+}
+```
+
+The marker declares that the function, or that loop, may not return; it makes
+no other claim and yields no evidence. The contract keeps exactly the partial
+correctness it already had: safety is checked on every execution prefix, and
+the `ensures` holds if the function returns. Because a marked function never
+yields termination evidence, it cannot also carry a function-level `decreases`
+clause, a marked loop cannot also carry a loop `decreases`, and a `loop
+diverges` is refused unless its enclosing function is declared `diverges` too.
+A marked function's other loops may still be ranked: their back-edge ranking
+members are checked as usual, but the function still gives its callers no
+whole-function termination evidence. An `extern` contract takes the marker in
+the same signature position and still refuses `decreases`, since it has no
+body to rank.
+
 Termination and host capacity are separate judgments. Click does not model
 process stack exhaustion, address-space exhaustion, operating-system
 allocation failure, or local-storage limits. A verified function can still

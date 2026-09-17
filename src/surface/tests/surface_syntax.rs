@@ -3668,3 +3668,203 @@ fn symbolic_integer_datatype_match_does_not_capture_outer_binding() {
         error.message()
     );
 }
+
+/// `diverges` is contextual: it means "may not return" only right after a
+/// parameter list, so existing C spellings keep working.
+#[test]
+fn diverges_stays_an_ordinary_identifier_elsewhere() {
+    let c_source = r#"
+            int32 diverges(int32 diverges) {
+                return diverges;
+            }
+        "#;
+    let click_source = r#"
+            verifying "diverges.c";
+
+            int32 diverges(int32 diverges) {
+                ensures result == diverges by auto;
+            }
+        "#;
+    verify_c0_sources(click_source, &[("diverges.c", c_source)])
+        .expect("`diverges` must still name a C function and a parameter");
+}
+
+/// The signature markers have one order, so a reader never has to know that
+/// two spellings mean the same thing.
+#[test]
+fn diverges_must_follow_throws_in_a_signature() {
+    let c_source = "int32 f(int32 x) { return x; }";
+    let click_source = r#"
+            verifying "f.c";
+
+            int32 f(int32 x) diverges throws int32 {
+                ensures result == x by auto;
+            }
+        "#;
+    let error = verify_c0_sources(click_source, &[("f.c", c_source)])
+        .expect_err("`diverges throws` must be refused");
+    assert!(
+        error
+            .message()
+            .contains("`throws` must come before `diverges`"),
+        "{}",
+        error.message()
+    );
+
+    let ordered = click_source.replace("diverges throws int32", "throws int32 diverges");
+    verify_c0_sources(&ordered, &[("f.c", c_source)])
+        .expect("`throws int32 diverges` is the accepted order");
+}
+
+/// An `external` contract is a signature too, so it takes the marker; it
+/// still has no body to rank, so `decreases` stays refused there.
+#[test]
+fn external_contracts_accept_diverges_and_still_reject_decreases() {
+    let c_source = r#"
+            int32 caller(int32 fd) {
+                int32 result;
+                result = wait_event(fd);
+                return result;
+            }
+        "#;
+    let marked = r#"
+            verifying "wait.c";
+
+            extern int32 wait_event(int32 fd) diverges {
+                ensures result == 0;
+            }
+
+            int32 caller(int32 fd) diverges {
+                ensures result == 0 by auto;
+            }
+        "#;
+    verify_c0_sources(marked, &[("wait.c", c_source)])
+        .expect("an external contract takes the marker");
+
+    let ranked = marked.replace(
+        "extern int32 wait_event(int32 fd) diverges {",
+        "extern int32 wait_event(int32 fd) diverges {\n                decreases fd;",
+    );
+    let error = verify_c0_sources(&ranked, &[("wait.c", c_source)])
+        .expect_err("an external contract cannot carry a `decreases` clause");
+    assert!(
+        error
+            .message()
+            .contains("external function contracts cannot carry proof or decreases clauses"),
+        "{}",
+        error.message()
+    );
+}
+
+/// Expansion re-emits the proof script it checked, so a `loop diverges` head
+/// must survive the round trip.
+#[test]
+fn loop_diverges_round_trips_through_expansion() {
+    let c_source = r#"
+            int32 spin() {
+                while (1) {
+                }
+                return 0;
+            }
+        "#;
+    let body = "loop diverges { invariant 0 == 0; initialize by simp; preserve by { step(); close_invariants(); } } simp();";
+    let click_source = format!(
+        r#"verifying "spin.c";
+
+            int32 spin() diverges {{
+                ensures 0 == 0;
+            }} by {{ {body} }}
+        "#
+    );
+    let verified = verify_c0_sources(&click_source, &[("spin.c", c_source)])
+        .expect("a marked perpetual loop proves partial correctness");
+    let expanded = verified[0]
+        .expanded_proof_source()
+        .expect("a checked proof expands");
+    assert!(
+        expanded.contains("loop diverges {"),
+        "expansion must reprint the loop marker:\n{expanded}"
+    );
+    verify_c0_sources(
+        &click_source.replace(&format!("by {{ {body} }}"), &expanded),
+        &[("spin.c", c_source)],
+    )
+    .expect("the reprinted proof checks unchanged");
+
+    // Locating the proof body in the source skips the signature markers, so
+    // in-place expansion must see past `diverges` as it does past `throws`.
+    let closer = click_source
+        .rfind("simp();")
+        .expect("proof should contain its direct closer");
+    let line = click_source[..closer]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = closer
+        - click_source[..closer]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let in_place = expand_c0_tactic_source_at(&click_source, &[("spin.c", c_source)], line, column)
+        .expect("a marked signature must not hide the proof body");
+    verify_c0_sources(&in_place, &[("spin.c", c_source)])
+        .expect("the in-place expansion checks unchanged");
+}
+
+/// The marker withholds whole-function termination evidence even when the
+/// function ranks some of its loops.
+#[test]
+fn a_diverges_function_never_yields_termination_evidence() {
+    let c_source = r#"
+            int32 drain_then_wait(int32 n, int32 x) {
+                while (n > 0) {
+                    n = n - 1;
+                }
+                while (x != 0) {
+                }
+                return n;
+            }
+        "#;
+    let click_source = r#"
+            verifying "drain_then_wait.c";
+
+            int32 drain_then_wait(int32 n, int32 x) diverges {
+                requires n >= 0;
+                ensures result == 0;
+            } by {
+                loop {
+                    decreases n;
+                    invariant n >= 0;
+                    initialize by simp;
+                    preserve by {
+                        have 0 <= n - 1 by {
+                            apply(int32_positive_predecessor_is_nonnegative(n)) using { n > 0; }
+                        }
+                        step();
+                        close_invariants by {
+                            both { arithmetic() using { 0 <= n; } }
+                            and {
+                                both { arithmetic() using { 0 <= n; } }
+                                and { arithmetic() using { 0 <= n; } }
+                            }
+                        }
+                    }
+                }
+                loop diverges {
+                    invariant n == 0;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants by { simp(); }
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let (session, _) = C0VerificationSession::new(click_source, &[("drain_then_wait.c", c_source)])
+        .expect("a marked function still verifies its ranked loop's bundle");
+    assert!(!session.function_termination_is_verified("drain_then_wait"));
+}

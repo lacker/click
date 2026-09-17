@@ -1011,6 +1011,7 @@ fn step_certificate_rejects_a_loop_step_with_an_unplanned_phase() {
         region: CodeRegion::Loop(0),
         label: None,
         decreases: None,
+        diverges: false,
         items: Vec::new(),
         resources: Vec::new(),
         initialize_proof: Some(Box::new(

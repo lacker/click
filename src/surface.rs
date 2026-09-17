@@ -208,6 +208,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "counted",
     "decreases",
     "defined",
+    "diverges",
     "double_negation",
     "else",
     "ensures",
@@ -326,6 +327,7 @@ pub const SURFACE_CLICK_FORMS: &[&str] = &[
     "contract",
     "decreases",
     "defined",
+    "diverges",
     "effect",
     "ensures",
     "exists",
@@ -1036,6 +1038,11 @@ pub struct FunctionSignature {
     /// The payload type of the function's declared exceptional outcome.
     /// This surface slice currently accepts only `throws int32`.
     exceptional_type: Option<C0Type>,
+    /// Whether the signature declares `diverges`: the function may not
+    /// return. Termination is opt-in today, so the marker changes no
+    /// judgment; it withholds the whole-function termination evidence a
+    /// `decreases` clause would otherwise request.
+    diverges: bool,
     /// Byte spans declared by sized array parameter spellings
     /// (`int32 p[2]`), used to certify requirement side-obligations.
     declared_loadable_bytes: Vec<(String, u32)>,
@@ -1079,6 +1086,10 @@ pub struct StructuralClause {
     region: CodeRegion,
     label: Option<String>,
     decreases: Option<TerminationMeasure>,
+    /// Whether the head declares `loop diverges`: this loop may not exit.
+    /// It excludes a `decreases` clause and requires the enclosing function
+    /// to be declared `diverges` too.
+    diverges: bool,
     items: Vec<StructuralItem>,
     /// The proof locals in scope where a frontier loop clause was written: a
     /// proof `match` arm's bindings, `unfold ... as` names, call-result
@@ -3311,6 +3322,7 @@ pub struct CertificateStructuralClause {
     region: CodeRegion,
     label: Option<String>,
     decreases: Option<TerminationMeasure>,
+    diverges: bool,
     items: Vec<CertificateStructuralItem>,
     resources: Vec<ResourceClause>,
     initialize_proof: Option<Box<ProofCertificate>>,
@@ -3724,6 +3736,7 @@ impl ProofStep {
                 region: clause.region,
                 label: clause.label.clone(),
                 decreases: clause.decreases.clone(),
+                diverges: clause.diverges,
                 resources: clause.resources.clone(),
                 items: clause
                     .items
@@ -3900,6 +3913,7 @@ impl ProofStep {
                 region: clause.region,
                 label: clause.label.clone(),
                 decreases: clause.decreases.clone(),
+                diverges: clause.diverges,
                 resources: clause.resources.clone(),
                 items: clause
                     .items
@@ -5707,6 +5721,7 @@ impl FunctionSignature {
             name: name.into(),
             parameters,
             exceptional_type: None,
+            diverges: false,
             declared_loadable_bytes: Vec::new(),
         }
     }
@@ -5738,6 +5753,11 @@ impl FunctionSignature {
 
     pub fn exceptional_type(&self) -> Option<C0Type> {
         self.exceptional_type
+    }
+
+    /// Whether the signature declares `diverges`.
+    pub fn diverges(&self) -> bool {
+        self.diverges
     }
 }
 
@@ -5849,6 +5869,11 @@ impl StructuralClause {
 
     pub fn decreases(&self) -> Option<&TerminationMeasure> {
         self.decreases.as_ref()
+    }
+
+    /// Whether the loop head declares `diverges`.
+    pub fn diverges(&self) -> bool {
+        self.diverges
     }
 
     pub fn items(&self) -> &[StructuralItem] {
