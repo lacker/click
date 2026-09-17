@@ -3791,6 +3791,15 @@ pub struct CState {
     /// is reachable only through the linear `joinable` token minted with it.
     pub(super) pending_joins:
         std::sync::Arc<BTreeMap<Bitvector32Term, std::sync::Arc<super::threads::SuspendedJoin>>>,
+    /// Handles this path has already joined, so a second join is refused as
+    /// a consumed right rather than as an unknown handle.
+    pub(super) joined_handles: std::sync::Arc<BTreeSet<Bitvector32Term>>,
+    /// Creations whose result has not yet been tested, keyed by the result
+    /// value the creating call returned. The state itself is the failed
+    /// creation; each entry holds the successful one, and the C `if` that
+    /// decides the result commits one of the two.
+    pub(super) pending_spawns:
+        std::sync::Arc<BTreeMap<Bitvector32Term, std::sync::Arc<super::threads::PendingSpawn>>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

@@ -3955,6 +3955,8 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
         next_local_frame: state.next_local_frame,
         next_local_lifetime: state.next_local_lifetime,
         pending_joins: state.pending_joins.clone(),
+        joined_handles: state.joined_handles.clone(),
+        pending_spawns: state.pending_spawns.clone(),
         counted_populations: std::sync::Arc::new(
             state
                 .counted_populations
@@ -6377,6 +6379,8 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
         next_local_frame: state.next_local_frame,
         next_local_lifetime: state.next_local_lifetime,
         pending_joins: state.pending_joins.clone(),
+        joined_handles: state.joined_handles.clone(),
+        pending_spawns: state.pending_spawns.clone(),
         counted_populations: std::sync::Arc::new(
             state
                 .counted_populations

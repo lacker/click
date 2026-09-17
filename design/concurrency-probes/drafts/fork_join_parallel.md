@@ -55,17 +55,6 @@ int fill_parallel(int output[4]) {
 target "x86_64-linux-userspace";
 verifying "fork_join.c";
 
-resource range_task(job: struct range_job*) {
-    views job->output;
-    views job->begin;
-    views job->end;
-    views job->value;
-    owns job->output[job->begin..job->end];
-    fact 0 <= job->begin;
-    fact job->begin <= job->end;
-    fact separate(memory(job[0..6]), memory(job->output[job->begin..job->end]));
-}
-
 predicate range_filled(job: struct range_job*) {
     forall (k: int32) {
         job->begin <= k and k < job->end implies job->output[k] == job->value
@@ -73,12 +62,21 @@ predicate range_filled(job: struct range_job*) {
 }
 
 void *fill_range(void *argument) {
-    consumes range_task((struct range_job *)argument);
-    produces range_task((struct range_job *)argument);
+    requires 0 <= ((struct range_job *)argument)->begin;
+    requires ((struct range_job *)argument)->begin <= ((struct range_job *)argument)->end;
+    requires separate(
+        memory(((struct range_job *)argument)[0..6]),
+        memory(((struct range_job *)argument)->output[
+            ((struct range_job *)argument)->begin..((struct range_job *)argument)->end]));
+    views ((struct range_job *)argument)->output;
+    views ((struct range_job *)argument)->begin;
+    views ((struct range_job *)argument)->end;
+    views ((struct range_job *)argument)->value;
+    owns ((struct range_job *)argument)->output[
+        ((struct range_job *)argument)->begin..((struct range_job *)argument)->end];
     ensures result == 0;
     ensures range_filled((struct range_job *)argument);
 } by {
-    unfold(range_task((struct range_job *)argument));
     step();
     step();
     step();
@@ -102,7 +100,6 @@ void *fill_range(void *argument) {
         }
     }
     step();
-    fold(range_task((struct range_job *)argument));
     simp();
 }
 

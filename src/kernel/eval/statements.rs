@@ -1997,7 +1997,7 @@ pub(crate) fn resolve_pending_heap_allocations(
                 ));
         }
     }
-    state
+    crate::kernel::threads::resolve_pending_spawns(state, assumptions)
 }
 
 fn execute_c_return_expression_paths(
@@ -2161,6 +2161,21 @@ pub(in crate::kernel) fn execute_c_statement_paths(
     // and counted every straight-line source statement twice.
     if !matches!(statement, CStatement::Seq(_, _)) {
         budget.consume_statement_step()?;
+    }
+    // A creation whose result is untested holds two candidate states. Only
+    // the `if` that decides the result may run until one is committed.
+    if !matches!(
+        statement,
+        CStatement::Seq(_, _) | CStatement::If { .. } | CStatement::Skip
+    ) && let Some(refusal) = crate::kernel::threads::untested_creation_refusal(state)
+    {
+        return Ok(vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::RuntimeError(refusal),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
+        }]);
     }
     let paths = match statement {
         CStatement::Skip => vec![CStatementExecutionPath {

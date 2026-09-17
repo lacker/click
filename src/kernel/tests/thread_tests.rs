@@ -442,10 +442,9 @@ fn a_second_join_on_one_handle_is_refused() {
     let paths = fixture.join(&joined, handle);
     assert_eq!(paths.len(), 1, "{paths:?}");
     let refusal = contract_refusal(&paths[0]);
-    assert!(refusal.contains("carry no authority"), "{refusal}");
     assert!(
-        !refusal.contains("already consumed"),
-        "join no longer conflates a re-join with a forged handle: {refusal}"
+        refusal.contains("already consumed by an earlier join"),
+        "{refusal}"
     );
 }
 
@@ -533,14 +532,23 @@ fn creation_refuses_a_worker_requirement_the_parent_does_not_hold() {
 }
 
 #[test]
-fn creation_refuses_an_unowned_handle_cell() {
+fn creation_carries_the_ordinary_store_obligation_for_the_handle_cell() {
     let fixture = fixture();
     let without_slot = fixture.state.clone().with_resource_context(
         ResourceContext::new().unchecked_with_fact(fixture.cell_fact.clone()),
     );
     let paths = fixture.create_from(&without_slot, fixture.create_arguments());
-    assert_eq!(paths.len(), 1, "{paths:?}");
-    assert!(contract_refusal(&paths[0]).contains("`pthread_t` cell"));
+    assert_eq!(paths.len(), 2, "{paths:?}");
+    for path in &paths {
+        assert!(
+            path.obligations.iter().any(|obligation| matches!(
+                obligation.proposition(),
+                Proposition::CMemoryCanStore { .. }
+            )),
+            "writing the handle into a cell the memory cannot take concretely leaves the ordinary store obligation: {:?}",
+            path.obligations
+        );
+    }
 }
 
 #[test]
@@ -650,7 +658,7 @@ fn create_and_join_mint_the_same_content_from_equal_budgets() {
 /// failing because the exit check learned to refuse the token, delete it and
 /// keep the refusing assertion in its place.
 #[test]
-fn a_returned_path_still_owning_a_joinable_right_is_not_yet_refused_at_exit() {
+fn a_returned_path_still_owning_a_joinable_right_is_refused_at_exit() {
     let fixture = fixture();
     let (success_state, _, _) = created(&fixture);
     let value = CValue::Int32(Bitvector32Term::Constant(0));
@@ -660,7 +668,7 @@ fn a_returned_path_still_owning_a_joinable_right_is_not_yet_refused_at_exit() {
         Vec::new(),
         c_return(c_int32_literal(0)),
     );
-    let leak = unreturned_allocation_at_function_exit(
+    let refusal = unreturned_allocation_at_function_exit(
         &success_state,
         &value,
         &leaky,
@@ -669,12 +677,11 @@ fn a_returned_path_still_owning_a_joinable_right_is_not_yet_refused_at_exit() {
         &mut ExecutionBudget::default(),
     )
     .expect("the exit check should not exhaust the budget")
-    .expect("the exit check should not error");
-    assert_eq!(
-        leak, None,
-        "the allocation exit check does not look at `joinable` rights"
+    .expect_err("a path that still owns a `joinable` right must be refused at exit");
+    assert!(
+        matches!(&refusal, CRuntimeError::FunctionContract(message) if message.contains("must be joined")),
+        "{refusal:?}"
     );
-    assert_eq!(joinable_tokens(&success_state).len(), 1);
 }
 
 /// A whole C function that creates a thread, gives the worker's cell away,
@@ -758,7 +765,7 @@ fn leaky_creator(fixture: &Fixture) -> (CFunction, Vec<CExpression>) {
 /// neither sees the unjoined thread. Flip this to a refusal when the leak is
 /// closed.
 #[test]
-fn a_whole_function_that_creates_and_never_joins_certifies_today() {
+fn a_whole_function_that_creates_and_never_joins_is_refused() {
     let fixture = fixture();
     let (leaky, arguments) = leaky_creator(&fixture);
     let execution = certify_contract_with_kernel_artifacts(
@@ -770,11 +777,9 @@ fn a_whole_function_that_creates_and_never_joins_certifies_today() {
         CExecutionSemantics::EXECUTE_BODIES,
         CFunctionContractExecutionMode::VerifyLoops,
     );
-    let claims = c_verified_function_contract_claims(&leaky, &execution)
-        .expect("a function that leaves a `joinable` right behind is not refused at exit");
     assert!(
-        c_verified_function_rule(leaky, &claims).is_some(),
-        "and it becomes a fully certified rule"
+        c_verified_function_contract_claims(&leaky, &execution).is_none(),
+        "a function that leaves a `joinable` right behind must not certify"
     );
 }
 
@@ -786,7 +791,7 @@ fn a_whole_function_that_creates_and_never_joins_certifies_today() {
 /// pins today's behavior; the intended behavior is that a right and its
 /// record travel together, or that the right cannot escape at all.
 #[test]
-fn a_joinable_right_outlives_its_suspension_record_across_a_function_return() {
+fn a_joinable_right_never_crosses_a_function_return() {
     let fixture = fixture();
     let (leaky, arguments) = leaky_creator(&fixture);
     let checked = prove_checked_c_function_execution_with_environment(
@@ -799,28 +804,32 @@ fn a_joinable_right_outlives_its_suspension_record_across_a_function_return() {
         CFunctionContractExecutionMode::VerifyLoops,
     );
     assert_eq!(checked.paths().len(), 2, "creation's two paths");
-    let mut escaped_rights = 0;
+    let mut refused = 0;
+    let mut returned = 0;
     for path in checked.paths() {
         let mut proposition = path.theorem().proposition();
         while let Proposition::Implies(_, body) = proposition {
             proposition = body;
         }
-        let Proposition::CFunctionVerifies {
-            outcome: CFunctionOutcome::Return { state, .. },
-            ..
-        } = proposition
-        else {
-            panic!("the leaky creator returns on both paths: {proposition:?}");
+        let Proposition::CFunctionVerifies { outcome, .. } = proposition else {
+            panic!("unexpected theorem shape: {proposition:?}");
         };
-        escaped_rights += joinable_tokens(state).len();
-        assert!(
-            state.pending_joins.is_empty(),
-            "the suspension record is dropped at the function boundary: {:?}",
-            state.pending_joins
-        );
+        match outcome {
+            CFunctionOutcome::Return { state, .. } => {
+                returned += 1;
+                assert!(joinable_tokens(state).is_empty());
+                assert!(state.pending_joins.is_empty());
+            }
+            CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)) => {
+                refused += 1;
+                assert!(message.contains("must be joined"), "{message}");
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
     }
     assert_eq!(
-        escaped_rights, 1,
-        "creation's success path leaves the right in the function's exit state"
+        (refused, returned),
+        (1, 1),
+        "the successful creation is refused at return; the failed one returns"
     );
 }

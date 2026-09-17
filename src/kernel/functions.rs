@@ -18466,6 +18466,9 @@ pub(crate) fn unreturned_allocation_at_function_exit(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<Option<CResourceFact>, CRuntimeError>> {
+    if let Some(refusal) = super::threads::thread_exit_refusal(state, function.name()) {
+        return Ok(Err(refusal));
+    }
     let function_can_package_allocation =
         function
             .composite_resource_definitions()
@@ -18652,6 +18655,9 @@ fn function_outcome_from_body_with_resource_transfer(
         );
         return Ok((outcome, obligations, None));
     };
+    if let Some(refusal) = super::threads::thread_exit_refusal(&state, function.name()) {
+        return Ok((CFunctionOutcome::RuntimeError(refusal), obligations, None));
+    }
     let Some(value) = coerce_function_return_value(value, function, &mut obligations, assumptions)
     else {
         return Ok((

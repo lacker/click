@@ -564,14 +564,25 @@ pub(super) fn execute_c_call_assign_paths(
                         loan_evidence: path.loan_evidence.clone(),
                     };
                 }
-                if assign_call_result(
-                    &mut state,
-                    target,
-                    value,
-                    &mut path.obligations,
-                    assumptions,
-                )
-                .is_some()
+                let pending_spawn_assigned =
+                    super::threads::update_pending_spawn_success(&mut state, &value, |success| {
+                        assign_call_result(
+                            success,
+                            target,
+                            value.clone(),
+                            &mut Vec::new(),
+                            assumptions,
+                        )
+                    });
+                if pending_spawn_assigned.is_some()
+                    && assign_call_result(
+                        &mut state,
+                        target,
+                        value,
+                        &mut path.obligations,
+                        assumptions,
+                    )
+                    .is_some()
                 {
                     CStatementOutcome::Normal(state)
                 } else {

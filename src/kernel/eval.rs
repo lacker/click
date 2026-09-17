@@ -73,4 +73,5 @@ pub(super) use statements::execute_c_realloc_assign_paths;
 pub(crate) use statements::resolve_pending_heap_allocations;
 pub(super) use statements::stable_loan_memory_write_outcome;
 pub(super) use statements::sync_stack_local;
+pub(in crate::kernel) use statements::write_c_lvalue_paths;
 pub(super) use statements::{execute_c_statement, execute_c_statement_paths};

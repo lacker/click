@@ -2110,6 +2110,39 @@ fn synthesize_parameter_field_pointer_value(
             });
         }
     }
+    // The same lookup through a cast `void *` parameter or a struct-pointer
+    // local: a pointer field's cell may hold a view's fresh value rather
+    // than a registered load, and this is its only spelling.
+    for owner in struct_owners(parameters, arguments, state) {
+        for (field_name, field) in owner.layout.fields() {
+            let value_type = field.c_type().to_kernel_type();
+            if !value_type.is_pointer() {
+                continue;
+            }
+            let field_pointer = owner.pointer.offset_by_bytes(field.offset_bytes());
+            let loaded_offset = match state.memory().load(&field_pointer) {
+                CExpressionOutcome::Value(CValue::Pointer(value)) => value.offset.clone(),
+                CExpressionOutcome::Value(CValue::Int32(value)) => PointerOffsetTerm::scale_int32(
+                    value,
+                    i64::from(value_type.pointee_type()?.byte_width()),
+                ),
+                _ => continue,
+            };
+            if !crate::kernel::offsets_have_same_canonical_form(&loaded_offset, term) {
+                continue;
+            }
+            return Some(ContractExpression::Field {
+                base: Box::new(ContractExpression::CFragment(owner.base.clone())),
+                field: field_name.clone(),
+                lowered: CExpression::TypedLoad {
+                    pointer: Box::new(owner_field_pointer(&owner.base, field.offset_bytes())),
+                    value_type,
+                    volatile: false,
+                    source: Default::default(),
+                },
+            });
+        }
+    }
     None
 }
 

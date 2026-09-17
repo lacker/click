@@ -77,6 +77,108 @@ impl Ord for SuspendedJoin {
     }
 }
 
+/// A creation whose result the program has not tested yet. The state that
+/// carries this record is the failed creation; `success` is the successful
+/// one. Both describe the same program point, so the deciding C `if` may
+/// commit either, exactly as a null test commits a pending allocation.
+#[derive(Clone, Debug)]
+pub(crate) struct PendingSpawn {
+    id: u64,
+    success: CState,
+}
+
+impl PartialEq for PendingSpawn {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl Eq for PendingSpawn {}
+impl std::hash::Hash for PendingSpawn {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+impl PartialOrd for PendingSpawn {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for PendingSpawn {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
+/// Commits every pending creation whose result the assumptions decide. A
+/// zero result installs the successful state; a nonzero result keeps the
+/// current state, which is the failed creation. Only the deciding `if` runs
+/// between the creating call and this commit, so the successful state
+/// recorded at the call is still the state of this program point.
+pub(crate) fn resolve_pending_spawns(state: CState, assumptions: &PureFactContext) -> CState {
+    if state.pending_spawns.is_empty() {
+        return state;
+    }
+    let pending = state
+        .pending_spawns
+        .iter()
+        .map(|(result, spawn)| (result.clone(), spawn.clone()))
+        .collect::<Vec<_>>();
+    let mut state = state;
+    for (result, spawn) in pending {
+        let succeeded = ConditionTerm::equal(result.clone(), Bitvector32Term::Constant(0));
+        match assumptions.decide(&succeeded) {
+            Some(true) => state = spawn.success.clone(),
+            Some(false) => {
+                Arc::make_mut(&mut state.pending_spawns).remove(&result);
+            }
+            None => {}
+        }
+    }
+    state
+}
+
+/// Applies the creating call's own result assignment to the successful
+/// state as well, so both candidates advance through that one store
+/// together. Returns `None` when the assignment is ill-typed.
+pub(super) fn update_pending_spawn_success(
+    state: &mut CState,
+    result: &CValue,
+    update: impl FnOnce(&mut CState) -> Option<()>,
+) -> Option<()> {
+    let CValue::Int32(term) = result else {
+        return Some(());
+    };
+    let Some(spawn) = state.pending_spawns.get(term).cloned() else {
+        return Some(());
+    };
+    let mut success = spawn.success.clone();
+    update(&mut success)?;
+    Arc::make_mut(&mut state.pending_spawns).insert(
+        term.clone(),
+        Arc::new(PendingSpawn {
+            id: spawn.id,
+            success,
+        }),
+    );
+    Some(())
+}
+
+/// Whether `state` holds a creation whose result is untested.
+pub(crate) fn has_pending_spawn(state: &CState) -> bool {
+    !state.pending_spawns.is_empty()
+}
+
+/// The refusal for running anything but the deciding `if` while a
+/// creation's result is untested, if `state` has such a creation.
+pub(crate) fn untested_creation_refusal(state: &CState) -> Option<CRuntimeError> {
+    (!state.pending_spawns.is_empty()).then(|| {
+        CRuntimeError::FunctionContract(
+            "the result of `pthread_create` must be tested by the next `if` before anything else runs"
+                .to_string(),
+        )
+    })
+}
+
 /// Fresh kernel variables that collide with nothing the caller's state or
 /// assumptions mention, minted the way the call executor mints them.
 fn fresh_variables(
@@ -92,6 +194,18 @@ fn fresh_variables(
     let variables = (0..count).map(|_| generator.next()).collect();
     budget.next_kernel_variable = generator.next;
     variables
+}
+
+/// A null pointer argument as C spells it: a null pointer value, or the
+/// integer constant zero converted at the call.
+fn is_null_argument(value: &CValue) -> bool {
+    match value {
+        CValue::Pointer(pointer) => pointer.is_null(),
+        CValue::Int32(term) | CValue::Int64(term) | CValue::UInt64(term) => {
+            term.as_const() == Some(0)
+        }
+        _ => false,
+    }
 }
 
 fn thread_failure(message: impl Into<String>) -> CFunctionPath {
@@ -127,14 +241,34 @@ fn memory_effect_facts(facts: &[ExecutionPureFact]) -> Vec<ExecutionPureFact> {
         .collect()
 }
 
-fn result_fact(result: Variable, is_zero: bool) -> ExecutionPureFact {
-    ExecutionPureFact::certified(Proposition::ConditionIs(
-        ConditionTerm::equal(
-            Bitvector32Term::Variable(result),
-            Bitvector32Term::Constant(0),
-        ),
-        is_zero,
-    ))
+/// Stores the created handle the way `*thread = handle` stores, so a named
+/// local becomes initialized and the store carries its ordinary obligations
+/// and its certified store fact.
+fn store_handle(
+    state: &CState,
+    thread: &super::Pointer,
+    handle: &CValue,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> Option<(CState, Vec<ExecutionPureFact>, Vec<super::ProofObligation>)> {
+    let lvalue = super::CLValue::memory_with_volatile(thread.clone(), CType::UInt64, false);
+    let mut written = super::eval::write_c_lvalue_paths(
+        state,
+        lvalue,
+        handle.clone(),
+        Vec::new(),
+        Vec::new(),
+        assumptions,
+        &mut budget.next_kernel_variable,
+    );
+    if written.len() != 1 {
+        return None;
+    }
+    let path = written.pop()?;
+    match path.outcome {
+        super::CStatementOutcome::Normal(state) => Some((state, path.facts, path.obligations)),
+        _ => None,
+    }
 }
 
 /// `pthread_create(thread, attr, start, arg)`.
@@ -179,7 +313,7 @@ pub(super) fn execute_thread_create(
             ));
             continue;
         };
-        if !matches!(attributes, CValue::Pointer(pointer) if pointer.is_null()) {
+        if !is_null_argument(attributes) {
             paths.push(thread_failure(
                 "thread attributes are not supported; pass a null `pthread_attr_t *`",
             ));
@@ -208,15 +342,6 @@ pub(super) fn execute_thread_create(
             &arguments_path.facts,
             &arguments_path.obligations,
         );
-        // The handle is stored the way an ordinary assignment stores: the
-        // cell must be writable here, as a live local block or an owned
-        // range.
-        if !path_assumptions.proves_memory_access(caller_state.memory(), thread.pointer(), 8) {
-            paths.push(thread_failure(
-                "the caller must be able to write the `pthread_t` cell the created handle is written to",
-            ));
-            continue;
-        }
         let worker_argument = [CExpression::Value(argument.clone())];
         // The worker's call boundary, run at the spawn point. Its entry half
         // reserves the task; the ordinary call then recovers everything,
@@ -275,22 +400,17 @@ pub(super) fn execute_thread_create(
         let Some((return_state, worker_facts, loan_evidence)) = return_path else {
             continue;
         };
-        let [handle_variable, result_variable, unspecified_variable] =
-            fresh_variables(caller_state, &path_assumptions, budget, 3)
+        let [handle_variable, result_variable] =
+            fresh_variables(caller_state, &path_assumptions, budget, 2)
                 .try_into()
-                .expect("three fresh variables");
+                .expect("two fresh variables");
         let handle = CValue::UInt64(Bitvector32Term::Variable(handle_variable));
         let result = CValue::Int32(Bitvector32Term::Variable(result_variable));
 
         // Success: the parent keeps its mid-call frame plus the right.
         let token = joinable_token(&handle, start, argument);
         let mut success = caller_state.clone();
-        success.set_memory(
-            return_state
-                .memory()
-                .clone()
-                .store(thread.pointer().clone(), handle.clone()),
-        );
+        success.set_memory(return_state.memory().clone());
         let resources = match mid_frame
             .clone()
             .try_compose_into_valid_context_delaying_normalization([token], &path_assumptions)
@@ -321,38 +441,55 @@ pub(super) fn execute_thread_create(
         };
         Arc::make_mut(&mut success.pending_joins)
             .insert(Bitvector32Term::Variable(handle_variable), Arc::new(record));
-        let mut success_facts = arguments_path.facts.clone();
-        success_facts.extend(memory_effect_facts(&worker_facts));
-        success_facts.push(result_fact(result_variable, true));
-        paths.push(CFunctionPath {
-            outcome: CFunctionOutcome::Return {
-                value: result.clone(),
-                state: success,
-            },
-            facts: success_facts,
-            obligations: arguments_path.obligations.clone(),
-            loan_evidence: super::loans::empty_checked_loan_evidence_sequence(),
-        });
-
-        // Failure: nothing was transferred and no right exists. The handle
-        // cell is unspecified.
-        let mut failure = caller_state.clone();
-        let unspecified = CValue::UInt64(Bitvector32Term::Variable(unspecified_variable));
-        failure.set_memory(
-            caller_state
-                .memory()
-                .clone()
-                .store(thread.pointer().clone(), unspecified),
+        const UNSTORABLE_HANDLE: &str =
+            "the `pthread_t` cell the created handle is written to cannot be stored here";
+        let Some((success, success_store_facts, _)) = store_handle(
+            &success,
+            thread.pointer(),
+            &handle,
+            &path_assumptions,
+            budget,
+        ) else {
+            paths.push(thread_failure(UNSTORABLE_HANDLE));
+            continue;
+        };
+        let Some((mut pending, store_facts, store_obligations)) = store_handle(
+            caller_state,
+            thread.pointer(),
+            &handle,
+            &path_assumptions,
+            budget,
+        ) else {
+            paths.push(thread_failure(UNSTORABLE_HANDLE));
+            continue;
+        };
+        // The call returns once, with its result untested. The returned
+        // state is the failed creation: nothing was transferred, no right
+        // exists, and the handle cell holds an unspecified value. The
+        // successful state waits in the pending record until the program
+        // tests the result.
+        Arc::make_mut(&mut pending.pending_spawns).insert(
+            Bitvector32Term::Variable(result_variable),
+            Arc::new(PendingSpawn {
+                id: result_variable.0,
+                success,
+            }),
         );
-        let mut failure_facts = arguments_path.facts;
-        failure_facts.push(result_fact(result_variable, false));
+        // The effect summary relates two explicit memories and holds by
+        // construction, whichever of them becomes current.
+        let mut facts = arguments_path.facts;
+        facts.extend(memory_effect_facts(&worker_facts));
+        facts.extend(success_store_facts);
+        facts.extend(store_facts);
+        let mut handle_obligations = arguments_path.obligations;
+        handle_obligations.extend(store_obligations);
         paths.push(CFunctionPath {
             outcome: CFunctionOutcome::Return {
                 value: result,
-                state: failure,
+                state: pending,
             },
-            facts: failure_facts,
-            obligations: arguments_path.obligations,
+            facts,
+            obligations: handle_obligations,
             loan_evidence: super::loans::empty_checked_loan_evidence_sequence(),
         });
     }
@@ -396,7 +533,7 @@ pub(super) fn execute_thread_join(
             paths.push(thread_failure("thread join arguments did not evaluate"));
             continue;
         };
-        if !matches!(result_slot, CValue::Pointer(pointer) if pointer.is_null()) {
+        if !is_null_argument(result_slot) {
             paths.push(thread_failure(
                 "collecting a worker's return value is not supported; pass a null `void **`",
             ));
@@ -413,12 +550,6 @@ pub(super) fn execute_thread_join(
             &arguments_path.facts,
             &arguments_path.obligations,
         );
-        let Some(record) = caller_state.pending_joins.get(handle_term).cloned() else {
-            paths.push(thread_failure(
-                "join requires a handle written by a successful creation on this path; the handle's bits carry no authority",
-            ));
-            continue;
-        };
         let token = caller_state.resources().facts().iter().find(|fact| {
             matches!(fact.resource(), CResource::Token { name, arguments }
                 if name == JOINABLE_RESOURCE_NAME
@@ -426,8 +557,16 @@ pub(super) fn execute_thread_join(
                 && fact.is_own()
         });
         let Some(token) = token.cloned() else {
+            paths.push(thread_failure(if caller_state.joined_handles.contains(handle_term) {
+                "join requires the completion right for this handle; it was already consumed by an earlier join"
+            } else {
+                "join requires a handle written by a successful creation on this path; the handle's bits carry no authority"
+            }));
+            continue;
+        };
+        let Some(record) = caller_state.pending_joins.get(handle_term).cloned() else {
             paths.push(thread_failure(
-                "join requires the completion right for this handle; it was already consumed or never held",
+                "join requires a handle written by a successful creation on this path; the handle's bits carry no authority",
             ));
             continue;
         };
@@ -478,6 +617,7 @@ pub(super) fn execute_thread_join(
         joined.loan_view_bindings = record.return_state.loan_view_bindings.clone();
         joined.counted_populations = record.return_state.counted_populations.clone();
         Arc::make_mut(&mut joined.pending_joins).remove(handle_term);
+        Arc::make_mut(&mut joined.joined_handles).insert(handle_term.clone());
         let mut facts = arguments_path.facts;
         facts.extend(record.facts.iter().cloned());
         let _ = (&record.worker, &CType::Int32);
@@ -493,4 +633,33 @@ pub(super) fn execute_thread_join(
     }
     budget.check_path_width(paths.len())?;
     Ok(paths)
+}
+
+/// The `joinable` right a returning path still owns, if any. A created
+/// thread must be joined before the function returns: the right is the only
+/// way to recover the worker's authority, and a right that outlives its
+/// creator's frame would be permanently unjoinable.
+pub(crate) fn unjoined_thread_at_exit(state: &CState) -> Option<CResourceFact> {
+    state
+        .resources()
+        .facts()
+        .iter()
+        .find(|fact| {
+            fact.is_own()
+                && matches!(fact.resource(), CResource::Token { name, .. } if name == JOINABLE_RESOURCE_NAME)
+        })
+        .cloned()
+}
+
+/// The refusal for a returning path that still has a thread to account for:
+/// an unjoined creation, or a creation whose result was never tested.
+pub(crate) fn thread_exit_refusal(state: &CState, function_name: &str) -> Option<CRuntimeError> {
+    if let Some(refusal) = untested_creation_refusal(state) {
+        return Some(refusal);
+    }
+    unjoined_thread_at_exit(state).map(|right| {
+        CRuntimeError::FunctionContract(format!(
+            "a created thread must be joined before `{function_name}` returns; the completion right {right:?} is still held"
+        ))
+    })
 }

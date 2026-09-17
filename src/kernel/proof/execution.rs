@@ -5008,9 +5008,12 @@ impl ExecutionProofCore {
         // A condition on a pending `malloc` result decides that allocation's
         // outcome: the reached state resolves the pending allocation from
         // the decided facts, the kernel rule execution applies right after
-        // the condition.
+        // the condition. A condition on an untested thread creation's
+        // result commits that creation the same way.
         let mut reached = proved_state.clone();
-        if reached.memory().has_pending_heap_allocation() {
+        if reached.memory().has_pending_heap_allocation()
+            || crate::kernel::threads::has_pending_spawn(&reached)
+        {
             let no_assumptions = PureFactContext::new();
             let entry_assumptions = self
                 .function_entry
