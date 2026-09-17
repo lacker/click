@@ -137,6 +137,7 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
             step();
             step();
             loop as find_adjacent_run {
+                decreases arena->capacity - i;
                 invariant 0 <= i and i <= arena->capacity;
                 invariant 0 <= run_length and run_length <= 2;
                 invariant (i <= 2 and run_length == 0) or
@@ -145,6 +146,7 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
 
                 initialize by simp;
                 preserve by {
+                    mark iteration;
                     if i < 2 {
                         have i + 1 <= arena->capacity by {
                             apply(int32_increment_upper_bound(
@@ -185,6 +187,27 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
                         have (i <= 2 and run_length == 0) or
                             (2 <= i and 2 + run_length == i) by {
                             left();
+                        }
+                        have 0 <= at(iteration, i) by {
+                            simp();
+                        }
+                        have 0 <= arena->capacity by {
+                            simp();
+                        }
+                        have 0 <= 0 - at(iteration, i) + arena->capacity - 1 by {
+                            arithmetic() using {
+                                0 <= at(iteration, i);
+                                at(iteration, i) < at(iteration, arena->capacity);
+                                0 <= arena->capacity;
+                            }
+                        }
+                        have 0 - at(iteration, i) + arena->capacity - 1
+                            < 0 - at(iteration, i) + arena->capacity by {
+                            arithmetic() using {
+                                0 <= at(iteration, i);
+                                at(iteration, i) < at(iteration, arena->capacity);
+                                0 <= arena->capacity;
+                            }
                         }
                         close_invariants();
                     } else {
@@ -258,6 +281,27 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
                         have (i <= 2 and run_length == 0) or
                             (2 <= i and 2 + run_length == i) by {
                             right();
+                        }
+                        have 0 <= at(iteration, i) by {
+                            simp();
+                        }
+                        have 0 <= arena->capacity by {
+                            simp();
+                        }
+                        have 0 <= 0 - at(iteration, i) + arena->capacity - 1 by {
+                            arithmetic() using {
+                                0 <= at(iteration, i);
+                                at(iteration, i) < at(iteration, arena->capacity);
+                                0 <= arena->capacity;
+                            }
+                        }
+                        have 0 - at(iteration, i) + arena->capacity - 1
+                            < 0 - at(iteration, i) + arena->capacity by {
+                            arithmetic() using {
+                                0 <= at(iteration, i);
+                                at(iteration, i) < at(iteration, arena->capacity);
+                                0 <= arena->capacity;
+                            }
                         }
                         close_invariants();
                     }
@@ -343,13 +387,35 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
                 }
             }
             loop as mark_adjacent_run {
+                decreases end - i;
                 invariant 2 <= i and i <= 4;
                 owns arena->occupied[0..arena->capacity];
 
                 initialize by simp;
                 preserve by {
+                    mark iteration;
                     step();
                     step();
+                    have 0 <= at(iteration, i) by {
+                        simp();
+                    }
+                    have 0 <= end by {
+                        simp();
+                    }
+                    have 0 <= end - at(iteration, i) - 1 by {
+                        arithmetic() using {
+                            0 <= at(iteration, i);
+                            0 <= end;
+                            at(iteration, i) < end;
+                        }
+                    }
+                    have end - at(iteration, i) - 1 < end - at(iteration, i) by {
+                        arithmetic() using {
+                            0 <= at(iteration, i);
+                            0 <= end;
+                            at(iteration, i) < end;
+                        }
+                    }
                     simp();
                 }
             }

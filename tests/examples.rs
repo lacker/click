@@ -40,12 +40,7 @@ const ARTIFACT_REUSE_REJECTION_BASELINE: &[(ArtifactReuseRejection, usize)] = &[
 /// ```termination block in its own file. The set only shrinks: a listed
 /// sidecar that verifies with termination required fails the gate until its
 /// line is removed, so the list cannot go stale.
-const TERMINATION_PENDING: &[(&str, TerminationPending)] = &[
-    (
-        "examples/arena/arena_second_alloc.click",
-        TerminationPending::UnrankedLoop,
-    ),
-];
+const TERMINATION_PENDING: &[(&str, TerminationPending)] = &[];
 
 #[test]
 fn example_projects() {
