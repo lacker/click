@@ -2074,18 +2074,33 @@ impl<'a> Proof<'a> {
         {
             let mut lower_bounds = Vec::new();
             let mut upper_bounds = Vec::new();
-            for (_, surface) in premise_pairs {
+            for (kernel, surface) in premise_pairs {
                 let anchored = surface_at_snapshot(surface, anchor).ok()?;
                 if let Some(parts) = surface_nonstrict_parts(&anchored) {
-                    lower_bounds.push((anchored.clone(), parts));
+                    lower_bounds.push((
+                        anchored.clone(),
+                        parts,
+                        signed_nonstrict_parts(kernel).map(|(_, value)| value),
+                    ));
                 }
                 if let Some(parts) = surface_strict_parts(&anchored) {
-                    upper_bounds.push((anchored, parts));
+                    upper_bounds.push((
+                        anchored,
+                        parts,
+                        signed_strict_parts(kernel).map(|(value, _)| value),
+                    ));
                 }
             }
-            for (lower_surface, (surface_lower, lower_value)) in &lower_bounds {
-                for (upper_surface, (upper_value, surface_upper)) in &upper_bounds {
-                    if lower_value != upper_value {
+            for (lower_surface, (surface_lower, lower_value), lower_kernel) in &lower_bounds {
+                for (upper_surface, (upper_value, surface_upper), upper_kernel) in &upper_bounds {
+                    // Entry requirements and resource observations can spell
+                    // the same checked value at different snapshots. Select
+                    // by the kernel endpoint as well as identical syntax;
+                    // ApplyTheoremUsing still validates both named premises
+                    // and the result at the chosen historical boundary.
+                    if lower_value != upper_value
+                        && !(lower_kernel.is_some() && lower_kernel == upper_kernel)
+                    {
                         continue;
                     }
                     let theorem = ProofStep::ApplyTheoremUsing {

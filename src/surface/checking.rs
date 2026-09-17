@@ -19,20 +19,53 @@ pub(super) use signed_arithmetic_planner::*;
 pub(super) use simp::*;
 pub(super) use special_arithmetic_planner::*;
 
-pub(super) fn prove_ensure_resource(
+/// Exact resource production evidence for one claim in one checked execution.
+/// Fields are private to the checker; presentation syntax cannot create it.
+#[derive(Clone)]
+pub(super) struct CheckedResourceClaim<'e> {
+    execution: &'e CCheckedFunctionExecution,
+    path_index: usize,
+    key: CFunctionContractClaimKey,
+}
+
+impl CheckedResourceClaim<'_> {
+    pub(super) fn matches(
+        &self,
+        execution: &CCheckedFunctionExecution,
+        path_index: usize,
+        key: &CFunctionContractClaimKey,
+    ) -> bool {
+        std::ptr::eq(self.execution, execution) && self.path_index == path_index && &self.key == key
+    }
+    pub(super) fn claim_key(&self) -> &CFunctionContractClaimKey {
+        &self.key
+    }
+    pub(super) fn path_index(&self) -> usize {
+        self.path_index
+    }
+}
+
+pub(super) fn prove_ensure_resource<'e>(
+    checked_execution: &'e CCheckedFunctionExecution,
+    claim_key: CFunctionContractClaimKey,
     claim_label: &str,
     path_index: usize,
     execution_pure_facts: &[crate::kernel::ExecutionPureFact],
-    available_pure_facts: &[Proposition],
+    available_pure_facts: &(impl PropositionSource + ?Sized),
     resource: &ResourceClause,
     borrowed: bool,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
     outcome: &CFunctionOutcome,
-) -> Result<(), ClickError> {
-    if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
-        return Ok(());
+) -> Result<CheckedResourceClaim<'e>, ClickError> {
+    // Post-return resource folds can extend the checked path before final
+    // contract certification. Its typed outcome Proof supplies the returning
+    // state checked below; the original artifact supplies stable path identity.
+    if checked_execution.paths().get(path_index).is_none() {
+        return Err(ClickError::new(
+            "resource claim has no checked execution path",
+        ));
     }
     let CFunctionOutcome::Return {
         value: result,
@@ -43,7 +76,10 @@ pub(super) fn prove_ensure_resource(
             "`{claim_label}` failed on path {path_index}: {}\n{}",
             describe_function_outcome(outcome, parameters, arguments),
             describe_proof_context(
-                available_pure_facts,
+                &available_pure_facts
+                    .propositions()
+                    .cloned()
+                    .collect::<Vec<_>>(),
                 pre_state.resources().facts(),
                 parameters,
                 arguments,
@@ -71,7 +107,11 @@ pub(super) fn prove_ensure_resource(
             .resources()
             .satisfies_fact(expected, &assumptions)
     }) {
-        return Ok(());
+        return Ok(CheckedResourceClaim {
+            execution: checked_execution,
+            path_index,
+            key: claim_key,
+        });
     }
     let expected = expected
         .iter()
@@ -85,7 +125,10 @@ pub(super) fn prove_ensure_resource(
         "`{claim_label}` failed on path {path_index}: {}",
         describe_missing_resource_fact(
             expected,
-            available_pure_facts,
+            &available_pure_facts
+                .propositions()
+                .cloned()
+                .collect::<Vec<_>>(),
             post_state.resources().facts(),
             parameters,
             arguments,
@@ -191,7 +234,7 @@ pub(super) fn apply_witness_tactic(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lower_ensure_proposition_goal(
-    available_pure_facts: &[Proposition],
+    available_pure_facts: &(impl PropositionSource + ?Sized),
     proposition: &ClickProposition,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],

@@ -6228,6 +6228,10 @@ impl CCheckedFunctionExecution {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SymbolicCExecutionPath {
+    /// The body outcome checked against a retained Proof trace before the
+    /// same producer applies the contract exit rule. Ordinary symbolic paths
+    /// have no separate proof-completion origin.
+    pub(super) completion_origin: Option<CFunctionOutcome>,
     pub(super) assumptions: PureFactContext,
     pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) effect_facts: Vec<ExecutionPureFact>,

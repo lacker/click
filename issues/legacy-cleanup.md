@@ -174,67 +174,50 @@ orchestration below remain separate work packages.
 
 ## Inventory and work package C: outcome drain and resource fact adapters
 
-Files and actual routes:
+Package C is complete. The post-execution drain now reads the focused outcome
+Proof's persistent facts. Haves, predicate unfolds, transport, composite folds,
+open-scope closure, and contract resource effects advance their checked
+successor. Smart grouped closure retains its resulting Proof as well as each
+claim completion. No caller reconstructs or reinstalls an ambient fact vector.
 
-- `claim_proofs.rs::finish_ordered_proof` carries mutable path requirements
-  alongside retained outcome proofs. Calls to
-  `with_checked_outcome_facts` resynchronize the two representations.
-- `proof_object/outcomes_and_focus.rs::with_checked_outcome_facts` reconstructs
-  requirement-prefix information and calls
-  `kernel/proof/facts.rs::resync_ordered_preserving_provenance`.
-- That resync calls `ProofFacts::from_ordered` on the whole supplied vector,
-  then restores selected provenance indexes. Its comment about iterating only
-  the explicit delta does not eliminate that ambient rebuild.
-- `resources.rs::LegacyResourcePureFacts` adapts vectors by rebuilding an
-  assumption context and using linear membership. Its production construction
-  sites are `apply_composite_observation_law`,
-  `append_resource_context_observable_facts`, and
-  `fold_composite_resources_on_outcome`. The latter is used by the outcome
-  drain. `ProofResourcePureFacts` already supports persistent facts.
+Source requirement correspondence is built from immutable entry origins, not
+the prefix of evolving facts. Resource projection and scope closure use the
+persistent resource adapter. Fold invariants are lowered against the current
+outcome; historical spelling alone cannot reuse an entry-era invariant after
+its population changes. Existing checked effect matching transports earlier
+evidence, without rebuilding a path-wide assumption context per fold. Checked
+64-bit equality uses its existing indexed constant-equality component, including
+call postconditions; unrelated facts are not scanned. Store consequences are
+checked once per outcome and retained with that outcome. Retained proposition scopes may refresh only
+from their owning outcome, preserving context, outcome identity, and result.
+That outcome identity survives existential scopes' local branch IDs. Entry and
+resource premises with different snapshot spellings are paired by their checked
+kernel endpoint, then validated by the ordinary named-premise operation.
 
-Migrate one outcome operation at a time to consume the focused outcome Proof
-and return its checked successor. Make that persistent context the only
-working semantic store. Preserve the immutable source-requirement index
-separately from facts added by choices, haves, or predicate unfolds; never
-recover requirement correspondence from the first N facts of a changing
-vector. Use explicit fact additions/removals and checked predicate-unfold
-results, not an arbitrary vector replacement.
+Removed `LegacyResourcePureFacts`, its observation/fold/vector wrappers,
+`with_checked_outcome_facts`, `resync_ordered_preserving_provenance`, and the
+drain's fresh fixed-state fallback roots. Borrowed premise views reuse the
+persistent assumption and exact-fact indexes. Output-sized certificate vectors
+and bounded smart-search candidate exports remain explicit boundaries.
 
-Port observation and fold callers to the existing persistent resource adapter
-and carry their checked deltas. Keep output-sized vectors for explicitly
-exported clauses or certificates; the problem is materializing unrelated
-ambient state per operation. Remove `LegacyResourcePureFacts` and the three
-vector adapters once their consumers are migrated, then remove
-`with_checked_outcome_facts` and `resync_ordered_preserving_provenance`.
-Preserve branch/path identity, return-fold trace extensions, effect contexts,
-and checked execution reuse. Do not re-execute a function prefix or body.
+Claim closure separates presentation from evidence. Proposition claims require
+`CheckedProposition`, including exceptional outcomes; exact resource production
+returns an opaque witness tied to the checked execution, path, and claim key; vacuity is read from the checked
+execution theorem. Proof-produced execution paths retain the checked body-to-exit
+outcome correspondence, including aggregate return layout restoration, so
+completion binding checks its exact producer without comparing away memory
+changes. Generic certificate-only and empty exact-check constructors are gone. Grouped closure associates each claim with its evidence, and final
+assembly rejects missing, mismatched, or wrong-path evidence. Independent
+contract certification still validates the checked execution and entry premises.
 
-The `ClosedClaim` constructors in `claim_proofs.rs::exit_claim` also need a
-stronger evidence boundary. `by_checked_certificate` accepts an admitted
-Surface certificate and stores no proposition completion; some legitimate
-resource or divergent-outcome closures use it. Replace the generic shape
-with distinct evidence-bearing cases:
-
-- proposition: the existing `CheckedProposition`;
-- resource/effect: a witness returned by the existing exact production/effect
-  check, tied to the selected path and claim key;
-- divergence: the checked divergent outcome that makes the claim vacuous.
-
-Introduce narrow opaque witnesses at those existing checker returns if needed.
-A witness must not be constructible from a bool, Surface certificate, or raw
-caller-supplied proposition. Keep presentation/claim grouping separately.
-Grouped closure must associate each claim key with its evidence; padding a
-Surface tactic list with `assumption()` is not that association. Independent
-contract certification must continue validating the supplied checked execution
-and entry premises; it must not manufacture missing completions.
-
-Tests: grouped scalar plus resource ensures, post-return fold on only one
-branch, different result values on sibling outcomes, a divergent path, and
-missing/incorrect claim evidence. Extend the existing grouped expansion and
-resource-scope tests. For repeated post-execution haves/folds, measure
-8/16/32/64 unrelated facts and multiple operation counts; context rebuild work
-must disappear and total work must be proportional to input plus produced
-proof deltas. Retain the negative wrong-sibling/path tests.
+Regressions cover mixed scalar/resource grouped claims, a fold on only one
+returning branch, distinct sibling results, divergent paths, evidence identity,
+and expansion/reverification with result tampering. Deterministic 8/16/32/64
+curves vary unrelated facts and repeated post-execution haves/folds independently:
+checked operations materialize no ambient facts, and end-to-end incremental
+indexing/export work depends on the produced deltas rather than ambient size.
+Existing resource-scope, predicate-provenance, wrong-sibling, and no-body-rerun
+regressions remain in the full gate.
 
 ## Inventory and work package D: loop-initialization certificate gateway
 

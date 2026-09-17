@@ -293,6 +293,7 @@ impl PureFactContext {
             ConditionTerm::Bitvector64UnsignedLessEqual(a, b) => Some((a, b, 5)),
             ConditionTerm::Bitvector64UnsignedGreaterThan(a, b) => Some((a, b, 6)),
             ConditionTerm::Bitvector64UnsignedGreaterEqual(a, b) => Some((a, b, 7)),
+            ConditionTerm::Bitvector64Equal(a, b) => Some((a, b, 8)),
             _ => None,
         };
         if let Some((left, right, operator)) = wide_comparison
@@ -309,7 +310,8 @@ impl PureFactContext {
                 4 => left < right,
                 5 => left <= right,
                 6 => left > right,
-                _ => left >= right,
+                7 => left >= right,
+                _ => left == right,
             });
         }
         match condition {

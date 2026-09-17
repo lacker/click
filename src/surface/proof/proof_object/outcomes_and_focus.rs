@@ -58,12 +58,119 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// Read return-count representation from the certified path, retaining
+    /// the body ownership until its open scopes have been checked closed.
+    pub(in crate::surface::proof) fn with_contract_return_counts(
+        &self,
+        execution: &CCheckedFunctionExecution,
+    ) -> Result<Self, ClickError> {
+        let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
+            return Err(self.step_error("return counts require an outcome goal"));
+        };
+        let path = execution
+            .paths()
+            .get(goal.path_index)
+            .ok_or_else(|| self.step_error("return counts have no checked path"))?;
+        let Proposition::CFunctionVerifies { outcome, .. } =
+            implication_body(path.theorem().proposition())
+        else {
+            return Err(self.step_error("return counts have no checked execution outcome"));
+        };
+        self.with_outcome_snapshot(&crate::kernel::function_body_with_return_counts(
+            &self.focused_outcome_snapshot()?,
+            outcome,
+        ))
+    }
+
+    /// A retained proposition scope may follow checked resource changes on
+    /// its owning outcome. Context, branch and result identity must agree.
+    pub(in crate::surface::proof) fn refresh_outcome_from(
+        &self,
+        root: &Self,
+    ) -> Result<Self, ClickError> {
+        if !Arc::ptr_eq(&self.context, &root.context) {
+            return Err(self.step_error("outcome refresh belongs to another proof branch"));
+        }
+        let data = self
+            .focused_outcome_data()
+            .ok_or_else(|| self.step_error("outcome refresh requires an outcome-aware goal"))?;
+        let current = root
+            .focused_outcome_data()
+            .ok_or_else(|| self.step_error("outcome refresh lost its owning outcome"))?;
+        if !data.core.identity.same_as(&current.core.identity) {
+            return Err(self.step_error("outcome refresh belongs to another execution outcome"));
+        }
+        if data.core.result != current.core.result
+            || data.core.is_exceptional != current.core.is_exceptional
+        {
+            return Err(self.step_error("outcome refresh cannot change the checked result"));
+        }
+        self.with_outcome_snapshot(&root.focused_outcome_snapshot()?)
+    }
+
+    pub(in crate::surface::proof) fn apply_outcome_contract_resources(
+        &self,
+        pre_state: &CState,
+        function: &CFunction,
+    ) -> Result<Self, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("contract resource effects require an execution proof"));
+        };
+
+        let (outcome, _obligations) = crate::kernel::apply_c_function_contract_resource_transition(
+            pre_state,
+            function,
+            context.arguments,
+            self.focused_outcome_snapshot()?,
+            self.facts().assumptions(),
+        )
+        .map_err(|message| {
+            self.step_error(format!(
+                "could not apply checked contract resource effect: {message}"
+            ))
+        })?;
+        self.with_outcome_snapshot(&outcome)
+    }
+
+    pub(in crate::surface::proof) fn check_outcome_resource_claim<'e>(
+        &self,
+        checked_execution: &'e CCheckedFunctionExecution,
+        claim: FunctionClaimRef<'_>,
+    ) -> Result<CheckedResourceClaim<'e>, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("resource claim requires an execution proof"));
+        };
+        let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
+            return Err(self.step_error("resource claim requires an outcome goal"));
+        };
+        let Ensure::Resource(resource) = claim.clause().ensure() else {
+            return Err(self.step_error("resource production cannot close a proposition claim"));
+        };
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("resource claim lost its execution"))?;
+        prove_ensure_resource(
+            checked_execution,
+            claim.key(),
+            context.claim_label,
+            goal.path_index,
+            &goal.data.core.effect_facts,
+            self.facts(),
+            resource,
+            claim.clause().borrowed(),
+            context.parsed_function.parameters(),
+            context.arguments,
+            execution
+                .core
+                .frontier
+                .execution_start_state(&execution.core.state),
+            &self.focused_outcome_snapshot()?,
+        )
+    }
+
     /// Updates the focused branch outcome goal's immutable result/state snapshot
     /// after a separately checked resource transition.
-    pub(in crate::surface::proof) fn with_outcome_snapshot(
-        &self,
-        outcome: &CFunctionOutcome,
-    ) -> Result<Self, ClickError> {
+    fn with_outcome_snapshot(&self, outcome: &CFunctionOutcome) -> Result<Self, ClickError> {
         let (value, state) = match outcome {
             CFunctionOutcome::Return { value, state }
             | CFunctionOutcome::Throw { value, state } => (value, state),
@@ -117,49 +224,37 @@ impl<'a> Proof<'a> {
         })
     }
 
-    /// Installs an already checked post-execution fact context on the focused branch
-    /// outcome goal while preserving retained Surface provenance for facts
-    /// that survive the transition.
-    pub(in crate::surface::proof) fn with_checked_outcome_facts(
-        &self,
-        facts: &[Proposition],
-    ) -> Result<Self, ClickError> {
-        let data = match self.focused_obligation() {
-            Some(Obligation::FunctionOutcome(goal)) => goal.data.as_ref(),
-            Some(Obligation::Proposition(goal)) => goal.outcome.as_deref().ok_or_else(|| {
-                self.step_error("outcome facts require a result-aware proposition goal")
-            })?,
-            _ => return Err(self.step_error("outcome facts require a focused outcome goal")),
+    /// Resource observations are consequences of this outcome's checked
+    /// resource state. Publish their persistent fact delta on the same branch.
+    pub(in crate::surface::proof) fn project_outcome_resources(&self) -> Result<Self, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("outcome resource projection requires an execution proof"));
         };
-        // Path preparation can unfold predicate requirements in place. Keep
-        // the fixed-state outcome view aligned with the checked fact context;
-        // caller-source identity no longer depends on this moving prefix.
-        let requires = match self.context.as_ref() {
-            ProofContext::Execution(context) => context.function_block.requires().len(),
-            _ => 0,
+        let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
+            return Err(self.step_error("outcome resource projection requires an outcome goal"));
         };
-        let mut data = data.clone();
-        data.core.requirement_facts = Arc::new(facts[..requires.min(facts.len())].to_vec());
-        let data = Arc::new(data);
-        let obligation = match self.focused_obligation() {
-            Some(Obligation::FunctionOutcome(goal)) => {
-                let mut updated = goal.clone();
-                updated.data = data;
-                Obligation::FunctionOutcome(updated)
-            }
-            Some(Obligation::Proposition(goal)) => {
-                let mut updated = goal.clone();
-                updated.outcome = Some(data);
-                Obligation::Proposition(updated)
-            }
-            _ => unreachable!("the outcome data was selected above"),
-        };
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("outcome lost its execution"))?;
+        let pre_state = execution
+            .core
+            .frontier
+            .execution_start_state(&execution.core.state);
+        let facts = project_outcome_resource_facts(
+            context.resource_environment,
+            context.parsed_function.parameters(),
+            context.arguments,
+            pre_state,
+            &self.focused_outcome_snapshot()?,
+            self.facts().clone(),
+            context.predicate_environment,
+            context.click_function_environment,
+            context.claim_label,
+            goal.path_index,
+        )?;
         let state = self
             .state
-            .replace_focused_obligation_and_facts(
-                obligation,
-                self.facts().resync_ordered_preserving_provenance(facts),
-            )
+            .replace_focused_obligation_and_facts(Obligation::FunctionOutcome(goal.clone()), facts)
             .map_err(|_| self.step_error("outcome goal is no longer open"))?;
         Ok(Self {
             site: self.site.clone(),
@@ -167,6 +262,141 @@ impl<'a> Proof<'a> {
             state,
             node: self.node.clone(),
         })
+    }
+
+    /// Route this checked execution path through its retained proof-case
+    /// hypotheses. The caller cannot supply a new hypothesis or select facts
+    /// from another path.
+    pub(in crate::surface::proof) fn prepare_outcome_cases(
+        &self,
+    ) -> Result<Option<Self>, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("outcome routing requires an execution proof"));
+        };
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("outcome lost its execution"))?;
+        let mut facts = self.facts().clone();
+        let outcome = self.focused_outcome_snapshot()?;
+        for case in &execution.presentation.case_assumptions {
+            let CFunctionOutcome::Return { value, state } = &outcome else {
+                return Err(self.step_error("proof-level `if` requires a return outcome"));
+            };
+            let fact = if let Some(fact) = &case.fact {
+                fact.clone()
+            } else {
+                let condition = lower_outcome_proposition_with_recorded_snapshots(
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                    execution
+                        .core
+                        .frontier
+                        .execution_start_state(&execution.core.state),
+                    state,
+                    value,
+                    &facts,
+                    &case.condition,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                    &execution.presentation.recorded_snapshots,
+                )
+                .map_err(|message| self.step_error(message))?;
+                if case.value {
+                    condition
+                } else {
+                    Proposition::Not(Box::new(condition))
+                }
+            };
+            if facts.directly_conflicts_with(&fact) {
+                return Ok(None);
+            }
+            match super::super::claim_proofs::proof_case_fact_conflicts(&fact, facts.assumptions())
+            {
+                Ok(true) => return Ok(None),
+                Err(()) => return Err(self.step_error(format!(
+                    "proof branch routing reached an inconsistent assumption context at tactic {}",
+                    case.tactic_index
+                ))),
+                Ok(false) => {}
+            }
+            facts = facts.with_kernel_checked_fact(fact);
+        }
+        let state = self
+            .state
+            .replace_focused_obligation_and_facts(
+                self.focused_obligation().expect("outcome exists").clone(),
+                facts,
+            )
+            .map_err(|_| self.step_error("outcome goal is no longer open"))?;
+        Ok(Some(Self {
+            site: self.site.clone(),
+            context: self.context.clone(),
+            state,
+            node: self.node.clone(),
+        }))
+    }
+
+    /// Store consequences are derived from this outcome's checked execution
+    /// once and retained with it. Later haves share the resulting fact root.
+    pub(in crate::surface::proof) fn with_outcome_store_consequences(
+        &self,
+    ) -> Result<Self, ClickError> {
+        let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
+            return Err(self.step_error("store consequences require an outcome goal"));
+        };
+        if goal.data.core.store_consequences_available {
+            return Ok(self.clone());
+        }
+        let mut facts = self.facts().clone();
+        for fact in crate::kernel::certified_store_equations(&goal.data.core.effect_facts)
+            .into_iter()
+            .chain(crate::kernel::certified_store_loadability_facts(
+                &goal.data.core.effect_facts,
+            ))
+        {
+            facts = facts.with_kernel_checked_fact(fact);
+        }
+        let mut data = (*goal.data).clone();
+        data.core.store_consequences_available = true;
+        let mut goal = goal.clone();
+        goal.data = Arc::new(data);
+        let state = self
+            .state
+            .replace_focused_obligation_and_facts(Obligation::FunctionOutcome(goal), facts)
+            .map_err(|_| self.step_error("outcome goal is no longer open"))?;
+        Ok(Self {
+            site: self.site.clone(),
+            context: self.context.clone(),
+            state,
+            node: self.node.clone(),
+        })
+    }
+
+    /// Focus a compiler-lowered contract claim with only the load facts
+    /// produced by that lowering. The ambient outcome facts remain shared.
+    pub(in crate::surface::proof) fn focus_lowered_outcome_claim(
+        &self,
+        goal: Proposition,
+        lowering_facts: &[Proposition],
+        surface: &ClickProposition,
+    ) -> Result<Self, ClickError> {
+        let mut focused = self.focus_fixed_state_goal_with_surface(goal, Some(surface.clone()))?;
+        let facts = lowering_facts
+            .iter()
+            .fold(focused.facts().clone(), |facts, fact| {
+                facts.with_kernel_checked_fact(fact.clone())
+            });
+        focused.state = focused
+            .state
+            .replace_focused_obligation_and_facts(
+                focused
+                    .focused_obligation()
+                    .expect("claim goal exists")
+                    .clone(),
+                facts,
+            )
+            .map_err(|_| self.step_error("claim goal is no longer open"))?;
+        Ok(focused)
     }
 
     /// Returns a handle addressing another open goal of the same state.
@@ -214,7 +444,6 @@ impl<'a> Proof<'a> {
     /// directly rather than converting through a mutable execution-context adapter.
     pub(in crate::surface::proof) fn split_function_outcomes(
         &self,
-        requirement_facts: Arc<Vec<Proposition>>,
     ) -> Result<(Self, Vec<BranchId>), ClickError> {
         if !matches!(self.focused_obligation(), Some(Obligation::Frontier(_))) {
             return Err(self.step_error("outcome goals require an open execution frontier"));
@@ -237,14 +466,25 @@ impl<'a> Proof<'a> {
             .as_ref()
             .and_then(|execution| frontier_premise_anchor(execution));
         let requirement_surfaces = match self.context.as_ref() {
-            ProofContext::Execution(context) => requirement_facts
+            ProofContext::Execution(context) => context
+                .constants
+                .execution_start_facts
                 .iter()
-                .zip(context.function_block.requires())
-                .filter_map(|(fact, requirement)| {
-                    requirement
-                        .proposition()
-                        .cloned()
-                        .map(|surface| (fact.clone(), surface))
+                .zip(context.constants.entry_fact_origins.iter())
+                .filter_map(|(fact, origin)| {
+                    let EntryFactOrigin::Requirement {
+                        source_id,
+                        role: RequirementFactRole::Principal { .. },
+                    } = origin
+                    else {
+                        return None;
+                    };
+                    let surface = context
+                        .function_block
+                        .requires()
+                        .get(source_id.outer_ordinal)?
+                        .proposition()?;
+                    Some((fact.clone(), surface.clone()))
                 })
                 .fold(PersistentMap::default(), |index, (fact, surface)| {
                     index.with_inserted(fact, surface)
@@ -279,30 +519,38 @@ impl<'a> Proof<'a> {
                 // A path proved non-returning owes no outcome judgment.
                 CFunctionOutcome::VerificationDiverges => continue,
                 CFunctionOutcome::UndefinedBehavior(_) | CFunctionOutcome::RuntimeError(_) => {
+                    let ProofContext::Execution(context) = self.context.as_ref() else {
+                        unreachable!()
+                    };
                     return Err(self.step_error(format!(
-                        "outcome goals require a verifying execution, but path {path_index} failed"
+                        "path {path_index}: {}",
+                        describe_function_outcome(
+                            path.outcome(),
+                            context.parsed_function.parameters(),
+                            context.arguments
+                        )
                     )));
                 }
             };
-            // The goal owns the path-local pure facts. Effect-region facts
-            // stay in the execution snapshot and are consumed only by the
-            // checked fixed-state operations that explicitly cross effects.
-            for fact in path.facts() {
+            // Import the checked path delta once, including its effect
+            // evidence. Haves and resource operations share this persistent
+            // context; none reconstructs assumptions from the path history.
+            let execution_facts = path.execution_facts();
+            for fact in &execution_facts {
                 facts = facts.with_kernel_checked_fact(fact.proposition().clone());
             }
-            let execution_facts = path.execution_facts();
             let provenance = execution.provenance_for_outcome(path_index);
             goals.push(OpenBranch::function_outcome(
                 OutcomeObligation::new(
                     path_index,
                     Arc::new(OutcomeProofData::new(
                         OutcomeProofCore {
+                            identity: crate::kernel::proof::OutcomeIdentity::fresh(),
+                            store_consequences_available: false,
                             result: Arc::new(result),
                             state: state.into(),
                             is_exceptional,
                             effect_facts: Arc::new(execution_facts),
-                            execution_pure_facts: Arc::new(path.facts().to_vec()),
-                            requirement_facts: requirement_facts.clone(),
                         },
                         OutcomeProofPresentation {
                             surface_propositions: provenance.surface_propositions,
@@ -322,7 +570,7 @@ impl<'a> Proof<'a> {
             ));
         }
         if goals.is_empty() {
-            return Err(self.step_error("outcome goals require at least one completed path"));
+            return Ok((self.clone(), Vec::new()));
         }
         let (state, outcome_ids) = self
             .state

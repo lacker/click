@@ -6348,12 +6348,9 @@ pub(in crate::surface) fn implication_body(proposition: &Proposition) -> &Propos
 }
 
 pub(in crate::surface) fn assumptions_from_propositions(
-    propositions: &[Proposition],
+    propositions: &(impl PropositionSource + ?Sized),
 ) -> PureFactContext {
-    propositions
-        .iter()
-        .cloned()
-        .fold(PureFactContext::new(), PureFactContext::assume_proposition)
+    propositions.pure_context()
 }
 
 pub(in crate::surface) fn check_signature(

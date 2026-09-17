@@ -8,49 +8,72 @@ pub(crate) fn c_checked_function_proposition(
     specification: &CFunctionSpecification,
     theorem: &Theorem,
     completion: &crate::kernel::proof::CheckedProposition,
-    path_outcome: Option<&CFunctionOutcome>,
+    path: &SymbolicCExecutionPath,
 ) -> Option<CCheckedFunctionProposition> {
-    let mut conclusion = theorem.proposition();
-    while let Proposition::Implies(_, body) = conclusion {
-        conclusion = body;
+    fn conclusion(theorem: &Theorem) -> &Proposition {
+        let mut proposition = theorem.proposition();
+        while let Proposition::Implies(_, body) = proposition {
+            proposition = body;
+        }
+        proposition
     }
-    let theorem_specification = match conclusion {
+    match conclusion(theorem) {
         Proposition::CFunctionSatisfiesSpecification {
             function: proved_function,
-            specification,
+            specification: proved_specification,
         }
         | Proposition::CFunctionPartiallySatisfiesSpecification {
             function: proved_function,
-            specification,
-        } if proved_function == function => specification,
+            specification: proved_specification,
+        } if proved_function == function && proved_specification == specification => {}
+        _ => return None,
+    }
+    // The origin is evidence for this exact checked path, never an arbitrary
+    // caller-supplied snapshot. Its producer checked the body against its
+    // retained trace and applied the contract exit rule to that same trace.
+    match conclusion(path.theorem()) {
+        Proposition::CFunctionVerifies {
+            state,
+            function: proved_function,
+            arguments,
+            outcome,
+        } if state == specification.state()
+            && proved_function == function
+            && arguments == specification.arguments()
+            && outcome == specification.outcome() => {}
+        _ => return None,
+    }
+    let completed = completion.outcome()?;
+    let exceptional = match specification.outcome() {
+        CFunctionOutcome::Return { .. } => false,
+        CFunctionOutcome::Throw { .. } => true,
         _ => return None,
     };
-    if theorem_specification != specification {
+    if completed.is_exceptional != exceptional {
         return None;
     }
-    let CFunctionOutcome::Return { value, state } = specification.outcome() else {
-        return None;
+    let matches_program_state = |outcome: &CFunctionOutcome| {
+        let (value, state, exceptional) = match outcome {
+            CFunctionOutcome::Return { value, state } => (value, state, false),
+            CFunctionOutcome::Throw { value, state } => (value, state, true),
+            _ => return false,
+        };
+        completed.is_exceptional == exceptional
+            && completed.result.as_ref() == value
+            && completed.state.memory() == state.memory()
+            && completed.state.locals() == state.locals()
     };
-    // The completion records the outcome it was proved at when its root was
-    // focused from a function-outcome obligation; a root focused on a
-    // fixed-state frontier records none, and the caller names the path
-    // outcome that frontier was built from.
-    let (result, outcome_state): (&CValue, &CState) = match completion.outcome() {
-        Some(outcome) => (outcome.result.as_ref(), &outcome.state),
-        None => match path_outcome {
-            Some(CFunctionOutcome::Return { value, state }) => (value, state),
-            _ => return None,
-        },
-    };
-    // The certified path's outcome is the proof's outcome under the contract's exit
-    // rule: the same result, memory, and locals, with resources and
-    // populations in the contract's representation. A proposition the proof
-    // completed about the result and memory holds at either; a proposition
-    // that embeds the raw state cannot match a lowering at the certified one
-    // and is simply never consulted.
-    if result != value
-        || outcome_state.memory() != state.memory()
-        || outcome_state.locals() != state.locals()
+    // Resource/population representation can change at exit. Aggregate return
+    // completion can also retain the body's sparse block layout, while the
+    // exit rule restores the caller's layout. Only the producer's checked
+    // correspondence admits that difference; memory contents are never erased
+    // or matched by source spelling. A state-embedded proposition still must
+    // match the exact contract lowering when this evidence is consumed.
+    if !matches_program_state(specification.outcome())
+        && !path
+            .completion_origin
+            .as_ref()
+            .is_some_and(matches_program_state)
     {
         return None;
     }
@@ -2687,6 +2710,7 @@ int32 array_fold_append_at_zero(int32 a[]) {
         };
         let fact = ExecutionPureFact::new(body_fact.clone());
         let path = SymbolicCExecutionPath {
+            completion_origin: None,
             assumptions: PureFactContext::new(),
             facts: vec![fact.clone()],
             effect_facts: Vec::new(),

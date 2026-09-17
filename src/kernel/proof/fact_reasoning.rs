@@ -429,10 +429,11 @@ pub(crate) fn condition_polarity_forms(proposition: &Proposition) -> Vec<Proposi
     forms
 }
 
-pub(crate) fn exact_fact_is_available(required: &Proposition, available: &[Proposition]) -> bool {
-    available
-        .iter()
-        .any(|fact| exact_fact_contains_conjunct(fact, required))
+pub(crate) fn exact_fact_is_available(
+    required: &Proposition,
+    available: &(impl super::PropositionSource + ?Sized),
+) -> bool {
+    available.exact_available(required)
 }
 
 /// Structural proposition equality whose condition leaves are decided by the

@@ -39,17 +39,17 @@ pub(crate) use fact_keys::{
 };
 #[cfg(test)]
 pub(crate) use fact_keys::{alpha_proposition_key_visits, reset_alpha_proposition_key_visits};
-pub(crate) use facts::ProofFacts;
 #[cfg(test)]
 pub(crate) use facts::take_fact_entry_counts;
+pub(crate) use facts::{ProofFacts, PropositionSource};
 pub(crate) use object::{
     ExecutionUpdateError, FrontierSplitError, ProofFocusError, ProofJoinError, ProofObject,
     ProofState, PropositionAssumptionContext, PropositionCloseError, PropositionIntroduction,
     PropositionSplitError,
 };
 pub(crate) use obligations::{
-    CheckedProposition, FrontierObligation, FunctionOutcomeObligation, OutcomeProofCore,
-    OutcomeProofState, ProofObligation, PropositionObligation,
+    CheckedProposition, FrontierObligation, FunctionOutcomeObligation, OutcomeIdentity,
+    OutcomeProofCore, OutcomeProofState, ProofObligation, PropositionObligation,
 };
 pub(crate) use storage::{
     PersistentOrderedSet, PersistentSequence, PersistentSequenceIter, SharedValue, SharedVec,

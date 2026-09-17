@@ -1681,3 +1681,80 @@ fn wide_execution_match_project(width: usize) -> (String, String) {
         "int32 read(int32* p) { return *p; }".to_string(),
     )
 }
+
+#[test]
+fn outcome_haves_and_resource_folds_do_not_reimport_ambient_facts() {
+    let c_source = "int32 identity(int32 x) { return x; }";
+    let mut samples = Vec::new();
+    for size in [8_usize, 16, 32, 64] {
+        let requirements = (0..size)
+            .map(|i| format!("requires x != {i};"))
+            .collect::<String>();
+        let mut baseline = None;
+        for operations in [0_usize, 1, 4, 16] {
+            let body = (0..operations)
+                .map(|i| {
+                    format!(
+                        "have {} == {} by {{ normalize(); }} unfold(marker(x)); fold(marker(x));",
+                        1000 + i,
+                        1000 + i,
+                    )
+                })
+                .collect::<String>();
+            let source = format!(
+                r#"
+                resource marker(x: int32) {{ fact x == x; }}
+                verifying "identity.c";
+                int32 identity(int32 x) {{
+                    {requirements}
+                    owns marker(x);
+                    ensures result == x;
+                }} by {{ execute(); {body} simp(); }}
+            "#
+            );
+            crate::kernel::proof::take_fact_entry_counts();
+            verify_c0_sources(&source, &[("identity.c", c_source)]).unwrap_or_else(|error| {
+                panic!("ambient {size}, operations {operations}: {error:?}")
+            });
+            let (indexed, materialized) = crate::kernel::proof::take_fact_entry_counts();
+            let (base_indexed, base_materialized) =
+                *baseline.get_or_insert((indexed, materialized));
+            samples.push((
+                size,
+                operations,
+                indexed - base_indexed,
+                materialized - base_materialized,
+            ));
+        }
+    }
+    for operations in [1, 4, 16] {
+        let curve = samples
+            .iter()
+            .filter(|sample| sample.1 == operations)
+            .collect::<Vec<_>>();
+        assert!(
+            curve[0].2 > 0,
+            "the regression must exercise checked fact production"
+        );
+        for sample in &curve[1..] {
+            assert_eq!(
+                (sample.2, sample.3),
+                (curve[0].2, curve[0].3),
+                "unrelated input facts changed the cost of the outcome operations: {samples:?}"
+            );
+        }
+    }
+    let unit = samples
+        .iter()
+        .find(|sample| sample.0 == 8 && sample.1 == 1)
+        .unwrap();
+    for sample in samples
+        .iter()
+        .filter(|sample| sample.0 == 8 && sample.1 > 0)
+    {
+        assert!(
+            sample.2 <= unit.2 * sample.1 && sample.3 <= unit.3 * sample.1,
+            "outcome operation history grew faster than its produced deltas: {samples:?}"
+        );
+    }
+}

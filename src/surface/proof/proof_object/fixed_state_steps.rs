@@ -520,9 +520,8 @@ impl<'a> Proof<'a> {
                 .copied()
                 .ok_or_else(|| self.step_error(format!("unknown requirement label `{label}`")))?,
         };
-        // Outcome proofs maintain a moving fixed-state requirement prefix.
-        // An ordinary caller source instead names the immutable entry vector
-        // from which its principal fact index was minted.
+        // A caller source always names the immutable entry vector from which
+        // its principal fact index was minted, including at function exit.
         let caller_requirement_facts: Option<&[Proposition]> = match self.context.as_ref() {
             ProofContext::Execution(context) => {
                 Some(context.constants.execution_start_facts.as_slice())
@@ -2012,7 +2011,7 @@ impl<'a> Proof<'a> {
             theorem_environment: context.theorem_environment,
             original_requirements: context.function_block.requires(),
             requirement_label_indices: Some(context.function_block.requirement_label_indices()),
-            requirement_facts: data.core.requirement_facts.as_ref(),
+            requirement_facts: context.constants.execution_start_facts.as_slice(),
         })
     }
 

@@ -181,8 +181,25 @@ fn modular_exceptional_call_completes_both_caller_claim_families() {
             exceptional ensures exception == 7;
         }
     "#;
-    verify_c0_sources(click_source, &[("calls.c", c_source)])
+    let verified = verify_c0_sources(click_source, &[("calls.c", c_source)])
         .expect("normal and exceptional caller claims must verify");
+    let exceptional = verified
+        .iter()
+        .filter(|theorem| {
+            matches!(theorem.claim, VerifiedClaim::ExceptionalEnsure { .. })
+                && matches!(
+                    theorem.specification.outcome(),
+                    CFunctionOutcome::Throw { .. }
+                )
+        })
+        .collect::<Vec<_>>();
+    assert!(!exceptional.is_empty());
+    assert!(
+        exceptional
+            .iter()
+            .all(|theorem| theorem.checked_proposition.is_some()),
+        "exceptional claims retain their proposition completion through certification"
+    );
     let expanded = expand_c0_claim_source(
         click_source,
         &[("calls.c", c_source)],
@@ -2752,4 +2769,73 @@ fn source_have_failures_keep_the_written_operation_in_each_execution_phase() {
             assert!(error.message().contains(diagnostic), "{body}: {error:?}");
         }
     }
+}
+
+#[test]
+fn grouped_outcome_fold_is_local_to_the_returning_branch() {
+    let c_source = r#"
+        int32 select(int32* cell, int32 flag) {
+            if (flag != 0) { cell[0] = 7; return 7; }
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        resource seven_cell(cell: int32*) { owns cell[0..1]; fact cell[0] == 7; }
+        verifying "select.c";
+        int32 select(int32* cell, int32 flag) {
+            owns seven_cell(cell);
+            ensures result == 0 or result == 7;
+        } by {
+            if (flag != 0) {
+                unfold(seven_cell(cell));
+                execute();
+                have cell[0] == 7 by { simp(); }
+                fold(seven_cell(cell));
+                simp();
+            } else {
+                execute();
+                simp();
+            }
+        }
+    "#;
+    let sources = &[("select.c", c_source)];
+    verify_c0_sources(click_source, sources)
+        .expect("each branch closes its own scalar and resource claims");
+    let expanded =
+        expand_c0_claim_source(click_source, sources, "select", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, sources)
+        .expect("branch-local fold expansion independently verifies");
+    let wrong_result = expanded.replace("result == 0 or result == 7", "result == 7");
+    assert_ne!(wrong_result, expanded);
+    verify_c0_sources(&wrong_result, sources)
+        .expect_err("the zero-returning sibling cannot borrow the seven-result completion");
+}
+
+#[test]
+fn aggregate_return_claims_retain_checked_completions() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/struct_aggregate_return_postcondition.md");
+    let fixture = crate::cli::read_mdtest(&path).unwrap();
+    let source = fixture.click_source.as_deref().unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, body)| (name.as_str(), body.as_str()))
+        .collect::<Vec<_>>();
+    let verified = verify_c0_sources(source, &sources).unwrap();
+    assert_eq!(verified.len(), 4);
+    assert!(
+        verified
+            .iter()
+            .all(|claim| claim.checked_proposition.is_some())
+    );
+    let expanded =
+        expand_c0_claim_source(source, &sources, "clone_packet", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+    let tampered = expanded.replace(
+        "ensures result.tag == source->tag;",
+        "ensures result.tag == source->inner.flag;",
+    );
+    assert_ne!(tampered, expanded);
+    assert!(verify_c0_sources(&tampered, &sources).is_err());
 }

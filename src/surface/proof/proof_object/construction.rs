@@ -496,6 +496,7 @@ impl<'a> Proof<'a> {
         )
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(in crate::surface::proof) fn for_fixed_state_frontier(
         claim_label: &'a str,
@@ -538,48 +539,6 @@ impl<'a> Proof<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::surface::proof) fn for_fixed_state_frontier_with_premise_anchor(
-        claim_label: &'a str,
-        tactic_index: usize,
-        available: &'a [Proposition],
-        parameters: &'a [syntax::C0Parameter],
-        arguments: &'a [CExpression],
-        pre_state: &'a CState,
-        state: &'a CState,
-        result: Option<&'a CValue>,
-        premise_anchor: Option<&ProgramPointRef>,
-        recorded_snapshots: &'a RecordedSnapshots,
-        surface_propositions: &'a SurfacePropositionMap,
-        predicate_environment: &'a PredicateEnvironment,
-        click_function_environment: &'a ClickFunctionEnvironment,
-        theorem_environment: &'a TheoremEnvironment,
-        unfolded_predicates: &'a [String],
-        effect_facts: &'a [ExecutionPureFact],
-    ) -> Self {
-        Self::for_fixed_state(
-            claim_label,
-            tactic_index,
-            available,
-            OpenBranch::frontier,
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            result,
-            premise_anchor.cloned(),
-            recorded_snapshots,
-            surface_propositions,
-            predicate_environment,
-            click_function_environment,
-            theorem_environment,
-            unfolded_predicates,
-            effect_facts,
-            &[],
-            None,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn for_fixed_state(
         claim_label: &'a str,
         tactic_index: usize,
@@ -602,8 +561,8 @@ impl<'a> Proof<'a> {
         requirement_label_indices: Option<&'a BTreeMap<String, usize>>,
     ) -> Self {
         let facts = ProofFacts::from_ordered(available);
-        let mut lowering_context = available.to_vec();
-        append_resource_context_observable_facts(state.resources(), &mut lowering_context);
+        let lowering_context =
+            resource_context_observable_facts_for_proof(state.resources(), facts.clone()).to_vec();
         let goal = goal(BranchState {
             facts,
             unfolded_predicates: PersistentOrderedSet::default(),

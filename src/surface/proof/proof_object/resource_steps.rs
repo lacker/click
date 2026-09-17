@@ -1142,6 +1142,36 @@ impl<'a> Proof<'a> {
         if let ResourceClause::Named { binding, .. } = resource {
             return self.apply_instance_rewrite(binding, resource, false);
         }
+        self.apply_outcome_resource_fold_with_closure(resource, ResourceBodyClosure::Initialize)
+    }
+
+    /// Closing an already open scope is checked by the same resource law as
+    /// an explicit fold, with the scope's ownership-preservation policy.
+    pub(in crate::surface::proof) fn close_outcome_resource_scope(
+        &self,
+        resource: &ResourceClause,
+        preserve_exposed_body: bool,
+    ) -> Result<Self, ClickError> {
+        let transition = self.apply_outcome_resource_fold_with_closure(
+            resource,
+            ResourceBodyClosure::CloseOpen {
+                preserve_exposed_body,
+            },
+        )?;
+        let successor = Self {
+            site: self.site.clone(),
+            context: self.context.clone(),
+            state: self.publish_checked_transition(transition)?,
+            node: self.node.clone(),
+        };
+        Ok(successor)
+    }
+
+    fn apply_outcome_resource_fold_with_closure(
+        &self,
+        resource: &ResourceClause,
+        closure: ResourceBodyClosure,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("outcome resource `fold` requires an execution proof"));
         };
@@ -1165,9 +1195,8 @@ impl<'a> Proof<'a> {
             resource,
             context.claim_label,
             goal.path_index,
-            &goal.data.core.execution_pure_facts,
+            &goal.data.core.effect_facts,
             self.facts().clone(),
-            &goal.data.surface_propositions,
             context.parsed_function.parameters(),
             context.arguments,
             pre_state,
@@ -1175,6 +1204,7 @@ impl<'a> Proof<'a> {
             context.predicate_environment,
             context.click_function_environment,
             &self.active_unfolded_predicates(),
+            closure,
         )?;
         let CFunctionOutcome::Return { value, state } = checked.outcome else {
             unreachable!("folding a return outcome preserves its outcome kind")
@@ -1226,17 +1256,14 @@ impl<'a> Proof<'a> {
             &state,
             &value,
         )?;
-        let mut assumptions = self.facts().assumptions().clone();
-        for execution_fact in goal.data.core.execution_pure_facts.iter() {
-            assumptions = assumptions.assume_proposition(execution_fact.proposition().clone());
-        }
+        let assumptions = self.facts().assumptions();
         let state = crate::kernel::construct_c_function_resource(
             &state,
             context.function,
             context.arguments,
             &value,
             &fact,
-            &assumptions,
+            assumptions,
         )
         .map_err(|message| {
             self.step_error(format!(

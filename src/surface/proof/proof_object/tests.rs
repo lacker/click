@@ -1960,8 +1960,8 @@ fn proof_fact_predicate_index_ignores_unrelated_context() {
 }
 
 #[test]
-fn outcome_fact_resync_preserves_only_surviving_unfold_provenance() {
-    let universal = |index: u64| Proposition::ForAll {
+fn outcome_fact_deltas_share_ambient_facts_and_preserve_unfold_provenance() {
+    let universal = |index| Proposition::ForAll {
         var: Variable(index),
         sort: Sort::CInt32,
         body: Box::new(Proposition::ConditionIs(
@@ -1972,45 +1972,37 @@ fn outcome_fact_resync_preserves_only_surviving_unfold_provenance() {
             true,
         )),
     };
-    let surviving = universal(9_000_000);
-    let removed = universal(9_000_001);
-
-    for size in [16_u64, 64, 256, 1024, 4096] {
+    for size in [8_u64, 16, 32, 64] {
         let ambient = (0..size)
             .map(|index| universal(10_000_000 + index))
             .collect::<Vec<_>>();
-        let mut original_order = ambient.clone();
-        original_order.push(surviving.clone());
-        original_order.push(removed.clone());
-        let original = ProofFacts::from_ordered(&original_order)
-            .with_predicate_unfold_fact(surviving.clone())
-            .with_predicate_unfold_fact(removed.clone());
-
-        let mut successor_order = ambient;
-        successor_order.push(surviving.clone());
-        let before_baseline = fact_node_allocations();
-        let _baseline = ProofFacts::from_ordered(&successor_order);
-        let baseline_allocations = fact_node_allocations() - before_baseline;
-        let before_resync = fact_node_allocations();
-        let successor = original.resync_ordered_preserving_provenance(&successor_order);
-        let resync_allocations = fact_node_allocations() - before_resync;
-
-        assert_eq!(
-            successor
-                .predicate_unfolded_universal_facts()
-                .collect::<Vec<_>>(),
-            vec![&surviving],
-            "size {size} must retain only surviving checked-unfold provenance"
-        );
-        assert!(successor.contains_top_level(&surviving));
-        assert!(!successor.contains_top_level(&removed));
-        let logarithmic_height = (u64::BITS - size.leading_zeros()) as usize;
-        let provenance_overhead = resync_allocations.saturating_sub(baseline_allocations);
-        let overhead_bound = 16 * logarithmic_height + 32;
-        assert!(
-            provenance_overhead <= overhead_bound,
-            "size {size} provenance resync added {provenance_overhead} persistent nodes over the legacy rebuild (bound {overhead_bound})"
-        );
+        let unfolded = universal(9_000_000);
+        let original =
+            ProofFacts::from_ordered(&ambient).with_predicate_unfold_fact(unfolded.clone());
+        for operations in [1_u64, 4, 16] {
+            crate::kernel::proof::take_fact_entry_counts();
+            let mut successor = original.clone();
+            for index in 0..operations {
+                successor = successor.with_kernel_checked_fact(universal(11_000_000 + index));
+            }
+            let (indexed, materialized) = crate::kernel::proof::take_fact_entry_counts();
+            assert_eq!(
+                indexed, operations as usize,
+                "ambient {size}, operations {operations}"
+            );
+            assert_eq!(
+                materialized, 0,
+                "ambient facts must never be materialized by a delta"
+            );
+            assert_eq!(
+                successor
+                    .predicate_unfolded_universal_facts()
+                    .collect::<Vec<_>>(),
+                vec![&unfolded]
+            );
+            assert!(!original.contains(&universal(11_000_000)));
+            assert!(successor.contains(&ambient[(size - 1) as usize]));
+        }
     }
 }
 
@@ -4983,7 +4975,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
         // snapshot by identity. The ancestor keeps its single frontier.
         let before_outcomes = fact_node_allocations();
         let (outcomes, outcome_ids) = terminal
-            .split_function_outcomes(Arc::new(Vec::new()))
+            .split_function_outcomes()
             .expect("the terminal execution should expose typed outcome goals");
         outcome_samples.push((
             size,
@@ -5005,6 +4997,10 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
             else_outcome.outcome_result(),
             "distinct return paths own distinct path-local results"
         );
+        assert!(
+            then_outcome.refresh_outcome_from(&else_outcome).is_err(),
+            "a retained judgment cannot adopt its sibling's result or resources"
+        );
         for outcome in [&then_outcome, &else_outcome] {
             assert!(Arc::ptr_eq(
                 outcome
@@ -5016,9 +5012,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
             ));
         }
         assert!(
-            outcomes
-                .split_function_outcomes(Arc::new(Vec::new()))
-                .is_err(),
+            outcomes.split_function_outcomes().is_err(),
             "an outcome goal is not a frontier and cannot derive again"
         );
     }
@@ -13488,4 +13482,163 @@ fn fixed_state_source_failure_is_only_a_miss_at_an_explicit_search_boundary() {
         completed.completed_certificate().unwrap().steps(),
         &[ProofStep::Assumption]
     );
+}
+
+#[test]
+fn outcome_haves_and_folds_share_facts_and_keep_sibling_resources_isolated() {
+    let click_file = crate::surface::parse(
+        r#"
+            resource marker(x: int32) {
+                fact x == x;
+            }
+            verifying "identity.c";
+            int32 identity(int32 x) {
+                owns marker(x);
+                ensures returns_x: result == x;
+            } by {
+                unfold(marker(x));
+                fold(marker(x));
+                execute();
+            }
+        "#,
+    )
+    .expect("test resource and function contract should parse");
+    let function_block = &click_file.function_blocks()[0];
+    let resource = function_block
+        .requires()
+        .iter()
+        .find_map(|requirement| match requirement.inner() {
+            Requirement::Resource(resource) => Some(resource.clone()),
+            _ => None,
+        })
+        .expect("the test function should own its marker resource");
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment =
+        ClickFunctionEnvironment::new(click_file.click_function_definitions());
+    let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+    let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+    let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+        .expect("test C function should parse");
+    let function = parsed_function
+        .to_kernel_function()
+        .with_composite_resource_definitions(
+            crate::surface::verification::composite_resource_definitions(
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the marker resource definition should lower"),
+        );
+    let function_environment = CExecutionEnvironment::new();
+    let arguments = vec![CExpression::Value(int32(7))];
+    let empty_state = CState::new();
+    let lowered = lower_resource_clause(
+        &resource,
+        parsed_function.parameters(),
+        &arguments,
+        empty_state.memory(),
+    )
+    .expect("the owned marker resource should lower");
+    let state =
+        empty_state.with_resource_context(ResourceContext::new().unchecked_with_fact(lowered));
+
+    for size in [8_u32, 16, 32, 64] {
+        let root = Proof::for_execution_frontier(
+            "persistent resource fold",
+            0,
+            ExecutionProofState::at_entry(
+                state.clone(),
+                ExecutionFrontier::default(),
+                RecordedSnapshots::new(),
+                SurfacePropositionMap::default(),
+                PersistentSequence::default(),
+            ),
+            (0..size).map(indexed_fact).collect(),
+            ExecutionProofConstants {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..ExecutionProofConstants::default()
+            },
+            function_block,
+            &function,
+            &parsed_function,
+            &arguments,
+            &function_environment,
+            &resource_environment,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+        );
+
+        let terminal = root
+            .apply_step(ProofStep::Step)
+            .expect("return step checks");
+        let (outcomes, ids) = terminal
+            .split_function_outcomes()
+            .expect("checked exit produces an outcome");
+        let root = outcomes
+            .focus_branch(ids[0])
+            .unwrap()
+            .project_outcome_resources()
+            .unwrap();
+        for operations in [1_usize, 4, 16] {
+            let mut current = root.clone();
+            let before = current.checkpoint();
+            crate::kernel::proof::take_fact_entry_counts();
+            for index in 0..operations {
+                let value =
+                    ContractExpression::CFragment(CExpression::Value(int32(index as u32 + 1000)));
+                let proposition = ClickProposition::Comparison {
+                    left: value.clone(),
+                    operator: ComparisonOperator::Equal,
+                    right: value,
+                };
+                current = current
+                    .begin_have(proposition)
+                    .unwrap()
+                    .try_authoritative_linear_script(&[ProofTactic::Normalize])
+                    .unwrap()
+                    .unwrap()
+                    .join()
+                    .unwrap()
+                    .apply_step(ProofStep::UnfoldResource(resource.clone()))
+                    .unwrap()
+                    .apply_step(ProofStep::FoldResource(resource.clone()))
+                    .unwrap();
+            }
+            let (indexed, materialized) = crate::kernel::proof::take_fact_entry_counts();
+            assert_eq!(
+                materialized, 0,
+                "ambient {size}, operations {operations} rebuilt a fact vector"
+            );
+            assert!(
+                indexed <= 8 * operations,
+                "only explicit operation deltas may be indexed: {indexed}"
+            );
+            assert_eq!(
+                current.certificate_since(&before).unwrap().steps().len(),
+                3 * operations
+            );
+            assert_eq!(root.certificate().steps(), terminal.certificate().steps());
+            assert_eq!(root.outcome_result(), current.outcome_result());
+            let CFunctionOutcome::Return { state: initial, .. } =
+                root.focused_outcome_snapshot().unwrap()
+            else {
+                unreachable!()
+            };
+            let CFunctionOutcome::Return {
+                state: final_state, ..
+            } = current.focused_outcome_snapshot().unwrap()
+            else {
+                unreachable!()
+            };
+            assert_eq!(initial.resources().facts(), final_state.resources().facts());
+        }
+        let unfolded = root
+            .apply_step(ProofStep::UnfoldResource(resource.clone()))
+            .unwrap();
+        assert_ne!(
+            unfolded.focused_outcome_snapshot().unwrap(),
+            root.focused_outcome_snapshot().unwrap()
+        );
+    }
 }

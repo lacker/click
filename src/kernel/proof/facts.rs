@@ -121,6 +121,52 @@ enum BitvectorEqualityAtomKey {
     },
 }
 
+/// Borrowed access to proposition premises. Persistent proofs supply their
+/// existing indexes; source/setup slices retain their ordered boundary view.
+/// This interface owns neither proof state nor completion evidence.
+pub(crate) trait PropositionSource {
+    fn propositions(&self) -> impl Iterator<Item = &Proposition>;
+    fn pure_context(&self) -> PureFactContext {
+        self.propositions()
+            .cloned()
+            .fold(PureFactContext::new(), PureFactContext::assume_proposition)
+    }
+    fn exact_available(&self, required: &Proposition) -> bool {
+        self.propositions()
+            .any(|fact| exact_fact_contains_conjunct(fact, required))
+    }
+}
+impl PropositionSource for [Proposition] {
+    fn propositions(&self) -> impl Iterator<Item = &Proposition> {
+        self.iter()
+    }
+}
+impl PropositionSource for Vec<Proposition> {
+    fn propositions(&self) -> impl Iterator<Item = &Proposition> {
+        self.iter()
+    }
+}
+impl<const N: usize> PropositionSource for [Proposition; N] {
+    fn propositions(&self) -> impl Iterator<Item = &Proposition> {
+        self.iter()
+    }
+}
+impl PropositionSource for ProofFacts {
+    fn propositions(&self) -> impl Iterator<Item = &Proposition> {
+        let mut seen = BTreeSet::new();
+        std::iter::successors(self.prioritized.as_deref(), |batch| batch.parent.as_deref())
+            .flat_map(|batch| batch.facts.iter())
+            .chain(self.ordered.iter())
+            .filter(move |fact| seen.insert(*fact))
+    }
+    fn pure_context(&self) -> PureFactContext {
+        self.assumptions().clone()
+    }
+    fn exact_available(&self, required: &Proposition) -> bool {
+        self.contains(required)
+    }
+}
+
 impl ProofFacts {
     /// Bounded newest-first view for diagnostics. This deliberately exposes
     /// references into the persistent sequence and never materializes the
@@ -354,20 +400,6 @@ impl ProofFacts {
             self.reserved_variables = self.reserved_variables.with_value(variable);
         }
         self
-    }
-
-    /// Rebuilds a legacy drain view while retaining the exact provenance
-    /// indexes owned by facts that remain available. The adapter iterates
-    /// only the explicit predicate-unfold delta, never the ambient fact set.
-    pub(crate) fn resync_ordered_preserving_provenance(&self, facts: &[Proposition]) -> Self {
-        let mut successor = Self::from_ordered(facts);
-        successor.rewritten_load_evidence = self.rewritten_load_evidence.clone();
-        for fact in self.predicate_unfolded_universal_facts.iter() {
-            if successor.contains_top_level(fact) {
-                successor = successor.with_predicate_unfold_fact(fact.clone());
-            }
-        }
-        successor
     }
 
     pub(crate) fn contains(&self, fact: &Proposition) -> bool {
@@ -1994,6 +2026,52 @@ mod integer_equality_fact_index_tests {
                 bytes: Bitvector32Term::Constant(bytes),
             }),
         }
+    }
+
+    #[test]
+    fn wide_equality_decision_uses_only_its_indexed_component() {
+        let left = Bitvector32Term::Variable(Variable(211_000));
+        let middle = Bitvector32Term::Variable(Variable(211_001));
+        let equality = |a: Bitvector32Term, b: Bitvector32Term| {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector64Equal(Box::new(a), Box::new(b)),
+                true,
+            )
+        };
+        let required = equality(left.clone(), Bitvector32Term::UInt64Constant(7));
+        let wrong = equality(left.clone(), Bitvector32Term::UInt64Constant(9));
+        let mut work = Vec::new();
+        for size in [8, 16, 32, 64] {
+            let unrelated = (0..size)
+                .map(|index| {
+                    equality(
+                        Bitvector32Term::Variable(Variable(212_000 + index)),
+                        Bitvector32Term::UInt64Constant(index),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let facts = ProofFacts::from_ordered(&unrelated)
+                .with_kernel_checked_fact(equality(left.clone(), middle.clone()))
+                .with_kernel_checked_fact(equality(
+                    middle.clone(),
+                    Bitvector32Term::UInt64Constant(7),
+                ));
+            let (proved, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                facts.assumptions().proves_atomic_without_search(&required)
+            });
+            assert!(proved);
+            assert!(!facts.assumptions().proves_atomic_without_search(&wrong));
+            work.push(measured);
+        }
+        assert!(work.windows(2).all(|pair| pair[0] == pair[1]), "{work:?}");
+        let narrow = ProofFacts::from_ordered(&[
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(middle.clone())),
+                true,
+            ),
+            equality(middle, Bitvector32Term::UInt64Constant(7)),
+        ]);
+        assert!(!narrow.assumptions().proves_atomic_without_search(&required));
     }
 
     #[test]

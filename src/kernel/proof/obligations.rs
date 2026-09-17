@@ -61,15 +61,28 @@ impl<S, O> DerefMut for PropositionObligation<S, O> {
     }
 }
 
+/// Identity of one producer-owned execution outcome. Proposition scopes
+/// retain it even when they allocate their own local proof branch IDs.
+#[derive(Clone)]
+pub(crate) struct OutcomeIdentity(Arc<()>);
+impl OutcomeIdentity {
+    pub(crate) fn fresh() -> Self {
+        Self(Arc::new(()))
+    }
+    pub(crate) fn same_as(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 /// Surface-independent payload-aware state for one checked function outcome.
 #[derive(Clone)]
 pub(crate) struct OutcomeProofCore {
+    pub(crate) identity: OutcomeIdentity,
     pub(crate) result: Arc<CValue>,
+    pub(crate) store_consequences_available: bool,
     pub(crate) state: SharedValue<CState>,
     pub(crate) is_exceptional: bool,
     pub(crate) effect_facts: Arc<Vec<ExecutionPureFact>>,
-    pub(crate) execution_pure_facts: Arc<Vec<ExecutionPureFact>>,
-    pub(crate) requirement_facts: Arc<Vec<Proposition>>,
 }
 
 /// Durable kernel evidence that one exact proposition judgment was closed.

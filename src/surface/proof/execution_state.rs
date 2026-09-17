@@ -1077,7 +1077,7 @@ pub(super) fn append_surface_tactics_at_branch_path(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn surface_branch_path_for_outcome(
     tactics: &[ProofTactic],
-    available: &[Proposition],
+    available: &(impl PropositionSource + ?Sized),
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -1111,7 +1111,7 @@ pub(super) fn surface_branch_path_for_outcome(
         let assumptions = assumptions_from_propositions(available);
         let is_true = exact_fact_is_available(&lowered, available) || assumptions.proves(&lowered);
         let is_false = available
-            .iter()
+            .propositions()
             .any(|fact| propositions_are_exact_negations(fact, &lowered))
             || fact_conflicts_with_assumptions(&lowered, &assumptions);
         let selected_then = match (is_true, is_false) {

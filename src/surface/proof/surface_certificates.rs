@@ -2770,7 +2770,9 @@ pub(super) fn plan_explicit_loadability_transport(
     None
 }
 
-fn signed_strict_parts(proposition: &Proposition) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
+pub(super) fn signed_strict_parts(
+    proposition: &Proposition,
+) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
     match proposition {
         Proposition::ConditionIs(ConditionTerm::Bitvector32SignedLessThan(left, right), true) => {
             Some((left, right))

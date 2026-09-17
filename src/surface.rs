@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::instrumentation::{self, TacticEvent, VerificationEvent};
+use crate::kernel::proof::PropositionSource;
 use crate::kernel::{
     AlgebraicValue, Bitvector32Term, BitvectorEqualityDerivationStep, CCheckedFunctionExecution,
     CCheckedFunctionProposition, CComparisonOperator, CCompositeResourceDefinition,

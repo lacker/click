@@ -1372,6 +1372,7 @@ fn return_population_count_is_not_an_assumed_invariant() {
     for proof in [
         "execute(); simp();",
         "unfold(reference(obj)); execute(); simp();",
+        "unfold(reference(obj)); execute(); fold(reference(obj)); simp();",
         "open(reference(obj)) { execute(); } simp();",
     ] {
         let source = format!(
@@ -13075,6 +13076,24 @@ fn qualified_static_struct_startup_and_expansion() {
         verify_c0_sources(&expanded, &sources)
             .unwrap_or_else(|error| panic!("{error:?}\n{expanded}"));
     }
+
+    // A valid helper contract that changes the cell must not let the caller
+    // fold its old invariant merely because its source spelling is unchanged.
+    let changed_counter = sources[0].1.replace(
+        "return p->value;",
+        "unsigned long old_value = p->value; p->value = 9; return old_value;",
+    );
+    let changed_sources = [(sources[0].0, changed_counter.as_str()), sources[1]];
+    let changed_proof = source.replace(
+        "ensures p->value == old(p->value);",
+        "ensures p->value == 9u64;",
+    );
+    let error = verify_c0_sources(&changed_proof, &changed_sources)
+        .expect_err("fold must establish the current 64-bit invariant");
+    assert!(
+        error.message().contains("fold(counter_state())"),
+        "{error:?}"
+    );
 }
 
 fn check_private_state_expansion(fixture_name: &str, name: &str) {

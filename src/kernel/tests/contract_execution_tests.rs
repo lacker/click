@@ -3154,6 +3154,7 @@ fn body_safety_claim_rejects_an_unproved_execution_condition() {
         },
     };
     let path = SymbolicCExecutionPath {
+        completion_origin: None,
         assumptions: PureFactContext::new(),
         facts: Vec::new(),
         effect_facts: Vec::new(),
@@ -3223,6 +3224,7 @@ fn contract_claims_are_judged_over_each_path_set_of_a_case() {
         true,
     ));
     let failing = SymbolicCExecutionPath {
+        completion_origin: None,
         assumptions: PureFactContext::new(),
         facts: Vec::new(),
         effect_facts: Vec::new(),
@@ -3237,6 +3239,7 @@ fn contract_claims_are_judged_over_each_path_set_of_a_case() {
         loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
     };
     let clean = SymbolicCExecutionPath {
+        completion_origin: None,
         assumptions: PureFactContext::new(),
         facts: Vec::new(),
         effect_facts: Vec::new(),
@@ -3317,6 +3320,7 @@ fn body_safety_claim_uses_path_facts_for_verification_conditions() {
         },
     };
     let path = SymbolicCExecutionPath {
+        completion_origin: None,
         assumptions: PureFactContext::new(),
         facts: vec![fact.clone()],
         effect_facts: Vec::new(),

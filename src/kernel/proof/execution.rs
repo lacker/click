@@ -6044,6 +6044,7 @@ impl ExecutionProofCore {
                 candidate.obligations(),
             ));
             paths.push(crate::kernel::SymbolicCExecutionPath {
+                completion_origin: Some(candidate.outcome().clone()),
                 assumptions: assumptions.clone(),
                 facts,
                 effect_facts: candidate.effect_facts().to_vec(),

@@ -92,17 +92,20 @@ Post-execution outcome partitions use the corresponding two-arm operation.
 At an execution or outcome join, the checked driver supplies the merged
 frontier while the kernel validates the child/parent lineage and restores the
 retired parent identity.
-Post-execution result refresh and fact resynchronization similarly replace
-only the focused obligation and its facts through kernel operations.
+Post-execution operations advance the focused outcome and its persistent facts
+together through checked kernel operations. Retained claim scopes can refresh
+resource representation only from their owning outcome; context, outcome identity,
+and result must agree. Outcome identity survives a claim scope's local branch IDs. No ambient fact vector is reinstalled.
 Function-exit outcome fanout lets the kernel allocate one identity per checked
 returning path. A completed `have` scope publishes only its focused obligation,
 facts, and optional execution attachment through the kernel.
 Structural loop-effect scopes may restore an already allocated retired cursor
 for provenance, but cannot invent a branch identity; the kernel also refuses
 to retire their frontier until its loop-effect goal is checked closed.
-Resource scope close currently hands its separately checked facts and
-execution result to a frontier-only kernel publication operation. This
-migration seam preserves the obligation, unfold set, and unrelated branches.
+Resource scope close publishes its checked state and fact delta on the
+owning frontier or outcome. Outcome closure projects only the restored
+composite's observations; unrelated resource facts remain shared. Both
+operations preserve the obligation, unfold set, and unrelated branches.
 Fixed-state theorem, rewrite, transport, frame, and resource rules use the
 same boundary shape: the language checker returns only a focused result, and
 the kernel replaces or closes that branch while preserving siblings, topology,
@@ -110,9 +113,10 @@ and focus. The kernel's raw `ProofState` fields and `ProofObject` constructor
 are private; production language code has read-only state accessors and cannot
 assemble or install a whole semantic state.
 Result-aware outcome state uses the same split as execution state: the kernel
-owns its result, C state, facts, requirements, and crossed effects, while
-Surface proposition records and diagnostic provenance remain an opaque
-language presentation.
+owns its result, C state, facts, and crossed effects. Source requirement identity
+comes from the immutable entry-origin index, independently of subsequently
+introduced facts. Surface proposition records and diagnostic provenance remain
+an opaque language presentation.
 Untrusted smart selection
 lives outside `proof_object/` and may inspect its read-only planning interface
 or publish descendants created by checked proof operations.
@@ -293,7 +297,17 @@ A claim with no `by` block has one implicit closer: the direct logical
 closure of the kernel's claim goal from the outcome Proof or, when that does
 not apply, the smart `simp` search, whose certificate is checked like an
 explicit one; either records the completion like any other closer. A
-resource ensure or an effect claim is an exact check against the outcome.
+resource ensure is an exact check against the outcome that returns an opaque
+witness bound to the claim key and checked execution path. Effect propositions
+retain their checked proposition completion. A vacuous claim retains the
+kernel-created divergent or opposite-family outcome that discharges it.
+Grouped presentation records these witnesses by claim key; serialized tactics
+cannot substitute for missing completion evidence.
+A proof-produced execution path also retains the body outcome checked against
+its trace before the contract exit rule. Completion binding checks that exact
+origin or the certified exit outcome, including the normal/exceptional family.
+This preserves aggregate-return completions when exit restores caller block
+layout metadata; it does not ignore memory differences or run the proof again.
 When nothing closes a claim, the diagnostic names the reason: the goal's
 lowering, a rewrite that did not apply, or the unclosed goal with the sides
 its comparison evaluated to. Certification proves nothing a second time: a

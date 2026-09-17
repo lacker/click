@@ -1875,6 +1875,7 @@ pub(super) fn prove_symbolic_c_function_verification_paths(
                         &path.obligations,
                     ));
                     SymbolicCExecutionPath {
+                        completion_origin: None,
                         assumptions: assumptions.clone(),
                         facts,
                         effect_facts,

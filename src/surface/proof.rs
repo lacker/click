@@ -1856,6 +1856,15 @@ pub(super) enum FunctionClaimRef<'a> {
 }
 
 impl<'a> FunctionClaimRef<'a> {
+    pub(super) fn key(self) -> CFunctionContractClaimKey {
+        match self {
+            Self::Ensure(index, _) => CFunctionContractClaimKey::Ensure(index),
+            Self::ExceptionalEnsure(index, _) => {
+                CFunctionContractClaimKey::ExceptionalEnsure(index)
+            }
+        }
+    }
+
     pub(super) fn proof(self) -> &'a SourceProof {
         match self {
             Self::Ensure(_, clause) | Self::ExceptionalEnsure(_, clause) => clause.proof(),
