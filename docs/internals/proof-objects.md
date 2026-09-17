@@ -250,8 +250,9 @@ its `CheckedFunctionEntry` is rebased without a second equivalence search.
 Certification never executes the function body: it judges the checked
 artifacts it is given, and when none can be reused it produces no paths and
 names the premise kind or entry-state component that blocked reuse, which
-the surface reports as the contract failure. Those non-reuse outcomes are counted under
-`instrumentation::ContractFallback` and pinned by the same ratchet.
+the surface reports as the contract failure. Rejections are counted under
+`instrumentation::ArtifactReuseRejection` and pinned by the
+[artifact reuse rejection ratchet](testing.md#artifact-reuse-rejection-ratchet).
 
 Claims are certified by matching, not by proving again. Every claim closer
 records the kernel-completed proposition it discharged, the certified

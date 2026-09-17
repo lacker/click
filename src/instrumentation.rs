@@ -1554,7 +1554,7 @@ mod tests {
 /// claim finishing. It then produces no paths and the reason; certification
 /// never executes a body itself.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum ContractFallback {
+pub enum ArtifactReuseRejection {
     /// No supplied artifact for this function had matching execution
     /// metadata, or none was supplied.
     NoMatchingArtifact,
@@ -1571,34 +1571,35 @@ pub enum ContractFallback {
     EntryStateDelta,
 }
 
-/// The process-wide count of body reruns by reason since the last take.
-pub type BodyRerunCensus = std::collections::BTreeMap<ContractFallback, usize>;
+/// The process-wide count of artifact reuse rejections by reason since the last take.
+pub type ArtifactReuseRejectionCensus = std::collections::BTreeMap<ArtifactReuseRejection, usize>;
 
-static BODY_RERUN_CENSUS: std::sync::Mutex<BodyRerunCensus> =
+static ARTIFACT_REUSE_REJECTION_CENSUS: std::sync::Mutex<ArtifactReuseRejectionCensus> =
     std::sync::Mutex::new(std::collections::BTreeMap::new());
 
-fn body_rerun_census() -> std::sync::MutexGuard<'static, BodyRerunCensus> {
-    BODY_RERUN_CENSUS
+fn artifact_reuse_rejection_census() -> std::sync::MutexGuard<'static, ArtifactReuseRejectionCensus>
+{
+    ARTIFACT_REUSE_REJECTION_CENSUS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-pub fn record_contract_fallback(cause: ContractFallback) {
-    *body_rerun_census().entry(cause).or_default() += 1;
+pub fn record_artifact_reuse_rejection(cause: ArtifactReuseRejection) {
+    *artifact_reuse_rejection_census().entry(cause).or_default() += 1;
 }
 
 /// Takes and clears the census. Verification of one corpus runs serially in
 /// the fixture harnesses, so the census is theirs alone there.
-pub fn take_body_rerun_census() -> BodyRerunCensus {
-    std::mem::take(&mut *body_rerun_census())
+pub fn take_artifact_reuse_rejection_census() -> ArtifactReuseRejectionCensus {
+    std::mem::take(&mut *artifact_reuse_rejection_census())
 }
 
 /// The ratchet: `None` when the census equals the pinned baseline exactly,
-/// otherwise a message listing every reason whose count rose (a new rerun,
+/// otherwise a message listing every reason whose count rose (a new rejection,
 /// which must not land) or fell (lower the pin so it cannot rise back).
-pub fn body_rerun_census_mismatch(
-    census: &BodyRerunCensus,
-    expected_contract: &[(ContractFallback, usize)],
+pub fn artifact_reuse_rejection_census_mismatch(
+    census: &ArtifactReuseRejectionCensus,
+    expected_rejections: &[(ArtifactReuseRejection, usize)],
 ) -> Option<String> {
     fn diff<K: Copy + Ord + std::fmt::Debug>(
         label: &str,
@@ -1620,7 +1621,7 @@ pub fn body_rerun_census_mismatch(
             let now = actual.get(&key).copied().unwrap_or(0);
             if now > was {
                 report.push(format!(
-                    "{label} {key:?} rose from {was} to {now}: a proof that used to reuse its checked execution now reruns its body"
+                    "{label} {key:?} rose from {was} to {now}: a checked execution artifact that used to be reused is now rejected"
                 ));
             } else if now < was {
                 report.push(format!(
@@ -1635,27 +1636,46 @@ pub fn body_rerun_census_mismatch(
         }
     }
     let mut report = Vec::new();
-    diff("contract fallback", census, expected_contract, &mut report);
+    diff(
+        "artifact reuse rejection",
+        census,
+        expected_rejections,
+        &mut report,
+    );
     (!report.is_empty()).then(|| report.join("\n"))
 }
 
 #[cfg(test)]
-mod body_rerun_census_tests {
+mod artifact_reuse_rejection_census_tests {
     use super::*;
 
     #[test]
     fn ratchet_reports_rises_and_falls() {
-        let census: BodyRerunCensus = [(ContractFallback::EntryStateDelta, 1)]
+        let census: ArtifactReuseRejectionCensus = [(ArtifactReuseRejection::EntryStateDelta, 1)]
             .into_iter()
             .collect();
         assert_eq!(
-            body_rerun_census_mismatch(&census, &[(ContractFallback::EntryStateDelta, 1)]),
+            artifact_reuse_rejection_census_mismatch(
+                &census,
+                &[(ArtifactReuseRejection::EntryStateDelta, 1)]
+            ),
             None
         );
-        let rise = body_rerun_census_mismatch(&census, &[]).expect("a rise is reported");
-        assert!(rise.contains("EntryStateDelta rose from 0 to 1"), "{rise}");
-        let fall = body_rerun_census_mismatch(&census, &[(ContractFallback::EntryStateDelta, 3)])
-            .expect("a fall is reported");
+        let rise =
+            artifact_reuse_rejection_census_mismatch(&census, &[]).expect("a rise is reported");
+        assert!(
+            rise.contains("artifact reuse rejection EntryStateDelta rose from 0 to 1"),
+            "{rise}"
+        );
+        assert!(
+            rise.contains("a checked execution artifact that used to be reused is now rejected"),
+            "{rise}"
+        );
+        let fall = artifact_reuse_rejection_census_mismatch(
+            &census,
+            &[(ArtifactReuseRejection::EntryStateDelta, 3)],
+        )
+        .expect("a fall is reported");
         assert!(fall.contains("EntryStateDelta fell from 3 to 1"), "{fall}");
     }
 }

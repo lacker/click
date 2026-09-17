@@ -7,7 +7,7 @@ use click::cli::{
     CInput, files_with_extension, read_c_inputs, read_click_project, read_verifying_sources,
     run_parallel, source_refs,
 };
-use click::instrumentation::{self, ContractFallback};
+use click::instrumentation::{self, ArtifactReuseRejection};
 use click::languages::refresh_compiler_import;
 use click::surface::{verify_c0_prepared_project, verify_c0_sources, verify_cpp_prepared_project};
 
@@ -24,9 +24,9 @@ const QUARANTINED: &[(&str, &str)] = &[(
     "ordinary-entry static-state transport does not yet certify its cross-file caller",
 )];
 
-/// The body-rerun ratchet (`docs/internals/testing.md`) over every example
-/// project; see `tests/mdtests.rs` for the rule.
-const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[];
+/// The artifact reuse rejection ratchet (`docs/internals/testing.md`) over
+/// every example project; see `tests/mdtests.rs` for the rule.
+const ARTIFACT_REUSE_REJECTION_BASELINE: &[(ArtifactReuseRejection, usize)] = &[];
 
 #[test]
 fn example_projects() {
@@ -82,7 +82,7 @@ fn example_projects() {
     // Verify projects on every core. Deterministic tactic work budgets decide
     // correctness, so concurrency cannot change a verdict; the test runner
     // owns hang containment.
-    let _ = instrumentation::take_body_rerun_census();
+    let _ = instrumentation::take_artifact_reuse_rejection_census();
     let workers = std::thread::available_parallelism().map_or(1, usize::from);
     let failures = run_parallel(&projects, workers, |project| {
         // One line as each project starts and one as it finishes, on stderr
@@ -112,13 +112,15 @@ fn example_projects() {
         }
         panic!("{message}");
     }
-    let census = instrumentation::take_body_rerun_census();
+    let census = instrumentation::take_artifact_reuse_rejection_census();
     if requested.is_none()
         && !run_quarantined
-        && let Some(mismatch) =
-            instrumentation::body_rerun_census_mismatch(&census, CONTRACT_FALLBACK_BASELINE)
+        && let Some(mismatch) = instrumentation::artifact_reuse_rejection_census_mismatch(
+            &census,
+            ARTIFACT_REUSE_REJECTION_BASELINE,
+        )
     {
-        panic!("body rerun ratchet (tests/examples.rs baselines):\n{mismatch}");
+        panic!("artifact reuse rejection ratchet (tests/examples.rs baselines):\n{mismatch}");
     }
 }
 

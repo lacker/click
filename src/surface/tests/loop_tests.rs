@@ -661,8 +661,7 @@ fn explicit_straight_line_swap_transports_an_entry_bound() {
 
 /// A reduction of the second sorting loop, not a replacement for its original C.
 /// Existing simple steps suffice when entry index and cell facts are explicit.
-#[test]
-fn explicit_swap_loop_transports_both_entry_bounds_and_expands() {
+fn explicit_swap_loop_fixture(include_transports: bool) -> (&'static str, String) {
     let c = "int32 swap(int32 p[3]) { int32 j; int32 tmp; j = 0; while (j < 1) { if (p[j + 1] < p[j]) { tmp = p[j]; p[j] = p[j + 1]; p[j + 1] = tmp; } j = j + 1; } return 0; }";
     let transport = r#"
         transport(at(before_swap, p[1] <= p[2]), p[0] <= p[2]) using {
@@ -672,6 +671,7 @@ fn explicit_swap_loop_transports_both_entry_bounds_and_expands() {
             at(before_swap, p[0] <= p[2]); at(before_swap, j) == 0;
         }
     "#;
+    let transport = if include_transports { transport } else { "" };
     let click = format!(
         r#"
         verifying "swap.c";
@@ -706,15 +706,25 @@ fn explicit_swap_loop_transports_both_entry_bounds_and_expands() {
         }}
     "#
     );
+    (c, click)
+}
+
+#[test]
+fn explicit_swap_loop_transports_both_entry_bounds_and_expands() {
+    let (c, click) = explicit_swap_loop_fixture(true);
     let sources = [("swap.c", c)];
     verify_c0_sources(&click, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
     let expanded = expand_c0_claim_source(&click, &sources, "swap", CProofClaim::Grouped)
         .unwrap_or_else(|e| panic!("{}", e.message()));
     verify_c0_sources(&expanded, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
     assert!(!expanded.contains("close_invariants();"));
+}
 
-    let missing_transports = click.replace(transport, "");
-    assert_ne!(missing_transports, click);
+#[test]
+fn explicit_swap_loop_rejects_missing_entry_bound_transports() {
+    let (c, missing_transports) = explicit_swap_loop_fixture(false);
+    assert!(!missing_transports.contains("transport("));
+    let sources = [("swap.c", c)];
     let error = verify_c0_sources(&missing_transports, &sources).unwrap_err();
     assert!(
         error

@@ -5,7 +5,7 @@ use click::cli::{
     CInput, MdTestExpectation, prepare_mdtest_inputs, read_click_project, read_mdtest,
     run_parallel, source_refs,
 };
-use click::instrumentation::{self, ContractFallback};
+use click::instrumentation::{self, ArtifactReuseRejection};
 use click::surface::{verify_c0_project, verify_c0_sources, verify_cpp_prepared_project};
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
@@ -17,11 +17,11 @@ const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
 /// they are fixed (see docs/internals/testing.md).
 const QUARANTINED: &[(&str, &str)] = &[];
 
-/// The body-rerun ratchet (`docs/internals/testing.md`): how many times, over
-/// the whole unfiltered corpus, claim finishing or contract certification
-/// executed a function body because a contract guard declined,
-/// by reason. A count may only fall; lower its pin when it does.
-const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[];
+/// The artifact reuse rejection ratchet (`docs/internals/testing.md`): count
+/// contract certification rejections of checked execution artifacts over the
+/// whole unfiltered corpus, by reason. A count may only fall; lower its pin
+/// when it does.
+const ARTIFACT_REUSE_REJECTION_BASELINE: &[(ArtifactReuseRejection, usize)] = &[];
 
 #[test]
 fn mdtests() {
@@ -75,17 +75,19 @@ fn mdtests() {
     // available to each file, so concurrency cannot change a verdict. Peak
     // memory stays small: on 2026-09-11 the whole corpus peaked at 171 MB
     // serially and 291 MB on 8 workers.
-    let _ = instrumentation::take_body_rerun_census();
+    let _ = instrumentation::take_artifact_reuse_rejection_census();
     let workers = std::thread::available_parallelism().map_or(1, usize::from);
     let failures = run_parallel(&paths, workers, |path| run_mdtest_in_thread(path));
-    let census = instrumentation::take_body_rerun_census();
+    let census = instrumentation::take_artifact_reuse_rejection_census();
     if failures.is_empty() {
         if !filtered
             && std::env::var_os(RUN_QUARANTINED).is_none()
-            && let Some(mismatch) =
-                instrumentation::body_rerun_census_mismatch(&census, CONTRACT_FALLBACK_BASELINE)
+            && let Some(mismatch) = instrumentation::artifact_reuse_rejection_census_mismatch(
+                &census,
+                ARTIFACT_REUSE_REJECTION_BASELINE,
+            )
         {
-            panic!("body rerun ratchet (tests/mdtests.rs baselines):\n{mismatch}");
+            panic!("artifact reuse rejection ratchet (tests/mdtests.rs baselines):\n{mismatch}");
         }
         return;
     }

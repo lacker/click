@@ -3,10 +3,8 @@ use crate::kernel::CheckedCallEventScope;
 use crate::kernel::abstract_c_state_for_interface_join_across;
 use std::sync::Arc;
 
-///
-/// The legacy cursor wrapper above materializes its vector at the boundary.
-/// Proof-owned structural joins call this operation directly, so checking an
-/// interface does not clone or re-index unrelated ambient facts.
+/// Checks a branch interface directly against the structural join's
+/// persistent proof facts, without cloning or re-indexing unrelated facts.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_branch_interface_with_proof_facts(
     target: &ProgramPointRef,

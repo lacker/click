@@ -10,7 +10,7 @@ use super::loans::{
 };
 pub(super) use super::memory_provenance::*;
 use super::prelude::*;
-use crate::instrumentation::ContractFallback;
+use crate::instrumentation::ArtifactReuseRejection;
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -5087,15 +5087,15 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
         if !reused {
             // Certification never executes the body: reuse either applies
             // or the caller gets no paths and the reason.
-            let mut cause = ContractFallback::NoMatchingArtifact;
+            let mut cause = ArtifactReuseRejection::NoMatchingArtifact;
             let mut detail = format!(
                 "no checked execution of `{}` matched the contract's execution mode",
                 function.name()
             );
             for checked in &candidates {
                 if checked.state != state {
-                    if cause == ContractFallback::NoMatchingArtifact {
-                        cause = ContractFallback::EntryStateDelta;
+                    if cause == ArtifactReuseRejection::NoMatchingArtifact {
+                        cause = ArtifactReuseRejection::EntryStateDelta;
                         detail = format!(
                             "the checked execution of `{}` started at a different entry state than the contract and could not be rebased onto it",
                             function.name()
@@ -5110,13 +5110,13 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                     .find(|premise| !checked_premise_is_authorized(checked, premise));
                 cause = match &unauthorized {
                     Some(Proposition::Predicate { .. }) => {
-                        ContractFallback::UnauthorizedPredicatePremise
+                        ArtifactReuseRejection::UnauthorizedPredicatePremise
                     }
                     Some(
                         Proposition::CResourceContains { .. }
                         | Proposition::CResourceSeparate { .. },
-                    ) => ContractFallback::UnauthorizedResourcePremise,
-                    Some(_) | None => ContractFallback::UnauthorizedPremise,
+                    ) => ArtifactReuseRejection::UnauthorizedResourcePremise,
+                    Some(_) | None => ArtifactReuseRejection::UnauthorizedPremise,
                 };
                 detail = match &unauthorized {
                     Some(premise) => format!(
@@ -5131,11 +5131,11 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                 };
                 break;
             }
-            crate::instrumentation::record_contract_fallback(cause);
+            crate::instrumentation::record_artifact_reuse_rejection(cause);
             crate::instrumentation::measure_operation(
                 function.name(),
                 "contract certification",
-                "contract checked body unavailable",
+                "contract artifact reuse rejected",
                 || (),
             );
             reuse_diagnostic = Some(detail);
