@@ -2455,6 +2455,10 @@ id = "glossary.invariant"
 path = "reference/glossary.md#invariant"
 
 [[item]]
+id = "glossary.invariant-bundle"
+path = "reference/glossary.md#invariant-bundle"
+
+[[item]]
 id = "glossary.join"
 path = "reference/glossary.md#join"
 
@@ -2545,6 +2549,10 @@ path = "reference/glossary.md#quantifier"
 [[item]]
 id = "glossary.round-trip-validation"
 path = "reference/glossary.md#round-trip-validation"
+
+[[item]]
+id = "glossary.ranking-obligation"
+path = "reference/glossary.md#ranking-obligation"
 
 [[item]]
 id = "glossary.resource"
@@ -2713,6 +2721,10 @@ path = "reference/glossary.md#load-term"
 [[item]]
 id = "glossary.memory-block"
 path = "reference/glossary.md#memory-block"
+
+[[item]]
+id = "glossary.measure"
+path = "reference/glossary.md#measure"
 
 [[item]]
 id = "glossary.memory-cell"

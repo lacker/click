@@ -611,8 +611,15 @@ pub fn c_loop_ranking_obligations_at_back_edge(
     state: &CState,
     iteration_entry_state: &CState,
     ranking_measures: &[CExpression],
+    assumptions: &PureFactContext,
 ) -> Result<Vec<ProofObligation>, String> {
-    collect_loop_ranking_obligations(state, iteration_entry_state, ranking_measures)
+    collect_loop_ranking_obligations(
+        state,
+        iteration_entry_state,
+        ranking_measures,
+        assumptions,
+        &mut ExecutionBudget::default(),
+    )
 }
 
 /// Exact entry judgments grouped by invariant declaration. Lowering's path

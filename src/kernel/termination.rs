@@ -1523,44 +1523,119 @@ fn termination_measure_display(measure: &CExpression) -> String {
         Multiply(left, right) => binary(left, right, "*"),
         Divide(left, right) => binary(left, right, "/"),
         Remainder(left, right) => binary(left, right, "%"),
+        // The kernel expression no longer carries a field's name, so a read is
+        // shown as the dereference it is, with its byte offset.
+        TypedLoad { pointer, .. } | Load(pointer) => {
+            format!("*({})", termination_measure_display(pointer))
+        }
+        PointerOffsetBytes { pointer, bytes } => {
+            format!("{} + {bytes} bytes", termination_measure_display(pointer))
+        }
+        Index(base, index) => format!(
+            "{}[{}]",
+            termination_measure_display(base),
+            termination_measure_display(index)
+        ),
+        Cast { expression, .. } => termination_measure_display(expression),
         _ => format!("{measure:?}"),
     }
 }
 
+/// What evaluating a measure's memory reads at one state left behind: the
+/// facts the evaluator published and the obligations it could not discharge
+/// itself, which are the reads' loadability.
+#[derive(Default)]
+pub(super) struct CRankingMeasureReads {
+    pub(super) facts: Vec<ExecutionPureFact>,
+    pub(super) obligations: Vec<ProofObligation>,
+}
+
+/// Where a measure's memory reads are evaluated. A measure over locals alone
+/// needs none of it and is read from the state by itself.
+pub(super) struct CRankingMeasureReader<'a> {
+    pub(super) assumptions: &'a PureFactContext,
+    pub(super) budget: &'a mut ExecutionBudget,
+    pub(super) reads: CRankingMeasureReads,
+}
+
 /// The kernel term for one `decreases` component at one C state.
 ///
-/// A ranking component is a scalar int32 expression over the loop's own
-/// unaddressed variables, so its value at a state is the state's own value
-/// for each named variable. The walk is structural over the named measure
-/// and consults no ambient fact: it is the exact reading of the declared
-/// measure at that state, which is what makes the back-edge bundle member
-/// and the declared clause the same object.
+/// A ranking component is a scalar int32 expression, so its value at a state
+/// is a function of that state: the state's own value for each named local,
+/// and, for a memory read, the value the expression evaluator gives that read
+/// there. The arithmetic between them is read structurally and consults no
+/// ambient fact, which is what makes the back-edge ranking obligation and the
+/// declared clause the same object. A read goes through the evaluator because
+/// an invariant about the same cell does, and the two must name the cell's
+/// value by the same term for a proof to connect them.
+///
+/// A measure is never executed, so a read in it is not a C access: it names
+/// the memory's content at that state. Its loadability is still returned as
+/// an obligation, so the value a proof reasons about is one the program could
+/// observe. A volatile read is refused, since it is not a function of state.
 pub(super) fn c_ranking_measure_term(
     expression: &CExpression,
     state: &CState,
+    reader: &mut CRankingMeasureReader<'_>,
 ) -> Result<Bitvector32Term, String> {
     // The declared measure is read as one affine form over the state's own
     // values. Folding it keeps `n - (i + 1)` from carrying an intermediate
     // `i + 1` whose definedness would need a bound the measure never claims,
     // and makes the member a stable function of the declaration rather than
     // of the assignment order that produced the state.
-    c_ranking_measure_term_unfolded(expression, state).map(|term| canonical_ranking_term(&term))
+    c_ranking_measure_term_unfolded(expression, state, reader)
+        .map(|term| canonical_ranking_term(&term))
+}
+
+/// The value of one memory read inside a measure, at `state`.
+fn c_ranking_measure_read(
+    expression: &CExpression,
+    state: &CState,
+    reader: &mut CRankingMeasureReader<'_>,
+) -> Result<Bitvector32Term, String> {
+    if matches!(expression, CExpression::TypedLoad { volatile: true, .. }) {
+        return Err("a termination measure may not read a volatile object".into());
+    }
+    let paths = evaluate_c_expression_paths(state, expression, reader.assumptions, reader.budget)
+        .map_err(|error| {
+        format!("could not evaluate a termination measure's read: {error:?}")
+    })?;
+    let [path] = paths.as_slice() else {
+        return Err(
+            "a termination measure's read must have exactly one value at this state".into(),
+        );
+    };
+    let (CExpressionOutcome::Value(CValue::Int32(value))
+    | CExpressionOutcome::Value(CValue::UInt8(value))) = &path.outcome
+    else {
+        return Err("termination measures must be int32 expressions".into());
+    };
+    reader.reads.facts.extend(path.facts.iter().cloned());
+    reader
+        .reads
+        .obligations
+        .extend(path.obligations.iter().cloned());
+    Ok(value.clone())
 }
 
 fn c_ranking_measure_term_unfolded(
     expression: &CExpression,
     state: &CState,
+    reader: &mut CRankingMeasureReader<'_>,
 ) -> Result<Bitvector32Term, String> {
     use CExpression::*;
-    let binary = |left: &CExpression,
-                  right: &CExpression,
-                  operation: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term|
-     -> Result<Bitvector32Term, String> {
+    fn binary(
+        left: &CExpression,
+        right: &CExpression,
+        state: &CState,
+        reader: &mut CRankingMeasureReader<'_>,
+        operation: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
+    ) -> Result<Bitvector32Term, String> {
         Ok(operation(
-            c_ranking_measure_term_unfolded(left, state)?,
-            c_ranking_measure_term_unfolded(right, state)?,
+            c_ranking_measure_term_unfolded(left, state, reader)?,
+            c_ranking_measure_term_unfolded(right, state, reader)?,
         ))
-    };
+    }
     match expression {
         Value(CValue::Int32(value)) | Value(CValue::UInt8(value)) => Ok(value.clone()),
         Value(_) => Err("termination measures must be int32 expressions".into()),
@@ -1577,15 +1652,15 @@ fn c_ranking_measure_term_unfolded(
             expression,
             target_type: CType::Int32 | CType::UInt8,
             ..
-        } => c_ranking_measure_term_unfolded(expression, state),
+        } => c_ranking_measure_term_unfolded(expression, state, reader),
         Conditional {
             condition,
             then_branch,
             else_branch,
         } => {
-            let (condition, value) = c_ranking_measure_condition_term(condition, state)?;
-            let then_term = c_ranking_measure_term_unfolded(then_branch, state)?;
-            let else_term = c_ranking_measure_term_unfolded(else_branch, state)?;
+            let (condition, value) = c_ranking_measure_condition_term(condition, state, reader)?;
+            let then_term = c_ranking_measure_term_unfolded(then_branch, state, reader)?;
+            let else_term = c_ranking_measure_term_unfolded(else_branch, state, reader)?;
             let (then_term, else_term) = if value {
                 (then_term, else_term)
             } else {
@@ -1597,28 +1672,36 @@ fn c_ranking_measure_term_unfolded(
                 else_term: Box::new(else_term),
             })
         }
-        Add(left, right) => binary(left, right, Bitvector32Term::add),
-        Subtract(left, right) => binary(left, right, Bitvector32Term::subtract),
-        Multiply(left, right) => binary(left, right, Bitvector32Term::multiply),
-        Divide(left, right) => binary(left, right, Bitvector32Term::divide),
-        Remainder(left, right) => binary(left, right, Bitvector32Term::remainder),
-        ShiftLeft(left, right) => binary(left, right, Bitvector32Term::shift_left),
-        ShiftRight(left, right) => binary(left, right, Bitvector32Term::arithmetic_shift_right),
-        BitwiseAnd(left, right) => binary(left, right, Bitvector32Term::bitwise_and),
-        BitwiseOr(left, right) => binary(left, right, Bitvector32Term::bitwise_or),
-        BitwiseXor(left, right) => binary(left, right, Bitvector32Term::bitwise_xor),
+        Add(left, right) => binary(left, right, state, reader, Bitvector32Term::add),
+        Subtract(left, right) => binary(left, right, state, reader, Bitvector32Term::subtract),
+        Multiply(left, right) => binary(left, right, state, reader, Bitvector32Term::multiply),
+        Divide(left, right) => binary(left, right, state, reader, Bitvector32Term::divide),
+        Remainder(left, right) => binary(left, right, state, reader, Bitvector32Term::remainder),
+        ShiftLeft(left, right) => binary(left, right, state, reader, Bitvector32Term::shift_left),
+        ShiftRight(left, right) => binary(
+            left,
+            right,
+            state,
+            reader,
+            Bitvector32Term::arithmetic_shift_right,
+        ),
+        BitwiseAnd(left, right) => binary(left, right, state, reader, Bitvector32Term::bitwise_and),
+        BitwiseOr(left, right) => binary(left, right, state, reader, Bitvector32Term::bitwise_or),
+        BitwiseXor(left, right) => binary(left, right, state, reader, Bitvector32Term::bitwise_xor),
         BitwiseNot(value) => Ok(Bitvector32Term::bitwise_not(
-            c_ranking_measure_term_unfolded(value, state)?,
+            c_ranking_measure_term_unfolded(value, state, reader)?,
         )),
         Cast { .. }
         | FloatNegate(_)
         | FloatClassification { .. }
         | FunctionAddress(_)
         | AddressOf(_)
-        | PointerOffsetBytes { .. }
-        | Load(_)
-        | TypedLoad { .. }
-        | Index(_, _) => Err("termination measures may only use scalar int32 expressions".into()),
+        | PointerOffsetBytes { .. } => {
+            Err("termination measures may only use scalar int32 expressions".into())
+        }
+        Load(_) | TypedLoad { .. } | Index(_, _) => {
+            c_ranking_measure_read(expression, state, reader)
+        }
         LessThan(_, _)
         | LessEqual(_, _)
         | GreaterThan(_, _)
@@ -1634,32 +1717,52 @@ fn c_ranking_measure_term_unfolded(
 fn c_ranking_measure_condition_term(
     expression: &CExpression,
     state: &CState,
+    reader: &mut CRankingMeasureReader<'_>,
 ) -> Result<(ConditionTerm, bool), String> {
     use CExpression::*;
-    let binary = |left: &CExpression,
-                  right: &CExpression,
-                  operation: fn(Bitvector32Term, Bitvector32Term) -> ConditionTerm|
-     -> Result<(ConditionTerm, bool), String> {
+    fn binary(
+        left: &CExpression,
+        right: &CExpression,
+        state: &CState,
+        reader: &mut CRankingMeasureReader<'_>,
+        operation: fn(Bitvector32Term, Bitvector32Term) -> ConditionTerm,
+    ) -> Result<(ConditionTerm, bool), String> {
         Ok((
             operation(
-                c_ranking_measure_term_unfolded(left, state)?,
-                c_ranking_measure_term_unfolded(right, state)?,
+                c_ranking_measure_term_unfolded(left, state, reader)?,
+                c_ranking_measure_term_unfolded(right, state, reader)?,
             ),
             true,
         ))
-    };
+    }
     match expression {
-        LessThan(left, right) => binary(left, right, ConditionTerm::signed_less_than),
-        LessEqual(left, right) => binary(left, right, ConditionTerm::signed_less_equal),
-        GreaterThan(left, right) => binary(left, right, ConditionTerm::signed_greater_than),
-        GreaterEqual(left, right) => binary(left, right, ConditionTerm::signed_greater_equal),
-        Equal(left, right) => binary(left, right, ConditionTerm::equal),
+        LessThan(left, right) => {
+            binary(left, right, state, reader, ConditionTerm::signed_less_than)
+        }
+        LessEqual(left, right) => {
+            binary(left, right, state, reader, ConditionTerm::signed_less_equal)
+        }
+        GreaterThan(left, right) => binary(
+            left,
+            right,
+            state,
+            reader,
+            ConditionTerm::signed_greater_than,
+        ),
+        GreaterEqual(left, right) => binary(
+            left,
+            right,
+            state,
+            reader,
+            ConditionTerm::signed_greater_equal,
+        ),
+        Equal(left, right) => binary(left, right, state, reader, ConditionTerm::equal),
         NotEqual(left, right) => {
-            let (condition, _) = binary(left, right, ConditionTerm::equal)?;
+            let (condition, _) = binary(left, right, state, reader, ConditionTerm::equal)?;
             Ok((condition, false))
         }
         Not(inner) => {
-            let (condition, value) = c_ranking_measure_condition_term(inner, state)?;
+            let (condition, value) = c_ranking_measure_condition_term(inner, state, reader)?;
             Ok((condition, !value))
         }
         And(_, _) | Or(_, _) => {
@@ -1667,7 +1770,7 @@ fn c_ranking_measure_condition_term(
         }
         _ => Ok((
             ConditionTerm::equal(
-                c_ranking_measure_term_unfolded(expression, state)?,
+                c_ranking_measure_term_unfolded(expression, state, reader)?,
                 Bitvector32Term::Constant(0),
             ),
             false,
@@ -3155,6 +3258,32 @@ mod ranking_member_tests {
     /// decrease obligation that is the right-nested disjunction over pivots.
     /// A retained certificate is only stable across runs and sites because
     /// this order never depends on the state or the ambient facts.
+    /// A volatile object's value is not a function of the state, so a measure
+    /// cannot be read from it, and the refusal says so.
+    #[test]
+    fn a_measure_may_not_read_a_volatile_object() {
+        let state = scalar_state(&[("i", Bitvector32Term::Variable(Variable(1)))]);
+        let volatile_read = CExpression::TypedLoad {
+            pointer: Box::new(CExpression::Variable("device".to_string())),
+            value_type: CType::Int32,
+            volatile: true,
+            source: CExpressionLoadSource::none(),
+        };
+        let measures = vec![CExpression::Subtract(
+            Box::new(volatile_read),
+            Box::new(CExpression::Variable("i".to_string())),
+        )];
+        let error = collect_loop_ranking_obligations(
+            &state,
+            &state,
+            &measures,
+            &PureFactContext::default(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect_err("a volatile read has no value at a state");
+        assert!(error.contains("volatile"), "{error}");
+    }
+
     #[test]
     fn ranking_members_are_ordered_and_right_nested() {
         let outer = Bitvector32Term::Variable(Variable(1));
@@ -3167,8 +3296,14 @@ mod ranking_member_tests {
             CExpression::Variable("i".to_string()),
             CExpression::Variable("j".to_string()),
         ];
-        let obligations = collect_loop_ranking_obligations(&back_edge, &entry, &measures)
-            .expect("scalar measures read at both ends");
+        let obligations = collect_loop_ranking_obligations(
+            &back_edge,
+            &entry,
+            &measures,
+            &PureFactContext::default(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("scalar measures read at both ends");
         assert_eq!(obligations.len(), 3);
 
         for (obligation, (component, post)) in obligations
@@ -3220,8 +3355,14 @@ mod ranking_member_tests {
         let post = Bitvector32Term::subtract(value.clone(), Bitvector32Term::Constant(1));
         let back_edge = scalar_state(&[("n", post.clone())]);
         let measures = vec![CExpression::Variable("n".to_string())];
-        let obligations = collect_loop_ranking_obligations(&back_edge, &entry, &measures)
-            .expect("a scalar measure reads at both ends");
+        let obligations = collect_loop_ranking_obligations(
+            &back_edge,
+            &entry,
+            &measures,
+            &PureFactContext::default(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("a scalar measure reads at both ends");
         assert_eq!(obligations.len(), 2);
         assert_eq!(
             obligations[1].proposition(),

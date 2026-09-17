@@ -3016,26 +3016,54 @@ fn collect_invariant_check_obligations_with_mode(
 ///
 /// `pre` reads each component at the iteration entry and `post` at the back
 /// edge. Work is linear in the declared measure; no ambient fact is scanned.
+///
+/// A measure that reads memory has each read evaluated at both states by the
+/// expression evaluator, under `assumptions`, as an invariant about the same
+/// cell is. What those reads owe, their loadability, comes first and only
+/// where it is not already an exact fact, so a measure over locals alone, or
+/// over cells the context already shows loadable, has exactly the members
+/// above.
 pub(super) fn collect_loop_ranking_obligations(
     state: &CState,
     iteration_entry_state: &CState,
     ranking_measures: &[CExpression],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
 ) -> Result<Vec<ProofObligation>, String> {
     if ranking_measures.is_empty() {
         return Ok(Vec::new());
     }
+    let mut reader = crate::kernel::termination::CRankingMeasureReader {
+        assumptions,
+        budget,
+        reads: Default::default(),
+    };
     let mut pre = Vec::with_capacity(ranking_measures.len());
     let mut post = Vec::with_capacity(ranking_measures.len());
     for measure in ranking_measures {
         pre.push(crate::kernel::termination::c_ranking_measure_term(
             measure,
             iteration_entry_state,
+            &mut reader,
         )?);
         post.push(crate::kernel::termination::c_ranking_measure_term(
-            measure, state,
+            measure,
+            state,
+            &mut reader,
         )?);
     }
+    let reads = reader.reads;
+    let read_assumptions = assumptions_with_path_context(assumptions, &reads.facts, &[]);
     let mut obligations = Vec::with_capacity(ranking_measures.len() + 1);
+    for obligation in &reads.obligations {
+        add_required_proof_obligation_without_search(
+            &mut obligations,
+            &read_assumptions,
+            obligation.proposition().clone(),
+            Some("a loop ranking measure's read is loadable"),
+            None,
+        );
+    }
     for (measure, post) in ranking_measures.iter().zip(post.iter()) {
         obligations.push(
             ProofObligation::verification_condition(Proposition::ConditionIs(
@@ -3094,8 +3122,16 @@ pub(super) fn loop_ranking_obligations_or_refusal(
     state: &CState,
     iteration_entry_state: &CState,
     ranking_measures: &[CExpression],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
 ) -> Vec<ProofObligation> {
-    match collect_loop_ranking_obligations(state, iteration_entry_state, ranking_measures) {
+    match collect_loop_ranking_obligations(
+        state,
+        iteration_entry_state,
+        ranking_measures,
+        assumptions,
+        budget,
+    ) {
         Ok(obligations) => obligations,
         Err(message) => vec![
             ProofObligation::verification_condition(false_equals_true_proposition())
@@ -3287,6 +3323,8 @@ pub(super) fn collect_loop_preservation_summary(
                                     &next_state,
                                     top_state,
                                     ranking_measures,
+                                    &path_assumptions,
+                                    budget,
                                 ));
                                 // A structural measure is not a ranking
                                 // member: the kernel decides the descent

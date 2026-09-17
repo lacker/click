@@ -206,7 +206,16 @@ value.
 
 The numeric proof shape is deliberately small but loop measures may be
 arbitrary current int32 expressions or a nonempty lexicographic tuple of
-expressions. A loop back edge must keep every component nonnegative and make
+expressions. A component may read memory, as `decreases box->len - i` does for
+a loop whose bound is a field the C keeps no local copy of: the read is
+evaluated in the back-edge memory and again in the memory the iteration
+started from, exactly as an invariant about the same cell is, so a body that
+writes the cell is judged by what it wrote. See
+`mdtests/loop_decreases_reads_a_field.md`,
+`mdtests/loop_decreases_reads_a_field_the_body_writes.md`, and
+`mdtests/loop_decreases_rejects_a_field_that_moves.md`. A measure is never
+executed, so a read in it is not a C access; a volatile object cannot be
+read, since its value is not a function of the state. A loop back edge must keep every component nonnegative and make
 one component strictly smaller while keeping all earlier components equal. For
 example, `decreases n - i` ranks a loop that increments `i` toward `n`.
 
@@ -225,7 +234,7 @@ search it uses for the invariants; where it misses, spell them in a
 `close_invariants by { ... }` body, whose `both { ... } and { ... }` structure
 follows the member order above. An explicit closer body written before a
 `decreases` clause existed fails promptly, and the diagnostic names the
-ranking members the bundle now carries.
+ranking obligations the bundle now carries.
 
 Arithmetic premises for those members are the cited ones only, so a member is
 closed with `arithmetic() using { ... }` naming the guard, precondition, and

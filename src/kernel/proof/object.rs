@@ -1327,8 +1327,11 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
                 &back_edge_state,
                 iteration_entry,
                 ranking_measures,
+                facts.assumptions(),
             )
-            .map_err(|_| "could not read the loop's declared ranking measure")?,
+            .map_err(|reason| {
+                format!("could not read the loop's declared ranking measure: {reason}")
+            })?,
         );
         let goal = obligations
             .iter()

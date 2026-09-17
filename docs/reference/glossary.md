@@ -471,6 +471,13 @@ Substitution of a concrete term for a quantified binder. The `instantiate`
 A proposition or resource condition that holds initially and is preserved by
   every loop iteration. It summarizes arbitrarily many iterations.
 
+### Invariant bundle
+
+The conjunction a loop's `close_invariants` closer proves at the back edge:
+the loop's declared invariants in declaration order, followed by the loop's
+[ranking obligations](#ranking-obligation) when it declares a `decreases`
+clause. A hand-written `close_invariants by { ... }` body follows that order.
+
 ## J
 
 ### Join
@@ -554,6 +561,14 @@ authority. It is not another name for fact transport.
 
 A repository fixture consisting of C, Click, and expected-result sections in
 Markdown. The gate verifies mdtests with deterministic bounds.
+
+### Measure
+
+The quantity a `decreases` clause names, whose descent shows that a loop or a
+recursion ends. A loop measure is an `int32` expression over the loop's
+locals and the memory it reads, a lexicographic tuple of such expressions, or
+one of the loop's resource binders. A function-level measure ranks recursive
+calls. See [ranking obligation](#ranking-obligation).
 
 ### Memory block
 
@@ -832,6 +847,16 @@ which reasons against a fixed symbolic C state.
   least one value of a type.
 
 ## R
+
+### Ranking obligation
+
+One of the obligations a loop's `decreases` clause adds to its
+[invariant bundle](#invariant-bundle): one `0 <= component` for each component
+of the measure, then one obligation that the measure decreased. Each compares
+the measure's value at the back edge with its value at the start of the same
+iteration; a component that reads memory is read in each of those two
+memories. The source never spells them. A hand-written closer proves them
+after the invariants.
 
 ### Round-trip validation
 

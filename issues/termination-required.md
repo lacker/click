@@ -219,13 +219,19 @@ exception.
 
 ## Out of scope unless migration needs it
 
-Measures over model values. Today a loop measure is an `int32` expression
-over the loop's own unaddressed locals, or structural descent into a
+Measures over model values. A loop measure is an `int32` expression over the
+loop's locals and the memory it reads, or structural descent into a
 resource's `contains` children. A walk over a DAG ranked by a ghost value,
 `rank[cur]` over a model sequence, fits neither. Extend the measure language
 in this campaign only if a corpus loop cannot be ranked without it; otherwise
 it is later work. Either way, a natural terminating loop that today's measures
 cannot rank is a finding to report.
+
+Migration did need measures that read memory: `while (i < owner->len)` has no
+local to measure against, and three grind slices hit it independently. That
+is landed, with no change of syntax. Ranking obligations are still built from
+the declared C expression, but each read in it is now evaluated by the
+ordinary expression evaluator at the iteration's two states.
 
 ## Migration
 
