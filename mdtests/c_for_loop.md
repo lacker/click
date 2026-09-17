@@ -89,6 +89,7 @@ int32 for_count_invariant(int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 0 and i <= n;
     }
     step();
@@ -102,10 +103,6 @@ int32 for_continue_concrete() {
 int32 for_continue_nested() {
     ensures total: result == 6 by auto;
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect
