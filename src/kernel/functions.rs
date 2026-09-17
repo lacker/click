@@ -1642,6 +1642,29 @@ pub(super) fn execute_c_function_call_paths(
         }]);
     }
     if let Some(rule) = environment.get_external_function_rule(function.name()) {
+        match rule.semantics() {
+            ExternalCallSemantics::Contract => {}
+            ExternalCallSemantics::ThreadCreate => {
+                return super::threads::execute_thread_create(
+                    caller_state,
+                    &rule.function,
+                    arguments,
+                    assumptions,
+                    environment,
+                    budget,
+                );
+            }
+            ExternalCallSemantics::ThreadJoin => {
+                return super::threads::execute_thread_join(
+                    caller_state,
+                    &rule.function,
+                    arguments,
+                    assumptions,
+                    environment,
+                    budget,
+                );
+            }
+        }
         // External summaries use the same body-independent application
         // interface as verified rules, but remain an assumption: do not
         // repackage one as `CVerifiedFunctionRule`, whose type carries body
@@ -1902,7 +1925,79 @@ pub(super) fn execute_c_function_call_paths(
     Ok(paths)
 }
 
-fn execute_verified_function_rule(
+/// The parent's frame during a spawned worker's call: the resources left
+/// after the worker's requirements are reserved, and the loan ledger with
+/// the worker's views lent. This is the entry half of the ordinary call
+/// boundary, planned exactly as the call itself plans it.
+pub(super) fn prepare_spawned_worker_frame(
+    caller_state: &CState,
+    rule: &CVerifiedFunctionRule,
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<
+    Result<
+        (
+            ResourceContext,
+            Option<super::loans::LoanLedger>,
+            Option<super::loans::LoanParticipantId>,
+        ),
+        CFunctionPath,
+    >,
+> {
+    let application = CFunctionContractApplication {
+        name: rule.function.name(),
+        interface_name: rule.function.name(),
+        interface: rule.function.contract_interface(),
+        storage: Some(&rule.function),
+        evidence: Some(&rule.function),
+    };
+    let mut prepared = None;
+    for arguments_path in evaluate_c_arguments_paths(
+        caller_state,
+        arguments,
+        assumptions,
+        budget,
+        Some(environment),
+    )? {
+        if let Some(outcome) = arguments_path.outcome {
+            return Ok(Err(CFunctionPath {
+                outcome,
+                facts: arguments_path.facts,
+                obligations: arguments_path.obligations,
+                loan_evidence: empty_checked_loan_evidence_sequence(),
+            }));
+        }
+        match prepare_verified_function_call(
+            caller_state,
+            application,
+            0,
+            arguments,
+            arguments_path,
+            false,
+            assumptions,
+            environment,
+            budget,
+            None,
+        )? {
+            Ok(call) => {
+                let plan = call.transfer.stable_view_plan.as_ref();
+                prepared = Some((
+                    call.transfer.caller_resources_after_requirements.clone(),
+                    plan.map(|plan| plan.ledger.clone()),
+                    plan.map(|plan| plan.caller_participant()),
+                ));
+            }
+            Err(failure) => return Ok(Err(failure)),
+        }
+    }
+    Ok(prepared.ok_or_else(|| {
+        resource_call_failure("the spawned worker's argument did not evaluate on any path")
+    }))
+}
+
+pub(super) fn execute_verified_function_rule(
     caller_state: &CState,
     rule: &CVerifiedFunctionRule,
     arguments: &[CExpression],

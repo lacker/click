@@ -16,6 +16,7 @@ pub const RESOURCE_SEMANTICS_VERSION: u32 = 2;
 pub(crate) mod assumptions;
 mod eval;
 mod functions;
+pub(crate) mod threads;
 pub(crate) use functions::ResourceBodyClauseRecord;
 #[cfg(test)]
 pub(crate) use functions::rewrite_resource_instance;

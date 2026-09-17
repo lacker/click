@@ -3786,6 +3786,11 @@ pub struct CState {
     /// declaration can be re-entered by a loop. This is path state so joins
     /// and nested calls cannot accidentally reuse an ended local block.
     pub(super) next_local_lifetime: u64,
+    /// The withheld return halves of created threads this path has not
+    /// joined, keyed by the handle value their creation wrote. Each entry
+    /// is reachable only through the linear `joinable` token minted with it.
+    pub(super) pending_joins:
+        std::sync::Arc<BTreeMap<Bitvector32Term, std::sync::Arc<super::threads::SuspendedJoin>>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
