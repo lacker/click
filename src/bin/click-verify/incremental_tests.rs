@@ -72,7 +72,13 @@ impl Project {
 
     fn attested(&self, revision: &str) -> bool {
         let commit = git_commit_id(&self.0, revision).unwrap();
-        has_full_verification_marker(&self.0, &commit, &self.sidecar()).unwrap()
+        has_full_verification_marker(
+            &self.0,
+            &commit,
+            &self.sidecar(),
+            click::languages::c::target::CTarget::SUPPORTED,
+        )
+        .unwrap()
     }
 }
 

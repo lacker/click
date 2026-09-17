@@ -21,7 +21,7 @@ use click::surface::{
     c0_prepared_project_external_dependencies, c0_prepared_project_selected_proof_count,
     c0_project_external_dependencies, c0_project_selected_proof_count,
     c0_project_selected_proof_names, cpp_prepared_project_external_dependencies,
-    cpp_prepared_project_selected_proof_count, verify_c0_prepared_project,
+    cpp_prepared_project_selected_proof_count, selected_c_target, verify_c0_prepared_project,
     verify_c0_prepared_project_at, verify_c0_project, verify_c0_project_at,
     verify_c0_project_functions, verify_cpp_prepared_project, verify_cpp_prepared_project_at,
     verifying_source_paths,
@@ -72,7 +72,7 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
     }
     let arguments = parse_arguments(raw)?;
     println!(
-        "C target: {} (LP64, 8-bit unsigned plain char)",
+        "default C target: {} (LP64, 8-bit unsigned plain char); a sidecar may select another with `target \"...\";`",
         CTarget::SUPPORTED.name()
     );
     if let Some(revision) = &arguments.changed_since {
@@ -203,7 +203,12 @@ fn verify_changed(
             CInput::Prepared(_) | CInput::PreparedCpp(_) => unreachable!(),
         };
         let refs = source_refs(&sources);
-        let baseline_attested = has_full_verification_marker(&repo, &baseline_commit, &sidecar)?;
+        let baseline_attested = has_full_verification_marker(
+            &repo,
+            &baseline_commit,
+            &sidecar,
+            selected_c_target(&click_source).map_err(click_message)?,
+        )?;
         let mut full_rebuild = !baseline_attested;
         let mut reasons = if !baseline_attested {
             vec![format!(
@@ -464,16 +469,35 @@ fn environment_switches_from(variables: impl IntoIterator<Item = (String, String
     switches.concat()
 }
 
-fn marker_contents(commit: &str, relative: &Path, fingerprint: &str, switches: &str) -> String {
+fn marker_contents(
+    commit: &str,
+    relative: &Path,
+    fingerprint: &str,
+    switches: &str,
+    target: CTarget,
+) -> String {
     format!(
         "{INCREMENTAL_CACHE_SCHEMA}\ntarget={}\nverifier={fingerprint}\ncommit={commit}\nsidecar={}\n{switches}",
-        CTarget::SUPPORTED.name(),
+        target.name(),
         relative.display()
     )
 }
 
-fn valid_marker(contents: &str, commit: &str, relative: &Path, fingerprint: &str) -> bool {
-    contents == marker_contents(commit, relative, fingerprint, &environment_switches())
+fn valid_marker(
+    contents: &str,
+    commit: &str,
+    relative: &Path,
+    fingerprint: &str,
+    target: CTarget,
+) -> bool {
+    contents
+        == marker_contents(
+            commit,
+            relative,
+            fingerprint,
+            &environment_switches(),
+            target,
+        )
 }
 
 /// Compare the commit's complete input bundle with the snapshot that was
@@ -486,7 +510,12 @@ fn baseline_matches_verified(
     baseline.0 == click_source && baseline.1 == sources
 }
 
-fn has_full_verification_marker(repo: &Path, commit: &str, sidecar: &Path) -> Result<bool, String> {
+fn has_full_verification_marker(
+    repo: &Path,
+    commit: &str,
+    sidecar: &Path,
+    target: CTarget,
+) -> Result<bool, String> {
     let marker = verification_marker_path(repo, commit, sidecar)?;
     let relative = sidecar.strip_prefix(repo).map_err(|_| {
         format!(
@@ -497,7 +526,13 @@ fn has_full_verification_marker(repo: &Path, commit: &str, sidecar: &Path) -> Re
     })?;
     let fingerprint = verifier_fingerprint()?;
     match fs::read_to_string(marker) {
-        Ok(contents) => Ok(valid_marker(&contents, commit, relative, fingerprint)),
+        Ok(contents) => Ok(valid_marker(
+            &contents,
+            commit,
+            relative,
+            fingerprint,
+            target,
+        )),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(_) => Ok(false),
     }
@@ -544,6 +579,7 @@ fn record_full_verification(
                 relative,
                 verifier_fingerprint()?,
                 &environment_switches(),
+                selected_c_target(click_source).map_err(click_message)?,
             ),
         )
         .map_err(|error| format!("failed to write `{}`: {error}", temporary.display()))?;
@@ -597,6 +633,7 @@ fn load_baseline_sources(
     mut load: impl FnMut(&Path) -> Result<Option<String>, String>,
 ) -> Result<Option<Vec<(String, String)>>, String> {
     let mut pending = verifying_source_paths(click_source).map_err(click_message)?;
+    let target = selected_c_target(click_source).map_err(click_message)?;
     let mut sources = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     let mut next = 0;
@@ -610,7 +647,7 @@ fn load_baseline_sources(
         let Some(source) = load(&source_path)? else {
             return Ok(None);
         };
-        let includes = c_source::local_include_paths(&name, &source)
+        let includes = c_source::local_include_paths_for_target(&name, &source, target)
             .map_err(|error| format!("failed to process baseline C source includes: {error}"))?;
         pending.extend(includes);
         sources.push((name, source));
@@ -850,13 +887,13 @@ mod tests {
     #[test]
     fn marker_contents_include_environment_switches() {
         let relative = Path::new("examples/tiny/tiny.click");
-        let plain = marker_contents("abc", relative, "fp", "");
+        let plain = marker_contents("abc", relative, "fp", "", CTarget::SUPPORTED);
         assert!(plain.contains("\ntarget=x86_64-linux-kernel\n"));
         let switches = environment_switches_from([(
             "CLICK_DISABLE_TACTIC_BUDGETS".to_string(),
             "1".to_string(),
         )]);
-        let budgets_off = marker_contents("abc", relative, "fp", &switches);
+        let budgets_off = marker_contents("abc", relative, "fp", &switches, CTarget::SUPPORTED);
         assert_ne!(plain, budgets_off);
         assert!(budgets_off.ends_with("env=CLICK_DISABLE_TACTIC_BUDGETS=1\n"));
     }
@@ -990,18 +1027,63 @@ mod tests {
     #[test]
     fn corrupted_or_mismatched_incremental_markers_are_cache_misses() {
         let path = Path::new("examples/sample.click");
-        let valid = marker_contents("abc123", path, "verifier-a", &environment_switches());
-        assert!(valid_marker(&valid, "abc123", path, "verifier-a"));
+        let valid = marker_contents(
+            "abc123",
+            path,
+            "verifier-a",
+            &environment_switches(),
+            CTarget::SUPPORTED,
+        );
+        assert!(valid_marker(
+            &valid,
+            "abc123",
+            path,
+            "verifier-a",
+            CTarget::SUPPORTED
+        ));
         let other_target = valid.replace("target=x86_64-linux-kernel", "target=another-target");
-        assert!(!valid_marker(&other_target, "abc123", path, "verifier-a"));
-        assert!(!valid_marker("truncated", "abc123", path, "verifier-a"));
-        assert!(!valid_marker(&valid, "different", path, "verifier-a"));
-        assert!(!valid_marker(&valid, "abc123", path, "verifier-b"));
+        assert!(!valid_marker(
+            &other_target,
+            "abc123",
+            path,
+            "verifier-a",
+            CTarget::SUPPORTED
+        ));
+        // The same sources under another selected target are a cache miss.
+        assert!(!valid_marker(
+            &valid,
+            "abc123",
+            path,
+            "verifier-a",
+            CTarget::X86_64LinuxUserspace
+        ));
+        assert!(!valid_marker(
+            "truncated",
+            "abc123",
+            path,
+            "verifier-a",
+            CTarget::SUPPORTED
+        ));
+        assert!(!valid_marker(
+            &valid,
+            "different",
+            path,
+            "verifier-a",
+            CTarget::SUPPORTED
+        ));
+        assert!(!valid_marker(
+            &valid,
+            "abc123",
+            path,
+            "verifier-b",
+            CTarget::SUPPORTED
+        ));
         assert!(!valid_marker(
             &valid,
             "abc123",
             Path::new("examples/other.click"),
-            "verifier-a"
+            "verifier-a",
+            CTarget::SUPPORTED
         ));
         // A marker written under a verifier switch this process does not have
         // set is a cache miss as well.
@@ -1009,12 +1091,19 @@ mod tests {
             "{}env=CLICK_DISABLE_TACTIC_BUDGETS=1\n",
             environment_switches()
         );
-        let attested_elsewhere = marker_contents("abc123", path, "verifier-a", &other_switches);
+        let attested_elsewhere = marker_contents(
+            "abc123",
+            path,
+            "verifier-a",
+            &other_switches,
+            CTarget::SUPPORTED,
+        );
         assert!(!valid_marker(
             &attested_elsewhere,
             "abc123",
             path,
-            "verifier-a"
+            "verifier-a",
+            CTarget::SUPPORTED
         ));
     }
 }

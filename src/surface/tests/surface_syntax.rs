@@ -450,6 +450,95 @@ fn parses_expanded_typed_loads_and_old_loadability() {
     assert!(matches!(&premises[2], ClickProposition::Separate { .. }));
 }
 
+/// The `target` directive selects the C implementation target. Absent, the
+/// file keeps the default; the accepted spellings come from `CTarget`.
+#[test]
+fn parses_the_c_target_directive() {
+    let file = parse("verifying \"fill3.c\";").expect("a sidecar without a target should parse");
+    assert_eq!(file.declared_c_target(), None);
+    assert_eq!(
+        file.selected_c_target(),
+        crate::languages::c::target::CTarget::SUPPORTED
+    );
+
+    let file = parse("target \"x86_64-linux-userspace\";\nverifying \"fill3.c\";")
+        .expect("a declared target should parse");
+    assert_eq!(
+        file.declared_c_target(),
+        Some(crate::languages::c::target::CTarget::X86_64LinuxUserspace)
+    );
+    assert_eq!(
+        file.selected_c_target(),
+        crate::languages::c::target::CTarget::X86_64LinuxUserspace
+    );
+}
+
+/// Include expansion needs the target before the sidecar is parsed, so the
+/// pre-parse scan must agree with the parser about what a directive is.
+#[test]
+fn the_pre_parse_target_scan_agrees_with_the_parser() {
+    use crate::languages::c::target::CTarget;
+
+    for (source, expected) in [
+        ("verifying \"fill3.c\";", CTarget::SUPPORTED),
+        (
+            "target \"x86_64-linux-kernel\";\nverifying \"fill3.c\";",
+            CTarget::X86_64LinuxKernel,
+        ),
+        (
+            "target \"x86_64-linux-userspace\";\nverifying \"fill3.c\";",
+            CTarget::X86_64LinuxUserspace,
+        ),
+    ] {
+        assert_eq!(
+            crate::surface::selected_c_target(source).expect("pre-parse scan"),
+            expected
+        );
+        assert_eq!(
+            parse(source)
+                .expect("sidecar should parse")
+                .selected_c_target(),
+            expected
+        );
+    }
+
+    // A `target "..."` spelling inside braces is not a file item. The scan
+    // must not preprocess C under a target the parser would never select;
+    // whatever this source means, the parser decides it.
+    assert_eq!(
+        crate::surface::selected_c_target(
+            "theorem nested() { target \"x86_64-linux-userspace\"; }"
+        )
+        .expect("pre-parse scan"),
+        CTarget::SUPPORTED
+    );
+
+    let error = crate::surface::selected_c_target(
+        "target \"x86_64-linux-kernel\";\ntarget \"x86_64-linux-userspace\";",
+    )
+    .expect_err("a file selects at most one target");
+    assert!(
+        error.message().contains("more than one `target`"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn rejects_an_unknown_or_repeated_c_target() {
+    let error = parse("target \"x86_64-linux-embedded\";").expect_err("unknown target name");
+    assert!(
+        error.message().contains("unknown C target")
+            && error.message().contains("`x86_64-linux-userspace`"),
+        "{error:?}"
+    );
+    let error = parse("target \"x86_64-linux-kernel\";\ntarget \"x86_64-linux-kernel\";")
+        .expect_err("a file selects at most one target");
+    assert!(
+        error.message().contains("more than one `target`"),
+        "{error:?}"
+    );
+}
+
 #[test]
 fn parses_checked_signature_and_contract_clauses() {
     let file = parse(FILL3_CLICK).expect("sidecar should parse");

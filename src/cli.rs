@@ -356,6 +356,10 @@ pub fn read_verifying_sources(
     click_source: &str,
 ) -> Result<Vec<(String, String)>, String> {
     let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
+    // Header discovery preprocesses the sources, so it needs the sidecar's
+    // selected C implementation target before any proof runs.
+    let target = crate::surface::selected_c_target(click_source)
+        .map_err(|error| error.message().to_string())?;
     let declared = read_declared_sources(click_path, click_source)?;
     let mut pending: Vec<String> = declared.iter().map(|(name, _)| name.clone()).collect();
     let mut loaded = Vec::new();
@@ -376,7 +380,7 @@ pub fn read_verifying_sources(
             fs::read_to_string(parent.join(&name))
                 .map_err(|error| format!("failed to read `{name}`: {error}"))?
         };
-        let includes = c_source::local_include_paths(&name, &source)
+        let includes = c_source::local_include_paths_for_target(&name, &source, target)
             .map_err(|error| format!("failed to process C source includes: {error}"))?;
         pending.extend(includes);
         loaded.push((name, source));

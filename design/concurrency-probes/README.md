@@ -13,7 +13,7 @@ bytes, not reshape the C to expose a friendlier proof state.
 
 | Boundary | Selection |
 | --- | --- |
-| Language and target | C11, x86-64 Linux user space, LP64, eight-bit bytes and `-funsigned-char`. The declaration parser now has a distinct `x86_64-linux-userspace` target identity without `__KERNEL__`; normal Click verification still selects the kernel target. |
+| Language and target | C11, x86-64 Linux user space, LP64, eight-bit bytes and `-funsigned-char`. Normal Click verification selects this target when a sidecar declares `target "x86_64-linux-userspace";`, which chooses the include model without `__KERNEL__` and a distinct proof-artifact identity; the kernel target remains the default. Selecting it adds no pthread contract and no concurrency semantics. |
 | Compiler and C library | Debian Bookworm GCC 12.2.0, glibc 2.36 headers and pthread runtime. The eventual locked import must record the exact driver, headers, flags, and ABI observations; the current modeled declarations are not that lock. |
 | Compile options | `-std=c11 -pthread -funsigned-char -D_POSIX_C_SOURCE=200809L`. No optimizer- or scheduler-specific ordering assumption belongs in a proof. |
 | Thread API | The selected `pthread.h` declarations for `pthread_create` and `pthread_join`, with joinable threads only. The declaration projection spells `pthread_t` as its x86-64 ABI `unsigned long`; future proof rules must treat its value as a handle, not derive thread behavior from integer arithmetic. Spawn success creates exactly one child and a completion handle; failure creates none. A successful join consumes that handle exactly once. |

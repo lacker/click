@@ -70,10 +70,14 @@ verification.
 
 ## Output and exit behavior
 
-The command first prints its concrete C implementation target:
-`C target: x86_64-linux-kernel (LP64, 8-bit unsigned plain char)`.
-Successful verification is relative to that profile, not a portability claim.
-The profile is currently fixed; there is no target-selection flag.
+The command first prints its default C implementation target:
+`default C target: x86_64-linux-kernel (LP64, 8-bit unsigned plain char); a
+sidecar may select another with ...`. Successful verification is relative to
+the target the sidecar actually selected, not a portability claim. There is no
+target-selection flag: a sidecar selects its target with the `target`
+directive described in
+[Supported C0](../language/c0.md#selecting-a-target), and that selection also
+separates incremental verification markers.
 
 Successful file or location verification prints one `external assumptions:`
 line for each verified function whose transitive C call closure uses an
