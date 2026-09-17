@@ -22,6 +22,12 @@ this milestone also requires modular rules and deterministic scaling tests.
 
 ## Current checkpoint and scope
 
+**Blocked on [termination-required.md](termination-required.md).** A join on a
+worker with no termination evidence may never return, so the fork/join slice
+waits for termination to become the default. The unfinished slice is parked,
+not green, on the branch `claude/concurrency-demo-slice2-parked`; read its
+`design/concurrency-probes/PARKED.md` before resuming.
+
 The source-selection checkpoint is
 [`design/concurrency-probes/fork_join.c`](../design/concurrency-probes/fork_join.c)
 with its [profile record](../design/concurrency-probes/README.md). It fixes an
