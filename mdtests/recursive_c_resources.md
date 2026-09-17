@@ -1,7 +1,9 @@
 # recursive C calls transfer recursive resources by contract
 
 Each returning recursive call gives the tail resource back. Folding the head
-therefore reconstructs the same list owned at entry.
+therefore reconstructs the same list owned at entry. The call receives a direct
+contained child of `list(node)`, so the structural measure `decreases
+list(node)` ranks the recursion.
 
 ```c filename=list_zero.c
 struct node {
@@ -33,6 +35,7 @@ resource list(node: struct node*) {
 verifying "list_zero.c";
 
 int32 list_zero(struct node* node) {
+    decreases list(node);
     requires node != 0;
     views list(node);
 
@@ -42,10 +45,6 @@ int32 list_zero(struct node* node) {
     execute();
     simp();
 }
-```
-
-```termination
-pending: unmeasured recursion
 ```
 
 ```expect
