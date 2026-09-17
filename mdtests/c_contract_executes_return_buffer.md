@@ -42,10 +42,6 @@ int32 caller(int32* cell) {
 } by { execute(); simp(); }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

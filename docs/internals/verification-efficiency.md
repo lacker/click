@@ -277,6 +277,14 @@ an equal-height callee is a recursive edge that a declared measure ranks. A
 refused member of a level withdraws its same-level callers through a worklist
 that pops each refusal once and reads each intra-level edge once.
 
+Calls through function pointers add one body walk and at most one more
+settling pass, not a search. Each function's body and linked static
+initializers are walked once for the addresses they take. The first settling
+pass refuses every pointer call, so what it certifies returns without going
+through a function pointer; when every address taken names such a function,
+a second pass over the same levels lets pointer calls return. A run with no
+pointer call never takes the second pass.
+
 The contract is therefore work linear in the call graph's nodes and edges,
 up to the indexing factor of the name-keyed BTree containers. Neither pass
 performs a reachability search, and no function's check scans another
@@ -290,9 +298,9 @@ verdicts at each size so the curve cannot be flattened by a run that decides
 nothing. It counts cooperative checkpoints — body statements walked, call
 edges read, level members settled, planner visits, worklist steps — not host
 time. Measured units, planner then check: a single call chain, the deepest
-graph, costs 5,496/5,498, 10,996/10,998, 21,996/21,998, and 43,996/43,998; a
+graph, costs 5,996/6,498, 11,996/12,998, 23,996/25,998, and 47,996/51,998; a
 layered DAG with four callees per function, where edges outnumber nodes,
-costs 17,416/17,432, 34,776/34,792, 69,776/69,792, and 139,776/139,792. Wide
+costs 20,896/24,392, 41,728/48,696, 83,728/97,696, and 167,728/195,696. Wide
 fan-out, many small unmeasured cycles with their callers, and one large cycle
 of the whole run measure the same exact doubling. The assertion allows a
 threefold rise per doubling, which leaves room for the indexing factor while

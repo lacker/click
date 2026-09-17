@@ -69,10 +69,6 @@ int32 active_effect_caller(int32* cell) {
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

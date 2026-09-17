@@ -3046,7 +3046,7 @@ fn verify_c0_sources_with_context(
         }
     }
     let partial_rules = function_environment.verified_function_rules();
-    let inline_bodies = function_environment.inline_body_functions();
+    let inline_bodies = function_environment.linked_functions();
     // Heights are a proposal the kernel checks at every call site. A callee
     // outside the verified set is an assumption, as its postconditions are:
     // an external contract always, and an unselected function once every
@@ -3076,6 +3076,7 @@ fn verify_c0_sources_with_context(
         rules: termination_rules,
         refusals: termination_refusals,
         unjustified_diverging,
+        unsuitable_callbacks,
     } = c_verified_function_termination_rules(
         &partial_rules,
         &termination_plans,
@@ -3104,6 +3105,35 @@ fn verify_c0_sources_with_context(
             "`{name}` is declared `diverges`, but every loop it runs is ranked and every call it makes descends; remove the marker"
         )));
     }
+    // A function whose address is taken may be reached through any function
+    // pointer, so it must return without going through one itself; otherwise
+    // no pointer call in the run is known to return. Once every function owes
+    // termination that is an error where the address is taken, and it names
+    // what the callback lacks.
+    if termination_is_required()
+        && let Some(unsuitable) = unsuitable_callbacks.first()
+    {
+        let spelling = |name: &str| {
+            name.split_once('#')
+                .map_or(name, |(name, _)| name)
+                .to_string()
+        };
+        let taker = spelling(&unsuitable.taker);
+        let callback = spelling(&unsuitable.callback);
+        let lacks = match termination_refusals.get(&unsuitable.callback) {
+            Some(refusal) => termination_refusal_report(
+                &callback,
+                refusal,
+                &termination_refusals,
+                &declared_diverging,
+                None,
+            ),
+            None => "it has no termination evidence".to_string(),
+        };
+        return Err(ClickError::new(format!(
+            "could not certify termination for `{taker}`: it takes the address of `{callback}`, and a function reached through a function pointer must return without calling through one: {lacks}"
+        )));
+    }
     // A caller refused for its callee is a consequence, so a function refused
     // for a defect of its own is reported first when the run has one.
     let refused = requested_termination
@@ -3120,7 +3150,13 @@ fn verify_c0_sources_with_context(
     {
         return Err(ClickError::new(format!(
             "could not certify termination for `{name}`: {}",
-            termination_refusal_report(name, refusal, &termination_refusals, &declared_diverging)
+            termination_refusal_report(
+                name,
+                refusal,
+                &termination_refusals,
+                &declared_diverging,
+                unsuitable_callbacks.first(),
+            )
         )));
     }
     function_environment =
@@ -3817,6 +3853,7 @@ fn termination_refusal_report(
     refusal: &CTerminationRefusal,
     refusals: &BTreeMap<String, CTerminationRefusal>,
     declared_diverging: &BTreeSet<String>,
+    unsuitable_callback: Option<&CUnsuitableCallback>,
 ) -> String {
     let spelling = |name: &str| {
         name.split_once('#')
@@ -3846,7 +3883,14 @@ fn termination_refusal_report(
                 return report;
             }
             CTerminationRefusal::IndirectCall { .. } => {
-                report.push_str(&format!("{current}; declare `{owner}` `diverges`"));
+                report.push_str(&current.to_string());
+                if let Some(unsuitable) = unsuitable_callback {
+                    report.push_str(&format!(
+                        "; a call through a function pointer returns only when every function whose address is taken returns without calling through one, and `{}` takes the address of `{}`, which does not",
+                        spelling(&unsuitable.taker),
+                        spelling(&unsuitable.callback)
+                    ));
+                }
                 return report;
             }
             CTerminationRefusal::DeclaredDiverging => {

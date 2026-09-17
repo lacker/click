@@ -175,10 +175,6 @@ int32 run_pipeline(
 
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

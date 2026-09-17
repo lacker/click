@@ -29,10 +29,6 @@ int32 invoke(void (*callback)(int32*, int32), int32* data, int32 count) {
 } by { step(Raw); fold(Buffer(data, count)); execute(); simp(); }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

@@ -128,17 +128,28 @@ recursive shapes stay tracked in [recursion.md](recursion.md). A recursive
 function with no measure is refused under the new default, the same as an
 unranked loop.
 
-**Indirect calls use the same rule.** A named contract is the only
-declaration an unknown callee has, so it carries a `decreases` clause over its
-own parameters, the same keyword a function uses. A call through the pointer
-proves descent against the contract's measure, and forming the contract at
-`&g` proves that `g`'s measure fits under it. A dispatch table whose handler
-`i` re-dispatches only to entries `j < i` is then provable, which no
-syntactic graph analysis can decide, and `f` passing itself to `apply`
-unchanged is refused because no measure satisfies the three constraints. A
-pointer the verifier resolves statically, as a `const` callback table does,
-is a direct call. Do not approximate indirect edges with an address-taken or
-signature-matched call graph: a false cycle there has no repair.
+**Calls through function pointers get a small rule, not an analysis.** No
+edge of the direct-call graph says what a pointer call reaches: a function can
+hand itself to the helper that calls it, or be stored by one function and
+called by another that it calls in turn. The rule is about the address and
+not the call. A function whose address is taken, in a body or in a static
+initializer, must return without calling through a function pointer itself,
+directly or in anything it calls; then no pointer call can re-enter its
+caller, and every pointer call returns. A comparator, a visitor, and an
+augment callback qualify with nothing written. `f` handing itself to `apply`
+is refused where the address is taken. A pointer the verifier resolves
+statically, as a `const` callback table does, is covered, because its entries
+are addresses taken in an initializer. Do not approximate indirect edges with
+an address-taken or signature-matched call graph: a false cycle there has no
+repair.
+
+The rare case this refuses, a callback that itself takes callbacks or a
+dispatch table whose handler `i` re-dispatches only to entries `j < i`,
+terminates for a reason only a measure can state: a `decreases` clause on the
+named contract, against which the pointer call descends and under which the
+function must fit when the contract is formed at `&g`. Build that when an
+example needs it. Until then such a function stays pending; it is not marked
+`diverges` to get past the rule.
 
 **The marker is `diverges`, in the signature.** It sits after the parameter
 list beside `throws`, because it is the same kind of thing: an effect that is
@@ -193,9 +204,10 @@ exception.
 
 ## Open questions
 
-- Whether a named contract's height can be inferred. It can when the sites
-  that form it are syntactically visible; otherwise callback contracts need
-  an explicit level.
+- A `diverges` named contract. The marker parses there, and nothing yet
+  refuses applying such a contract inside a function that is not declared
+  `diverges`. The kernel knows at the call step which contract it applies, so
+  the refusal belongs there. No test uses one yet.
 
 ## Out of scope unless migration needs it
 
@@ -253,7 +265,10 @@ Stages, each a green commit or a short run of them:
    counted and other by shape. These counts, not a guess, decide the shape of
    loop inference and what to do next.
 3. Counted-loop inference with expansion. Delete the blocks it clears.
-4. Measures on named contracts, and the indirect-call descent rule.
+4. Done. The function-pointer rule above cleared all 81 `indirect call`
+   files with no edit to any of them, and the modeled `realloc` cleared the
+   10 `callee` files. Remaining: 109 `unranked loop`, 4 `unmeasured
+   recursion`, and 4 examples.
 5. Grind the remaining buckets by hand in small commits: explicit
    `decreases` clauses, or the marker where divergence is intended. A loop
    that cannot be ranked with today's measures is a finding: report it, leave

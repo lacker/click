@@ -65,10 +65,6 @@ void disjunctive_clause_caller(int32* cell) {
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

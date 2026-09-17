@@ -69,10 +69,6 @@ int32 framed_bundle_caller(int32 key, int32 spare) {
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

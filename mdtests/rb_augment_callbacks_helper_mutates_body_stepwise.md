@@ -91,10 +91,6 @@ void erase_mutating(struct node* node, struct node* parent,
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

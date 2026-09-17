@@ -41,10 +41,6 @@ void caller(int32* data) {
 } by { execute(); simp(); }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

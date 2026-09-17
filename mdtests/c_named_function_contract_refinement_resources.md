@@ -69,10 +69,6 @@ int32 resource_refining_step_caller(int32* output) {
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

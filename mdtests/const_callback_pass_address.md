@@ -18,10 +18,6 @@ int use_view(const int *(*f)(int *), int *p) {
 int caller(int *p) { views p[0..1]; ensures result == p[0]; } by { execute(); simp(); }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

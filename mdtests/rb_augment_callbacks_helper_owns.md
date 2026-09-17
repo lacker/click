@@ -101,10 +101,6 @@ void erase_augmented(struct node* node, struct node* parent,
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

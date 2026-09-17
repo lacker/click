@@ -176,10 +176,6 @@ struct node* rotate_reset(struct node* node) {
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

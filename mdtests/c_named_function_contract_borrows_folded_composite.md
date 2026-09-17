@@ -72,10 +72,6 @@ int32 borrow_then_spend_bundle(int32 key) {
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

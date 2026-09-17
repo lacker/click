@@ -93,10 +93,6 @@ void abstract_quantity_caller(
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

@@ -123,7 +123,7 @@ pub(crate) use reasoning::{
     collect_spec_integer_bound_variables, collect_spec_integer_variables,
 };
 pub use termination::{
-    CTerminationRefusal, CTerminationVerdicts, c_termination_height_plan,
+    CTerminationRefusal, CTerminationVerdicts, CUnsuitableCallback, c_termination_height_plan,
     c_verified_function_termination_rules,
 };
 

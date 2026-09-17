@@ -32,10 +32,6 @@ int32 f(int32 (*helper)(int32)) {
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

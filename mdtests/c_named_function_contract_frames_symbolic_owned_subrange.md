@@ -94,10 +94,6 @@ void symbolic_framed_resource_caller(
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

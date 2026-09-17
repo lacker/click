@@ -2164,6 +2164,203 @@ fn termination_callees(function: &CFunction) -> BTreeSet<String> {
         .collect()
 }
 
+/// The function a pointer value names, if it names one.
+fn value_function_address(value: &CValue) -> Option<&str> {
+    let CValue::Pointer(pointer) = value else {
+        return None;
+    };
+    match &pointer.pointer().block {
+        PointerBlock::Function(name) => Some(name),
+        _ => None,
+    }
+}
+
+fn expression_function_addresses(expression: &CExpression, taken: &mut BTreeSet<String>) {
+    use CExpression::*;
+    match expression {
+        FunctionAddress(name) => {
+            taken.insert(name.clone());
+        }
+        Value(value) => {
+            if let Some(name) = value_function_address(value) {
+                taken.insert(name.to_string());
+            }
+        }
+        Variable(_) => {}
+        Cast { expression, .. }
+        | FloatNegate(expression)
+        | FloatClassification { expression, .. }
+        | AddressOf(expression)
+        | PointerOffsetBytes {
+            pointer: expression,
+            ..
+        }
+        | TypedLoad {
+            pointer: expression,
+            ..
+        }
+        | Not(expression)
+        | BitwiseNot(expression)
+        | Load(expression) => expression_function_addresses(expression, taken),
+        Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expression_function_addresses(condition, taken);
+            expression_function_addresses(then_branch, taken);
+            expression_function_addresses(else_branch, taken);
+        }
+        LessThan(left, right)
+        | LessEqual(left, right)
+        | GreaterThan(left, right)
+        | GreaterEqual(left, right)
+        | Equal(left, right)
+        | NotEqual(left, right)
+        | And(left, right)
+        | Or(left, right)
+        | Add(left, right)
+        | Subtract(left, right)
+        | Multiply(left, right)
+        | Divide(left, right)
+        | Remainder(left, right)
+        | ShiftLeft(left, right)
+        | ShiftRight(left, right)
+        | BitwiseAnd(left, right)
+        | BitwiseOr(left, right)
+        | BitwiseXor(left, right)
+        | Index(left, right) => {
+            expression_function_addresses(left, taken);
+            expression_function_addresses(right, taken);
+        }
+    }
+}
+
+fn statement_function_addresses(statement: &CStatement, taken: &mut BTreeSet<String>) {
+    charge_termination_work(1);
+    let mut visit = |expression: &CExpression| expression_function_addresses(expression, taken);
+    match statement {
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Goto { .. }
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. } => {}
+        CStatement::Assign { expression, .. }
+        | CStatement::Return(expression)
+        | CStatement::Throw(expression) => visit(expression),
+        CStatement::CallAssign { arguments, .. } | CStatement::Call { arguments, .. } => {
+            arguments.iter().for_each(visit);
+        }
+        CStatement::HeapAllocate { bytes, .. } => visit(bytes),
+        CStatement::HeapFree { pointer } => visit(pointer),
+        CStatement::Assert { condition, .. } => visit(condition),
+        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
+            visit(pointer);
+            visit(value);
+        }
+        CStatement::CopyAggregate { target, source, .. } => {
+            visit(target);
+            visit(source);
+        }
+        CStatement::Update {
+            target, operand, ..
+        } => {
+            visit(target);
+            visit(operand);
+        }
+        CStatement::ContinueWithStep { step } => statement_function_addresses(step, taken),
+        CStatement::Seq(first, second) => {
+            statement_function_addresses(first, taken);
+            statement_function_addresses(second, taken);
+        }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            statement_function_addresses(try_body, taken);
+            statement_function_addresses(handler, taken);
+        }
+        CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            visit(condition);
+            statement_function_addresses(then_branch, taken);
+            statement_function_addresses(else_branch, taken);
+        }
+        CStatement::While {
+            condition, body, ..
+        } => {
+            visit(condition);
+            statement_function_addresses(body, taken);
+        }
+        CStatement::Switch { expression, cases } => {
+            visit(expression);
+            for case in cases {
+                statement_function_addresses(&case.body, taken);
+            }
+        }
+    }
+}
+
+/// Every function whose address `function` takes: in its body, and in the
+/// initial values of the static storage it links, which is where a `const`
+/// callback table names its entries. These are all the ways a function in
+/// the verified set becomes the target of a function pointer.
+fn function_address_taken(function: &CFunction, taken: &mut BTreeSet<String>) {
+    statement_function_addresses(&function.source_body, taken);
+    let scalars = function
+        .global_variables()
+        .iter()
+        .map(|global| &global.initial_value)
+        .chain(
+            function
+                .static_variables()
+                .iter()
+                .map(|local| &local.initial_value),
+        );
+    let arrays = function
+        .global_arrays()
+        .iter()
+        .flat_map(|array| &array.initial_values)
+        .chain(
+            function
+                .static_arrays()
+                .iter()
+                .flat_map(|array| &array.initial_values),
+        );
+    let aggregates = function
+        .global_aggregates()
+        .iter()
+        .flat_map(|aggregate| &aggregate.initializers)
+        .chain(
+            function
+                .global_aggregate_arrays()
+                .iter()
+                .flat_map(|aggregate| &aggregate.initializers),
+        )
+        .chain(
+            function
+                .static_aggregates()
+                .iter()
+                .flat_map(|aggregate| &aggregate.initializers),
+        )
+        .chain(
+            function
+                .static_aggregate_arrays()
+                .iter()
+                .flat_map(|aggregate| &aggregate.initializers),
+        )
+        .map(|initializer| &initializer.value);
+    for value in scalars.chain(arrays).chain(aggregates) {
+        charge_termination_work(1);
+        if let Some(name) = value_function_address(value) {
+            taken.insert(name.to_string());
+        }
+    }
+}
+
 /// The verified functions of one run, the contract-less `static inline`
 /// helpers their bodies reach, and each node's callees.
 ///
@@ -2186,9 +2383,9 @@ fn termination_call_graph<'a>(
         .map(|rule| (rule.function.name.clone(), &rule.function))
         .collect::<BTreeMap<_, _>>();
     charge_termination_work(partial_rules.len() + inline_bodies.len());
-    let available_inline_bodies = inline_bodies
+    let unruled_bodies = inline_bodies
         .iter()
-        .filter(|function| function.has_inline_body() && !functions.contains_key(function.name()))
+        .filter(|function| !functions.contains_key(function.name()))
         .map(|function| (function.name().to_string(), *function))
         .collect::<BTreeMap<_, _>>();
     let mut calls = BTreeMap::<String, BTreeSet<String>>::new();
@@ -2207,11 +2404,29 @@ fn termination_call_graph<'a>(
             if functions.contains_key(callee) {
                 continue;
             }
-            let Some(helper) = available_inline_bodies.get(callee) else {
+            let Some(helper) = unruled_bodies
+                .get(callee)
+                .filter(|helper| helper.has_inline_body())
+            else {
                 continue;
             };
             functions.insert(callee.clone(), *helper);
             pending.push(callee.clone());
+        }
+        // A contract-less function whose address is taken has no rule to
+        // answer for it either: a function pointer resolved to it executes
+        // its body in place, so that body is a node too.
+        let mut taken = BTreeSet::new();
+        function_address_taken(function, &mut taken);
+        for callback in taken {
+            charge_termination_work(1);
+            if functions.contains_key(&callback) {
+                continue;
+            }
+            if let Some(body) = unruled_bodies.get(&callback) {
+                functions.insert(callback.clone(), *body);
+                pending.push(callback);
+            }
         }
         calls.insert(name, found);
     }
@@ -2363,6 +2578,15 @@ impl std::fmt::Display for CTerminationRefusal {
     }
 }
 
+/// A function whose address `taker` takes, so that it may be called through a
+/// function pointer, although it is not shown to return without going through
+/// a function pointer itself.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CUnsuitableCallback {
+    pub taker: String,
+    pub callback: String,
+}
+
 /// The outcome of one termination check: evidence for the functions shown to
 /// return, and one reason for each function that was not.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2374,6 +2598,10 @@ pub struct CTerminationVerdicts {
     /// no evidence, and the caller of this check decides what an unjustified
     /// declaration means.
     pub unjustified_diverging: Vec<String>,
+    /// Address-takings that keep every call through a function pointer
+    /// refused. While this is nonempty the verdicts are the strict ones, and
+    /// `refusals` says why each named callback does not qualify.
+    pub unsuitable_callbacks: Vec<CUnsuitableCallback>,
 }
 
 /// Checks untrusted ranking plans against exact partially-correct function
@@ -2433,230 +2661,281 @@ pub fn c_verified_function_termination_rules(
         levels.entry(height_of(name)?).or_default().push(name);
     }
 
-    let mut terminating = BTreeSet::<String>::new();
-    let mut refusals = BTreeMap::<String, CTerminationRefusal>::new();
-    let mut unjustified_diverging = Vec::new();
-    for (height, level) in &levels {
-        // The calls a function makes at its own height are its recursive
-        // edges: the height does not rank them, so its declared measure must.
-        let mut level_callers = BTreeMap::<&str, Vec<&String>>::new();
-        let mut settled = Vec::<&String>::new();
-        for name in level {
-            charge_termination_work(1);
-            let name = *name;
-            let function = functions[name];
-            let mut refusal = None;
-            let mut recursive_callees = BTreeSet::<String>::new();
-            for callee in &calls[name] {
+    type Settled = (
+        BTreeSet<String>,
+        BTreeMap<String, CTerminationRefusal>,
+        Vec<String>,
+    );
+    let settle = |allow_pointer_calls: bool| -> Result<Settled, CTerminationError> {
+        let mut terminating = BTreeSet::<String>::new();
+        let mut refusals = BTreeMap::<String, CTerminationRefusal>::new();
+        let mut unjustified_diverging = Vec::new();
+        for (height, level) in &levels {
+            // The calls a function makes at its own height are its recursive
+            // edges: the height does not rank them, so its declared measure must.
+            let mut level_callers = BTreeMap::<&str, Vec<&String>>::new();
+            let mut settled = Vec::<&String>::new();
+            for name in level {
                 charge_termination_work(1);
-                // `realloc` is a call in the syntax and a primitive in the
-                // semantics: execution models it before it looks for any
-                // function of that name, as it models the allocation and
-                // free statements, so it returns like they do.
-                if callee == MODELED_REALLOC {
-                    continue;
-                }
-                if !functions.contains_key(callee) {
-                    if !assumed_terminating.contains(callee) && refusal.is_none() {
-                        refusal = Some(match callee.strip_suffix("#indirect") {
-                            Some(object) => CTerminationRefusal::IndirectCall {
+                let name = *name;
+                let function = functions[name];
+                let mut refusal = None;
+                let mut recursive_callees = BTreeSet::<String>::new();
+                for callee in &calls[name] {
+                    charge_termination_work(1);
+                    // `realloc` is a call in the syntax and a primitive in the
+                    // semantics: execution models it before it looks for any
+                    // function of that name, as it models the allocation and
+                    // free statements, so it returns like they do.
+                    if callee == MODELED_REALLOC {
+                        continue;
+                    }
+                    if let Some(object) = callee.strip_suffix("#indirect") {
+                        if !allow_pointer_calls && refusal.is_none() {
+                            refusal = Some(CTerminationRefusal::IndirectCall {
                                 object: object.to_string(),
-                            },
-                            None => CTerminationRefusal::Callee {
+                            });
+                        }
+                        continue;
+                    }
+                    if !functions.contains_key(callee) {
+                        if !assumed_terminating.contains(callee) && refusal.is_none() {
+                            refusal = Some(CTerminationRefusal::Callee {
                                 callee: callee.clone(),
+                            });
+                        }
+                        continue;
+                    }
+                    let callee_height = height_of(callee)?;
+                    if callee_height > *height {
+                        return Err(error(format!(
+                            "the termination height plan places callee `{callee}` at height {callee_height}, above its caller `{name}` at height {height}"
+                        )));
+                    }
+                    if callee_height == *height {
+                        recursive_callees.insert(callee.clone());
+                        level_callers.entry(callee.as_str()).or_default().push(name);
+                    } else if !terminating.contains(callee) && refusal.is_none() {
+                        refusal = Some(CTerminationRefusal::Callee {
+                            callee: callee.clone(),
+                        });
+                    }
+                }
+
+                let plan = plans.get(name);
+                let recursive_measure = plan.and_then(|plan| plan.recursive_measure);
+                let mut parameter_indices = BTreeMap::new();
+                let mut structural_requirement = None;
+                if recursive_callees.is_empty() {
+                    if recursive_measure.is_some() {
+                        return Err(error(format!(
+                            "function-level `decreases` on nonrecursive function `{name}` has no recursive edge to rank"
+                        )));
+                    }
+                } else if let Some(unmeasured) = std::iter::once(name)
+                    .chain(recursive_callees.iter())
+                    .inspect(|_| charge_termination_work(1))
+                    .find(|member| {
+                        plans
+                            .get(*member)
+                            .and_then(|plan| plan.recursive_measure.as_ref())
+                            .is_none()
+                    })
+                {
+                    if refusal.is_none() {
+                        refusal = Some(CTerminationRefusal::UnmeasuredRecursion {
+                            callee: if unmeasured == name {
+                                recursive_callees
+                                    .first()
+                                    .expect("a recursive function has a recursive callee")
+                                    .clone()
+                            } else {
+                                unmeasured.clone()
                             },
                         });
                     }
-                    continue;
-                }
-                let callee_height = height_of(callee)?;
-                if callee_height > *height {
-                    return Err(error(format!(
-                        "the termination height plan places callee `{callee}` at height {callee_height}, above its caller `{name}` at height {height}"
-                    )));
-                }
-                if callee_height == *height {
-                    recursive_callees.insert(callee.clone());
-                    level_callers.entry(callee.as_str()).or_default().push(name);
-                } else if !terminating.contains(callee) && refusal.is_none() {
-                    refusal = Some(CTerminationRefusal::Callee {
-                        callee: callee.clone(),
-                    });
-                }
-            }
-
-            let plan = plans.get(name);
-            let recursive_measure = plan.and_then(|plan| plan.recursive_measure);
-            let mut parameter_indices = BTreeMap::new();
-            let mut structural_requirement = None;
-            if recursive_callees.is_empty() {
-                if recursive_measure.is_some() {
-                    return Err(error(format!(
-                        "function-level `decreases` on nonrecursive function `{name}` has no recursive edge to rank"
-                    )));
-                }
-            } else if let Some(unmeasured) = std::iter::once(name)
-                .chain(recursive_callees.iter())
-                .inspect(|_| charge_termination_work(1))
-                .find(|member| {
-                    plans
-                        .get(*member)
-                        .and_then(|plan| plan.recursive_measure.as_ref())
-                        .is_none()
-                })
-            {
-                if refusal.is_none() {
-                    refusal = Some(CTerminationRefusal::UnmeasuredRecursion {
-                        callee: if unmeasured == name {
-                            recursive_callees
-                                .first()
-                                .expect("a recursive function has a recursive callee")
-                                .clone()
-                        } else {
-                            unmeasured.clone()
-                        },
-                    });
-                }
-            } else if let Some(CFunctionTerminationMeasure::ResourceRequirement(index)) =
-                recursive_measure
-            {
-                if recursive_callees.len() != 1 || !recursive_callees.contains(name) {
-                    return Err(error(
-                        "structural resource termination currently supports direct recursion only",
-                    ));
-                }
-                structural_requirement = Some(index);
-            } else {
-                for member in std::iter::once(name).chain(recursive_callees.iter()) {
-                    charge_termination_work(1);
-                    let Some(CFunctionTerminationMeasure::NumericParameter(index)) =
-                        plans[member].recursive_measure
-                    else {
+                } else if let Some(CFunctionTerminationMeasure::ResourceRequirement(index)) =
+                    recursive_measure
+                {
+                    if recursive_callees.len() != 1 || !recursive_callees.contains(name) {
                         return Err(error(
-                            "a recursive component cannot mix numeric and structural measures",
+                            "structural resource termination currently supports direct recursion only",
                         ));
-                    };
-                    let parameter = functions[member].parameters().get(index).ok_or_else(|| {
-                        error(format!(
-                            "termination parameter index is invalid for `{member}`"
-                        ))
-                    })?;
-                    if parameter.c_type != CType::Int32 {
-                        return Err(error(format!(
-                            "termination parameter `{}` in `{member}` must have type int32",
-                            parameter.name
-                        )));
                     }
-                    parameter_indices.insert(member.clone(), index);
+                    structural_requirement = Some(index);
+                } else {
+                    for member in std::iter::once(name).chain(recursive_callees.iter()) {
+                        charge_termination_work(1);
+                        let Some(CFunctionTerminationMeasure::NumericParameter(index)) =
+                            plans[member].recursive_measure
+                        else {
+                            return Err(error(
+                                "a recursive component cannot mix numeric and structural measures",
+                            ));
+                        };
+                        let parameter =
+                            functions[member].parameters().get(index).ok_or_else(|| {
+                                error(format!(
+                                    "termination parameter index is invalid for `{member}`"
+                                ))
+                            })?;
+                        if parameter.c_type != CType::Int32 {
+                            return Err(error(format!(
+                                "termination parameter `{}` in `{member}` must have type int32",
+                                parameter.name
+                            )));
+                        }
+                        parameter_indices.insert(member.clone(), index);
+                    }
                 }
-            }
 
-            let empty = BTreeMap::new();
-            let loop_measures = plan.map_or(&empty, |plan| &plan.loop_measures);
-            for measures in loop_measures.values() {
-                let CLoopTerminationMeasure::Ranking(measures) = measures else {
-                    continue;
+                let empty = BTreeMap::new();
+                let loop_measures = plan.map_or(&empty, |plan| &plan.loop_measures);
+                for measures in loop_measures.values() {
+                    let CLoopTerminationMeasure::Ranking(measures) = measures else {
+                        continue;
+                    };
+                    for measure in measures {
+                        reject_address_escaped_expression_measure(
+                            name,
+                            measure,
+                            &function.source_body,
+                        )?;
+                    }
+                }
+                let certified = match verified_loop_rules.get(name) {
+                    Some(rules) => {
+                        verified_loop_ranking_measures(name, &function.source_body, rules)?
+                    }
+                    None => BTreeMap::new(),
                 };
-                for measure in measures {
-                    reject_address_escaped_expression_measure(
-                        name,
-                        measure,
+                let mut next_loop = 0;
+                let mut unranked = Vec::new();
+                check_loops(
+                    &function.source_body,
+                    loop_measures,
+                    &certified,
+                    name,
+                    &mut next_loop,
+                    &mut unranked,
+                )?;
+                if loop_measures.keys().any(|index| *index >= next_loop) {
+                    return Err(error(format!(
+                        "termination plan for `{name}` refers to a nonexistent loop"
+                    )));
+                }
+                if let Some(index) = unranked.first() {
+                    // An unranked loop is the function's own defect, so it is
+                    // reported ahead of anything a callee lacks.
+                    refusal = Some(CTerminationRefusal::UnrankedLoop { index: *index });
+                }
+
+                if let Some(requirement_index) = structural_requirement {
+                    let measure = structural_resource_children(function, requirement_index)?;
+                    // An arm the function's own requirements already select is
+                    // active on every path; the check reads that from the arm
+                    // rather than seeding a synthetic path condition.
+                    structural_recursion_paths(
                         &function.source_body,
+                        function,
+                        &measure,
+                        vec![StructuralRecursionPath {
+                            aliases: BTreeMap::new(),
+                            conditions: Vec::new(),
+                        }],
+                    )?;
+                } else if let Some(index) = parameter_indices.get(name) {
+                    let measure = &function.parameters()[*index].name;
+                    reject_address_escaped_measure(name, measure, &function.source_body)?;
+                    recursion_paths(
+                        &function.source_body,
+                        measure,
+                        &recursive_callees,
+                        &parameter_indices,
+                        vec![i64::MIN / 2],
                     )?;
                 }
-            }
-            let certified = match verified_loop_rules.get(name) {
-                Some(rules) => verified_loop_ranking_measures(name, &function.source_body, rules)?,
-                None => BTreeMap::new(),
-            };
-            let mut next_loop = 0;
-            let mut unranked = Vec::new();
-            check_loops(
-                &function.source_body,
-                loop_measures,
-                &certified,
-                name,
-                &mut next_loop,
-                &mut unranked,
-            )?;
-            if loop_measures.keys().any(|index| *index >= next_loop) {
-                return Err(error(format!(
-                    "termination plan for `{name}` refers to a nonexistent loop"
-                )));
-            }
-            if let Some(index) = unranked.first() {
-                // An unranked loop is the function's own defect, so it is
-                // reported ahead of anything a callee lacks.
-                refusal = Some(CTerminationRefusal::UnrankedLoop { index: *index });
-            }
 
-            if let Some(requirement_index) = structural_requirement {
-                let measure = structural_resource_children(function, requirement_index)?;
-                // An arm the function's own requirements already select is
-                // active on every path; the check reads that from the arm
-                // rather than seeding a synthetic path condition.
-                structural_recursion_paths(
-                    &function.source_body,
-                    function,
-                    &measure,
-                    vec![StructuralRecursionPath {
-                        aliases: BTreeMap::new(),
-                        conditions: Vec::new(),
-                    }],
-                )?;
-            } else if let Some(index) = parameter_indices.get(name) {
-                let measure = &function.parameters()[*index].name;
-                reject_address_escaped_measure(name, measure, &function.source_body)?;
-                recursion_paths(
-                    &function.source_body,
-                    measure,
-                    &recursive_callees,
-                    &parameter_indices,
-                    vec![i64::MIN / 2],
-                )?;
-            }
-
-            match refusal {
-                Some(refusal) => {
-                    refusals.insert(name.clone(), refusal);
-                    settled.push(name);
-                }
-                None => {
-                    terminating.insert(name.clone());
+                match refusal {
+                    Some(refusal) => {
+                        refusals.insert(name.clone(), refusal);
+                        settled.push(name);
+                    }
+                    None => {
+                        terminating.insert(name.clone());
+                    }
                 }
             }
-        }
 
-        // A recursive edge is sound only if its callee terminates too. Each
-        // refused member withdraws the callers that reach it at this height,
-        // once per edge, which leaves the largest set whose every call
-        // descends.
-        while let Some(refused) = settled.pop() {
-            charge_termination_work(1);
-            for caller in level_callers.remove(refused.as_str()).unwrap_or_default() {
+            // A recursive edge is sound only if its callee terminates too. Each
+            // refused member withdraws the callers that reach it at this height,
+            // once per edge, which leaves the largest set whose every call
+            // descends.
+            while let Some(refused) = settled.pop() {
                 charge_termination_work(1);
-                if terminating.remove(caller) {
-                    refusals.insert(
-                        caller.clone(),
-                        CTerminationRefusal::Callee {
-                            callee: refused.clone(),
-                        },
-                    );
-                    settled.push(caller);
+                for caller in level_callers.remove(refused.as_str()).unwrap_or_default() {
+                    charge_termination_work(1);
+                    if terminating.remove(caller) {
+                        refusals.insert(
+                            caller.clone(),
+                            CTerminationRefusal::Callee {
+                                callee: refused.clone(),
+                            },
+                        );
+                        settled.push(caller);
+                    }
+                }
+            }
+
+            // Only a settled level says whether a declaration was needed. The
+            // evidence is withdrawn before any higher caller can read it.
+            for name in level {
+                charge_termination_work(1);
+                if declared_diverging.contains(*name) && terminating.remove(*name) {
+                    refusals.insert((*name).clone(), CTerminationRefusal::DeclaredDiverging);
+                    unjustified_diverging.push((*name).clone());
                 }
             }
         }
 
-        // Only a settled level says whether a declaration was needed. The
-        // evidence is withdrawn before any higher caller can read it.
-        for name in level {
+        Ok((terminating, refusals, unjustified_diverging))
+    };
+
+    // A call through a function pointer reaches some function whose address
+    // was taken. The strict walk refuses every such call, so the functions it
+    // certifies return without going through any function pointer, in their
+    // own bodies or below. When every address taken in this run names one of
+    // those, no pointer call can re-enter its caller, and a second walk may
+    // let pointer calls return. Otherwise the strict verdicts stand.
+    let strict = settle(false)?;
+    let mut unsuitable_callbacks = Vec::new();
+    for (taker, function) in &functions {
+        let mut taken = BTreeSet::new();
+        function_address_taken(function, &mut taken);
+        for callback in taken {
             charge_termination_work(1);
-            if declared_diverging.contains(*name) && terminating.remove(*name) {
-                refusals.insert((*name).clone(), CTerminationRefusal::DeclaredDiverging);
-                unjustified_diverging.push((*name).clone());
+            // A function this run did not select is an assumption, as
+            // everywhere else, even when its unverified body was linked.
+            let returns_pointer_free =
+                strict.0.contains(&callback) || assumed_terminating.contains(&callback);
+            if !returns_pointer_free {
+                unsuitable_callbacks.push(CUnsuitableCallback {
+                    taker: taker.clone(),
+                    callback,
+                });
             }
         }
     }
+    let makes_pointer_calls = calls
+        .values()
+        .flatten()
+        .any(|callee| callee.ends_with("#indirect"));
+    let (terminating, refusals, unjustified_diverging) =
+        if makes_pointer_calls && unsuitable_callbacks.is_empty() {
+            settle(true)?
+        } else {
+            strict
+        };
 
     Ok(CTerminationVerdicts {
         rules: partial_rules
@@ -2669,6 +2948,7 @@ pub fn c_verified_function_termination_rules(
             .collect(),
         refusals,
         unjustified_diverging,
+        unsuitable_callbacks,
     })
 }
 
@@ -3194,6 +3474,143 @@ mod local_descent_tests {
             );
         }
         assert!(loop_at_index(&body, 3, &mut 0).is_none());
+    }
+
+    /// A rule whose body calls `callees`, calls through the local object
+    /// `through` when given one, and takes the address of each of `takes`.
+    fn pointer_rule(
+        name: &str,
+        callees: &[&str],
+        through: Option<&str>,
+        takes: &[&str],
+    ) -> CVerifiedFunctionRule {
+        let mut body = CStatement::Skip;
+        for callee in callees {
+            body = CStatement::Seq(
+                Arc::new(body),
+                Arc::new(crate::kernel::c_call(*callee, Vec::new())),
+            );
+        }
+        for taken in takes {
+            body = CStatement::Seq(
+                Arc::new(body),
+                Arc::new(CStatement::Assign {
+                    name: "slot".to_string(),
+                    expression: crate::kernel::c_function_address(*taken),
+                }),
+            );
+        }
+        let parameters = match through {
+            Some(object) => {
+                body = CStatement::Seq(
+                    Arc::new(body),
+                    Arc::new(crate::kernel::c_call(object, Vec::new())),
+                );
+                vec![crate::kernel::c_parameter(
+                    object,
+                    CType::FunctionPointer(CallbackSignature::UNSPECIFIED),
+                )]
+            }
+            None => Vec::new(),
+        };
+        CVerifiedFunctionRule {
+            function: CFunction::new(CType::Void, name, parameters, body),
+        }
+    }
+
+    /// The ordinary callback: `sort` calls through a pointer, `caller` hands
+    /// it `compare`, and `compare` returns without touching a pointer. Every
+    /// address taken names such a function, so the pointer call returns.
+    #[test]
+    fn a_pointer_call_returns_when_every_address_taken_is_pointer_free() {
+        let rules = [
+            pointer_rule("caller", &["sort"], None, &["compare"]),
+            pointer_rule("sort", &[], Some("callback"), &[]),
+            pointer_rule("compare", &[], None, &[]),
+        ];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let verdicts = check(&rules, &[], &plan, &[]).expect("the plan checks");
+        assert_eq!(
+            terminating(&verdicts),
+            BTreeSet::from(["caller", "compare", "sort"])
+        );
+        assert!(verdicts.unsuitable_callbacks.is_empty());
+    }
+
+    /// `spin` hands itself to `apply`. No direct call closes the cycle, and
+    /// the address does: `spin` reaches a pointer call, so it may not be
+    /// reached through one, and every pointer call in the run stays refused.
+    #[test]
+    fn a_function_that_reaches_a_pointer_call_cannot_be_a_callback() {
+        let rules = [
+            pointer_rule("spin", &["apply"], None, &["spin"]),
+            pointer_rule("apply", &[], Some("callback"), &[]),
+        ];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let verdicts = check(&rules, &[], &plan, &[]).expect("the plan checks");
+        assert!(terminating(&verdicts).is_empty(), "{verdicts:?}");
+        assert_eq!(
+            verdicts.unsuitable_callbacks,
+            [CUnsuitableCallback {
+                taker: "spin".to_string(),
+                callback: "spin".to_string(),
+            }]
+        );
+        assert_eq!(
+            verdicts.refusals["apply"],
+            CTerminationRefusal::IndirectCall {
+                object: "callback".to_string()
+            }
+        );
+    }
+
+    /// The knot through memory: `install` stores `handler`, `dispatch` calls
+    /// what was stored, and `handler` calls `dispatch`. The function that
+    /// takes the address never calls through it, so an edge from taker to
+    /// callback would miss the cycle. The rule does not: `handler` reaches a
+    /// pointer call by way of `dispatch`.
+    #[test]
+    fn a_stored_callback_cannot_call_back_into_its_dispatcher() {
+        let rules = [
+            pointer_rule("install", &[], None, &["handler"]),
+            pointer_rule("dispatch", &[], Some("stored"), &[]),
+            pointer_rule("handler", &["dispatch"], None, &[]),
+            pointer_rule("bystander", &[], None, &[]),
+        ];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let verdicts = check(&rules, &[], &plan, &[]).expect("the plan checks");
+        // Taking an address is not a call, so `install` itself returns.
+        assert_eq!(
+            terminating(&verdicts),
+            BTreeSet::from(["bystander", "install"])
+        );
+        assert_eq!(
+            verdicts.unsuitable_callbacks,
+            [CUnsuitableCallback {
+                taker: "install".to_string(),
+                callback: "handler".to_string(),
+            }]
+        );
+    }
+
+    /// A callback with an unranked loop, or one declared diverging, is not
+    /// shown to return at all, so it is no more suitable than one that
+    /// reaches a pointer call.
+    #[test]
+    fn a_callback_without_evidence_keeps_pointer_calls_refused() {
+        let rules = [
+            pointer_rule("caller", &["apply"], None, &["loops"]),
+            pointer_rule("apply", &[], Some("callback"), &[]),
+            rule("loops", &[], 1),
+        ];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let verdicts = check(&rules, &[], &plan, &[]).expect("the plan checks");
+        assert!(terminating(&verdicts).is_empty(), "{verdicts:?}");
+        assert_eq!(verdicts.unsuitable_callbacks.len(), 1);
+        assert_eq!(
+            verdicts.refusals["loops"],
+            CTerminationRefusal::UnrankedLoop { index: 0 }
+        );
     }
 
     /// `realloc` is modeled by execution itself, so it is no node of the call

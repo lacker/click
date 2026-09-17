@@ -36,10 +36,6 @@ int read_view(int *p) { views p[0..1]; ensures result == p[0]; } by { execute();
 int nested(int *p) { views p[0..1]; ensures result == p[0]; } by { execute(); simp(); }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

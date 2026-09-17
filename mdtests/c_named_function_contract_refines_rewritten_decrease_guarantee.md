@@ -71,10 +71,6 @@ void rewritten_decrease_caller(int32* cell) {
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

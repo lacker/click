@@ -65,5 +65,5 @@ int32 caller(int32 n) {
 ```
 
 ```expect
-fail: could not certify termination for `f`: the call through `helper` has no declared callee to descend to
+fail: could not certify termination for `caller`: it takes the address of `spin`, and a function reached through a function pointer must return without calling through one: the recursive call to `spin` is ranked by no function-level `decreases` measure
 ```

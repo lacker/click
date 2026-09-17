@@ -25,10 +25,6 @@ int read_view(const int *(*f)(const int *), const int *p) {
 } by { apply(lift(f)); step(Readable); execute(); simp(); }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

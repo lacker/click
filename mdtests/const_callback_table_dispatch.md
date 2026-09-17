@@ -99,10 +99,6 @@ int32 through_parameter() {
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

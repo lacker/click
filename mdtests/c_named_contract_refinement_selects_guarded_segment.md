@@ -83,10 +83,6 @@ int32 selected_caller(int32* on_cell, int32* off_cell) {
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

@@ -98,10 +98,6 @@ void automatic_caller(struct node* node) {
 }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

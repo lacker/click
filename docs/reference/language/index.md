@@ -297,7 +297,15 @@ Supplying any C `decreases` clause asks Click to certify termination of the
 whole function, so every reachable loop and recursive component must be ranked
 and every callee must itself have termination evidence. A verified callee
 supplies its own; an `extern` contract is trusted to return, as its `ensures`
-is trusted; a call through a function pointer supplies none. The refusal
+is trusted. A call through a function pointer returns when every function
+whose address the project takes returns without calling through a function
+pointer itself, directly or in anything it calls: a comparator, a visitor, or
+an augment callback qualifies, and a function that hands itself to the helper
+that calls it does not. Until that holds no pointer call supplies evidence,
+and once termination is required the refusal is reported where the address is
+taken; see `mdtests/termination_callback_self_application_rejected.md`. A
+callback that itself takes callbacks needs a measure on its named contract,
+which is not supported yet. The refusal
 names the unranked loop or the callee responsible. The kernel records
 that evidence separately from `CVerifiedFunctionRule`. Ordinary calls and
 ordinary `ensures` continue to use partial correctness and do not silently

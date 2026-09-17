@@ -26,10 +26,6 @@ void invoke(void (*callback)(int32*), int32* cells) {
 } by { step(Buffered); execute(); simp(); }
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```

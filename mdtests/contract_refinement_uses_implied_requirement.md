@@ -54,10 +54,6 @@ void guarded_caller(int32 flag, int32 n) {
 } by auto;
 ```
 
-```termination
-pending: indirect call
-```
-
 ```expect
 pass
 ```
