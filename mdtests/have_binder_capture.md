@@ -79,5 +79,5 @@ int32 bad(int32 x) {
 ```
 
 ```expect
-fail: certificate failed round-trip validation
+fail: have body tactic 2: `assumption` requires the current goal as an available semantic fact
 ```

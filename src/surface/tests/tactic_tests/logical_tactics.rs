@@ -2206,14 +2206,12 @@ fn leading_logical_have_decomposition_stays_on_one_proof() {
         }
     "#;
 
-    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
-                        proof::count_explicit_linear_fallbacks(|| {
-                            verify_c0_sources(click_source, &[("logical_haves.c", c_source)])
-                        })
+                        verify_c0_sources(click_source, &[("logical_haves.c", c_source)])
                     })
                 })
             }
@@ -2227,10 +2225,6 @@ fn leading_logical_have_decomposition_stays_on_one_proof() {
     assert_eq!(
         certificate_checks, 0,
         "ordinary logical have verification must not check a certificate"
-    );
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "every explicit logical operation should apply directly to Proof"
     );
 
     let expanded = verified[0]
@@ -2259,11 +2253,7 @@ fn leading_logical_have_decomposition_stays_on_one_proof() {
         corrupted, rewritten,
         "the expansion should expose a checked branch selection"
     );
-    let (corrupted_result, corrupted_fallbacks) = {
-        proof::count_explicit_linear_fallbacks(|| {
-            verify_c0_sources(&corrupted, &[("logical_haves.c", c_source)])
-        })
-    };
+    let corrupted_result = { verify_c0_sources(&corrupted, &[("logical_haves.c", c_source)]) };
     let error = corrupted_result
         .expect_err("tampering with a logical branch selection must invalidate the proof");
     assert!(
@@ -2271,10 +2261,6 @@ fn leading_logical_have_decomposition_stays_on_one_proof() {
             .message()
             .contains("`right` requires its selected disjunct as an exact fact"),
         "the checked Proof operation should reject the tamper directly: {error:?}"
-    );
-    assert_eq!(
-        corrupted_fallbacks, 0,
-        "an invalid migrated operation must not become a compatibility miss"
     );
 }
 
@@ -2330,14 +2316,12 @@ fn leading_universal_have_scopes_stay_on_one_proof() {
         }
     "#;
 
-    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
-                        proof::count_explicit_linear_fallbacks(|| {
-                            verify_c0_sources(click_source, &[("universal_haves.c", c_source)])
-                        })
+                        verify_c0_sources(click_source, &[("universal_haves.c", c_source)])
                     })
                 })
             }
@@ -2351,10 +2335,6 @@ fn leading_universal_have_scopes_stay_on_one_proof() {
     assert_eq!(
         certificate_checks, 0,
         "ordinary universal verification must not check a certificate"
-    );
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "every explicit universal operation should apply directly to Proof"
     );
 
     let expanded = verified[0]
@@ -2383,11 +2363,7 @@ fn leading_universal_have_scopes_stay_on_one_proof() {
         corrupted, rewritten,
         "the expansion should expose the checked instantiation argument"
     );
-    let (corrupted_result, corrupted_fallbacks) = {
-        proof::count_explicit_linear_fallbacks(|| {
-            verify_c0_sources(&corrupted, &[("universal_haves.c", c_source)])
-        })
-    };
+    let corrupted_result = { verify_c0_sources(&corrupted, &[("universal_haves.c", c_source)]) };
     let error = corrupted_result
         .expect_err("tampering with a universal instantiation must invalidate the proof");
     assert!(
@@ -2395,10 +2371,6 @@ fn leading_universal_have_scopes_stay_on_one_proof() {
             .message()
             .contains("`assumption` requires the current goal as an available semantic fact"),
         "the checked Proof operation should reject the tamper directly: {error:?}"
-    );
-    assert_eq!(
-        corrupted_fallbacks, 0,
-        "an invalid migrated operation must not become a compatibility miss"
     );
 }
 

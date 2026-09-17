@@ -138,35 +138,39 @@ theorem, and constructor-coverage negatives remain part of the gate.
 
 ## Inventory and work package B: explicit error-to-compatibility conversion
 
-Files: `src/surface/proof/smart_closures.rs::try_linear_script`,
-`src/surface/proof/proof_object.rs`, and its remaining execution/fixed-state
-and proof-planning callers. Pure theorem checking already uses the propagating driver.
+Package B is complete. Source scripts in the remaining execution scopes,
+outcome `have` bodies, and fixed-state planning callers now use the same
+propagating `Proof` driver as pure theorems. Nested scopes and branch arms
+inherit that behavior. Unsupported operations name the written tactic;
+explicit failures retain their diagnostic, and open source goals fail.
 
-`try_linear_script` catches `Err` for an explicit-only script, increments
-`EXPLICIT_LINEAR_FALLBACKS` in tests, and returns `Ok(None)`. That allows an
-ordinary checked failure to masquerade as a request for another driver.
-`try_authoritative_linear_script` already propagates the error.
+Removed `try_linear_script`, the generated-script entry point and driver-mode
+flags, whole-script capability prechecks, and the explicit fallback counter
+and counting helper. Outcome haves no longer retry a declined source body as
+generated code. Fixed-state source scripts no longer fall through to unchecked
+certificate construction.
 
-With package A complete, migrate the remaining authoritative
-callers to the propagating behavior. For speculative candidates use the
-existing `attempt` API to classify a checked refusal as a candidate miss;
-that is search on the same proof, not permission to reinterpret source.
-Remove the error-swallowing branch, fallback counter and counting helper.
-Keep a clearly named speculative entry point only where its callers actually
-perform bounded candidate search.
+Smart planning remains distinct from source execution. A selected atomic plan
+is checked on its input Proof and its refusal is classified through `attempt`.
+The loop smart closer selects ordinary simplification or its existing bundle
+member planner directly on the same root; it does not run a source script and
+reinterpret its error. Explicit loop closure bodies propagate their errors.
 
-Existing coverage is in `src/surface/tests/{expansion_tests,contract_tests}.rs`,
-`src/surface/expansion/tests.rs`, and
-`src/surface/tests/tactic_tests/logical_tactics.rs`. Convert counter assertions
-into positive exact-completion/provenance checks and negative assertions that
-the original failing operation's diagnostic survives. Retain their accepted
-proofs, tampering cases, sibling-isolation checks, and no-body-rerun checks;
-do not delete the tests with the counter.
+A completed theorem application followed by more written steps retains its
+checked descendant as a fact in pure and fixed-state/execution contexts.
+Retention verifies context, branch, ancestry, and source-to-kernel goal
+correspondence; it does not reopen the body or execute its certificate.
 
-Completion for A/B: the old pure interpreter and explicit error fallback have
-no production callers and are physically removed. Add narrow source-boundary
-tests against those specific APIs returning; do not ban the word `fallback`
-throughout the repository.
+Existing expansion, tampering, sibling-isolation, and no-body-rerun regressions
+remain. Counter assertions were removed while retaining their behavioral
+checks; additional assertions check retained proposition completion and
+provenance. Regressions cover source failures before and after execution,
+unsupported operations, named theorem failures, source error versus deliberate
+candidate refusal, and 8/16/32/64 fact-sharing during completion retention.
+Narrow source-boundary tests prevent the deleted entry points from returning.
+
+The remaining outcome adapters and loop-initialization layout/certificate
+orchestration below remain separate work packages.
 
 ## Inventory and work package C: outcome drain and resource fact adapters
 

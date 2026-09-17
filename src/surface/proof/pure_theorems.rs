@@ -1865,7 +1865,11 @@ fn verify_contract_refinement_theorem(
     let mut search = super::attempt::search_scope("contract refinement");
     let attempted = match root.try_authoritative_linear_script(proof_tactics) {
         Ok(attempted) => attempted,
-        Err(error) => return Err(error.with_search_failures(search.finish())),
+        Err(error) => {
+            return Err(error
+                .with_context(refinement_failure().message())
+                .with_search_failures(search.finish()));
+        }
     };
     let proof = match attempted {
         Some(proof) => {

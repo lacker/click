@@ -1543,15 +1543,8 @@ fn owned_split_buffer_carried_load_facts_stay_on_direct_proof_path() {
     let sources = crate::cli::read_verifying_sources(&path, &click_source)
         .unwrap_or_else(|error| panic!("failed to load `{}`: {error}", path.display()));
     let c_sources = crate::cli::source_refs(&sources);
-    let (verified, fallbacks) =
-        proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&click_source, &c_sources));
+    let verified = verify_c0_sources(&click_source, &c_sources);
     verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
-    assert_eq!(
-        fallbacks,
-        0,
-        "`{}` should interpret every explicit linear tactic directly on Proof",
-        path.display()
-    );
 }
 
 #[test]

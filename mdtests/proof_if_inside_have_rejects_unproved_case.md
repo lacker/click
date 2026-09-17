@@ -27,5 +27,5 @@ int32 unproved_have_case(int32 x) {
 ```
 
 ```expect
-fail: `have x <= 0` was not proved: step 1 of its body, `if`, declined
+fail: have body tactic 1: `simp` failed for `unproved_have_case.ensures_0`: simplified proposition was not true: signed less-or-equal is true
 ```

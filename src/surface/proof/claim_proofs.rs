@@ -104,39 +104,6 @@ fn synthesize_post_execution_paths(
     synthesize_surface_alternatives(paths)
 }
 
-fn collect_post_execution_if_have_indices<'a>(
-    tactics: impl IntoIterator<Item = &'a DeferredPostExecutionTactic>,
-    indices: &mut BTreeSet<usize>,
-) {
-    for deferred in tactics {
-        let (then_tactics, else_tactics) = match &deferred.tactic {
-            PostExecutionTactic::If {
-                then_tactics,
-                else_tactics,
-                ..
-            } => (then_tactics, else_tactics),
-            PostExecutionTactic::CallOutcomes {
-                returned_tactics,
-                threw_tactics,
-            } => (returned_tactics, threw_tactics),
-            _ => continue,
-        };
-        for arm in [then_tactics, else_tactics] {
-            for nested in arm {
-                match &nested.tactic {
-                    PostExecutionTactic::Have(_) => {
-                        indices.insert(nested.tactic_index);
-                    }
-                    PostExecutionTactic::If { .. } | PostExecutionTactic::CallOutcomes { .. } => {
-                        collect_post_execution_if_have_indices(std::iter::once(nested), indices);
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-}
-
 /// Selects the complete-proof route for supported top-level composite scopes
 /// and execution branches. Tactics before, between, and after structures
 /// remain linear; a scope body may also contain the checked C-branch forms
@@ -1334,15 +1301,6 @@ pub(super) fn finish_ordered_proof<'a>(
     // goals now, and the working-set parity invariant below must hold for
     // every drain before its working vector is finalized.
     let direct_view = proof.finalization_view()?;
-    let mut authoritative_outcome_haves = BTreeSet::new();
-    collect_post_execution_if_have_indices(
-        direct_view
-            .execution
-            .presentation
-            .post_execution_tactics
-            .iter(),
-        &mut authoritative_outcome_haves,
-    );
     let pure_facts = direct_view.facts.clone();
     // The outcome substrate keeps the current fixed-state requirement view.
     // Caller-source identity is carried independently by the immutable entry
@@ -2405,13 +2363,6 @@ pub(super) fn finish_ordered_proof<'a>(
                                 // Restricting these facts to hand-written `derive`
                                 // scripts let smart `simp` search succeed and then
                                 // fail when its generated certificate was proof_candidate.
-                                // The migrated path first: the `have` scope
-                                // opens on this path's evolving outcome proof.
-                                // Haves in the audited execute/have/empty-frame
-                                // segment are authoritative; other outcome
-                                // shapes retain their compatibility adapter.
-                                let authoritative_have =
-                                    authoritative_outcome_haves.contains(tactic_index);
                                 let Some(evolving_root) = outcome_proof.take() else {
                                     // The unconditional substrate makes this
                                     // unreachable; fail loudly rather than
@@ -2439,18 +2390,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 SmartTactic::Auto | SmartTactic::Simp,
                                             ) => scope.try_simp_closure()?,
                                             SourceProof::Script(tactics) => {
-                                                let selected = if authoritative_have {
-                                                    scope.try_authoritative_linear_script(tactics)?
-                                                } else {
-                                                    scope.try_linear_script(tactics)?
-                                                };
-                                                match selected {
-                                                    Some(selected) => Some(selected),
-                                                    None if !authoritative_have => {
-                                                        scope.try_planned_linear_script(tactics)?
-                                                    }
-                                                    None => None,
-                                                }
+                                                scope.try_authoritative_linear_script(tactics)?
                                             }
                                         };
                                         let Some(closed) = selected else {

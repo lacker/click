@@ -85,5 +85,5 @@ int32 check_update(int32 (*callback)(int32*, int32), int32* cell, int32 value) {
 ```
 
 ```expect
-fail: checked outcome `have` search did not retain a complete proof
+fail: have body tactic 1: `simp` failed for `lift.contract`: simplified proposition was not true: int32 equality is true
 ```

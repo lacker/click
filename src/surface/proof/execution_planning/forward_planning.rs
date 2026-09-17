@@ -620,7 +620,7 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
     // but only `Proof::apply_step` installs its conclusion and provenance.
     // This replaces the former source rewrite that copied every theorem
     // requirement into an unchecked `apply using` certificate.
-    if Proof::supports_linear_source(proof) {
+    {
         let proof_goal = exact_proof_goal.cloned().unwrap_or_else(|| fact.clone());
         let root = Proof::for_fixed_state_surface_goal(
             claim_label,
@@ -649,7 +649,7 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
             SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
                 root.try_simp_closure()?
             }
-            SourceProof::Script(tactics) => root.try_linear_script(tactics)?,
+            SourceProof::Script(tactics) => root.try_authoritative_linear_script(tactics)?,
         };
         if let Some(checked) = checked {
             if !checked.is_complete() {
@@ -691,15 +691,10 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
         }
     }
 
-    if let SourceProof::Script(tactics) = proof
-        && let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics)
-    {
-        return Ok(PlannedPointPureGoal {
-            fact,
-            certificate,
-            certificate_already_checked: false,
-            introductions,
-        });
+    if matches!(proof, SourceProof::Script(_)) {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof {proof_index}: fixed-state script ended with an open goal"
+        )));
     }
 
     let unfolded_predicates = smart_simp_unfold_prefix(proof).ok_or_else(|| {

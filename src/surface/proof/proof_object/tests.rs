@@ -278,7 +278,7 @@ fn invariant_bundle_closure_descends_surface_free_both_and_intro_and_rechecks() 
                 ]
     ));
     let rechecked = root
-        .try_planned_linear_script(&certificate.to_proof_tactics())
+        .try_authoritative_linear_script(&certificate.to_proof_tactics())
         .expect("the generated structural certificate should recheck")
         .expect("rechecking the generated certificate should close");
     assert_eq!(rechecked.certificate(), certificate);
@@ -686,7 +686,7 @@ fn both_preserves_written_body_across_an_inserted_guard_and_reverifies_cold() {
     assert!(joined.is_complete());
     let certificate = joined.certificate();
     let cold = root
-        .try_planned_linear_script(&certificate.to_proof_tactics())
+        .try_authoritative_linear_script(&certificate.to_proof_tactics())
         .expect("the rendered guarded split should be accepted cold")
         .expect("the rendered guarded split should close");
     assert_eq!(cold.certificate(), certificate);
@@ -696,7 +696,7 @@ fn both_preserves_written_body_across_an_inserted_guard_and_reverifies_cold() {
     }])
     .unwrap();
     assert!(
-        root.try_planned_linear_script(&missing_guard.to_proof_tactics())
+        root.try_authoritative_linear_script(&missing_guard.to_proof_tactics())
             .expect("deleting a required guard proof should be a bounded rejection")
             .is_none(),
         "the guard child cannot be silently omitted"
@@ -1566,18 +1566,16 @@ fn smart_have_scope_and_explicit_step_scale_with_local_output() {
         let scope = root
             .begin_have(proposition.clone())
             .expect("have should open a nested proof");
-        assert!(
-            scope
-                .try_linear_smart_script(&missing_body)
-                .expect("an unknown theorem should be a bounded smart-search miss")
-                .is_none(),
-            "an unknown theorem must not manufacture a nested descendant"
-        );
+        let error = scope
+            .try_authoritative_linear_script(&missing_body)
+            .err()
+            .expect("an unknown named theorem must report the source operation's error");
+        assert!(error.message().contains("unknown theorem `missing`"));
         assert!(scope.body().certificate().steps().is_empty());
 
         let before = fact_node_allocations();
         let selected = scope
-            .try_linear_smart_script(&smart_body)
+            .try_authoritative_linear_script(&smart_body)
             .expect("nested smart search should not fail")
             .expect("simp should close the constant equality");
         let enclosing = selected
@@ -2129,7 +2127,7 @@ fn proposition_unfold_uses_indexed_facts_and_persistent_local_state() {
         let certificate =
             ProofCertificate::from_steps(vec![unfold.clone(), ProofStep::Assumption]).unwrap();
         let checked = root
-            .try_planned_linear_script(&certificate.to_proof_tactics())
+            .try_authoritative_linear_script(&certificate.to_proof_tactics())
             .expect("the explicit proposition unfold script should apply through Proof")
             .expect("the explicit proposition unfold script should close");
         assert!(checked.is_complete());
@@ -2208,7 +2206,7 @@ fn fixed_state_proposition_unfold_checks_the_same_retained_step() {
     ])
     .unwrap();
     let checked = root
-        .try_planned_linear_script(&certificate.to_proof_tactics())
+        .try_authoritative_linear_script(&certificate.to_proof_tactics())
         .expect("fixed-state unfold should use the shared Proof script driver")
         .expect("fixed-state unfold should close through the shared predicate transition");
     assert!(checked.is_complete());
@@ -4688,7 +4686,6 @@ fn nested_have_accepts_trailing_assumption_after_closure() {
         &click_function_environment,
         &theorem_environment,
     );
-    let _ = &missing_application;
     // The theorem application's conclusion is the have's goal, so the goal
     // is discharged before the script's final `assumption`; that trailing
     // tactic asserts a closed judgment and must not decline the script.
@@ -4700,12 +4697,49 @@ fn nested_have_accepts_trailing_assumption_after_closure() {
         ProofTactic::Assumption,
     ];
     let closed = scope
-        .try_linear_script(&script)
+        .try_authoritative_linear_script(&script)
         .expect("the nested script is a bounded check");
     assert!(
         closed.is_some(),
         "a trailing `assumption` after the discharging application must be accepted"
     );
+
+    let script = [
+        ProofTactic::ApplyTheoremUsing {
+            application,
+            premises: vec![premise.clone()],
+        },
+        ProofTactic::Have(ProofHave {
+            proposition: conclusion.clone(),
+            proof: SourceProof::Script(vec![ProofTactic::Assumption]),
+        }),
+        ProofTactic::Assumption,
+    ];
+    take_checked_have_operations();
+    let completed = scope
+        .try_authoritative_linear_script(&script)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        take_checked_have_operations(),
+        5,
+        "three written proof steps plus the nested have's open and join; retaining the application adds no checks"
+    );
+    assert!(matches!(completed.body().certificate().steps(), [
+        ProofStep::Have { proof, .. }, ProofStep::Have { .. }, ProofStep::Assumption
+    ] if matches!(proof.steps(), [ProofStep::ApplyTheoremUsing { .. }])));
+    let error = scope
+        .try_authoritative_linear_script(&[
+            ProofTactic::ApplyTheoremUsing {
+                application: missing_application,
+                premises: vec![premise],
+            },
+            ProofTactic::Assumption,
+        ])
+        .err()
+        .expect("wrong theorem guards must preserve their checked error");
+    assert!(error.message().contains("apply"), "{error:?}");
+    assert!(scope.body().certificate().steps().is_empty());
 }
 
 #[test]
@@ -5160,7 +5194,7 @@ fn fixed_state_apply_search_uses_indexes_and_retains_its_checked_successor() {
         ];
         let before_apply = fact_node_allocations();
         let complete = root
-            .try_linear_smart_script(&tactics)
+            .try_authoritative_linear_script(&tactics)
             .expect("mixed linear search should not fail")
             .expect("extract, smart apply, and simp should close the goal");
         let allocations = fact_node_allocations() - before_apply;
@@ -5270,7 +5304,7 @@ fn result_aware_fixed_state_apply_scales_with_unrelated_facts() {
         );
         let before = fact_node_allocations();
         let complete = root
-            .try_linear_smart_script(have_tactics)
+            .try_authoritative_linear_script(have_tactics)
             .expect("result-aware theorem search should not fail")
             .expect("result-aware theorem application and simp should close the goal");
         let allocations = fact_node_allocations() - before;
@@ -7468,7 +7502,7 @@ fn le_and_not_lt_equality_simp_retains_one_indexed_theorem_application() {
         let planned_certificate = ProofCertificate::from_proof_tactics(&planned)
             .expect("the named equality theorem should form a simple certificate");
         let planned_closed = pure_root
-            .try_planned_linear_script(&planned_certificate.to_proof_tactics())
+            .try_authoritative_linear_script(&planned_certificate.to_proof_tactics())
             .unwrap_or_else(|error| panic!("the named equality plan failed: {error:?}"))
             .expect("the named equality plan should close through checked Proof operations");
         assert!(planned_closed.is_complete());
@@ -8595,7 +8629,7 @@ fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
         );
         let before_script = fact_node_allocations();
         let complete = root
-            .try_linear_smart_script(&[
+            .try_authoritative_linear_script(&[
                 ProofTactic::ApplyTheorem(application.clone()),
                 ProofTactic::Simp,
             ])
@@ -13264,7 +13298,7 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
 }
 
 #[test]
-fn pure_completed_application_retention_does_not_rerun_and_scales() {
+fn completed_application_retention_does_not_rerun_and_scales() {
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
     let theorems = TheoremEnvironment::new(&[]);
@@ -13277,6 +13311,9 @@ fn pure_completed_application_retention_does_not_rerun_and_scales() {
             Bitvector32Term::Constant(0),
         ))),
     };
+    let state = CState::new();
+    let snapshots = RecordedSnapshots::new();
+    let surfaces = SurfacePropositionMap::default();
     let mut allocations = Vec::new();
     for size in [8, 16, 32, 64] {
         let mut context = pure_identity_fixture();
@@ -13301,41 +13338,61 @@ fn pure_completed_application_retention_does_not_rerun_and_scales() {
             &functions,
             &theorems,
         );
-        let completed = root.apply_step(ProofStep::Normalize).unwrap();
-        take_checked_have_operations();
-        let before = fact_node_allocations();
-        let retained = root.retain_completed_pure_goal(&completed).unwrap();
-        allocations.push(fact_node_allocations() - before);
-        assert_eq!(
-            take_checked_have_operations(),
+        let fixed = Proof::for_fixed_state_surface_goal(
+            "retained fixed-state",
             0,
-            "retention must not reopen and rerun a have body"
-        );
-        assert!(!retained.is_complete());
-        assert!(retained.facts().contains(&goal));
-        assert!(root.certificate().steps().is_empty());
-        assert!(
-            matches!(retained.certificate().steps(), [ProofStep::Have { proof, .. }] if matches!(proof.steps(), [ProofStep::Normalize]))
-        );
-        retained
-            .apply_step(ProofStep::Assumption)
-            .unwrap()
-            .completed_proposition()
-            .unwrap();
-        let other = Proof::for_pure_surface_goal(
-            "other",
             &context.requires,
-            goal,
+            goal.clone(),
             surface.clone(),
-            &context,
+            &[],
+            &[],
+            &state,
+            &state,
+            &snapshots,
+            &surfaces,
             &predicates,
             &functions,
             &theorems,
-        )
-        .apply_step(ProofStep::Normalize)
-        .unwrap();
-        assert!(root.retain_completed_pure_goal(&other).is_err());
-        assert!(root.retain_completed_pure_goal(&root).is_err());
+            &[],
+            &[],
+        );
+        for root in [root, fixed] {
+            let completed = root.apply_step(ProofStep::Normalize).unwrap();
+            take_checked_have_operations();
+            let before = fact_node_allocations();
+            let retained = root.retain_completed_goal(&completed).unwrap();
+            allocations.push(fact_node_allocations() - before);
+            assert_eq!(
+                take_checked_have_operations(),
+                0,
+                "retention must not reopen and rerun a have body"
+            );
+            assert!(!retained.is_complete());
+            assert!(retained.facts().contains(&goal));
+            assert!(root.certificate().steps().is_empty());
+            assert!(
+                matches!(retained.certificate().steps(), [ProofStep::Have { proof, .. }] if matches!(proof.steps(), [ProofStep::Normalize]))
+            );
+            retained
+                .apply_step(ProofStep::Assumption)
+                .unwrap()
+                .completed_proposition()
+                .unwrap();
+            let other = Proof::for_pure_surface_goal(
+                "other",
+                &context.requires,
+                goal.clone(),
+                surface.clone(),
+                &context,
+                &predicates,
+                &functions,
+                &theorems,
+            )
+            .apply_step(ProofStep::Normalize)
+            .unwrap();
+            assert!(root.retain_completed_goal(&other).is_err());
+            assert!(root.retain_completed_goal(&root).is_err());
+        }
     }
     for pair in allocations.windows(2) {
         assert!(
@@ -13343,4 +13400,92 @@ fn pure_completed_application_retention_does_not_rerun_and_scales() {
             "retention must share unrelated facts: {allocations:?}"
         );
     }
+}
+
+#[test]
+fn source_script_compatibility_entry_points_stay_removed() {
+    for source in [
+        include_str!("../smart_closures.rs"),
+        include_str!("../proof_object.rs"),
+        include_str!("scope.rs"),
+        include_str!("../claim_proofs.rs"),
+        include_str!("../execution_planning/forward_planning.rs"),
+        include_str!("../checked_drivers/proof_execution.rs"),
+    ] {
+        for removed in [
+            "try_linear_script(",
+            "try_planned_linear_script(",
+            "EXPLICIT_LINEAR_FALLBACKS",
+            "count_explicit_linear_fallbacks",
+            "record_explicit_linear_fallback",
+        ] {
+            assert!(
+                !source.contains(removed),
+                "removed script authority returned: {removed}"
+            );
+        }
+    }
+}
+
+#[test]
+fn fixed_state_source_failure_is_only_a_miss_at_an_explicit_search_boundary() {
+    let state = CState::new();
+    let snapshots = RecordedSnapshots::new();
+    let surfaces = SurfacePropositionMap::default();
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let theorems = TheoremEnvironment::new(&[]);
+    let goal = indexed_fact(10);
+    let surface = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+            Bitvector32Term::Variable(Variable(0)),
+        ))),
+        operator: ComparisonOperator::LessThan,
+        right: ContractExpression::CFragment(CExpression::Value(int32(10))),
+    };
+    let root = Proof::for_fixed_state_surface_goal(
+        "source error",
+        0,
+        std::slice::from_ref(&goal),
+        goal.clone(),
+        surface,
+        &[],
+        &[],
+        &state,
+        &state,
+        &snapshots,
+        &surfaces,
+        &predicates,
+        &functions,
+        &theorems,
+        &[],
+        &[],
+    );
+    let retained = root.clone();
+    let script = [ProofTactic::Normalize, ProofTactic::Assumption];
+    let error = root
+        .try_authoritative_linear_script(&script)
+        .err()
+        .expect("a named normalization must fail even though assumption could close the goal");
+    assert!(error.message().contains("`normalize`"), "{error:?}");
+    assert!(error.message().contains("tactic 1"), "{error:?}");
+    assert!(
+        attempt::candidate_outcome(root.try_authoritative_linear_script(&script))
+            .unwrap()
+            .is_none()
+    );
+    assert!(root.state.shares_state_with(&retained.state));
+    assert!(root.certificate().steps().is_empty());
+    let completed = root
+        .try_authoritative_linear_script(&[ProofTactic::Assumption])
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        completed.completed_proposition().unwrap().proposition(),
+        &goal
+    );
+    assert_eq!(
+        completed.completed_certificate().unwrap().steps(),
+        &[ProofStep::Assumption]
+    );
 }

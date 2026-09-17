@@ -556,20 +556,6 @@ impl<'a> ProofScope<'a> {
         Ok(Some(next))
     }
 
-    /// Runs one supported source script inside the owned nested body and
-    /// retains its already-checked descendant.
-    pub(in crate::surface::proof) fn try_linear_script(
-        &self,
-        tactics: &[ProofTactic],
-    ) -> Result<Option<Self>, ClickError> {
-        let Some(body) = self.body.try_linear_script(tactics)? else {
-            return Ok(None);
-        };
-        let mut next = self.clone();
-        next.body = body;
-        Ok(Some(next))
-    }
-
     /// Checks a source body after its enclosing driver has selected Proof as
     /// the authority for this scope. Explicit failures remain checked errors
     /// through every nested scope and logical arm.
@@ -594,35 +580,6 @@ impl<'a> ProofScope<'a> {
             .body
             .try_authoritative_linear_script_reporting(tactics, declined)?
         else {
-            return Ok(None);
-        };
-        let mut next = self.clone();
-        next.body = body;
-        Ok(Some(next))
-    }
-
-    /// Applies a planner-selected recursive script inside this owned scope,
-    /// retaining the checked body descendant without materializing a
-    /// certificate.
-    pub(in crate::surface::proof) fn try_planned_linear_script(
-        &self,
-        tactics: &[ProofTactic],
-    ) -> Result<Option<Self>, ClickError> {
-        let Some(body) = self.body.try_planned_linear_script(tactics)? else {
-            return Ok(None);
-        };
-        let mut next = self.clone();
-        next.body = body;
-        Ok(Some(next))
-    }
-
-    /// Smart-only compatibility wrapper retained for focused branch regressions.
-    #[cfg(test)]
-    pub(in crate::surface::proof) fn try_linear_smart_script(
-        &self,
-        tactics: &[ProofTactic],
-    ) -> Result<Option<Self>, ClickError> {
-        let Some(body) = self.body.try_linear_smart_script(tactics)? else {
             return Ok(None);
         };
         let mut next = self.clone();
@@ -885,19 +842,20 @@ impl<'a> ProofScope<'a> {
 }
 
 impl<'a> Proof<'a> {
-    /// Retain a completed descendant of this focused pure goal as a `have`.
+    /// Retain a completed descendant of this focused proposition goal as a `have`.
     /// The checked descendant supplies the evidence; its certificate is only
     /// serialized provenance and is never executed again.
-    pub(in crate::surface::proof) fn retain_completed_pure_goal(
+    pub(in crate::surface::proof) fn retain_completed_goal(
         &self,
         completed: &Self,
     ) -> Result<Self, ClickError> {
-        if !matches!(self.context.as_ref(), ProofContext::Pure(_))
-            || !Arc::ptr_eq(&self.context, &completed.context)
+        if !Arc::ptr_eq(&self.context, &completed.context)
             || self.focused_branch_id() != completed.focused_branch_id()
             || !completed.focused_discharged()
         {
-            return Err(self.step_error("completed application does not belong to this pure goal"));
+            return Err(
+                self.step_error("completed application does not belong to this proposition goal")
+            );
         }
         let body = completed.certificate_since(&self.checkpoint())?;
         let proposition = self

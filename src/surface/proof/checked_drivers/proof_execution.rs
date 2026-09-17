@@ -693,9 +693,9 @@ fn advance_checked_linear_continuation<'a>(
         } else if let ProofTactic::Have(have) = &indexed.tactic {
             let nested = proof.begin_have(have.proposition.clone())?;
             let goal = nested.goal().cloned();
-            let selected = solve_nested_have(nested, have, true)
+            let selected = solve_nested_have(nested, have)
                 .map_err(|error| {
-                    source_have_error(&proof, have, indexed.index, goal.as_ref(), Some(&error))
+                    source_have_error(&proof, have, indexed.index, goal.as_ref(), Some(error))
                 })?
                 .ok_or_else(|| {
                     source_have_error(&proof, have, indexed.index, goal.as_ref(), None)
@@ -1407,8 +1407,15 @@ fn source_have_error(
     have: &ProofHave,
     index: usize,
     goal: Option<&Proposition>,
-    cause: Option<&ClickError>,
+    cause: Option<ClickError>,
 ) -> ClickError {
+    if let Some(error) = cause {
+        return error.with_context(format!(
+            "`{}` tactic {index}: `have` failed for `{}`",
+            proof.claim_label(),
+            crate::surface::diagnostics::describe_click_proposition(&have.proposition)
+        ));
+    }
     let pointer_equality = matches!(
         goal,
         Some(Proposition::ConditionIs(
@@ -1416,12 +1423,8 @@ fn source_have_error(
             true
         ))
     );
-    let detail = if pointer_equality
-        && cause.is_none_or(|error| error.message().contains("was not proved"))
-    {
+    let detail = if pointer_equality {
         "missing pure fact: pointer equality is true".to_string()
-    } else if let Some(error) = cause {
-        error.message().to_string()
     } else {
         format!(
             "`have {}` did not close its checked nested goal",
@@ -1437,7 +1440,6 @@ fn source_have_error(
 pub(super) fn solve_nested_have<'a>(
     nested: ProofScope<'a>,
     have: &ProofHave,
-    authoritative: bool,
 ) -> Result<Option<ProofScope<'a>>, ClickError> {
     let selected = match &have.proof {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
@@ -1447,37 +1449,32 @@ pub(super) fn solve_nested_have<'a>(
             // An explicit script is checked by its proof steps alone: a
             // step that fails is an error, never a miss for search to
             // rescue. The checked scope reports the exact declining step.
-            if authoritative {
-                let mut declined = None;
-                let selected =
-                    nested.try_authoritative_linear_script_reporting(body, &mut declined)?;
-                if selected.is_none() {
-                    let detail = match declined {
-                        Some(crate::surface::proof::smart_closures::LinearScriptDecline::Step(
-                            index,
-                        )) => match body.get(index) {
-                            Some(tactic) => format!(
-                                "step {} of its body, `{}`, declined",
-                                index + 1,
-                                tactic_name(tactic)
-                            ),
-                            None => format!("step {} of its body declined", index + 1),
-                        },
-                        Some(crate::surface::proof::smart_closures::LinearScriptDecline::Shape) => {
-                            "its body is not a shape the checked driver runs".to_string()
-                        }
-                        None => "its body ran to the end with the goal still open".to_string(),
-                    };
-                    let goal =
-                        crate::surface::diagnostics::describe_click_proposition(&have.proposition);
-                    return Err(ClickError::new(format!(
-                        "`have {goal}` was not proved: {detail}"
-                    )));
-                }
-                selected
-            } else {
-                nested.try_linear_script(body)?
+            let mut declined = None;
+            let selected = nested.try_authoritative_linear_script_reporting(body, &mut declined)?;
+            if selected.is_none() {
+                let detail = match declined {
+                    Some(crate::surface::proof::smart_closures::LinearScriptDecline::Step(
+                        index,
+                    )) => match body.get(index) {
+                        Some(tactic) => format!(
+                            "step {} of its body, `{}`, declined",
+                            index + 1,
+                            tactic_name(tactic)
+                        ),
+                        None => format!("step {} of its body declined", index + 1),
+                    },
+                    Some(crate::surface::proof::smart_closures::LinearScriptDecline::Shape) => {
+                        "its body is not a shape the checked driver runs".to_string()
+                    }
+                    None => "its body ran to the end with the goal still open".to_string(),
+                };
+                let goal =
+                    crate::surface::diagnostics::describe_click_proposition(&have.proposition);
+                return Err(ClickError::new(format!(
+                    "`have {goal}` was not proved: {detail}"
+                )));
             }
+            selected
         }
     };
     // A surface `have` may lower to more than the currently focused
@@ -2124,9 +2121,9 @@ fn advance_focused_execution_arm<'a>(
         } else if let ProofTactic::Have(have) = &indexed.tactic {
             let nested = proof.begin_have(have.proposition.clone())?;
             let goal = nested.goal().cloned();
-            let selected = solve_nested_have(nested, have, true)
+            let selected = solve_nested_have(nested, have)
                 .map_err(|error| {
-                    source_have_error(&proof, have, indexed.index, goal.as_ref(), Some(&error))
+                    source_have_error(&proof, have, indexed.index, goal.as_ref(), Some(error))
                 })?
                 .ok_or_else(|| {
                     source_have_error(&proof, have, indexed.index, goal.as_ref(), None)
@@ -3091,7 +3088,7 @@ fn advance_linear_open_scope<'a>(
         // proof has no such source tactic.
         let checkpoint = scope.checkpoint();
         let nested = scope.begin_have(have.proposition.clone())?;
-        let selected = solve_nested_have(nested, have, false)?;
+        let selected = solve_nested_have(nested, have)?;
         let Some(selected) = selected else {
             return decline();
         };

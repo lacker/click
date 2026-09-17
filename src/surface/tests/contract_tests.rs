@@ -1949,13 +1949,18 @@ fn heap_backed_predicate_contract_stays_on_checked_proof() {
             }
         "#;
 
-    let (verified, explicit_fallbacks) = proof::count_explicit_linear_fallbacks(|| {
-        verify_c0_sources(click_source, &[("read_first.c", c_source)])
-    });
-    verified.expect("heap-backed predicate contract should verify");
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "heap-backed predicate contract should use the checked proof driver"
+    let verified = { verify_c0_sources(click_source, &[("read_first.c", c_source)]) };
+    let verified = verified.expect("heap-backed predicate contract should verify");
+    assert_eq!(verified.len(), 2);
+    assert!(
+        verified
+            .iter()
+            .all(|theorem| theorem.checked_proposition.is_some())
+    );
+    assert!(
+        verified
+            .iter()
+            .all(|theorem| theorem.expanded_proof.is_some())
     );
 }
 
@@ -1989,13 +1994,18 @@ fn quantified_heap_scope_stays_on_checked_proof() {
             }
         "#;
 
-    let (verified, explicit_fallbacks) = proof::count_explicit_linear_fallbacks(|| {
-        verify_c0_sources(click_source, &[("read_first.c", c_source)])
-    });
-    verified.expect("quantified heap scope should verify");
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "quantified heap scope should use the checked proof driver"
+    let verified = { verify_c0_sources(click_source, &[("read_first.c", c_source)]) };
+    let verified = verified.expect("quantified heap scope should verify");
+    assert_eq!(verified.len(), 2);
+    assert!(
+        verified
+            .iter()
+            .all(|theorem| theorem.checked_proposition.is_some())
+    );
+    assert!(
+        verified
+            .iter()
+            .all(|theorem| theorem.expanded_proof.is_some())
     );
 }
 
@@ -2031,14 +2041,12 @@ fn grouped_leading_resource_relations_stay_on_one_proof() {
         "#;
     let sources = &[("inspect_pair.c", c_source)];
 
-    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
-                        proof::count_explicit_linear_fallbacks(|| {
-                            verify_c0_sources(click_source, sources)
-                        })
+                        verify_c0_sources(click_source, sources)
                     })
                 })
             }
@@ -2052,10 +2060,6 @@ fn grouped_leading_resource_relations_stay_on_one_proof() {
     assert_eq!(
         certificate_checks, 0,
         "ordinary resource-relation verification must not check a certificate"
-    );
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "resource-relation assumptions must apply directly to Proof"
     );
 
     let expanded =
@@ -2091,15 +2095,10 @@ fn grouped_leading_resource_relations_stay_on_one_proof() {
         ),
     ] {
         assert_ne!(corrupted, expanded, "expansion should expose {relation}");
-        let (corrupted_result, corrupted_fallbacks) =
-            { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, sources)) };
+        let corrupted_result = { verify_c0_sources(&corrupted, sources) };
         corrupted_result.expect_err(&format!(
             "tampering with {relation} must invalidate the proof"
         ));
-        assert_eq!(
-            corrupted_fallbacks, 0,
-            "invalid migrated {relation} must not become a compatibility miss"
-        );
     }
 }
 
@@ -2137,14 +2136,12 @@ fn grouped_unfolded_resource_relations_stay_on_one_proof() {
         "#;
     let sources = &[("inspect_pair.c", c_source)];
 
-    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
-                        proof::count_explicit_linear_fallbacks(|| {
-                            verify_c0_sources(click_source, sources)
-                        })
+                        verify_c0_sources(click_source, sources)
                     })
                 })
             }
@@ -2158,10 +2155,6 @@ fn grouped_unfolded_resource_relations_stay_on_one_proof() {
     assert_eq!(
         certificate_checks, 0,
         "ordinary unfolded-resource verification must not check a certificate"
-    );
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "derived resource relations must apply directly to Proof"
     );
 
     let expanded =
@@ -2196,13 +2189,8 @@ fn grouped_unfolded_resource_relations_stay_on_one_proof() {
         corrupted, expanded,
         "expansion should expose the derived separation"
     );
-    let (corrupted_result, corrupted_fallbacks) =
-        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, sources)) };
+    let corrupted_result = { verify_c0_sources(&corrupted, sources) };
     corrupted_result.expect_err("tampering with the derived separation must fail");
-    assert_eq!(
-        corrupted_fallbacks, 0,
-        "invalid migrated separation must not become a compatibility miss"
-    );
 }
 
 #[test]
@@ -2236,14 +2224,12 @@ fn grouped_owned_outcome_resources_stay_on_one_proof() {
         "#;
     let sources = &[("set_seven.c", c_source)];
 
-    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
-                        proof::count_explicit_linear_fallbacks(|| {
-                            verify_c0_sources(click_source, sources)
-                        })
+                        verify_c0_sources(click_source, sources)
                     })
                 })
             }
@@ -2257,10 +2243,6 @@ fn grouped_owned_outcome_resources_stay_on_one_proof() {
     assert_eq!(
         certificate_checks, 0,
         "ordinary owned outcome verification must not check a certificate"
-    );
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "owned outcome resource operations must apply directly to Proof"
     );
 
     let expanded = expand_c0_claim_source(click_source, sources, "set_seven", CProofClaim::Grouped)
@@ -2734,5 +2716,40 @@ fn sequence_contracts_reject_mixed_and_non_equality_types() {
             "unexpected diagnostic for `{claim}`: {}",
             error.message()
         );
+    }
+}
+
+#[test]
+fn source_have_failures_keep_the_written_operation_in_each_execution_phase() {
+    let c_source = "int32 identity(int32 x) { return x; }";
+    for (before, after) in [("", "execute();"), ("execute();", "")] {
+        for (body, diagnostic) in [
+            (
+                "apply(missing()); assumption();",
+                "unknown theorem `missing`",
+            ),
+            ("unfold(missing); assumption();", "missing"),
+            (
+                "step(); assumption();",
+                "unsupported proof operation `step`",
+            ),
+        ] {
+            let source = format!(
+                r#"
+                verifying "identity.c";
+                int32 identity(int32 x) {{
+                    ensures result == x;
+                }} by {{
+                    {before}
+                    have x == x by {{ {body} }}
+                    {after}
+                    simp();
+                }}
+            "#
+            );
+            let error = verify_c0_sources(&source, &[("identity.c", c_source)])
+                .expect_err("an invalid source operation must not be rescued by the true goal");
+            assert!(error.message().contains(diagnostic), "{body}: {error:?}");
+        }
     }
 }

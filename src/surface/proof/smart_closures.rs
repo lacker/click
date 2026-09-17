@@ -654,9 +654,8 @@ fn surface_split_disequality(proposition: &ClickProposition) -> Option<ClickProp
 
 /// Why a written linear proof script did not close its goal.
 ///
-/// A declined script is not an error by itself; the caller decides whether to
-/// try another route. When it does report one, the author needs the step to
-/// look at.
+/// The script has not proved its goal. Source callers report this at the
+/// written scope; a speculative planner may discard its candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::surface::proof) enum LinearScriptDecline {
     /// The script's shape is outside what this driver checks, so no written
@@ -5105,27 +5104,11 @@ impl<'a> Proof<'a> {
         // Apply those through the same recursive Proof driver used by
         // authoritative source scripts; the plan is provenance input, not an
         // independently interpreted semantic certificate.
-        let proof = self.try_planned_linear_script(&tactics).ok().flatten()?;
+        let proof = attempt::candidate_outcome(self.try_authoritative_linear_script(&tactics))
+            .ok()
+            .flatten()
+            .flatten()?;
         proof.focused_discharged().then_some(proof)
-    }
-
-    /// Runs one branch arm of the linear script driver on the focused branch sibling
-    /// goal. Both smart and explicit bodies apply their operations directly to
-    /// this `Proof`; ordinary source interpretation does not first construct a
-    /// certificate.
-    pub(super) fn try_focused_script_arm(
-        &self,
-        tactics: &[ProofTactic],
-        authoritative: bool,
-        generated: bool,
-    ) -> Result<Option<Self>, ClickError> {
-        if generated {
-            self.try_planned_linear_script(tactics)
-        } else if authoritative {
-            self.try_authoritative_linear_script(tactics)
-        } else {
-            self.try_linear_script(tactics)
-        }
     }
 
     pub(super) fn simp_failure(&self) -> ClickError {
@@ -5190,32 +5173,6 @@ impl<'a> Proof<'a> {
         })
     }
 
-    /// Interprets one supported source script directly on this proof.
-    ///
-    /// Smart tactics search for checked descendants while explicit tactics
-    /// apply their named operation. The returned proof already owns both the
-    /// semantic result and its exact provenance; no certificate is constructed
-    /// or checked to establish acceptance.
-    pub(in crate::surface::proof) fn try_linear_script(
-        &self,
-        tactics: &[ProofTactic],
-    ) -> Result<Option<Self>, ClickError> {
-        let contains_search = script_contains_linear_search(tactics);
-        match self.try_linear_script_inner(tactics, false, false) {
-            // Before this migration, an explicit-only script was checked by
-            // the established source interpreter whenever the typed Proof
-            // surface did not yet admit it. Preserve that transactional
-            // fallback while successful explicit scripts take the direct
-            // path. Smart-script failures retain their checked diagnostic.
-            Err(_) if !contains_search && !crate::instrumentation::deadline_exceeded() => {
-                #[cfg(test)]
-                record_explicit_linear_fallback();
-                Ok(None)
-            }
-            result => result,
-        }
-    }
-
     /// Checks source whose caller has already selected this Proof driver as
     /// the semantic authority. Explicit operation failures propagate instead
     /// of being converted into a compatibility miss; recursive scopes and
@@ -5224,7 +5181,7 @@ impl<'a> Proof<'a> {
         &self,
         tactics: &[ProofTactic],
     ) -> Result<Option<Self>, ClickError> {
-        self.try_linear_script_inner(tactics, true, false)
+        self.try_authoritative_linear_script_reporting(tactics, &mut None)
     }
 
     /// [`Self::try_authoritative_linear_script`], also reporting why the body
@@ -5235,50 +5192,8 @@ impl<'a> Proof<'a> {
         tactics: &[ProofTactic],
         declined: &mut Option<LinearScriptDecline>,
     ) -> Result<Option<Self>, ClickError> {
-        self.try_linear_script_inner_reporting(tactics, true, false, declined)
-    }
-
-    /// Applies one planner-selected or expansion-generated Surface script to
-    /// this Proof. Generated theorem plans may retain a final `assumption()`
-    /// for outcome contexts where the theorem sometimes adds only an anchored
-    /// equivalent fact. If an earlier checked operation closes that body
-    /// exactly, only that final generated no-op is ignored. Ordinary explicit
-    /// source scripts remain strict through `try_linear_script`.
-    pub(in crate::surface::proof) fn try_planned_linear_script(
-        &self,
-        tactics: &[ProofTactic],
-    ) -> Result<Option<Self>, ClickError> {
-        self.try_linear_script_inner(tactics, true, true)
-    }
-
-    pub(super) fn try_linear_script_inner(
-        &self,
-        tactics: &[ProofTactic],
-        authoritative: bool,
-        generated: bool,
-    ) -> Result<Option<Self>, ClickError> {
-        self.try_linear_script_inner_reporting(tactics, authoritative, generated, &mut None)
-    }
-
-    /// The one linear-script walk. `declined` records why the script did not
-    /// close its goal, so a caller can name it; it stays `None` when the
-    /// script ran to its end with the goal still open.
-    fn try_linear_script_inner_reporting(
-        &self,
-        tactics: &[ProofTactic],
-        authoritative: bool,
-        generated: bool,
-        declined: &mut Option<LinearScriptDecline>,
-    ) -> Result<Option<Self>, ClickError> {
-        let pure_source = authoritative && matches!(self.context.as_ref(), ProofContext::Pure(_));
+        let pure_source = matches!(self.context.as_ref(), ProofContext::Pure(_));
         if tactics.is_empty() {
-            *declined = Some(LinearScriptDecline::Shape);
-            return Ok(None);
-        }
-
-        // Recognize the complete path before doing any search. `simp` closes
-        // the remaining goal and is therefore meaningful only at the end.
-        if !pure_source && !linear_script_is_supported(tactics) {
             *declined = Some(LinearScriptDecline::Shape);
             return Ok(None);
         }
@@ -5304,14 +5219,10 @@ impl<'a> Proof<'a> {
                 if matches!(tactic, ProofTactic::Simp) {
                     continue;
                 }
-                if pure_source {
-                    return Err(proof.step_error(format!(
-                        "`{}` follows a goal-closing tactic",
-                        tactic_name(tactic)
-                    )));
-                }
-                *declined = Some(LinearScriptDecline::Step(index));
-                return Ok(None);
+                return Err(proof.step_error(format!(
+                    "`{}` follows a goal-closing tactic",
+                    tactic_name(tactic)
+                )));
             }
             // A theorem can close the goal before a written suffix. Retain
             // that completed application as a checked have, keeping the
@@ -5344,51 +5255,33 @@ impl<'a> Proof<'a> {
                     proof = proof.apply_smart_induction(hypothesis, arguments)?;
                 }
                 ProofTactic::ApplyTheorem(application) => {
-                    if authoritative {
-                        proof = proof.apply_theorem_application(application)?;
-                    } else {
-                        let Some(applied) = proof.try_theorem_application(application)? else {
-                            *declined = Some(LinearScriptDecline::Step(index));
-                            return Ok(None);
-                        };
-                        proof = applied;
-                    }
+                    proof = proof.apply_theorem_application(application)?;
                 }
                 ProofTactic::Simp => {
                     let Some(closed) = proof.try_simp_closure()? else {
-                        if authoritative
-                            && tactics[..index].iter().any(|previous| {
-                                matches!(previous, ProofTactic::Witness(_) | ProofTactic::Choose(_))
-                            })
-                        {
+                        if tactics[..index].iter().any(|previous| {
+                            matches!(previous, ProofTactic::Witness(_) | ProofTactic::Choose(_))
+                        }) {
                             return Err(proof.step_error(
                                 "checked `simp` after witness/choose could not close the remaining witness obligations; split conjunctions and discharge each definedness condition explicitly",
                             ));
                         }
-                        if pure_source {
-                            return Err(proof.simp_failure());
-                        }
-                        *declined = Some(LinearScriptDecline::Step(index));
-                        return Ok(None);
+                        return Err(proof.simp_failure());
                     };
                     proof = closed;
                 }
                 ProofTactic::SimpUsing(simp) => {
-                    let Some(closed) = proof.try_restricted_simp_closure(&simp.premises) else {
-                        if authoritative
-                            && tactics[..index].iter().any(|previous| {
-                                matches!(previous, ProofTactic::Witness(_) | ProofTactic::Choose(_))
-                            })
-                        {
+                    let selected = proof.try_restricted_simp_closure(&simp.premises);
+                    check_verification_deadline()?;
+                    let Some(closed) = selected else {
+                        if tactics[..index].iter().any(|previous| {
+                            matches!(previous, ProofTactic::Witness(_) | ProofTactic::Choose(_))
+                        }) {
                             return Err(proof.step_error(
                                 "checked `simp` after witness/choose could not close the remaining witness obligations; split conjunctions and discharge each definedness condition explicitly",
                             ));
                         }
-                        if pure_source {
-                            return Err(proof.step_error("`simp() using` could not prove the current goal from only its listed premises"));
-                        }
-                        *declined = Some(LinearScriptDecline::Step(index));
-                        return Ok(None);
+                        return Err(proof.step_error("`simp() using` could not prove the current goal from only its listed premises"));
                     };
                     proof = closed;
                 }
@@ -5399,15 +5292,7 @@ impl<'a> Proof<'a> {
                         | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
                             scope.try_simp_closure()?
                         }
-                        SourceProof::Script(body) => {
-                            if generated {
-                                scope.try_planned_linear_script(body)?
-                            } else if authoritative {
-                                scope.try_authoritative_linear_script(body)?
-                            } else {
-                                scope.try_linear_script(body)?
-                            }
-                        }
+                        SourceProof::Script(body) => scope.try_authoritative_linear_script(body)?,
                     };
                     let Some(selected) = selected else {
                         *declined = Some(LinearScriptDecline::Step(index));
@@ -5425,16 +5310,14 @@ impl<'a> Proof<'a> {
                     let marker = split_proof.checkpoint();
                     let Some(then_done) = split_proof
                         .focus_branch(ids[0])?
-                        .try_focused_script_arm(&then_tactics, authoritative, generated)?
+                        .try_authoritative_linear_script(&then_tactics)?
                     else {
                         *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
-                    let Some(both_done) = then_done.focus_branch(ids[1])?.try_focused_script_arm(
-                        &else_tactics,
-                        authoritative,
-                        generated,
-                    )?
+                    let Some(both_done) = then_done
+                        .focus_branch(ids[1])?
+                        .try_authoritative_linear_script(&else_tactics)?
                     else {
                         *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
@@ -5452,16 +5335,14 @@ impl<'a> Proof<'a> {
                     let marker = split_proof.checkpoint();
                     let Some(left_done) = split_proof
                         .focus_branch(ids[0])?
-                        .try_focused_script_arm(&both.left_tactics, authoritative, generated)?
+                        .try_authoritative_linear_script(&both.left_tactics)?
                     else {
                         *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
-                    let Some(both_done) = left_done.focus_branch(ids[1])?.try_focused_script_arm(
-                        &both.right_tactics,
-                        authoritative,
-                        generated,
-                    )?
+                    let Some(both_done) = left_done
+                        .focus_branch(ids[1])?
+                        .try_authoritative_linear_script(&both.right_tactics)?
                     else {
                         *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
@@ -5482,16 +5363,14 @@ impl<'a> Proof<'a> {
                     let marker = split_proof.checkpoint();
                     let Some(left_done) = split_proof
                         .focus_branch(ids[0])?
-                        .try_focused_script_arm(&left_tactics, authoritative, generated)?
+                        .try_authoritative_linear_script(&left_tactics)?
                     else {
                         *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
-                    let Some(both_done) = left_done.focus_branch(ids[1])?.try_focused_script_arm(
-                        &right_tactics,
-                        authoritative,
-                        generated,
-                    )?
+                    let Some(both_done) = left_done
+                        .focus_branch(ids[1])?
+                        .try_authoritative_linear_script(&right_tactics)?
                     else {
                         *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
@@ -5507,7 +5386,7 @@ impl<'a> Proof<'a> {
                 tactic => {
                     let step = explicit_linear_step(tactic).ok_or_else(|| {
                         proof.step_error(format!(
-                            "unsupported pure proof operation `{}`",
+                            "unsupported proof operation `{}`",
                             tactic_name(tactic)
                         ))
                     })?;
@@ -5517,41 +5396,11 @@ impl<'a> Proof<'a> {
             if let Some(before) = before_application
                 && proof.focused_discharged()
             {
-                if matches!(proof.context.as_ref(), ProofContext::Pure(_)) {
-                    proof = before.retain_completed_pure_goal(&proof)?;
-                    continue;
-                }
-                let Some(proposition) = before.surface_goal().cloned() else {
-                    *declined = Some(LinearScriptDecline::Step(index));
-                    return Ok(None);
-                };
-                let body = proof.certificate_since(&before.checkpoint())?;
-                proof = before.apply_step(ProofStep::Have {
-                    proposition,
-                    proof: Box::new(body),
-                })?;
+                proof = before.retain_completed_goal(&proof)?;
             }
         }
 
         Ok(proof.focused_discharged().then_some(proof))
-    }
-
-    /// Smart-only compatibility wrapper retained for focused branch regressions.
-    #[cfg(test)]
-    pub(in crate::surface::proof) fn try_linear_smart_script(
-        &self,
-        tactics: &[ProofTactic],
-    ) -> Result<Option<Self>, ClickError> {
-        if !script_contains_linear_search(tactics) {
-            return Ok(None);
-        }
-        self.try_linear_script(tactics)
-    }
-
-    /// Whether this source proof is wholly represented by the recursive
-    /// proposition driver. This is a syntax-only capability query.
-    pub(in crate::surface::proof) fn supports_linear_source(proof: &SourceProof) -> bool {
-        source_proof_is_supported(proof)
     }
 
     /// Applies one statement step, retaining one newly proved non-load

@@ -3233,22 +3233,20 @@ fn marked_constant_store_transport_retains_load_identity() {
     "#;
     let sources = [("touch_other.c", touch_c), ("pipeline.c", pipeline_c)];
 
-    let (
-        ((((verified, events), explicit_fallbacks), certificate_checks), context_exports),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        crate::instrumentation::collect(|| {
-                            verify_c0_sources(click_source, &sources)
-                        })
+    let ((((verified, events), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        {
+                            crate::instrumentation::collect(|| {
+                                verify_c0_sources(click_source, &sources)
+                            })
+                        }
                     })
                 })
-            })
-        }
-    });
+            }
+        });
     verified.expect("the smart marked transport should verify before expansion");
     assert_eq!(flat_units, 2, "both function proofs should retain Proof");
     assert_eq!(
@@ -3259,7 +3257,7 @@ fn marked_constant_store_transport_retains_load_identity() {
         certificate_checks, 0,
         "ordinary verification checked a certificate"
     );
-    assert_eq!(explicit_fallbacks, 0, "the marked transport fell back");
+
     let transport_checks = events
         .iter()
         .filter_map(|event| {
@@ -3307,13 +3305,8 @@ fn marked_constant_store_transport_retains_load_identity() {
         corrupted, expanded,
         "the expansion should expose its target"
     );
-    let (corrupted_result, corrupted_fallbacks) =
-        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
+    let corrupted_result = { verify_c0_sources(&corrupted, &sources) };
     corrupted_result.expect_err("tampering with the transport target must invalidate the proof");
-    assert_eq!(
-        corrupted_fallbacks, 0,
-        "an invalid migrated transport must not become a compatibility miss"
-    );
 
     let mutating_c = touch_c.replace("owner->other = 0;", "owner->value = 0;");
     let mutating_click = click_source.replace(
@@ -5069,32 +5062,16 @@ fn post_execution_simp_unfolds_predicate_goal_explicitly() {
     );
     assert!(expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    let (reverified, reverify_fallbacks) = {
-        proof::count_explicit_linear_fallbacks(|| {
-            verify_c0_sources(&expanded, &[("compare_swap2.c", c_source)])
-        })
-    };
+    let reverified = { verify_c0_sources(&expanded, &[("compare_swap2.c", c_source)]) };
     reverified.expect("expanded predicate-goal proof should independently reverify");
-    assert_eq!(
-        reverify_fallbacks, 0,
-        "the expanded predicate proof must use only authoritative Proof operations"
-    );
 
     let corrupted = expanded.replacen("unfold(sorted_pair);", "unfold(missing);", 1);
     assert_ne!(
         corrupted, expanded,
         "the expansion should expose its checked predicate unfold"
     );
-    let (corrupted_result, corrupted_fallbacks) = {
-        proof::count_explicit_linear_fallbacks(|| {
-            verify_c0_sources(&corrupted, &[("compare_swap2.c", c_source)])
-        })
-    };
+    let corrupted_result = { verify_c0_sources(&corrupted, &[("compare_swap2.c", c_source)]) };
     corrupted_result.expect_err("a corrupted branched predicate expansion must be rejected");
-    assert_eq!(
-        corrupted_fallbacks, 0,
-        "a corrupted predicate unfold must be rejected by Proof, not compatibility"
-    );
 
     let condition = "at(statement(1).entry, p[1]) < at(statement(1).entry, p[0])";
     let wrong_condition = "at(statement(1).entry, p[0]) < at(statement(1).entry, p[1])";
@@ -5103,16 +5080,8 @@ fn post_execution_simp_unfolds_predicate_goal_explicitly() {
         corrupted, expanded,
         "the expansion should expose its checked outcome condition"
     );
-    let (corrupted_result, corrupted_fallbacks) = {
-        proof::count_explicit_linear_fallbacks(|| {
-            verify_c0_sources(&corrupted, &[("compare_swap2.c", c_source)])
-        })
-    };
+    let corrupted_result = { verify_c0_sources(&corrupted, &[("compare_swap2.c", c_source)]) };
     corrupted_result.expect_err("a corrupted outcome condition must be rejected");
-    assert_eq!(
-        corrupted_fallbacks, 0,
-        "a corrupted outcome condition must be rejected by Proof, not compatibility"
-    );
 }
 
 #[test]
@@ -7572,14 +7541,12 @@ fn grouped_post_execution_rewrite_and_apply_before_frame_stay_on_proof() {
     "#;
     let sources = [("apply_write.c", apply_c), ("rewrite_write.c", rewrite_c)];
 
-    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
-                        proof::count_explicit_linear_fallbacks(|| {
-                            verify_c0_sources(click_source, &sources)
-                        })
+                        verify_c0_sources(click_source, &sources)
                     })
                 })
             }
@@ -7590,10 +7557,6 @@ fn grouped_post_execution_rewrite_and_apply_before_frame_stay_on_proof() {
     assert_eq!(
         certificate_checks, 0,
         "ordinary verification checked a certificate"
-    );
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "an ordered outcome operation fell back"
     );
 
     let retained = verified
@@ -7653,10 +7616,8 @@ fn grouped_post_execution_rewrite_and_apply_before_frame_stay_on_proof() {
             &corrupted, original,
             "the expansion should expose {description}"
         );
-        let (result, fallbacks) =
-            { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
+        let result = { verify_c0_sources(&corrupted, &sources) };
         result.expect_err("tampering with an ordered outcome operation must invalidate the proof");
-        assert_eq!(fallbacks, 0, "invalid {description} must not fall back");
     }
 }
 
@@ -7691,14 +7652,12 @@ fn grouped_post_execution_predicate_unfold_before_frame_stays_on_proof() {
     "#;
     let sources = [("write_first.c", c_source)];
 
-    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
-                        proof::count_explicit_linear_fallbacks(|| {
-                            verify_c0_sources(click_source, &sources)
-                        })
+                        verify_c0_sources(click_source, &sources)
                     })
                 })
             }
@@ -7709,10 +7668,6 @@ fn grouped_post_execution_predicate_unfold_before_frame_stays_on_proof() {
     assert_eq!(
         certificate_checks, 0,
         "ordinary verification checked a certificate"
-    );
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "the ordered predicate unfold fell back"
     );
 
     let tactics = verified[0]
@@ -7737,10 +7692,8 @@ fn grouped_post_execution_predicate_unfold_before_frame_stays_on_proof() {
         corrupted, rewritten,
         "the expansion should expose the unfold"
     );
-    let (result, fallbacks) =
-        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
+    let result = { verify_c0_sources(&corrupted, &sources) };
     result.expect_err("tampering with the predicate unfold must invalidate the proof");
-    assert_eq!(fallbacks, 0, "an invalid unfold must not fall back");
 }
 
 #[test]
@@ -7764,14 +7717,12 @@ fn quantified_contract_resource_open_stays_on_one_proof() {
     "#;
     let sources = [("preserve_markers.c", c_source)];
 
-    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
-                        proof::count_explicit_linear_fallbacks(|| {
-                            verify_c0_sources(click_source, &sources)
-                        })
+                        verify_c0_sources(click_source, &sources)
                     })
                 })
             }
@@ -7782,10 +7733,6 @@ fn quantified_contract_resource_open_stays_on_one_proof() {
     assert_eq!(
         certificate_checks, 0,
         "ordinary verification checked a certificate"
-    );
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "the quantified resource scope fell back"
     );
 
     let tactics = verified[0]
@@ -7815,15 +7762,13 @@ fn quantified_contract_resource_open_stays_on_one_proof() {
         corrupted, rewritten,
         "the expansion should expose the checked resource selection"
     );
-    let (result, fallbacks) =
-        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
+    let result = { verify_c0_sources(&corrupted, &sources) };
     let error =
         result.expect_err("tampering with the resource selection must invalidate the proof");
     assert!(
         error.message().contains("`unfold(marker((x + 1)))` failed"),
         "the checked resource-entry operation should reject the tamper directly: {error:?}"
     );
-    assert_eq!(fallbacks, 0, "an invalid open must not fall back");
 }
 
 #[test]
@@ -8003,14 +7948,12 @@ fn nested_composite_resource_scopes_stay_on_one_proof() {
     let sources = [("read_cell.c", c_source)];
 
     let _ = crate::kernel::take_checked_function_body_execution_count();
-    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
-                        proof::count_explicit_linear_fallbacks(|| {
-                            verify_c0_sources(click_source, &sources)
-                        })
+                        verify_c0_sources(click_source, &sources)
                     })
                 })
             }
@@ -8022,10 +7965,7 @@ fn nested_composite_resource_scopes_stay_on_one_proof() {
         certificate_checks, 0,
         "ordinary verification checked a certificate"
     );
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "the nested resource scopes fell back"
-    );
+
     assert_eq!(
         crate::kernel::take_checked_function_body_execution_count(),
         0,
@@ -8059,15 +7999,13 @@ fn nested_composite_resource_scopes_stay_on_one_proof() {
         corrupted, rewritten,
         "the expansion should expose the nested resource selection"
     );
-    let (result, fallbacks) =
-        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
+    let result = { verify_c0_sources(&corrupted, &sources) };
     let error =
         result.expect_err("tampering with the nested resource selection must invalidate the proof");
     assert!(
         error.message().contains("`unfold(cell((p + 1)))` failed"),
         "the nested checked resource entry should reject the tamper directly: {error:?}"
     );
-    assert_eq!(fallbacks, 0, "an invalid nested open must not fall back");
 }
 
 #[test]
@@ -8260,14 +8198,12 @@ fn execution_branch_arm_resource_scope_stays_on_one_proof() {
     "#;
     let sources = [("read_if.c", c_source)];
 
-    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
-                        proof::count_explicit_linear_fallbacks(|| {
-                            verify_c0_sources(click_source, &sources)
-                        })
+                        verify_c0_sources(click_source, &sources)
                     })
                 })
             }
@@ -8278,10 +8214,6 @@ fn execution_branch_arm_resource_scope_stays_on_one_proof() {
     assert_eq!(
         certificate_checks, 0,
         "ordinary verification checked a certificate"
-    );
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "the branch-arm resource scope fell back"
     );
 
     let tactics = verified[0]
@@ -8310,17 +8242,12 @@ fn execution_branch_arm_resource_scope_stays_on_one_proof() {
         corrupted, rewritten,
         "the expansion should expose the branch-arm resource selection"
     );
-    let (result, fallbacks) =
-        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
+    let result = { verify_c0_sources(&corrupted, &sources) };
     let error =
         result.expect_err("tampering with the branch-arm resource must invalidate the proof");
     assert!(
         error.message().contains("`unfold(cell((p + 1)))` failed"),
         "the checked branch-arm resource entry should reject the tamper directly: {error:?}"
-    );
-    assert_eq!(
-        fallbacks, 0,
-        "an invalid branch-arm open must not fall back"
     );
 }
 
@@ -8390,14 +8317,12 @@ fn scoped_execution_branch_arm_resource_scope_stays_on_one_proof() {
     "#;
     let sources = [("read_if.c", c_source)];
 
-    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
-                        proof::count_explicit_linear_fallbacks(|| {
-                            verify_c0_sources(click_source, &sources)
-                        })
+                        verify_c0_sources(click_source, &sources)
                     })
                 })
             }
@@ -8411,10 +8336,6 @@ fn scoped_execution_branch_arm_resource_scope_stays_on_one_proof() {
     assert_eq!(
         certificate_checks, 0,
         "ordinary verification checked a certificate"
-    );
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "the nested branch-arm scope fell back"
     );
 
     let tactics = verified[0]
@@ -8451,8 +8372,7 @@ fn scoped_execution_branch_arm_resource_scope_stays_on_one_proof() {
         corrupted, rewritten,
         "the expansion should expose the nested branch-arm resource selection"
     );
-    let (result, fallbacks) =
-        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
+    let result = { verify_c0_sources(&corrupted, &sources) };
     let error = result
         .expect_err("tampering with the nested branch-arm resource must invalidate the proof");
     assert!(
@@ -8460,10 +8380,6 @@ fn scoped_execution_branch_arm_resource_scope_stays_on_one_proof() {
             .message()
             .contains("`unfold(marker((flag + 1)))` failed"),
         "the checked nested branch-arm entry should reject the tamper directly: {error:?}"
-    );
-    assert_eq!(
-        fallbacks, 0,
-        "an invalid nested branch-arm open must not fall back"
     );
 }
 
@@ -8503,14 +8419,12 @@ fn execution_branch_arm_terminal_proof_if_stays_on_one_proof() {
     "#;
     let sources = [("choose_x_or_zero.c", c_source)];
 
-    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
-                        proof::count_explicit_linear_fallbacks(|| {
-                            verify_c0_sources(click_source, &sources)
-                        })
+                        verify_c0_sources(click_source, &sources)
                     })
                 })
             }
@@ -8524,10 +8438,6 @@ fn execution_branch_arm_terminal_proof_if_stays_on_one_proof() {
     assert_eq!(
         certificate_checks, 0,
         "ordinary verification checked a certificate"
-    );
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "the nested terminal proof if fell back"
     );
 
     let tactics = verified[0]
@@ -8572,29 +8482,16 @@ fn execution_branch_arm_terminal_proof_if_stays_on_one_proof() {
         .map(|offset| nested_if + offset)
         .expect("the nested then arm should contain a simp");
     let position = expansion::position_at_offset(click_source, selected_simp);
-    let ((selected_expansion, selected_fallbacks), selected_flat_units) =
-        proof::count_flat_proof_units(|| {
-            {
-                proof::count_explicit_linear_fallbacks(|| {
-                    expand_c0_tactic_source_at(
-                        click_source,
-                        &sources,
-                        position.line,
-                        position.column,
-                    )
-                })
-            }
-        });
+    let (selected_expansion, selected_flat_units) = proof::count_flat_proof_units(|| {
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+    });
     let selected_expansion = selected_expansion
         .expect("the selected terminal-arm simp should expand from retained provenance");
     assert_eq!(
         selected_flat_units, 1,
         "selected expansion should retain one Proof"
     );
-    assert_eq!(
-        selected_fallbacks, 0,
-        "selected nested-arm expansion fell back from a checked operation"
-    );
+
     assert_eq!(
         selected_expansion.matches("simp();").count(),
         2,
@@ -8609,13 +8506,8 @@ fn execution_branch_arm_terminal_proof_if_stays_on_one_proof() {
         corrupted, rewritten,
         "the expansion should expose the nested proof-if condition"
     );
-    let (result, fallbacks) =
-        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
+    let result = { verify_c0_sources(&corrupted, &sources) };
     result.expect_err("an unavailable result condition must invalidate the nested proof if");
-    assert_eq!(
-        fallbacks, 0,
-        "an invalid nested proof if must not fall back"
-    );
 }
 
 #[test]
@@ -11041,8 +10933,7 @@ fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
         corrupted, expanded,
         "the expansion should expose its checked root branch anchor"
     );
-    let (corrupted_result, corrupted_fallbacks) =
-        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
+    let corrupted_result = { verify_c0_sources(&corrupted, &sources) };
     let error = corrupted_result
         .expect_err("tampering with the nested execution branch anchor must invalidate the proof");
     assert!(
@@ -11053,10 +10944,6 @@ fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
                 .message()
                 .contains("no state snapshot was recorded for `statement(6).entry`"),
         "the checked Proof split should reject the tamper directly: {error:?}"
-    );
-    assert_eq!(
-        corrupted_fallbacks, 0,
-        "an invalid nested branch anchor must not become a compatibility miss"
     );
 }
 
@@ -11123,8 +11010,7 @@ fn successive_post_execution_ifs_stay_on_one_proof() {
         corrupted, expanded,
         "the expansion should expose the first C branch"
     );
-    let (corrupted_result, corrupted_fallbacks) =
-        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
+    let corrupted_result = { verify_c0_sources(&corrupted, &sources) };
     let error = corrupted_result.expect_err("the corrupted branch anchor must be rejected");
     // The corrupted anchor names a statement that has not been executed
     // where the split is stated; the Proof rejects it at lowering.
@@ -11137,7 +11023,6 @@ fn successive_post_execution_ifs_stay_on_one_proof() {
                 .contains("no state snapshot was recorded for `statement(5).entry`"),
         "the Proof-owned C split should reject the corruption directly: {error:?}"
     );
-    assert_eq!(corrupted_fallbacks, 0, "the corruption entered a fallback");
 }
 
 #[test]
@@ -12307,22 +12192,20 @@ fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
                 simp();
             }
         "#;
-    let (
-        ((((verified, events), explicit_fallbacks), certificate_checks), context_exports),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        crate::instrumentation::collect(|| {
-                            verify_c0_sources(click_source, &[("identity.c", c_source)])
-                        })
+    let ((((verified, events), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        {
+                            crate::instrumentation::collect(|| {
+                                verify_c0_sources(click_source, &[("identity.c", c_source)])
+                            })
+                        }
                     })
                 })
-            })
-        }
-    });
+            }
+        });
     verified.expect("the unfold-then-simp have should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
     assert_eq!(
@@ -12333,10 +12216,7 @@ fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
         certificate_checks, 0,
         "ordinary predicate-have verification checked a certificate"
     );
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "the explicit predicate proof used the compatibility driver"
-    );
+
     assert!(
         events.iter().all(|event| !matches!(
             event,

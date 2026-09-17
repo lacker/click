@@ -61,7 +61,7 @@ int cell_same(struct cell* p, struct cell* q) {
 ```
 
 ```expect
-fail: `have` failed: missing pure fact: pointer equality is true
+fail: have body tactic 1: `simp` failed for `cell_same.contract`: simplified proposition was not true: pointer equality is true
 ```
 
 The refusal is a proof failure over pointer equalities, not a lowering

@@ -689,7 +689,22 @@ impl<'a> Proof<'a> {
         };
         let mut search = attempt::search_scope("close invariants body");
         let checkpoint = root.checkpoint();
-        let attempted = match root.try_authoritative_linear_script(body) {
+        // This smart request owns two bounded strategies on the same root:
+        // ordinary simplification, then the loop-specific member planner.
+        // Explicit source bodies use the source driver exactly once.
+        let attempted = if body == [ProofTactic::Simp] {
+            match root.try_simp_closure()? {
+                Some(completed) => Ok(Some(completed)),
+                None => {
+                    let (candidate, premises) =
+                        root.named_arithmetic_premises(bundle, context.function_block.requires())?;
+                    candidate.plan_invariant_bundle_closure(&premises)
+                }
+            }
+        } else {
+            root.try_authoritative_linear_script(body)
+        };
+        let attempted = match attempted {
             Ok(attempted) => attempted,
             Err(error) => {
                 let detail = ranking_member_diagnostic(&bundle.ranking_measures);
@@ -700,24 +715,6 @@ impl<'a> Proof<'a> {
                 };
                 return Err(error.with_search_failures(search.finish()));
             }
-        };
-        // A smart closure request is the one body this planner owns:
-        // `close_invariants()`, `close_invariants by { simp(); }`, the omitted
-        // preservation body, and the region `simp()` all reach here as the
-        // single `simp` script. When the ordinary closer declines it, descend
-        // the bundle's own structure and offer each member the loop head's and
-        // the contract's named arithmetic premises.
-        let attempted = match attempted {
-            Some(completed) => Some(completed),
-            None if body == [ProofTactic::Simp] => {
-                let (root, premises) =
-                    root.named_arithmetic_premises(bundle, context.function_block.requires())?;
-                match root.plan_invariant_bundle_closure(&premises) {
-                    Ok(result) => result,
-                    Err(error) => return Err(error.with_search_failures(search.finish())),
-                }
-            }
-            None => None,
         };
         let Some(completed) = attempted else {
             let error = root.step_error(format!(

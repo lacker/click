@@ -26,9 +26,6 @@ thread_local! {
     static SOURCE_CERTIFICATE_CHECKS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
-    static EXPLICIT_LINEAR_FALLBACKS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
     static EXECUTION_CONTEXT_EXPORTS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
@@ -69,21 +66,6 @@ pub(in crate::surface) fn count_source_certificate_checks<R>(
     let result = operation();
     let after = SOURCE_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
     (result, after - before)
-}
-
-#[cfg(test)]
-pub(in crate::surface) fn count_explicit_linear_fallbacks<R>(
-    operation: impl FnOnce() -> R,
-) -> (R, usize) {
-    let before = EXPLICIT_LINEAR_FALLBACKS.with(std::cell::Cell::get);
-    let result = operation();
-    let after = EXPLICIT_LINEAR_FALLBACKS.with(std::cell::Cell::get);
-    (result, after - before)
-}
-
-#[cfg(test)]
-pub(in crate::surface::proof) fn record_explicit_linear_fallback() {
-    EXPLICIT_LINEAR_FALLBACKS.with(|fallbacks| fallbacks.set(fallbacks.get() + 1));
 }
 
 #[cfg(test)]
@@ -440,83 +422,6 @@ pub(in crate::surface::proof) fn explicit_linear_step(tactic: &ProofTactic) -> O
         }),
         _ => None,
     }
-}
-
-fn source_proof_contains_linear_search(proof: &SourceProof) -> bool {
-    match proof {
-        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
-        SourceProof::Script(tactics) => script_contains_linear_search(tactics),
-    }
-}
-
-pub(super) fn script_contains_linear_search(tactics: &[ProofTactic]) -> bool {
-    tactics.iter().any(|tactic| match tactic {
-        ProofTactic::ApplyTheorem(_) | ProofTactic::Simp | ProofTactic::SimpUsing(_) => true,
-        ProofTactic::Have(have) => source_proof_contains_linear_search(&have.proof),
-        ProofTactic::If(proof_if) => {
-            script_contains_linear_search(&proof_if.then_tactics)
-                || script_contains_linear_search(&proof_if.else_tactics)
-        }
-        ProofTactic::Both(both) => {
-            script_contains_linear_search(&both.left_tactics)
-                || script_contains_linear_search(&both.right_tactics)
-        }
-        ProofTactic::Cases(proof_cases) => {
-            script_contains_linear_search(&proof_cases.left_tactics)
-                || script_contains_linear_search(&proof_cases.right_tactics)
-        }
-        ProofTactic::StructuralInduct { arms, .. } => arms
-            .iter()
-            .any(|arm| script_contains_linear_search(&arm.tactics)),
-        _ => false,
-    })
-}
-
-fn branch_arm_is_supported(tactics: &[ProofTactic]) -> bool {
-    linear_script_is_supported(tactics)
-}
-
-pub(in crate::surface::proof) fn source_proof_is_supported(proof: &SourceProof) -> bool {
-    match proof {
-        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
-        SourceProof::Script(tactics) => linear_script_is_supported(tactics),
-    }
-}
-
-pub(in crate::surface::proof) fn linear_script_is_supported(tactics: &[ProofTactic]) -> bool {
-    linear_script_fragment_is_supported(tactics, false)
-}
-
-fn linear_script_fragment_is_supported(tactics: &[ProofTactic], has_continuation: bool) -> bool {
-    (!tactics.is_empty() || has_continuation)
-        && tactics
-            .iter()
-            .enumerate()
-            .all(|(index, tactic)| match tactic {
-                ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyInduction { .. } => true,
-                ProofTactic::Simp => index + 1 == tactics.len(),
-                ProofTactic::SimpUsing(_) => index + 1 == tactics.len(),
-                ProofTactic::Have(have) => source_proof_is_supported(&have.proof),
-                ProofTactic::Both(both) => {
-                    index + 1 == tactics.len()
-                        && branch_arm_is_supported(&both.left_tactics)
-                        && branch_arm_is_supported(&both.right_tactics)
-                }
-                ProofTactic::If(proof_if) => {
-                    let continuation = has_continuation || index + 1 < tactics.len();
-                    linear_script_fragment_is_supported(&proof_if.then_tactics, continuation)
-                        && linear_script_fragment_is_supported(&proof_if.else_tactics, continuation)
-                }
-                ProofTactic::Cases(proof_cases) => {
-                    let continuation = has_continuation || index + 1 < tactics.len();
-                    linear_script_fragment_is_supported(&proof_cases.left_tactics, continuation)
-                        && linear_script_fragment_is_supported(
-                            &proof_cases.right_tactics,
-                            continuation,
-                        )
-                }
-                tactic => explicit_linear_step(tactic).is_some(),
-            })
 }
 
 type ProofState = KernelProofState<ProofLocals, Obligation, ExecutionProofState>;
