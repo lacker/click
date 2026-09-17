@@ -666,6 +666,20 @@ pub(in crate::surface::proof) enum LinearScriptDecline {
     Step(usize),
 }
 
+/// A branch continuation is checked in each selected arm. Borrow terminal
+/// arms unchanged; copied source is proportional to the explicit branch proof
+/// being checked and serialized, rather than to ambient semantic state.
+fn script_arm_with_continuation<'a>(
+    arm: &'a [ProofTactic],
+    continuation: &[ProofTactic],
+) -> std::borrow::Cow<'a, [ProofTactic]> {
+    if continuation.is_empty() {
+        std::borrow::Cow::Borrowed(arm)
+    } else {
+        std::borrow::Cow::Owned(arm.iter().chain(continuation).cloned().collect())
+    }
+}
+
 impl<'a> Proof<'a> {
     fn signed_surface_term(
         &self,
@@ -5183,18 +5197,22 @@ impl<'a> Proof<'a> {
                     proof = selected.join()?;
                 }
                 ProofTactic::If(proof_if) => {
+                    let then_tactics =
+                        script_arm_with_continuation(&proof_if.then_tactics, &tactics[index + 1..]);
+                    let else_tactics =
+                        script_arm_with_continuation(&proof_if.else_tactics, &tactics[index + 1..]);
                     let (split_proof, split, ids) =
                         proof.split_focused_if(proof_if.condition.clone())?;
                     let marker = split_proof.checkpoint();
                     let Some(then_done) = split_proof
                         .focus_branch(ids[0])?
-                        .try_focused_script_arm(&proof_if.then_tactics, authoritative, generated)?
+                        .try_focused_script_arm(&then_tactics, authoritative, generated)?
                     else {
                         *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
                     let Some(both_done) = then_done.focus_branch(ids[1])?.try_focused_script_arm(
-                        &proof_if.else_tactics,
+                        &else_tactics,
                         authoritative,
                         generated,
                     )?
@@ -5208,6 +5226,7 @@ impl<'a> Proof<'a> {
                         ids,
                         proof_if.condition.clone(),
                     )?;
+                    return Ok(proof.focused_discharged().then_some(proof));
                 }
                 ProofTactic::Both(both) => {
                     let (split_proof, split, ids) = proof.split_focused_both()?;
@@ -5231,21 +5250,26 @@ impl<'a> Proof<'a> {
                     proof = both_done.join_focused_both(&marker, split, ids)?;
                 }
                 ProofTactic::Cases(proof_cases) => {
+                    let left_tactics = script_arm_with_continuation(
+                        &proof_cases.left_tactics,
+                        &tactics[index + 1..],
+                    );
+                    let right_tactics = script_arm_with_continuation(
+                        &proof_cases.right_tactics,
+                        &tactics[index + 1..],
+                    );
                     let (split_proof, split, ids) =
                         proof.split_focused_cases(proof_cases.disjunction.clone())?;
                     let marker = split_proof.checkpoint();
-                    let Some(left_done) =
-                        split_proof.focus_branch(ids[0])?.try_focused_script_arm(
-                            &proof_cases.left_tactics,
-                            authoritative,
-                            generated,
-                        )?
+                    let Some(left_done) = split_proof
+                        .focus_branch(ids[0])?
+                        .try_focused_script_arm(&left_tactics, authoritative, generated)?
                     else {
                         *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
                     };
                     let Some(both_done) = left_done.focus_branch(ids[1])?.try_focused_script_arm(
-                        &proof_cases.right_tactics,
+                        &right_tactics,
                         authoritative,
                         generated,
                     )?
@@ -5259,6 +5283,7 @@ impl<'a> Proof<'a> {
                         ids,
                         proof_cases.disjunction.clone(),
                     )?;
+                    return Ok(proof.focused_discharged().then_some(proof));
                 }
                 tactic => {
                     let step = explicit_linear_step(tactic)

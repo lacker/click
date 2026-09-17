@@ -1666,22 +1666,24 @@ fn verify_theorem_ensure(
             } else {
                 let (tactics, induction_setup) =
                     prepare_pure_induction_tactics(theorem, surface_goal, tactics)?;
-                checked_certificate = if induction_setup.is_none() {
-                    check_pure_script_with_proof(
-                        claim_label,
-                        context,
-                        surface_goal,
-                        &goal,
-                        &goal_introductions,
-                        &tactics,
-                        predicate_environment,
-                        click_function_environment,
-                        theorem_environment,
-                    )?
-                    .map(|(certificate, completion)| (certificate, Some(completion)))
-                } else {
-                    None
-                };
+                checked_certificate =
+                    if induction_setup.is_none() || pure_script_contains_instantiate(&tactics) {
+                        check_pure_script_with_proof(
+                            claim_label,
+                            context,
+                            surface_goal,
+                            &goal,
+                            &goal_introductions,
+                            &tactics,
+                            induction_setup.as_ref(),
+                            predicate_environment,
+                            click_function_environment,
+                            theorem_environment,
+                        )?
+                        .map(|(certificate, completion)| (certificate, Some(completion)))
+                    } else {
+                        None
+                    };
                 if checked_certificate.is_some() {
                     (ProofKind::TacticScript, None, induction_setup)
                 } else {
@@ -2517,6 +2519,7 @@ fn verify_kernel_standard_theorem_axiom(
 fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
     certificate.steps().iter().all(|step| match step {
         ProofStep::ApplyTheoremUsing { .. }
+        | ProofStep::InstantiateUsing { .. }
         | ProofStep::UnfoldPredicate(_)
         | ProofStep::UnfoldFunction(_)
         | ProofStep::Assumption
@@ -2572,20 +2575,50 @@ fn check_pure_script_with_proof(
     goal: &Proposition,
     goal_introductions: &crate::kernel::LoweringIntroductions,
     tactics: &[ProofTactic],
+    induction_setup: Option<&PureInductionSetup>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Option<(ProofCertificate, crate::kernel::proof::CheckedProposition)>, ClickError> {
-    let root = Proof::for_pure_surface_goal(
-        claim_label,
-        &context.requires,
-        goal.clone(),
-        surface_goal.clone(),
-        context,
-        predicate_environment,
-        click_function_environment,
-        theorem_environment,
-    )
+    let planned_induction;
+    let tactics = if let Some(setup) = induction_setup {
+        planned_induction = lower_pure_induction_tactics(
+            claim_label,
+            context,
+            predicate_environment,
+            click_function_environment,
+            &setup.surface_requires,
+            &[],
+            tactics,
+            setup,
+        )?;
+        &planned_induction
+    } else {
+        tactics
+    };
+    let root = match induction_setup {
+        Some(setup) => Proof::for_pure_surface_goal_with_induction(
+            claim_label,
+            &context.requires,
+            goal.clone(),
+            surface_goal.clone(),
+            context,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+            setup.clone(),
+        ),
+        None => Proof::for_pure_surface_goal(
+            claim_label,
+            &context.requires,
+            goal.clone(),
+            surface_goal.clone(),
+            context,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+        ),
+    }
     .with_recorded_goal_introductions(Some(goal_introductions.clone()));
 
     if let [ProofTactic::SimpUsing(simp)] = tactics
@@ -2600,12 +2633,9 @@ fn check_pure_script_with_proof(
         return Ok(Some((proof.certificate(), proof.completed_proposition()?)));
     }
 
-    // The checked Proof object currently owns the fixed-state and execution
-    // instantiation paths, but pure theorem scripts still use the legacy
-    // pure driver for this operation. Do not send an unsupported certificate
-    // through the authoritative pure Proof path: that would turn a valid
-    // script into a shape error before the pure driver can check it.
-    if let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics)
+    let contains_instantiate = pure_script_contains_instantiate(tactics);
+    if !contains_instantiate
+        && let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics)
         && !proof_supports_pure_certificate(&certificate)
     {
         return Ok(None);
@@ -2617,7 +2647,10 @@ fn check_pure_script_with_proof(
     // example, an invalid `assumption` after a shadowing `intro`) with a
     // spurious zero-path lowering error.
     let has_integer_surface = surface_goal_contains_integer_quantifier(surface_goal);
-    let checked = if has_integer_surface
+    let mut declined = None;
+    let checked = if contains_instantiate {
+        root.try_authoritative_linear_script_reporting(tactics, &mut declined)?
+    } else if has_integer_surface
         || tactics.iter().any(|tactic| {
             matches!(
                 tactic,
@@ -2627,7 +2660,8 @@ fn check_pure_script_with_proof(
                     | ProofTactic::Witness(_)
                     | ProofTactic::Choose(_)
             )
-        }) {
+        })
+    {
         root.try_authoritative_linear_script(tactics)?
     } else {
         root.try_linear_script(tactics)?
@@ -2636,7 +2670,46 @@ fn check_pure_script_with_proof(
         return Ok(Some((proof.certificate(), proof.completed_proposition()?)));
     }
 
+    if contains_instantiate {
+        let detail = match declined {
+            Some(super::smart_closures::LinearScriptDecline::Shape) => {
+                "contains an unsupported operation or control-flow shape".to_string()
+            }
+            Some(super::smart_closures::LinearScriptDecline::Step(index)) => format!(
+                "could not complete tactic {} (`{}`)",
+                index + 1,
+                tactic_name(&tactics[index])
+            ),
+            None => "ended with its goal still open".to_string(),
+        };
+        return Err(root.step_error(format!("checked pure script for `{claim_label}` {detail}")));
+    }
     Ok(None)
+}
+
+/// Migrated instantiation scripts must not return to the mutable interpreter,
+/// including when the operation appears inside a nested proof or branch.
+fn pure_script_contains_instantiate(tactics: &[ProofTactic]) -> bool {
+    tactics.iter().any(|tactic| match tactic {
+        ProofTactic::InstantiateUsing { .. } => true,
+        ProofTactic::Have(have) => have
+            .proof
+            .tactics()
+            .is_some_and(pure_script_contains_instantiate),
+        ProofTactic::If(branch) => {
+            pure_script_contains_instantiate(&branch.then_tactics)
+                || pure_script_contains_instantiate(&branch.else_tactics)
+        }
+        ProofTactic::Cases(branch) => {
+            pure_script_contains_instantiate(&branch.left_tactics)
+                || pure_script_contains_instantiate(&branch.right_tactics)
+        }
+        ProofTactic::Both(branch) => {
+            pure_script_contains_instantiate(&branch.left_tactics)
+                || pure_script_contains_instantiate(&branch.right_tactics)
+        }
+        _ => false,
+    })
 }
 
 fn surface_goal_contains_integer_quantifier(surface: &ClickProposition) -> bool {
@@ -5121,108 +5194,6 @@ fn prove_pure_theorem_tactics(
                 }
                 available = applied;
             }
-            ProofTactic::InstantiateUsing {
-                quantified: surface_quantified,
-                argument,
-                premises: surface_premises,
-            } => {
-                let explicit_premises = surface_premises
-                    .iter()
-                    .map(|premise| {
-                        lower_pure_theorem_proposition(
-                            claim_label,
-                            premise,
-                            &context.values,
-                            &context.array_refs,
-                            &context.memory,
-                            predicate_environment,
-                            click_function_environment,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: could not lower `instantiate using` premise: {message}"
-                        ))
-                    })?;
-                for premise in &explicit_premises {
-                    if !exact_fact_is_available(premise, &available)
-                        && quantified_equivalent_available_fact(premise, &available).is_none()
-                    {
-                        return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: `instantiate using` requires an exact available premise"
-                        )));
-                    }
-                }
-
-                let lowered_quantified = lower_pure_theorem_proposition(
-                    claim_label,
-                    surface_quantified,
-                    &context.values,
-                    &context.array_refs,
-                    &context.memory,
-                    predicate_environment,
-                    click_function_environment,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not lower `instantiate` quantified fact: {message}"
-                    ))
-                })?;
-                let quantified_fact = if exact_fact_is_available(&lowered_quantified, &available) {
-                    lowered_quantified
-                } else if let Some(matched) =
-                    quantified_equivalent_available_fact(&lowered_quantified, &available)
-                {
-                    matched
-                } else {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `instantiate` quantified fact is not exactly available: {}",
-                        describe_click_proposition(surface_quantified)
-                    )));
-                };
-
-                let assumptions = assumptions_from_propositions(&available);
-                let mut active_functions = BTreeSet::new();
-                let state = CState::new().with_memory(context.memory.clone());
-                let argument_value = evaluate_contract_expression_with_environment(
-                    &context.values,
-                    &context.array_refs,
-                    &state,
-                    &state,
-                    None,
-                    &assumptions,
-                    argument,
-                    predicate_environment,
-                    click_function_environment,
-                    &recorded_snapshots,
-                    &mut active_functions,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not evaluate `instantiate` argument: {message}"
-                    ))
-                })?;
-                let CValue::Int32(argument_term) = argument_value else {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `instantiate` argument did not evaluate to int32"
-                    )));
-                };
-
-                let conclusion = check_forall_int32_instantiation(
-                    &quantified_fact,
-                    argument_term,
-                    &explicit_premises,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `instantiate` failed: {message}"
-                    ))
-                })?;
-                if !available.contains(&conclusion) {
-                    available.push(conclusion);
-                }
-            }
             ProofTactic::Assumption => {
                 if !available.contains(&goal)
                     && exactly_available_fact(&goal, &available).is_none()
@@ -5487,6 +5458,355 @@ fn prove_pure_theorem_tactics(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const INSTANTIATE_BOUND: &str = r#"
+        theorem instantiate_bound(x: int32, limit: int32, upper: int32) {
+            requires forall (k: int32) {
+                0 <= k and k < limit implies k <= upper
+            };
+            requires 0 <= x;
+            requires x < limit;
+            ensures x <= upper by {
+                instantiate(forall (k: int32) {
+                    0 <= k and k < limit implies k <= upper
+                }, x) using { 0 <= x; x < limit; }
+                assumption();
+            }
+        }
+    "#;
+
+    fn verify_instantiation_theorem(source: &str) -> Result<VerifiedPureTheorem, ClickError> {
+        let file = crate::surface::parse(source)?;
+        let predicates = PredicateEnvironment::new(file.predicate_definitions());
+        let functions = ClickFunctionEnvironment::new(file.click_function_definitions());
+        let mut verified = verify_concrete_theorem_definition(
+            &file.theorem_definitions()[0],
+            &predicates,
+            &functions,
+            &TheoremEnvironment::new(&[]),
+            None,
+        )?;
+        Ok(verified.remove(0))
+    }
+
+    #[test]
+    fn pure_instantiate_retains_checked_authority_without_recertification() {
+        let (result, events) =
+            crate::instrumentation::collect(|| verify_instantiation_theorem(INSTANTIATE_BOUND));
+        let verified = result.expect("pure instantiation must produce checked authority");
+        assert!(verified.kernel_authority.is_some());
+        assert!(matches!(
+            verified.proof.as_ref().unwrap().steps(),
+            [ProofStep::InstantiateUsing { .. }, ProofStep::Assumption]
+        ));
+        assert!(!events.iter().any(|event| matches!(event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "generated certificate validation" || name == "surface certificate construction"
+        )), "ordinary instantiation must retain the checked result: {events:?}");
+    }
+
+    #[test]
+    fn pure_instantiate_rejects_omitted_guard_and_preserves_checked_error() {
+        let missing =
+            INSTANTIATE_BOUND.replace("using { 0 <= x; x < limit; }", "using { 0 <= x; }");
+        let error = verify_instantiation_theorem(&missing)
+            .expect_err("ambient guards cannot fill a missing citation");
+        assert!(
+            error
+                .message()
+                .contains("does not follow from the listed evidence"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            !error.message().contains("round-trip"),
+            "{}",
+            error.message()
+        );
+        let unavailable = INSTANTIATE_BOUND.replace("requires x < limit;", "");
+        let error = verify_instantiation_theorem(&unavailable)
+            .expect_err("a named guard must be available");
+        assert!(
+            error.message().contains("unavailable exact premise"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn pure_instantiate_preserves_an_unrelated_open_goal() {
+        let open = INSTANTIATE_BOUND
+            .replace("ensures x <= upper", "ensures x == upper")
+            .replace("                assumption();", "");
+        let error = verify_instantiation_theorem(&open)
+            .expect_err("instantiation does not change the selected goal");
+        assert!(
+            error.message().contains("goal still open"),
+            "{}",
+            error.message()
+        );
+        let failed = INSTANTIATE_BOUND.replace("ensures x <= upper", "ensures x == upper");
+        let error = verify_instantiation_theorem(&failed)
+            .expect_err("the explicit closer must fail on the original goal");
+        assert!(
+            error.message().contains("assumption"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            !error.message().contains("round-trip"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn pure_instantiate_resolves_introduced_binders_and_nested_shadowing() {
+        let source = r#"
+            theorem shadowed(x: int32) {
+                requires x == 0;
+                requires forall (k: int32) { k <= 10 implies k <= 20 };
+                ensures forall (x: int32) { x <= 10 implies x <= 20 } by {
+                    intro(); intro();
+                    have x <= 20 by {
+                        instantiate(forall (x: int32) { x <= 10 implies x <= 20 }, x)
+                            using { x <= 10; }
+                        assumption();
+                    }
+                    assumption();
+                }
+            }
+        "#;
+        let verified = verify_instantiation_theorem(source)
+            .expect("intro bindings must shadow theorem parameters");
+        assert!(verified.kernel_authority.is_some());
+        let invalid = source.replace("using { x <= 10; }", "using { x == 0; }");
+        assert!(
+            verify_instantiation_theorem(&invalid).is_err(),
+            "the outer x cannot supply evidence for the introduced x"
+        );
+    }
+
+    #[test]
+    fn pure_instantiate_keeps_nested_universal_binders_distinct() {
+        let source = r#"
+            theorem nested() {
+                requires forall (k: int32) { forall (k: int32) { k == k } };
+                ensures forall (x: int32) { x == x } by {
+                    instantiate(forall (k: int32) { forall (k: int32) { k == k } }, 0) using {}
+                    assumption();
+                }
+            }
+        "#;
+        assert!(
+            verify_instantiation_theorem(source)
+                .unwrap()
+                .kernel_authority
+                .is_some()
+        );
+        let invalid = source.replace(
+            "ensures forall (x: int32) { x == x }",
+            "ensures forall (x: int32) { x == 0 }",
+        );
+        assert!(verify_instantiation_theorem(&invalid).is_err());
+    }
+
+    #[test]
+    fn pure_instantiate_in_numeric_induction_retains_completion() {
+        let source = INSTANTIATE_BOUND.replace("0 <= x", "x >= 0").replace(
+            "ensures x <= upper by {",
+            "ensures x <= upper by { induct(x) as ih;",
+        );
+        let (verified, events) =
+            crate::instrumentation::collect(|| verify_instantiation_theorem(&source));
+        assert!(verified.unwrap().kernel_authority.is_some());
+        assert!(!events.iter().any(|event| matches!(event,
+            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                if name == "generated certificate validation"
+        )));
+    }
+
+    #[test]
+    fn pure_instantiate_shares_unrelated_facts_and_bindings() {
+        let mut allocations = Vec::new();
+        for size in [8usize, 16, 32, 64] {
+            let parameters = (0..size)
+                .map(|i| format!(", unused{i}: int32"))
+                .collect::<String>();
+            let requirements = (0..size)
+                .map(|i| format!("requires unused{i} == {i};\n"))
+                .collect::<String>();
+            let source = INSTANTIATE_BOUND
+                .replace("upper: int32)", &format!("upper: int32{parameters})"))
+                .replace(
+                    "requires 0 <= x;",
+                    &format!("{requirements}requires 0 <= x;"),
+                );
+            let file = crate::surface::parse(&source).unwrap();
+            let theorem = &file.theorem_definitions()[0];
+            let predicates = PredicateEnvironment::new(&[]);
+            let functions = ClickFunctionEnvironment::new(&[]);
+            let theorems = TheoremEnvironment::new(&[]);
+            let context = pure_theorem_context(theorem, &predicates, &functions).unwrap();
+            let Ensure::Proposition(surface_goal) = theorem.ensures()[0].ensure() else {
+                unreachable!()
+            };
+            let goal = lower_pure_theorem_proposition(
+                theorem.name(),
+                surface_goal,
+                &context.values,
+                &context.array_refs,
+                &context.memory,
+                &predicates,
+                &functions,
+            )
+            .unwrap();
+            let root = Proof::for_pure_surface_goal(
+                theorem.name(),
+                &context.requires,
+                goal.clone(),
+                surface_goal.clone(),
+                &context,
+                &predicates,
+                &functions,
+                &theorems,
+            );
+            let certificate = ProofCertificate::from_proof_tactics(
+                theorem.ensures()[0].proof().tactics().unwrap(),
+            )
+            .unwrap();
+            let before = crate::persistent::persistent_node_allocations();
+            let instantiated = root.apply_step(certificate.steps()[0].clone()).unwrap();
+            allocations.push(crate::persistent::persistent_node_allocations() - before);
+            assert!(!instantiated.is_complete());
+            assert_eq!(instantiated.goal(), Some(&goal));
+            assert!(root.certificate().steps().is_empty());
+            assert!(!root.facts().contains(&goal));
+            assert!(instantiated.facts().contains(&goal));
+            let completed = instantiated.apply_step(ProofStep::Assumption).unwrap();
+            completed.completed_proposition().unwrap();
+        }
+        for pair in allocations.windows(2) {
+            assert!(
+                pair[1] <= pair[0] + 128,
+                "instantiation must allocate only a logarithmic fact delta: {allocations:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pure_instantiate_smart_caller_expands_and_reverifies() {
+        let fixture = include_str!("../../../mdtests/pure_theorem_instantiate.md");
+        let source = fixture
+            .split_once("```click\n")
+            .unwrap()
+            .1
+            .split_once("\n```")
+            .unwrap()
+            .0;
+        crate::surface::verify_c0_sources(source, &[]).unwrap();
+        let expanded = crate::surface::expand_c0_claim_source_by_label(
+            source,
+            &[],
+            "instantiate_bound_caller.ensures_0",
+        )
+        .unwrap();
+        assert_ne!(source, expanded);
+        crate::surface::verify_c0_sources(&expanded, &[]).unwrap();
+        let repeated = crate::surface::expand_c0_claim_source_by_label(
+            &expanded,
+            &[],
+            "instantiate_bound_caller.ensures_0",
+        )
+        .unwrap();
+        assert_eq!(expanded, repeated);
+    }
+
+    #[test]
+    fn pure_instantiate_rejects_integer_binder_shadowing_an_int32_parameter() {
+        let source = r#"
+            theorem wrong_sort(x: int32) {
+                requires forall (k: int32) { k == k };
+                ensures forall (x: Integer) { x == x } by {
+                    intro();
+                    instantiate(forall (k: int32) { k == k }, x) using {}
+                    normalize();
+                }
+            }
+        "#;
+        let error = verify_instantiation_theorem(source).unwrap_err();
+        assert!(
+            error.message().contains("Integer binding"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn pure_instantiate_branch_continuations_keep_checked_sibling_proofs() {
+        let source = r#"
+            theorem branched(x: int32) {
+                requires forall (k: int32) { k == k };
+                requires x == 0 or x != 0;
+                ensures x == x by {
+                    if x == 0 {
+                        instantiate(forall (k: int32) { k == k }, x) using {}
+                    } else {
+                        instantiate(forall (k: int32) { k == k }, x) using {}
+                    }
+                    assumption();
+                }
+            }
+        "#;
+        let cases = source
+            .replace("if x == 0", "cases (x == 0 or x != 0)")
+            .replace("} else {", "} {");
+        for source in [source, cases.as_str()] {
+            let verified = verify_instantiation_theorem(source).unwrap();
+            assert!(verified.kernel_authority.is_some());
+            let arms = match &verified.proof.as_ref().unwrap().steps()[0] {
+                ProofStep::If {
+                    then_proof,
+                    else_proof,
+                    ..
+                } => [then_proof, else_proof],
+                ProofStep::Cases {
+                    left_proof,
+                    right_proof,
+                    ..
+                } => [left_proof, right_proof],
+                _ => panic!("the checked certificate must retain both branches"),
+            };
+            for arm in arms {
+                assert!(matches!(
+                    arm.steps(),
+                    [ProofStep::InstantiateUsing { .. }, ProofStep::Assumption]
+                ));
+            }
+            let prefix = source.split_once(" by {").unwrap().0;
+            let expanded = format!(
+                "{prefix} {}\n}}",
+                format_proof_certificate(verified.proof.as_ref().unwrap())
+            );
+            assert!(
+                verify_instantiation_theorem(&expanded)
+                    .unwrap()
+                    .kernel_authority
+                    .is_some()
+            );
+            let wrong_sibling = source.replacen(
+                "instantiate(forall (k: int32) { k == k }, x) using {}",
+                "",
+                1,
+            );
+            let error = verify_instantiation_theorem(&wrong_sibling).unwrap_err();
+            assert!(
+                error.message().contains("assumption"),
+                "{}",
+                error.message()
+            );
+        }
+    }
 
     fn verify_standard_declaration(source: &str) -> Result<(), ClickError> {
         let file = crate::surface::parser::parse_file_items(source)?;

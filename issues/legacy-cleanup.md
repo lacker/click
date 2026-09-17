@@ -78,28 +78,30 @@ Actual compatibility path:
 5. `prove_pure_theorem_tactics` is a separate mutable interpreter with its own
    available-fact vector, goal, unfold set, and closed flag.
 
-The first concrete vocabulary gap is universal instantiation:
-`proof_supports_pure_certificate` omits `InstantiateUsing`, and
-`proof_object/fixed_state_steps.rs::apply_fixed_state_instantiate_using`
-rejects `ProofContext::Pure`. The old pure interpreter implements it.
+The pure universal-instantiation slice is complete. `InstantiateUsing` now
+uses the shared `Proof` operation in pure, fixed-state, and execution contexts.
+Pure argument capture resolves retained goal bindings and selects only referenced
+theorem values; premise lowering retains introduced antecedents. The kernel's
+existing instantiation rule checks indexed fact availability and named guards.
+Pure `assumption` also recognizes indexed alpha-equivalent quantified facts,
+so an instantiated inner universal can close an independently lowered goal.
 
-Start by adding pure-context int32 argument capture and premise lowering to
-the shared checked instantiation operation. Use the pure context's retained
-values, memory, binder introductions, and indexed facts; call the existing
-kernel `apply_instantiate`. Do not simulate a C execution or reinterpret the
-whole theorem as a fresh fixed-state proof. Preserve explicitly named guards,
-lexical binder shadowing, and the rule that instantiation does not itself
-change the goal into an unrelated conclusion.
+Pure scripts containing instantiation, including nested bodies and numeric
+induction, retain their checked completion and propagate checked failures.
+The mutable interpreter's instantiation arm and its standalone language-facing
+kernel-check adapter have been deleted. Ordinary verification of these scripts
+does not recertify their generated Surface certificate. This is a completed
+operation migration; the other compatibility routes below remain open.
 
 Then route all ordinary pure source scripts through the authoritative Proof
 driver. Numeric induction should use the existing
 `for_pure_surface_goal_with_induction` and checked `apply_induction` path.
 The old interpreter's operation families are induction/application,
-predicate/function unfold, have, theorem application, instantiate, assumption,
+predicate/function unfold, have, theorem application, assumption,
 extract, normalize, arithmetic, logical introduction/selection, contradiction,
 restricted simp, rewrite, and simp (proof-if cases are expanded before it).
-They map to the existing checked operation families; pure instantiation is the
-confirmed missing context case. Do not invent a third executor for this list.
+They map to the existing checked operation families. Do not invent a third
+executor for this list.
 
 For smart cases, preserve candidate generators for normalization, named signed
 rules, theorem application, rewrites, predicate/function unfolds, branching,
@@ -128,7 +130,7 @@ once all ordinary pure operations use the shared driver. Ordinary verification
 must not round-trip a generated certificate to establish a result already
 checked by Proof. Expansion still reverifies independently.
 
-Intended small regression:
+Implemented instantiation regression:
 
 ```click
 theorem instantiate_bound(x: int32, limit: int32, upper: int32) {
@@ -146,16 +148,17 @@ theorem instantiate_bound(x: int32, limit: int32, upper: int32) {
 }
 ```
 
-Review verified this source through the existing compatibility route. The
-regression must additionally inspect the verified theorem: with these int32
-parameters, its retained checked completion must yield `kernel_authority`,
-and the certificate must contain the checked instantiation. A source-only
-“pass” assertion would miss the migration defect. The premises are jointly
-satisfiable (for example, x = 1, limit = 8, upper = 10). Add a negative variant
-lacking the upper-domain guard, a nested-binder variant, and
-expansion/reverification of a smart caller using the theorem. Preserve existing
-numeric/structural induction, Integer, generic theorem, and constructor-coverage
-negatives.
+The regression now checks retained `kernel_authority`, checked instantiation
+provenance, and the absence of ordinary certificate-construction/validation
+reruns. It covers missing and unavailable guards, an unrelated open goal,
+introduced and nested shadowing binders (including Integer/int32 shadowing),
+numeric induction, and smart-caller expansion/reverification. The shared checked
+script driver also carries `if`/`cases` continuations into each checked arm;
+regressions retain both arm certificates and reject wrong-sibling evidence. The premises are jointly satisfiable (for example,
+x = 1, limit = 8, upper = 10). A deterministic 8/16/32/64 regression checks
+persistent allocations while unrelated facts and theorem bindings grow.
+Preserve these tests and the existing numeric/structural induction, Integer,
+generic theorem, and constructor-coverage negatives in the remaining migration.
 
 ## Inventory and work package B: explicit error-to-compatibility conversion
 

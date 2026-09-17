@@ -484,7 +484,11 @@ pub(in crate::surface::proof) fn source_proof_is_supported(proof: &SourceProof) 
 }
 
 pub(in crate::surface::proof) fn linear_script_is_supported(tactics: &[ProofTactic]) -> bool {
-    !tactics.is_empty()
+    linear_script_fragment_is_supported(tactics, false)
+}
+
+fn linear_script_fragment_is_supported(tactics: &[ProofTactic], has_continuation: bool) -> bool {
+    (!tactics.is_empty() || has_continuation)
         && tactics
             .iter()
             .enumerate()
@@ -499,14 +503,17 @@ pub(in crate::surface::proof) fn linear_script_is_supported(tactics: &[ProofTact
                         && branch_arm_is_supported(&both.right_tactics)
                 }
                 ProofTactic::If(proof_if) => {
-                    index + 1 == tactics.len()
-                        && branch_arm_is_supported(&proof_if.then_tactics)
-                        && branch_arm_is_supported(&proof_if.else_tactics)
+                    let continuation = has_continuation || index + 1 < tactics.len();
+                    linear_script_fragment_is_supported(&proof_if.then_tactics, continuation)
+                        && linear_script_fragment_is_supported(&proof_if.else_tactics, continuation)
                 }
                 ProofTactic::Cases(proof_cases) => {
-                    index + 1 == tactics.len()
-                        && branch_arm_is_supported(&proof_cases.left_tactics)
-                        && branch_arm_is_supported(&proof_cases.right_tactics)
+                    let continuation = has_continuation || index + 1 < tactics.len();
+                    linear_script_fragment_is_supported(&proof_cases.left_tactics, continuation)
+                        && linear_script_fragment_is_supported(
+                            &proof_cases.right_tactics,
+                            continuation,
+                        )
                 }
                 tactic => explicit_linear_step(tactic).is_some(),
             })

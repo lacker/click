@@ -605,7 +605,13 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 || facts.available_across_effects(proposition, &outcome.core.effect_facts)
         } else {
             match context {
-                PropositionAssumptionContext::Exact => facts.contains(proposition),
+                PropositionAssumptionContext::Exact => {
+                    // Instantiation can expose an inner universal whose retained
+                    // binder differs from the goal's independently lowered binder.
+                    // Alpha-equivalence preserves the exact fact; use the indexed
+                    // quantified lookup without invoking a derivation search.
+                    facts.contains(proposition) || facts.quantified_fact_available(proposition)
+                }
                 PropositionAssumptionContext::Pure => facts.pure_assumption_available(proposition),
                 PropositionAssumptionContext::Materialized => {
                     // Alpha-equivalent quantified and Integer facts remain

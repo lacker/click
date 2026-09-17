@@ -1172,69 +1172,105 @@ impl<'a> Proof<'a> {
         .map_err(|message| self.step_error(format!("could not capture Integer witness: {message}")))
     }
 
-    pub(super) fn apply_fixed_state_instantiate_using(
+    /// Capture only the written argument in the current proof context. Pure
+    /// proofs use their retained theorem memory and bindings, without creating
+    /// a fixed-state proof or rebuilding an assumption context.
+    fn capture_instantiate_argument(
         &self,
-        surface_quantified: &ClickProposition,
         argument: &ContractExpression,
-        surface_premises: &[ClickProposition],
-    ) -> Result<KernelProofHandle, ClickError> {
-        let view = match self.context.as_ref() {
-            ProofContext::FixedState(context) => FixedStateOperationView::from_fixed_state(context),
-            // An instantiation on a judgment stated at a function outcome
-            // evaluates its argument and quantified fact in that outcome's
-            // result-aware fixed-state environment.
-            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => self
-                .outcome_fixed_state_view()
-                .expect("a focused outcome judgment resolves its fixed-state view"),
-            // A leading nested `have` is a proposition proof at the
-            // execution frontier. It evaluates the quantified fact and
-            // argument in that outcome's fixed-state environment without
-            // exporting or checking execution state.
-            ProofContext::Execution(_) => self
-                .execution_proposition_fixed_state_view()
-                .ok_or_else(|| {
-                    self.step_error("`instantiate` requires a fixed-state proposition proof")
-                })?,
-            _ => {
-                return Err(
-                    self.step_error("`instantiate` requires a fixed-state proposition proof")
-                );
-            }
-        };
-        let surface_quantified =
-            self.substitute_fixed_state_locals_in_proposition(surface_quantified)?;
-        let surface_premises = surface_premises
-            .iter()
-            .map(|surface| self.substitute_fixed_state_locals_in_proposition(surface))
-            .collect::<Result<Vec<_>, _>>()?;
-        let explicit_premises = surface_premises
-            .iter()
-            .map(|surface| self.lower_surface_proposition(surface, "`instantiate using` premise"))
-            .collect::<Result<Vec<_>, _>>()?;
-        let lowered_quantified =
-            self.lower_surface_proposition(&surface_quantified, "`instantiate` quantified fact")?;
-
-        let parameter_values = parameter_values(view.parameters, view.arguments)
-            .map_err(|error| self.step_error(error.message))?;
-        let array_refs =
-            array_refs_for_parameters(view.parameters, &parameter_values, view.state.memory());
-        let (values, array_refs) =
-            contract_environment_at_state(&parameter_values, &array_refs, view.state);
-        let mut active_functions = BTreeSet::new();
+    ) -> Result<Bitvector32Term, ClickError> {
         let argument = self.substitute_fixed_state_locals_in_expression(argument)?;
-        let value = evaluate_contract_expression_with_environment(
-            &values,
-            &array_refs,
-            view.pre_state,
-            view.state,
-            view.result,
-            self.facts().assumptions(),
-            &argument,
-            view.predicate_environment,
-            view.click_function_environment,
-            view.recorded_snapshots,
-            &mut active_functions,
-        )
+        let value = if let ProofContext::Pure(context) = self.context.as_ref() {
+            let names = contract_expression_referenced_names(&argument);
+            if let Some(name) = names.iter().find(|name| {
+                self.local_integer_values().get(*name).is_some()
+                    || context.theorem_context.integer_values.get(*name).is_some()
+            }) {
+                return Err(self.step_error(format!(
+                    "`instantiate` argument requires int32 values; `{name}` is an Integer binding"
+                )));
+            }
+            let values = names
+                .iter()
+                .filter_map(|name| {
+                    context
+                        .theorem_context
+                        .values
+                        .get(name)
+                        .map(|value| (name.clone(), value.clone()))
+                })
+                .collect();
+            let arrays = names
+                .iter()
+                .filter_map(|name| {
+                    context
+                        .theorem_context
+                        .array_refs
+                        .get(name)
+                        .map(|value| (name.clone(), value.clone()))
+                })
+                .collect();
+            let state = CState::new().with_memory(context.theorem_context.memory.clone());
+            evaluate_contract_expression_with_environment(
+                &values,
+                &arrays,
+                &state,
+                &state,
+                None,
+                self.facts().assumptions(),
+                &argument,
+                context.predicate_environment,
+                context.click_function_environment,
+                &RecordedSnapshots::new(),
+                &mut BTreeSet::new(),
+            )
+        } else {
+            let view = match self.context.as_ref() {
+                ProofContext::FixedState(context) => {
+                    FixedStateOperationView::from_fixed_state(context)
+                }
+                // An instantiation on a judgment stated at a function outcome
+                // evaluates its argument and quantified fact in that outcome's
+                // result-aware fixed-state environment.
+                ProofContext::Execution(_) if self.focused_outcome_data().is_some() => self
+                    .outcome_fixed_state_view()
+                    .expect("a focused outcome judgment resolves its fixed-state view"),
+                // A leading nested `have` is a proposition proof at the
+                // execution frontier. It evaluates the quantified fact and
+                // argument in that outcome's fixed-state environment without
+                // exporting or checking execution state.
+                ProofContext::Execution(_) => self
+                    .execution_proposition_fixed_state_view()
+                    .ok_or_else(|| {
+                        self.step_error("`instantiate` requires a fixed-state proposition proof")
+                    })?,
+                _ => {
+                    return Err(
+                        self.step_error("`instantiate` requires a fixed-state proposition proof")
+                    );
+                }
+            };
+            let parameter_values = parameter_values(view.parameters, view.arguments)
+                .map_err(|error| self.step_error(error.message))?;
+            let array_refs =
+                array_refs_for_parameters(view.parameters, &parameter_values, view.state.memory());
+            let (values, array_refs) =
+                contract_environment_at_state(&parameter_values, &array_refs, view.state);
+            let mut active_functions = BTreeSet::new();
+            evaluate_contract_expression_with_environment(
+                &values,
+                &array_refs,
+                view.pre_state,
+                view.state,
+                view.result,
+                self.facts().assumptions(),
+                &argument,
+                view.predicate_environment,
+                view.click_function_environment,
+                view.recorded_snapshots,
+                &mut active_functions,
+            )
+        }
         .map_err(|message| {
             self.step_error(format!(
                 "could not evaluate `instantiate` argument: {message}"
@@ -1243,6 +1279,28 @@ impl<'a> Proof<'a> {
         let CValue::Int32(argument) = value else {
             return Err(self.step_error("`instantiate` argument did not evaluate to int32"));
         };
+        Ok(argument)
+    }
+
+    pub(super) fn apply_fixed_state_instantiate_using(
+        &self,
+        surface_quantified: &ClickProposition,
+        argument: &ContractExpression,
+        surface_premises: &[ClickProposition],
+    ) -> Result<KernelProofHandle, ClickError> {
+        let surface_quantified =
+            self.substitute_fixed_state_locals_in_proposition(surface_quantified)?;
+        let explicit_premises = surface_premises
+            .iter()
+            .map(|surface| {
+                self.lower_cited_surface_proposition(surface, "`instantiate using` premise")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let lowered_quantified = self.lower_cited_surface_proposition(
+            &surface_quantified,
+            "`instantiate` quantified fact",
+        )?;
+        let argument = self.capture_instantiate_argument(argument)?;
 
         self.state
             .apply_instantiate(lowered_quantified, argument, &explicit_premises)

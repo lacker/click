@@ -486,20 +486,6 @@ pub(super) fn discharge_instantiated_guards(
         .map_err(format_forall_int32_instantiation_error)
 }
 
-/// Language-facing diagnostic adapter for the kernel's explicit `int32`
-/// specialization check. `ProofObject::apply_instantiate` additionally owns
-/// fact availability and publishing the checked conclusion.
-pub(super) fn check_forall_int32_instantiation(
-    quantified: &Proposition,
-    argument: Bitvector32Term,
-    premises: &[Proposition],
-) -> Result<Proposition, String> {
-    crate::kernel::proof::fact_reasoning::check_forall_int32_instantiation(
-        quantified, argument, premises,
-    )
-    .map_err(format_forall_int32_instantiation_error)
-}
-
 pub(super) fn format_forall_int32_instantiation_error(
     error: crate::kernel::proof::fact_reasoning::ForallInt32InstantiationError,
 ) -> String {

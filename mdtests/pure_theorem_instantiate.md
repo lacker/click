@@ -16,6 +16,30 @@ theorem bounded_value(value: int32) {
         assumption();
     }
 }
+
+theorem instantiate_bound(x: int32, limit: int32, upper: int32) {
+    requires forall (k: int32) {
+        0 <= k and k < limit implies k <= upper
+    };
+    requires 0 <= x;
+    requires x < limit;
+    ensures x <= upper by {
+        instantiate(forall (k: int32) {
+            0 <= k and k < limit implies k <= upper
+        }, x) using { 0 <= x; x < limit; }
+        assumption();
+    }
+}
+
+theorem instantiate_bound_caller(x: int32, limit: int32, upper: int32) {
+    requires forall (k: int32) {
+        0 <= k and k < limit implies k <= upper
+    };
+    requires 0 <= x;
+    requires x < limit;
+    ensures x <= upper by { apply(instantiate_bound(x, limit, upper)); }
+}
+
 ```
 
 ```expect
