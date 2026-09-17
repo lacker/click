@@ -18,6 +18,10 @@ successor, so the join is the standard weakening.
 The exported disjunction is what the post-loop claim is proved from. `cases`
 splits on it and each side reads its own model off its disjunct.
 
+Every path out of the body is a `break`, so the back edge is unreachable and
+the constant `decreases 0;` is all the loop's ranking needs: the nonnegativity
+member holds and no decrease is ever demanded.
+
 A loop that declares no binder has nothing to read a differing cell back
 through, and is refused by name; see
 [`loop_break_exit_unowned_cell_rejected.md`](loop_break_exit_unowned_cell_rejected.md).
@@ -60,6 +64,7 @@ void paint(struct node* p, int32 flag) {
     ensures c.color == Color::Red or c.color == Color::Black;
 } by {
     loop {
+        decreases 0;
         owns c: painted(p);
         invariant c.color == Color::Black;
 
@@ -88,10 +93,6 @@ void paint(struct node* p, int32 flag) {
     }
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect
