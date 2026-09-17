@@ -16,6 +16,7 @@ theorem not_always_zero(x: int32) {
 ```
 
 ```expect
-fail: `simp` failed for `not_always_zero.ensures_0`: simplified proposition was not true: int32 equality is true
-  available pure facts: [not (int32 equality is true)]
+fail: kernel goal: int32 =(v0, 0) is true
+  recent premises (showing 1 of 1):
+    int32 =(v0, 0) is false
 ```

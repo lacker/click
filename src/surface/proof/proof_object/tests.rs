@@ -13262,3 +13262,85 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         );
     }
 }
+
+#[test]
+fn pure_completed_application_retention_does_not_rerun_and_scales() {
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let theorems = TheoremEnvironment::new(&[]);
+    let surface = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+            Bitvector32Term::Constant(0),
+        ))),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+            Bitvector32Term::Constant(0),
+        ))),
+    };
+    let mut allocations = Vec::new();
+    for size in [8, 16, 32, 64] {
+        let mut context = pure_identity_fixture();
+        context.requires = (0..size).map(indexed_fact).collect();
+        let goal = lower_pure_theorem_proposition(
+            "retained",
+            &surface,
+            &context.values,
+            &context.array_refs,
+            &context.memory,
+            &predicates,
+            &functions,
+        )
+        .unwrap();
+        let root = Proof::for_pure_surface_goal(
+            "retained",
+            &context.requires,
+            goal.clone(),
+            surface.clone(),
+            &context,
+            &predicates,
+            &functions,
+            &theorems,
+        );
+        let completed = root.apply_step(ProofStep::Normalize).unwrap();
+        take_checked_have_operations();
+        let before = fact_node_allocations();
+        let retained = root.retain_completed_pure_goal(&completed).unwrap();
+        allocations.push(fact_node_allocations() - before);
+        assert_eq!(
+            take_checked_have_operations(),
+            0,
+            "retention must not reopen and rerun a have body"
+        );
+        assert!(!retained.is_complete());
+        assert!(retained.facts().contains(&goal));
+        assert!(root.certificate().steps().is_empty());
+        assert!(
+            matches!(retained.certificate().steps(), [ProofStep::Have { proof, .. }] if matches!(proof.steps(), [ProofStep::Normalize]))
+        );
+        retained
+            .apply_step(ProofStep::Assumption)
+            .unwrap()
+            .completed_proposition()
+            .unwrap();
+        let other = Proof::for_pure_surface_goal(
+            "other",
+            &context.requires,
+            goal,
+            surface.clone(),
+            &context,
+            &predicates,
+            &functions,
+            &theorems,
+        )
+        .apply_step(ProofStep::Normalize)
+        .unwrap();
+        assert!(root.retain_completed_pure_goal(&other).is_err());
+        assert!(root.retain_completed_pure_goal(&root).is_err());
+    }
+    for pair in allocations.windows(2) {
+        assert!(
+            pair[1] <= pair[0] + 128,
+            "retention must share unrelated facts: {allocations:?}"
+        );
+    }
+}

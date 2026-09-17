@@ -562,45 +562,6 @@ pub(crate) fn exact_proper_conjunct_is_available(
     })
 }
 
-/// Modus ponens as a bounded structural rule for the simple `extract` tactic:
-/// `required` is a consequent reached by walking an available (possibly
-/// chained) implication whose antecedents are each themselves available
-/// facts. Antecedents and the consequent match exactly, up to condition
-/// polarity, or by the snapshot bridge — never by derivation. Work is linear
-/// in the available facts times the implication depth; nothing is searched.
-pub(crate) fn discharged_implication_consequent_is_available(
-    required: &Proposition,
-    available: &[Proposition],
-) -> bool {
-    if !available
-        .iter()
-        .any(|fact| matches!(fact, Proposition::Implies(_, _)))
-    {
-        return false;
-    }
-    let assumptions = assumptions_from_propositions(available);
-    let fact_available = |needed: &Proposition| {
-        pure_fact_is_available(needed, available)
-            || available.iter().any(|fact| {
-                condition_polarity_equivalent(fact, needed)
-                    || propositions_equal_modulo_proven_snapshots(fact, needed, &assumptions)
-            })
-    };
-    available.iter().any(|fact| {
-        let mut current = fact;
-        while let Proposition::Implies(antecedent, consequent) = current {
-            if !fact_available(antecedent) {
-                return false;
-            }
-            if propositions_equal_modulo_proven_snapshots(consequent, required, &assumptions) {
-                return true;
-            }
-            current = consequent;
-        }
-        false
-    })
-}
-
 pub(crate) fn propositions_are_exact_negations(left: &Proposition, right: &Proposition) -> bool {
     match (left, right) {
         (

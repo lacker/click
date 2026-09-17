@@ -102,9 +102,7 @@ pub(super) use pure_theorems::{
     verify_theorem_definitions,
 };
 #[cfg(test)]
-use pure_theorems::{
-    lower_pure_theorem_proposition, pure_theorem_context, validate_pure_theorem_certificate,
-};
+use pure_theorems::{lower_pure_theorem_proposition, pure_theorem_context};
 pub(super) use resources::instantiate_composite_resource_body_resources;
 use resources::*;
 use structural::*;
@@ -162,128 +160,6 @@ fn check_verification_deadline() -> Result<(), ClickError> {
         )))
     } else {
         Ok(())
-    }
-}
-
-fn apply_logical_goal_tactic(
-    tactic: &ProofTactic,
-    goal: &mut Proposition,
-    available: &mut Vec<Proposition>,
-    contradiction_fact: Option<Proposition>,
-) -> Result<bool, String> {
-    match tactic {
-        ProofTactic::Intro => match goal.clone() {
-            Proposition::Implies(antecedent, consequent) => {
-                if !available.contains(&antecedent) {
-                    available.push(*antecedent);
-                }
-                *goal = *consequent;
-                Ok(false)
-            }
-            Proposition::ForAll { var, body, .. } => {
-                let (_, body) = crate::kernel::freshen_int32_forall_body(var, &body, available);
-                *goal = body;
-                Ok(false)
-            }
-            Proposition::Not(body) => {
-                if !available.contains(&body) {
-                    available.push(*body);
-                }
-                *goal = Proposition::ConditionIs(ConditionTerm::Constant(false), true);
-                Ok(false)
-            }
-            _ => Err(format!(
-                "`intro` requires an implication, negation, or universal goal, got {goal:?}"
-            )),
-        },
-        ProofTactic::Split => {
-            let Proposition::And(left, right) = goal else {
-                return Err(format!("`split` requires a conjunction goal, got {goal:?}"));
-            };
-            if !available.contains(left.as_ref()) || !available.contains(right.as_ref()) {
-                return Err(format!(
-                    "`split` requires both conjuncts as exact facts: {left:?} and {right:?}"
-                ));
-            }
-            Ok(true)
-        }
-        ProofTactic::Left => {
-            let Proposition::Or(left, _) = goal else {
-                return Err(format!("`left` requires a disjunction goal, got {goal:?}"));
-            };
-            if !available
-                .iter()
-                .any(|fact| condition_polarity_equivalent(fact, left))
-            {
-                return Err(format!(
-                    "`left` requires its selected disjunct as an exact fact: {left:?}"
-                ));
-            }
-            Ok(true)
-        }
-        ProofTactic::Right => {
-            let Proposition::Or(_, right) = goal else {
-                return Err(format!("`right` requires a disjunction goal, got {goal:?}"));
-            };
-            if !available
-                .iter()
-                .any(|fact| condition_polarity_equivalent(fact, right))
-            {
-                return Err(format!(
-                    "`right` requires its selected disjunct as an exact fact: {right:?}"
-                ));
-            }
-            Ok(true)
-        }
-        ProofTactic::Enumerate => {
-            // Close a constant-bounded universal goal from its written
-            // instances: the goal's guards fix each binder's constant range
-            // (exactly the kernel `FiniteForAll` table), and every in-range
-            // instance must either normalize context-free (a vacuous guard)
-            // or be an exact available fact. Work is proportional to the
-            // instantiation table; nothing is searched.
-            let Some(instances) = crate::kernel::finite_forall_goal_instances(goal) else {
-                return Err(format!(
-                    "`enumerate` requires a universal goal whose guards bound every binder to a constant range, got {goal:?}"
-                ));
-            };
-            for (_, instance) in instances {
-                if normalizes_context_free(&instance) {
-                    continue;
-                }
-                if !pure_fact_is_available(&instance, available) {
-                    return Err(format!(
-                        "`enumerate` requires each in-range instance as an exact available fact; missing {}",
-                        describe_pure_fact(&instance, &[], &[]),
-                    ));
-                }
-            }
-            Ok(true)
-        }
-        ProofTactic::Contradiction(_) => {
-            let fact = contradiction_fact
-                .ok_or_else(|| "`contradiction` is missing its lowered fact".to_string())?;
-            let negated = Proposition::Not(Box::new(fact.clone()));
-            let opposite_condition = match &fact {
-                Proposition::ConditionIs(condition, polarity) => {
-                    Some(Proposition::ConditionIs(condition.clone(), !polarity))
-                }
-                _ => None,
-            };
-            if !conjunction_available(&fact, available)
-                || (!available.contains(&negated)
-                    && !opposite_condition
-                        .as_ref()
-                        .is_some_and(|opposite| available.contains(opposite))
-                    && !normalizes_context_free(&negated))
-            {
-                return Err(format!(
-                    "`contradiction` requires an exact fact and its exact negation or opposite condition polarity: {fact:?}"
-                ));
-            }
-            Ok(true)
-        }
-        _ => Err("not a logical goal tactic".to_string()),
     }
 }
 
@@ -771,18 +647,6 @@ pub(in crate::surface) fn normalizes_context_free(goal: &Proposition) -> bool {
     crate::kernel::proof::fact_reasoning::normalizes_context_free(goal)
 }
 
-fn pure_goal_proof_certificate_gateway<T>(
-    claim_label: &str,
-    planner: impl FnOnce() -> Result<ProofCertificate, ClickError>,
-    check: impl FnOnce(&ProofCertificate) -> Result<T, ClickError>,
-) -> Result<(ProofCertificate, T), ClickError> {
-    pure_goal_proof_certificate_gateway_with_checked_result(
-        claim_label,
-        || planner().map(|certificate| (certificate, None)),
-        check,
-    )
-}
-
 fn pure_goal_proof_certificate_gateway_with_checked_result<T>(
     claim_label: &str,
     planner: impl FnOnce() -> Result<(ProofCertificate, Option<T>), ClickError>,
@@ -1210,50 +1074,33 @@ mod certificate_tests {
             &click_function_environment,
         )
         .expect("goal should lower");
-        let failing = ProofCertificate::from_proof_tactics(&[ProofTactic::Assumption])
-            .expect("assumption is a simple tactic");
-        let succeeding = ProofCertificate::from_proof_tactics(&[ProofTactic::Normalize])
-            .expect("normalize is a simple tactic");
-
-        let failed = pure_goal_proof_certificate_gateway(
-            "reflexive.ensures_0",
-            || Ok(failing.clone()),
-            |certificate| {
-                validate_pure_theorem_certificate(
-                    "reflexive.ensures_0",
-                    &context.requires,
-                    &goal,
-                    &predicate_environment,
-                    &click_function_environment,
-                    &theorem_environment,
-                    &context,
-                    certificate,
-                    None,
-                )
-            },
-        )
-        .map(|(certificate, _)| certificate);
-        let error =
-            failed.expect_err("a perturbed smart certificate must not be reported as success");
-        assert!(
-            error
-                .message()
-                .contains("certificate failed round-trip validation"),
-            "unexpected gateway error: {}",
-            error.message()
-        );
-        let succeeded = validate_pure_theorem_certificate(
+        let root = Proof::for_pure_surface_goal(
             "reflexive.ensures_0",
             &context.requires,
-            &goal,
+            goal.clone(),
+            surface_goal.clone(),
+            &context,
             &predicate_environment,
             &click_function_environment,
             &theorem_environment,
-            &context,
-            &succeeding,
-            None,
         );
-        succeeded.expect("failed validation must not mutate the shared proof inputs");
+        let error = root
+            .apply_step(ProofStep::Assumption)
+            .err()
+            .expect("a rejected candidate must not be reported as success");
+        assert!(
+            error.message().contains("assumption"),
+            "{}",
+            error.message()
+        );
+        assert!(root.certificate().steps().is_empty());
+        let completed = root
+            .apply_step(ProofStep::Normalize)
+            .expect("failed validation must not mutate the retained root");
+        assert_eq!(
+            completed.completed_proposition().unwrap().proposition(),
+            &goal
+        );
     }
 
     #[test]
@@ -1481,123 +1328,6 @@ mod certificate_tests {
 
         assert!(error.message().contains("incompatible next branch"));
     }
-}
-
-struct ExpandedProofCase {
-    tactics: Vec<ProofTactic>,
-    assumptions: Vec<ProofCaseAssumption>,
-}
-
-struct ProofCaseAssumption {
-    tactic_index: usize,
-    kind: ProofCaseAssumptionKind,
-}
-
-#[derive(Clone)]
-enum ProofCaseAssumptionKind {
-    /// Excluded-middle case split from proof-level `if`: assume the written
-    /// condition with the given polarity. Sound without an availability check.
-    Condition {
-        proposition: ClickProposition,
-        value: bool,
-    },
-    /// Disjunction elimination from `cases`: proof checking requires the written
-    /// disjunction is an available fact at the split point, then assumes
-    /// exactly the selected disjunct.
-    Disjunct {
-        disjunction: ClickProposition,
-        left: bool,
-    },
-}
-
-// Pure proofs and fixed-state `have` proofs use flat logical cases. Execution
-// proofs use `InternalProofNode` for frontier-local control structure.
-fn expand_proof_if_cases(tactics: &[ProofTactic]) -> Result<Vec<ExpandedProofCase>, ClickError> {
-    expand_structured_proof_cases(tactics)
-}
-
-fn expand_structured_proof_cases(
-    tactics: &[ProofTactic],
-) -> Result<Vec<ExpandedProofCase>, ClickError> {
-    let Some((control_index, control_tactic)) = tactics
-        .iter()
-        .enumerate()
-        .find(|(_, tactic)| matches!(tactic, ProofTactic::If(_) | ProofTactic::Cases(_)))
-    else {
-        return Ok(vec![ExpandedProofCase {
-            tactics: tactics.to_vec(),
-            assumptions: Vec::new(),
-        }]);
-    };
-    let prefix = &tactics[..control_index];
-    let branches: [(ProofCaseAssumptionKind, &[ProofTactic]); 2] = match control_tactic {
-        ProofTactic::If(proof_if) => [
-            (
-                ProofCaseAssumptionKind::Condition {
-                    proposition: proof_if.condition.clone(),
-                    value: true,
-                },
-                proof_if.then_tactics.as_slice(),
-            ),
-            (
-                ProofCaseAssumptionKind::Condition {
-                    proposition: proof_if.condition.clone(),
-                    value: false,
-                },
-                proof_if.else_tactics.as_slice(),
-            ),
-        ],
-        ProofTactic::Cases(proof_cases) => [
-            (
-                ProofCaseAssumptionKind::Disjunct {
-                    disjunction: proof_cases.disjunction.clone(),
-                    left: true,
-                },
-                proof_cases.left_tactics.as_slice(),
-            ),
-            (
-                ProofCaseAssumptionKind::Disjunct {
-                    disjunction: proof_cases.disjunction.clone(),
-                    left: false,
-                },
-                proof_cases.right_tactics.as_slice(),
-            ),
-        ],
-        _ => unreachable!("control-tactic search only returns proof if or cases"),
-    };
-    let suffix_cases = expand_structured_proof_cases(&tactics[control_index + 1..])?;
-    let mut cases = Vec::new();
-    for (kind, branch_tactics) in branches {
-        for branch in expand_structured_proof_cases(branch_tactics)? {
-            for suffix in &suffix_cases {
-                let boundary = prefix.len() + branch.tactics.len();
-                let mut linear = prefix.to_vec();
-                linear.extend(branch.tactics.iter().cloned());
-                linear.extend(suffix.tactics.iter().cloned());
-                let mut assumptions = vec![ProofCaseAssumption {
-                    tactic_index: prefix.len(),
-                    kind: kind.clone(),
-                }];
-                assumptions.extend(branch.assumptions.iter().map(|assumption| {
-                    ProofCaseAssumption {
-                        tactic_index: prefix.len() + assumption.tactic_index,
-                        kind: assumption.kind.clone(),
-                    }
-                }));
-                assumptions.extend(suffix.assumptions.iter().map(|assumption| {
-                    ProofCaseAssumption {
-                        tactic_index: boundary + assumption.tactic_index,
-                        kind: assumption.kind.clone(),
-                    }
-                }));
-                cases.push(ExpandedProofCase {
-                    tactics: linear,
-                    assumptions,
-                });
-            }
-        }
-    }
-    Ok(cases)
 }
 
 #[derive(Clone)]
@@ -3334,23 +3064,4 @@ pub(super) fn prove_claim_by_script(
         ProofTacticSource::SourceSyntax,
     )?;
     Ok(theorems.theorems)
-}
-
-/// Whether `fact` is available exactly, or is a conjunction whose atomic
-/// conjuncts are each available. An introduced antecedent is recorded
-/// conjunct by conjunct, so a `contradiction` written over the whole guard
-/// must find it that way too.
-pub(in crate::surface) fn conjunction_available(
-    fact: &Proposition,
-    available: &[Proposition],
-) -> bool {
-    if available.contains(fact) {
-        return true;
-    }
-    let mut conjuncts = Vec::new();
-    crate::kernel::proof::fact_reasoning::atomic_conjuncts(fact, &mut conjuncts);
-    conjuncts.len() > 1
-        && conjuncts.iter().all(|conjunct| {
-            crate::kernel::proof::fact_reasoning::pure_fact_is_available(conjunct, available)
-        })
 }

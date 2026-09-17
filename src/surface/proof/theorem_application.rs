@@ -805,7 +805,7 @@ pub(super) fn theorem_application_bindings(
     Ok((values, array_refs, algebraic_values, integer_values))
 }
 
-fn theorem_application_pointer_element_widths(
+pub(super) fn theorem_application_pointer_element_widths(
     theorem: &TheoremDefinition,
     application: &TheoremApplication,
     context: &TheoremApplicationContext<'_>,

@@ -493,7 +493,7 @@ fn linear_script_fragment_is_supported(tactics: &[ProofTactic], has_continuation
             .iter()
             .enumerate()
             .all(|(index, tactic)| match tactic {
-                ProofTactic::ApplyTheorem(_) => true,
+                ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyInduction { .. } => true,
                 ProofTactic::Simp => index + 1 == tactics.len(),
                 ProofTactic::SimpUsing(_) => index + 1 == tactics.len(),
                 ProofTactic::Have(have) => source_proof_is_supported(&have.proof),

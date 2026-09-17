@@ -11,5 +11,5 @@ theorem integer_forall_logical_have_false() {
 ```
 
 ```expect
-fail: could not lower `have` proposition
+fail: proof tactic 2 > have body tactic 1: `simp` failed
 ```

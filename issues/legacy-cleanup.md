@@ -63,72 +63,48 @@ when every success is a checked descendant of the same input proof.
 
 Primary file: `src/surface/proof/pure_theorems.rs`.
 
-Actual compatibility path:
+Package A is complete. Ordinary pure defaults, smart scripts, explicit scripts,
+branch continuations, nested `have` bodies, and numeric induction now finish on
+an authoritative `Proof`. Checked operation failures propagate with the actual
+focused goal, source position, and bounded search context. Unsupported operations
+name the operation. No pure caller reruns the source to recover a diagnostic.
 
-1. `verify_theorem_ensure` first tries `check_direct_pure_goal_with_proof` or
-   `check_pure_script_with_proof`.
-2. Smart misses call `prove_pure_theorem_goal`. Some explicit scripts call
-   `prove_pure_theorem_script`; despite a diagnostic-only comment, its error
-   is propagated for non-induction scripts.
-3. `pure_theorem_surface_certificate` builds source operations through the
-   generic certificate gateway in `src/surface/proof.rs`.
-4. `validate_pure_theorem_certificate` checks supported certificates using
-   `Proof`, but sends unsupported certificates through
-   `prove_pure_theorem_script` and returns no checked completion.
-5. `prove_pure_theorem_tactics` is a separate mutable interpreter with its own
-   available-fact vector, goal, unfold set, and closed flag.
+The old mutable pure interpreter and its prove/build/validate entry points are
+removed, together with the compatibility dispatch predicate and their unused
+planning/lowering helpers. Production pure acceptance no longer calls
+`simp_proposition`; that helper remains only in diagnostic unit tests.
 
-The pure universal-instantiation slice is complete. `InstantiateUsing` now
-uses the shared `Proof` operation in pure, fixed-state, and execution contexts.
-Pure argument capture resolves retained goal bindings and selects only referenced
-theorem values; premise lowering retains introduced antecedents. The kernel's
-existing instantiation rule checks indexed fact availability and named guards.
-Pure `assumption` also recognizes indexed alpha-equivalent quantified facts,
-so an instantiated inner universal can close an independently lowered goal.
+Numeric induction applies the existing checked induction operations. Smart
+hypothesis applications prove their domain and substituted requirements in
+checked `have` scopes against retained facts. Arithmetic planning selects signed
+bounds through the goal variables' persistent index. Induction entry checks an
+exact nonnegative domain, including a stronger constant lower bound. Applications
+that close a goal before a later source step retain their checked descendant as
+a `have`, without executing its serialized steps again.
 
-Pure scripts containing instantiation, including nested bodies and numeric
-induction, retain their checked completion and propagate checked failures.
-The mutable interpreter's instantiation arm and its standalone language-facing
-kernel-check adapter have been deleted. Ordinary verification of these scripts
-does not recertify their generated Surface certificate. This is a completed
-operation migration; the other compatibility routes below remain open.
+Pure theorem results retain their checked proposition completion. Structural
+induction remains a distinct checked rule: constructor coverage and descent are
+checked, and each arm's completion is retained through serialization. This adds
+no whole-contract authority for algebraic or Integer parameter binders; the
+existing int32 authority boundary remains unchanged.
 
-Then route all ordinary pure source scripts through the authoritative Proof
-driver. Numeric induction should use the existing
-`for_pure_surface_goal_with_induction` and checked `apply_induction` path.
-The old interpreter's operation families are induction/application,
-predicate/function unfold, have, theorem application, assumption,
-extract, normalize, arithmetic, logical introduction/selection, contradiction,
-restricted simp, rewrite, and simp (proof-if cases are expanded before it).
-They map to the existing checked operation families. Do not invent a third
-executor for this list.
+The shared checked planners now cover the previously hidden pure strategies:
+selected facts exposed by predicate unfold, constructor-field extraction and
+contradiction, sequence conjunctions, Integer theorem requirements, and numeric
+induction side conditions. Source `have` bodies may use checked smart tactics;
+a search miss reports the actual nested operation instead of the old interpreter's
+certificate-syntax refusal.
 
-For smart cases, preserve candidate generators for normalization, named signed
-rules, theorem application, rewrites, predicate/function unfolds, branching,
-and induction. Move any still-needed generator behind the corresponding
-Proof search operation, submit its explicit operations to the same starting
-Proof, and return only its completed descendant. Remove acceptance-only
-`simp_proposition` checks and source-wide recertification from the fallback
-path. A candidate-generation helper may remain untrusted planning code; its
-boolean answer is never proof authority. Delete the redundant
-prove-then-build-then-validate routes and the old mutable interpreter,
-including diagnostic-only reruns. Obtain the diagnostic from the
-actual failed Proof operation and its bounded search context instead.
+The universal-instantiation slice remains on the same shared `InstantiateUsing`
+operation in pure, fixed-state, and execution contexts. Argument capture retains
+introduced names and shadowing; indexed fact availability and named guards are
+checked by the kernel. Pure `assumption` recognizes indexed alpha-equivalent
+quantified facts.
 
-`check_pure_structural_induction` is a different case: it checks constructor
-coverage/descent and already runs each arm through an authoritative Proof.
-Keep that checked rule and its branch-local induction hypotheses. Its outer
-result currently lacks ordinary whole-contract kernel authority because the
-kernel theorem wrapper only quantifies int32 parameters. Do not remove that
-rule or fabricate authority just to eliminate `Option` fields. Represent this
-case distinctly from a compatibility-interpreter success; retain the checked
-arm completions through serialization. Generalizing the kernel's binder
-vocabulary is outside this issue.
-
-Delete `proof_supports_pure_certificate` as a compatibility dispatch switch
-once all ordinary pure operations use the shared driver. Ordinary verification
-must not round-trip a generated certificate to establish a result already
-checked by Proof. Expansion still reverifies independently.
+Regressions cover ordinary explicit/smart completion, numeric induction expansion
+and independent reverification, distinct structural arm evidence, negative source
+operations, and narrow source boundaries against the removed pure APIs. Expansion
+still independently verifies the emitted Surface Click.
 
 Implemented instantiation regression:
 
@@ -157,21 +133,21 @@ script driver also carries `if`/`cases` continuations into each checked arm;
 regressions retain both arm certificates and reject wrong-sibling evidence. The premises are jointly satisfiable (for example,
 x = 1, limit = 8, upper = 10). A deterministic 8/16/32/64 regression checks
 persistent allocations while unrelated facts and theorem bindings grow.
-Preserve these tests and the existing numeric/structural induction, Integer,
-generic theorem, and constructor-coverage negatives in the remaining migration.
+These tests and the existing numeric/structural induction, Integer, generic
+theorem, and constructor-coverage negatives remain part of the gate.
 
 ## Inventory and work package B: explicit error-to-compatibility conversion
 
 Files: `src/surface/proof/smart_closures.rs::try_linear_script`,
-`src/surface/proof/proof_object.rs`, and its callers in pure theorem checking
-and proof planning.
+`src/surface/proof/proof_object.rs`, and its remaining execution/fixed-state
+and proof-planning callers. Pure theorem checking already uses the propagating driver.
 
 `try_linear_script` catches `Err` for an explicit-only script, increments
 `EXPLICIT_LINEAR_FALLBACKS` in tests, and returns `Ok(None)`. That allows an
 ordinary checked failure to masquerade as a request for another driver.
 `try_authoritative_linear_script` already propagates the error.
 
-After package A admits the missing pure operations, migrate authoritative
+With package A complete, migrate the remaining authoritative
 callers to the propagating behavior. For speculative candidates use the
 existing `attempt` API to classify a checked refusal as a candidate miss;
 that is search on the same proof, not permission to reinterpret source.

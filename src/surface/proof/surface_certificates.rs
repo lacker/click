@@ -5932,25 +5932,6 @@ fn plan_explicit_increment_lower_bound(
     None
 }
 
-pub(super) fn plan_restricted_simp_expansion(
-    goal: &Proposition,
-    surface_goal: Option<&ClickProposition>,
-    premise_pairs: &[(Proposition, ClickProposition)],
-) -> Result<Vec<ProofTactic>, ClickError> {
-    let available = premise_pairs
-        .iter()
-        .map(|(kernel, _)| kernel.clone())
-        .collect::<Vec<_>>();
-    let derivation = plan_restricted_simp_goal(goal, available.clone(), goal, &available)
-        .map_err(ClickError::new)?;
-    lower_restricted_simp_plan(
-        goal,
-        surface_goal,
-        &SimpEvidence::Derivation(derivation),
-        premise_pairs,
-    )
-}
-
 pub(super) fn comparison_snapshot_variants(
     proposition: &ClickProposition,
     selectors: &[SnapshotSelector],

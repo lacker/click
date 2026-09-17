@@ -411,5 +411,6 @@ pub(super) fn verify_execution_theorem(
         requires: context.requires,
         conclusion,
         kernel_authority: Some(authority),
+        checked_completion: None,
     })
 }

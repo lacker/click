@@ -1991,7 +1991,7 @@ impl PureFactContext {
     /// term and, when different, its canonical form. Each entry yields the
     /// fact's own endpoint term first, so callers can cite the exact fact
     /// even when the query reached it through the canonical form.
-    pub(in crate::kernel) fn signed_order_bound_entries(
+    pub(crate) fn signed_order_bound_entries(
         &self,
         term: &Bitvector32Term,
     ) -> impl Iterator<Item = (Bitvector32Term, Bitvector32Term, bool, bool)> + '_ {

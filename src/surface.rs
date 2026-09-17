@@ -42,7 +42,7 @@ use crate::kernel::{
     prove_c_condition_fact_direct_transport, prove_c_condition_fact_transport,
     prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems,
     prove_c_function_contract_refinement,
-    prove_c_function_satisfies_specification_from_symbolic_path, prove_forall_int32_application,
+    prove_c_function_satisfies_specification_from_symbolic_path,
     prove_int32_above_one_predecessor_is_at_least_one,
     prove_int32_add_nonnegative_left_is_at_least_right,
     prove_int32_add_nonnegative_right_is_at_least_left, prove_int32_ge_and_not_gt_implies_eq,
@@ -5190,7 +5190,7 @@ pub struct CProofSelection {
     pub assumed_functions: Vec<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct VerifiedPureTheorem {
     pub theorem_definition: TheoremDefinition,
     pub ensure_index: usize,
@@ -5200,7 +5200,51 @@ pub struct VerifiedPureTheorem {
     pub requires: Vec<Proposition>,
     pub conclusion: Proposition,
     pub(crate) kernel_authority: Option<CVerifiedPureTheorem>,
+    /// Retained source-proof evidence. Kernel axioms and execution/refinement
+    /// rules retain their authority through their dedicated checker instead.
+    pub(crate) checked_completion: Option<TheoremProofCompletion>,
 }
+
+#[derive(Clone)]
+pub(crate) enum TheoremProofCompletion {
+    Proposition(crate::kernel::proof::CheckedProposition),
+    /// Constructor coverage/descent is checked by the structural rule. Each
+    /// arm retains its exact local completion; this grants no new binder sort
+    /// to the whole-contract theorem authority.
+    StructuralInduction(Vec<crate::kernel::proof::CheckedProposition>),
+}
+
+impl std::fmt::Debug for TheoremProofCompletion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Proposition(completion) => f
+                .debug_struct("PropositionCompletion")
+                .field("closed_without_assumptions", &completion.is_closed())
+                .finish(),
+            Self::StructuralInduction(arms) => f
+                .debug_struct("StructuralInductionCompletion")
+                .field("checked_arms", &arms.len())
+                .finish(),
+        }
+    }
+}
+
+// Public theorem equality compares the declaration and its checked
+// presentation, as before. Opaque retained proof handles are provenance,
+// not a new structural equality or cache key for the verifier.
+impl PartialEq for VerifiedPureTheorem {
+    fn eq(&self, other: &Self) -> bool {
+        self.theorem_definition == other.theorem_definition
+            && self.ensure_index == other.ensure_index
+            && self.ensure_clause == other.ensure_clause
+            && self.proof_kind == other.proof_kind
+            && self.proof == other.proof
+            && self.requires == other.requires
+            && self.conclusion == other.conclusion
+            && self.kernel_authority == other.kernel_authority
+    }
+}
+impl Eq for VerifiedPureTheorem {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VerifiedClaim {
@@ -6145,10 +6189,28 @@ impl VerifiedCTheorem {
 
 impl VerifiedPureTheorem {
     pub fn proof_tactics(&self) -> Option<Vec<ProofTactic>> {
-        self.proof.as_ref().map(ProofCertificate::to_proof_tactics)
+        self.proof_certificate()
+            .ok()
+            .map(|proof| proof.to_proof_tactics())
     }
 
     pub fn proof_certificate(&self) -> Result<ProofCertificate, ClickError> {
+        if let Some(TheoremProofCompletion::Proposition(completion)) = &self.checked_completion
+            && completion.proposition() != &self.conclusion
+        {
+            return Err(ClickError::new(
+                "theorem presentation does not match its retained completion",
+            ));
+        }
+        if let Some(TheoremProofCompletion::StructuralInduction(completions)) =
+            &self.checked_completion
+            && !matches!(self.proof.as_ref().map(ProofCertificate::steps),
+                Some([ProofStep::StructuralInduct { arms, .. }]) if arms.len() == completions.len())
+        {
+            return Err(ClickError::new(
+                "structural induction presentation lost its checked arms",
+            ));
+        }
         self.proof.clone().ok_or_else(|| {
             ClickError::new(format!(
                 "pure theorem `{}` ensure {} has no surface certificate",

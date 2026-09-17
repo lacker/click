@@ -12,5 +12,5 @@ theorem bad_larger(n: int32) {
 ```
 
 ```expect
-fail: is not proved smaller than `n`
+fail: induction hypothesis `ih` could not prove premise `0 <= (n + 1)`
 ```

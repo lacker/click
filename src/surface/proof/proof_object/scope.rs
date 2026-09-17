@@ -883,3 +883,64 @@ impl<'a> ProofScope<'a> {
         }
     }
 }
+
+impl<'a> Proof<'a> {
+    /// Retain a completed descendant of this focused pure goal as a `have`.
+    /// The checked descendant supplies the evidence; its certificate is only
+    /// serialized provenance and is never executed again.
+    pub(in crate::surface::proof) fn retain_completed_pure_goal(
+        &self,
+        completed: &Self,
+    ) -> Result<Self, ClickError> {
+        if !matches!(self.context.as_ref(), ProofContext::Pure(_))
+            || !Arc::ptr_eq(&self.context, &completed.context)
+            || self.focused_branch_id() != completed.focused_branch_id()
+            || !completed.focused_discharged()
+        {
+            return Err(self.step_error("completed application does not belong to this pure goal"));
+        }
+        let body = completed.certificate_since(&self.checkpoint())?;
+        let proposition = self
+            .surface_goal()
+            .cloned()
+            .ok_or_else(|| self.step_error("completed application has no source goal"))?;
+        let kernel = self
+            .goal()
+            .cloned()
+            .ok_or_else(|| self.step_error("completed application has no kernel goal"))?;
+        let lowered = self.lower_surface_proposition(&proposition, "retained application")?;
+        if !crate::kernel::proof::propositions_are_alpha_equal(&lowered, &kernel) {
+            return Err(
+                self.step_error("retained application source does not match its checked goal")
+            );
+        }
+        let branch = self
+            .focused_branch()
+            .ok_or_else(|| self.step_error("application parent has no open branch"))?;
+        let state = self
+            .state
+            .publish_checked_focused_transition(
+                self.focused_obligation().cloned().unwrap(),
+                self.facts().with_kernel_checked_fact(kernel.clone()),
+                branch.state.execution.clone(),
+                vec![kernel.clone()],
+                vec![kernel],
+            )
+            .map_err(|_| self.step_error("application parent has no open goal"))?;
+        Ok(Self {
+            site: self.site.clone(),
+            context: self.context.clone(),
+            state,
+            node: Arc::new(ProofNode {
+                parent: Some(self.node.clone()),
+                step: Some(Arc::new(ProofStep::Have {
+                    proposition,
+                    proof: Box::new(body),
+                })),
+                focused_branch: self.focused_branch_id(),
+                depth: self.node.depth + 1,
+                split_branches: Vec::new(),
+            }),
+        })
+    }
+}

@@ -309,7 +309,9 @@ fn false_library_list_equality_has_a_bounded_diagnostic() {
         error.message()
     );
     assert!(!error.message().contains("AlgebraicSchemas"));
-    assert!(error.message().len() < 1000, "{}", error.message());
+    assert!(error.message().contains("kernel goal:"));
+    assert!(error.message().contains("search candidates:"));
+    assert!(error.message().len() < 4000, "{}", error.message());
 }
 
 #[test]

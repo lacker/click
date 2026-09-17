@@ -511,7 +511,9 @@ fn failed_algebraic_simp_reports_claim_without_internal_schema_dump() {
     assert!(message.contains("algebraic value equality"), "{message}");
     assert!(!message.contains("AlgebraicSchemas"), "{message}");
     assert!(!message.contains("AlgebraicTerm"), "{message}");
-    assert!(message.len() < 1000, "{message}");
+    assert!(message.contains("kernel goal:"), "{message}");
+    assert!(message.contains("search candidates:"), "{message}");
+    assert!(message.len() < 4000, "{message}");
 }
 
 /// A goal whose shape has no prepared sentence used to fall through to the
@@ -550,7 +552,8 @@ fn failed_compound_algebraic_simp_renders_the_goal_once_without_a_debug_dump() {
     assert!(message.contains("color_bit_is_two.ensures_0"), "{message}");
     assert!(message.contains("root_color("), "{message}");
     assert!(message.contains("Color::Red"), "{message}");
-    assert!(message.contains("available pure facts: []"), "{message}");
+    assert!(message.contains("kernel goal:"), "{message}");
+    assert!(message.contains("search candidates:"), "{message}");
     for marker in [
         "AlgebraicSchemas",
         "AlgebraicTerm",
@@ -566,9 +569,12 @@ fn failed_compound_algebraic_simp_renders_the_goal_once_without_a_debug_dump() {
     }
     // The goal is reported once, not once as the simplified proposition and
     // again as the missing fact.
-    assert_eq!(message.matches("Color::Red").count(), 1, "{message}");
+    let focused = message.split("search candidates:").next().unwrap();
+    assert_eq!(focused.matches("Color::Red").count(), 1, "{message}");
     assert!(!message.contains("missing pure fact"), "{message}");
-    assert!(message.len() < 600, "{message}");
+    // Bounded candidate reasons now accompany the one focused goal; each
+    // reason may cite its selected subgoal, but never an internal schema.
+    assert!(message.len() < 4000, "{message}");
 }
 
 #[test]

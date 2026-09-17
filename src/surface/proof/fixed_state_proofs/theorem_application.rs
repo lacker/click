@@ -244,7 +244,7 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
         predicate_environment,
         click_function_environment,
     )?;
-    let (values, array_refs, algebraic_values, _integer_values) = theorem_application_bindings(
+    let (values, array_refs, algebraic_values, integer_values) = theorem_application_bindings(
         &theorem,
         application,
         context,
@@ -271,18 +271,21 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
                     theorem.name()
                 )
             })?;
-            let lowered = lower_fixed_state_proposition_through_kernel_with_algebraic_values(
+            let lowered = lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
                 requirement,
                 assumptions,
                 &values,
                 &array_refs,
                 &algebraic_values,
+                &integer_values,
                 &pre_state,
                 &post_state,
                 None,
                 context.recorded_snapshots,
                 predicate_environment,
                 click_function_environment,
+                &BTreeSet::new(),
+                super::super::theorem_application::theorem_application_pointer_element_widths(&theorem, application, context),
             )?;
             unfold_predicates_in_proposition(
                 predicate_environment,

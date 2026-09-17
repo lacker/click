@@ -38,6 +38,5 @@ theorem color_bit_is_two(t: RbTree) {
 ```
 
 ```expect
-fail: simplified proposition was not true: (int32 =(color_bit(root_color(v4000000:RbTree)), 2) is true ∧ root_color(v4000000:RbTree) = Color::Red)
-  available pure facts: []
+fail: kernel goal: (int32 =(color_bit(root_color(v4000000:RbTree)), 2) is true ∧ root_color(v4000000:RbTree) = Color::Red)
 ```

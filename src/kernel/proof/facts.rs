@@ -540,6 +540,24 @@ impl ProofFacts {
         self.reserved_variables.contains(&variable)
     }
 
+    /// Numeric induction enters once per theorem. Check its domain from
+    /// exact signed bounds on this measure, without searching other facts
+    /// or deriving a replacement proof state.
+    pub(crate) fn has_nonnegative_induction_domain(&self, measure: &Bitvector32Term) -> bool {
+        self.assumptions.signed_order_bound_entries(measure).any(
+            |(endpoint, bound, strict, forward)| {
+                if forward || endpoint != *measure {
+                    return false;
+                }
+                let Bitvector32Term::Constant(bits) = bound else {
+                    return false;
+                };
+                let lower = bits as i32;
+                lower >= 0 || (strict && lower == -1)
+            },
+        )
+    }
+
     pub(crate) fn contradicts(&self, fact: &Proposition) -> bool {
         let negated = Proposition::Not(Box::new(fact.clone()));
         // An introduced guard is held conjunct by conjunct, so a
@@ -1975,6 +1993,54 @@ mod integer_equality_fact_index_tests {
                 },
                 bytes: Bitvector32Term::Constant(bytes),
             }),
+        }
+    }
+
+    #[test]
+    fn induction_domain_uses_only_the_selected_signed_bound_bucket() {
+        let measure = Bitvector32Term::Variable(Variable(123456));
+        for size in [8, 32, 128, 512] {
+            let unrelated = (0..size)
+                .map(|index| {
+                    Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32SignedGreaterEqual(
+                            Box::new(Bitvector32Term::Variable(Variable(index))),
+                            Box::new(Bitvector32Term::Constant(0)),
+                        ),
+                        true,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let base = ProofFacts::from_ordered(&unrelated);
+            assert!(!base.has_nonnegative_induction_domain(&measure));
+            for (bound, strict, expected) in [
+                (5i32, false, true),
+                (-1, true, true),
+                (-1, false, false),
+                (-2, true, false),
+            ] {
+                let condition = if strict {
+                    ConditionTerm::Bitvector32SignedGreaterThan(
+                        Box::new(measure.clone()),
+                        Box::new(Bitvector32Term::Constant(bound as u32)),
+                    )
+                } else {
+                    ConditionTerm::Bitvector32SignedGreaterEqual(
+                        Box::new(measure.clone()),
+                        Box::new(Bitvector32Term::Constant(bound as u32)),
+                    )
+                };
+                let facts =
+                    base.with_kernel_checked_fact(Proposition::ConditionIs(condition, true));
+                assert_eq!(
+                    facts
+                        .assumptions()
+                        .signed_order_bound_entries(&measure)
+                        .count(),
+                    1
+                );
+                assert_eq!(facts.has_nonnegative_induction_domain(&measure), expected);
+            }
         }
     }
 

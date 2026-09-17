@@ -12,5 +12,5 @@ theorem bad_same(n: int32) {
 ```
 
 ```expect
-fail: is not proved smaller than `n`
+fail: induction hypothesis `ih` could not prove premise `n < n`
 ```

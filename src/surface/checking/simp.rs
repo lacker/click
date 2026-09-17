@@ -1771,6 +1771,7 @@ pub(in crate::surface) fn check_simp_certificate(
     }
 }
 
+#[cfg(test)]
 pub(in crate::surface) fn simp_proposition(
     proposition: &Proposition,
     assumptions: &PureFactContext,
@@ -1917,6 +1918,7 @@ pub(in crate::surface) fn simp_term(term: &Term) -> Term {
     }
 }
 
+#[cfg(test)]
 pub(in crate::surface) fn simp_condition(
     condition: &ConditionTerm,
     assumptions: &PureFactContext,

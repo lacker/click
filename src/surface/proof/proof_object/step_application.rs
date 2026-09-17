@@ -1993,9 +1993,11 @@ impl<'a> Proof<'a> {
             ),
             true,
         );
-        if !self.facts().contains(&nonnegative) {
+        if !self.facts().contains(&nonnegative)
+            && !self.facts().has_nonnegative_induction_domain(current)
+        {
             return Err(self.step_error(format!(
-                "`induct({parameter})` requires an exact nonnegative requirement"
+                "`induct({parameter})` requires a proof that `{parameter}` is nonnegative"
             )));
         }
         let quantified = super::super::pure_theorems::pure_induction_hypothesis(

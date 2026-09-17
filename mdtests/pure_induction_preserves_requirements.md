@@ -12,5 +12,5 @@ theorem restricted(n: int32) {
 ```
 
 ```expect
-fail: induction hypothesis requirement is unavailable
+fail: induction hypothesis `ih` could not prove premise `(n - 1) >= 5`
 ```

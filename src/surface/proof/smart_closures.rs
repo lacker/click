@@ -1164,6 +1164,14 @@ impl<'a> Proof<'a> {
             scope.succeed();
             return Ok(Some(proof));
         }
+        if matches!(self.context.as_ref(), ProofContext::Pure(_))
+            && let Some(surface) = self.surface_goal()
+            && let Ok(proof) = self.apply_step(ProofStep::Extract(surface.clone()))
+            && proof.focused_discharged()
+        {
+            scope.succeed();
+            return Ok(Some(proof));
+        }
         if let Some(execution) = self.execution()
             && let Some(anchor) = frontier_premise_anchor(execution)
             && let Some(surface_goal) = self.surface_goal()
@@ -1317,6 +1325,15 @@ impl<'a> Proof<'a> {
         if let Some(atomic) = atomic {
             return Ok(Some(atomic));
         }
+        if matches!(self.context.as_ref(), ProofContext::Pure(_)) {
+            for (_, surface) in &anchored_pairs {
+                if let Some(contradiction) = attempt::candidate_outcome(
+                    self.apply_step(ProofStep::Contradiction(surface.clone())),
+                )? {
+                    return Ok(Some(contradiction));
+                }
+            }
+        }
         if let Some(surface_goal) = self.surface_goal()
             && let Some(goal) = self.goal()
             && !anchored_pairs.is_empty()
@@ -1367,6 +1384,9 @@ impl<'a> Proof<'a> {
         // as `Option`; surface a deadline that fired inside them here rather
         // than continuing into structural search with it exceeded.
         check_verification_deadline()?;
+        if self.surface_goal().is_none() && matches!(self.goal(), Some(Proposition::And(_, _))) {
+            return self.try_structural_and_simp_closure(introduced_surfaces);
+        }
         let Some(surface_goal) = self.surface_goal().cloned() else {
             return Ok(None);
         };
@@ -1486,7 +1506,65 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(proof));
         }
-        Ok(None)
+        let selected = self.try_pure_signed_arithmetic();
+        check_verification_deadline()?;
+        Ok(selected)
+    }
+
+    /// Select signed bounds only from the goal variables' persistent buckets.
+    /// This is a smart query; the resulting certificate checks every premise.
+    fn try_pure_signed_arithmetic(&self) -> Option<Self> {
+        let ProofContext::Pure(context) = self.context.as_ref() else {
+            return None;
+        };
+        let goal = self.goal()?;
+        let surface_goal = self.surface_goal()?;
+        let mut selected = BTreeSet::new();
+        for variable in crate::kernel::proposition_variables(goal) {
+            for (endpoint, other, strict, forward) in self
+                .facts()
+                .assumptions()
+                .signed_order_bound_entries(&Bitvector32Term::Variable(variable))
+            {
+                let (left, right) = if forward {
+                    (endpoint, other)
+                } else {
+                    (other, endpoint)
+                };
+                let condition = if strict {
+                    ConditionTerm::Bitvector32SignedLessThan(Box::new(left), Box::new(right))
+                } else {
+                    ConditionTerm::Bitvector32SignedLessEqual(Box::new(left), Box::new(right))
+                };
+                let fact = Proposition::ConditionIs(condition, true);
+                for form in std::iter::once(fact.clone()).chain(condition_polarity_forms(&fact)) {
+                    if self.facts().contains(&form) {
+                        selected.insert(form);
+                    }
+                }
+            }
+        }
+        let pairs = selected
+            .into_iter()
+            .filter_map(|fact| {
+                let source = self.available_surface_fact(
+                    &context.theorem_context.surface_requirements,
+                    None,
+                    &fact,
+                )?;
+                Some((fact, source))
+            })
+            .collect::<Vec<_>>();
+        let kernels = pairs
+            .iter()
+            .map(|(fact, _)| fact.clone())
+            .collect::<Vec<_>>();
+        let plan = plan_signed_arithmetic_certificate(goal, &kernels)?;
+        let certificate = self.signed_plan_to_surface_certificate(&plan, &pairs, surface_goal)?;
+        self.apply_step(ProofStep::ArithmeticCertificate(ArithmeticCertificate {
+            family: ArithmeticCertificateFamily::SignedInt32(certificate),
+        }))
+        .ok()
     }
 
     /// Select only guards actually occurring in the goal, through indexed
@@ -2662,11 +2740,14 @@ impl<'a> Proof<'a> {
                 .assumptions()
                 .derive_simp_proposition_without_exact_goal(&goal)?
         } else {
-            let plan = plan_simp_certificate(&goal, self.facts().assumptions())?;
-            let SimpEvidence::Derivation(derivation) = plan else {
-                return None;
-            };
-            derivation
+            match plan_simp_certificate(&goal, self.facts().assumptions()) {
+                Some(SimpEvidence::Derivation(derivation)) => derivation,
+                _ if matches!(self.context.as_ref(), ProofContext::Pure(_)) => self
+                    .facts()
+                    .assumptions()
+                    .derive_atomic_proposition(&goal)?,
+                _ => return None,
+            }
         };
         let context_premises = derivation.context_premises();
         let resolve_premise = |premise: &Proposition, anchor: Option<&ProgramPointRef>| {
@@ -3042,6 +3123,49 @@ impl<'a> Proof<'a> {
                 }
             }
         }
+        // Pure unfolding and induction can add a selected fact without a
+        // written requirement entry. Synthesize its presentation from retained
+        // binder names, then independently lower it back to this exact fact.
+        // This is candidate presentation only; it neither adds facts nor
+        // reconstructs a proof context.
+        if let ProofContext::Pure(context) = self.context.as_ref() {
+            let selected = crate::kernel::proposition_variables(kernel);
+            let mut bindings = context
+                .theorem_context
+                .values
+                .iter()
+                .filter_map(|(name, value)| {
+                    let CValue::Int32(Bitvector32Term::Variable(variable)) = value else {
+                        return None;
+                    };
+                    selected
+                        .contains(variable)
+                        .then(|| (*variable, name.clone()))
+                })
+                .collect::<BTreeMap<_, _>>();
+            if let Some(goal) = self.proposition_obligation() {
+                for (name, value) in goal.surface_bindings.iter() {
+                    if let ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                        Bitvector32Term::Variable(variable),
+                    ))) = value
+                        && selected.contains(variable)
+                    {
+                        bindings.insert(*variable, name.clone());
+                    }
+                }
+            }
+            let state = CState::new().with_memory(context.theorem_context.memory.clone());
+            if let Some(surface) = synthesize_surface_proposition_with_bound_variable_names(
+                kernel,
+                &[],
+                &[],
+                &state,
+                &bindings,
+            ) && matches_kernel(&surface).is_some()
+            {
+                return Some(surface);
+            }
+        }
         // Branch-condition facts are checked execution outputs, but their
         // arm-local Surface map entry need not survive at the shared outcome.
         // Reconstruct only this derivation-selected premise at the current
@@ -3296,8 +3420,19 @@ impl<'a> Proof<'a> {
                     std::iter::once(surface.clone()).chain(reverse_surface_equality(surface))
                 {
                     if let Ok(rewritten) = proof.apply_step(ProofStep::Rewrite(oriented)) {
-                        selected = Some((index, rewritten));
-                        break;
+                        let closed = if restricted {
+                            rewritten.try_typed_atomic_simp_from_selected_premises(premise_pairs)
+                        } else {
+                            rewritten
+                                .try_direct_logical_closure()
+                                .ok()
+                                .flatten()
+                                .or_else(|| rewritten.try_typed_atomic_simp_closure())
+                        };
+                        if let Some(closed) = closed {
+                            return Some(closed);
+                        }
+                        selected.get_or_insert((index, rewritten));
                     }
                 }
                 if selected.is_some() {
@@ -3306,18 +3441,6 @@ impl<'a> Proof<'a> {
             }
             let (index, rewritten) = selected?;
             remaining.remove(index);
-            let closed = if restricted {
-                rewritten.try_typed_atomic_simp_from_selected_premises(premise_pairs)
-            } else {
-                rewritten
-                    .try_direct_logical_closure()
-                    .ok()
-                    .flatten()
-                    .or_else(|| rewritten.try_typed_atomic_simp_closure())
-            };
-            if let Some(closed) = closed {
-                return Some(closed);
-            }
             proof = rewritten;
         }
         None
@@ -5005,6 +5128,68 @@ impl<'a> Proof<'a> {
         }
     }
 
+    pub(super) fn simp_failure(&self) -> ClickError {
+        self.step_error(format!(
+            "`simp` failed for `{}`: simplified proposition was not true: {}",
+            self.claim_label(),
+            self.goal()
+                .map(|goal| match goal {
+                    Proposition::And(_, _)
+                    | Proposition::Or(_, _)
+                    | Proposition::Implies(_, _)
+                    | Proposition::ForAll { .. }
+                    | Proposition::Exists { .. } => "compound proposition".to_string(),
+                    _ => describe_pure_fact(goal, &[], &[]),
+                })
+                .unwrap_or_else(|| "no open proposition".into())
+        ))
+    }
+
+    /// Plan a numeric induction application against the current checked facts.
+    /// Each missing domain premise is a checked have; no source-wide premise
+    /// pool or parallel induction executor participates in acceptance.
+    fn apply_smart_induction(
+        &self,
+        hypothesis: &str,
+        arguments: &[ContractExpression],
+    ) -> Result<Self, ClickError> {
+        let ProofContext::Pure(context) = self.context.as_ref() else {
+            return Err(self.step_error("induction application requires a pure theorem proof"));
+        };
+        let Some(setup) = context.induction_setup.as_ref() else {
+            return Err(self.step_error("induction hypothesis is not active"));
+        };
+        if hypothesis != setup.hypothesis {
+            return Err(self.step_error(format!("unknown induction hypothesis `{hypothesis}`")));
+        }
+        let [argument] = arguments else {
+            return Err(self.step_error(format!(
+                "induction hypothesis `{hypothesis}` expects one argument"
+            )));
+        };
+        let premises = pure_theorems::induction_application_surface_premises(setup, argument)?;
+        let mut proof = self.clone();
+        for premise in &premises {
+            let lowered = proof.lower_cited_surface_proposition(premise, "induction premise")?;
+            if proof.facts().contains(&lowered) {
+                continue;
+            }
+            let scope = proof.begin_have(premise.clone())?;
+            let Some(checked) = scope.try_simp_closure()? else {
+                return Err(proof.step_error(format!(
+                    "induction hypothesis `{hypothesis}` could not prove premise `{}`",
+                    describe_click_proposition(premise),
+                )));
+            };
+            proof = checked.join()?;
+        }
+        proof.apply_step(ProofStep::ApplyInduction {
+            hypothesis: hypothesis.to_string(),
+            arguments: arguments.to_vec(),
+            premises,
+        })
+    }
+
     /// Interprets one supported source script directly on this proof.
     ///
     /// Smart tactics search for checked descendants while explicit tactics
@@ -5085,6 +5270,7 @@ impl<'a> Proof<'a> {
         generated: bool,
         declined: &mut Option<LinearScriptDecline>,
     ) -> Result<Option<Self>, ClickError> {
+        let pure_source = authoritative && matches!(self.context.as_ref(), ProofContext::Pure(_));
         if tactics.is_empty() {
             *declined = Some(LinearScriptDecline::Shape);
             return Ok(None);
@@ -5092,7 +5278,7 @@ impl<'a> Proof<'a> {
 
         // Recognize the complete path before doing any search. `simp` closes
         // the remaining goal and is therefore meaningful only at the end.
-        if !linear_script_is_supported(tactics) {
+        if !pure_source && !linear_script_is_supported(tactics) {
             *declined = Some(LinearScriptDecline::Shape);
             return Ok(None);
         }
@@ -5118,28 +5304,55 @@ impl<'a> Proof<'a> {
                 if matches!(tactic, ProofTactic::Simp) {
                     continue;
                 }
+                if pure_source {
+                    return Err(proof.step_error(format!(
+                        "`{}` follows a goal-closing tactic",
+                        tactic_name(tactic)
+                    )));
+                }
                 *declined = Some(LinearScriptDecline::Step(index));
                 return Ok(None);
             }
             // A theorem can close the goal before a written suffix. Retain
             // that completed application as a checked have, keeping the
             // outer goal open so every remaining explicit step is checked.
-            let retain_application = matches!(tactic, ProofTactic::ApplyTheoremUsing { .. })
-                && tactics.get(index + 1).is_some_and(|next| {
-                    !matches!(next, ProofTactic::Assumption | ProofTactic::Simp)
-                });
+            let retain_application = matches!(
+                tactic,
+                ProofTactic::ApplyTheoremUsing { .. }
+                    | ProofTactic::ApplyInductionUsing { .. }
+                    | ProofTactic::ApplyInduction { .. }
+            ) && tactics
+                .get(index + 1)
+                .is_some_and(|next| !matches!(next, ProofTactic::Assumption | ProofTactic::Simp));
+            let retain_application = retain_application
+                || (pure_source
+                    && matches!(
+                        tactic,
+                        ProofTactic::UnfoldFunction(_)
+                            | ProofTactic::Extract(_)
+                            | ProofTactic::ApplyTheorem(_)
+                    )
+                    && tactics.get(index + 1).is_some_and(|next| {
+                        !matches!(next, ProofTactic::Assumption | ProofTactic::Simp)
+                    }));
             let before_application = retain_application.then(|| proof.clone());
             match tactic {
+                ProofTactic::ApplyInduction {
+                    hypothesis,
+                    arguments,
+                } => {
+                    proof = proof.apply_smart_induction(hypothesis, arguments)?;
+                }
                 ProofTactic::ApplyTheorem(application) => {
                     if authoritative {
                         proof = proof.apply_theorem_application(application)?;
-                        continue;
+                    } else {
+                        let Some(applied) = proof.try_theorem_application(application)? else {
+                            *declined = Some(LinearScriptDecline::Step(index));
+                            return Ok(None);
+                        };
+                        proof = applied;
                     }
-                    let Some(applied) = proof.try_theorem_application(application)? else {
-                        *declined = Some(LinearScriptDecline::Step(index));
-                        return Ok(None);
-                    };
-                    proof = applied;
                 }
                 ProofTactic::Simp => {
                     let Some(closed) = proof.try_simp_closure()? else {
@@ -5151,6 +5364,9 @@ impl<'a> Proof<'a> {
                             return Err(proof.step_error(
                                 "checked `simp` after witness/choose could not close the remaining witness obligations; split conjunctions and discharge each definedness condition explicitly",
                             ));
+                        }
+                        if pure_source {
+                            return Err(proof.simp_failure());
                         }
                         *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
@@ -5167,6 +5383,9 @@ impl<'a> Proof<'a> {
                             return Err(proof.step_error(
                                 "checked `simp` after witness/choose could not close the remaining witness obligations; split conjunctions and discharge each definedness condition explicitly",
                             ));
+                        }
+                        if pure_source {
+                            return Err(proof.step_error("`simp() using` could not prove the current goal from only its listed premises"));
                         }
                         *declined = Some(LinearScriptDecline::Step(index));
                         return Ok(None);
@@ -5286,14 +5505,22 @@ impl<'a> Proof<'a> {
                     return Ok(proof.focused_discharged().then_some(proof));
                 }
                 tactic => {
-                    let step = explicit_linear_step(tactic)
-                        .expect("the linear script was recognized before execution");
+                    let step = explicit_linear_step(tactic).ok_or_else(|| {
+                        proof.step_error(format!(
+                            "unsupported pure proof operation `{}`",
+                            tactic_name(tactic)
+                        ))
+                    })?;
                     proof = proof.apply_step(step)?;
                 }
             }
             if let Some(before) = before_application
                 && proof.focused_discharged()
             {
+                if matches!(proof.context.as_ref(), ProofContext::Pure(_)) {
+                    proof = before.retain_completed_pure_goal(&proof)?;
+                    continue;
+                }
                 let Some(proposition) = before.surface_goal().cloned() else {
                     *declined = Some(LinearScriptDecline::Step(index));
                     return Ok(None);
