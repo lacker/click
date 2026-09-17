@@ -2279,6 +2279,28 @@ pub fn c_external_function_rule(function: CFunction) -> Option<CExternalFunction
     })
 }
 
+/// Packages a recognized thread-primitive declaration as a rule whose meaning
+/// is the named kernel transition. The declaration's identity selects the
+/// semantics, so the interface must carry no contract of its own: a user
+/// contract on a thread primitive would be an unchecked assumption about
+/// concurrency, not evidence. `ExternalCallSemantics::Contract` is rejected
+/// here because an ordinary opaque assumption belongs to
+/// [`c_external_function_rule`].
+pub fn c_thread_primitive_function_rule(
+    function: CFunction,
+    semantics: ExternalCallSemantics,
+) -> Option<CExternalFunctionRule> {
+    (!function.is_program_entry()
+        && function.contract_claims().is_empty()
+        && function.contract_requires().is_empty()
+        && function.contract_ensures().is_empty()
+        && semantics != ExternalCallSemantics::Contract)
+        .then(|| CExternalFunctionRule {
+            function,
+            semantics,
+        })
+}
+
 /// Builds an untrusted ranking plan. Supplying a plan is not evidence; the
 /// kernel validates it together with the exact verified C functions in
 /// [`c_verified_function_termination_rules`].

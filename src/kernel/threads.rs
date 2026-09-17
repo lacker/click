@@ -208,14 +208,12 @@ pub(super) fn execute_thread_create(
             &arguments_path.facts,
             &arguments_path.obligations,
         );
-        if !super::reasoning::resource_context_has_read(
-            caller_state.resources(),
-            thread.pointer(),
-            8,
-            &path_assumptions,
-        ) {
+        // The handle is stored the way an ordinary assignment stores: the
+        // cell must be writable here, as a live local block or an owned
+        // range.
+        if !path_assumptions.proves_memory_access(caller_state.memory(), thread.pointer(), 8) {
             paths.push(thread_failure(
-                "the caller must own the `pthread_t` cell the created handle is written to",
+                "the caller must be able to write the `pthread_t` cell the created handle is written to",
             ));
             continue;
         }

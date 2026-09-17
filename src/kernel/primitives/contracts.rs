@@ -2061,6 +2061,15 @@ impl CExecutionEnvironment {
         self.external_function_rules.get(name)
     }
 
+    /// Which transition an external declaration's rule stands for, if this
+    /// environment has one. The rule itself stays inside the kernel; a
+    /// language layer only needs to see the semantics it registered.
+    pub fn external_call_semantics(&self, name: &str) -> Option<ExternalCallSemantics> {
+        self.external_function_rules
+            .get(name)
+            .map(CExternalFunctionRule::semantics)
+    }
+
     pub fn with_verified_function_rule(mut self, rule: CVerifiedFunctionRule) -> Self {
         std::sync::Arc::make_mut(&mut self.verified_function_rules)
             .insert(rule.function.name().to_string(), rule);

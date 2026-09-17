@@ -5864,18 +5864,51 @@ pub(crate) struct C0FunctionHeader {
 }
 
 impl C0FunctionHeader {
-    #[cfg(test)]
     pub(crate) fn return_type(&self) -> C0Type {
         self.return_type
     }
 
-    #[cfg(test)]
     pub(crate) fn parameters(&self) -> &[C0Parameter] {
         &self.parameters
     }
 
     pub(crate) fn linkage_name(&self) -> &str {
         &self.name
+    }
+
+    pub(crate) fn source_name(&self) -> &str {
+        &self.source_name
+    }
+
+    pub(crate) fn return_pointee_is_constant(&self) -> bool {
+        self.return_pointee_constant
+    }
+
+    pub(crate) fn return_struct_name(&self) -> Option<&str> {
+        self.return_struct_name.as_deref()
+    }
+
+    pub(crate) fn return_pointer_struct_name(&self) -> Option<&str> {
+        self.return_pointer_struct_name.as_deref()
+    }
+
+    /// The declared interface as a body-less C0 function. This is how a
+    /// declaration whose meaning comes from its identity, rather than from a
+    /// sidecar contract, reaches the kernel: the signature is exactly the one
+    /// the translation unit declared, and the body stays absent.
+    ///
+    /// The result is externally linked, with its source spelling as its
+    /// kernel name, and carries no struct tag on the return type. A caller
+    /// must therefore have already checked the declaration against the exact
+    /// interface it expects; this is not a general header-to-function
+    /// conversion.
+    pub(crate) fn to_declared_external_function(&self) -> C0Function {
+        C0Function::external(
+            self.return_type,
+            self.source_name.clone(),
+            self.parameters.clone(),
+        )
+        .with_return_pointee_constant(self.return_pointee_constant)
     }
 
     pub(crate) fn compatible_with(&self, other: &Self) -> bool {
