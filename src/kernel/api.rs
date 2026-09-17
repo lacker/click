@@ -615,6 +615,39 @@ pub fn c_loop_ranking_obligations_at_back_edge(
     collect_loop_ranking_obligations(state, iteration_entry_state, ranking_measures)
 }
 
+/// Exact entry judgments grouped by invariant declaration. Lowering's path
+/// facts and loadability conditions remain guards on each judgment, with their
+/// introduction metadata. A declaration can have several path judgments; an
+/// empty group means no reachable lowering path. These are goals, not evidence
+/// that initialization has proved them.
+#[derive(Clone, Debug)]
+pub struct CLoopEntryGoals {
+    declarations: Vec<Vec<ProofObligation>>,
+}
+
+impl CLoopEntryGoals {
+    pub fn declarations(&self) -> &[Vec<ProofObligation>] {
+        &self.declarations
+    }
+}
+
+pub fn c_loop_entry_goals(
+    state: &CState,
+    invariant_checks: &[CLoopInvariantCheck],
+    assumptions: &PureFactContext,
+) -> Result<CLoopEntryGoals, String> {
+    let mut declarations = vec![Vec::new(); invariant_checks.len()];
+    super::loops::collect_loop_entry_goals(
+        state,
+        invariant_checks,
+        assumptions,
+        &mut ExecutionBudget::default(),
+        &mut declarations,
+    )
+    .map_err(|error| format!("could not lower entry invariants: {error:?}"))?;
+    Ok(CLoopEntryGoals { declarations })
+}
+
 pub fn c_loop_invariant_obligations_at_entry(
     state: &CState,
     invariant_checks: &[CLoopInvariantCheck],

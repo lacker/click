@@ -221,6 +221,20 @@ regressions remain in the full gate.
 
 ## Inventory and work package D: loop-initialization certificate gateway
 
+The producer prerequisite is implemented: `kernel::c_loop_entry_goals` keeps
+exact entry judgments and lowering metadata grouped by declaration, including
+satisfied and duplicate declarations. Path facts and loadability conditions
+remain guards on those judgments. The existing outstanding-obligation query
+still serves the current initialization driver until its migration lands.
+
+The retained-Proof migration exposed a nested-loop clause ownership problem:
+`frontier_local_loop_verifies_nested_loops_at_their_respective_frontiers` reaches
+loop 1 with four lowered checks for two written invariants. The outer loop
+registers its nested clause, then frontier binding appends the same clause again.
+Fix declaration ownership during frontier binding before switching consumers;
+do not truncate the produced goals or deduplicate declarations by spelling.
+The existing nested-loop test is the regression for that boundary.
+
 `execution_planning/loop_planning.rs` recognizes an expanded source layout of
 helper steps followed by one `have` per invariant. It specially dispatches
 `source_contains_legacy_arithmetic` and uses

@@ -2859,6 +2859,7 @@ pub(super) fn collect_invariant_check_obligations(
         assumptions,
         budget,
         false,
+        None,
     )
 }
 
@@ -2878,6 +2879,28 @@ pub(super) fn collect_invariant_check_obligations_without_search(
         assumptions,
         budget,
         true,
+        None,
+    )
+}
+
+/// Collects every declaration's exact lowered goals before outstanding-obligation
+/// filtering. Equal or already-known goals retain their declaration positions.
+pub(super) fn collect_loop_entry_goals(
+    state: &CState,
+    checks: &[CLoopInvariantCheck],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    declarations: &mut [Vec<ProofObligation>],
+) -> ExecutionResult<Vec<ProofObligation>> {
+    collect_invariant_check_obligations_with_mode(
+        state,
+        state,
+        checks,
+        InvariantPhase::Entry,
+        assumptions,
+        budget,
+        true,
+        Some(declarations),
     )
 }
 
@@ -2890,10 +2913,11 @@ fn collect_invariant_check_obligations_with_mode(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     without_search: bool,
+    mut declarations: Option<&mut [Vec<ProofObligation>]>,
 ) -> ExecutionResult<Vec<ProofObligation>> {
     let mut contexts = vec![(Vec::new(), Vec::new())];
     let mut all_obligations = Vec::new();
-    for check in invariant_checks {
+    for (declaration_index, check) in invariant_checks.iter().enumerate() {
         let mut next_contexts = Vec::new();
         for (facts, obligations) in contexts {
             let effective_assumptions = if without_search {
@@ -2936,6 +2960,14 @@ fn collect_invariant_check_obligations_with_mode(
                 let mut introductions = guards;
                 introductions.extend(path.introductions.iter().cloned());
                 let introductions = std::sync::Arc::new(introductions);
+                if let Some(declarations) = declarations.as_deref_mut() {
+                    let mut goal = ProofObligation::new(proposition.clone())
+                        .with_shared_introductions(Some(&introductions));
+                    if let Some(context) = invariant_context(check, phase) {
+                        goal = goal.with_context(context);
+                    }
+                    declarations[declaration_index].push(goal);
+                }
                 if without_search {
                     add_required_proof_obligation_without_search(
                         &mut obligations,

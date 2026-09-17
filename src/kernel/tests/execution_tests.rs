@@ -2076,3 +2076,81 @@ fn loop_back_edge_refuses_a_dropped_share_or_a_regenerated_root() {
     .expect_err("a back edge cannot discard the share the head holds");
     assert!(refusal.contains("stable-view loan authority"), "{refusal}");
 }
+
+#[test]
+fn loop_entry_goals_retain_satisfied_duplicate_declarations() {
+    let state = CState::new().with_local("i", int32(0));
+    let proposition = SpecProposition::Comparison {
+        left: SpecExpression::Value(int32(0)),
+        operator: CComparisonOperator::LessEqual,
+        right: SpecExpression::CExpression(c_variable("i")),
+    };
+    let checks = (0..2)
+        .map(|index| {
+            CLoopInvariantCheck::new(
+                proposition.clone(),
+                Some(format!("invariant {index}")),
+                None,
+            )
+        })
+        .collect::<Vec<_>>();
+    let assumptions = PureFactContext::new();
+    let goals = c_loop_entry_goals(&state, &checks, &assumptions).unwrap();
+    assert_eq!(goals.declarations().len(), 2);
+    for (index, declaration) in goals.declarations().iter().enumerate() {
+        assert_eq!(declaration.len(), 1);
+        assert_eq!(
+            declaration[0].context(),
+            Some(format!("invariant {index}").as_str())
+        );
+        assert!(declaration[0].introductions().is_some());
+    }
+    assert_eq!(
+        goals.declarations()[0][0].proposition(),
+        goals.declarations()[1][0].proposition()
+    );
+    assert!(
+        c_loop_invariant_obligations_at_entry(&state, &checks, &assumptions)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn loop_entry_goals_preserve_guarded_judgments() {
+    let state = CState::new().with_local("i", int32(Bitvector32Term::Variable(Variable(600))));
+    let proposition = SpecProposition::Comparison {
+        left: SpecExpression::Value(int32(0)),
+        operator: CComparisonOperator::LessEqual,
+        right: SpecExpression::CExpression(c_variable("i")),
+    };
+    let checks = (0..2)
+        .map(|index| {
+            CLoopInvariantCheck::new(
+                proposition.clone(),
+                Some(format!("invariant {index}")),
+                None,
+            )
+        })
+        .collect::<Vec<_>>();
+    let assumptions = PureFactContext::new();
+    let goals = c_loop_entry_goals(&state, &checks, &assumptions).unwrap();
+    assert_eq!(goals.declarations().len(), 2);
+    assert!(goals.declarations().iter().all(|goals| goals.len() == 1));
+    let first = &goals.declarations()[0][0];
+    let second = &goals.declarations()[1][0];
+    assert!(
+        matches!(second.proposition(), Proposition::Implies(guard, body)
+        if guard.as_ref() == first.proposition() && body.as_ref() == first.proposition())
+    );
+    let outstanding = c_loop_invariant_obligations_at_entry(&state, &checks, &assumptions).unwrap();
+    assert_eq!(
+        goals
+            .declarations()
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>(),
+        outstanding
+    );
+}
