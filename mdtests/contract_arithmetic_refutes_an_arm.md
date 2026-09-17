@@ -64,6 +64,7 @@ void from_invariant(struct box* b, int32 count) {
     step();
     step();
     loop {
+        decreases count - i;
         owns c: counter(b, count);
         invariant i >= 0;
         invariant i <= count;

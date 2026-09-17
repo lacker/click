@@ -29,10 +29,12 @@ int32 later_loop_preserve() {
     step();
     step();
     loop {
+        decreases 1 - i;
         invariant i >= 0 and i <= 1;
     }
     step();
     loop {
+        decreases 1 - j;
         invariant j >= 0 and j <= 1;
         preserve by {
             step();

@@ -465,6 +465,7 @@ mod tests {
                     })
                     .collect(),
                 exceptional_type: None,
+                diverges: false,
                 declared_loadable_bytes: Vec::new(),
             },
             external: true,

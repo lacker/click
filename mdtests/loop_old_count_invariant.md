@@ -25,9 +25,11 @@ int32 loop_old_count_invariant(int32 p[3]) {
     step();
     step();
     loop {
+        decreases 3 - i;
         invariant i >= 0 and i <= 3;
         invariant old(count(p, 0, 3, p[0])) == old(count(p, 0, 3, p[0]));
         preserve by {
+            mark iteration;
             step();
             have i >= 0 and i <= 3 by simp;
             close_invariants by {
@@ -36,7 +38,11 @@ int32 loop_old_count_invariant(int32 p[3]) {
                         at(function.entry, loadable(p[0..3]));
                     }
                     assumption();
-                } and { intro(); normalize(); }
+                } and {
+                    both { intro(); normalize(); }
+                    and { both { arithmetic() using { at(iteration, i) < 3; at(iteration, i) >= 0; } }
+                        and { arithmetic() using { at(iteration, i) < 3; at(iteration, i) >= 0; } } }
+                }
             }
         }
     }

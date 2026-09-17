@@ -70,7 +70,8 @@ structural calls across a loop back edge remain tracked in the hard-bucket
 
 Termination is also a claim about everything the loop body calls: every
 reachable loop, recursive cycle, and callee needs a checked ranking proof. A
-callee with a contract answers with a verified rule of its own. A
+callee with a contract answers with a verified rule of its own, and an
+`extern` contract is trusted to return exactly as its `ensures` is trusted. A
 header-provided `static inline` helper has no contract boundary — its body
 executes at the call site — so it is read as a node of the caller's own call
 graph instead. A helper whose body is straight-line, with no loop, no

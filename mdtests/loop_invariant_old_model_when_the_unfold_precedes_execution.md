@@ -60,6 +60,7 @@ int spin(struct cell* node, struct cell* other, int n) {
     step();
     step();
     loop {
+        decreases n - i;
         owns c: cell(node);
         owns d: cell(other);
         invariant i >= 0;

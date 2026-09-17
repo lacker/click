@@ -12,6 +12,10 @@ fresh values, and each exit contributes the equations pinning them as its own
 disjunct. What *every* exit states — that the root is a real node — survives
 the join as an ordinary fact, which is what this postcondition reads.
 
+Both ways out of the body are `break`s, so the back edge is unreachable and the
+constant `decreases 0;` ranks the loop with nothing to prove beyond its own
+nonnegativity.
+
 A claim that has to distinguish the exits reads the exported disjunction with
 `cases`; see
 [`loop_break_exit_binder_model_join.md`](loop_break_exit_binder_model_join.md).
@@ -79,6 +83,7 @@ struct tree_node* maybe_swap(struct tree_node* root, int flag) {
     step();
     step();
     loop {
+        decreases 0;
         owns t: tree_at(root);
         invariant t.model != HeapTree::Empty;
 

@@ -63,11 +63,11 @@ int32 service_step(struct service* owner) {
     simp();
 }
 
-int32 service_run(struct service* owner) {
+int32 service_run(struct service* owner) diverges {
     owns service(owner);
 } by {
     step();
-    loop {
+    loop diverges {
         invariant 0 <= owner->phase;
         invariant owner->phase <= 1;
         initialize by simp;

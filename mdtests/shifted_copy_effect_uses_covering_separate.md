@@ -36,6 +36,7 @@ int32 shifted_copy_effect_uses_covering_separate(int32 dst[], int32 src[], int32
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 1;
         invariant i <= n;
         owns (dst + 1)[0..n - 1];

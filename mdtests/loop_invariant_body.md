@@ -24,13 +24,20 @@ int32 count() { ensures result == 3; } by {
     step();
     step();
     loop {
+        decreases 3 - i;
         invariant i >= 0;
         invariant i <= 3;
         initialize by simp;
         preserve by {
+            mark iteration;
             step();
             close_invariants by {
-                both { simp(); } and { simp(); }
+                both { simp(); }
+                and {
+                    both { simp(); }
+                    and { both { arithmetic() using { at(iteration, i) < 3; at(iteration, i) >= 0; } }
+                        and { arithmetic() using { at(iteration, i) < 3; at(iteration, i) >= 0; } } }
+                }
             }
         }
     }

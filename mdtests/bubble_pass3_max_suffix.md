@@ -39,6 +39,7 @@ int32 bubble_pass3(int32 p[3]) {
     step();
     step();
     loop {
+        decreases 2 - j;
         invariant j >= 0 and j <= 2;
         invariant all_le_range(p, 0, j, p[j]);
         initialize by {

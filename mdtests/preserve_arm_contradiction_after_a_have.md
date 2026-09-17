@@ -73,6 +73,7 @@ void bump_n(struct cell* node, int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         owns l: list_at(node);
         invariant i >= 0;
         invariant i <= n;

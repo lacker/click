@@ -295,11 +295,65 @@ measure remain unsupported.
 
 Supplying any C `decreases` clause asks Click to certify termination of the
 whole function, so every reachable loop and recursive component must be ranked
-and every callee must itself have termination evidence. The kernel records
+and every callee must itself have termination evidence. A loop the proof does
+not summarize needs no measure: Click executes such a loop concretely, one
+bounded iteration at a time, and that execution succeeds only when every
+feasible path has left the loop, so it is the loop's termination evidence; see
+`mdtests/bounded_loop.md`. A loop proved through a `loop` block is summarized
+by its invariants and needs a `decreases` clause. A verified callee
+supplies its own; an `extern` contract is trusted to return, as its `ensures`
+is trusted. A call through a function pointer returns when every function
+whose address the project takes returns without calling through a function
+pointer itself, directly or in anything it calls: a comparator, a visitor, or
+an augment callback qualifies, and a function that hands itself to the helper
+that calls it does not. Until that holds no pointer call supplies evidence,
+and once termination is required the refusal is reported where the address is
+taken; see `mdtests/termination_callback_self_application_rejected.md`. A
+callback that itself takes callbacks needs a measure on its named contract,
+which is not supported yet. The refusal
+names the unranked loop or the callee responsible. The kernel records
 that evidence separately from `CVerifiedFunctionRule`. Ordinary calls and
 ordinary `ensures` continue to use partial correctness and do not silently
 depend on it. A perpetual service loop should therefore have an invariant but
 no `decreases` clause.
+
+The `diverges` marker lets that loop say so in the contract instead of leaving
+it to the reader. It sits after the parameter list, beside `throws` and after
+it when a signature carries both, and on a `loop` head, which has no signature
+of its own:
+
+<!-- verified-example: mdtests/diverges_perpetual_loop.md -->
+```click
+int32 wait_for_zero(int32 x) diverges {
+    ensures result == 1;
+} by {
+    loop diverges {
+        invariant x == x;
+    }
+}
+```
+
+The marker declares that the function, or that loop, may not return; it makes
+no other claim and yields no evidence. The contract keeps exactly the partial
+correctness it already had: safety is checked on every execution prefix, and
+the `ensures` holds if the function returns. Because a marked function never
+yields termination evidence, it cannot also carry a function-level `decreases`
+clause, a marked loop cannot also carry a loop `decreases`, and a `loop
+diverges` is refused unless its enclosing function is declared `diverges` too.
+A marked function's other loops may still be ranked: their back-edge ranking
+members are checked as usual, but the function still gives its callers no
+whole-function termination evidence. An `extern` contract takes the marker in
+the same signature position and still refuses `decreases`, since it has no
+body to rank.
+
+The marker is required on, and only on, a function that may not return. A
+function whose every loop is ranked and whose every call descends has nothing
+to justify the marker, and declaring it `diverges` is refused; see
+`mdtests/diverges_rejects_unjustified_marker.md`. An `extern` contract is
+exempt, because the declaration is all that is known about it. The marker is
+contagious: a caller that asks for termination evidence and calls a marked
+function is refused, and the refusal names the callee and the repair, which is
+to declare the caller `diverges` too.
 
 Termination and host capacity are separate judgments. Click does not model
 process stack exhaustion, address-space exhaustion, operating-system

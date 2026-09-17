@@ -39,6 +39,7 @@ void loop_owns_composite_resource(struct cell* node, int32 q[], int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         owns cell(node);
         invariant i >= 0;
         invariant i <= n;

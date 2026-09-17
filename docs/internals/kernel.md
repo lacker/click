@@ -194,11 +194,54 @@ decrease annotation and does not create termination evidence.
 
 Optional C termination is a second judgment. Surface `decreases` clauses are
 lowered to an untrusted `CFunctionTerminationPlan`; the kernel checks the exact
-partially verified function bodies, call-graph components, loop indices,
-integer types, guards, and decreasing edges before constructing
-`CVerifiedFunctionTerminationRule`. A recursive component is accepted only
-when every member has a compatible measure. Whole-function evidence is
-withheld if any reachable loop, recursive component, or callee lacks evidence.
+partially verified function bodies, loop indices, integer types, guards, and
+decreasing edges before constructing `CVerifiedFunctionTerminationRule`.
+
+The judgment is local descent. An untrusted planner proposes a height for
+every function, the longest path below it in the direct-call graph with the
+members of a cycle sharing one height. The kernel never computes call-graph
+components or reachability. At each call site it checks that the callee is not
+above its caller; a strictly lower callee must already have evidence, and a
+callee at the caller's own height is a recursive edge that the declared
+function-level measures must rank. Soundness is one induction on the pair of
+height and measure, so a wrong height can refuse a function or fail the check
+but cannot certify one. Levels are settled in ascending height, which makes
+the work linear in the functions and their call edges. A callee outside the
+verified set is an assumption in the same sense as its postconditions: an
+`extern` contract is trusted to return as its `ensures` is trusted.
+
+A loop owes a measure only when the proof summarized it. Execution summarizes
+a loop only when the loop carries annotations: a verified loop rule applies to
+a loop with invariant or effect checks, and the invariant route runs for one
+with checks or a measure. A loop with none has one route, the concrete one,
+which consumes loop budget per iteration and returns only when every feasible
+path has left the loop. A function's verified rule exists because
+certification executed exactly its body, so the termination check grants such
+a loop without a measure, for functions certified on their own and only when
+the certified body's loops match the source body's loops shape for shape,
+since loop indices name source loops. A linked body with no rule of its own is
+not granted this.
+
+A call through a function pointer has no declared callee, and no edge of the
+direct-call graph says what it reaches: a function can hand itself to the
+helper that calls it, or be stored by one function and called by another that
+it calls in turn. The rule is about the address and not the call. Whatever a
+pointer call reaches had its address taken, in a body or in a static
+initializer, so the check first settles every level with pointer calls
+refused; a function certified then returns without going through a function
+pointer, in its own body or below, and so can never re-enter a caller through
+one. If every address taken names such a function, the levels are settled
+again with pointer calls allowed to return. Otherwise the strict verdicts
+stand, and the check names each unsuitable callback with the function that
+takes its address. A contract-less function whose address is taken is a node
+of the graph like an inline helper, because a resolved pointer executes its
+body in place. This is a deliberately small rule: a callback that itself
+takes callbacks, or a handler table that re-dispatches to lower entries,
+terminates for a reason only a measure on the named contract can state, and
+that is not built. Each refused
+function carries one reason, its own first unranked loop or the first call
+not shown to descend, which the surface reports by following refused callees
+to the defect that refused them.
 
 For a structural `decreases`, the plan contains only an index into the exact entry
 resource requirements. The kernel resolves that requirement and the exact

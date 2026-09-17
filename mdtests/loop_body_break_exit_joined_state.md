@@ -43,6 +43,7 @@ int32 assign_then_break(int32 n) {
     step();
     step();
     loop {
+        decreases i;
         invariant i >= 0;
         invariant r == 0;
 

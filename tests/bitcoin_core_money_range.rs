@@ -11,6 +11,7 @@ use click::surface::{
     C0VerificationSession, cpp_prepared_project_smart_tactic_source_sites,
     cpp_prepared_project_tactic_source_position, expand_cpp_prepared_project_claim_source_by_label,
     expand_cpp_prepared_project_tactic_source_at, verify_cpp_prepared_project,
+    with_termination_required,
 };
 use sha2::{Digest, Sha256};
 
@@ -170,8 +171,12 @@ fn pinned_upstream_money_range_reexports_and_verifies_in_normal_gate() {
         .expect("the upstream bound is imported from its C++ declaration");
     assert_eq!(max_money.evaluated_value, "2100000000000000");
     let project = read_click_project(&sidecar, SIDECAR).unwrap();
-    let (verification, profile) =
-        instrumentation::collect(|| verify_cpp_prepared_project(&project, &imported));
+    // The one integration fixture is held to the termination rule like every
+    // other corpus fixture (`issues/termination-required.md`); it has no loop
+    // and no callee, so it owes no measure and needs no pending marker.
+    let (verification, profile) = instrumentation::collect(|| {
+        with_termination_required(|| verify_cpp_prepared_project(&project, &imported))
+    });
     verification.expect("verify the exact inclusive range contract and four boundary calls");
     let finished_claims = profile
         .iter()

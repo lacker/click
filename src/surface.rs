@@ -19,7 +19,8 @@ use crate::kernel::{
     CFunctionOutcome, CFunctionSpecification, CLoopBreakExit, CLoopEffect, CLoopEffectCheck,
     CLoopEffectSpan, CLoopFinalExitCandidate, CLoopInvariantCheck, CMemory, CMemoryRange,
     CMemorySegment, CResource, CResourceAccessMode, CResourceFact, CResourceSnapshot,
-    CResourceSpec, CResourceTransferRole, CState, CStatement, CStatementOutcome, CType, CValue,
+    CResourceSpec, CResourceTransferRole, CState, CStatement, CStatementOutcome,
+    CTerminationRefusal, CTerminationVerdicts, CType, CUnsuitableCallback, CValue,
     CVerifiedLoopRule, CVerifiedPureTheorem, ConditionTerm, ExecutionBudget, ExecutionPureFact,
     Pointer, PointerBlock, PointerOffsetTerm, ProofObligation, Proposition, PropositionDerivation,
     PureFactContext, ResourceArguments, ResourceContext, ResourceContextValidityError,
@@ -34,7 +35,7 @@ use crate::kernel::{
     c_function_outcome_from_statement_outcome, c_function_specification,
     c_function_termination_plan, c_if, c_loop_invariants_hold_at_entry,
     c_loop_preservation_contexts, c_pointer_offsets_proven_equal_for_effect,
-    c_resources_directly_match, c_seq, c_typed_pointer_value,
+    c_resources_directly_match, c_seq, c_termination_height_plan, c_typed_pointer_value,
     c_unverified_function_contract_claims_with_checked_propositions,
     c_verified_function_contract_claims_with_checked_propositions, c_verified_function_rule,
     c_verified_function_termination_rules, c_while_with_invariant_and_effect_checks,
@@ -158,6 +159,7 @@ pub use verification::{
     verify_c0_project_at, verify_c0_project_functions, verify_c0_sources, verify_c0_sources_at,
     verify_c0_sources_functions, verify_click_theorems, verify_cpp_prepared_project,
     verify_cpp_prepared_project_at, verify_cpp_prepared_sources_at, verify_standard_library,
+    with_termination_required,
 };
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
@@ -208,6 +210,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "counted",
     "decreases",
     "defined",
+    "diverges",
     "double_negation",
     "else",
     "ensures",
@@ -326,6 +329,7 @@ pub const SURFACE_CLICK_FORMS: &[&str] = &[
     "contract",
     "decreases",
     "defined",
+    "diverges",
     "effect",
     "ensures",
     "exists",
@@ -1036,6 +1040,11 @@ pub struct FunctionSignature {
     /// The payload type of the function's declared exceptional outcome.
     /// This surface slice currently accepts only `throws int32`.
     exceptional_type: Option<C0Type>,
+    /// Whether the signature declares `diverges`: the function may not
+    /// return. Termination is opt-in today, so the marker changes no
+    /// judgment; it withholds the whole-function termination evidence a
+    /// `decreases` clause would otherwise request.
+    diverges: bool,
     /// Byte spans declared by sized array parameter spellings
     /// (`int32 p[2]`), used to certify requirement side-obligations.
     declared_loadable_bytes: Vec<(String, u32)>,
@@ -1079,6 +1088,10 @@ pub struct StructuralClause {
     region: CodeRegion,
     label: Option<String>,
     decreases: Option<TerminationMeasure>,
+    /// Whether the head declares `loop diverges`: this loop may not exit.
+    /// It excludes a `decreases` clause and requires the enclosing function
+    /// to be declared `diverges` too.
+    diverges: bool,
     items: Vec<StructuralItem>,
     /// The proof locals in scope where a frontier loop clause was written: a
     /// proof `match` arm's bindings, `unfold ... as` names, call-result
@@ -3311,6 +3324,7 @@ pub struct CertificateStructuralClause {
     region: CodeRegion,
     label: Option<String>,
     decreases: Option<TerminationMeasure>,
+    diverges: bool,
     items: Vec<CertificateStructuralItem>,
     resources: Vec<ResourceClause>,
     initialize_proof: Option<Box<ProofCertificate>>,
@@ -3724,6 +3738,7 @@ impl ProofStep {
                 region: clause.region,
                 label: clause.label.clone(),
                 decreases: clause.decreases.clone(),
+                diverges: clause.diverges,
                 resources: clause.resources.clone(),
                 items: clause
                     .items
@@ -3900,6 +3915,7 @@ impl ProofStep {
                 region: clause.region,
                 label: clause.label.clone(),
                 decreases: clause.decreases.clone(),
+                diverges: clause.diverges,
                 resources: clause.resources.clone(),
                 items: clause
                     .items
@@ -5723,6 +5739,7 @@ impl FunctionSignature {
             name: name.into(),
             parameters,
             exceptional_type: None,
+            diverges: false,
             declared_loadable_bytes: Vec::new(),
         }
     }
@@ -5754,6 +5771,11 @@ impl FunctionSignature {
 
     pub fn exceptional_type(&self) -> Option<C0Type> {
         self.exceptional_type
+    }
+
+    /// Whether the signature declares `diverges`.
+    pub fn diverges(&self) -> bool {
+        self.diverges
     }
 }
 
@@ -5865,6 +5887,11 @@ impl StructuralClause {
 
     pub fn decreases(&self) -> Option<&TerminationMeasure> {
         self.decreases.as_ref()
+    }
+
+    /// Whether the loop head declares `diverges`.
+    pub fn diverges(&self) -> bool {
+        self.diverges
     }
 
     pub fn items(&self) -> &[StructuralItem] {

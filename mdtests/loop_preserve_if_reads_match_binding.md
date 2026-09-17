@@ -36,12 +36,15 @@ void count_to(int32 n) {
     step();
     loop {
         owns m: marker();
+        decreases n - i;
         invariant i >= 0;
         invariant i <= n;
         invariant m.model == old(m.model);
 
         initialize by simp;
         preserve by {
+            have 0 <= n - i - 1 by { arithmetic() using { i < n; i >= 0; n >= 0; } }
+            have n - i - 1 < n - i by { arithmetic() using { i < n; i >= 0; n >= 0; } }
             match m.model {
                 Bound::At(end) => {
                     if i < end {

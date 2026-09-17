@@ -95,6 +95,10 @@ void *fill_range(void *argument) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

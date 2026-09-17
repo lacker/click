@@ -81,6 +81,10 @@ int32 composite_resource_vector_fill_loop_snapshot(
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

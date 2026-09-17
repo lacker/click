@@ -2043,15 +2043,12 @@ impl CExecutionEnvironment {
         self.functions.get(name)
     }
 
-    /// The project's header-provided `static inline` bodies. A call to one of
-    /// them executes that body at the call site instead of applying a
-    /// verified rule, so C termination reads them as call-graph nodes rather
-    /// than as opaque callees with a rule of their own.
-    pub fn inline_body_functions(&self) -> Vec<&CFunction> {
-        self.functions
-            .values()
-            .filter(|function| function.has_inline_body())
-            .collect()
+    /// Every function body the project links. C termination reads a body with
+    /// no verified rule as a call-graph node in two cases: a `static inline`
+    /// helper a verified body calls, and a contract-less function whose
+    /// address is taken, which a resolved function pointer executes in place.
+    pub fn linked_functions(&self) -> Vec<&CFunction> {
+        self.functions.values().collect()
     }
 
     pub(in crate::kernel) fn get_external_function_rule(

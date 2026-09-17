@@ -1108,6 +1108,212 @@ int32 stuck(int32 n) {
     assert!(!session.function_termination_is_verified("stuck"));
 }
 
+/// The regression from `issues/termination-required.md`: a loop nobody ranked
+/// verifies under the partial-correctness default and is refused, by name,
+/// once termination is required. Its caller is refused for it.
+#[test]
+fn required_termination_refuses_an_unranked_loop_and_its_caller() {
+    let c_source = r#"int32 wait_for_zero(int32 x) {
+    while (x != 0) {
+    }
+    return 1;
+}
+
+int32 caller(int32 x) {
+    int32 r;
+    r = wait_for_zero(x);
+    return r;
+}"#;
+    let wait_contract = r#"int32 wait_for_zero(int32 x) {
+    ensures result == 1;
+} by {
+    loop {
+        invariant 0 == 0;
+        initialize by simp;
+        preserve by {
+            step();
+            close_invariants();
+        }
+    }
+    step();
+    simp();
+}
+"#;
+    let caller_contract = r#"int32 caller(int32 x) {
+    ensures result == 1;
+} by {
+    step();
+    step();
+    step();
+    simp();
+}
+"#;
+    let both = format!("verifying \"wait.c\";\n\n{wait_contract}\n{caller_contract}");
+    let sources = [("wait.c", c_source)];
+
+    let (session, _) = C0VerificationSession::new(&both, &sources)
+        .expect("partial correctness accepts the unranked loop");
+    assert!(!session.function_termination_is_verified("wait_for_zero"));
+    assert!(!session.function_termination_is_verified("caller"));
+
+    let error = with_termination_required(|| C0VerificationSession::new(&both, &sources))
+        .err()
+        .expect("required termination refuses the unranked loop");
+    assert!(
+        error.message().contains(
+            "could not certify termination for `wait_for_zero`: loop 0 declares no `decreases` measure"
+        ),
+        "{}",
+        error.message()
+    );
+
+    // The switch is scoped to the closure.
+    C0VerificationSession::new(&both, &sources)
+        .expect("the requirement does not outlive its scope");
+}
+
+/// `diverges` is contagious once termination is required: a caller of a
+/// marked function is refused by name until it carries the marker too, and
+/// then both verify.
+#[test]
+fn required_termination_spreads_diverges_to_callers() {
+    let c_source = r#"int32 wait_for_zero(int32 x) {
+    while (x != 0) {
+    }
+    return 1;
+}
+
+int32 caller(int32 x) {
+    int32 r;
+    r = wait_for_zero(x);
+    return r;
+}"#;
+    let click_source = r#"verifying "wait.c";
+
+int32 wait_for_zero(int32 x) diverges {
+    ensures result == 1;
+} by {
+    loop diverges {
+        invariant 0 == 0;
+        initialize by simp;
+        preserve by {
+            step();
+            close_invariants();
+        }
+    }
+    step();
+    simp();
+}
+
+int32 caller(int32 x) {
+    ensures result == 1;
+} by {
+    step();
+    step();
+    step();
+    simp();
+}
+"#;
+    let sources = [("wait.c", c_source)];
+    let error = with_termination_required(|| C0VerificationSession::new(click_source, &sources))
+        .err()
+        .expect("an unmarked caller of a diverging function is refused");
+    assert!(
+        error.message().contains(
+            "could not certify termination for `caller`: callee `wait_for_zero` has no termination evidence: it is declared `diverges`; declare `caller` `diverges` too"
+        ),
+        "{}",
+        error.message()
+    );
+
+    let marked = click_source.replace(
+        "int32 caller(int32 x) {",
+        "int32 caller(int32 x) diverges {",
+    );
+    let (session, _) = with_termination_required(|| C0VerificationSession::new(&marked, &sources))
+        .expect("marking the caller admits the divergence");
+    assert!(!session.function_termination_is_verified("caller"));
+}
+
+/// A straight-line function owes nothing but its callees' evidence, so under
+/// required termination it verifies with no clause of its own, and its
+/// evidence is recorded.
+#[test]
+fn required_termination_certifies_loop_free_callers_unannotated() {
+    let c_source = r#"int32 one() {
+    return 1;
+}
+
+int32 two() {
+    int32 r;
+    r = one();
+    return r + 1;
+}"#;
+    let click_source = r#"verifying "two.c";
+
+int32 one() {
+    ensures result == 1 by auto;
+}
+
+int32 two() {
+    ensures result == 2 by auto;
+}
+"#;
+    let (session, _) = with_termination_required(|| {
+        C0VerificationSession::new(click_source, &[("two.c", c_source)])
+    })
+    .expect("a call DAG with no loops terminates by height alone");
+    assert!(session.function_termination_is_verified("one"));
+    assert!(session.function_termination_is_verified("two"));
+}
+
+/// An `extern` contract is trusted to return exactly as its `ensures` is
+/// trusted, so a ranked function that calls one has termination evidence.
+#[test]
+fn an_extern_callee_is_assumed_to_return() {
+    let c_source = r#"int32 poll();
+
+int32 drain(int32 n) {
+    int32 seen;
+    while (n > 0) {
+        seen = poll();
+        n = n - 1;
+    }
+    return n;
+}"#;
+    let click_source = r#"verifying "drain.c";
+
+extern int32 poll() {
+    ensures result >= 0;
+}
+
+int32 drain(int32 n) {
+    requires n >= 0;
+    ensures result == 0;
+} by {
+    step();
+    loop {
+        decreases n;
+        invariant n >= 0;
+        initialize by simp;
+        preserve by {
+            have 0 <= n - 1 by {
+                apply(int32_positive_predecessor_is_nonnegative(n)) using { n > 0; }
+            }
+            step();
+            step();
+            close_invariants();
+        }
+    }
+    step();
+    simp();
+}
+"#;
+    let (session, _) = C0VerificationSession::new(click_source, &[("drain.c", c_source)])
+        .expect("the ranked loop verifies");
+    assert!(session.function_termination_is_verified("drain"));
+}
+
 /// `condition_polarity_equivalent` used to answer through
 /// `canonical_order_condition(left) == canonical_order_condition(right)`.
 /// Only comparisons have a canonical order form, so every pair of

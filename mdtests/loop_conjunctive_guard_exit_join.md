@@ -15,6 +15,12 @@ nonzero, so the first disjunct is refuted and the returned `p[0]` must be zero.
 `cases` splits on the exported disjunction and closes the refuted side by
 contradiction.
 
+The loop terminates because the body zeroes `a`, so `a` is the measure. Its
+decrease obligation is `0 < a` at the head, which the first guard conjunct
+gives only as `a != 0`; the arithmetic members are affine, so the preservation
+body turns the disequality into `a > 0` by ruling out `a == 0` against that
+conjunct before the step runs.
+
 ```c filename=loop_conjunctive_guard_exit_join.c
 int32 uses_exit_disjunction(int32 a, int32 *p) {
     while (a != 0 && p[0] != 0) {
@@ -36,13 +42,38 @@ int32 uses_exit_disjunction(int32 a, int32* p) {
     ensures result == 0;
 } by {
     loop {
+        decreases a;
         invariant a >= 0;
         invariant a <= 10;
+
+        initialize by simp;
+        preserve by {
+            have a > 0 by {
+                if a > 0 {
+                    assumption();
+                } else {
+                    have a == 0 by {
+                        apply(int32_ge_and_not_gt_implies_eq(a, 0)) using {
+                            a >= 0;
+                            not (a > 0);
+                        }
+                    }
+                    contradiction(a == 0);
+                }
+            }
+            step();
+            close_invariants by {
+                simp();
+            }
+        }
     }
     branch {
         then {
             have p[0] == 0 by {
                 cases(a == 0 or p[0] == 0) {
+                    have a == 0 by {
+                        assumption();
+                    }
                     contradiction(a == 0);
                 } {
                     assumption();

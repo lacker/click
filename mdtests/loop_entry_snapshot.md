@@ -43,6 +43,10 @@ int32 drain_to_zero(int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

@@ -56,6 +56,7 @@ int32 fill_prefix(int32 p[], int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 0;
         invariant i <= n;
     }
@@ -73,6 +74,7 @@ int32 fill_tail(int32 p[], int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 1;
         invariant i <= n;
         owns p[1..n];
@@ -93,6 +95,7 @@ int32 fill_two(int32 p[], int32 q[], int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 0;
         invariant i <= n;
     }

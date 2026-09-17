@@ -70,6 +70,7 @@ int32 sum(int32 a[], int32 n) {
         }
     }
     loop as sum {
+        decreases n - i;
         invariant 0 <= i;
         invariant i <= n;
         invariant to_integer(total) ==
@@ -338,7 +339,66 @@ int32 sum(int32 a[], int32 n) {
                     k < n;
                 }
             }
-            close_invariants by { simp(); }
+            close_invariants by {
+                both {
+                    simp();
+                } and {
+                    both {
+                        simp();
+                    } and {
+                        both {
+                            simp();
+                        } and {
+                            both {
+                                simp();
+                            } and {
+                                both {
+                                    simp();
+                                } and {
+                                    both {
+                                        simp();
+                                    } and {
+                                        both {
+                                            arithmetic_certificate signed_int32 {
+                                                premise 0: 0 <= n => 0 <= n;
+                                                premise 1: at(statement(5).entry, 0) <= at(statement(5).entry, i) => at(statement(5).entry, 0) <= at(statement(5).entry, i);
+                                                premise 2: at(statement(5).entry, i) < at(statement(5).entry, n) => at(statement(5).entry, i) < at(statement(5).entry, n);
+                                                premise 3: n <= 1000 => n <= 1000;
+                                                interval_from_affine 0 (n) (0) (2147483647);
+                                                interval_from_affine 3 (n) (-2147483648) (1000);
+                                                interval_intersect 4, 5 (0) (1000);
+                                                interval_from_affine 1 (at(statement(5).entry, i)) (0) (2147483647);
+                                                interval_subtract 6, 7 6 (-2147483647) (1000);
+                                                interval_atom (1) (1) (1);
+                                                interval_subtract 8, 9 8 (-2147483648) (999);
+                                                affine_conclusion 2 10 => 0 <= ((n - at(statement(5).entry, i)) - 1);
+                                                conclusion 11;
+                                            }
+                                        } and {
+                                            arithmetic_certificate signed_int32 {
+                                                premise 0: 0 <= n => 0 <= n;
+                                                premise 1: at(statement(5).entry, 0) <= at(statement(5).entry, i) => at(statement(5).entry, 0) <= at(statement(5).entry, i);
+                                                premise 2: n <= 1000 => n <= 1000;
+                                                interval_from_affine 0 (n) (0) (2147483647);
+                                                interval_from_affine 2 (n) (-2147483648) (1000);
+                                                interval_intersect 3, 4 (0) (1000);
+                                                interval_from_affine 1 (at(statement(5).entry, i)) (0) (2147483647);
+                                                interval_subtract 5, 6 5 (-2147483647) (1000);
+                                                interval_atom (1) (1) (1);
+                                                interval_subtract 7, 8 7 (-2147483648) (999);
+                                                interval_subtract 5, 6 5 (-2147483647) (1000);
+                                                trivial => 0 <= 0;
+                                                affine_conclusion_pair 11 9 10 => ((n - at(statement(5).entry, i)) - 1) < (n - at(statement(5).entry, i));
+                                                conclusion 12;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     have i == n by {

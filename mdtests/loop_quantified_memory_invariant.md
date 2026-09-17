@@ -25,6 +25,7 @@ int32 loop_quantified_memory_invariant(int32 p[], int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 0 and i <= n;
         invariant forall (k: int32) {
             0 <= k and k < n implies p[k] == p[k]

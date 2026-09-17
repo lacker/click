@@ -65,5 +65,5 @@ int32 caller(int32 n) {
 ```
 
 ```expect
-fail: every reachable loop, recursive cycle, and callee must have a checked ranking proof
+fail: could not certify termination for `caller`: it takes the address of `spin`, and a function reached through a function pointer must return without calling through one: the recursive call to `spin` is ranked by no function-level `decreases` measure
 ```

@@ -63,6 +63,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
     step();
     step();
     loop {
+        decreases 2 - j;
         invariant j >= 0 and j <= 2;
         invariant all_le_range(p, 0, j, p[j]);
         initialize by {
@@ -191,17 +192,54 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                 }
                             }
                         } and {
-                            intro();
-                            extract(j >= 0);
-                            extract(j <= 2);
-                            intro();
-                            intro();
-                            intro();
-                            instantiate(forall (k: int32) { at(statement(10).entry, 0) <= at(statement(10).entry, k) and at(statement(10).entry, 0) <= at(statement(10).entry, k) and at(statement(10).entry, k) < at(statement(10).entry, j) implies at(statement(10).entry, p[k]) <= at(statement(10).entry, p[j]) }, __click_q0) using {
-                                0 <= __click_q0 and 0 <= __click_q0 and __click_q0 < j;
-                            }
-                            assumption();
-                        }
+                                    both {
+                                                                    intro();
+                                                                    extract(j >= 0);
+                                                                    extract(j <= 2);
+                                                                    intro();
+                                                                    intro();
+                                                                    intro();
+                                                                    instantiate(forall (k: int32) { at(statement(10).entry, 0) <= at(statement(10).entry, k) and at(statement(10).entry, 0) <= at(statement(10).entry, k) and at(statement(10).entry, k) < at(statement(10).entry, j) implies at(statement(10).entry, p[k]) <= at(statement(10).entry, p[j]) }, __click_q0) using {
+                                                                        0 <= __click_q0 and 0 <= __click_q0 and __click_q0 < j;
+                                                                    }
+                                                                    assumption();
+                                                                
+                                    } and {
+                                        both {
+                                            arithmetic_certificate signed_int32 {
+                                                premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
+                                                premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
+                                                interval_atom (0) (0) (0);
+                                                interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
+                                                interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
+                                                interval_intersect 3, 4 (0) (1);
+                                                interval_subtract 2, 5 2 (-1) (0);
+                                                interval_atom (1) (1) (1);
+                                                interval_add_bounded 6, 7 (0) (1);
+                                                affine_conclusion 1 8 => 0 <= ((0 - at(statement(4).entry, j)) + 1);
+                                                conclusion 9;
+                                            }
+                                        } and {
+                                            arithmetic_certificate signed_int32 {
+                                                premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
+                                                premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
+                                                interval_atom (0) (0) (0);
+                                                interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
+                                                interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
+                                                interval_intersect 3, 4 (0) (1);
+                                                interval_subtract 2, 5 2 (-1) (0);
+                                                interval_atom (1) (1) (1);
+                                                interval_add_bounded 6, 7 (0) (1);
+                                                interval_subtract 2, 5 2 (-1) (0);
+                                                interval_atom (2) (2) (2);
+                                                interval_add_bounded 9, 10 (1) (2);
+                                                trivial => 0 <= 0;
+                                                affine_conclusion_pair 12 8 11 => ((0 - at(statement(4).entry, j)) + 1) < ((0 - at(statement(4).entry, j)) + 2);
+                                                conclusion 13;
+                                            }
+                                        }
+                                    }
+}
                     }
                 }
             } else {
@@ -328,18 +366,55 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                     at(function.entry, loadable(p[0..3]));
                                 }
                             } and {
-                                intro();
-                                extract(j >= 0);
-                                extract(j <= 2);
-                                intro();
-                                intro();
-                                intro();
-                                intro();
-                                instantiate(forall (k: int32) { at(statement(10).entry, 0) <= at(statement(10).entry, k) and at(statement(10).entry, 0) <= at(statement(10).entry, k) and at(statement(10).entry, k) < at(statement(10).entry, j) implies at(statement(10).entry, p[k]) <= at(statement(10).entry, p[j]) }, __click_q0) using {
-                                    0 <= __click_q0 and 0 <= __click_q0 and __click_q0 < j;
-                                }
-                                assumption();
-                            }
+                                    both {
+                                                                        intro();
+                                                                        extract(j >= 0);
+                                                                        extract(j <= 2);
+                                                                        intro();
+                                                                        intro();
+                                                                        intro();
+                                                                        intro();
+                                                                        instantiate(forall (k: int32) { at(statement(10).entry, 0) <= at(statement(10).entry, k) and at(statement(10).entry, 0) <= at(statement(10).entry, k) and at(statement(10).entry, k) < at(statement(10).entry, j) implies at(statement(10).entry, p[k]) <= at(statement(10).entry, p[j]) }, __click_q0) using {
+                                                                            0 <= __click_q0 and 0 <= __click_q0 and __click_q0 < j;
+                                                                        }
+                                                                        assumption();
+                                                                    
+                                    } and {
+                                        both {
+                                            arithmetic_certificate signed_int32 {
+                                                premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
+                                                premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
+                                                interval_atom (0) (0) (0);
+                                                interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
+                                                interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
+                                                interval_intersect 3, 4 (0) (1);
+                                                interval_subtract 2, 5 2 (-1) (0);
+                                                interval_atom (1) (1) (1);
+                                                interval_add_bounded 6, 7 (0) (1);
+                                                affine_conclusion 1 8 => 0 <= ((0 - at(statement(4).entry, j)) + 1);
+                                                conclusion 9;
+                                            }
+                                        } and {
+                                            arithmetic_certificate signed_int32 {
+                                                premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
+                                                premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
+                                                interval_atom (0) (0) (0);
+                                                interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
+                                                interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
+                                                interval_intersect 3, 4 (0) (1);
+                                                interval_subtract 2, 5 2 (-1) (0);
+                                                interval_atom (1) (1) (1);
+                                                interval_add_bounded 6, 7 (0) (1);
+                                                interval_subtract 2, 5 2 (-1) (0);
+                                                interval_atom (2) (2) (2);
+                                                interval_add_bounded 9, 10 (1) (2);
+                                                trivial => 0 <= 0;
+                                                affine_conclusion_pair 12 8 11 => ((0 - at(statement(4).entry, j)) + 1) < ((0 - at(statement(4).entry, j)) + 2);
+                                                conclusion 13;
+                                            }
+                                        }
+                                    }
+}
                         }
                     }
                 }
@@ -348,6 +423,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
     }
     step();
     loop {
+        decreases 1 - j;
         invariant j >= 0 and j <= 1;
         invariant all_le_range(p, 0, 2, p[2]);
         invariant all_le_range(p, 0, j, p[j]);
@@ -517,20 +593,53 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                             }
                                         }
                                     } and {
-                                        intro();
-                                        extract(j >= 0);
-                                        extract(j <= 1);
-                                        intro();
-                                        intro();
-                                        intro();
-                                        intro();
-                                        intro();
-                                        intro();
-                                        instantiate(forall (k: int32) { at(statement(18).entry, 0) <= at(statement(18).entry, k) and at(statement(18).entry, 0) <= at(statement(18).entry, k) and at(statement(18).entry, k) < at(statement(18).entry, j) implies at(statement(18).entry, p[k]) <= at(statement(18).entry, p[j]) }, __click_q0) using {
-                                            0 <= __click_q0 and 0 <= __click_q0 and __click_q0 < j;
+                                    both {
+                                                                                intro();
+                                                                                extract(j >= 0);
+                                                                                extract(j <= 1);
+                                                                                intro();
+                                                                                intro();
+                                                                                intro();
+                                                                                intro();
+                                                                                intro();
+                                                                                intro();
+                                                                                instantiate(forall (k: int32) { at(statement(18).entry, 0) <= at(statement(18).entry, k) and at(statement(18).entry, 0) <= at(statement(18).entry, k) and at(statement(18).entry, k) < at(statement(18).entry, j) implies at(statement(18).entry, p[k]) <= at(statement(18).entry, p[j]) }, __click_q0) using {
+                                                                                    0 <= __click_q0 and 0 <= __click_q0 and __click_q0 < j;
+                                                                                }
+                                                                                assumption();
+                                                                            
+                                    } and {
+                                        both {
+                                            arithmetic_certificate signed_int32 {
+                                                premise 0: at(statement(17).entry, j) >= at(statement(17).entry, 0) => at(statement(17).entry, j) >= at(statement(17).entry, 0);
+                                                premise 1: at(statement(17).entry, j) < at(statement(17).entry, 1) => at(statement(17).entry, j) < at(statement(17).entry, 1);
+                                                interval_atom (0) (0) (0);
+                                                interval_from_affine 0 (at(statement(17).entry, j)) (0) (2147483647);
+                                                interval_from_affine 1 (at(statement(17).entry, j)) (-2147483648) (0);
+                                                interval_intersect 3, 4 (0) (0);
+                                                interval_subtract 2, 5 2 (0) (0);
+                                                affine_conclusion 1 6 => 0 <= (0 - at(statement(17).entry, j));
+                                                conclusion 7;
+                                            }
+                                        } and {
+                                            arithmetic_certificate signed_int32 {
+                                                premise 0: at(statement(17).entry, j) >= at(statement(17).entry, 0) => at(statement(17).entry, j) >= at(statement(17).entry, 0);
+                                                premise 1: at(statement(17).entry, j) < at(statement(17).entry, 1) => at(statement(17).entry, j) < at(statement(17).entry, 1);
+                                                interval_atom (0) (0) (0);
+                                                interval_from_affine 0 (at(statement(17).entry, j)) (0) (2147483647);
+                                                interval_from_affine 1 (at(statement(17).entry, j)) (-2147483648) (0);
+                                                interval_intersect 3, 4 (0) (0);
+                                                interval_subtract 2, 5 2 (0) (0);
+                                                interval_subtract 2, 5 2 (0) (0);
+                                                interval_atom (1) (1) (1);
+                                                interval_add_bounded 7, 8 (1) (1);
+                                                trivial => 0 <= 0;
+                                                affine_conclusion_pair 10 6 9 => (0 - at(statement(17).entry, j)) < ((0 - at(statement(17).entry, j)) + 1);
+                                                conclusion 11;
+                                            }
                                         }
-                                        assumption();
                                     }
+}
                                 }
                             }
                         }
@@ -673,15 +782,48 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                                 at(function.entry, loadable(p[0..3]));
                                             }
                                         } and {
-                                            rewrite(at(statement(17).entry, j) == at(statement(17).entry, 0));
-                                            intro();
-                                            intro();
-                                            intro();
-                                            intro();
-                                            intro();
-                                            intro();
-                                            enumerate();
+                                    both {
+                                                                                    rewrite(at(statement(17).entry, j) == at(statement(17).entry, 0));
+                                                                                    intro();
+                                                                                    intro();
+                                                                                    intro();
+                                                                                    intro();
+                                                                                    intro();
+                                                                                    intro();
+                                                                                    enumerate();
+                                                                                
+                                    } and {
+                                        both {
+                                            arithmetic_certificate signed_int32 {
+                                                premise 0: at(statement(17).entry, j) >= at(statement(17).entry, 0) => at(statement(17).entry, j) >= at(statement(17).entry, 0);
+                                                premise 1: at(statement(17).entry, j) < at(statement(17).entry, 1) => at(statement(17).entry, j) < at(statement(17).entry, 1);
+                                                interval_atom (0) (0) (0);
+                                                interval_from_affine 0 (at(statement(17).entry, j)) (0) (2147483647);
+                                                interval_from_affine 1 (at(statement(17).entry, j)) (-2147483648) (0);
+                                                interval_intersect 3, 4 (0) (0);
+                                                interval_subtract 2, 5 2 (0) (0);
+                                                affine_conclusion 1 6 => 0 <= (0 - at(statement(17).entry, j));
+                                                conclusion 7;
+                                            }
+                                        } and {
+                                            arithmetic_certificate signed_int32 {
+                                                premise 0: at(statement(17).entry, j) >= at(statement(17).entry, 0) => at(statement(17).entry, j) >= at(statement(17).entry, 0);
+                                                premise 1: at(statement(17).entry, j) < at(statement(17).entry, 1) => at(statement(17).entry, j) < at(statement(17).entry, 1);
+                                                interval_atom (0) (0) (0);
+                                                interval_from_affine 0 (at(statement(17).entry, j)) (0) (2147483647);
+                                                interval_from_affine 1 (at(statement(17).entry, j)) (-2147483648) (0);
+                                                interval_intersect 3, 4 (0) (0);
+                                                interval_subtract 2, 5 2 (0) (0);
+                                                interval_subtract 2, 5 2 (0) (0);
+                                                interval_atom (1) (1) (1);
+                                                interval_add_bounded 7, 8 (1) (1);
+                                                trivial => 0 <= 0;
+                                                affine_conclusion_pair 10 6 9 => (0 - at(statement(17).entry, j)) < ((0 - at(statement(17).entry, j)) + 1);
+                                                conclusion 11;
+                                            }
                                         }
+                                    }
+}
                                     }
                                 }
                             }

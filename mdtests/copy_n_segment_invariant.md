@@ -46,6 +46,7 @@ int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 0;
         invariant i <= n;
         invariant forall (k: int32) {

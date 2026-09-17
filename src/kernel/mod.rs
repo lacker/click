@@ -122,7 +122,10 @@ pub(crate) use reasoning::{
     collect_c_value_bitvector_variables, collect_spec_algebraic_expression_bitvector_variables,
     collect_spec_integer_bound_variables, collect_spec_integer_variables,
 };
-pub use termination::c_verified_function_termination_rules;
+pub use termination::{
+    CTerminationRefusal, CTerminationVerdicts, CUnsuitableCallback, c_termination_height_plan,
+    c_verified_function_termination_rules,
+};
 
 /// The bitvector variables one condition fact mentions, including those
 /// inside load pointers and memories. Facts sharing none of these cannot

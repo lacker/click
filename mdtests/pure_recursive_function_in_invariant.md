@@ -27,6 +27,7 @@ int32 count_up(int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 0 and i <= n;
         invariant countdown(n) == countdown(n);
     }

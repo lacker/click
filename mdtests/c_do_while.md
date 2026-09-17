@@ -13,6 +13,12 @@ produced. The invariant is written `i + 1 == 1` rather than `i == 0` because a
 proof after the loop reads the exported invariant facts in the terms the head
 stated them.
 
+The first three proofs carry no loop annotation, so certification executes
+their constant-bound loops to the exit and that execution is their termination
+evidence. `do_while_invariant` summarizes its loop instead, so it declares
+`decreases i;`; the guard `0` means the back edge is never reached, and only
+the measure's nonnegativity is proved.
+
 ```c filename=do_while_count.c
 int32 do_while_count() {
     int32 i = 0;
@@ -83,6 +89,7 @@ int32 do_while_invariant(int32 i) {
     ensures result == 1;
 } by {
     loop {
+        decreases i;
         invariant i + 1 == 1;
     }
     step();

@@ -16,6 +16,10 @@ guard-false exit. `do_break_flag` has both: the `break` leaves with `i == 3`,
 the guard-false exit leaves with `i == 0`, and the post-loop claim reads their
 disjunction.
 
+The measure is `decreases i;`. Both ways out of the body are exits, so the back
+edge is unreachable and only the measure's nonnegativity, which the invariant
+already states, has to be proved.
+
 ```c filename=do_break_flag.c
 int32 do_break_flag(int32 flag) {
     int32 i = 0;
@@ -39,6 +43,7 @@ int32 do_break_flag(int32 flag) {
     step();
     step();
     loop {
+        decreases i;
         invariant i >= 0;
     }
     step();

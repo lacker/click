@@ -4,7 +4,6 @@ use crate::languages::c::compiler_import::PreparedCImport;
 use crate::languages::c::target::CTarget;
 use crate::languages::cpp::{LoweredCppFunction, PreparedCppImport, lower_import};
 use sha2::{Digest, Sha256};
-#[cfg(test)]
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -49,6 +48,32 @@ fn digest_framed_parts<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> [u8; 32
         digest.update(part);
     }
     digest.finalize().into()
+}
+
+thread_local! {
+    static TERMINATION_REQUIRED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Runs `verify` with termination required of every selected C function, not
+/// only of those that declare a `decreases` clause.
+///
+/// This is the migration switch for `issues/termination-required.md` and is
+/// deleted when that rule becomes the default. It scopes the calling thread,
+/// which is the thread that runs the whole-function termination check, and
+/// restores the previous setting when `verify` returns or unwinds.
+pub fn with_termination_required<T>(verify: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TERMINATION_REQUIRED.with(|required| required.set(self.0));
+        }
+    }
+    let _restore = Restore(TERMINATION_REQUIRED.with(|required| required.replace(true)));
+    verify()
+}
+
+fn termination_is_required() -> bool {
+    TERMINATION_REQUIRED.with(Cell::get)
 }
 
 /// Typed input boundary for C verification. The bundle variant preserves the
@@ -2851,6 +2876,10 @@ fn verify_c0_sources_with_context(
                         )));
                     }
                 }
+                // As in `c_function_termination_plans`, a `diverges` function
+                // plans its ranked loops, so the check can tell whether the
+                // marker was needed, but never requests whole-function
+                // termination evidence.
                 if !loop_measures.is_empty() {
                     let executing_name = executing_function_name(
                         &termination_kernel_names,
@@ -2868,7 +2897,9 @@ fn verify_c0_sources_with_context(
                             loop_measures,
                         ));
                     }
-                    requested_termination.insert(function_block.signature.name().to_string());
+                    if !function_block.signature.diverges() {
+                        requested_termination.insert(function_block.signature.name().to_string());
+                    }
                 }
             }
             let checked_propositions = function_verified
@@ -3006,6 +3037,7 @@ fn verify_c0_sources_with_context(
         check_verification_deadline()?;
     }
 
+    let assumed_unselected_names = unselected_function_names.clone().unwrap_or_default();
     if let Some(unselected) = unselected_function_names {
         for function_name in unselected {
             function_environment = function_environment
@@ -3014,24 +3046,118 @@ fn verify_c0_sources_with_context(
         }
     }
     let partial_rules = function_environment.verified_function_rules();
-    let inline_bodies = function_environment.inline_body_functions();
-    let termination_rules = c_verified_function_termination_rules(
+    let inline_bodies = function_environment.linked_functions();
+    // Heights are a proposal the kernel checks at every call site. A callee
+    // outside the verified set is an assumption, as its postconditions are:
+    // an external contract always, and an unselected function once every
+    // function owes termination evidence to the run that does select it.
+    let termination_heights = c_termination_height_plan(&partial_rules, &inline_bodies);
+    let declared_diverging = external_and_user_function_blocks
+        .iter()
+        .filter(|function| function.signature().diverges())
+        .map(|function| {
+            executing_function_name(&termination_kernel_names, function.signature().name())
+        })
+        .collect::<BTreeSet<_>>();
+    let assumed_terminating = external_and_user_function_blocks
+        .iter()
+        .filter(|function| function.is_external())
+        .map(|function| function.signature().name())
+        .chain(
+            assumed_unselected_names
+                .iter()
+                .filter(|_| termination_is_required())
+                .map(String::as_str),
+        )
+        .map(|name| executing_function_name(&termination_kernel_names, name))
+        .filter(|name| !declared_diverging.contains(name))
+        .collect::<BTreeSet<_>>();
+    let CTerminationVerdicts {
+        rules: termination_rules,
+        refusals: termination_refusals,
+        unjustified_diverging,
+        unsuitable_callbacks,
+    } = c_verified_function_termination_rules(
         &partial_rules,
         &termination_plans,
         &termination_loop_rules,
         &inline_bodies,
+        &termination_heights,
+        &assumed_terminating,
+        &declared_diverging,
     )
     .map_err(|error| ClickError::new(format!("could not certify C termination: {error}")))?;
-    for name in &requested_termination {
-        let executing_name = executing_function_name(&termination_kernel_names, name);
-        if !termination_rules
-            .iter()
-            .any(|rule| rule.function_name() == executing_name)
-        {
-            return Err(ClickError::new(format!(
-                "could not certify termination for `{name}`: every reachable loop, recursive cycle, and callee must have a checked ranking proof"
-            )));
-        }
+    // An `extern` contract has no body to answer for its marker: the
+    // declaration is the whole of what is known about it.
+    let extern_names = external_and_user_function_blocks
+        .iter()
+        .filter(|function| function.is_external())
+        .map(|function| {
+            executing_function_name(&termination_kernel_names, function.signature().name())
+        })
+        .collect::<BTreeSet<_>>();
+    if let Some(name) = unjustified_diverging
+        .iter()
+        .find(|name| !extern_names.contains(*name))
+    {
+        let name = name.split_once('#').map_or(name.as_str(), |(name, _)| name);
+        return Err(ClickError::new(format!(
+            "`{name}` is declared `diverges`, but every loop it runs is ranked and every call it makes descends; remove the marker"
+        )));
+    }
+    // A function whose address is taken may be reached through any function
+    // pointer, so it must return without going through one itself; otherwise
+    // no pointer call in the run is known to return. Once every function owes
+    // termination that is an error where the address is taken, and it names
+    // what the callback lacks.
+    if termination_is_required()
+        && let Some(unsuitable) = unsuitable_callbacks.first()
+    {
+        let spelling = |name: &str| {
+            name.split_once('#')
+                .map_or(name, |(name, _)| name)
+                .to_string()
+        };
+        let taker = spelling(&unsuitable.taker);
+        let callback = spelling(&unsuitable.callback);
+        let lacks = match termination_refusals.get(&unsuitable.callback) {
+            Some(refusal) => termination_refusal_report(
+                &callback,
+                refusal,
+                &termination_refusals,
+                &declared_diverging,
+                None,
+            ),
+            None => "it has no termination evidence".to_string(),
+        };
+        return Err(ClickError::new(format!(
+            "could not certify termination for `{taker}`: it takes the address of `{callback}`, and a function reached through a function pointer must return without calling through one: {lacks}"
+        )));
+    }
+    // A caller refused for its callee is a consequence, so a function refused
+    // for a defect of its own is reported first when the run has one.
+    let refused = requested_termination
+        .iter()
+        .filter_map(|name| {
+            let executing_name = executing_function_name(&termination_kernel_names, name);
+            Some((name, termination_refusals.get(&executing_name)?))
+        })
+        .collect::<Vec<_>>();
+    if let Some((name, refusal)) = refused
+        .iter()
+        .find(|(_, refusal)| !matches!(refusal, CTerminationRefusal::Callee { .. }))
+        .or(refused.first())
+    {
+        return Err(ClickError::new(format!(
+            "could not certify termination for `{name}`: {}",
+            termination_refusal_report(
+                name,
+                refusal,
+                &termination_refusals,
+                &declared_diverging,
+                unsuitable_callbacks.first(),
+            )
+        )));
     }
     function_environment =
         function_environment.with_verified_function_termination_rules(termination_rules);
@@ -3718,6 +3844,79 @@ pub(in crate::surface) fn c0_statement_calls(
     calls
 }
 
+/// Words one termination refusal for the function `name`. A refused callee
+/// is named by its source spelling and followed to the defect that refused
+/// it, so the report ends at something the user can repair, with the repairs
+/// the function that owns the defect has.
+fn termination_refusal_report(
+    name: &str,
+    refusal: &CTerminationRefusal,
+    refusals: &BTreeMap<String, CTerminationRefusal>,
+    declared_diverging: &BTreeSet<String>,
+    unsuitable_callback: Option<&CUnsuitableCallback>,
+) -> String {
+    let spelling = |name: &str| {
+        name.split_once('#')
+            .map_or(name, |(name, _)| name)
+            .to_string()
+    };
+    let mut report = String::new();
+    let mut visited = BTreeSet::new();
+    let mut owner = name.to_string();
+    let mut current = refusal;
+    loop {
+        let callee = match current {
+            CTerminationRefusal::Callee { callee } => callee,
+            CTerminationRefusal::UnmeasuredRecursion { callee } => {
+                let shown = CTerminationRefusal::UnmeasuredRecursion {
+                    callee: spelling(callee),
+                };
+                report.push_str(&format!(
+                    "{shown}; rank it with function-level `decreases` clauses, or declare `{owner}` `diverges`"
+                ));
+                return report;
+            }
+            CTerminationRefusal::UnrankedLoop { .. } => {
+                report.push_str(&format!(
+                    "{current}; give it one, or mark it `loop diverges` and declare `{owner}` `diverges`"
+                ));
+                return report;
+            }
+            CTerminationRefusal::IndirectCall { .. } => {
+                report.push_str(&current.to_string());
+                if let Some(unsuitable) = unsuitable_callback {
+                    report.push_str(&format!(
+                        "; a call through a function pointer returns only when every function whose address is taken returns without calling through one, and `{}` takes the address of `{}`, which does not",
+                        spelling(&unsuitable.taker),
+                        spelling(&unsuitable.callback)
+                    ));
+                }
+                return report;
+            }
+            CTerminationRefusal::DeclaredDiverging => {
+                report.push_str(&current.to_string());
+                return report;
+            }
+        };
+        let shown = CTerminationRefusal::Callee {
+            callee: spelling(callee),
+        };
+        report.push_str(&shown.to_string());
+        if declared_diverging.contains(callee) {
+            report.push_str(&format!(
+                ": it is declared `diverges`; declare `{owner}` `diverges` too"
+            ));
+            return report;
+        }
+        let Some(next) = refusals.get(callee).filter(|_| visited.insert(callee)) else {
+            return report;
+        };
+        report.push_str(": ");
+        owner = spelling(callee);
+        current = next;
+    }
+}
+
 pub(in crate::surface) fn termination_measure_name(
     expression: &ContractExpression,
     context: &str,
@@ -4018,8 +4217,18 @@ pub(in crate::surface) fn c_function_termination_plans(
         // calls, so planning an unselected function's loops would fail
         // certification for a loop rule this run was never going to build.
         // A whole-file run selects everything, so nothing is dropped there.
-        if selected && (recursive_measure.is_some() || !loop_measures.is_empty()) {
+        // A `diverges` function declares that it may not return, so it never
+        // asks for whole-function termination evidence. It still plans its
+        // ranked loops, which lets the check say whether the marker was
+        // needed.
+        let requests = selected && !function.signature().diverges();
+        if requests && termination_is_required() {
             requested.insert(function.signature().name().to_string());
+        }
+        if selected && (recursive_measure.is_some() || !loop_measures.is_empty()) {
+            if requests {
+                requested.insert(function.signature().name().to_string());
+            }
             plans.push(c_function_termination_plan(
                 executing_function_name(executing_names, function.signature().name()),
                 recursive_measure,

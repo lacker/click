@@ -35,6 +35,7 @@ void loop_views_clause_writes_nothing(int32 p[], int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 0 and i <= n;
     }
     step();

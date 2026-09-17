@@ -30,6 +30,7 @@ int32 fill_tail_old_prefix_segment(int32 p[], int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 1 and i <= n;
         invariant forall (k: int32) {
             0 <= k and k < 1 implies p[k] == old(p[k])

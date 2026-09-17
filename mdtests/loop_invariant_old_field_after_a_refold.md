@@ -83,6 +83,9 @@ int walk(struct node* n) {
             step();
             loop {
                 owns t: tree_at(n);
+                decreases 1 - i;
+                invariant i >= 0;
+                invariant i <= 1;
                 invariant t.model == old(t.model);
             }
             execute();

@@ -29,6 +29,7 @@ int32 fill_n_symbolic_pointer_loop(int32 p[], int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 0;
         invariant i <= n;
     }

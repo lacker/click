@@ -40,6 +40,7 @@ int32 count_down(int32 n) {
     step();
     step();
     loop {
+        decreases i;
         invariant i >= 0;
 
         initialize by simp;

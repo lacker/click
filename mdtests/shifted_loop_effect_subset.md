@@ -30,6 +30,7 @@ int32 shifted_loop_effect_subset(int32 p[], int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 1;
         invariant i <= n;
         owns (p + 1)[0..n - 1];

@@ -1,7 +1,9 @@
-# recursive C contracts remain partial without decreases
+# recursive C contracts remain partial under `diverges`
 
-This function may recurse forever. Its contract still proves only what is true
-if a call returns.
+This function may recurse forever: the recursive call passes `n` unchanged, so
+nothing descends. `diverges` is the honest spelling of that, and the contract
+still proves only what is true if a call returns. No `decreases` clause could
+be written here, because there is no measure to write.
 
 ```c filename=c_partial_without_decreases.c
 int32 stuck(int32 n) {
@@ -17,7 +19,7 @@ int32 stuck(int32 n) {
 ```click
 verifying "c_partial_without_decreases.c";
 
-int32 stuck(int32 n) {
+int32 stuck(int32 n) diverges {
     ensures result == 0 by auto;
 }
 ```

@@ -34,6 +34,7 @@ int spin(int n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 0;
         invariant i <= n;
 

@@ -30,6 +30,7 @@ int32 probe_fill(int32 p[], int32 lo, int32 hi, int32 v) {
     step();
     step();
     loop as fill {
+        decreases hi - i;
         invariant lo <= i and i <= hi;
         invariant forall (k: int32) { lo <= k and k < i implies p[k] == v };
 
@@ -44,6 +45,24 @@ int32 probe_fill(int32 p[], int32 lo, int32 hi, int32 v) {
             }
         }
         preserve by {
+            have 0 <= i by {
+                extract(0 <= lo);
+                extract(lo <= i);
+                apply(int32_le_transitive(0, lo, i)) using { 0 <= lo; lo <= i; }
+            }
+            have 0 <= hi by {
+                extract(0 <= lo);
+                extract(lo <= hi);
+                apply(int32_le_transitive(0, lo, hi)) using { 0 <= lo; lo <= hi; }
+            }
+            have 0 <= hi - i - 1 by {
+                extract(hi <= 1000);
+                arithmetic() using { i < hi; 0 <= i; 0 <= hi; hi <= 1000; }
+            }
+            have hi - i - 1 < hi - i by {
+                extract(hi <= 1000);
+                arithmetic() using { i < hi; 0 <= i; 0 <= hi; hi <= 1000; }
+            }
             step();
             step();
             simp();

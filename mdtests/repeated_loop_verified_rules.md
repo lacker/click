@@ -31,11 +31,13 @@ int32 repeated_loop(int32 n) {
     step();
     step();
     loop {
+        decreases 3 - i;
         invariant i >= 0;
         invariant i <= 3;
     }
     step();
     loop {
+        decreases 3 - i;
         invariant i >= 0;
         invariant i <= 3;
     }
