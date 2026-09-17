@@ -151,6 +151,10 @@ unsigned long spin_over_the_binding(struct node* p, int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

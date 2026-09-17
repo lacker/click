@@ -46,6 +46,10 @@ int32 probe_fill(int32 p[], int32 lo, int32 hi, int32 v) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

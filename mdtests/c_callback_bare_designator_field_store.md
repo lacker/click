@@ -44,6 +44,10 @@ int32 caller() {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

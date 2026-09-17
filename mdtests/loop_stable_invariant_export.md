@@ -53,6 +53,10 @@ int32 fill_tail(int32 p[], int32 n, int32 untouched[]) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

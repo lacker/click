@@ -177,6 +177,10 @@ int32 stop_at_automatically(int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

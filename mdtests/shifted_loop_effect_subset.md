@@ -39,6 +39,10 @@ int32 shifted_loop_effect_subset(int32 p[], int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

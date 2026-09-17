@@ -69,6 +69,10 @@ int32 check_update(int32 (*callback)(int32*, int32), int32* cell, int32 value) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

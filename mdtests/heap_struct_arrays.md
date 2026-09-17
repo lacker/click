@@ -139,6 +139,10 @@ int32 struct_pointer_stride() {
 }
 ```
 
+```termination
+pending: callee
+```
+
 ```expect
 pass
 ```

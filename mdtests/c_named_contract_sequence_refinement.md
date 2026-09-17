@@ -59,6 +59,10 @@ void caller(int32* cells) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

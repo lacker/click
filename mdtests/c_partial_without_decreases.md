@@ -22,6 +22,10 @@ int32 stuck(int32 n) {
 }
 ```
 
+```termination
+pending: unmeasured recursion
+```
+
 ```expect
 pass
 ```

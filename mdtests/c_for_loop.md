@@ -104,6 +104,10 @@ int32 for_continue_nested() {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

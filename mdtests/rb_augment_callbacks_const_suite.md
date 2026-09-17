@@ -161,6 +161,10 @@ theorem dummy_copy_contract() { ensures Copy(&dummy_copy) by { unfold(Copy); sim
 theorem dummy_rotate_contract() { ensures Rotate(&dummy_rotate) by { unfold(Rotate); simp(); } }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

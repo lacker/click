@@ -24,6 +24,10 @@ int32 invoke(int32 (*callback)(int32*), int32* cell) {
 } by { step(Buffered); execute(); simp(); }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

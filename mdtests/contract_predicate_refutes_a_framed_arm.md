@@ -95,6 +95,10 @@ void probe(struct cell* node, struct cell* other, int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

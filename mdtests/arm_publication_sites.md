@@ -248,6 +248,10 @@ void guard_conjunct(struct cell* node, int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

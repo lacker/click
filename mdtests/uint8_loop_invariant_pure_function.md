@@ -40,6 +40,10 @@ uint8 fill_byte_tail(uint8 p[], int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

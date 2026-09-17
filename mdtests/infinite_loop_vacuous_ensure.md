@@ -24,6 +24,10 @@ int32 spin_with_postcondition() {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

@@ -47,6 +47,10 @@ int32 stop_now() {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

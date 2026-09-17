@@ -248,6 +248,10 @@ int32 bubble_sort3_loop_permutation(int32 p[3]) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

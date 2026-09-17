@@ -48,6 +48,10 @@ int32 nested_loop_preserve() {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

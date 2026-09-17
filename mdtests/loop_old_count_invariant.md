@@ -45,6 +45,10 @@ int32 loop_old_count_invariant(int32 p[3]) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

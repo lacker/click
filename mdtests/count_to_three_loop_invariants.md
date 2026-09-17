@@ -33,6 +33,10 @@ int32 count_to_three() {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

@@ -78,6 +78,10 @@ int32 symbolic_borrowed_subrange_caller(
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

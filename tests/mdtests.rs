@@ -2,11 +2,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use click::cli::{
-    CInput, MdTestExpectation, prepare_mdtest_inputs, read_click_project, read_mdtest,
-    run_parallel, source_refs,
+    CInput, MdTestExpectation, RequiredRun, prepare_mdtest_inputs, read_click_project, read_mdtest,
+    run_parallel, source_refs, termination_pending_verdict,
 };
 use click::instrumentation::{self, ContractFallback};
-use click::surface::{verify_c0_project, verify_c0_sources, verify_cpp_prepared_project};
+use click::surface::{self, verify_c0_project, verify_c0_sources, verify_cpp_prepared_project};
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
@@ -159,42 +159,86 @@ fn run_mdtest(path: &Path) -> Result<(), String> {
         .ok_or_else(|| format!("`{}` is missing a ```expect block", path.display()))?;
 
     let has_imports = click_source.contains("import \"");
-    let result = match &inputs {
-        CInput::Bundle(sources) if has_imports => {
-            let project = read_click_project(path, click_source)?;
-            verify_c0_project(&project, &source_refs(sources))
-        }
-        CInput::Bundle(sources) => verify_c0_sources(click_source, &source_refs(sources)),
-        CInput::PreparedCpp(import) => {
-            let project = read_click_project(path, click_source)?;
-            verify_cpp_prepared_project(&project, import)
-        }
+    let project = match &inputs {
+        CInput::Bundle(_) if !has_imports => None,
         CInput::Prepared(_) => unreachable!("mdtests have no C compiler-import fence"),
+        _ => Some(read_click_project(path, click_source)?),
     };
+    let verify = || -> Result<(), String> {
+        match (&inputs, &project) {
+            (CInput::Bundle(sources), Some(project)) => {
+                verify_c0_project(project, &source_refs(sources)).map(|_| ())
+            }
+            (CInput::Bundle(sources), None) => {
+                verify_c0_sources(click_source, &source_refs(sources)).map(|_| ())
+            }
+            (CInput::PreparedCpp(import), Some(project)) => {
+                verify_cpp_prepared_project(project, import).map(|_| ())
+            }
+            (CInput::PreparedCpp(_), None) | (CInput::Prepared(_), _) => {
+                unreachable!("every prepared mdtest input reads a Click project")
+            }
+        }
+        .map_err(|error| error.message().to_string())
+    };
+
+    // Every mdtest is held to the termination rule unless it says it is
+    // pending, so a new test is written against the new rule from the day it
+    // lands (`issues/termination-required.md`).
+    let Some(pending) = mdtest.termination_pending else {
+        return check_expectation(
+            path,
+            expectation,
+            surface::with_termination_required(verify),
+        );
+    };
+    check_expectation(path, expectation, verify())?;
+    // The pending run is a migration check, not part of the corpus the
+    // instrumentation baselines above describe, so it contributes no counts.
+    let required =
+        instrumentation::without_body_rerun_census(|| surface::with_termination_required(verify));
+    let outcome = match (expectation, &required) {
+        (MdTestExpectation::Pass, Ok(())) => RequiredRun::Satisfied,
+        (MdTestExpectation::FailContains(expected), Err(message)) if message.contains(expected) => {
+            RequiredRun::Satisfied
+        }
+        (_, Err(message)) => RequiredRun::Unsatisfied(message),
+        (MdTestExpectation::FailContains(_), Ok(())) => {
+            RequiredRun::Unsatisfied("verification passed")
+        }
+    };
+    termination_pending_verdict(
+        &path.display().to_string(),
+        "```termination block",
+        Some(pending),
+        outcome,
+    )
+}
+
+fn check_expectation(
+    path: &Path,
+    expectation: &MdTestExpectation,
+    result: Result<(), String>,
+) -> Result<(), String> {
     match (expectation, result) {
-        (MdTestExpectation::Pass, Ok(_)) => {}
-        (MdTestExpectation::Pass, Err(error)) => {
-            return Err(format!(
-                "`{}` expected pass, but failed: {}",
-                path.display(),
-                error.message()
-            ));
-        }
-        (MdTestExpectation::FailContains(expected), Ok(_)) => {
-            return Err(format!(
-                "`{}` expected failure containing `{expected}`, but passed",
-                path.display()
-            ));
-        }
-        (MdTestExpectation::FailContains(expected), Err(error)) => {
-            if !error.message().contains(expected) {
-                return Err(format!(
-                    "`{}` expected failure containing `{expected}`, got `{}`",
-                    path.display(),
-                    error.message()
-                ));
+        (MdTestExpectation::Pass, Ok(())) => Ok(()),
+        (MdTestExpectation::Pass, Err(message)) => Err(format!(
+            "`{}` expected pass, but failed: {message}",
+            path.display()
+        )),
+        (MdTestExpectation::FailContains(expected), Ok(())) => Err(format!(
+            "`{}` expected failure containing `{expected}`, but passed",
+            path.display()
+        )),
+        (MdTestExpectation::FailContains(expected), Err(message)) => {
+            if message.contains(expected) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "`{}` expected failure containing `{expected}`, got `{message}`",
+                    path.display()
+                ))
             }
         }
     }
-    Ok(())
 }

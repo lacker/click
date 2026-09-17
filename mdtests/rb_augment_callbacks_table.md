@@ -147,6 +147,10 @@ void erase_dummy(struct node* node, struct node* parent) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

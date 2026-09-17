@@ -38,6 +38,10 @@ int32 odd(int32 n) {
 }
 ```
 
+```termination
+pending: unmeasured recursion
+```
+
 ```expect
 pass
 ```

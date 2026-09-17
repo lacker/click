@@ -81,6 +81,10 @@ int32 guarded_pair_caller(int32* first, int32* spare) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

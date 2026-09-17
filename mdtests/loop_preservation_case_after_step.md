@@ -41,6 +41,10 @@ int32 count_once(int32 flag) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

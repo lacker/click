@@ -35,6 +35,10 @@ int32 loop_quantified_memory_invariant(int32 p[], int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

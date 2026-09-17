@@ -71,6 +71,10 @@ void abstract_contract_refinement_caller(
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

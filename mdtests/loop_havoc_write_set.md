@@ -39,6 +39,10 @@ int32 loop_havoc_write_set(int32 p[], int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

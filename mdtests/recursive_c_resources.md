@@ -44,6 +44,10 @@ int32 list_zero(struct node* node) {
 }
 ```
 
+```termination
+pending: unmeasured recursion
+```
+
 ```expect
 pass
 ```

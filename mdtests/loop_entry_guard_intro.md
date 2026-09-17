@@ -58,6 +58,10 @@ int32 loop_entry_guard_intro(int32 p[3]) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

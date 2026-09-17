@@ -27,6 +27,10 @@ int32 stop_at_three() {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

@@ -26,6 +26,10 @@ void invoke(void (*callback)(int32*), int32* data) {
 } by { apply(lift(callback)); step(Buffered); execute(); simp(); }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

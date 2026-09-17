@@ -52,6 +52,10 @@ int32 borrowed_subrange_caller(int32* cells) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

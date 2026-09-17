@@ -32,6 +32,10 @@ int32 count_to_three_loop_immutable() {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

@@ -29,6 +29,10 @@ int32 invoke(void (*callback)(int32*, int32), int32* data, int32 count) {
 } by { if count == 0 { step(Buffered); execute(); simp(); } else { step(Buffered); execute(); simp(); } }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

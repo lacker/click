@@ -302,6 +302,10 @@ int32 copy3(int32 dst[3], int32 src[3]) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

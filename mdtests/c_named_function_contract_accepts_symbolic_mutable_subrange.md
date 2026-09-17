@@ -88,6 +88,10 @@ void symbolic_footprint_caller(int32* cells, int32 index, int32 length) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

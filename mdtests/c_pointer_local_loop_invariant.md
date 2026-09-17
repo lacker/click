@@ -51,6 +51,10 @@ int32 last_element(int32 arr[], int32 n, int32 cap) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

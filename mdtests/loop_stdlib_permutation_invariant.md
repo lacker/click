@@ -45,6 +45,10 @@ int32 loop_stdlib_permutation_invariant(int32 p[3]) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

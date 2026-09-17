@@ -90,6 +90,10 @@ void paint(struct node* p, int32 flag) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

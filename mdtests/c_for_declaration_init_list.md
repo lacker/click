@@ -21,6 +21,10 @@ int32 for_declaration_init_list() {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

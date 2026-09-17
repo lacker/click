@@ -91,6 +91,10 @@ int32 do_while_invariant(int32 i) {
 
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

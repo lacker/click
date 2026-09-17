@@ -54,6 +54,10 @@ int32 loop_explicit_initialize_and_preserve(int32 x) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

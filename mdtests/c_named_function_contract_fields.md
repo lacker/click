@@ -71,6 +71,10 @@ int32 use_callbacks(struct callback_table* table, int32 left, int32 right) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

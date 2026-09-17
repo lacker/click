@@ -54,6 +54,10 @@ void borrow_then_write(int32* cells) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

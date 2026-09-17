@@ -45,6 +45,10 @@ int32 loop_owns_preserves_symbolic_index(int32 p[], int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

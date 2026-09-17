@@ -51,6 +51,10 @@ int spin(int n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

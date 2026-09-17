@@ -69,6 +69,10 @@ int32 probe_contract(struct job *j) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

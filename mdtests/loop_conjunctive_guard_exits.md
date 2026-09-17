@@ -102,6 +102,10 @@ int32 either(int32 a, int32 b) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

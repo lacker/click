@@ -73,6 +73,10 @@ int32 spin(struct cell* node, int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

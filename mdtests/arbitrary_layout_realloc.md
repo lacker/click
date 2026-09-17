@@ -58,6 +58,10 @@ int32 arbitrary_struct_realloc() {
 }
 ```
 
+```termination
+pending: callee
+```
+
 ```expect
 pass
 ```

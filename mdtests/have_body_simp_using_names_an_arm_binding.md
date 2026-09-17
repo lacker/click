@@ -137,6 +137,10 @@ unsigned long spin(struct node* p, int n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

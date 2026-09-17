@@ -92,6 +92,10 @@ int walk(struct node* n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

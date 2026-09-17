@@ -42,6 +42,10 @@ void loop_views_clause_writes_nothing(int32 p[], int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

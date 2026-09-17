@@ -58,6 +58,10 @@ int32 uses_exit_disjunction(int32 a, int32* p) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

@@ -45,6 +45,10 @@ int32 shifted_copy_effect_uses_covering_separate(int32 dst[], int32 src[], int32
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

@@ -116,6 +116,10 @@ struct tree_node* maybe_swap(struct tree_node* root, int flag) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

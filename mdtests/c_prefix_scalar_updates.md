@@ -22,6 +22,10 @@ int32 prefix_scalar_updates() {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

@@ -28,6 +28,10 @@ uint8 realloc_preserves_calloc_uint8_prefix() {
 }
 ```
 
+```termination
+pending: callee
+```
+
 ```expect
 pass
 ```

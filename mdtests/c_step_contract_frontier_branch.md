@@ -25,6 +25,10 @@ void invoke(void (*callback)(int32*), int32* cell, int32 active) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

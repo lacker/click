@@ -68,6 +68,10 @@ void framed_resource_caller(int32* cells) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

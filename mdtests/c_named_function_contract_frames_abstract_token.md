@@ -65,6 +65,10 @@ int32 framed_token_caller(int32 key, int32 spare) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

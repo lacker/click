@@ -66,6 +66,10 @@ void concrete_caller(int32* state) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

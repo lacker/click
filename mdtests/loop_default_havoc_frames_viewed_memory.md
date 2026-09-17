@@ -40,6 +40,10 @@ void loop_default_havoc_frames_viewed_memory(int32 p[], int32 r[], int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

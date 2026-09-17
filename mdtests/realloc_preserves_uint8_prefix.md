@@ -33,6 +33,10 @@ uint8 realloc_preserves_uint8_prefix(int32 count, int32 new_count) {
 }
 ```
 
+```termination
+pending: callee
+```
+
 ```expect
 pass
 ```

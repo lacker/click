@@ -76,6 +76,10 @@ int32* read_acquired(int32* (*acquire)(), int32* value) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

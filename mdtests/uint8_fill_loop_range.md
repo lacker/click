@@ -36,6 +36,10 @@ int32 fill_bytes(uint8 buf[], int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

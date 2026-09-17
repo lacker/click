@@ -46,6 +46,10 @@ int32 do_break_flag(int32 flag) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

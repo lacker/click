@@ -66,6 +66,10 @@ int32 loop_static_havoc(int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

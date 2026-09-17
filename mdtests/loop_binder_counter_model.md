@@ -60,6 +60,10 @@ void bump_n(struct cell* p, int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

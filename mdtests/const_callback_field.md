@@ -16,6 +16,10 @@ const int *view(const int *p) { ensures result == p; } by { execute(); simp(); }
 int read_view(struct reader *r, const int *p) { owns object(r); views p[0..1]; ensures result == old(p[0]); } by { execute(); simp(); }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

@@ -62,6 +62,10 @@ int32 invoke_consumer(
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

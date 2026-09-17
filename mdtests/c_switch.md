@@ -74,6 +74,10 @@ int32 switch_loop_control() {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

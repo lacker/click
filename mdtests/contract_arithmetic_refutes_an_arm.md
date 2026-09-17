@@ -85,6 +85,10 @@ void from_invariant(struct box* b, int32 count) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

@@ -96,6 +96,10 @@ void refinement_theorem_caller(int32* cell) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

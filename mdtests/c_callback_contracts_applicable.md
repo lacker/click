@@ -16,6 +16,10 @@ int32 invoke(int32 (*callback)(int32), int32 x) {
 } by { execute(); simp(); }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

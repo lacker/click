@@ -47,6 +47,10 @@ int32 fill3_array_loop(int32 p[3]) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

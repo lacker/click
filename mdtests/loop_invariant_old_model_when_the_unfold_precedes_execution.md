@@ -72,6 +72,10 @@ int spin(struct cell* node, struct cell* other, int n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

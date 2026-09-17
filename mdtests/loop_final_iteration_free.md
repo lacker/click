@@ -44,6 +44,10 @@ int32 loop_final_iteration_free(int32* data) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

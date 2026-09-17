@@ -65,6 +65,10 @@ void predicate_refinement_caller(int32* cell) {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

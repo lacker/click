@@ -56,6 +56,10 @@ void loop_owns_composite_resource(struct cell* node, int32 q[], int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

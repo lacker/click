@@ -1583,7 +1583,33 @@ fn body_rerun_census() -> std::sync::MutexGuard<'static, BodyRerunCensus> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+thread_local! {
+    static BODY_RERUN_CENSUS_DISABLED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+struct BodyRerunCensusDisabledGuard;
+
+impl Drop for BodyRerunCensusDisabledGuard {
+    fn drop(&mut self) {
+        BODY_RERUN_CENSUS_DISABLED.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+/// Runs `operation` without counting the body reruns it causes.
+///
+/// The termination ratchet in the fixture gates verifies a pending fixture a
+/// second time. That extra run is a migration check, not part of the corpus
+/// the pinned baselines describe, so it must not move the census.
+pub fn without_body_rerun_census<R>(operation: impl FnOnce() -> R) -> R {
+    BODY_RERUN_CENSUS_DISABLED.with(|depth| depth.set(depth.get() + 1));
+    let _guard = BodyRerunCensusDisabledGuard;
+    operation()
+}
+
 pub fn record_contract_fallback(cause: ContractFallback) {
+    if BODY_RERUN_CENSUS_DISABLED.with(|depth| depth.get() > 0) {
+        return;
+    }
     *body_rerun_census().entry(cause).or_default() += 1;
 }
 

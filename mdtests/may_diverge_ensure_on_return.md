@@ -41,6 +41,10 @@ int32 call_wait(int32 flag[]) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

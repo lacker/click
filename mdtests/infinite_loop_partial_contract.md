@@ -29,6 +29,10 @@ int32 spin() {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

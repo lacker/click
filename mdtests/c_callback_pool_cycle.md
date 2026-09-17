@@ -63,6 +63,10 @@ void cycle(int32* (*acquire)(int32*), void (*release)(int32*, int32*), int32* po
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

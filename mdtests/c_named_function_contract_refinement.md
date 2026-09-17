@@ -57,6 +57,10 @@ int32 refining_step_caller() {
 }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```

@@ -39,6 +39,10 @@ int32 count() { ensures result == 3; } by {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

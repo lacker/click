@@ -101,6 +101,10 @@ int32 fill_two(int32 p[], int32 q[], int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

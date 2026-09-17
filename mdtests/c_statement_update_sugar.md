@@ -63,6 +63,10 @@ int32 symbolic_statement_update(int32 x) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

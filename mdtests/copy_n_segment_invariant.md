@@ -129,6 +129,10 @@ int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

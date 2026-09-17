@@ -40,6 +40,10 @@ int32 fill_tail_old_prefix_segment(int32 p[], int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

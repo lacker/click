@@ -362,6 +362,10 @@ int32 sum(int32 a[], int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

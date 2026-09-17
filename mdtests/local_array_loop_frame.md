@@ -34,6 +34,10 @@ int32 local_array_loop_frame() {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

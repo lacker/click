@@ -56,6 +56,10 @@ int32 bubble_pass3(int32 p[3]) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

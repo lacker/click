@@ -57,6 +57,10 @@ int32 count_down(int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

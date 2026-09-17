@@ -44,6 +44,10 @@ int32 repeated_loop(int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

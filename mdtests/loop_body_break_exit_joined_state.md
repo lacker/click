@@ -57,6 +57,10 @@ int32 assign_then_break(int32 n) {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

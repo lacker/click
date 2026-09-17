@@ -46,6 +46,10 @@ int32 later_loop_preserve() {
 }
 ```
 
+```termination
+pending: unranked loop
+```
+
 ```expect
 pass
 ```

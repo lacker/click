@@ -31,6 +31,10 @@ int32 apply(int32 (*callback)(int32), int32 value) {
 } by { execute(); simp(); }
 ```
 
+```termination
+pending: indirect call
+```
+
 ```expect
 pass
 ```
