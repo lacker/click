@@ -1728,8 +1728,32 @@ fn loop_at_index<'a>(
         CStatement::Switch { cases, .. } => cases
             .iter()
             .find_map(|case| loop_at_index(&case.body, target, next_index)),
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => loop_at_index(try_body, target, next_index)
+            .or_else(|| loop_at_index(handler, target, next_index)),
         CStatement::ContinueWithStep { step } => loop_at_index(step, target, next_index),
-        _ => None,
+        // Spelled out, as in `check_loops`: the two walks number the same
+        // loops only while they descend into the same statements, so a new
+        // statement kind must be placed in both.
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Goto { .. }
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
+        | CStatement::Assign { .. }
+        | CStatement::CallAssign { .. }
+        | CStatement::Call { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Throw(_)
+        | CStatement::Return(_)
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. }
+        | CStatement::Update { .. } => None,
     }
 }
 
@@ -3048,6 +3072,117 @@ mod local_descent_tests {
                 callee: "spins".to_string()
             }
         );
+    }
+
+    /// A measured member of a cycle is locally sound, and still owes its
+    /// verdict to the member it calls. When that member is refused for a loop
+    /// of its own, the evidence already granted at this height is withdrawn,
+    /// whichever of the two the level happened to visit first.
+    #[test]
+    fn a_refused_cycle_member_withdraws_the_measured_member_that_calls_it() {
+        // `void NAME(int32 n) { if (n > 0) { CALLEE(n - 1); } LOOPS }`
+        let countdown = |name: &str, callee: &str, loops: usize| {
+            let mut body = crate::kernel::c_if(
+                crate::kernel::c_greater_than(
+                    crate::kernel::c_variable("n"),
+                    crate::kernel::c_int32_literal(0),
+                ),
+                crate::kernel::c_call(
+                    callee,
+                    vec![crate::kernel::c_subtract(
+                        crate::kernel::c_variable("n"),
+                        crate::kernel::c_int32_literal(1),
+                    )],
+                ),
+                CStatement::Skip,
+            );
+            for _ in 0..loops {
+                body = CStatement::Seq(
+                    Arc::new(body),
+                    Arc::new(crate::kernel::c_while(
+                        crate::kernel::c_int32_literal(1),
+                        Vec::new(),
+                        CStatement::Skip,
+                    )),
+                );
+            }
+            CVerifiedFunctionRule {
+                function: CFunction::new(
+                    CType::Void,
+                    name,
+                    vec![crate::kernel::c_parameter("n", CType::Int32)],
+                    body,
+                ),
+            }
+        };
+        let measured = |name: &str| CFunctionTerminationPlan {
+            function_name: name.to_string(),
+            recursive_measure: Some(CFunctionTerminationMeasure::NumericParameter(0)),
+            loop_measures: BTreeMap::new(),
+        };
+        // Both visiting orders: the refused member sorts first, then last.
+        for (sound, spins) in [("ping", "a_spins"), ("ping", "z_spins")] {
+            let rules = [countdown(sound, spins, 0), countdown(spins, sound, 1)];
+            let plan = c_termination_height_plan(&rules, &[]);
+            let verdicts = check(&rules, &[measured(sound), measured(spins)], &plan, &[])
+                .expect("both recursive edges descend");
+            assert!(terminating(&verdicts).is_empty(), "{verdicts:?}");
+            assert_eq!(
+                verdicts.refusals[spins],
+                CTerminationRefusal::UnrankedLoop { index: 0 }
+            );
+            assert_eq!(
+                verdicts.refusals[sound],
+                CTerminationRefusal::Callee {
+                    callee: spins.to_string()
+                }
+            );
+        }
+    }
+
+    /// `loop_at_index` had no arm for a try/catch, so it neither found a loop
+    /// inside one nor counted past it, while `check_loops` numbers those
+    /// loops. An index then named different source loops in the two walks.
+    #[test]
+    fn loop_lookup_numbers_loops_inside_try_catch_as_the_check_does() {
+        let spin = |condition: u32| {
+            crate::kernel::c_while(
+                crate::kernel::c_int32_literal(condition),
+                Vec::new(),
+                CStatement::Skip,
+            )
+        };
+        let body = CStatement::Seq(
+            Arc::new(CStatement::TryCatchInt32 {
+                try_body: Box::new(spin(1)),
+                binding: "code".to_string(),
+                handler: Box::new(spin(2)),
+            }),
+            Arc::new(spin(3)),
+        );
+
+        let mut next_index = 0;
+        let mut unranked = Vec::new();
+        check_loops(
+            &body,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            "f",
+            &mut next_index,
+            &mut unranked,
+        )
+        .expect("an unranked body checks");
+        assert_eq!(unranked, [0, 1, 2]);
+
+        for (index, condition) in [(0, 1), (1, 2), (2, 3)] {
+            let found = loop_at_index(&body, index, &mut 0)
+                .unwrap_or_else(|| panic!("loop {index} exists"));
+            assert!(
+                same_statement_shape(found, &spin(condition)),
+                "loop {index} must be the loop the check numbered {index}"
+            );
+        }
+        assert!(loop_at_index(&body, 3, &mut 0).is_none());
     }
 
     /// An unranked loop used to stop the walk, so later loops were never
