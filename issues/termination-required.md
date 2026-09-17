@@ -65,16 +65,21 @@ int32 wait_for_zero(int32 x) {
     loop {
         invariant 0 == 0;
         initialize by simp;
-        preserve by { }
+        preserve by {
+            step();
+            close_invariants();
+        }
     }
     step();
     simp();
 }
 ```
 
-The proof script is a sketch; adjust it to whatever currently verifies the
-function before flipping the default, so the regression records a real
-before-and-after. Three companions are required:
+This regression and its first two companions are in place, as
+`required_termination_refuses_an_unranked_loop_and_its_caller` and
+`required_termination_spreads_diverges_to_callers` in
+`src/surface/tests/project_tests.rs` and `mdtests/diverges_perpetual_loop.md`.
+Three companions are required:
 
 - the same function declared `diverges`, with `loop diverges`, verifies;
 - a terminating caller of the marked function is refused, and the diagnostic
@@ -94,11 +99,9 @@ keeps no project-wide termination state, so a location-scoped run needs only
 what it already reads: each callee's declaration, of which the measure and the
 marker are part, exactly as its `ensures` is.
 
-This replaces the current whole-project pass in
-`c_verified_function_termination_rules`, which finds components by pairwise
-reachability and closes a fixpoint over them. That pass is roughly cubic in
-the function count and cannot serve a scoped run; it was tolerable only while
-termination was opt-in.
+This replaced the whole-project pass that found components by pairwise
+reachability and closed a fixpoint over them, which was roughly cubic in the
+function count and could not serve a scoped run.
 
 **Call-DAG height is plan data, never source.** For ordinary code whose
 calls form a DAG the measure is the function's height in that DAG. An
@@ -132,10 +135,10 @@ proves descent against the contract's measure, and forming the contract at
 `&g` proves that `g`'s measure fits under it. A dispatch table whose handler
 `i` re-dispatches only to entries `j < i` is then provable, which no
 syntactic graph analysis can decide, and `f` passing itself to `apply`
-unchanged is refused because no measure satisfies the three constraints. A pointer the verifier resolves statically,
-as a `const` callback table does, is a direct call. Do not approximate
-indirect edges with an address-taken or signature-matched call graph: a false
-cycle there has no repair.
+unchanged is refused because no measure satisfies the three constraints. A
+pointer the verifier resolves statically, as a `const` callback table does,
+is a direct call. Do not approximate indirect edges with an address-taken or
+signature-matched call graph: a false cycle there has no repair.
 
 **The marker is `diverges`, in the signature.** It sits after the parameter
 list beside `throws`, because it is the same kind of thing: an effect that is
@@ -162,12 +165,14 @@ marker is refused at no extra cost. A marked function keeps today's semantics:
 safety on every prefix, `ensures` if it returns. A perpetual service loop is
 the intended use.
 
-**Externals.** An `external` contract follows the same rule as any other
+**Externs.** An `extern` contract follows the same rule as any other
 function. Unmarked, it asserts that the function returns, on the same trust as
 its `ensures`; marked, its callers inherit the marker. The parser accepts the
-marker on `external` blocks and still rejects `decreases` there, since there
-is no body to rank. `pthread_join` is a modeled call whose return depends on
-the worker's contract; that rule belongs to the parked fork/join slice.
+marker on `extern` blocks and still rejects `decreases` there, since there is
+no body to rank, and an `extern` marker is never refused as unjustified,
+because the declaration is all that is known. `pthread_join` is a modeled call
+whose return depends on the worker's contract; that rule belongs to the parked
+fork/join slice.
 
 **Simple tactics first.** Every measure must be expressible as an explicit
 clause with no inference; loop measures that Click infers expand to one. Do
@@ -210,24 +215,27 @@ with no measure. Do not migrate on a long-lived branch. The new rule lands on
 master early, behind a switch, and the corpus is burned down against it in
 small green commits.
 
-**The switch.** A `require_termination` verification option, off by default,
-reachable from the CLI and from the fixture harnesses. It is an ordinary
-option on the shared verification engine, not an environment variable or a
+**The switch.** `with_termination_required(|| ...)`, off by default, scoped
+to the verification it wraps in the way `with_deadline` is, and reachable as
+`click verify --require-termination`. It is not an environment variable or a
 child mode. It is temporary: the flip deletes it.
 
-**The pending list.** A checked-in list of corpus files that do not yet pass
-with the option on, in the style of the ratchets in `tests/mdtests.rs`. The
-gate verifies every file once: with the option on, unless the file is listed,
-in which case with it off. So the gate costs what it costs today, a new test
-is held to the new rule from the day it is written, and the list length is
-the campaign's progress number. A listed file that passes with the option on
-fails the gate until its line is removed, so the list can only shrink and
-never goes stale.
+**The pending marker.** A corpus file that does not yet pass with the switch
+on says so itself, with a `termination` block holding `pending: <reason>`,
+where the reason is the refusal's root cause. The marker is per-file so that
+many agents can clear files in parallel without editing one shared list; the
+small `examples/` and `integrations/` sets keep a list beside their harness.
+The gate holds every unmarked file to the new rule. A marked file is verified
+with the switch off, and again with it on, where it must still be refused for
+the recorded reason: a marked file that now passes fails the gate until its
+block is deleted, so the pending set can only shrink and never goes stale. A
+new test is held to the new rule from the day it is written, and the count of
+blocks, by reason, is the campaign's progress number.
 
 **Migration commits are green either way.** A `decreases` clause is already
 legal and already certified under today's opt-in rule, so a commit that adds
-measures to a handful of tests and removes their lines from the list is valid
-under both settings. No commit depends on the flip.
+measures to a handful of tests and deletes their `termination` blocks is
+valid under both settings. No commit depends on the flip.
 
 **Keep the termination refusal last.** It must run after ordinary
 verification, as the current pass does, so an `expect fail` test keeps failing
@@ -235,22 +243,23 @@ for the reason it records and does not start failing on a missing measure.
 
 Stages, each a green commit or a short run of them:
 
-1. The option, the local-descent judgment for direct calls with inferred
-   height, the marker and its contagion, and the pending list, seeded by
-   running the corpus once. Include the regressions above.
-2. Bucket the pending list by refusal reason: counted loop, other loop,
-   unmeasured recursion, indirect call, external callee, intended divergence.
-   The refusal diagnostic must name its reason precisely enough to bucket
-   mechanically. These counts, not a guess, decide the shape of loop
-   inference and what to do next.
-3. Counted-loop inference with expansion. Remove the files it clears.
+1. Done. The `diverges` marker (7f12d1ab); the local-descent judgment with
+   planned heights, the marker's contagion and the unjustified-marker
+   refusal, the switch, and refusals that carry one machine-readable reason
+   (932e13e8). In flight: the pending marker with its ratchet and the seeding
+   run, and the scaling regression.
+2. Read the seeded counts by reason: unranked loop, unmeasured recursion,
+   indirect call, callee, diverging callee. Split the unranked loops into
+   counted and other by shape. These counts, not a guess, decide the shape of
+   loop inference and what to do next.
+3. Counted-loop inference with expansion. Delete the blocks it clears.
 4. Measures on named contracts, and the indirect-call descent rule.
 5. Grind the remaining buckets by hand in small commits: explicit
    `decreases` clauses, or the marker where divergence is intended. A loop
    that cannot be ranked with today's measures is a finding: report it, leave
-   its file on the list, and do not mark it `diverges` to get past it.
-6. When the list is empty, flip the default, delete the option, the list, and
-   the old whole-project pass, and rewrite "Optional C termination" and the
+   its block in place, and do not mark it `diverges` to get past it.
+6. When no block is left, flip the default, delete the switch and the
+   pending-marker machinery, and rewrite "Optional C termination" and the
    partial correctness paragraphs in the loops concept page.
 
 ## Acceptance criteria
