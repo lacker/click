@@ -13346,6 +13346,16 @@ pub enum ResourceRewriteRefusal {
         index: usize,
         count: usize,
     },
+    /// Unfold/fold exposed a body clause whose evaluation can be undefined
+    /// behavior (unchecked arithmetic), and nothing establishes that it is
+    /// defined. `kind` names the operation, `index`/`count` locate the body
+    /// clause as in [`ResourceRewriteRefusal::BodyFactNotEstablished`].
+    BodyFactPossiblyUndefinedBehavior {
+        arm: Option<String>,
+        index: usize,
+        count: usize,
+        kind: &'static str,
+    },
 }
 
 impl ResourceRewriteRefusal {
@@ -13359,6 +13369,21 @@ impl ResourceRewriteRefusal {
                 };
                 format!(
                     "fold requires the instance body facts for the proposed fields: fact {} of {count} {place} is not established",
+                    index + 1
+                )
+            }
+            ResourceRewriteRefusal::BodyFactPossiblyUndefinedBehavior {
+                arm,
+                index,
+                count,
+                kind,
+            } => {
+                let place = match arm {
+                    Some(arm) => format!("of arm `{arm}`"),
+                    None => "of the resource body".to_string(),
+                };
+                format!(
+                    "instance body fact might be undefined behavior: {kind} is not ruled out for fact {} of {count} {place}; state `defined(...)` for the arithmetic in an earlier body fact",
                     index + 1
                 )
             }
@@ -13378,6 +13403,9 @@ impl From<ResourceRewriteRefusal> for &'static str {
             ResourceRewriteRefusal::Message(message) => message,
             ResourceRewriteRefusal::BodyFactNotEstablished { .. } => {
                 "fold requires the instance body facts for the proposed fields"
+            }
+            ResourceRewriteRefusal::BodyFactPossiblyUndefinedBehavior { .. } => {
+                "instance body fact might be undefined behavior"
             }
         }
     }
@@ -13399,6 +13427,30 @@ pub(crate) struct ResourceInstanceRewriteResult {
     pub(crate) state: CState,
     pub(crate) semantic_facts: Vec<Proposition>,
     pub(crate) body_clauses: Vec<ResourceBodyClauseRecord>,
+}
+
+/// Names the undefined-behavior condition a body-clause evaluation depends
+/// on not happening, when the undischarged proposition only says that
+/// condition does not happen (for example, `x + 2` cannot overflow). Returns
+/// `None` for conditions that are not UB-avoidance, which keep the generic
+/// conditional-proof diagnostic.
+fn undefined_behavior_condition_kind(proposition: &Proposition) -> Option<&'static str> {
+    let Proposition::ConditionIs(condition, false) = proposition else {
+        return None;
+    };
+    Some(match condition {
+        ConditionTerm::Bitvector32SignedAddOverflows(..) => "addition overflow",
+        ConditionTerm::Bitvector32SignedSubtractOverflows(..) => "subtraction overflow",
+        ConditionTerm::Bitvector32SignedMultiplyOverflows(..) => "multiplication overflow",
+        ConditionTerm::Bitvector32SignedDivideOverflows(..) => "division overflow",
+        ConditionTerm::Bitvector32SignedShiftLeftOverflows(..) => "left-shift overflow",
+        ConditionTerm::Bitvector64SignedAddOverflows(..) => "int64 addition overflow",
+        ConditionTerm::Bitvector64SignedSubtractOverflows(..) => "int64 subtraction overflow",
+        ConditionTerm::Bitvector64SignedMultiplyOverflows(..) => "int64 multiplication overflow",
+        ConditionTerm::Bitvector64SignedDivideOverflows(..) => "int64 division overflow",
+        ConditionTerm::Bitvector64SignedShiftLeftOverflows(..) => "int64 left-shift overflow",
+        _ => return None,
+    })
 }
 
 /// Lower one selected body in source order. A body clause is available to a
@@ -13446,18 +13498,35 @@ fn lower_selected_resource_body_clauses(
         .map_err(|_| "could not evaluate instance body fact")?;
         let path = crate::kernel::api::exactly_selected_spec_proposition_path(&paths, &context)
             .ok_or("instance body fact needs an unsupported conditional proof")?;
-        if path
+        let undischarged_fact = path
             .facts
             .iter()
-            .any(|fact| !required_obligation_is_exactly_discharged(&context, fact.proposition()))
-            || path.obligations.iter().any(|goal| {
+            .find(|fact| !required_obligation_is_exactly_discharged(&context, fact.proposition()));
+        let undischarged_obligation = if undischarged_fact.is_none() {
+            path.obligations.iter().find(|goal| {
                 !required_obligation_is_exactly_discharged(&context, goal.proposition())
                     && !quantified_resource_fact_memory_obligation_is_discharged(
                         &context,
                         goal.proposition(),
                     )
             })
-        {
+        } else {
+            None
+        };
+        if undischarged_fact.is_some() || undischarged_obligation.is_some() {
+            let culprit: Option<Proposition> = undischarged_fact
+                .map(|fact| fact.proposition().clone())
+                .or_else(|| undischarged_obligation.map(|goal| goal.proposition().clone()));
+            if let Some(proposition) = culprit
+                && let Some(kind) = undefined_behavior_condition_kind(&proposition)
+            {
+                return Err(ResourceRewriteRefusal::BodyFactPossiblyUndefinedBehavior {
+                    arm: arm.map(str::to_owned),
+                    index: ordinal,
+                    count: source.len(),
+                    kind,
+                });
+            }
             return Err("instance body fact needs an unsupported conditional proof".into());
         }
         if let Some(established) = established_assumptions
