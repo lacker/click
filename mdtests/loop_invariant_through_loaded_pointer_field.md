@@ -12,6 +12,11 @@ indices use the invariant at the store's entry, while the final index uses
 the store result. This explicit case split keeps the remaining smart closures
 small enough to verify and expand under their ordinary budgets.
 
+The loop counts toward `j->hi`, a viewed field the body never writes, so the
+measure reads it. The quantified invariant shares the closer's premise pool, so
+the two ranking members are named before the back edge in the shape the
+obligation is built in.
+
 ```c filename=probe_contract.c
 struct job {
     int32 *p;
@@ -60,6 +65,7 @@ int32 probe_contract(struct job *j) {
     step();
     step();
     loop as fill {
+        decreases j->hi - i;
         invariant j->lo <= i and i <= j->hi;
         invariant forall (k: int32) { j->lo <= k and k < i implies j->p[k] == j->v };
 
@@ -94,16 +100,41 @@ int32 probe_contract(struct job *j) {
                 }
             }
             step();
+            have 0 <= at(statement(3).entry, i) by {
+                simp() using {
+                    0 <= j->lo;
+                    j->lo <= at(statement(3).entry, i);
+                }
+            }
+            have 0 <= j->hi by {
+                simp() using {
+                    0 <= j->lo;
+                    j->lo <= j->hi;
+                }
+            }
+            have 0 <= 0 - at(statement(3).entry, i) + j->hi - 1 by {
+                arithmetic() using {
+                    0 <= at(statement(3).entry, i);
+                    0 <= j->hi;
+                    at(statement(3).entry, i) < at(statement(3).entry, j->hi);
+                    j->lo <= j->hi;
+                }
+            }
+            have 0 - at(statement(3).entry, i) + j->hi - 1
+                < 0 - at(statement(3).entry, i) + j->hi by {
+                arithmetic() using {
+                    0 <= at(statement(3).entry, i);
+                    0 <= j->hi;
+                    at(statement(3).entry, i) < at(statement(3).entry, j->hi);
+                    j->lo <= j->hi;
+                }
+            }
             simp();
         }
     }
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect
