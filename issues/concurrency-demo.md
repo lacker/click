@@ -3,7 +3,7 @@
 ## Objective and violated invariant
 
 Requested on 2026-09-15. Deliver basic concurrency support before launch,
-alongside the selected basic-C++ milestone. Rbtree remains the main launch
+following the completed basic-C++ milestone. Rbtree remains the main launch
 demo. The intended additional claim is: **Click verifies memory safety, race
 freedom, and functional safety properties of three small concurrent C
 programs under one documented thread and memory-model profile.**

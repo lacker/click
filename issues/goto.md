@@ -23,6 +23,9 @@ frontends in mind. The shared control-flow discussion is in
 [Supporting more languages](../design/supporting-more-languages.md#control-flow-goto-and-implicit-cleanup).
 The delivered [basic C++ slice](../examples/basic-cpp/README.md) implements
 implicit cleanup on ordinary scope exits and returns without general C goto.
+The [one-guard exception regression](../mdtests/cpp_one_guard_unwind.md) now
+checks cleanup on one exceptional call edge as well; the broader two-guard
+unwinding case remains with [the P1 control-flow demo](control-flow-demo.md).
 
 A target label alone is not enough for every language. An edge may need
 checked scope-exit operations, object-lifetime changes, and a distinction

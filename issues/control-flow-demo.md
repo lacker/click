@@ -21,13 +21,35 @@ merely because a lexical scope ended. Rbtree remains the main launch demo.
 2. The completed [basic C++ example](../examples/basic-cpp/README.md) supplies
    the typed frontend, object lifetimes, and normal scope cleanup. Its baseline
    profile remains a non-throwing slice.
-3. This issue adds the narrow cross-call exception model and proves both
-   end-to-end cleanup programs. The same edge/state infrastructure should
-   serve C jumps and C++ cleanup, with language-specific legality rules.
+3. This issue finishes the narrow cross-call exception demo. Checked scalar
+   exceptional outcomes, modular `throws int32` contracts, typed `catch`, and
+   one try-local guard unwound across a helper call have landed. The remaining
+   two-guard and conditional-lifetime proofs below are still required. The
+   same edge/state infrastructure should serve C jumps and C++ cleanup, with
+   language-specific legality rules.
 
 The C++ exception probe does not semantically depend on C goto syntax; both
 feed the shared edge design. Do not introduce a dependency cycle by requiring
 the first C++ slice or the goto primitive to finish this whole demo first.
+
+## Delivered checkpoints, not final acceptance
+
+The C forward-cleanup and cleanup-chain regressions are in
+[`mdtests/forward_goto_cleanup_chain.md`](../mdtests/forward_goto_cleanup_chain.md).
+The scalar C++ profile now checks typed throws, normal/exceptional modular
+contracts, and a named `catch (int)`. The
+[`cpp_one_guard_unwind` mdtest](../mdtests/cpp_one_guard_unwind.md) imports
+original C++ with one `noexcept` guard constructed first inside a `try`, then
+a potentially throwing helper call. It proves restoration on normal return
+and before the handler observes a caught exception. Import regressions reject
+multiple or late guards, return from that guarded region, and a potentially
+throwing `noexcept` destructor. Removing the constructor's separation
+postcondition fails the destructor proof.
+
+This checkpoint does **not** establish two nested/overlapping guards, reverse
+destructor order during unwinding, or the companion throw-before-second-guard
+path. Those and the remaining hostile outcome/cleanup and scaling cases stay
+in this P1 issue; do not close it based on the one-guard mdtest.
 
 ## Program 1: C cleanup after partial acquisition
 

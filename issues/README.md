@@ -75,12 +75,18 @@ references, checked scoped cleanup, and a modular caller. The unchanged
 Bitcoin Core `MoneyRange` function under its real Clang project profile is
 verified in
 [`integrations/bitcoin-core-money-range/`](../integrations/bitcoin-core-money-range/).
-General `goto`, multi-compiler support, and broad C++ coverage are not part of
-the delivered basic slice.
+The first [cross-call exception mdtest](../mdtests/cpp_one_guard_unwind.md)
+also verifies one `noexcept` guard constructed inside a `try`: its destructor
+restores caller memory before either normal continuation or the matching
+`catch` observes it. This is progress on the separate control-flow demo, not
+completion of its two-guard and conditional-lifetime acceptance case. General
+`goto`, multi-compiler support, and broad C++ coverage remain outside the
+delivered slices.
 
-The control-flow demo separately depends on the forward-cleanup goto slice and
-the delivered basic C++ frontend/normal-cleanup slice. It adds narrow
-exception support. General backward/irreducible jumps remain P2. The
+The control-flow demo builds on the delivered forward-cleanup goto and basic
+C++ frontend/normal-cleanup slices. Its scalar exception contracts, typed
+handler, and first one-guard unwind proof have landed; the full two-guard demo
+is still open. General backward/irreducible jumps remain P2. The
 byte-representation and sequential shared-heap-graph demos do not depend on
 goto, C++, or concurrency.
 

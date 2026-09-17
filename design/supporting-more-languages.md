@@ -5,7 +5,8 @@ consolidates the C++/Rust architecture and borrowing investigations requested
 on 2026-09-11. Initial borrowing evidence was recorded at `bf0399b5`; this
 consolidation uses `2ac83e6d`. The [probe record](borrow-probes/README.md)
 contains executable evidence, compiler versions, and reproduction commands.
-No C++ or Rust verification frontend is implemented by this document.
+This design record predates the delivered C++ frontend; it does not itself
+implement a Rust frontend.
 
 The [stable-views record](../docs/internals/stable-views.md) and the completed
 [basic C++ example](../examples/basic-cpp/README.md) carry the implemented
@@ -14,7 +15,7 @@ investigations, so those decisions survive issue closure.
 
 ## Sequence: C++ first, Rust next
 
-Deliver basic C++ first: a pinned, non-throwing C++20 subset with scalar
+The delivered basic C++ milestone is a pinned, non-throwing C++20 subset with scalar
 functions, pointer/reference parameters, simple objects, explicit construction,
 and implicit destruction on ordinary and early returns. The defining example
 is an RAII guard that restores a caller's integer after the function captures
@@ -23,18 +24,18 @@ usable path from original `.cpp` source through normal Click sidecars.
 
 | Consideration | C++ first | Rust first |
 | --- | --- | --- |
-| Compiler boundary | Clang semantic AST and control flow; a new typed exporter is needed. | rustc MIR plus the selected phase's type, move, borrow, lifetime, and drop information. |
-| Small meaningful feature | References and a simple constructor/destructor across two return paths. | Shared/exclusive references and reborrows across calls. |
-| Existing overlap | Much of the scalar, pointer, memory, and call machinery can be reused after checking C++ semantics. | Memory/call machinery can be reused, but reference validity and borrow provenance need additional interpretation. |
-| Main design question tested | Can a second frontend preserve source identity, object lifetime, and implicit cleanup in the shared checker? | Can the borrow protocol and compiler extraction agree on active references and recovered authority? |
-| Work already being done without a frontend | C++ cleanup still needs an end-to-end source witness. | The stable-view rules already require small checked borrowing and concurrency models. |
+| Compiler boundary | The pinned Clang typed exporter records semantic AST and cleanup information. | rustc MIR plus the selected phase's type, move, borrow, lifetime, and drop information. |
+| Small meaningful feature | References and a simple constructor/destructor across two return paths are verified. | Shared/exclusive references and reborrows across calls. |
+| Existing overlap | Scalar, pointer, memory, and call machinery is reused where C++ semantics agree. | Memory/call machinery can be reused, but reference validity and borrow provenance need additional interpretation. |
+| Main design question tested | The second frontend preserves source identity, object lifetime, and implicit cleanup in the shared checker for the bounded slice. | Can the borrow protocol and compiler extraction agree on active references and recovered authority? |
+| Current evidence | The basic C++ source witness and one checked exceptional guard have landed; the separate P1 demo still needs its two-guard case. | The stable-view rules already require small checked borrowing and concurrency models. |
 
-This is a sequencing judgment, not a measured claim that a Clang exporter is
-cheap. Today Click's compiler import captures preprocessed C text; it does
-not already import Clang ASTs. C++ first limits the new semantic work while
-testing the whole program-language boundary. Rust follows once the shared
-borrowing model and that boundary have evidence behind them. Avoid doing both
-frontends simultaneously for the first milestone.
+This was a sequencing judgment, not a measured claim that a Clang exporter
+would be cheap. Click now has both its preprocessed-C import and a narrow typed
+Clang C++ export. C++ first limited the new semantic work while testing the
+whole program-language boundary. Rust follows once the shared borrowing model
+and that boundary have evidence behind them. Avoid doing both frontends
+simultaneously for the first milestone.
 
 The bounded C++ slice is P1 by explicit user direction. The launch remains
 P1 -> unchanged Linux rbtree verification -> public launch with rbtree as the
@@ -62,7 +63,7 @@ Use compiler semantic information deliberately:
 
 - **C/C++:** a pinned Clang LibTooling exporter can provide resolved
   declarations, types, layouts, source locations, and implicit operations.
-  The first C++ exporter should own a narrow, versioned output schema.
+  The delivered C++ exporter owns a narrow, versioned output schema.
   Clang's AST preserves source-level structure, and LibTooling supports
   standalone semantic tools. Human AST/CFG dumps are investigation aids.
   [Clang AST](https://clang.llvm.org/docs/IntroductionToTheClangAST.html),
@@ -98,13 +99,13 @@ claims, not implied by two independent frontends.
 
 ## Control flow, goto, and implicit cleanup
 
-The current statement-tree/frontier representation must grow beyond a cursor
-that only advances through lexical source. The
-[goto issue](../issues/goto.md) owns explicit C jumps; its design should also
-accommodate C++ scope exits and Rust MIR blocks. A common edge representation
-needs an explicit target, path state, source attribution, and any checked
-scope/lifetime effects. A source jump, destructor call, loan expiration, and
-object-lifetime end are distinct events.
+The statement-tree/frontier representation has grown beyond a cursor that only
+advances through lexical source: checked forward C jumps and narrow C++ cleanup
+edges are implemented. The [goto issue](../issues/goto.md) owns remaining
+general C jumps; future design must also accommodate Rust MIR blocks. A common
+edge representation needs an explicit target, path state, source attribution,
+and any checked scope/lifetime effects. A source jump, destructor call, loan
+expiration, and object-lifetime end are distinct events.
 
 For C++, leaving a scope can destroy constructed automatic objects, in reverse
 construction order. Jumping into a scope across non-vacuous initialization is
@@ -123,36 +124,35 @@ Do not treat every local as needing an unconditional drop, or recover a loan
 merely because its local storage ends. Future unwind/abort paths must be
 distinguishable from normal returns. [rustc drop elaboration](https://rustc-dev-guide.rust-lang.org/mir/drop-elaboration.html)
 
-The first C++ slice only needs normal scope exits and returns. General goto,
-irreducible control flow, exceptions, Rust panic unwinding, and coroutines can
-remain unsupported while the edge representation reserves their semantic
-distinctions. Backedges still need invariants and termination evidence; a
-tactic budget is not a termination proof. Compare a forward C cleanup jump,
-the C++ RAII return example, and a Rust conditional drop when selecting the
-shared representation.
+The first C++ slice covered normal scope exits and returns. A later scalar
+exception slice now checks one guard unwound after a cross-call throw. General
+goto, irreducible control flow, broader C++ exceptions, Rust panic unwinding,
+and coroutines remain unsupported while the edge representation reserves their
+semantic distinctions. Backedges still need invariants and termination
+evidence; a tactic budget is not a termination proof. Compare a forward C
+cleanup jump, the C++ RAII return example, and a Rust conditional drop when
+selecting the shared representation.
 
 The separately selected P1 [control-flow demo](../issues/control-flow-demo.md)
-now requires forward C cleanup jumps and a narrow cross-call C++ exception
-probe before launch. Its forward C prerequisite is now implemented; the
+requires forward C cleanup jumps and a cross-call C++ exception probe before
+launch. Its forward C prerequisite and first one-guard C++ unwind proof have
+landed; the two-guard/conditional-lifetime acceptance case remains open. The
 remaining [goto issue](../issues/goto.md) tracks general backward and
-irreducible jumps at P2. This does not expand the first non-throwing C++ slice
-or make it wait on exception support.
+irreducible jumps at P2. The exception proof is a later slice, not an expansion
+of the completed non-throwing basic C++ milestone.
 
-For that later probe, exceptional behavior is part of the verified function
-interface: a closed `throws` set states which payload types may cross a modular
-call. Outcome-specific postconditions are separate proof claims. Omitting
-`noexcept` in C++ does not infer a Click exceptional signature, and omitting a
-Click exceptional signature means the body must prove non-throwing. The kernel
-first gains an internal exceptional outcome while the frontend continues to
-reject exception syntax; surface exceptional signatures and modular rules land
-before any end-to-end C++ exception acceptance.
+For that probe, exceptional behavior is part of the verified function
+interface: a closed `throws int32` signature states which payload may cross a
+modular call. Outcome-specific postconditions are separate proof claims.
+Omitting `noexcept` in C++ does not infer a Click exceptional signature, and
+omitting a Click exceptional signature means the body must prove non-throwing.
 
-The object-free scalar profile now imports direct `throw int32`. A checked
-kernel-only exact-int32 handler receives the payload and state from a direct or
-modular throw and leaves normal/other terminal outcomes alone. The exporter
-still rejects C++ source `try`/`catch`, and the kernel handler does not yet
-represent automatic-object unwinding; neither boundary should be inferred from
-the internal regression.
+The scalar profile imports a typed `throw int`, one named by-value `catch (int)`,
+and a try-local `noexcept` guard whose destructor runs after a helper call
+throws. The [checked regression](../mdtests/cpp_one_guard_unwind.md) proves
+the resulting state on normal and caught paths. This is neither general C++
+unwinding nor proof of an exception ABI; the two-guard case remains in the P1
+control-flow issue.
 
 ## Shared resources and Rust borrowing
 
@@ -381,9 +381,12 @@ distinctions, not cross-target layout agreement or source-to-machine refinement.
 4. Keep access-origin and loan checks beside storage lookup when changing
    memory-access interfaces. Rust borrow origins are still not distinguished
    for two accesses to the same address.
-5. Done: the basic C++ slice uses a typed compiler import and checked cleanup
-   edges, shared in design with goto without adding general jumps or exception
-   unwinding to that first milestone.
+5. Done: the basic C++ slice uses a typed compiler import and checked normal
+   cleanup edges, shared in design with goto without adding general jumps to
+   that first milestone. The later
+   [one-guard exception regression](../mdtests/cpp_one_guard_unwind.md) now
+   checks one unwind edge; the P1 control-flow demo still owns its broader
+   two-guard acceptance case.
 
 Valid C aliasing was not a reason to keep views weak. The
 [ownership-only probe](borrow-probes/alias-owned.click) verifies the same C and
@@ -391,8 +394,9 @@ postcondition without a conflicting view, and the
 [field-split probe](borrow-probes/field-split.click) preserves a caller's field
 invariant using a view of the unchanged field. Both migrations left the C
 unchanged, which is the standard every later frontend inherits.
-Do not call a mutable reborrow a duplicable owner. Only the explicitly scoped
-basic C++ issue adds a second-language requirement to P1.
+Do not call a mutable reborrow a duplicable owner. The completed basic C++
+milestone and the still-open P1 control-flow demo are the scoped
+second-language requirements; neither implies broad C++ coverage.
 
 ## Rust's first support slice, after C++
 
@@ -443,7 +447,8 @@ ever wider syntax acceptance:
    plus growing unrelated resource contexts. Ending a loan should touch its
    dependent obligations, not scan every fact, pointer, or memory snapshot.
 
-For C++, follow normal cleanup with the selected scalar-exception probe in the
+For C++, the selected scalar-exception probe now verifies one guard inside a
+`try`; finish the two-guard and conditional-lifetime paths in the P1
 control-flow demo. Broader object initialization/validity and storage reuse,
 class copy/move and temporaries, and exceptions during partial construction
 remain later work; they are not prerequisites of that narrow probe.
