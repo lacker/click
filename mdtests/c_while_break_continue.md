@@ -45,10 +45,6 @@ int32 sum_odd_positions() {
 }
 ```
 
-```termination
-pending: unranked loop
-```
-
 ```expect
 pass
 ```

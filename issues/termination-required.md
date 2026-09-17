@@ -189,6 +189,14 @@ fork/join slice.
 clause with no inference; loop measures that Click infers expand to one. Do
 not make the kernel guess measures.
 
+**A loop the verifier executed needs no measure.** A loop with no `loop`
+block is not summarized: execution runs it concretely, one bounded iteration
+at a time, and succeeds only when every feasible path has left it. That
+execution is the termination evidence, so a function proved `by auto` over a
+constant-bound loop holds with nothing written. This is what "auto infers the
+measure" comes to for these loops: there is no invariant bundle for an
+inferred measure to join. Landed; it cleared 15 files with no edit.
+
 **Loop inference, to make migration tractable.** Infer the measure for a loop
 whose guard compares an induction variable with a bound the body does not
 write and whose step moves the variable toward the bound. The corpus has about

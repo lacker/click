@@ -56,10 +56,6 @@ int32 call_condition_without_switch() {
 }
 ```
 
-```termination
-pending: unranked loop
-```
-
 ```expect
 pass
 ```

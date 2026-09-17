@@ -295,7 +295,12 @@ measure remain unsupported.
 
 Supplying any C `decreases` clause asks Click to certify termination of the
 whole function, so every reachable loop and recursive component must be ranked
-and every callee must itself have termination evidence. A verified callee
+and every callee must itself have termination evidence. A loop the proof does
+not summarize needs no measure: Click executes such a loop concretely, one
+bounded iteration at a time, and that execution succeeds only when every
+feasible path has left the loop, so it is the loop's termination evidence; see
+`mdtests/bounded_loop.md`. A loop proved through a `loop` block is summarized
+by its invariants and needs a `decreases` clause. A verified callee
 supplies its own; an `extern` contract is trusted to return, as its `ensures`
 is trusted. A call through a function pointer returns when every function
 whose address the project takes returns without calling through a function

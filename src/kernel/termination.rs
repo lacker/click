@@ -1985,6 +1985,110 @@ fn canonical_ranking_term(term: &Bitvector32Term) -> Bitvector32Term {
     }
 }
 
+/// Every loop of `statement`, in the order `check_loops` numbers them.
+fn collect_loops<'a>(statement: &'a CStatement, loops: &mut Vec<&'a CStatement>) {
+    charge_termination_work(1);
+    match statement {
+        CStatement::While { body, .. } => {
+            loops.push(statement);
+            collect_loops(body, loops);
+        }
+        CStatement::Seq(first, second) => {
+            collect_loops(first, loops);
+            collect_loops(second, loops);
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_loops(then_branch, loops);
+            collect_loops(else_branch, loops);
+        }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            collect_loops(try_body, loops);
+            collect_loops(handler, loops);
+        }
+        CStatement::Switch { cases, .. } => {
+            for case in cases {
+                collect_loops(&case.body, loops);
+            }
+        }
+        CStatement::ContinueWithStep { step } => collect_loops(step, loops),
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Goto { .. }
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
+        | CStatement::Assign { .. }
+        | CStatement::CallAssign { .. }
+        | CStatement::Call { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Throw(_)
+        | CStatement::Return(_)
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. }
+        | CStatement::Update { .. } => {}
+    }
+}
+
+/// The loops of a certified function that certification executed to their
+/// exit, by source index.
+///
+/// Execution summarizes a loop only when the loop carries annotations: a
+/// verified loop rule applies to a loop with invariant or effect checks, and
+/// the invariant route runs for one with checks or a measure. A loop with none
+/// of them has one route, the concrete one, which takes the loop one budgeted
+/// iteration at a time and returns only when every feasible path has left it.
+/// A function's verified rule exists because certification executed exactly
+/// this body, so such a loop was run to its exit on every path the contract
+/// admits and owes no measure. Nothing is granted unless the certified body's
+/// loops are the source body's loops, shape for shape, since the indices
+/// name source loops.
+fn loops_executed_to_exit(function: &CFunction) -> BTreeSet<usize> {
+    let mut source_loops = Vec::new();
+    collect_loops(&function.source_body, &mut source_loops);
+    let mut certified_loops = Vec::new();
+    collect_loops(function.body(), &mut certified_loops);
+    if source_loops.len() != certified_loops.len()
+        || source_loops
+            .iter()
+            .zip(&certified_loops)
+            .any(|(source, certified)| !same_statement_shape(source, certified))
+    {
+        return BTreeSet::new();
+    }
+    certified_loops
+        .iter()
+        .enumerate()
+        .filter(|(_, certified)| {
+            matches!(
+                certified,
+                CStatement::While {
+                    invariant,
+                    invariant_checks,
+                    effect_checks,
+                    resource_specs,
+                    ranking_measures,
+                    structural_measure: None,
+                    ..
+                } if invariant.is_empty()
+                    && invariant_checks.is_empty()
+                    && effect_checks.is_empty()
+                    && resource_specs.is_empty()
+                    && ranking_measures.is_empty()
+            )
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
 /// Confirms that every loop the plan ranks has a checked back-edge bundle
 /// for exactly that measure, and collects the index of every loop that
 /// carries no measure at all. Every loop is visited, so the collected indices
@@ -2635,6 +2739,10 @@ pub fn c_verified_function_termination_rules(
     declared_diverging: &BTreeSet<String>,
 ) -> Result<CTerminationVerdicts, CTerminationError> {
     let (functions, calls) = termination_call_graph(partial_rules, inline_bodies);
+    let ruled = partial_rules
+        .iter()
+        .map(|rule| rule.function.name())
+        .collect::<BTreeSet<_>>();
     charge_termination_work(plan_entries.len());
     let plans = plan_entries
         .iter()
@@ -2823,6 +2931,12 @@ pub fn c_verified_function_termination_rules(
                     return Err(error(format!(
                         "termination plan for `{name}` refers to a nonexistent loop"
                     )));
+                }
+                // Only a function certified on its own is known to have had
+                // this body executed; a linked body with no rule is not.
+                if ruled.contains(name.as_str()) {
+                    let executed = loops_executed_to_exit(function);
+                    unranked.retain(|index| !executed.contains(index));
                 }
                 if let Some(index) = unranked.first() {
                     // An unranked loop is the function's own defect, so it is
@@ -3166,6 +3280,19 @@ mod local_descent_tests {
     use super::*;
     use std::sync::Arc;
 
+    /// A loop the proof summarized: it carries an invariant, so execution
+    /// never ran it to its exit and only a measure can rank it.
+    fn summarized_loop(condition: u32) -> CStatement {
+        crate::kernel::c_while(
+            crate::kernel::c_int32_literal(condition),
+            vec![Proposition::ConditionIs(
+                ConditionTerm::Constant(true),
+                true,
+            )],
+            CStatement::Skip,
+        )
+    }
+
     /// A verified rule whose body calls `callees` in order and then holds the
     /// given loops, which is all the termination check reads of a function.
     fn rule(name: &str, callees: &[&str], loops: usize) -> CVerifiedFunctionRule {
@@ -3177,14 +3304,7 @@ mod local_descent_tests {
             );
         }
         for _ in 0..loops {
-            body = CStatement::Seq(
-                Arc::new(body),
-                Arc::new(crate::kernel::c_while(
-                    crate::kernel::c_int32_literal(1),
-                    Vec::new(),
-                    CStatement::Skip,
-                )),
-            );
+            body = CStatement::Seq(Arc::new(body), Arc::new(summarized_loop(1)));
         }
         CVerifiedFunctionRule {
             function: CFunction::new(CType::Void, name, Vec::new(), body),
@@ -3388,14 +3508,7 @@ mod local_descent_tests {
                 CStatement::Skip,
             );
             for _ in 0..loops {
-                body = CStatement::Seq(
-                    Arc::new(body),
-                    Arc::new(crate::kernel::c_while(
-                        crate::kernel::c_int32_literal(1),
-                        Vec::new(),
-                        CStatement::Skip,
-                    )),
-                );
+                body = CStatement::Seq(Arc::new(body), Arc::new(summarized_loop(1)));
             }
             CVerifiedFunctionRule {
                 function: CFunction::new(
@@ -3611,6 +3724,77 @@ mod local_descent_tests {
             verdicts.refusals["loops"],
             CTerminationRefusal::UnrankedLoop { index: 0 }
         );
+    }
+
+    /// A loop with no annotation has one route through execution, the
+    /// concrete one, which returns only when every feasible path has left the
+    /// loop. A function certified with such a loop ran it to its exit, so it
+    /// owes no measure; the same loop in a linked body nobody certified, or a
+    /// loop the proof summarized, still does.
+    #[test]
+    fn a_loop_certification_executed_to_its_exit_owes_no_measure() {
+        let bare = |name: &str| CVerifiedFunctionRule {
+            function: CFunction::new(
+                CType::Void,
+                name,
+                Vec::new(),
+                crate::kernel::c_while(
+                    crate::kernel::c_int32_literal(0),
+                    Vec::new(),
+                    CStatement::Skip,
+                ),
+            ),
+        };
+        let rules = [bare("counts"), rule("summarized", &[], 1)];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let verdicts = check(&rules, &[], &plan, &[]).expect("the plan checks");
+        assert_eq!(terminating(&verdicts), BTreeSet::from(["counts"]));
+        assert_eq!(
+            verdicts.refusals["summarized"],
+            CTerminationRefusal::UnrankedLoop { index: 0 }
+        );
+
+        // The same bare loop in a body with no rule of its own: a helper the
+        // verified caller reaches.
+        let helper = bare("helper").function.with_inline_body();
+        let caller = [rule("caller", &["helper"], 0)];
+        let bodies = [&helper];
+        let plan = c_termination_height_plan(&caller, &bodies);
+        let verdicts = c_verified_function_termination_rules(
+            &caller,
+            &[],
+            &BTreeMap::new(),
+            &bodies,
+            &plan,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        )
+        .expect("the plan checks");
+        assert_eq!(
+            verdicts.refusals["helper"],
+            CTerminationRefusal::UnrankedLoop { index: 0 }
+        );
+    }
+
+    /// The indices name source loops, so nothing is granted when the
+    /// certified body's loops are not the source body's loops.
+    #[test]
+    fn executed_loops_are_granted_only_when_the_bodies_agree() {
+        let spin = |condition: u32| {
+            crate::kernel::c_while(
+                crate::kernel::c_int32_literal(condition),
+                Vec::new(),
+                CStatement::Skip,
+            )
+        };
+        let agrees = CFunction::new(CType::Void, "f", Vec::new(), spin(0));
+        assert_eq!(loops_executed_to_exit(&agrees), BTreeSet::from([0]));
+        let differs =
+            CFunction::new(CType::Void, "f", Vec::new(), spin(0)).with_source_body(spin(1));
+        assert!(loops_executed_to_exit(&differs).is_empty());
+        let summarized = CFunction::new(CType::Void, "f", Vec::new(), summarized_loop(0))
+            .with_source_body(spin(0));
+        assert!(loops_executed_to_exit(&summarized).is_empty());
     }
 
     /// `realloc` is modeled by execution itself, so it is no node of the call

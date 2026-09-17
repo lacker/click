@@ -24,10 +24,6 @@ int32 for_comma_step() {
 }
 ```
 
-```termination
-pending: unranked loop
-```
-
 ```expect
 pass
 ```

@@ -22,10 +22,6 @@ int32 for_omitted_clauses() {
 }
 ```
 
-```termination
-pending: unranked loop
-```
-
 ```expect
 pass
 ```

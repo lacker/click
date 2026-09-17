@@ -25,10 +25,6 @@ int32 automatic_block_reentry_lifetime_initialized() {
 }
 ```
 
-```termination
-pending: unranked loop
-```
-
 ```expect
 pass
 ```

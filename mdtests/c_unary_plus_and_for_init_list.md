@@ -23,10 +23,6 @@ int32 unary_plus_for_init() {
 }
 ```
 
-```termination
-pending: unranked loop
-```
-
 ```expect
 pass
 ```

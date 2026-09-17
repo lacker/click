@@ -210,6 +210,18 @@ the work linear in the functions and their call edges. A callee outside the
 verified set is an assumption in the same sense as its postconditions: an
 `extern` contract is trusted to return as its `ensures` is trusted.
 
+A loop owes a measure only when the proof summarized it. Execution summarizes
+a loop only when the loop carries annotations: a verified loop rule applies to
+a loop with invariant or effect checks, and the invariant route runs for one
+with checks or a measure. A loop with none has one route, the concrete one,
+which consumes loop budget per iteration and returns only when every feasible
+path has left the loop. A function's verified rule exists because
+certification executed exactly its body, so the termination check grants such
+a loop without a measure, for functions certified on their own and only when
+the certified body's loops match the source body's loops shape for shape,
+since loop indices name source loops. A linked body with no rule of its own is
+not granted this.
+
 A call through a function pointer has no declared callee, and no edge of the
 direct-call graph says what it reaches: a function can hand itself to the
 helper that calls it, or be stored by one function and called by another that
