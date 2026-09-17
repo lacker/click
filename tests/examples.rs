@@ -42,10 +42,6 @@ const ARTIFACT_REUSE_REJECTION_BASELINE: &[(ArtifactReuseRejection, usize)] = &[
 /// line is removed, so the list cannot go stale.
 const TERMINATION_PENDING: &[(&str, TerminationPending)] = &[
     (
-        "examples/arena/arena.click",
-        TerminationPending::UnrankedLoop,
-    ),
-    (
         "examples/arena/arena_second_alloc.click",
         TerminationPending::UnrankedLoop,
     ),

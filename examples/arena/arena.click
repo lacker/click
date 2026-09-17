@@ -260,6 +260,7 @@ int32 arena_init(struct arena* arena, int32 capacity) {
     }
     step();
     loop as initialize_occupied {
+        decreases capacity - i;
         invariant 0 <= i and i <= capacity;
         invariant forall (k: int32) {
             0 <= k and k < i implies occupied[k] == 0
@@ -268,8 +269,25 @@ int32 arena_init(struct arena* arena, int32 capacity) {
 
         initialize by simp;
         preserve by {
+            mark iteration;
             step();
             step();
+            have 0 <= capacity - at(iteration, i) - 1 by {
+                arithmetic() using {
+                    0 <= at(iteration, i);
+                    at(iteration, i) < capacity;
+                    1 <= capacity;
+                    capacity <= 536870911;
+                }
+            }
+            have capacity - at(iteration, i) - 1 < capacity - at(iteration, i) by {
+                arithmetic() using {
+                    0 <= at(iteration, i);
+                    at(iteration, i) < capacity;
+                    1 <= capacity;
+                    capacity <= 536870911;
+                }
+            }
             simp();
         }
     }
@@ -540,12 +558,14 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
     step();
     step();
     loop as find_first_run {
+        decreases arena->capacity - i;
         invariant 0 <= i and i <= arena->capacity and
             run_length == i and run_length <= count;
         owns arena->occupied[0..arena->capacity];
 
         initialize by simp;
         preserve by {
+            mark iteration;
             have 0 <= i by {
                 simp() using {
                     0 <= i and i <= arena->capacity and
@@ -576,6 +596,24 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
             step();
             have run_length <= count by {
                 simp();
+            }
+            have 0 <= arena->capacity by {
+                simp();
+            }
+            have 0 <= 0 - at(iteration, i) + arena->capacity - 1 by {
+                arithmetic() using {
+                    0 <= at(iteration, i);
+                    at(iteration, i) < at(iteration, arena->capacity);
+                    0 <= arena->capacity;
+                }
+            }
+            have 0 - at(iteration, i) + arena->capacity - 1
+                < 0 - at(iteration, i) + arena->capacity by {
+                arithmetic() using {
+                    0 <= at(iteration, i);
+                    at(iteration, i) < at(iteration, arena->capacity);
+                    0 <= arena->capacity;
+                }
             }
             close_invariants();
         }
@@ -687,13 +725,35 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
         split();
     }
     loop as mark_first_run {
+        decreases end - i;
         invariant start <= i and i <= end;
         owns arena->occupied[start..end];
 
         initialize by simp;
         preserve by {
+            mark iteration;
             step();
             step();
+            have 0 <= at(iteration, i) by {
+                simp();
+            }
+            have 0 <= end by {
+                simp();
+            }
+            have 0 <= end - at(iteration, i) - 1 by {
+                arithmetic() using {
+                    0 <= at(iteration, i);
+                    0 <= end;
+                    at(iteration, i) < end;
+                }
+            }
+            have end - at(iteration, i) - 1 < end - at(iteration, i) by {
+                arithmetic() using {
+                    0 <= at(iteration, i);
+                    0 <= end;
+                    at(iteration, i) < end;
+                }
+            }
             close_invariants();
         }
     }
@@ -909,6 +969,7 @@ void arena_free(struct region* region) {
     step();
     step();
     loop as clear_occupied {
+        decreases region->end - i;
         invariant region->start <= i and i <= region->end;
         owns region->arena->occupied[region->start..region->end];
         initialize by {
@@ -928,6 +989,7 @@ void arena_free(struct region* region) {
             }
         }
         preserve by {
+            mark iteration;
             have i < region->end by {
                 assumption();
             }
@@ -970,6 +1032,30 @@ void arena_free(struct region* region) {
             }
             have i <= region->end by {
                 simp();
+            }
+            have 0 <= at(iteration, i) by {
+                simp();
+            }
+            have 0 <= region->end by {
+                simp() using {
+                    0 <= region->start;
+                    region->start <= region->end;
+                }
+            }
+            have 0 <= 0 - at(iteration, i) + region->end - 1 by {
+                arithmetic() using {
+                    0 <= at(iteration, i);
+                    0 <= region->end;
+                    at(iteration, i) < at(iteration, region->end);
+                }
+            }
+            have 0 - at(iteration, i) + region->end - 1
+                < 0 - at(iteration, i) + region->end by {
+                arithmetic() using {
+                    0 <= at(iteration, i);
+                    0 <= region->end;
+                    at(iteration, i) < at(iteration, region->end);
+                }
             }
             close_invariants();
         }
