@@ -2635,6 +2635,35 @@ impl Ord for CFunctionContract {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CExternalFunctionRule {
     pub(super) function: CFunction,
+    /// How a call to this external function transitions the caller. An
+    /// ordinary rule applies the declared contract as an opaque assumption;
+    /// a thread primitive is a checked kernel transition selected by the
+    /// declaration's identity, never by a user-written contract.
+    pub(super) semantics: ExternalCallSemantics,
+}
+
+/// The checked transition an external declaration stands for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum ExternalCallSemantics {
+    /// Apply the declared contract as an opaque assumption.
+    Contract,
+    /// `pthread_create`: transfer the selected worker's task out of the
+    /// caller and mint one linear completion right on success.
+    ThreadCreate,
+    /// `pthread_join`: consume one completion right and install the
+    /// worker's returned resources and postcondition.
+    ThreadJoin,
+}
+
+impl CExternalFunctionRule {
+    pub fn semantics(&self) -> ExternalCallSemantics {
+        self.semantics
+    }
+
+    pub fn with_semantics(mut self, semantics: ExternalCallSemantics) -> Self {
+        self.semantics = semantics;
+        self
+    }
 }
 
 /// Kernel evidence that a partially-correct C function also returns.
