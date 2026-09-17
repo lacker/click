@@ -78,6 +78,7 @@ void bump_n(struct cell* node, int32 n) {
     step();
     loop {
         owns l: list_at(node);
+        decreases n - i;
         invariant i >= 0;
         invariant i <= n;
         invariant node != 0;
@@ -88,6 +89,8 @@ void bump_n(struct cell* node, int32 n) {
             match l.model {
                 CellList::Nil => { contradiction(l.model == CellList::Nil); },
                 CellList::Cons(identity, value, tail_model) => {
+                    have 0 <= n - i - 1 by { arithmetic() using { i < n; i >= 0; n >= 0; } }
+                    have n - i - 1 < n - i by { arithmetic() using { i < n; i >= 0; n >= 0; } }
                     unfold(l) as { tail: t };
                     have list_head_is(CellList::Cons(node, 7, tail_model), node) == 1 by {
                         unfold(list_head_is(CellList::Cons(node, 7, tail_model), node));
@@ -106,10 +109,6 @@ void bump_n(struct cell* node, int32 n) {
     execute();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

@@ -30,6 +30,7 @@ int32 loop_final_iteration_free(int32* data) {
     step();
     step();
     loop {
+        decreases 1 - i;
         invariant i >= 0;
         invariant i <= 1;
         initialize by simp;
@@ -42,10 +43,6 @@ int32 loop_final_iteration_free(int32* data) {
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect
