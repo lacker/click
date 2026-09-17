@@ -49,10 +49,6 @@ const TERMINATION_PENDING: &[(&str, TerminationPending)] = &[
         "examples/arena/arena_second_alloc.click",
         TerminationPending::UnrankedLoop,
     ),
-    (
-        "examples/owned-vector/vector.click",
-        TerminationPending::UnrankedLoop,
-    ),
 ];
 
 #[test]

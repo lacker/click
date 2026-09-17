@@ -94,6 +94,7 @@ int32 vector_copy(
     step();
     step();
     loop {
+        decreases length - i;
         invariant 0 <= i;
         invariant i <= length;
         invariant forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) };
@@ -1027,6 +1028,7 @@ int32 vector_fill(struct vector* owner, int32 value) {
         assumption();
     }
     loop as fill_cells {
+        decreases owner->len - i;
         invariant i >= 0 and i <= owner->len;
         owns owner->data[0..owner->len];
         initialize by {
@@ -1063,6 +1065,23 @@ int32 vector_fill(struct vector* owner, int32 value) {
                     at(statement(3).entry, i) < at(statement(3).entry, owner->len);
                 }
                 assumption();
+            }
+            have 0 <= 0 - at(statement(3).entry, i) + owner->len - 1 by {
+                arithmetic() using {
+                    at(statement(3).entry, i) >= 0;
+                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
+                    0 <= owner->len;
+                    i <= owner->len;
+                }
+            }
+            have 0 - at(statement(3).entry, i) + owner->len - 1
+                < 0 - at(statement(3).entry, i) + owner->len by {
+                arithmetic() using {
+                    at(statement(3).entry, i) >= 0;
+                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
+                    0 <= owner->len;
+                    i <= owner->len;
+                }
             }
             close_invariants();
         }
