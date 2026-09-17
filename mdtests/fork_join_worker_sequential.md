@@ -63,6 +63,7 @@ void *fill_range(void *argument) {
     step();
     step();
     loop as fill {
+        decreases job->end - index;
         views job->output;
         views job->begin;
         views job->end;
@@ -84,8 +85,38 @@ void *fill_range(void *argument) {
             }
         }
         preserve by {
+            mark iteration;
             step();
             step();
+            have 0 <= at(iteration, index) by {
+                simp() using {
+                    0 <= job->begin;
+                    job->begin <= at(iteration, index);
+                }
+            }
+            have 0 <= job->end by {
+                simp() using {
+                    0 <= job->begin;
+                    job->begin <= job->end;
+                }
+            }
+            have 0 <= 0 - at(iteration, index) + job->end - 1 by {
+                arithmetic() using {
+                    0 <= at(iteration, index);
+                    0 <= job->end;
+                    at(iteration, index) < at(iteration, job->end);
+                    job->begin <= job->end;
+                }
+            }
+            have 0 - at(iteration, index) + job->end - 1
+                < 0 - at(iteration, index) + job->end by {
+                arithmetic() using {
+                    0 <= at(iteration, index);
+                    0 <= job->end;
+                    at(iteration, index) < at(iteration, job->end);
+                    job->begin <= job->end;
+                }
+            }
             simp();
         }
     }
@@ -93,10 +124,6 @@ void *fill_range(void *argument) {
     fold(range_task((struct range_job *)argument));
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect
