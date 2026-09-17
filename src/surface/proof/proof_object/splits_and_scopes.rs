@@ -229,9 +229,32 @@ impl<'a> Proof<'a> {
                     },
                 ]);
             }
-            return Err(self.step_error(
-                "`both` cannot preserve its written conjunction: no checked child correspondence",
-            ));
+            // The refusal is right whenever it fires: the text does not mean
+            // the goal. What it must say is which text, since a smart closer
+            // renders a bundle the user never wrote, and where the text and
+            // the goal part, since a wrong rendering and a comparison that
+            // misses are repaired in different places.
+            let rendered = crate::surface::printing::source_click_proposition(surface);
+            let mismatch = (0..2)
+                .filter(|index| children[*index].is_none())
+                .map(|index| {
+                    let side = if index == 0 { "left" } else { "right" };
+                    match &lowered_children[index] {
+                        Some(lowered) => format!(
+                            "its {side} conjunct lowers to `{}` but the goal's is `{}`",
+                            crate::surface::proof_diagnostics::render::render_proposition(lowered),
+                            crate::surface::proof_diagnostics::render::render_proposition(
+                                kernel_children[index]
+                            )
+                        ),
+                        None => format!("its {side} conjunct does not lower here"),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(self.step_error(format!(
+                "`both` cannot split this goal: its source form, `{rendered}`, does not lower back to it; {mismatch}"
+            )));
         }
 
         // A non-conjunct written body can be the semantic child of a
@@ -333,23 +356,23 @@ impl<'a> Proof<'a> {
         surface: &ClickProposition,
         kernel_children: [&Proposition; 2],
     ) -> Result<[Option<ClickProposition>; 2], ClickError> {
-        let lowered = match self
-            .lower_surface_proposition(surface, "`both` presentation conjunction")
-        {
-            Ok(lowered) => lowered,
-            Err(_) => {
-                let parent = Proposition::And(
-                    Box::new(kernel_children[0].clone()),
-                    Box::new(kernel_children[1].clone()),
-                );
-                if self.recorded_surface_matches(surface, &parent) {
-                    return Ok([None, None]);
+        let lowered =
+            match self.lower_surface_proposition(surface, "`both` presentation conjunction") {
+                Ok(lowered) => lowered,
+                Err(_) => {
+                    let parent = Proposition::And(
+                        Box::new(kernel_children[0].clone()),
+                        Box::new(kernel_children[1].clone()),
+                    );
+                    if self.recorded_surface_matches(surface, &parent) {
+                        return Ok([None, None]);
+                    }
+                    return Err(self.step_error(format!(
+                        "`both` cannot split this goal: its source form, `{}`, does not lower here",
+                        crate::surface::printing::source_click_proposition(surface)
+                    )));
                 }
-                return Err(self.step_error(
-                    "`both` cannot preserve its written conjunction: no checked child correspondence",
-                ));
-            }
-        };
+            };
         let matches = kernel_children
             .iter()
             .enumerate()

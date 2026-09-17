@@ -3,7 +3,7 @@ use super::diagnostics::{
 };
 use super::*;
 
-pub(super) fn source_click_proposition(proposition: &ClickProposition) -> String {
+pub(in crate::surface) fn source_click_proposition(proposition: &ClickProposition) -> String {
     fn at_precedence(proposition: &ClickProposition, required: u8) -> String {
         let (precedence, source) = match proposition {
             ClickProposition::Implies(left, right) => (
