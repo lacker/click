@@ -65,5 +65,5 @@ int32 caller(int32 n) {
 ```
 
 ```expect
-fail: every reachable loop, recursive cycle, and callee must have a checked ranking proof
+fail: could not certify termination for `f`: the call through `helper` has no declared callee to descend to
 ```

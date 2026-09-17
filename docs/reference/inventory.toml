@@ -1643,6 +1643,10 @@ id = "cli.verify.--explain"
 path = "reference/cli/verify.md#options"
 
 [[item]]
+id = "cli.verify.--require-termination"
+path = "reference/cli/verify.md#options"
+
+[[item]]
 id = "cli.verify.--help"
 path = "reference/cli/verify.md#options"
 

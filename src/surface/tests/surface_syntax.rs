@@ -3711,9 +3711,16 @@ fn diverges_must_follow_throws_in_a_signature() {
         error.message()
     );
 
+    // The accepted order parses; `f` has no loop or call that could fail to
+    // return, so the marker itself is then refused as unjustified.
     let ordered = click_source.replace("diverges throws int32", "throws int32 diverges");
-    verify_c0_sources(&ordered, &[("f.c", c_source)])
-        .expect("`throws int32 diverges` is the accepted order");
+    let error = verify_c0_sources(&ordered, &[("f.c", c_source)])
+        .expect_err("a marker with nothing to justify it is refused");
+    assert!(
+        error.message().contains("`f` is declared `diverges`, but"),
+        "{}",
+        error.message()
+    );
 }
 
 /// An `external` contract is a signature too, so it takes the marker; it

@@ -295,7 +295,10 @@ measure remain unsupported.
 
 Supplying any C `decreases` clause asks Click to certify termination of the
 whole function, so every reachable loop and recursive component must be ranked
-and every callee must itself have termination evidence. The kernel records
+and every callee must itself have termination evidence. A verified callee
+supplies its own; an `extern` contract is trusted to return, as its `ensures`
+is trusted; a call through a function pointer supplies none. The refusal
+names the unranked loop or the callee responsible. The kernel records
 that evidence separately from `CVerifiedFunctionRule`. Ordinary calls and
 ordinary `ensures` continue to use partial correctness and do not silently
 depend on it. A perpetual service loop should therefore have an invariant but
@@ -329,6 +332,15 @@ members are checked as usual, but the function still gives its callers no
 whole-function termination evidence. An `extern` contract takes the marker in
 the same signature position and still refuses `decreases`, since it has no
 body to rank.
+
+The marker is required on, and only on, a function that may not return. A
+function whose every loop is ranked and whose every call descends has nothing
+to justify the marker, and declaring it `diverges` is refused; see
+`mdtests/diverges_rejects_unjustified_marker.md`. An `extern` contract is
+exempt, because the declaration is all that is known about it. The marker is
+contagious: a caller that asks for termination evidence and calls a marked
+function is refused, and the refusal names the callee and the repair, which is
+to declare the caller `diverges` too.
 
 Termination and host capacity are separate judgments. Click does not model
 process stack exhaustion, address-space exhaustion, operating-system

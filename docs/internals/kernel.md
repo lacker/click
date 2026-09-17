@@ -194,11 +194,25 @@ decrease annotation and does not create termination evidence.
 
 Optional C termination is a second judgment. Surface `decreases` clauses are
 lowered to an untrusted `CFunctionTerminationPlan`; the kernel checks the exact
-partially verified function bodies, call-graph components, loop indices,
-integer types, guards, and decreasing edges before constructing
-`CVerifiedFunctionTerminationRule`. A recursive component is accepted only
-when every member has a compatible measure. Whole-function evidence is
-withheld if any reachable loop, recursive component, or callee lacks evidence.
+partially verified function bodies, loop indices, integer types, guards, and
+decreasing edges before constructing `CVerifiedFunctionTerminationRule`.
+
+The judgment is local descent. An untrusted planner proposes a height for
+every function, the longest path below it in the direct-call graph with the
+members of a cycle sharing one height. The kernel never computes call-graph
+components or reachability. At each call site it checks that the callee is not
+above its caller; a strictly lower callee must already have evidence, and a
+callee at the caller's own height is a recursive edge that the declared
+function-level measures must rank. Soundness is one induction on the pair of
+height and measure, so a wrong height can refuse a function or fail the check
+but cannot certify one. Levels are settled in ascending height, which makes
+the work linear in the functions and their call edges. A callee outside the
+verified set is an assumption in the same sense as its postconditions: an
+`extern` contract is trusted to return as its `ensures` is trusted. An
+indirect call has no declared callee and withholds evidence. Each refused
+function carries one reason, its own first unranked loop or the first call
+not shown to descend, which the surface reports by following refused callees
+to the defect that refused them.
 
 For a structural `decreases`, the plan contains only an index into the exact entry
 resource requirements. The kernel resolves that requirement and the exact

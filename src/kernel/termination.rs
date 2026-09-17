@@ -1941,8 +1941,9 @@ fn canonical_ranking_term(term: &Bitvector32Term) -> Bitvector32Term {
 }
 
 /// Confirms that every loop the plan ranks has a checked back-edge bundle
-/// for exactly that measure, and reports whether every loop in the statement
-/// is ranked at all.
+/// for exactly that measure, and collects the index of every loop that
+/// carries no measure at all. Every loop is visited, so the collected indices
+/// and `next_index` describe the whole statement whichever loops are ranked.
 ///
 /// This pass proves nothing. A loop's nonnegativity and lexicographic
 /// decrease obligations are members of its `close_invariants` bundle, which
@@ -1955,38 +1956,83 @@ fn check_loops(
     certified: &BTreeMap<usize, CLoopTerminationMeasure>,
     function_name: &str,
     next_index: &mut usize,
-) -> Result<bool, CTerminationError> {
+    unranked: &mut Vec<usize>,
+) -> Result<(), CTerminationError> {
     match statement {
         CStatement::Seq(first, second) => {
-            Ok(
-                check_loops(first, supplied, certified, function_name, next_index)?
-                    && check_loops(second, supplied, certified, function_name, next_index)?,
+            check_loops(
+                first,
+                supplied,
+                certified,
+                function_name,
+                next_index,
+                unranked,
+            )?;
+            check_loops(
+                second,
+                supplied,
+                certified,
+                function_name,
+                next_index,
+                unranked,
             )
         }
         CStatement::If {
             then_branch,
             else_branch,
             ..
-        } => Ok(
-            check_loops(then_branch, supplied, certified, function_name, next_index)?
-                && check_loops(else_branch, supplied, certified, function_name, next_index)?,
-        ),
+        } => {
+            check_loops(
+                then_branch,
+                supplied,
+                certified,
+                function_name,
+                next_index,
+                unranked,
+            )?;
+            check_loops(
+                else_branch,
+                supplied,
+                certified,
+                function_name,
+                next_index,
+                unranked,
+            )
+        }
         CStatement::TryCatchInt32 {
             try_body, handler, ..
         } => {
-            let try_terminates =
-                check_loops(try_body, supplied, certified, function_name, next_index)?;
-            let handler_terminates =
-                check_loops(handler, supplied, certified, function_name, next_index)?;
-            Ok(try_terminates && handler_terminates)
+            check_loops(
+                try_body,
+                supplied,
+                certified,
+                function_name,
+                next_index,
+                unranked,
+            )?;
+            check_loops(
+                handler,
+                supplied,
+                certified,
+                function_name,
+                next_index,
+                unranked,
+            )
         }
         CStatement::While { body, .. } => {
             let index = *next_index;
             *next_index += 1;
-            let nested_terminate =
-                check_loops(body, supplied, certified, function_name, next_index)?;
+            check_loops(
+                body,
+                supplied,
+                certified,
+                function_name,
+                next_index,
+                unranked,
+            )?;
             let Some(measures) = supplied.get(&index) else {
-                return Ok(false);
+                unranked.push(index);
+                return Ok(());
             };
             if matches!(measures, CLoopTerminationMeasure::Ranking(components) if components.is_empty())
             {
@@ -1995,7 +2041,7 @@ fn check_loops(
                 )));
             }
             match certified.get(&index) {
-                Some(checked) if checked == measures => Ok(nested_terminate),
+                Some(checked) if checked == measures => Ok(()),
                 Some(checked) => Err(error(format!(
                     "loop {index} in `{function_name}` was certified for `{}`, not the planned `{}`",
                     loop_termination_measure_display(checked),
@@ -2008,16 +2054,26 @@ fn check_loops(
             }
         }
         CStatement::Switch { cases, .. } => {
-            let mut nested_terminate = true;
             for case in cases {
-                nested_terminate &=
-                    check_loops(&case.body, supplied, certified, function_name, next_index)?;
+                check_loops(
+                    &case.body,
+                    supplied,
+                    certified,
+                    function_name,
+                    next_index,
+                    unranked,
+                )?;
             }
-            Ok(nested_terminate)
+            Ok(())
         }
-        CStatement::ContinueWithStep { step } => {
-            check_loops(step, supplied, certified, function_name, next_index)
-        }
+        CStatement::ContinueWithStep { step } => check_loops(
+            step,
+            supplied,
+            certified,
+            function_name,
+            next_index,
+            unranked,
+        ),
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
@@ -2035,25 +2091,8 @@ fn check_loops(
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
         | CStatement::CopyAggregate { .. }
-        | CStatement::Update { .. } => Ok(true),
+        | CStatement::Update { .. } => Ok(()),
     }
-}
-
-fn reachable(start: &str, target: &str, calls: &BTreeMap<String, BTreeSet<String>>) -> bool {
-    let mut pending = vec![start];
-    let mut visited = BTreeSet::new();
-    while let Some(name) = pending.pop() {
-        if !visited.insert(name) {
-            continue;
-        }
-        if name == target {
-            return true;
-        }
-        if let Some(next) = calls.get(name) {
-            pending.extend(next.iter().map(String::as_str));
-        }
-    }
-    false
 }
 
 /// The callees of one body, with a callee spelled like an object the function
@@ -2079,41 +2118,32 @@ fn termination_callees(function: &CFunction) -> BTreeSet<String> {
         .collect()
 }
 
-/// Checks untrusted ranking plans against exact partially-correct function
-/// rules and returns the independently usable subset proved to terminate.
+/// The verified functions of one run, the contract-less `static inline`
+/// helpers their bodies reach, and each node's callees.
 ///
-/// `inline_bodies` carries the project's contract-less `static inline`
-/// helpers. A call to one of them executes that body at the call site, so the
-/// helper is a node of this call graph exactly like the function whose body
-/// contains the call: its own loops must be ranked and certified, its own
-/// recursion is a cycle needing a checked rule, and a straight-line body over
-/// terminating callees terminates by construction. Only the helpers the
-/// verified bodies actually reach are pulled in, and each is read once.
-pub fn c_verified_function_termination_rules(
-    partial_rules: &[CVerifiedFunctionRule],
-    plan_entries: &[CFunctionTerminationPlan],
-    verified_loop_rules: &BTreeMap<String, Vec<CVerifiedLoopRule>>,
-    inline_bodies: &[&CFunction],
-) -> Result<Vec<CVerifiedFunctionTerminationRule>, CTerminationError> {
+/// A call to such a helper executes that body at the call site, so the helper
+/// is a node of this call graph exactly like the function whose body contains
+/// the call. A helper that carries its own sidecar contract already has a
+/// verified rule and stays that node; only the contract-less ones are added,
+/// only the ones the verified bodies actually reach, and each is read once.
+type TerminationCallGraph<'a> = (
+    BTreeMap<String, &'a CFunction>,
+    BTreeMap<String, BTreeSet<String>>,
+);
+
+fn termination_call_graph<'a>(
+    partial_rules: &'a [CVerifiedFunctionRule],
+    inline_bodies: &[&'a CFunction],
+) -> TerminationCallGraph<'a> {
     let mut functions = partial_rules
         .iter()
         .map(|rule| (rule.function.name.clone(), &rule.function))
         .collect::<BTreeMap<_, _>>();
-    // A helper that carries its own sidecar contract already has a verified
-    // rule above and stays that node; only the contract-less ones are added.
     let available_inline_bodies = inline_bodies
         .iter()
         .filter(|function| function.has_inline_body() && !functions.contains_key(function.name()))
         .map(|function| (function.name().to_string(), *function))
         .collect::<BTreeMap<_, _>>();
-    let plans = plan_entries
-        .iter()
-        .map(|plan| (plan.function_name.clone(), plan))
-        .collect::<BTreeMap<_, _>>();
-    if plans.len() != plan_entries.len() {
-        return Err(error("termination plans contain a duplicate function"));
-    }
-
     let mut calls = BTreeMap::<String, BTreeSet<String>>::new();
     let mut pending = functions.keys().cloned().collect::<Vec<_>>();
     while let Some(name) = pending.pop() {
@@ -2136,99 +2166,326 @@ pub fn c_verified_function_termination_rules(
         }
         calls.insert(name, found);
     }
+    (functions, calls)
+}
 
-    let mut components = Vec::<BTreeSet<String>>::new();
-    for name in functions.keys() {
-        let component = functions
-            .keys()
-            .filter(|other| reachable(name, other, &calls) && reachable(other, name, &calls))
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        if !components.contains(&component) {
-            components.push(component);
-        }
-    }
-
-    let mut structurally_terminating = BTreeMap::new();
-    for component in &components {
-        let recursive = component.len() > 1
-            || component
+/// Proposes a height for every node of the termination call graph: zero for a
+/// function that calls no other node, and otherwise one more than its highest
+/// callee outside its own recursive cycle. The members of a cycle share a
+/// height.
+///
+/// The result is untrusted. [`c_verified_function_termination_rules`] checks
+/// at every call site that the callee is not above its caller, and treats
+/// every call between equal heights as a recursive edge that a declared
+/// measure must rank, so a wrong height can only refuse a function or fail
+/// the check; it cannot certify one. This is Tarjan's algorithm with an
+/// explicit stack, so a call chain as deep as the project is long costs heap
+/// and not machine stack. Work is linear in the nodes and their call edges.
+pub fn c_termination_height_plan(
+    partial_rules: &[CVerifiedFunctionRule],
+    inline_bodies: &[&CFunction],
+) -> BTreeMap<String, usize> {
+    let (functions, calls) = termination_call_graph(partial_rules, inline_bodies);
+    let names = functions.keys().collect::<Vec<_>>();
+    let node_of = names
+        .iter()
+        .enumerate()
+        .map(|(node, name)| (name.as_str(), node))
+        .collect::<BTreeMap<_, _>>();
+    let edges = names
+        .iter()
+        .map(|name| {
+            calls[*name]
                 .iter()
-                .any(|name| calls[name].contains(name.as_str()));
-        let mut parameter_indices = BTreeMap::new();
-        let mut structural_requirement = None;
-        if recursive {
-            if component.iter().any(|name| {
-                plans
-                    .get(name)
-                    .and_then(|plan| plan.recursive_measure.as_ref())
-                    .is_none()
-            }) {
-                for name in component {
-                    structurally_terminating.insert(name.clone(), false);
+                .filter_map(|callee| node_of.get(callee.as_str()).copied())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    const UNVISITED: usize = usize::MAX;
+    let mut discovery = vec![UNVISITED; names.len()];
+    let mut low = vec![0; names.len()];
+    let mut on_stack = vec![false; names.len()];
+    let mut height = vec![UNVISITED; names.len()];
+    let mut stack = Vec::new();
+    let mut next_discovery = 0;
+    for root in 0..names.len() {
+        if discovery[root] != UNVISITED {
+            continue;
+        }
+        // Each frame is a node and the position of its next unexplored edge.
+        let mut frames = vec![(root, 0)];
+        while let Some((node, edge)) = frames.last().copied() {
+            if edge == 0 {
+                discovery[node] = next_discovery;
+                low[node] = next_discovery;
+                next_discovery += 1;
+                stack.push(node);
+                on_stack[node] = true;
+            }
+            if let Some(callee) = edges[node].get(edge).copied() {
+                frames.last_mut().expect("the frame was just read").1 += 1;
+                if discovery[callee] == UNVISITED {
+                    frames.push((callee, 0));
+                } else if on_stack[callee] {
+                    low[node] = low[node].min(discovery[callee]);
                 }
                 continue;
             }
-            let has_resource_measure = component.iter().any(|name| {
-                matches!(
-                    plans[name].recursive_measure,
-                    Some(CFunctionTerminationMeasure::ResourceRequirement(_))
-                )
-            });
-            if has_resource_measure {
-                if component.len() != 1 {
+            frames.pop();
+            if let Some((caller, _)) = frames.last() {
+                low[*caller] = low[*caller].min(low[node]);
+            }
+            if low[node] != discovery[node] {
+                continue;
+            }
+            // `node` roots a finished cycle. Every callee outside it was
+            // finished earlier, so its height is already known.
+            let first_member = stack
+                .iter()
+                .rposition(|member| *member == node)
+                .expect("a cycle root is on the stack");
+            let members = stack.split_off(first_member);
+            for member in &members {
+                on_stack[*member] = false;
+            }
+            let cycle_height = members
+                .iter()
+                .flat_map(|member| edges[*member].iter())
+                .filter(|callee| height[**callee] != UNVISITED)
+                .map(|callee| height[*callee] + 1)
+                .max()
+                .unwrap_or(0);
+            for member in members {
+                height[member] = cycle_height;
+            }
+        }
+    }
+    names
+        .into_iter()
+        .zip(height)
+        .map(|(name, height)| (name.clone(), height))
+        .collect()
+}
+
+/// Why a function has no termination evidence. Exactly one reason is
+/// reported per function: its own first unranked loop if it has one, and
+/// otherwise the first call that is not shown to descend.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CTerminationRefusal {
+    /// The loop at this index, in source order, declares no measure.
+    UnrankedLoop { index: usize },
+    /// A call to `callee` closes a recursive cycle, and the caller or
+    /// `callee` declares no function-level measure to rank it.
+    UnmeasuredRecursion { callee: String },
+    /// `callee` has no termination evidence of its own.
+    Callee { callee: String },
+    /// A call through the object `object` has no declared callee.
+    IndirectCall { object: String },
+    /// The function declares that it may not return, and nothing else about
+    /// it withholds evidence.
+    DeclaredDiverging,
+}
+
+impl std::fmt::Display for CTerminationRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnrankedLoop { index } => {
+                write!(formatter, "loop {index} declares no `decreases` measure")
+            }
+            Self::UnmeasuredRecursion { callee } => write!(
+                formatter,
+                "the recursive call to `{callee}` is ranked by no function-level `decreases` measure"
+            ),
+            Self::Callee { callee } => {
+                write!(formatter, "callee `{callee}` has no termination evidence")
+            }
+            Self::IndirectCall { object } => write!(
+                formatter,
+                "the call through `{object}` has no declared callee to descend to"
+            ),
+            Self::DeclaredDiverging => write!(formatter, "it is declared `diverges`"),
+        }
+    }
+}
+
+/// The outcome of one termination check: evidence for the functions shown to
+/// return, and one reason for each function that was not.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CTerminationVerdicts {
+    pub rules: Vec<CVerifiedFunctionTerminationRule>,
+    pub refusals: BTreeMap<String, CTerminationRefusal>,
+    /// Functions declared diverging that this check would otherwise have
+    /// certified: every loop ranked and every call descending. They receive
+    /// no evidence, and the caller of this check decides what an unjustified
+    /// declaration means.
+    pub unjustified_diverging: Vec<String>,
+}
+
+/// Checks untrusted ranking plans against exact partially-correct function
+/// rules and returns the independently usable subset proved to terminate.
+///
+/// The judgment is local descent. `heights` is an untrusted proposal, as
+/// [`c_termination_height_plan`] makes one: every call must reach a callee
+/// that is not above its caller, a strictly lower callee must already have
+/// evidence, and a callee at the caller's own height is a recursive edge that
+/// the caller's declared measure must rank. Soundness is one induction on the
+/// pair of height and measure, so nothing here searches the call graph: each
+/// function reads its own call sites and loops, and levels are settled in
+/// ascending order with work linear in their recursive edges.
+///
+/// `assumed_terminating` names callees outside the verified set whose
+/// declarations promise that they return: an external contract, or a function
+/// this run did not select. They are assumptions in the same sense as those
+/// callees' postconditions.
+///
+/// `declared_diverging` names verified functions whose declarations say they
+/// may not return. Such a function is checked like any other, so the verdict
+/// can say whether the declaration was needed, but it never receives
+/// evidence and its callers are refused for it.
+pub fn c_verified_function_termination_rules(
+    partial_rules: &[CVerifiedFunctionRule],
+    plan_entries: &[CFunctionTerminationPlan],
+    verified_loop_rules: &BTreeMap<String, Vec<CVerifiedLoopRule>>,
+    inline_bodies: &[&CFunction],
+    heights: &BTreeMap<String, usize>,
+    assumed_terminating: &BTreeSet<String>,
+    declared_diverging: &BTreeSet<String>,
+) -> Result<CTerminationVerdicts, CTerminationError> {
+    let (functions, calls) = termination_call_graph(partial_rules, inline_bodies);
+    let plans = plan_entries
+        .iter()
+        .map(|plan| (plan.function_name.clone(), plan))
+        .collect::<BTreeMap<_, _>>();
+    if plans.len() != plan_entries.len() {
+        return Err(error("termination plans contain a duplicate function"));
+    }
+
+    let height_of = |name: &str| {
+        heights.get(name).copied().ok_or_else(|| {
+            error(format!(
+                "the termination height plan assigns no height to `{name}`"
+            ))
+        })
+    };
+
+    // Ascending height visits every strictly lower callee before its caller,
+    // so a caller reads a verdict and never computes one. Functions of equal
+    // height are one level, settled together below.
+    let mut levels = BTreeMap::<usize, Vec<&String>>::new();
+    for name in functions.keys() {
+        levels.entry(height_of(name)?).or_default().push(name);
+    }
+
+    let mut terminating = BTreeSet::<String>::new();
+    let mut refusals = BTreeMap::<String, CTerminationRefusal>::new();
+    let mut unjustified_diverging = Vec::new();
+    for (height, level) in &levels {
+        // The calls a function makes at its own height are its recursive
+        // edges: the height does not rank them, so its declared measure must.
+        let mut level_callers = BTreeMap::<&str, Vec<&String>>::new();
+        let mut settled = Vec::<&String>::new();
+        for name in level {
+            let name = *name;
+            let function = functions[name];
+            let mut refusal = None;
+            let mut recursive_callees = BTreeSet::<String>::new();
+            for callee in &calls[name] {
+                if !functions.contains_key(callee) {
+                    if !assumed_terminating.contains(callee) && refusal.is_none() {
+                        refusal = Some(match callee.strip_suffix("#indirect") {
+                            Some(object) => CTerminationRefusal::IndirectCall {
+                                object: object.to_string(),
+                            },
+                            None => CTerminationRefusal::Callee {
+                                callee: callee.clone(),
+                            },
+                        });
+                    }
+                    continue;
+                }
+                let callee_height = height_of(callee)?;
+                if callee_height > *height {
+                    return Err(error(format!(
+                        "the termination height plan places callee `{callee}` at height {callee_height}, above its caller `{name}` at height {height}"
+                    )));
+                }
+                if callee_height == *height {
+                    recursive_callees.insert(callee.clone());
+                    level_callers.entry(callee.as_str()).or_default().push(name);
+                } else if !terminating.contains(callee) && refusal.is_none() {
+                    refusal = Some(CTerminationRefusal::Callee {
+                        callee: callee.clone(),
+                    });
+                }
+            }
+
+            let plan = plans.get(name);
+            let recursive_measure = plan.and_then(|plan| plan.recursive_measure);
+            let mut parameter_indices = BTreeMap::new();
+            let mut structural_requirement = None;
+            if recursive_callees.is_empty() {
+                if recursive_measure.is_some() {
+                    return Err(error(format!(
+                        "function-level `decreases` on nonrecursive function `{name}` has no recursive edge to rank"
+                    )));
+                }
+            } else if let Some(unmeasured) = std::iter::once(name)
+                .chain(recursive_callees.iter())
+                .find(|member| {
+                    plans
+                        .get(*member)
+                        .and_then(|plan| plan.recursive_measure.as_ref())
+                        .is_none()
+                })
+            {
+                if refusal.is_none() {
+                    refusal = Some(CTerminationRefusal::UnmeasuredRecursion {
+                        callee: if unmeasured == name {
+                            recursive_callees
+                                .first()
+                                .expect("a recursive function has a recursive callee")
+                                .clone()
+                        } else {
+                            unmeasured.clone()
+                        },
+                    });
+                }
+            } else if let Some(CFunctionTerminationMeasure::ResourceRequirement(index)) =
+                recursive_measure
+            {
+                if recursive_callees.len() != 1 || !recursive_callees.contains(name) {
                     return Err(error(
                         "structural resource termination currently supports direct recursion only",
                     ));
                 }
-                let name = component.first().expect("recursive component is nonempty");
-                let Some(CFunctionTerminationMeasure::ResourceRequirement(index)) =
-                    plans[name].recursive_measure
-                else {
-                    return Err(error(
-                        "a recursive component cannot mix numeric and structural measures",
-                    ));
-                };
                 structural_requirement = Some(index);
             } else {
-                for name in component {
-                    let function = functions[name];
+                for member in std::iter::once(name).chain(recursive_callees.iter()) {
                     let Some(CFunctionTerminationMeasure::NumericParameter(index)) =
-                        plans[name].recursive_measure
+                        plans[member].recursive_measure
                     else {
                         return Err(error(
                             "a recursive component cannot mix numeric and structural measures",
                         ));
                     };
-                    let parameter = function.parameters().get(index).ok_or_else(|| {
+                    let parameter = functions[member].parameters().get(index).ok_or_else(|| {
                         error(format!(
-                            "termination parameter index is invalid for `{name}`"
+                            "termination parameter index is invalid for `{member}`"
                         ))
                     })?;
                     if parameter.c_type != CType::Int32 {
                         return Err(error(format!(
-                            "termination parameter `{}` in `{name}` must have type int32",
+                            "termination parameter `{}` in `{member}` must have type int32",
                             parameter.name
                         )));
                     }
-                    parameter_indices.insert(name.clone(), index);
+                    parameter_indices.insert(member.clone(), index);
                 }
             }
-        } else if let Some(name) = component.first()
-            && plans
-                .get(name)
-                .is_some_and(|plan| plan.recursive_measure.is_some())
-        {
-            return Err(error(format!(
-                "function-level `decreases` on nonrecursive function `{name}` has no recursive edge to rank"
-            )));
-        }
 
-        let mut component_ok = true;
-        for name in component {
-            let function = functions[name];
             let empty = BTreeMap::new();
-            let loop_measures = plans.get(name).map_or(&empty, |plan| &plan.loop_measures);
+            let loop_measures = plan.map_or(&empty, |plan| &plan.loop_measures);
             for measures in loop_measures.values() {
                 let CLoopTerminationMeasure::Ranking(measures) = measures else {
                     continue;
@@ -2246,78 +2503,102 @@ pub fn c_verified_function_termination_rules(
                 None => BTreeMap::new(),
             };
             let mut next_loop = 0;
-            component_ok &= check_loops(
+            let mut unranked = Vec::new();
+            check_loops(
                 &function.source_body,
                 loop_measures,
                 &certified,
                 name,
                 &mut next_loop,
+                &mut unranked,
             )?;
             if loop_measures.keys().any(|index| *index >= next_loop) {
                 return Err(error(format!(
                     "termination plan for `{name}` refers to a nonexistent loop"
                 )));
             }
-            if recursive {
-                if let Some(requirement_index) = structural_requirement {
-                    let measure = structural_resource_children(function, requirement_index)?;
-                    // An arm the function's own requirements already select is
-                    // active on every path; the check reads that from the arm
-                    // rather than seeding a synthetic path condition.
-                    structural_recursion_paths(
-                        &function.source_body,
-                        function,
-                        &measure,
-                        vec![StructuralRecursionPath {
-                            aliases: BTreeMap::new(),
-                            conditions: Vec::new(),
-                        }],
-                    )?;
-                } else {
-                    let index = parameter_indices[name];
-                    let measure = &function.parameters()[index].name;
-                    reject_address_escaped_measure(name, measure, &function.source_body)?;
-                    recursion_paths(
-                        &function.source_body,
-                        measure,
-                        component,
-                        &parameter_indices,
-                        vec![i64::MIN / 2],
-                    )?;
+            if let Some(index) = unranked.first() {
+                // An unranked loop is the function's own defect, so it is
+                // reported ahead of anything a callee lacks.
+                refusal = Some(CTerminationRefusal::UnrankedLoop { index: *index });
+            }
+
+            if let Some(requirement_index) = structural_requirement {
+                let measure = structural_resource_children(function, requirement_index)?;
+                // An arm the function's own requirements already select is
+                // active on every path; the check reads that from the arm
+                // rather than seeding a synthetic path condition.
+                structural_recursion_paths(
+                    &function.source_body,
+                    function,
+                    &measure,
+                    vec![StructuralRecursionPath {
+                        aliases: BTreeMap::new(),
+                        conditions: Vec::new(),
+                    }],
+                )?;
+            } else if let Some(index) = parameter_indices.get(name) {
+                let measure = &function.parameters()[*index].name;
+                reject_address_escaped_measure(name, measure, &function.source_body)?;
+                recursion_paths(
+                    &function.source_body,
+                    measure,
+                    &recursive_callees,
+                    &parameter_indices,
+                    vec![i64::MIN / 2],
+                )?;
+            }
+
+            match refusal {
+                Some(refusal) => {
+                    refusals.insert(name.clone(), refusal);
+                    settled.push(name);
+                }
+                None => {
+                    terminating.insert(name.clone());
                 }
             }
         }
-        for name in component {
-            structurally_terminating.insert(name.clone(), component_ok);
-        }
-    }
 
-    let mut terminating = BTreeSet::new();
-    loop {
-        let before = terminating.len();
-        for component in &components {
-            if component.iter().all(|name| structurally_terminating[name])
-                && component.iter().all(|name| {
-                    calls[name]
-                        .iter()
-                        .all(|callee| component.contains(callee) || terminating.contains(callee))
-                })
-            {
-                terminating.extend(component.iter().cloned());
+        // A recursive edge is sound only if its callee terminates too. Each
+        // refused member withdraws the callers that reach it at this height,
+        // once per edge, which leaves the largest set whose every call
+        // descends.
+        while let Some(refused) = settled.pop() {
+            for caller in level_callers.remove(refused.as_str()).unwrap_or_default() {
+                if terminating.remove(caller) {
+                    refusals.insert(
+                        caller.clone(),
+                        CTerminationRefusal::Callee {
+                            callee: refused.clone(),
+                        },
+                    );
+                    settled.push(caller);
+                }
             }
         }
-        if terminating.len() == before {
-            break;
+
+        // Only a settled level says whether a declaration was needed. The
+        // evidence is withdrawn before any higher caller can read it.
+        for name in level {
+            if declared_diverging.contains(*name) && terminating.remove(*name) {
+                refusals.insert((*name).clone(), CTerminationRefusal::DeclaredDiverging);
+                unjustified_diverging.push((*name).clone());
+            }
         }
     }
 
-    Ok(partial_rules
-        .iter()
-        .filter(|rule| terminating.contains(rule.function.name()))
-        .map(|rule| CVerifiedFunctionTerminationRule {
-            function: rule.function.clone(),
-        })
-        .collect())
+    Ok(CTerminationVerdicts {
+        rules: partial_rules
+            .iter()
+            .filter(|rule| terminating.contains(rule.function.name()))
+            .map(|rule| CVerifiedFunctionTerminationRule {
+                function: rule.function.clone(),
+            })
+            .collect(),
+        refusals,
+        unjustified_diverging,
+    })
 }
 
 #[cfg(test)]
@@ -2526,5 +2807,263 @@ mod ranking_member_tests {
             .is_some(),
             "the exact fact still settles its own obligation"
         );
+    }
+}
+
+#[cfg(test)]
+mod local_descent_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// A verified rule whose body calls `callees` in order and then holds the
+    /// given loops, which is all the termination check reads of a function.
+    fn rule(name: &str, callees: &[&str], loops: usize) -> CVerifiedFunctionRule {
+        let mut body = CStatement::Skip;
+        for callee in callees {
+            body = CStatement::Seq(
+                Arc::new(body),
+                Arc::new(crate::kernel::c_call(*callee, Vec::new())),
+            );
+        }
+        for _ in 0..loops {
+            body = CStatement::Seq(
+                Arc::new(body),
+                Arc::new(crate::kernel::c_while(
+                    crate::kernel::c_int32_literal(1),
+                    Vec::new(),
+                    CStatement::Skip,
+                )),
+            );
+        }
+        CVerifiedFunctionRule {
+            function: CFunction::new(CType::Void, name, Vec::new(), body),
+        }
+    }
+
+    fn check(
+        rules: &[CVerifiedFunctionRule],
+        plans: &[CFunctionTerminationPlan],
+        heights: &BTreeMap<String, usize>,
+        assumed: &[&str],
+    ) -> Result<CTerminationVerdicts, CTerminationError> {
+        c_verified_function_termination_rules(
+            rules,
+            plans,
+            &BTreeMap::new(),
+            &[],
+            heights,
+            &assumed.iter().map(|name| name.to_string()).collect(),
+            &BTreeSet::new(),
+        )
+    }
+
+    fn terminating(verdicts: &CTerminationVerdicts) -> BTreeSet<&str> {
+        verdicts
+            .rules
+            .iter()
+            .map(|rule| rule.function.name())
+            .collect()
+    }
+
+    fn heights(entries: &[(&str, usize)]) -> BTreeMap<String, usize> {
+        entries
+            .iter()
+            .map(|(name, height)| (name.to_string(), *height))
+            .collect()
+    }
+
+    #[test]
+    fn planned_heights_follow_the_call_dag_and_share_a_cycle() {
+        let rules = [
+            rule("top", &["middle", "ping"], 0),
+            rule("middle", &["leaf"], 0),
+            rule("leaf", &[], 0),
+            rule("ping", &["pong"], 0),
+            rule("pong", &["ping", "leaf"], 0),
+        ];
+        assert_eq!(
+            c_termination_height_plan(&rules, &[]),
+            heights(&[
+                ("leaf", 0),
+                ("middle", 1),
+                ("ping", 1),
+                ("pong", 1),
+                ("top", 2)
+            ])
+        );
+    }
+
+    #[test]
+    fn a_dag_terminates_under_its_planned_heights() {
+        let rules = [
+            rule("top", &["middle"], 0),
+            rule("middle", &["leaf"], 0),
+            rule("leaf", &[], 0),
+        ];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let verdicts = check(&rules, &[], &plan, &[]).expect("a consistent plan checks");
+        assert_eq!(
+            terminating(&verdicts),
+            BTreeSet::from(["leaf", "middle", "top"])
+        );
+        assert!(verdicts.refusals.is_empty());
+    }
+
+    /// Heights are untrusted: one that inverts a call is an error, never
+    /// evidence.
+    #[test]
+    fn a_callee_planned_above_its_caller_is_rejected() {
+        let rules = [rule("caller", &["callee"], 0), rule("callee", &[], 0)];
+        let forged = heights(&[("caller", 0), ("callee", 1)]);
+        let error = check(&rules, &[], &forged, &[]).expect_err("an inverted plan must not check");
+        assert!(error.message.contains("above its caller"), "{error:?}");
+    }
+
+    /// Flattening two functions onto one height hides nothing: the call
+    /// between them becomes a recursive edge, which needs a measure.
+    #[test]
+    fn a_call_between_equal_heights_needs_a_measure() {
+        let rules = [rule("caller", &["callee"], 0), rule("callee", &[], 0)];
+        let forged = heights(&[("caller", 0), ("callee", 0)]);
+        let verdicts = check(&rules, &[], &forged, &[]).expect("the plan is merely unhelpful");
+        assert_eq!(terminating(&verdicts), BTreeSet::from(["callee"]));
+        assert_eq!(
+            verdicts.refusals["caller"],
+            CTerminationRefusal::UnmeasuredRecursion {
+                callee: "callee".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn a_missing_height_is_rejected() {
+        let rules = [rule("only", &[], 0)];
+        let error =
+            check(&rules, &[], &BTreeMap::new(), &[]).expect_err("every node needs a height");
+        assert!(error.message.contains("assigns no height"), "{error:?}");
+    }
+
+    #[test]
+    fn an_unmeasured_cycle_refuses_its_members_and_their_callers() {
+        let rules = [
+            rule("top", &["ping"], 0),
+            rule("ping", &["pong"], 0),
+            rule("pong", &["ping"], 0),
+            rule("bystander", &[], 0),
+        ];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let verdicts = check(&rules, &[], &plan, &[]).expect("the plan checks");
+        assert_eq!(terminating(&verdicts), BTreeSet::from(["bystander"]));
+        assert!(matches!(
+            verdicts.refusals["ping"],
+            CTerminationRefusal::UnmeasuredRecursion { .. }
+        ));
+        assert_eq!(
+            verdicts.refusals["top"],
+            CTerminationRefusal::Callee {
+                callee: "ping".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn a_callee_outside_the_run_terminates_only_when_assumed() {
+        let rules = [rule("caller", &["outside"], 0)];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let refused = check(&rules, &[], &plan, &[]).expect("the plan checks");
+        assert_eq!(
+            refused.refusals["caller"],
+            CTerminationRefusal::Callee {
+                callee: "outside".to_string()
+            }
+        );
+        let assumed = check(&rules, &[], &plan, &["outside"]).expect("the plan checks");
+        assert_eq!(terminating(&assumed), BTreeSet::from(["caller"]));
+    }
+
+    #[test]
+    fn a_declared_diverging_function_refuses_its_callers_and_answers_for_the_marker() {
+        let rules = [
+            rule("caller", &["spins"], 0),
+            rule("spins", &[], 1),
+            rule("idle", &[], 0),
+        ];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let verdicts = c_verified_function_termination_rules(
+            &rules,
+            &[],
+            &BTreeMap::new(),
+            &[],
+            &plan,
+            &BTreeSet::new(),
+            &BTreeSet::from(["spins".to_string(), "idle".to_string()]),
+        )
+        .expect("the plan checks");
+        assert!(terminating(&verdicts).is_empty());
+        // `spins` needs its marker for its loop; `idle` has nothing to justify one.
+        assert_eq!(
+            verdicts.refusals["spins"],
+            CTerminationRefusal::UnrankedLoop { index: 0 }
+        );
+        assert_eq!(verdicts.unjustified_diverging, ["idle".to_string()]);
+        assert_eq!(
+            verdicts.refusals["caller"],
+            CTerminationRefusal::Callee {
+                callee: "spins".to_string()
+            }
+        );
+    }
+
+    /// An unranked loop used to stop the walk, so later loops were never
+    /// counted and a measure planned for one of them was reported as naming a
+    /// loop that does not exist.
+    #[test]
+    fn an_unranked_loop_does_not_hide_the_loops_after_it() {
+        let rules = [rule("two_loops", &[], 2)];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let verdicts = check(&rules, &[], &plan, &[]).expect("the plan checks");
+        assert_eq!(
+            verdicts.refusals["two_loops"],
+            CTerminationRefusal::UnrankedLoop { index: 0 }
+        );
+
+        let mut ranks_second = CFunctionTerminationPlan {
+            function_name: "two_loops".to_string(),
+            recursive_measure: None,
+            loop_measures: BTreeMap::new(),
+        };
+        ranks_second.extend_loop_measures([(
+            1,
+            CLoopTerminationMeasure::Ranking(vec![CExpression::Variable("n".to_string())]),
+        )]);
+        let error = check(&rules, &[ranks_second], &plan, &[])
+            .expect_err("loop 1 is planned but was never certified");
+        assert!(
+            error.message.contains("no verified loop rule"),
+            "loop 1 exists and must be reported as uncertified, got {error:?}"
+        );
+    }
+
+    /// The planner keeps its own stack, and the check visits each function
+    /// once, so a call chain as long as the project is neither a machine
+    /// stack overflow nor a quadratic walk.
+    #[test]
+    fn a_long_call_chain_plans_and_checks() {
+        const LENGTH: usize = 20_000;
+        let name = |index: usize| format!("f{index:05}");
+        let rules = (0..LENGTH)
+            .map(|index| {
+                if index + 1 < LENGTH {
+                    rule(&name(index), &[&name(index + 1)], 0)
+                } else {
+                    rule(&name(index), &[], 0)
+                }
+            })
+            .collect::<Vec<_>>();
+        let plan = c_termination_height_plan(&rules, &[]);
+        assert_eq!(plan[&name(0)], LENGTH - 1);
+        assert_eq!(plan[&name(LENGTH - 1)], 0);
+        let verdicts = check(&rules, &[], &plan, &[]).expect("the plan checks");
+        assert_eq!(verdicts.rules.len(), LENGTH);
     }
 }

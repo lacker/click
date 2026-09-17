@@ -40,7 +40,11 @@ assumptions; their proof bodies are not recursively selected.
 Given a directory, verifies every sidecar in it: either the project directory
 itself when it holds sidecars, or each immediate subdirectory that does. This
 is the command to run after applying an expansion emitted by `click expand`.
-Each sidecar has a 30-second limit by default.";
+Each sidecar has a 30-second limit by default.
+
+`--require-termination` is the temporary migration switch for termination by
+default: every selected C function must then have termination evidence, not
+only those that declare a `decreases` clause.";
 
 const INCREMENTAL_CACHE_SCHEMA: &str = "click-verified-v1";
 type LoadedSidecar = (String, Vec<(String, String)>);
@@ -51,6 +55,7 @@ struct Arguments {
     time_limit: Duration,
     changed_since: Option<String>,
     explain: bool,
+    require_termination: bool,
 }
 
 fn main() {
@@ -71,6 +76,24 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
         return Ok(());
     }
     let arguments = parse_arguments(raw)?;
+    if arguments.require_termination {
+        // A baseline records what an ordinary run verified, so it cannot say
+        // which proofs the stricter rule still has to check.
+        if arguments.changed_since.is_some() {
+            return Err(
+                "`--require-termination` cannot be combined with `--changed-since`".to_string(),
+            );
+        }
+        let arguments = Arguments {
+            require_termination: false,
+            ..arguments
+        };
+        return click::surface::with_termination_required(|| run(arguments));
+    }
+    run(arguments)
+}
+
+fn run(arguments: Arguments) -> Result<(), String> {
     println!(
         "default C target: {} (LP64, 8-bit unsigned plain char); a sidecar may select another with `target \"...\";`",
         CTarget::SUPPORTED.name()
@@ -99,6 +122,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     let mut time_limit = DEFAULT_VERIFY_TIME_LIMIT;
     let mut changed_since = None;
     let mut explain = false;
+    let mut require_termination = false;
     let mut parse_options = true;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
@@ -120,6 +144,8 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
             );
         } else if parse_options && argument == "--explain" {
             explain = true;
+        } else if parse_options && argument == "--require-termination" {
+            require_termination = true;
         } else if parse_options && argument.starts_with('-') {
             return Err(format!("unknown option `{argument}`\n{USAGE}"));
         } else if target.replace(argument).is_some() {
@@ -131,6 +157,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
         time_limit,
         changed_since,
         explain,
+        require_termination,
     })
 }
 
@@ -822,6 +849,7 @@ mod tests {
                 time_limit: DEFAULT_VERIFY_TIME_LIMIT,
                 changed_since: None,
                 explain: false,
+                require_termination: false,
             })
         );
         assert_eq!(
@@ -835,6 +863,7 @@ mod tests {
                 time_limit: Duration::from_millis(250),
                 changed_since: None,
                 explain: false,
+                require_termination: false,
             })
         );
         assert_eq!(
@@ -849,6 +878,7 @@ mod tests {
                 time_limit: DEFAULT_VERIFY_TIME_LIMIT,
                 changed_since: Some("HEAD~1".to_string()),
                 explain: true,
+                require_termination: false,
             })
         );
     }
