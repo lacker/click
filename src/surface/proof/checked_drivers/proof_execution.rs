@@ -1645,7 +1645,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                     .filter(|(_, unconsumed)| unconsumed.is_empty());
                     let Some((advanced, _)) = advanced else {
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {}: `{}` did not verify as a checked preservation operation",
+                            "`{claim_label}` tactic {}: `{}` did not verify as a checked preservation operation. The preservation driver declined it; this is a proof-shape limitation, not a failed proposition check. For proposition-only work, move the operation into `have proposition by {{ ... }}`.",
                             indexed.index,
                             tactic_name(&indexed.tactic)
                         )));
