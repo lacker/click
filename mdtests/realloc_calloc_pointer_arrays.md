@@ -66,10 +66,6 @@ uint8 realloc_calloc_uint8_pointer_array() {
 }
 ```
 
-```termination
-pending: callee
-```
-
 ```expect
 pass
 ```

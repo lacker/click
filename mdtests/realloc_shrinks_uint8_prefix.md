@@ -30,10 +30,6 @@ uint8 realloc_shrinks_uint8_prefix() {
 }
 ```
 
-```termination
-pending: callee
-```
-
 ```expect
 pass
 ```

@@ -32,10 +32,6 @@ int32 realloc_preserves_int32_prefix() {
 }
 ```
 
-```termination
-pending: callee
-```
-
 ```expect
 pass
 ```

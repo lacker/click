@@ -140,10 +140,6 @@ uint64_t realloc_uint64_array_with_size_t(size_t count) {
 }
 ```
 
-```termination
-pending: callee
-```
-
 ```expect
 pass
 ```

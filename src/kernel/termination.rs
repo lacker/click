@@ -13,6 +13,10 @@ fn charge_termination_work(units: usize) {
     crate::instrumentation::record_deterministic_work(units);
 }
 
+/// The one library call the execution model implements itself instead of
+/// looking up a function; see `c0_statement_calls`.
+const MODELED_REALLOC: &str = "realloc";
+
 fn error(message: impl Into<String>) -> CTerminationError {
     CTerminationError {
         message: message.into(),
@@ -2445,6 +2449,13 @@ pub fn c_verified_function_termination_rules(
             let mut recursive_callees = BTreeSet::<String>::new();
             for callee in &calls[name] {
                 charge_termination_work(1);
+                // `realloc` is a call in the syntax and a primitive in the
+                // semantics: execution models it before it looks for any
+                // function of that name, as it models the allocation and
+                // free statements, so it returns like they do.
+                if callee == MODELED_REALLOC {
+                    continue;
+                }
                 if !functions.contains_key(callee) {
                     if !assumed_terminating.contains(callee) && refusal.is_none() {
                         refusal = Some(match callee.strip_suffix("#indirect") {
@@ -3183,6 +3194,17 @@ mod local_descent_tests {
             );
         }
         assert!(loop_at_index(&body, 3, &mut 0).is_none());
+    }
+
+    /// `realloc` is modeled by execution itself, so it is no node of the call
+    /// graph and needs no assumption to return.
+    #[test]
+    fn the_modeled_realloc_returns_without_being_assumed() {
+        let rules = [rule("grows", &["realloc"], 0)];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let verdicts = check(&rules, &[], &plan, &[]).expect("the plan checks");
+        assert_eq!(terminating(&verdicts), BTreeSet::from(["grows"]));
+        assert!(verdicts.refusals.is_empty());
     }
 
     /// An unranked loop used to stop the walk, so later loops were never

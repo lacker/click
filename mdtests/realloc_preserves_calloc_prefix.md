@@ -28,10 +28,6 @@ int32 realloc_preserves_calloc_prefix() {
 }
 ```
 
-```termination
-pending: callee
-```
-
 ```expect
 pass
 ```
