@@ -34,6 +34,7 @@ int32 copy3(int32 dst[3], int32 src[3]) {
     step();
     step();
     loop {
+        decreases 3 - i;
         invariant i >= 0 and i <= 3;
         invariant forall (k: int32) { 0 <= k and k < 3 implies src[k] == old(src[k]) };
         invariant forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) };
@@ -235,21 +236,58 @@ int32 copy3(int32 dst[3], int32 src[3]) {
                                             }
                                         }
                                     } and {
-                                        intro();
-                                        extract(i >= 0);
-                                        extract(i <= 3);
-                                        intro();
-                                        intro();
-                                        intro();
-                                        intro();
-                                        intro();
-                                        intro();
-                                        intro();
-                                        instantiate(forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) }, __click_q0) using {
-                                            0 <= __click_q0 and __click_q0 < i;
+                                both {
+                                                                            intro();
+                                                                            extract(i >= 0);
+                                                                            extract(i <= 3);
+                                                                            intro();
+                                                                            intro();
+                                                                            intro();
+                                                                            intro();
+                                                                            intro();
+                                                                            intro();
+                                                                            intro();
+                                                                            instantiate(forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) }, __click_q0) using {
+                                                                                0 <= __click_q0 and __click_q0 < i;
+                                                                            }
+                                                                            assumption();
+                                                                        
+                                } and {
+                                    both {
+                                        arithmetic_certificate signed_int32 {
+                                            premise 0: at(statement(3).entry, i) >= at(statement(3).entry, 0) => at(statement(3).entry, i) >= at(statement(3).entry, 0);
+                                            premise 1: at(statement(3).entry, i) < at(statement(3).entry, 3) => at(statement(3).entry, i) < at(statement(3).entry, 3);
+                                            interval_atom (0) (0) (0);
+                                            interval_from_affine 0 (at(statement(3).entry, i)) (0) (2147483647);
+                                            interval_from_affine 1 (at(statement(3).entry, i)) (-2147483648) (2);
+                                            interval_intersect 3, 4 (0) (2);
+                                            interval_subtract 2, 5 2 (-2) (0);
+                                            interval_atom (2) (2) (2);
+                                            interval_add_bounded 6, 7 (0) (2);
+                                            affine_conclusion 1 8 => 0 <= ((0 - at(statement(3).entry, i)) + 2);
+                                            conclusion 9;
                                         }
-                                        assumption();
+                                    } and {
+                                        arithmetic_certificate signed_int32 {
+                                            premise 0: at(statement(3).entry, i) >= at(statement(3).entry, 0) => at(statement(3).entry, i) >= at(statement(3).entry, 0);
+                                            premise 1: at(statement(3).entry, i) < at(statement(3).entry, 3) => at(statement(3).entry, i) < at(statement(3).entry, 3);
+                                            interval_atom (0) (0) (0);
+                                            interval_from_affine 0 (at(statement(3).entry, i)) (0) (2147483647);
+                                            interval_from_affine 1 (at(statement(3).entry, i)) (-2147483648) (2);
+                                            interval_intersect 3, 4 (0) (2);
+                                            interval_subtract 2, 5 2 (-2) (0);
+                                            interval_atom (2) (2) (2);
+                                            interval_add_bounded 6, 7 (0) (2);
+                                            interval_subtract 2, 5 2 (-2) (0);
+                                            interval_atom (3) (3) (3);
+                                            interval_add_bounded 9, 10 (1) (3);
+                                            trivial => 0 <= 0;
+                                            affine_conclusion_pair 12 8 11 => ((0 - at(statement(3).entry, i)) + 2) < ((0 - at(statement(3).entry, i)) + 3);
+                                            conclusion 13;
+                                        }
                                     }
+                                }
+}
                                 }
                             }
                         }
@@ -300,10 +338,6 @@ int32 copy3(int32 dst[3], int32 src[3]) {
     assumption();
     assumption();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect
