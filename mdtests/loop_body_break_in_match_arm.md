@@ -48,6 +48,7 @@ int32 spin(struct cell* node, int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         owns c: cell(node);
         invariant i >= 0;
         invariant c.model == old(c.model);
@@ -66,10 +67,6 @@ int32 spin(struct cell* node, int32 n) {
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect
