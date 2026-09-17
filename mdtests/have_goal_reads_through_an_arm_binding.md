@@ -121,6 +121,7 @@ unsigned long spin_over_the_binding(struct node* p, int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         owns t: tree_at(p);
         invariant i >= 0;
         invariant i <= n;
@@ -141,7 +142,63 @@ unsigned long spin_over_the_binding(struct node* p, int32 n) {
                     step();
                     let t = fold(tree_at(p), { model: Tree::Node(id, color, left_model) },
                         { left: l });
-                    close_invariants();
+                    close_invariants by {
+                        both {
+                            apply(int32_increment_greater_equal_lower_bound(at(statement(3).entry, i), at(statement(3).entry, 0), at(statement(3).entry, n))) using {
+                                at(statement(3).entry, i) >= at(statement(3).entry, 0);
+                                at(statement(3).entry, i) < at(statement(3).entry, n);
+                            }
+                        } and {
+                            both {
+                                intro();
+                                apply(int32_increment_upper_bound(at(statement(3).entry, i), at(statement(3).entry, n))) using {
+                                    at(statement(3).entry, i) < at(statement(3).entry, n);
+                                }
+                            } and {
+                                both {
+                                    intro();
+                                    intro();
+                                    simp();
+                                } and {
+                                    both {
+                                        intro();
+                                        intro();
+                                        intro();
+                                        simp();
+                                    } and {
+                                        both {
+                                            arithmetic_certificate signed_int32 {
+                                                premise 0: n >= 0 => n >= 0;
+                                                premise 1: at(statement(3).entry, i) >= at(statement(3).entry, 0) => at(statement(3).entry, i) >= at(statement(3).entry, 0);
+                                                premise 2: at(statement(3).entry, i) < at(statement(3).entry, n) => at(statement(3).entry, i) < at(statement(3).entry, n);
+                                                interval_from_affine 0 (n) (0) (2147483647);
+                                                interval_from_affine 1 (at(statement(3).entry, i)) (0) (2147483647);
+                                                interval_subtract 3, 4 3 (-2147483647) (2147483647);
+                                                interval_atom (1) (1) (1);
+                                                interval_subtract 5, 6 5 (-2147483648) (2147483646);
+                                                affine_conclusion 2 7 => 0 <= ((n - at(statement(3).entry, i)) - 1);
+                                                conclusion 8;
+                                            }
+                                        } and {
+                                            arithmetic_certificate signed_int32 {
+                                                premise 0: n >= 0 => n >= 0;
+                                                premise 1: at(statement(3).entry, i) >= at(statement(3).entry, 0) => at(statement(3).entry, i) >= at(statement(3).entry, 0);
+                                                interval_from_affine 0 (n) (0) (2147483647);
+                                                interval_from_affine 1 (at(statement(3).entry, i)) (0) (2147483647);
+                                                interval_subtract 2, 3 2 (-2147483647) (2147483647);
+                                                interval_atom (1) (1) (1);
+                                                interval_subtract 4, 5 4 (-2147483648) (2147483646);
+                                                interval_subtract 2, 3 2 (-2147483647) (2147483647);
+                                                trivial => 0 <= 0;
+                                                affine_conclusion_pair 8 6 7 => ((n - at(statement(3).entry, i)) - 1) < (n - at(statement(3).entry, i));
+                                                conclusion 9;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 },
             }
         }
@@ -149,10 +206,6 @@ unsigned long spin_over_the_binding(struct node* p, int32 n) {
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect
