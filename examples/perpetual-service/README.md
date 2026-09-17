@@ -8,7 +8,9 @@ service metadata and its separate backing cell. `service_step` toggles a
 two-state protocol and returns the same folded resource. `service_run` calls
 that verified function opaquely inside `while (1)`; its loop invariant records
 the legal phase range while the resource is transferred to and returned by
-each summarized call.
+each summarized call. Its signature says `diverges` and its loop head says
+`loop diverges`, which is how a contract admits out loud that the function may
+never return.
 
 Click proves that every finite execution prefix is free of the checked forms of
 undefined behavior, respects the declared memory footprint, preserves the

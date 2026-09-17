@@ -53,10 +53,6 @@ const TERMINATION_PENDING: &[(&str, TerminationPending)] = &[
         "examples/owned-vector/vector.click",
         TerminationPending::UnrankedLoop,
     ),
-    (
-        "examples/perpetual-service/perpetual_service.click",
-        TerminationPending::UnrankedLoop,
-    ),
 ];
 
 #[test]
