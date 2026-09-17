@@ -26,16 +26,13 @@ int32 local_array_loop_frame() {
     step();
     step();
     loop {
+        decreases 3 - i;
         invariant i >= 0;
         invariant i <= 3;
     }
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

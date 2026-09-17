@@ -32,6 +32,7 @@ void loop_owns_clause_frames_other_owned_memory(int32 p[], int32 q[], int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         owns p[0..n];
         invariant i >= 0;
         invariant i <= n;
@@ -39,10 +40,6 @@ void loop_owns_clause_frames_other_owned_memory(int32 p[], int32 q[], int32 n) {
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

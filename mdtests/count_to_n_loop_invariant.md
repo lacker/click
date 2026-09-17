@@ -24,15 +24,12 @@ int32 count_to_n_loop_invariant(int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 0 and i <= n;
     }
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

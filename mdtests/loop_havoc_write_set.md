@@ -30,6 +30,7 @@ int32 loop_havoc_write_set(int32 p[], int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 1;
         invariant i <= n;
         owns (p + 1)[0..n - 1];
@@ -37,10 +38,6 @@ int32 loop_havoc_write_set(int32 p[], int32 n) {
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

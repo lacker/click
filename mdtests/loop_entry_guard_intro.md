@@ -33,6 +33,7 @@ int32 loop_entry_guard_intro(int32 p[3]) {
     step();
     step();
     loop {
+        decreases 3 - i;
         invariant i >= 0 and i <= 3;
         invariant forall (k: int32) {
             0 <= k and k < i implies p[k] == k
@@ -56,10 +57,6 @@ int32 loop_entry_guard_intro(int32 p[3]) {
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

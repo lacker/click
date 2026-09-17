@@ -30,6 +30,7 @@ int32 fill_n_segment_invariant(int32 p[], int32 n) {
     step();
     step();
     loop as fill {
+        decreases n - i;
         invariant i >= 0 and i <= n;
         invariant forall (k: int32) {
             0 <= k and k < i implies p[k] == k
@@ -46,10 +47,6 @@ int32 fill_n_segment_invariant(int32 p[], int32 n) {
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

@@ -23,6 +23,7 @@ int32 count_once(int32 flag) {
     step();
     step();
     loop {
+        decreases 1 - i;
         invariant i >= 0;
         invariant i <= 1;
         initialize by simp;
@@ -39,10 +40,6 @@ int32 count_once(int32 flag) {
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

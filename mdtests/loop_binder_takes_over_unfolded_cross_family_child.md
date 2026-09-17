@@ -46,6 +46,7 @@ void drain(int32 n) {
         RootModel::Has(child_model) => {
             unfold(r) as { child: child };
             loop {
+                decreases n;
                 owns child: leaf();
                 invariant child.model == LeafModel::Unit;
                 invariant n >= 0;
@@ -76,10 +77,6 @@ void drain(int32 n) {
         },
     }
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

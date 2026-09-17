@@ -28,16 +28,13 @@ int32 fill_n_with_segment_range(int32 p[], int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 0;
         invariant i <= n;
     }
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

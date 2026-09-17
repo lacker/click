@@ -32,16 +32,13 @@ uint8 fill_byte_tail(uint8 p[], int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 1 and i <= n;
         invariant first_byte(p) == old(first_byte(p));
     }
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

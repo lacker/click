@@ -25,16 +25,13 @@ int32 count_to_three() {
         simp();
     }
     loop {
+        decreases 3 - i;
         invariant i >= 0;
         invariant i <= 3;
     }
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

@@ -32,6 +32,7 @@ int32 fill_tail(int32 p[], int32 n, int32 untouched[]) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant n <= 10;
         invariant n <= 10;
         invariant i >= 1 and i <= n;
@@ -51,10 +52,6 @@ int32 fill_tail(int32 p[], int32 n, int32 untouched[]) {
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect
