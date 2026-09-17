@@ -227,13 +227,13 @@ satisfied and duplicate declarations. Path facts and loadability conditions
 remain guards on those judgments. The existing outstanding-obligation query
 still serves the current initialization driver until its migration lands.
 
-The retained-Proof migration exposed a nested-loop clause ownership problem:
-`frontier_local_loop_verifies_nested_loops_at_their_respective_frontiers` reaches
-loop 1 with four lowered checks for two written invariants. The outer loop
-registers its nested clause, then frontier binding appends the same clause again.
-Fix declaration ownership during frontier binding before switching consumers;
-do not truncate the produced goals or deduplicate declarations by spelling.
-The existing nested-loop test is the regression for that boundary.
+The nested-loop clause ownership prerequisite is also implemented. Frontier
+binding replaces the previously registered clause for the same C loop identity,
+including its proof-local scope, while retaining separate invariant declarations
+within that clause. The nested-loop regression verifies and expands twice; the
+binding regression checks scope replacement and preservation of duplicate
+invariant spellings. This prevents two written inner invariants from producing
+four lowered checks when the outer proof already registered the inner clause.
 
 `execution_planning/loop_planning.rs` recognizes an expanded source layout of
 helper steps followed by one `have` per invariant. It specially dispatches

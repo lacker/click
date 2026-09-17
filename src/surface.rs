@@ -5659,16 +5659,32 @@ impl FunctionBlock {
     }
 
     fn with_frontier_loop_clause(&self, clause: &StructuralClause, loop_index: usize) -> Self {
-        let mut function = self.clone();
-        function
-            .structural_clauses
-            .push(clause.bound_to_loop(loop_index));
-        function
+        self.with_bound_frontier_loop_clauses(&[clause.bound_to_loop(loop_index)])
     }
 
+    /// Install the current complete clause for each C loop identity. An outer
+    /// proof can register nested clauses before execution reaches their own
+    /// frontiers; binding them there replaces that earlier view, including its
+    /// proof-local scope. Repeated invariant spellings inside a clause remain
+    /// separate declarations.
     fn with_bound_frontier_loop_clauses(&self, clauses: &[StructuralClause]) -> Self {
         let mut function = self.clone();
-        function.structural_clauses.extend_from_slice(clauses);
+        let mut positions = BTreeMap::new();
+        let mut bound = Vec::with_capacity(function.structural_clauses.len() + clauses.len());
+        for clause in std::mem::take(&mut function.structural_clauses)
+            .into_iter()
+            .chain(clauses.iter().cloned())
+        {
+            if let CodeRegion::Loop(index) = clause.region() {
+                if let Some(position) = positions.get(index) {
+                    bound[*position] = clause;
+                    continue;
+                }
+                positions.insert(*index, bound.len());
+            }
+            bound.push(clause);
+        }
+        function.structural_clauses = bound;
         function
     }
 

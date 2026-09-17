@@ -1338,6 +1338,47 @@ fn frontier_local_loop_verifies_at_a_branch_local_frontier() {
 }
 
 #[test]
+fn frontier_loop_binding_replaces_scope_without_merging_declarations() {
+    let parsed = parse(
+        r#"
+        verifying "count.c";
+        int32 count(int32 i) { ensures result >= 0; } by {
+            loop {
+                invariant i >= bound;
+                invariant i >= bound;
+                initialize by simp;
+                preserve by simp;
+            }
+        }
+    "#,
+    )
+    .unwrap();
+    let function = &parsed.function_blocks()[0];
+    let ProofTactic::Loop(template) = &function.grouped_proof().unwrap().tactics().unwrap()[0]
+    else {
+        panic!("expected the loop template");
+    };
+    let value = |n| ContractExpression::CFragment(CExpression::Value(int32(n)));
+    let outer = template.with_scope(BTreeMap::from([("bound".to_string(), value(0))]));
+    let inner = template.with_scope(BTreeMap::from([("bound".to_string(), value(1))]));
+    let initial = function
+        .with_bound_frontier_loop_clauses(&[outer.bound_to_loop(0), outer.bound_to_loop(1)]);
+    let rebound = initial.with_frontier_loop_clause(&inner, 1);
+    let repeated = rebound.with_bound_frontier_loop_clauses(&[inner.bound_to_loop(1)]);
+    assert_eq!(initial.structural_clauses().len(), 2);
+    assert_eq!(rebound.structural_clauses(), repeated.structural_clauses());
+    assert_eq!(repeated.structural_clauses().len(), 2);
+    assert_eq!(repeated.structural_clauses()[0], outer.bound_to_loop(0));
+    assert_eq!(repeated.structural_clauses()[1], inner.bound_to_loop(1));
+    assert_eq!(repeated.structural_clauses()[1].items().len(), 2);
+    assert_eq!(initial.structural_clauses()[1], outer.bound_to_loop(1));
+    assert_ne!(
+        initial.structural_clauses()[1].resolved().unwrap().items(),
+        repeated.structural_clauses()[1].resolved().unwrap().items()
+    );
+}
+
+#[test]
 fn frontier_local_loop_verifies_nested_loops_at_their_respective_frontiers() {
     let c_source = r#"
             int32 nested_count() {
@@ -1387,8 +1428,17 @@ fn frontier_local_loop_verifies_nested_loops_at_their_respective_frontiers() {
             }
         "#;
 
-    verify_c0_sources(click_source, &[("nested_count.c", c_source)])
+    let sources = [("nested_count.c", c_source)];
+    verify_c0_sources(click_source, &sources)
         .expect("nested loop proofs should be scoped to their respective frontiers");
+    let expanded =
+        expand_c0_claim_source(click_source, &sources, "nested_count", CProofClaim::Grouped)
+            .expect("nested loop proofs should expand");
+    verify_c0_sources(&expanded, &sources).expect("expanded nested loops should verify");
+    let repeated =
+        expand_c0_claim_source(&expanded, &sources, "nested_count", CProofClaim::Grouped)
+            .expect("expanded nested loops should remain expandable");
+    assert_eq!(repeated, expanded);
 }
 
 #[test]
