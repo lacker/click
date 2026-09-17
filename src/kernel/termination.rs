@@ -1,5 +1,18 @@
 use super::prelude::*;
 
+/// Charges `units` of termination work to the ambient deterministic-work
+/// counters.
+///
+/// The termination check has no tactic of its own, so this is measurement
+/// only: it never consumes a budget and so cannot change a verdict. Every
+/// unit is one step the algorithm actually takes — a statement of a body it
+/// walks, a call edge it reads, a level member it settles, a planner visit,
+/// or a worklist step — so `termination_scaling_tests` counts the checker
+/// rather than the host clock.
+fn charge_termination_work(units: usize) {
+    crate::instrumentation::record_deterministic_work(units);
+}
+
 fn error(message: impl Into<String>) -> CTerminationError {
     CTerminationError {
         message: message.into(),
@@ -1091,6 +1104,7 @@ fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet
 /// syntactic condition for "a store or a callee might change this local
 /// without assigning it by name".
 fn statement_takes_address_of(statement: &CStatement, name: &str) -> bool {
+    charge_termination_work(1);
     let escapes = |expression: &CExpression| expression_takes_address_of(expression, name);
     match statement {
         CStatement::Skip
@@ -1192,6 +1206,7 @@ fn reject_address_escaped_expression_measure(
 }
 
 fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
+    charge_termination_work(1);
     match statement {
         CStatement::CallAssign { function_name, .. } | CStatement::Call { function_name, .. } => {
             calls.insert(function_name.clone());
@@ -1246,6 +1261,7 @@ fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
 /// Collects the names this body declares, so a call through one of them is
 /// not mistaken for a call to a like-named function.
 fn statement_declared_variables(statement: &CStatement, names: &mut BTreeSet<String>) {
+    charge_termination_work(1);
     match statement {
         CStatement::Declare { name, .. }
         | CStatement::DeclareAggregate { name, .. }
@@ -1690,6 +1706,7 @@ fn loop_at_index<'a>(
     target: usize,
     next_index: &mut usize,
 ) -> Option<&'a CStatement> {
+    charge_termination_work(1);
     match statement {
         CStatement::While { body, .. } => {
             let index = *next_index;
@@ -1958,6 +1975,7 @@ fn check_loops(
     next_index: &mut usize,
     unranked: &mut Vec<usize>,
 ) -> Result<(), CTerminationError> {
+    charge_termination_work(1);
     match statement {
         CStatement::Seq(first, second) => {
             check_loops(
@@ -2139,6 +2157,7 @@ fn termination_call_graph<'a>(
         .iter()
         .map(|rule| (rule.function.name.clone(), &rule.function))
         .collect::<BTreeMap<_, _>>();
+    charge_termination_work(partial_rules.len() + inline_bodies.len());
     let available_inline_bodies = inline_bodies
         .iter()
         .filter(|function| function.has_inline_body() && !functions.contains_key(function.name()))
@@ -2147,6 +2166,7 @@ fn termination_call_graph<'a>(
     let mut calls = BTreeMap::<String, BTreeSet<String>>::new();
     let mut pending = functions.keys().cloned().collect::<Vec<_>>();
     while let Some(name) = pending.pop() {
+        charge_termination_work(1);
         if calls.contains_key(&name) {
             continue;
         }
@@ -2155,6 +2175,7 @@ fn termination_call_graph<'a>(
             .expect("every pending name was added with its function");
         let found = termination_callees(function);
         for callee in &found {
+            charge_termination_work(1);
             if functions.contains_key(callee) {
                 continue;
             }
@@ -2195,8 +2216,10 @@ pub fn c_termination_height_plan(
     let edges = names
         .iter()
         .map(|name| {
+            charge_termination_work(1);
             calls[*name]
                 .iter()
+                .inspect(|_| charge_termination_work(1))
                 .filter_map(|callee| node_of.get(callee.as_str()).copied())
                 .collect::<Vec<_>>()
         })
@@ -2216,6 +2239,7 @@ pub fn c_termination_height_plan(
         // Each frame is a node and the position of its next unexplored edge.
         let mut frames = vec![(root, 0)];
         while let Some((node, edge)) = frames.last().copied() {
+            charge_termination_work(1);
             if edge == 0 {
                 discovery[node] = next_discovery;
                 low[node] = next_discovery;
@@ -2246,12 +2270,14 @@ pub fn c_termination_height_plan(
                 .rposition(|member| *member == node)
                 .expect("a cycle root is on the stack");
             let members = stack.split_off(first_member);
+            charge_termination_work(members.len());
             for member in &members {
                 on_stack[*member] = false;
             }
             let cycle_height = members
                 .iter()
                 .flat_map(|member| edges[*member].iter())
+                .inspect(|_| charge_termination_work(1))
                 .filter(|callee| height[**callee] != UNVISITED)
                 .map(|callee| height[*callee] + 1)
                 .max()
@@ -2353,6 +2379,7 @@ pub fn c_verified_function_termination_rules(
     declared_diverging: &BTreeSet<String>,
 ) -> Result<CTerminationVerdicts, CTerminationError> {
     let (functions, calls) = termination_call_graph(partial_rules, inline_bodies);
+    charge_termination_work(plan_entries.len());
     let plans = plan_entries
         .iter()
         .map(|plan| (plan.function_name.clone(), plan))
@@ -2374,6 +2401,7 @@ pub fn c_verified_function_termination_rules(
     // height are one level, settled together below.
     let mut levels = BTreeMap::<usize, Vec<&String>>::new();
     for name in functions.keys() {
+        charge_termination_work(1);
         levels.entry(height_of(name)?).or_default().push(name);
     }
 
@@ -2386,11 +2414,13 @@ pub fn c_verified_function_termination_rules(
         let mut level_callers = BTreeMap::<&str, Vec<&String>>::new();
         let mut settled = Vec::<&String>::new();
         for name in level {
+            charge_termination_work(1);
             let name = *name;
             let function = functions[name];
             let mut refusal = None;
             let mut recursive_callees = BTreeSet::<String>::new();
             for callee in &calls[name] {
+                charge_termination_work(1);
                 if !functions.contains_key(callee) {
                     if !assumed_terminating.contains(callee) && refusal.is_none() {
                         refusal = Some(match callee.strip_suffix("#indirect") {
@@ -2432,6 +2462,7 @@ pub fn c_verified_function_termination_rules(
                 }
             } else if let Some(unmeasured) = std::iter::once(name)
                 .chain(recursive_callees.iter())
+                .inspect(|_| charge_termination_work(1))
                 .find(|member| {
                     plans
                         .get(*member)
@@ -2462,6 +2493,7 @@ pub fn c_verified_function_termination_rules(
                 structural_requirement = Some(index);
             } else {
                 for member in std::iter::once(name).chain(recursive_callees.iter()) {
+                    charge_termination_work(1);
                     let Some(CFunctionTerminationMeasure::NumericParameter(index)) =
                         plans[member].recursive_measure
                     else {
@@ -2565,7 +2597,9 @@ pub fn c_verified_function_termination_rules(
         // once per edge, which leaves the largest set whose every call
         // descends.
         while let Some(refused) = settled.pop() {
+            charge_termination_work(1);
             for caller in level_callers.remove(refused.as_str()).unwrap_or_default() {
+                charge_termination_work(1);
                 if terminating.remove(caller) {
                     refusals.insert(
                         caller.clone(),
@@ -2581,6 +2615,7 @@ pub fn c_verified_function_termination_rules(
         // Only a settled level says whether a declaration was needed. The
         // evidence is withdrawn before any higher caller can read it.
         for name in level {
+            charge_termination_work(1);
             if declared_diverging.contains(*name) && terminating.remove(*name) {
                 refusals.insert((*name).clone(), CTerminationRefusal::DeclaredDiverging);
                 unjustified_diverging.push((*name).clone());
@@ -2591,6 +2626,7 @@ pub fn c_verified_function_termination_rules(
     Ok(CTerminationVerdicts {
         rules: partial_rules
             .iter()
+            .inspect(|_| charge_termination_work(1))
             .filter(|rule| terminating.contains(rule.function.name()))
             .map(|rule| CVerifiedFunctionTerminationRule {
                 function: rule.function.clone(),
@@ -3065,5 +3101,293 @@ mod local_descent_tests {
         assert_eq!(plan[&name(LENGTH - 1)], 0);
         let verdicts = check(&rules, &[], &plan, &[]).expect("the plan checks");
         assert_eq!(verdicts.rules.len(), LENGTH);
+    }
+}
+
+/// Deterministic scaling regressions for the termination check and its height
+/// planner.
+///
+/// The contract these pin is in `docs/internals/verification-efficiency.md`:
+/// planning and checking cost the call-graph nodes and edges of the selected
+/// run, not a search over it. Every sample counts cooperative verifier
+/// checkpoints rather than host time, so the curve is the same on any machine
+/// under any load.
+#[cfg(test)]
+mod termination_scaling_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// Four geometric sizes give three adjacent ratios. Work linear in nodes
+    /// and edges, up to the BTree indexing factor, doubles; holding every
+    /// ratio under this rejects the 4x-per-doubling curve of a quadratic
+    /// checker, which is what the pairwise-reachability predecessor of the
+    /// local-descent check had.
+    const MAX_GROWTH_RATIO: usize = 3;
+
+    const SIZES: [usize; 4] = [500, 1_000, 2_000, 4_000];
+
+    /// A call sequence built as a balanced tree rather than a left spine.
+    /// `Seq` is associative, so this is the same body with the same call
+    /// sites; only its nesting depth changes. The termination walks are
+    /// recursive, so a 4,000-call fan-out root built as a spine would measure
+    /// the host's stack rather than the checker's work.
+    fn calls_body(callees: &[String]) -> CStatement {
+        match callees {
+            [] => CStatement::Skip,
+            [only] => crate::kernel::c_call(only.clone(), Vec::new()),
+            _ => {
+                let (left, right) = callees.split_at(callees.len() / 2);
+                CStatement::Seq(Arc::new(calls_body(left)), Arc::new(calls_body(right)))
+            }
+        }
+    }
+
+    /// A verified rule whose body calls `callees` and nothing else, which is
+    /// all the termination check reads of a function carrying no loops and no
+    /// measures.
+    fn rule(name: &str, callees: &[String]) -> CVerifiedFunctionRule {
+        CVerifiedFunctionRule {
+            function: CFunction::new(CType::Void, name, Vec::new(), calls_body(callees)),
+        }
+    }
+
+    /// One shape at one size: the deterministic work the planner and then the
+    /// check spent on it.
+    #[derive(Clone, Debug)]
+    struct Sample {
+        size: usize,
+        nodes: usize,
+        plan_work: usize,
+        check_work: usize,
+    }
+
+    /// Plans heights, checks them, and hands the verdicts to `inspect`, so a
+    /// curve cannot be flattened by a run that decides nothing.
+    fn sample(
+        size: usize,
+        rules: &[CVerifiedFunctionRule],
+        inspect: impl FnOnce(&BTreeMap<String, usize>, &CTerminationVerdicts),
+    ) -> Sample {
+        let (heights, plan_work) = crate::instrumentation::measure_deterministic_work(|| {
+            c_termination_height_plan(rules, &[])
+        });
+        let (verdicts, check_work) = crate::instrumentation::measure_deterministic_work(|| {
+            c_verified_function_termination_rules(
+                rules,
+                &[],
+                &BTreeMap::new(),
+                &[],
+                &heights,
+                &BTreeSet::new(),
+                &BTreeSet::new(),
+            )
+            .expect("a planned height assignment checks")
+        });
+        assert_eq!(
+            verdicts.rules.len() + verdicts.refusals.len(),
+            rules.len(),
+            "every function receives evidence or a reason"
+        );
+        inspect(&heights, &verdicts);
+        Sample {
+            size,
+            nodes: rules.len(),
+            plan_work,
+            check_work,
+        }
+    }
+
+    fn assert_near_linear(shape: &str, samples: &[Sample]) {
+        assert_eq!(samples.len(), SIZES.len());
+        for pair in samples.windows(2) {
+            assert_eq!(
+                pair[1].size,
+                pair[0].size * 2,
+                "{shape}: sizes must double: {samples:?}"
+            );
+            assert!(
+                pair[1].plan_work <= pair[0].plan_work * MAX_GROWTH_RATIO,
+                "{shape}: height planning grows faster than its node-and-edge contract: {samples:?}"
+            );
+            assert!(
+                pair[1].check_work <= pair[0].check_work * MAX_GROWTH_RATIO,
+                "{shape}: the termination check grows faster than its node-and-edge contract: {samples:?}"
+            );
+        }
+    }
+
+    /// The deepest graph: height equals the node count, so every level holds
+    /// one function and the check settles `n` levels in ascending order.
+    #[test]
+    fn one_long_call_chain_costs_linear_termination_work() {
+        let name = |index: usize| format!("chain{index:06}");
+        let mut samples = Vec::new();
+        for size in SIZES {
+            let rules = (0..size)
+                .map(|index| {
+                    let callees = if index + 1 < size {
+                        vec![name(index + 1)]
+                    } else {
+                        Vec::new()
+                    };
+                    rule(&name(index), &callees)
+                })
+                .collect::<Vec<_>>();
+            samples.push(sample(size, &rules, |heights, verdicts| {
+                assert_eq!(heights[&name(0)], size - 1);
+                assert_eq!(heights[&name(size - 1)], 0);
+                assert_eq!(verdicts.rules.len(), size, "a call chain all terminates");
+                assert!(verdicts.refusals.is_empty());
+            }));
+        }
+        report("call chain", &samples);
+        assert_near_linear("call chain", &samples);
+    }
+
+    /// The widest graph: one level of `n` leaves, and a root whose own call
+    /// list is the whole edge set.
+    #[test]
+    fn wide_fan_out_costs_linear_termination_work() {
+        let leaf = |index: usize| format!("leaf{index:06}");
+        let mut samples = Vec::new();
+        for size in SIZES {
+            let leaves = (0..size).map(leaf).collect::<Vec<_>>();
+            let mut rules = vec![rule("root", &leaves)];
+            rules.extend(leaves.iter().map(|name| rule(name, &[])));
+            samples.push(sample(size, &rules, |heights, verdicts| {
+                assert_eq!(heights["root"], 1);
+                assert_eq!(heights[&leaf(0)], 0);
+                assert_eq!(
+                    verdicts.rules.len(),
+                    size + 1,
+                    "a root over terminating leaves terminates"
+                );
+                assert!(verdicts.refusals.is_empty());
+            }));
+        }
+        report("wide fan-out", &samples);
+        assert_near_linear("wide fan-out", &samples);
+    }
+
+    /// Many two-member cycles, each with its own caller. Every cycle member is
+    /// refused for unmeasured recursion, every refusal is pushed through the
+    /// level worklist, and every caller then reads a refused callee.
+    #[test]
+    fn many_small_unmeasured_cycles_cost_linear_termination_work() {
+        let ping = |index: usize| format!("ping{index:06}");
+        let pong = |index: usize| format!("pong{index:06}");
+        let caller = |index: usize| format!("caller{index:06}");
+        let mut samples = Vec::new();
+        for size in SIZES {
+            let groups = size / 2;
+            let mut rules = Vec::new();
+            for index in 0..groups {
+                rules.push(rule(&ping(index), &[pong(index)]));
+                rules.push(rule(&pong(index), &[ping(index)]));
+                rules.push(rule(&caller(index), &[ping(index)]));
+            }
+            samples.push(sample(size, &rules, |heights, verdicts| {
+                assert_eq!(heights[&ping(0)], 0, "a cycle's members share a height");
+                assert_eq!(heights[&pong(0)], 0);
+                assert_eq!(heights[&caller(0)], 1);
+                assert!(verdicts.rules.is_empty(), "nothing here terminates");
+                for index in [0, groups - 1] {
+                    assert!(matches!(
+                        verdicts.refusals[&ping(index)],
+                        CTerminationRefusal::UnmeasuredRecursion { .. }
+                    ));
+                    assert!(matches!(
+                        verdicts.refusals[&pong(index)],
+                        CTerminationRefusal::UnmeasuredRecursion { .. }
+                    ));
+                    assert_eq!(
+                        verdicts.refusals[&caller(index)],
+                        CTerminationRefusal::Callee {
+                            callee: ping(index)
+                        }
+                    );
+                }
+            }));
+        }
+        report("many small unmeasured cycles", &samples);
+        assert_near_linear("many small unmeasured cycles", &samples);
+    }
+
+    /// One strongly connected component of `n` functions: the planner's
+    /// explicit stack holds every member at once, and the check settles them
+    /// as a single level.
+    #[test]
+    fn one_large_cycle_costs_linear_termination_work() {
+        let name = |index: usize| format!("ring{index:06}");
+        let mut samples = Vec::new();
+        for size in SIZES {
+            let rules = (0..size)
+                .map(|index| rule(&name(index), &[name((index + 1) % size)]))
+                .collect::<Vec<_>>();
+            samples.push(sample(size, &rules, |heights, verdicts| {
+                assert!(
+                    (0..size).all(|index| heights[&name(index)] == 0),
+                    "one cycle is one level"
+                );
+                assert!(verdicts.rules.is_empty());
+                assert!(
+                    (0..size).all(|index| matches!(
+                        verdicts.refusals[&name(index)],
+                        CTerminationRefusal::UnmeasuredRecursion { .. }
+                    )),
+                    "every member of an unmeasured cycle is refused for it"
+                );
+            }));
+        }
+        report("one large cycle", &samples);
+        assert_near_linear("one large cycle", &samples);
+    }
+
+    /// A layered DAG whose edges outnumber its nodes four to one, so a check
+    /// linear in edges and one linear only in nodes are distinguishable.
+    #[test]
+    fn a_layered_dag_costs_linear_termination_work() {
+        const WIDTH: usize = 8;
+        const FAN_OUT: usize = 4;
+        let name = |layer: usize, index: usize| format!("dag{layer:06}_{index}");
+        let mut samples = Vec::new();
+        for size in SIZES {
+            let layers = size.div_ceil(WIDTH);
+            let nodes = layers * WIDTH;
+            let mut rules = Vec::new();
+            for layer in 0..layers {
+                for index in 0..WIDTH {
+                    let callees = if layer + 1 < layers {
+                        (0..FAN_OUT)
+                            .map(|step| name(layer + 1, (index + step) % WIDTH))
+                            .collect::<Vec<_>>()
+                    } else {
+                        Vec::new()
+                    };
+                    rules.push(rule(&name(layer, index), &callees));
+                }
+            }
+            assert_eq!(rules.len(), nodes);
+            samples.push(sample(size, &rules, |heights, verdicts| {
+                assert_eq!(heights[&name(0, 0)], layers - 1, "the top layer is deepest");
+                assert_eq!(heights[&name(layers - 1, 0)], 0);
+                assert_eq!(verdicts.rules.len(), nodes, "a DAG all terminates");
+                assert!(verdicts.refusals.is_empty());
+            }));
+        }
+        report("layered DAG", &samples);
+        assert_near_linear("layered DAG", &samples);
+    }
+
+    /// The measured curve, so the numbers quoted in
+    /// `docs/internals/verification-efficiency.md` can be reproduced with
+    /// `cargo test termination_scaling -- --nocapture`.
+    fn report(shape: &str, samples: &[Sample]) {
+        for measured in samples {
+            eprintln!(
+                "termination scaling: {shape} size {} nodes {} plan {} check {}",
+                measured.size, measured.nodes, measured.plan_work, measured.check_work
+            );
+        }
     }
 }

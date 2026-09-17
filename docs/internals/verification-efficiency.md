@@ -97,6 +97,14 @@ charged to visible semantic output rather than hidden ambient state:
 - Independent kernel certification may add a small constant multiple of the
   selected function's work. It must not multiply that work by the number of
   claims, unrelated functions, or globally declared theorems.
+- Termination height inference reads the forward call closure of the run: the
+  bodies of the functions this run verifies, plus the contract-less
+  `static inline` helpers those bodies reach, each read once. This is the one
+  termination cost that is not per-function local, and it is charged to
+  visible input and output — that closure is the selected syntax, and a
+  height for each of its nodes is the planner's whole result. Every other
+  part of the check reads one function's own call sites and loops. See
+  [Termination heights and local descent](#termination-heights-and-local-descent).
 - A loan-preserving havoc (loop head, interface join) decides, per surviving
   cell, whether an active loan protects it. Concrete protected ranges answer
   from the dyadic index; a range with a symbolic base or bounds cannot be
@@ -255,6 +263,41 @@ contexts, theory-capable order endpoints, fixed overflow decisions, quantified
 fact queries, long order paths, fixed loadability queries, and condition
 derivations.
 
+## Termination heights and local descent
+
+Whole-project termination is decided in two passes over one call graph, built
+once from the run's verified functions and the inline helpers they reach.
+`c_termination_height_plan` proposes a height per node — iterative Tarjan with
+an explicit stack, longest path over the condensation, cycle members sharing a
+height. `c_verified_function_termination_rules` then checks that proposal:
+functions are grouped by planned height and levels are settled in ascending
+order, so at each call site the check reads only whether the callee is above
+its caller, whether a strictly lower callee already has evidence, and whether
+an equal-height callee is a recursive edge that a declared measure ranks. A
+refused member of a level withdraws its same-level callers through a worklist
+that pops each refusal once and reads each intra-level edge once.
+
+The contract is therefore work linear in the call graph's nodes and edges,
+up to the indexing factor of the name-keyed BTree containers. Neither pass
+performs a reachability search, and no function's check scans another
+function's state; the plan is untrusted, so a wrong height can only refuse a
+function or fail the check, never certify one. The predecessor of this design
+found recursive components by pairwise reachability and was roughly cubic.
+
+`termination_scaling_tests` in `src/kernel/termination.rs` pins the curve over
+five graph shapes at 500, 1,000, 2,000, and 4,000 functions, asserting the
+verdicts at each size so the curve cannot be flattened by a run that decides
+nothing. It counts cooperative checkpoints — body statements walked, call
+edges read, level members settled, planner visits, worklist steps — not host
+time. Measured units, planner then check: a single call chain, the deepest
+graph, costs 5,496/5,498, 10,996/10,998, 21,996/21,998, and 43,996/43,998; a
+layered DAG with four callees per function, where edges outnumber nodes,
+costs 17,416/17,432, 34,776/34,792, 69,776/69,792, and 139,776/139,792. Wide
+fan-out, many small unmeasured cycles with their callers, and one large cycle
+of the whole run measure the same exact doubling. The assertion allows a
+threefold rise per doubling, which leaves room for the indexing factor while
+rejecting the fourfold rise of a quadratic checker.
+
 ## Checked execution reuse
 
 Ordered finalization and opaque-contract certification may share
@@ -319,8 +362,9 @@ The scaling suite should cover independent axes:
 - ambient pure and condition facts;
 - surface-to-kernel proposition spellings;
 - resource facts and resource-definition members;
-- global and imported theorem declarations; and
-- number of claims sharing one function execution.
+- global and imported theorem declarations;
+- number of claims sharing one function execution; and
+- call-graph nodes and edges in whole-project termination checking.
 
 For a linear or `N log N` path, doubling the input should remain close to a
 factor of two after fixed startup work is excluded. A regression must fail on
