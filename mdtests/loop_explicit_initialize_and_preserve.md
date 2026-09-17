@@ -5,6 +5,11 @@ proof at loop entry, while preservation is an execution proof of one arbitrary
 iteration. The invariant predicate remains opaque unless the written theorem
 applications are used.
 
+The loop's body sets `x` to zero, so it exits only if `x` was already at least
+one: from any state its own precondition admits it may run forever. The
+signature and the loop head say so with `diverges`, which leaves the two
+premises this fixture is about unchanged.
+
 ```c filename=loop_explicit_initialize_and_preserve.c
 int32 loop_explicit_initialize_and_preserve(int32 x) {
     while (x < 1) {
@@ -30,11 +35,11 @@ theorem nonnegative_is_acceptable(x: int32) {
     }
 }
 
-int32 loop_explicit_initialize_and_preserve(int32 x) {
+int32 loop_explicit_initialize_and_preserve(int32 x) diverges {
     requires x >= 0;
     ensures acceptable(result);
 } by {
-    loop {
+    loop diverges {
         invariant acceptable(x);
 
         initialize by {
@@ -52,10 +57,6 @@ int32 loop_explicit_initialize_and_preserve(int32 x) {
     unfold(acceptable);
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

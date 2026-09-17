@@ -20,8 +20,10 @@ ranked, and whether an earlier `have` in the same body was proved by `simp`.
 A `simp`-proved `have` kept working only because its goal named no binding, and
 a `have` whose goal names none still works after one that does. The same `have`
 written beside the `loop` in the arm, rather than in a phase body, always
-worked. `spin` below is unranked and `spin_ranked` declares `decreases`; both
-phase bodies prove the same definitional equation by `unfold` and `normalize`.
+worked. Both loops below carry a measure, as every loop must; they differ in
+which phase bodies name the arm's bindings, `spin` from `initialize` and
+`preserve` and `spin_ranked` only from `preserve`, and both phase bodies prove
+the same definitional equation by `unfold` and `normalize`.
 
 `spin`'s `initialize` is written in the shape the entry planner checks: one
 `have` per invariant, then `assumption()`. The helper `have` that needs the
@@ -94,6 +96,7 @@ int spin(struct node* p, int n) {
             step();
             loop {
                 owns t: tree_at(p);
+                decreases n - i;
                 invariant i >= 0;
                 invariant i <= n;
                 invariant t.model == Tree::Node(id, value, left_model);
@@ -117,6 +120,8 @@ int spin(struct node* p, int n) {
                         unfold(head_value(Tree::Node(id, value, left_model)));
                         normalize();
                     }
+                    have 0 <= n - i - 1 by { arithmetic() using { i < n; i >= 0; n >= 0; } }
+                    have n - i - 1 < n - i by { arithmetic() using { i < n; i >= 0; n >= 0; } }
                     step();
                     close_invariants();
                 }
@@ -159,10 +164,6 @@ int spin_ranked(struct node* p, int n) {
         },
     }
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect
