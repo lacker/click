@@ -57,6 +57,7 @@ impl<'a> Proof<'a> {
                 // ordinary Surface structural presentation instead.
                 crate::kernel::LoweringIntroduction::WrittenImplication
                 | crate::kernel::LoweringIntroduction::WrittenNegation
+                | crate::kernel::LoweringIntroduction::ComparisonNegation
                 | crate::kernel::LoweringIntroduction::WrittenUniversal { .. } => return None,
             }
         }

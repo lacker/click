@@ -2329,7 +2329,11 @@ fn lower_spec_algebraic_comparison_at_state(
                 )
             };
             paths.push(SpecPropositionPath {
-                introductions: Vec::new(),
+                introductions: if equal {
+                    Vec::new()
+                } else {
+                    vec![LoweringIntroduction::ComparisonNegation]
+                },
                 proposition: if equal {
                     equality
                 } else {
@@ -3133,7 +3137,11 @@ fn lower_spec_sequence_comparison_at_state(
             };
             let equality = finite_sequence_equality(&left_path.value, &right_path.value);
             paths.push(SpecPropositionPath {
-                introductions: Vec::new(),
+                introductions: if equal {
+                    Vec::new()
+                } else {
+                    vec![LoweringIntroduction::ComparisonNegation]
+                },
                 proposition: if equal {
                     equality
                 } else {
@@ -7669,6 +7677,49 @@ mod lowering_provenance_tests {
             )
             .expect("the test proposition lowers on one path");
         introductions
+    }
+
+    #[test]
+    fn inequality_lowering_records_its_negation() {
+        let algebraic = |index| SpecAlgebraicExpression {
+            algebraic_type: AlgebraicType::parameter("T".into()),
+            node: SpecAlgebraicExpressionNode::Variable(Variable(index)),
+        };
+        let sequence =
+            |value| SpecSequenceExpression::Literal(vec![SpecExpression::Value(int32(value))]);
+        for equal in [false, true] {
+            for source in [
+                SpecProposition::AlgebraicComparison {
+                    left: algebraic(1),
+                    equal,
+                    right: algebraic(2),
+                },
+                SpecProposition::SequenceComparison {
+                    left: sequence(1),
+                    equal,
+                    right: sequence(2),
+                },
+            ] {
+                let (goal, _, _, recorded) =
+                    crate::kernel::c_lower_spec_proposition_at_state_with_provenance(
+                        &CState::new(),
+                        &source,
+                        None,
+                        &PureFactContext::new(),
+                    )
+                    .unwrap();
+                assert_eq!(matches!(goal, Proposition::Not(_)), !equal);
+                assert_eq!(
+                    recorded,
+                    if equal {
+                        vec![]
+                    } else {
+                        vec![LoweringIntroduction::ComparisonNegation]
+                    },
+                    "{source:?}"
+                );
+            }
+        }
     }
 
     #[test]

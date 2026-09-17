@@ -94,6 +94,9 @@ pub enum LoweringIntroduction {
     WrittenImplication,
     /// A `Not` written as a spec, and therefore Surface, negation.
     WrittenNegation,
+    /// A `Not` introduced by lowering a written `!=` comparison. The source
+    /// has no separate negation connective to consume.
+    ComparisonNegation,
     /// A `ForAll` written as a spec, and therefore Surface, universal.
     /// `name` is the written binder spelling and `variable` is the exact
     /// kernel variable the lowering bound it to.
@@ -106,7 +109,8 @@ pub enum LoweringIntroduction {
 }
 
 /// The head chain of a lowered proposition, outermost first: one entry per
-/// node a proposition introduction can reach before any other step.
+/// node a proposition introduction can reach before any other step. A negation
+/// ends the chain: introducing it assumes its body and leaves a false goal.
 pub type LoweringIntroductions = Vec<LoweringIntroduction>;
 
 pub(in crate::kernel) fn wrap_path_context(

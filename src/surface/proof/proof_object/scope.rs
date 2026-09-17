@@ -80,6 +80,7 @@ impl<'a> ProofScope<'a> {
         // quantifier in the proposition. A quantifier in an unrelated
         // connective branch is not reachable by `intro` and must not be used
         // to bind a reported introduction.
+        let contradiction_goal = Proposition::ConditionIs(ConditionTerm::Constant(false), true);
         let mut cursor = actual;
         let introductions = introductions
             .into_iter()
@@ -95,13 +96,16 @@ impl<'a> ProofScope<'a> {
                     cursor = body;
                     Ok(introduction)
                 }
-                crate::kernel::LoweringIntroduction::WrittenNegation => {
-                    let Proposition::Not(body) = cursor else {
+                crate::kernel::LoweringIntroduction::WrittenNegation
+                | crate::kernel::LoweringIntroduction::ComparisonNegation => {
+                    let Proposition::Not(_) = cursor else {
                         return Err(self.root.step_error(
                             "reported introductions do not match the nested `have` path",
                         ));
                     };
-                    cursor = body;
+                    // Negation introduction adds its body as an assumption;
+                    // it does not expose that body's binders as further goals.
+                    cursor = &contradiction_goal;
                     Ok(introduction)
                 }
                 crate::kernel::LoweringIntroduction::WrittenUniversal {

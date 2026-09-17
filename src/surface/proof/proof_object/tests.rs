@@ -1358,6 +1358,58 @@ fn have_scope_accepts_matching_reported_goal_and_records_introductions() {
 }
 
 #[test]
+fn have_scope_negation_metadata_stops_at_the_contradiction_goal() {
+    let surface = ClickProposition::Not(Box::new(ClickProposition::ForAll {
+        click_type: ClickType::C(C0Type::Int32),
+        name: "k".into(),
+        written_name: None,
+        body: Box::new(ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("k".into())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        }),
+    }));
+    let root = pure_have_presentation_root(surface.clone());
+    let scope = root.begin_have(surface).unwrap();
+    let reported = scope.body().goal().unwrap().clone();
+    let adapted = scope
+        .with_reported_goal_introductions(
+            &reported,
+            Some(vec![LoweringIntroduction::WrittenNegation]),
+        )
+        .expect("negation introduction assumes its body and leaves false, not its inner universal");
+    let introduced = adapted.apply_step(ProofStep::Intro).unwrap();
+    assert_eq!(
+        introduced.body().goal(),
+        Some(&Proposition::ConditionIs(
+            ConditionTerm::Constant(false),
+            true,
+        ))
+    );
+    assert!(
+        scope
+            .with_reported_goal_introductions(&reported, Some(vec![]))
+            .is_err()
+    );
+    assert!(
+        scope
+            .with_reported_goal_introductions(
+                &reported,
+                Some(vec![
+                    LoweringIntroduction::WrittenNegation,
+                    LoweringIntroduction::WrittenUniversal {
+                        name: "k".into(),
+                        variable: Variable(1),
+                        pointer: false,
+                        integer: false,
+                    },
+                ])
+            )
+            .is_err()
+    );
+}
+
+#[test]
 fn have_scope_rejects_mismatched_reported_goal_transactionally() {
     let surface = ClickProposition::Comparison {
         left: ContractExpression::CFragment(CExpression::Value(int32(0))),
