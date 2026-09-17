@@ -542,11 +542,16 @@ impl ProofFacts {
 
     pub(crate) fn contradicts(&self, fact: &Proposition) -> bool {
         let negated = Proposition::Not(Box::new(fact.clone()));
-        self.contains(fact)
-            && (self.contains(&negated)
-                || matches!(fact, Proposition::ConditionIs(condition, value)
+        // An introduced guard is held conjunct by conjunct, so a
+        // contradiction written over the whole guard finds it that way.
+        let mut conjuncts = Vec::new();
+        super::fact_reasoning::atomic_conjuncts(fact, &mut conjuncts);
+        let held = self.contains(fact)
+            || (conjuncts.len() > 1 && conjuncts.iter().all(|conjunct| self.contains(conjunct)));
+        held && (self.contains(&negated)
+            || matches!(fact, Proposition::ConditionIs(condition, value)
                     if self.contains(&Proposition::ConditionIs(condition.clone(), !value)))
-                || super::fact_reasoning::normalizes_context_free_leaf(&negated))
+            || super::fact_reasoning::normalizes_context_free_leaf(&negated))
     }
 
     pub(crate) fn freshen_pointer_forall_body(

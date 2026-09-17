@@ -971,6 +971,11 @@ pub struct FunctionBlock {
     /// As `requirement_source_clauses`, for `ensures`.
     ensure_source_clauses: Vec<usize>,
     grouped_proof: Option<SourceProof>,
+    /// The struct each opaque `void *` parameter is cast to in this block's
+    /// clauses and proof, by parameter name. A block casts a parameter to at
+    /// most one struct; proof synthesis reads memory through the parameter
+    /// with that layout, as it does for a declared struct-pointer parameter.
+    parameter_struct_casts: BTreeMap<String, String>,
 }
 
 /// Turns the source clause of each flattened clause into its position among
@@ -1811,14 +1816,34 @@ impl SurfacePropositionMap {
                 }
                 Ok(())
             }
+            // A quantified body that reads memory lowers to its loadability
+            // premises implying the quantifier itself. The premises carry no
+            // surface form of their own; record the surface quantifier
+            // against the guarded conclusion.
+            (
+                ClickProposition::ForAll { .. } | ClickProposition::Exists { .. },
+                Proposition::Implies(_, conclusion),
+            ) if self.clone().record_lowering(surface, conclusion).is_ok() => {
+                self.record_lowering(surface, conclusion)
+            }
             (ClickProposition::And(_, _), _)
             | (ClickProposition::Or(_, _), _)
             | (ClickProposition::Not(_), _)
             | (ClickProposition::Implies(_, _), _)
             | (ClickProposition::ForAll { .. }, _)
-            | (ClickProposition::Exists { .. }, _) => Err(ClickError::new(format!(
-                "surface proposition did not lower to matching logical structure: {surface:?} -> {kernel:?}"
-            ))),
+            | (ClickProposition::Exists { .. }, _) => {
+                // The kernel form can embed whole memory snapshots; bound the
+                // rendering so the diagnostic stays a diagnostic.
+                let kernel = format!("{kernel:?}");
+                let kernel = if kernel.len() > 600 {
+                    format!("{}…", &kernel[..600])
+                } else {
+                    kernel
+                };
+                Err(ClickError::new(format!(
+                    "surface proposition did not lower to matching logical structure: {surface:?} -> {kernel}"
+                )))
+            }
             _ => Ok(()),
         }
     }
@@ -5498,6 +5523,10 @@ impl ContractDefinition {
 impl FunctionBlock {
     pub fn signature(&self) -> &FunctionSignature {
         &self.signature
+    }
+
+    pub fn parameter_struct_casts(&self) -> &BTreeMap<String, String> {
+        &self.parameter_struct_casts
     }
 
     pub fn is_external(&self) -> bool {

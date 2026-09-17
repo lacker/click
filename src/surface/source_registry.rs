@@ -468,6 +468,7 @@ mod tests {
                 declared_loadable_bytes: Vec::new(),
             },
             external: true,
+            parameter_struct_casts: BTreeMap::new(),
             one_call_proof: false,
             requirement_label_indices: requires
                 .iter()

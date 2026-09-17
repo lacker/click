@@ -27,6 +27,226 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     static SURFACE_SYNTHESIS_BITVECTOR_NESTING: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
+    /// The struct layouts synthesis may read memory through for the
+    /// function under proof: its automatic struct-pointer locals and its
+    /// `void *` parameters cast to a struct in the sidecar, each by C
+    /// spelling. A generated obligation over memory reached through one of
+    /// them (the loadability of `job->output[k]`, say) has no written
+    /// spelling; this is what lets synthesis name that memory as the field
+    /// read the source performs.
+    static SYNTHESIS_STRUCT_OWNERS: std::cell::RefCell<Option<std::sync::Arc<SynthesisStructOwners>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[derive(Default)]
+pub(in crate::surface) struct SynthesisStructOwners {
+    locals: BTreeMap<String, syntax::C0StructLayout>,
+    cast_parameters: BTreeMap<String, (String, syntax::C0StructLayout)>,
+}
+
+/// Installs the function's struct owners for synthesis while the guard
+/// lives, restoring the previous scope on drop.
+pub(in crate::surface) struct LocalStructLayoutScope(Option<std::sync::Arc<SynthesisStructOwners>>);
+
+impl LocalStructLayoutScope {
+    pub(in crate::surface) fn enter(function: &syntax::C0Function, block: &FunctionBlock) -> Self {
+        let locals = function
+            .local_struct_pointers()
+            .iter()
+            .filter_map(|(local, struct_name)| {
+                Some((local.clone(), function.structs().get(struct_name)?.clone()))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let cast_parameters = block
+            .parameter_struct_casts()
+            .iter()
+            .filter_map(|(parameter, struct_name)| {
+                Some((
+                    parameter.clone(),
+                    (
+                        struct_name.clone(),
+                        function.structs().get(struct_name)?.clone(),
+                    ),
+                ))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let owners = SynthesisStructOwners {
+            locals,
+            cast_parameters,
+        };
+        Self(SYNTHESIS_STRUCT_OWNERS.with(|slot| slot.replace(Some(std::sync::Arc::new(owners)))))
+    }
+}
+
+impl Drop for LocalStructLayoutScope {
+    fn drop(&mut self) {
+        SYNTHESIS_STRUCT_OWNERS.with(|slot| {
+            slot.replace(self.0.take());
+        });
+    }
+}
+
+/// One object synthesis may spell field reads through: how its pointer is
+/// written, the pointer's value here, and the struct layout at that value.
+struct StructOwner {
+    base: CExpression,
+    pointer: crate::kernel::CPointerValue,
+    layout: syntax::C0StructLayout,
+}
+
+/// The cast `void *` parameters, with their argument values, and the
+/// struct-pointer locals present in this state. Declared struct-pointer
+/// parameters keep their own parameter-based spelling paths.
+fn struct_owners(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Vec<StructOwner> {
+    let Some(owners) = SYNTHESIS_STRUCT_OWNERS.with(|slot| slot.borrow().clone()) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for (parameter, argument) in parameters.iter().zip(arguments) {
+        let (Some((struct_name, layout)), CExpression::Value(CValue::Pointer(base))) =
+            (owners.cast_parameters.get(parameter.name()), argument)
+        else {
+            continue;
+        };
+        found.push(StructOwner {
+            base: CExpression::Cast {
+                expression: Box::new(CExpression::Variable(parameter.name().to_string())),
+                target_type: CType::Int32Pointer,
+                pointee_struct: Some(struct_name.clone()),
+                pointee_volatile: false,
+                pointee_constant: false,
+            },
+            pointer: base.clone(),
+            layout: layout.clone(),
+        });
+    }
+    for (name, value) in state.locals().object_values() {
+        if let (Some(layout), CValue::Pointer(base)) = (owners.locals.get(name), value) {
+            found.push(StructOwner {
+                base: CExpression::Variable(name.to_string()),
+                pointer: base.clone(),
+                layout: layout.clone(),
+            });
+        }
+    }
+    found
+}
+
+fn owner_field_pointer(base: &CExpression, offset_bytes: u32) -> CExpression {
+    if offset_bytes == 0 {
+        base.clone()
+    } else {
+        CExpression::PointerOffsetBytes {
+            pointer: Box::new(base.clone()),
+            bytes: offset_bytes,
+        }
+    }
+}
+
+/// A range base synthesis can name: a parameter or local by its spelling,
+/// or a pointer field read through a struct-pointer parameter or local.
+struct NamedRangeBase {
+    lowered: CExpression,
+    surface: ContractExpression,
+    pointer: crate::kernel::CPointerValue,
+    width: u32,
+}
+
+/// Pointer-typed fields of struct-pointer parameters and locals whose cell
+/// currently holds a data pointer, spelled as the field read. The struct
+/// layouts come from the parameter declarations and the installed local
+/// layout scope; the pointer values come from this state's memory.
+fn field_pointer_bases(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Vec<NamedRangeBase> {
+    let mut owners: Vec<StructOwner> = Vec::new();
+    for (parameter, argument) in parameters.iter().zip(arguments) {
+        if let (Some(layout), CExpression::Value(CValue::Pointer(base))) =
+            (parameter.struct_layout(), argument)
+        {
+            owners.push(StructOwner {
+                base: CExpression::Variable(parameter.name().to_string()),
+                pointer: base.clone(),
+                layout: layout.clone(),
+            });
+        }
+    }
+    owners.extend(struct_owners(parameters, arguments, state));
+    let mut bases = Vec::new();
+    for owner in owners {
+        for (field_name, field) in owner.layout.fields() {
+            let value_type = field.c_type().to_kernel_type();
+            let Some(width) = value_type.pointee_type().map(CType::byte_width) else {
+                continue;
+            };
+            if width == 0 {
+                continue;
+            }
+            let field_pointer = owner.pointer.offset_by_bytes(field.offset_bytes());
+            let loaded = match state.memory().load(&field_pointer) {
+                CExpressionOutcome::Value(CValue::Pointer(loaded)) => loaded,
+                // Contract memory keeps a pointer field as its pointer-width
+                // scalar offset inside the owner's block.
+                CExpressionOutcome::Value(CValue::Int32(value)) => {
+                    let CValue::Pointer(loaded) = CValue::typed_pointer(
+                        Pointer {
+                            block: owner.pointer.pointer().block.clone(),
+                            offset: PointerOffsetTerm::scale_int32(value, i64::from(width)),
+                        },
+                        value_type,
+                    ) else {
+                        continue;
+                    };
+                    loaded
+                }
+                _ => continue,
+            };
+            let lowered = CExpression::TypedLoad {
+                pointer: Box::new(owner_field_pointer(&owner.base, field.offset_bytes())),
+                value_type,
+                volatile: false,
+                source: Default::default(),
+            };
+            bases.push(NamedRangeBase {
+                surface: ContractExpression::Field {
+                    base: Box::new(ContractExpression::CFragment(owner.base.clone())),
+                    field: field_name.clone(),
+                    lowered: lowered.clone(),
+                },
+                lowered,
+                pointer: loaded,
+                width,
+            });
+        }
+    }
+    bases
+}
+
+fn named_range_bases(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: Option<&CState>,
+    full_state: &CState,
+) -> Vec<NamedRangeBase> {
+    let mut bases = named_pointer_bases(parameters, arguments, state)
+        .map(|(name, pointer, width)| {
+            let lowered = CExpression::Variable(name);
+            NamedRangeBase {
+                surface: ContractExpression::CFragment(lowered.clone()),
+                lowered,
+                pointer,
+                width,
+            }
+        })
+        .collect::<Vec<_>>();
+    bases.extend(field_pointer_bases(parameters, arguments, full_state));
+    bases
 }
 
 pub(super) struct QualifiedSynthesisScope(Option<SurfacePropositionMap>);
@@ -778,7 +998,8 @@ fn synthesize_zero_based_loadable_segment(
         return None;
     };
     let semantic_base =
-        synthesize_surface_pointer(base, parameters, arguments, state, bound_variables)?;
+        synthesize_surface_pointer(base, parameters, arguments, state, bound_variables);
+    let semantic_base = semantic_base?;
     let surface_base = synthesize_surface_pointer_offset(
         &base.offset,
         parameters,
@@ -915,18 +1136,21 @@ fn synthesize_named_range_loadable_segment(
         Some(state)
     };
     if let Some(byte_count) = bytes.as_const() {
-        let (named, width, start) = named_pointer_bases(parameters, arguments, named_pointer_state)
-            .filter_map(|(name, pointer, width)| {
-                if pointer.offset == PointerOffsetTerm::Constant(0) || byte_count % width != 0 {
-                    return None;
-                }
-                Some((
-                    name,
-                    width,
-                    base.element_index_from_base_with_width(&pointer, width)?,
-                ))
-            })
-            .find(|(_, _, start)| start.as_const().is_some_and(|start| start != 0))?;
+        let (named, width, start) =
+            named_range_bases(parameters, arguments, named_pointer_state, state)
+                .into_iter()
+                .filter_map(|named| {
+                    if named.pointer.offset == PointerOffsetTerm::Constant(0)
+                        || byte_count % named.width != 0
+                    {
+                        return None;
+                    }
+                    let start =
+                        base.element_index_from_base_with_width(&named.pointer, named.width)?;
+                    let width = named.width;
+                    Some((named, width, start))
+                })
+                .find(|(_, _, start)| start.as_const().is_some_and(|start| start != 0))?;
         let element_count = byte_count / width;
         let end = Bitvector32Term::add(start.clone(), Bitvector32Term::Constant(element_count));
         let start = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
@@ -943,15 +1167,14 @@ fn synthesize_named_range_loadable_segment(
             state,
             bound_variables,
         )?)?;
-        let named = CExpression::Variable(named);
         return Some(ClickProposition::Loadable {
             segment: ContractSegment {
                 state: ContractSegmentState::Current,
-                base: named.clone(),
+                base: named.lowered,
                 start: start.clone(),
                 end: end.clone(),
                 surface: ContractSegmentSurface::Range {
-                    base: ContractExpression::CFragment(named),
+                    base: named.surface,
                     start: ContractExpression::CFragment(start),
                     end: ContractExpression::CFragment(end),
                 },
@@ -973,12 +1196,14 @@ fn synthesize_named_range_loadable_segment(
     };
     // The named pointer this range starts from, and the element index the
     // requirement's base pointer sits at within it.
-    let named = named_pointer_bases(parameters, arguments, named_pointer_state).find_map(
-        |(name, pointer, width)| {
-            (width == scale && base.element_index_from_base_with_width(&pointer, width)? == **start)
-                .then_some(name)
-        },
-    )?;
+    let named = named_range_bases(parameters, arguments, named_pointer_state, state)
+        .into_iter()
+        .find(|named| {
+            named.width == scale
+                && base
+                    .element_index_from_base_with_width(&named.pointer, named.width)
+                    .is_some_and(|index| index == **start)
+        })?;
     let start = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
         start,
         parameters,
@@ -993,15 +1218,14 @@ fn synthesize_named_range_loadable_segment(
         state,
         bound_variables,
     )?)?;
-    let named = CExpression::Variable(named);
     Some(ClickProposition::Loadable {
         segment: ContractSegment {
             state: ContractSegmentState::Current,
-            base: named.clone(),
+            base: named.lowered,
             start: start.clone(),
             end: end.clone(),
             surface: ContractSegmentSurface::Range {
-                base: ContractExpression::CFragment(named),
+                base: named.surface,
                 start: ContractExpression::CFragment(start),
                 end: ContractExpression::CFragment(end),
             },
@@ -1738,9 +1962,13 @@ pub(super) fn synthesize_surface_pointer_offset(
             let Bitvector32Term::MemoryLoad(_, pointer) = value.as_ref() else {
                 unreachable!()
             };
-            if let Some(field) =
-                synthesize_parameter_field_load(pointer, CType::Int32Pointer, parameters, arguments)
-            {
+            if let Some(field) = synthesize_struct_field_load(
+                pointer,
+                CType::Int32Pointer,
+                parameters,
+                arguments,
+                state,
+            ) {
                 Some(field)
             } else {
                 Some(ContractExpression::CFragment(CExpression::TypedLoad {
@@ -1957,6 +2185,9 @@ fn synthesize_surface_bitvector(
     if let Some(field) = synthesize_local_aggregate_field(term, state) {
         return Some(field);
     }
+    if let Some(field) = synthesize_local_struct_pointer_field(term, parameters, arguments, state) {
+        return Some(field);
+    }
     if let Some(snapshot) = synthesize_snapshot_local(term) {
         return Some(snapshot);
     }
@@ -2047,6 +2278,7 @@ fn synthesize_surface_bitvector(
             Some(ContractExpression::CFragment(CExpression::Cast {
                 expression: Box::new(pointer),
                 target_type: CType::UInt64,
+                pointee_struct: None,
                 pointee_volatile: false,
                 pointee_constant: false,
             }))
@@ -2099,9 +2331,13 @@ fn synthesize_surface_bitvector(
                 Some(ContractExpression::CFragment(CExpression::Variable(
                     name.to_string(),
                 )))
-            } else if let Some(field) =
-                synthesize_parameter_field_load(kernel_pointer, CType::Int32, parameters, arguments)
-            {
+            } else if let Some(field) = synthesize_struct_field_load(
+                kernel_pointer,
+                CType::Int32,
+                parameters,
+                arguments,
+                state,
+            ) {
                 Some(field)
             } else if let Some(indexed_field) = synthesize_parameter_field_indexed_int32_load(
                 kernel_pointer,
@@ -2220,6 +2456,7 @@ fn synthesize_surface_bitvector(
                     )?,
                 )?),
                 target_type: CType::Int64,
+                pointee_struct: None,
                 pointee_volatile: false,
                 pointee_constant: false,
             }))
@@ -2238,6 +2475,7 @@ fn synthesize_surface_bitvector(
                     )?,
                 )?),
                 target_type: CType::UInt64,
+                pointee_struct: None,
                 pointee_volatile: false,
                 pointee_constant: false,
             }))
@@ -2254,6 +2492,7 @@ fn synthesize_surface_bitvector(
                     )?,
                 )?),
                 target_type: CType::UInt32,
+                pointee_struct: None,
                 pointee_volatile: false,
                 pointee_constant: false,
             }))
@@ -2442,11 +2681,12 @@ fn synthesize_parameter_field_indexed_int32_load(
         let Bitvector32Term::MemoryLoad(_, field_pointer) = value.as_ref() else {
             return None;
         };
-        let field = synthesize_parameter_field_load(
+        let field = synthesize_struct_field_load(
             field_pointer,
             CType::Int32Pointer,
             parameters,
             arguments,
+            state,
         )?;
         let index = match index {
             None => ContractExpression::CFragment(CExpression::Value(int32(0))),
@@ -2469,6 +2709,56 @@ fn synthesize_parameter_field_indexed_int32_load(
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => return None,
     };
     Some(ContractExpression::Index(Box::new(field), Box::new(index)))
+}
+
+/// A scalar field of a struct-pointer local whose cell currently holds
+/// `term`, spelled `local->field`. The layouts come from the installed local
+/// layout scope; without one, no local is a candidate.
+fn synthesize_local_struct_pointer_field(
+    term: &Bitvector32Term,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Option<ContractExpression> {
+    for owner in struct_owners(parameters, arguments, state) {
+        for (field_name, field) in owner.layout.fields() {
+            let value_type = field.c_type().to_kernel_type();
+            if value_type.is_pointer() || value_type.byte_width() == 0 {
+                continue;
+            }
+            let pointer = owner.pointer.offset_by_bytes(field.offset_bytes());
+            let CExpressionOutcome::Value(loaded) = state.memory().load(&pointer) else {
+                continue;
+            };
+            let loaded = match loaded {
+                CValue::Bool(value)
+                | CValue::Int16(value)
+                | CValue::Int32(value)
+                | CValue::UInt8(value)
+                | CValue::UInt16(value)
+                | CValue::UInt32(value)
+                | CValue::Int64(value)
+                | CValue::UInt64(value) => value,
+                CValue::Pointer(_) | CValue::Void | CValue::Float32(_) | CValue::Float64(_) => {
+                    continue;
+                }
+            };
+            if loaded != *term {
+                continue;
+            }
+            return Some(ContractExpression::Field {
+                base: Box::new(ContractExpression::CFragment(owner.base.clone())),
+                field: field_name.clone(),
+                lowered: CExpression::TypedLoad {
+                    pointer: Box::new(owner_field_pointer(&owner.base, field.offset_bytes())),
+                    value_type,
+                    volatile: false,
+                    source: Default::default(),
+                },
+            });
+        }
+    }
+    None
 }
 
 fn synthesize_local_aggregate_field(
@@ -2749,6 +3039,60 @@ fn synthesize_parameter_field_load(
         });
     }
     None
+}
+
+/// The field read a struct-pointer local performs at `pointer`, spelled
+/// `local->field`, when the installed local layout scope knows the local's
+/// struct and this state holds the local's pointer value.
+fn synthesize_local_field_load(
+    pointer: &Pointer,
+    value_type: CType,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Option<ContractExpression> {
+    for owner in struct_owners(parameters, arguments, state) {
+        // Compare each field's address with the load's pointer directly: an
+        // object reached through an opaque `void *` keeps a byte-scaled
+        // offset that element arithmetic over the struct width would miss.
+        let Some((field_name, field)) = owner.layout.fields().iter().find(|(_, field)| {
+            let field_pointer = owner.pointer.offset_by_bytes(field.offset_bytes());
+            field_pointer.block == pointer.block
+                && crate::kernel::offsets_have_same_canonical_form(
+                    &field_pointer.offset,
+                    &pointer.offset,
+                )
+        }) else {
+            continue;
+        };
+        if field.c_type().to_kernel_type() != value_type {
+            continue;
+        }
+        return Some(ContractExpression::Field {
+            base: Box::new(ContractExpression::CFragment(owner.base.clone())),
+            field: field_name.clone(),
+            lowered: CExpression::TypedLoad {
+                pointer: Box::new(owner_field_pointer(&owner.base, field.offset_bytes())),
+                value_type,
+                volatile: false,
+                source: Default::default(),
+            },
+        });
+    }
+    None
+}
+
+/// A field read spelled through a struct-pointer parameter or, failing
+/// that, through a struct-pointer local of the function under proof.
+fn synthesize_struct_field_load(
+    pointer: &Pointer,
+    value_type: CType,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Option<ContractExpression> {
+    synthesize_parameter_field_load(pointer, value_type, parameters, arguments)
+        .or_else(|| synthesize_local_field_load(pointer, value_type, parameters, arguments, state))
 }
 
 fn synthesize_surface_pointer(

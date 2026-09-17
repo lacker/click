@@ -270,7 +270,7 @@ fn apply_logical_goal_tactic(
                 }
                 _ => None,
             };
-            if !available.contains(&fact)
+            if !conjunction_available(&fact, available)
                 || (!available.contains(&negated)
                     && !opposite_condition
                         .as_ref()
@@ -3334,4 +3334,23 @@ pub(super) fn prove_claim_by_script(
         ProofTacticSource::SourceSyntax,
     )?;
     Ok(theorems.theorems)
+}
+
+/// Whether `fact` is available exactly, or is a conjunction whose atomic
+/// conjuncts are each available. An introduced antecedent is recorded
+/// conjunct by conjunct, so a `contradiction` written over the whole guard
+/// must find it that way too.
+pub(in crate::surface) fn conjunction_available(
+    fact: &Proposition,
+    available: &[Proposition],
+) -> bool {
+    if available.contains(fact) {
+        return true;
+    }
+    let mut conjuncts = Vec::new();
+    crate::kernel::proof::fact_reasoning::atomic_conjuncts(fact, &mut conjuncts);
+    conjuncts.len() > 1
+        && conjuncts.iter().all(|conjunct| {
+            crate::kernel::proof::fact_reasoning::pure_fact_is_available(conjunct, available)
+        })
 }

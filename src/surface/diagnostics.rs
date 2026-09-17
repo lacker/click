@@ -1323,8 +1323,15 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
         CExpression::Cast {
             expression,
             target_type,
+            pointee_struct,
             ..
         } => {
+            if let Some(struct_name) = pointee_struct {
+                return format!(
+                    "((struct {struct_name} *){})",
+                    describe_c_expression(expression)
+                );
+            }
             let spelling = match target_type {
                 CType::Int16 => "int16".to_string(),
                 CType::Int32 => "int32".to_string(),

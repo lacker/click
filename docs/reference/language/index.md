@@ -1747,6 +1747,24 @@ select another snapshot. A 64-to-`uint32` cast retains the low 32 bits, rather
 than requiring the source value to fit. Casts retain their selected memory
 snapshot even when the underlying field is subsequently updated.
 
+A contract may also cast an opaque `void *` parameter of the function under
+contract to a struct pointer and describe the object through the result:
+
+<!-- verified-example: mdtests/fork_join_worker_sequential.md -->
+```click
+views ((struct range_job *)argument)->begin;
+owns ((struct range_job *)argument)->output[
+    ((struct range_job *)argument)->begin..((struct range_job *)argument)->end];
+ensures range_filled((struct range_job *)argument);
+```
+
+The cast retypes the pointer for the clause; it does not change the pointer's
+value or provenance, and the C body's own conversion reaches the same object.
+Only `void *` parameters may be cast, and a block casts each parameter to one
+struct, so the proof and its synthesized certificates read the parameter with
+one layout. Casts of other pointers, and casts inside resource or predicate
+definitions (whose parameters are already typed), are rejected.
+
 When `old(p)` is passed as an array argument to a pure Click function or
 predicate, it becomes an entry-state Click array ref. For example,
 `permutation(p, old(p), 0, 2)` compares post-state `p` to entry-state `p`.

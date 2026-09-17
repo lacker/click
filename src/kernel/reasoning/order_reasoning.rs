@@ -226,6 +226,68 @@ fn antecedent_ranges(
     Some(ranges)
 }
 
+/// Whether a conjunction of signed order facts is unsatisfiable on its own:
+/// its `<=`/`<` edges over syntactically identical terms form a cycle with at
+/// least one strict edge. Identical terms denote one value, and the signed
+/// int32 order is total, so `a <= ... < ... <= a` has no model. This reads
+/// only the facts it is given, so `t <= k and k < t` is disproved without a
+/// premise context. Constant-versus-constant comparisons are not evaluated
+/// here; two distinct constants are two distinct nodes.
+pub(in crate::kernel) fn order_facts_form_strict_cycle(
+    facts: &[(Bitvector32Term, Bitvector32Term, bool)],
+) -> bool {
+    let mut nodes: BTreeMap<&Bitvector32Term, usize> = BTreeMap::new();
+    let mut edges = Vec::with_capacity(facts.len());
+    for (left, right, strict) in facts {
+        let next = nodes.len();
+        let from = *nodes.entry(left).or_insert(next);
+        let next = nodes.len();
+        let to = *nodes.entry(right).or_insert(next);
+        edges.push((from, to, *strict));
+    }
+    let symbolic = {
+        let mut flags = vec![false; nodes.len()];
+        for (term, index) in &nodes {
+            flags[*index] = !matches!(term, Bitvector32Term::Constant(_));
+        }
+        flags
+    };
+    // An edge between two non-constant terms is what makes the cycle a
+    // symbolic one; a cycle of a variable against constants alone
+    // (`0 <= k and k < 0`) is a finite range, decided elsewhere.
+    let symbolic_edge = |from: usize, to: usize| symbolic[from] && symbolic[to];
+    for &(from, to, strict) in &edges {
+        if !strict {
+            continue;
+        }
+        // A strict edge `from < to` closes a contradictory cycle when `to`
+        // reaches `from`; the search state carries whether a symbolic edge
+        // has been crossed, the strict edge itself included.
+        let mut visited = vec![[false; 2]; nodes.len()];
+        let mut stack = vec![(to, symbolic_edge(from, to))];
+        while let Some((current, crossed)) = stack.pop() {
+            if current == from {
+                if crossed {
+                    return true;
+                }
+                continue;
+            }
+            if std::mem::replace(&mut visited[current][usize::from(crossed)], true) {
+                continue;
+            }
+            for &(edge_from, edge_to, _) in &edges {
+                if edge_from == current {
+                    let next = crossed || symbolic_edge(edge_from, edge_to);
+                    if !visited[edge_to][usize::from(next)] {
+                        stack.push((edge_to, next));
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 pub(in crate::kernel) fn collect_order_facts_from_assumed_proposition(
     proposition: &Proposition,
     facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,

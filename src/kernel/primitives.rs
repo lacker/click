@@ -663,6 +663,12 @@ pub enum CExpression {
     Cast {
         expression: Box<CExpression>,
         target_type: CType,
+        /// The struct tag of a pointer cast target, as the source spelled it.
+        /// Evaluation ignores it: a struct pointer is a kernel `Int32Pointer`
+        /// and the layout lives with the field accesses. It is kept so a
+        /// contract cast prints back as `(struct name *)` and so the parser
+        /// resolves `->field` through the cast result.
+        pointee_struct: Option<String>,
         /// Whether the cast result points at a volatile pointer-valued cell.
         /// This carries the C qualifier in `T * volatile *` into a following
         /// dereference without confusing it with volatile `T` storage.

@@ -37,6 +37,13 @@ transfer ownership on failure. The thread body and both client paths remain
 verification obligations. A native compiler run below checks C syntax only;
 it does not establish any concurrency property.
 
+## Sequential worker checkpoint
+
+`mdtests/fork_join_worker_sequential.md` verifies `fill_range` from this file,
+unchanged, with the contract a spawn will transfer as the worker's task. It is
+the worker half of the eventual proof, not evidence about threads; the parent
+is not yet verified in any form.
+
 ## Frozen fork/join program
 
 `fill_parallel` requires a live four-element output array. The parent zeros

@@ -1,6 +1,13 @@
 use crate::kernel::*;
 
 pub(crate) fn normalizes_context_free(goal: &Proposition) -> bool {
+    // A guarded proposition whose guard has no model, or a universal over
+    // one, is context-free: `intro` exposes the guard and `contradiction`
+    // closes it. This is a planning judgment only; lowering keeps such a
+    // guarded obligation, so written proofs still see the guard.
+    if vacuously_guarded(goal) {
+        return true;
+    }
     if let Proposition::ConditionIs(condition, value) = goal {
         match condition {
             ConditionTerm::IntegerEqual(left, right) if left == right => return *value,
@@ -35,6 +42,18 @@ pub(crate) fn normalizes_context_free(goal: &Proposition) -> bool {
     // singleton substitution, the inconsistency fallback -- are vacuous
     // here by construction.
     PureFactContext::new().proves_atomic_for_derivation(goal, false)
+}
+
+fn vacuously_guarded(goal: &Proposition) -> bool {
+    match goal {
+        Proposition::Implies(antecedent, _) => {
+            crate::kernel::reasoning::path_facts::conjunction_order_facts_are_inconsistent(
+                antecedent,
+            )
+        }
+        Proposition::ForAll { body, .. } => vacuously_guarded(body),
+        _ => false,
+    }
 }
 
 /// Transitional leaf check for structural-normalization migration:

@@ -271,6 +271,11 @@ struct Parser {
     struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
     union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
     current_struct_params: BTreeMap<String, String>,
+    /// The `void *` parameters of the function block being parsed, which a
+    /// contract may cast to a struct pointer, and the struct each has been
+    /// cast to so far.
+    current_void_pointer_params: BTreeSet<String>,
+    current_parameter_struct_casts: BTreeMap<String, String>,
     aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
     aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
     global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, GlobalArrayShape>>,
@@ -344,6 +349,14 @@ struct ParsedType {
     struct_pointer: bool,
     constant: bool,
     pointee_constant: bool,
+}
+
+/// A recognized `(struct name *)` cast prefix in a contract expression.
+struct StructPointerCast {
+    struct_name: String,
+    pointee_constant: bool,
+    /// Tokens the prefix occupies, from `(` through `)`.
+    tokens: usize,
 }
 
 pub(super) fn is_c_type_keyword(name: &str) -> bool {
@@ -530,6 +543,8 @@ impl Parser {
             struct_layouts,
             union_layouts,
             current_struct_params: BTreeMap::new(),
+            current_void_pointer_params: BTreeSet::new(),
+            current_parameter_struct_casts: BTreeMap::new(),
             aggregate_objects_by_function,
             aggregate_array_objects_by_function,
             global_array_shapes_by_function,
@@ -1060,6 +1075,7 @@ impl Parser {
             Some(target_type) => CExpression::Cast {
                 expression: Box::new(expression.clone()),
                 target_type,
+                pointee_struct: None,
                 pointee_volatile: false,
                 pointee_constant: false,
             },
@@ -1874,6 +1890,17 @@ impl Parser {
         }
         let previous_struct_params =
             std::mem::replace(&mut self.current_struct_params, struct_params);
+        let previous_void_pointer_params = std::mem::replace(
+            &mut self.current_void_pointer_params,
+            signature
+                .parameters()
+                .iter()
+                .filter(|parameter| parameter.c_type() == C0Type::VoidPointer)
+                .map(|parameter| parameter.name().to_string())
+                .collect(),
+        );
+        let previous_parameter_struct_casts =
+            std::mem::take(&mut self.current_parameter_struct_casts);
         let aggregate_objects = self
             .aggregate_objects_by_function
             .get(signature.name())
@@ -2181,6 +2208,11 @@ impl Parser {
             ));
         }
         self.current_struct_params = previous_struct_params;
+        self.current_void_pointer_params = previous_void_pointer_params;
+        let parameter_struct_casts = std::mem::replace(
+            &mut self.current_parameter_struct_casts,
+            previous_parameter_struct_casts,
+        );
         self.current_resource_bindings = previous_resource_bindings;
         self.current_resource_targets = previous_resource_targets;
         self.current_aggregate_objects = previous_aggregate_objects;
@@ -2253,6 +2285,7 @@ impl Parser {
             exceptional_ensures,
             ensure_source_clauses,
             grouped_proof,
+            parameter_struct_casts,
         })
     }
 
@@ -5844,6 +5877,9 @@ impl Parser {
                         .and_then(|object| object.struct_name.as_ref())
                 })
                 .cloned(),
+            ContractExpression::CFragment(CExpression::Cast { pointee_struct, .. }) => {
+                pointee_struct.clone()
+            }
             _ => None,
         };
         let mut union_name: Option<String> = None;
@@ -6494,6 +6530,7 @@ impl Parser {
                 field_struct_name, ..
             } => field_struct_name.as_ref(),
             C0Expression::AggregateAddress { struct_name, .. } => Some(struct_name),
+            C0Expression::Cast { struct_name, .. } => struct_name.as_ref(),
             _ => None,
         };
         if let Some(struct_name) = struct_name {
@@ -6808,7 +6845,107 @@ impl Parser {
         Ok(expression)
     }
 
+    /// Recognizes `( [const] struct name [const] * )` at the cursor without
+    /// consuming it. A struct-pointer cast is the only pointer cast contract
+    /// expressions accept; it lets a contract over an opaque `void *`
+    /// parameter name the object the C body reaches through the same cast.
+    fn peek_struct_pointer_cast(&self) -> Option<StructPointerCast> {
+        let mut index = self.position;
+        if self.tokens.get(index) != Some(&Token::LParen) {
+            return None;
+        }
+        index += 1;
+        let mut pointee_constant = false;
+        if matches!(self.tokens.get(index), Some(Token::Ident(name)) if name == "const") {
+            pointee_constant = true;
+            index += 1;
+        }
+        if !matches!(self.tokens.get(index), Some(Token::Ident(name)) if name == "struct") {
+            return None;
+        }
+        index += 1;
+        let Some(Token::Ident(struct_name)) = self.tokens.get(index) else {
+            return None;
+        };
+        let struct_name = struct_name.clone();
+        index += 1;
+        if matches!(self.tokens.get(index), Some(Token::Ident(name)) if name == "const") {
+            pointee_constant = true;
+            index += 1;
+        }
+        if self.tokens.get(index) != Some(&Token::Star) {
+            return None;
+        }
+        index += 1;
+        if self.tokens.get(index) != Some(&Token::RParen) {
+            return None;
+        }
+        Some(StructPointerCast {
+            struct_name,
+            pointee_constant,
+            tokens: index + 1 - self.position,
+        })
+    }
+
+    fn consume_struct_pointer_cast(&mut self, cast: &StructPointerCast) -> Result<(), ClickError> {
+        if !self.struct_layouts.contains_key(&cast.struct_name) {
+            return Err(self.error(format!(
+                "unknown struct declaration `{}` in pointer cast",
+                cast.struct_name
+            )));
+        }
+        self.position += cast.tokens;
+        Ok(())
+    }
+
+    /// A struct-pointer cast applies to one `void *` parameter of the block
+    /// under contract, and a block casts a parameter to one struct only, so
+    /// synthesized proof text reads the parameter with a single layout.
+    fn record_parameter_struct_cast(
+        &mut self,
+        operand: Option<&str>,
+        struct_name: &str,
+    ) -> Result<(), ClickError> {
+        let Some(name) = operand.filter(|name| self.current_void_pointer_params.contains(*name))
+        else {
+            return Err(self.error(
+                "a struct pointer cast applies to a `void *` parameter of the function under contract",
+            ));
+        };
+        match self.current_parameter_struct_casts.get(name) {
+            Some(previous) if previous != struct_name => Err(self.error(format!(
+                "parameter `{name}` is already cast to `struct {previous}`; a contract casts a parameter to one struct"
+            ))),
+            _ => {
+                self.current_parameter_struct_casts
+                    .insert(name.to_string(), struct_name.to_string());
+                Ok(())
+            }
+        }
+    }
+
     fn parse_contract_unary(&mut self) -> Result<ContractExpression, ClickError> {
+        if let Some(cast) = self.peek_struct_pointer_cast() {
+            self.consume_struct_pointer_cast(&cast)?;
+            let operand = self.parse_contract_unary()?;
+            let Some(operand) = contract_expression_as_c_fragment(&operand) else {
+                return Err(self.error(
+                    "struct pointer cast expects a current C `void *` expression; put old(...) around the whole cast for an entry-state value",
+                ));
+            };
+            let operand_name = match &operand {
+                CExpression::Variable(name) => Some(name.as_str()),
+                _ => None,
+            };
+            self.record_parameter_struct_cast(operand_name, &cast.struct_name)?;
+            return Ok(ContractExpression::CFragment(CExpression::Cast {
+                expression: Box::new(operand),
+                target_type: CType::Int32Pointer,
+                pointee_struct: Some(cast.struct_name),
+                pointee_volatile: false,
+                pointee_constant: cast.pointee_constant,
+            }));
+        }
         if self.peek() == Some(&Token::LParen)
             && matches!(self.peek_next(), Some(Token::Ident(name)) if name == "uint32")
         {
@@ -6825,6 +6962,7 @@ impl Parser {
             return Ok(ContractExpression::CFragment(CExpression::Cast {
                 expression: Box::new(expression),
                 target_type,
+                pointee_struct: None,
                 pointee_volatile: false,
                 pointee_constant: false,
             }));
@@ -6881,6 +7019,9 @@ impl Parser {
         mut expression: ContractExpression,
     ) -> Result<ContractExpression, ClickError> {
         let mut struct_name = match &expression {
+            ContractExpression::CFragment(CExpression::Cast { pointee_struct, .. }) => {
+                pointee_struct.clone()
+            }
             ContractExpression::QualifiedC { name, .. } => self
                 .qualified_object(name)
                 .and_then(|object| object.struct_name.clone()),
@@ -7411,6 +7552,7 @@ impl Parser {
             return Ok(ContractExpression::CFragment(CExpression::Cast {
                 expression: Box::new(pointer),
                 target_type: CType::UInt64,
+                pointee_struct: None,
                 pointee_volatile: false,
                 pointee_constant: false,
             }));
@@ -7850,6 +7992,24 @@ impl Parser {
             Some(Token::UInt64Number(value)) => Ok(C0Expression::UInt64Literal(value)),
             Some(Token::CharLiteral(value)) => Ok(C0Expression::UInt8Literal(value)),
             Some(Token::LParen) => {
+                self.position -= 1;
+                if let Some(cast) = self.peek_struct_pointer_cast() {
+                    self.consume_struct_pointer_cast(&cast)?;
+                    let operand = self.parse_ensure_unary()?;
+                    let operand_name = match &operand {
+                        C0Expression::Variable(name) => Some(name.as_str()),
+                        _ => None,
+                    };
+                    self.record_parameter_struct_cast(operand_name, &cast.struct_name)?;
+                    return Ok(C0Expression::Cast {
+                        expression: Box::new(operand),
+                        c_type: C0Type::Int32Pointer,
+                        struct_name: Some(cast.struct_name),
+                        pointee_volatile: false,
+                        pointee_constant: cast.pointee_constant,
+                    });
+                }
+                self.position += 1;
                 let expression = self.parse_ensure_expression()?;
                 self.expect(Token::RParen)?;
                 Ok(expression)
@@ -8341,6 +8501,7 @@ fn aligned_proposition(pointer: CExpression, alignment: u64) -> ClickProposition
             Box::new(ContractExpression::CFragment(CExpression::Cast {
                 expression: Box::new(pointer),
                 target_type: CType::UInt64,
+                pointee_struct: None,
                 pointee_volatile: false,
                 pointee_constant: false,
             })),

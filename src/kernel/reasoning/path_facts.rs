@@ -229,7 +229,18 @@ pub(crate) fn solve_builtin_prop(proposition: &Proposition) -> bool {
         Proposition::ConditionIs(ConditionTerm::Constant(actual), expected) => actual == expected,
         Proposition::And(left, right) => solve_builtin_prop(left) && solve_builtin_prop(right),
         Proposition::Or(left, right) => solve_builtin_prop(left) || solve_builtin_prop(right),
-        Proposition::Not(body) => disprove_builtin_prop(body),
+        Proposition::Not(body) => {
+            disprove_builtin_prop(body) || conjunction_order_facts_are_inconsistent(body)
+        }
+        // A guarded proposition is true wherever its guard has no model, and
+        // a universal over one is true for the arbitrary binder. Only the
+        // unsatisfiable-guard case is decided here; a guard that may hold
+        // keeps its consequent as an ordinary obligation.
+        Proposition::Implies(antecedent, _) => conjunction_order_facts_are_inconsistent(antecedent),
+        Proposition::ForAll { body, .. } => {
+            matches!(body.as_ref(), Proposition::Implies(antecedent, _)
+                if conjunction_order_facts_are_inconsistent(antecedent))
+        }
         Proposition::CMemoryLoadable {
             memory,
             base,
@@ -260,6 +271,20 @@ pub(crate) fn solve_builtin_prop(proposition: &Proposition) -> bool {
         } => memory.access_in_bounds(pointer, *byte_width),
         _ => false,
     }
+}
+
+/// A conjunction of signed order facts with no model, such as the guard
+/// `t <= k and k < t` of a universal whose range is empty at a loop entry.
+/// The check reads only the conjunction's own order facts. A cycle through
+/// constants only (`0 <= k and k < 0`) is deliberately not decided here:
+/// constant ranges keep their finite-range treatment, whose `enumerate`
+/// certificates written proofs rely on.
+pub(in crate::kernel) fn conjunction_order_facts_are_inconsistent(
+    proposition: &Proposition,
+) -> bool {
+    let mut facts = Vec::new();
+    super::order_reasoning::collect_order_facts_from_assumed_proposition(proposition, &mut facts);
+    facts.len() >= 2 && super::order_reasoning::order_facts_form_strict_cycle(&facts)
 }
 
 pub(in crate::kernel) fn disprove_builtin_prop(proposition: &Proposition) -> bool {

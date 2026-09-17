@@ -44,8 +44,34 @@ from `void *` to a named struct pointer, and discarded direct calls written
 `(void)call(...)`, all needed by that ordinary C source. These are source and
 type support, not thread semantics.
 
-Normal `click verify` still selects the kernel target. The modeled header is
-not a locked import of glibc headers, and no pthread external contract,
+The sequential worker checkpoint is complete. `mdtests/fork_join_worker_sequential.md`
+proves the frozen `fill_range` byte for byte, in one thread, with the task
+contract a spawn will later transfer: a `range_task` resource holding a view
+of the job record, reached through the opaque `void *` argument by a contract
+cast, exclusive ownership of exactly `output[begin..end]`, and the exact
+filled-slice postcondition. Reaching this exposed and closed four Click gaps
+with no C change: struct pointer casts of `void *` parameters in contract
+clauses, certificates for quantified invariants whose symbolic range is empty
+at loop entry, spelling memory reached through a loaded pointer field or a
+cast parameter in synthesized certificates, and `contradiction` over an
+introduced conjunctive guard. A sidecar directive
+`target "x86_64-linux-userspace";` selects the user-space include model and
+binds the target into artifact identities.
+
+Two caller-side findings shape the next slice. A caller cannot fold
+`range_task` for a job it owns, because folding a composite whose body
+packages views over context-owned memory is refused by the stable-views
+rules; the spawn boundary must therefore lend the job view at the call, the
+way an ordinary call backs a callee's `views` clause, rather than transfer a
+folded task instance. Writing the task as direct `views`/`owns` clauses on
+`fill_range` is the shape that allows this, but its quantified invariant
+leaves currently fail certificate planning, and a bundle of more than two
+loop invariants plans too few guard introductions for a later universal
+invariant. Both are certificate-planning gaps with the same C and the same
+proof text; fix them before binding spawn to the real call.
+
+The modeled header is not a locked import of glibc headers, and no pthread
+external contract,
 checked spawn/join operation, scheduling/memory-model rule, worker proof,
 sidecar, or verified concurrency example has landed. In particular, the
 numeric representation of `pthread_t` grants no completion authority; only
@@ -104,7 +130,7 @@ or serial execution wrappers to make their proofs work.
    resources, and call binders can unambiguously select the worker task and
    success-only completion right. Do not add a proof-only spawn call that can
    diverge from C execution.
-3. Prove the frozen worker once and then the three parent outcomes: first
+3. Prove the three parent outcomes on top of the verified worker: first
    create fails (four zeros), second create fails after the first succeeds
    (join first, then `[11, 11, 0, 0]`), and both succeed (join both, then
    `[11, 11, 22, 22]`). The worker task needs an exclusive output subrange and

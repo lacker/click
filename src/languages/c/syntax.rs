@@ -3727,14 +3727,15 @@ impl C0Expression {
             Self::Cast {
                 expression,
                 c_type,
+                struct_name,
                 pointee_volatile,
                 pointee_constant,
-                ..
-            } => crate::kernel::c_cast_with_pointee_qualifiers(
+            } => crate::kernel::c_cast_with_pointee_qualifiers_and_struct(
                 expression.to_kernel_expression(),
                 c_type.to_kernel_type(),
                 *pointee_volatile,
                 *pointee_constant,
+                struct_name.clone(),
             ),
             Self::Conditional {
                 condition,

@@ -295,6 +295,8 @@ pub(in crate::surface) fn prove_claim_by_tactics(
             "`{claim_label}` has an empty explicit proof script"
         )));
     }
+    let _local_layouts =
+        super::surface_synthesis::LocalStructLayoutScope::enter(parsed_function, function_block);
     let program = build_internal_proof_with_source(tactics, claim_label, tactic_source)?;
     let generated_by_source_index = match tactic_source {
         ProofTacticSource::SourceSyntax => None,
@@ -494,6 +496,8 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
     tactic_source: ProofTacticSource,
 ) -> Result<ClaimProofResult, ClickError> {
     let proof_label = format!("{}.contract", function_block.signature().name());
+    let _local_layouts =
+        super::surface_synthesis::LocalStructLayoutScope::enter(parsed_function, function_block);
     if claims.is_empty() {
         return Err(ClickError::new(format!(
             "`{proof_label}` grouped proof has no contract claims"

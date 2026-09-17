@@ -2261,6 +2261,7 @@ pub(super) fn infer_contract_expression_type(
                     "`result` is not available in {context}"
                 )));
             }
+            validate_pointer_cast_operands(expression, variables, context)?;
             Ok(infer_c_expression_type(expression, variables))
         }
         ContractExpression::ArrayIndex { lowered, .. } => {
@@ -2435,6 +2436,84 @@ pub(super) fn infer_contract_expression_type(
                 }
             }
             Ok(function.return_type.c_type())
+        }
+    }
+}
+
+/// A contract pointer cast only converts an opaque `void *` back to the
+/// modeled object the C body reaches through the same conversion. Retyping a
+/// typed pointer would let a contract read a different object at the same
+/// address than the body can, so any operand with a known non-opaque type
+/// is rejected. Scalar casts and casts the parser synthesizes over untyped
+/// bases (global array decay) keep their existing meaning.
+fn validate_pointer_cast_operands(
+    expression: &CExpression,
+    variables: &BTreeMap<String, C0Type>,
+    context: &str,
+) -> Result<(), ClickError> {
+    match expression {
+        CExpression::Cast {
+            expression: operand,
+            target_type,
+            ..
+        } => {
+            if target_type.is_pointer() {
+                match infer_c_expression_type(operand, variables) {
+                    None | Some(C0Type::VoidPointer) => {}
+                    Some(actual) => {
+                        return Err(ClickError::new(format!(
+                            "pointer cast in {context} expects a `void *` operand, got `{actual:?}`"
+                        )));
+                    }
+                }
+            }
+            validate_pointer_cast_operands(operand, variables, context)
+        }
+        CExpression::Value(_) | CExpression::FunctionAddress(_) | CExpression::Variable(_) => {
+            Ok(())
+        }
+        CExpression::FloatNegate(inner)
+        | CExpression::FloatClassification {
+            expression: inner, ..
+        }
+        | CExpression::AddressOf(inner)
+        | CExpression::Not(inner)
+        | CExpression::BitwiseNot(inner)
+        | CExpression::Load(inner)
+        | CExpression::TypedLoad { pointer: inner, .. }
+        | CExpression::PointerOffsetBytes { pointer: inner, .. } => {
+            validate_pointer_cast_operands(inner, variables, context)
+        }
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            validate_pointer_cast_operands(condition, variables, context)?;
+            validate_pointer_cast_operands(then_branch, variables, context)?;
+            validate_pointer_cast_operands(else_branch, variables, context)
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
+        | CExpression::Index(left, right) => {
+            validate_pointer_cast_operands(left, variables, context)?;
+            validate_pointer_cast_operands(right, variables, context)
         }
     }
 }

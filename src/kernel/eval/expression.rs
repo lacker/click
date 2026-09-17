@@ -1103,6 +1103,7 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
         CExpression::Cast {
             expression,
             target_type,
+            pointee_struct: _,
             pointee_volatile,
             pointee_constant,
         } => evaluate_c_cast_paths(

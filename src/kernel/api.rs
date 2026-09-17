@@ -1078,9 +1078,26 @@ pub fn c_cast_with_pointee_qualifiers(
     pointee_volatile: bool,
     pointee_constant: bool,
 ) -> CExpression {
+    c_cast_with_pointee_qualifiers_and_struct(
+        expression,
+        target_type,
+        pointee_volatile,
+        pointee_constant,
+        None,
+    )
+}
+
+pub fn c_cast_with_pointee_qualifiers_and_struct(
+    expression: CExpression,
+    target_type: CType,
+    pointee_volatile: bool,
+    pointee_constant: bool,
+    pointee_struct: Option<String>,
+) -> CExpression {
     CExpression::Cast {
         expression: Box::new(expression),
         target_type,
+        pointee_struct,
         pointee_volatile,
         pointee_constant,
     }
