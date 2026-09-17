@@ -49,6 +49,7 @@ int32 composite_resource_vector_fill_loop_snapshot(
     step();
     step();
     loop as fill_cells {
+        decreases owner->len - i;
         invariant i >= 0 and i <= owner->len;
         owns vector(owner);
 
@@ -69,6 +70,23 @@ int32 composite_resource_vector_fill_loop_snapshot(
                     at(statement(3).entry, i) < at(statement(3).entry, owner->len);
                 }
             }
+            have 0 <= 0 - at(statement(3).entry, i) + owner->len - 1 by {
+                arithmetic() using {
+                    at(statement(3).entry, i) >= 0;
+                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
+                    0 <= owner->len;
+                    i <= owner->len;
+                }
+            }
+            have 0 - at(statement(3).entry, i) + owner->len - 1
+                < 0 - at(statement(3).entry, i) + owner->len by {
+                arithmetic() using {
+                    at(statement(3).entry, i) >= 0;
+                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
+                    0 <= owner->len;
+                    i <= owner->len;
+                }
+            }
             close_invariants();
         }
     }
@@ -79,10 +97,6 @@ int32 composite_resource_vector_fill_loop_snapshot(
     assumption();
     assumption();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect
