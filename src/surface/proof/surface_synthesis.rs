@@ -2175,7 +2175,23 @@ fn synthesize_surface_bitvector(
             ContractExpression::CFragment(CExpression::Variable(name.to_string()))
         });
     }
-    if let Some(name) = describe_parameter_bitvector(term, parameters, arguments) {
+    // The term is the value a parameter was passed. No local holds it now, or
+    // the search above would have named it, so if that parameter is a local
+    // of this state it has been reassigned, and its bare name means the new
+    // value. Naming the passed value by it printed `n <= n` for the invariant
+    // `n <= at(loop.entry, n)` in a loop that counts `n` down, which lowers
+    // to a different proposition, and `both` then refused to split a bundle
+    // whose text did not match its goal. Such a value is left to the
+    // spellings below, and has none here if they do not name it either: a
+    // goal with no source form is handled; one with a wrong source form is
+    // not.
+    if let Some(name) = describe_parameter_bitvector(term, parameters, arguments)
+        && (name == "result"
+            || !state
+                .locals()
+                .object_values()
+                .any(|(local, _)| *local == name))
+    {
         return Some(if name == "result" {
             ContractExpression::CBinding(name)
         } else {
