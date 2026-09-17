@@ -57,6 +57,7 @@ fn signed_step_result_surface(step: &SignedArithmeticStep) -> Option<&ClickPropo
         | SignedArithmeticStep::EqualityToLessEqual { result, .. }
         | SignedArithmeticStep::EqualityFromBounds { result, .. }
         | SignedArithmeticStep::Trivial { result }
+        | SignedArithmeticStep::StrictSuccessorPremise { result, .. }
         | SignedArithmeticStep::IntervalCompare { result, .. }
         | SignedArithmeticStep::AffineConclusion { result, .. } => Some(result),
         _ => None,
@@ -1076,6 +1077,9 @@ impl<'a> Proof<'a> {
             let (index, lowered) = match node {
                 SignedArithmeticStep::Premise {
                     index, proposition, ..
+                }
+                | SignedArithmeticStep::StrictSuccessorPremise {
+                    index, proposition, ..
                 } => (
                     *index,
                     self.lower_surface_proposition_direct(
@@ -1098,10 +1102,16 @@ impl<'a> Proof<'a> {
                 std::collections::btree_map::Entry::Vacant(entry) => {
                     entry.insert(lowered);
                 }
-                std::collections::btree_map::Entry::Occupied(_entry) => {
-                    return Err(self.step_error(format!(
-                        "signed_int32 premise {index} is declared more than once"
-                    )));
+                // One source proposition may be read twice, for example as an
+                // ordinary affine premise and as a strict machine successor.
+                // Repeating the same declaration names the same slot; only a
+                // conflicting redeclaration is an error.
+                std::collections::btree_map::Entry::Occupied(entry) => {
+                    if entry.get() != &lowered {
+                        return Err(self.step_error(format!(
+                            "signed_int32 premise {index} is declared more than once"
+                        )));
+                    }
                 }
             }
         }
@@ -1384,6 +1394,28 @@ impl<'a> Proof<'a> {
                         index: *index,
                         carrier: SignedArithmeticCarrier::SignedInt32,
                         term: lower_term(self, term)?,
+                    }
+                }
+                SignedArithmeticStep::StrictSuccessorPremise {
+                    index,
+                    proposition,
+                    result,
+                } => {
+                    let supplied = premises.get(*index).ok_or_else(|| {
+                        self.step_error(format!("signed_int32 premise {index} is out of range"))
+                    })?;
+                    let declared =
+                        lower_prop(self, proposition, "signed_int32 strict successor premise")?;
+                    if !same_signed_claim(supplied, &declared) {
+                        return Err(self.step_error(format!(
+                            "signed_int32 premise {index} does not match its source proposition"
+                        )));
+                    }
+                    let declared_result =
+                        lower_prop(self, result, "signed_int32 strict successor result")?;
+                    SignedArithmeticNode::StrictSuccessorPremise {
+                        index: *index,
+                        result: claim(&declared_result, "signed_int32 strict successor result")?,
                     }
                 }
                 SignedArithmeticStep::IntervalIntersect {

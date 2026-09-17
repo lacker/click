@@ -5350,6 +5350,19 @@ impl Parser {
                     self.expect(Token::Semicolon)?;
                     SignedArithmeticStep::DefinedPremise { index, term }
                 }
+                "strict_successor" => {
+                    let index = self.expect_index("strict successor premise index")?;
+                    self.expect(Token::Colon)?;
+                    let proposition = self.parse_proposition()?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::StrictSuccessorPremise {
+                        index,
+                        proposition,
+                        result,
+                    }
+                }
                 "interval_intersect" => {
                     let left = self.expect_index("left interval")?;
                     self.expect(Token::Comma)?;

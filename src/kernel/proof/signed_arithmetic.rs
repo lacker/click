@@ -637,6 +637,18 @@ pub(crate) enum SignedArithmeticNode {
         carrier: SignedArithmeticCarrier,
         term: Bitvector32Term,
     },
+    /// Read one exact strict premise `value < upper + 1` as the affine claim
+    /// `value <= upper`.  No definedness premise is needed: the machine
+    /// successor only wraps when `upper` is the signed maximum, and then the
+    /// wrapped successor is the signed minimum, so the strict premise is
+    /// unsatisfiable and the conclusion holds vacuously.  This is the
+    /// certificate form of the `int32_lt_successor_implies_le` law, and it is
+    /// exact to the `+ 1` shape: a wider machine offset has satisfiable
+    /// wrapped cases and is not decomposed here.
+    StrictSuccessorPremise {
+        index: usize,
+        result: SignedArithmeticClaim,
+    },
     IntervalAdd {
         left: usize,
         right: usize,
@@ -1002,6 +1014,20 @@ impl SignedArithmeticCertificate {
                         carrier: *carrier,
                         term: term.clone(),
                     }
+                }
+                SignedArithmeticNode::StrictSuccessorPremise { index, result } => {
+                    let proposition = premises
+                        .get(*index)
+                        .ok_or(SignedArithmeticCheckError::InvalidPremise(*index))?;
+                    let expected = strict_successor_claim(proposition)
+                        .ok_or(SignedArithmeticCheckError::UnsupportedPremise(*index))?;
+                    if !charge_claim_work(&expected) {
+                        return Err(SignedArithmeticCheckError::Overflow(node_index));
+                    }
+                    if !same_int32_claim(&expected, result) {
+                        return Err(SignedArithmeticCheckError::NodeResultMismatch(node_index));
+                    }
+                    CheckedValue::Affine(expected)
                 }
                 SignedArithmeticNode::IntervalAdd {
                     left,
@@ -2096,6 +2122,92 @@ fn affine_leaf(term: &Bitvector32Term) -> Option<(BTreeMap<SignedArithmeticAtom,
     Some((BTreeMap::from([(atom, BigInt::one())]), BigInt::zero()))
 }
 
+/// Split a strict signed comparison into its smaller and larger operands.
+///
+/// Every spelling `affine_claim` normalizes to a strict `LessEqual` claim is
+/// accepted, so the caller sees one canonical `value < upper` shape.
+fn strict_less_than_parts(
+    proposition: &Proposition,
+) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
+    let (condition, value) = match proposition {
+        Proposition::ConditionIs(condition, value) => (condition, *value),
+        Proposition::Not(body) => match body.as_ref() {
+            Proposition::ConditionIs(condition, value) => (condition, !*value),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some(match (condition, value) {
+        (ConditionTerm::Bitvector32SignedLessThan(left, right), true) => {
+            (left.as_ref(), right.as_ref())
+        }
+        (ConditionTerm::Bitvector32SignedGreaterThan(left, right), true) => {
+            (right.as_ref(), left.as_ref())
+        }
+        (ConditionTerm::Bitvector32SignedLessEqual(left, right), false) => {
+            (right.as_ref(), left.as_ref())
+        }
+        (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), false) => {
+            (left.as_ref(), right.as_ref())
+        }
+        _ => return None,
+    })
+}
+
+/// The operand of a machine successor `base + 1`, in either operand order.
+fn machine_successor_base(term: &Bitvector32Term) -> Option<&Bitvector32Term> {
+    let Bitvector32Term::Add(left, right) = term else {
+        return None;
+    };
+    if right.as_const() == Some(1) {
+        return Some(left.as_ref());
+    }
+    (left.as_const() == Some(1)).then_some(right.as_ref())
+}
+
+/// The affine claim `value <= upper` justified by a strict premise
+/// `value < upper + 1`.
+///
+/// The machine successor wraps only when `upper` is the signed maximum, and
+/// the wrapped successor is then the signed minimum, so no `int32` value is
+/// strictly below it and the premise is unsatisfiable.  Every other case has
+/// an exact successor.  The conclusion therefore needs no definedness
+/// premise, which is what makes it available to a premise that carries no
+/// bound on `upper` at all.
+pub(crate) fn strict_successor_claim(proposition: &Proposition) -> Option<SignedArithmeticClaim> {
+    let (value, successor) = strict_less_than_parts(proposition)?;
+    let base = machine_successor_base(successor)?;
+    if contains_affine_machine_operation(value) || contains_affine_machine_operation(base) {
+        return None;
+    }
+    let (mut terms, constant) = affine_leaf(value)?;
+    let (base_terms, base_constant) = affine_leaf(base)?;
+    for (atom, coefficient) in base_terms {
+        if !charge_affine_map_update_work(&terms, &atom, &coefficient) {
+            return None;
+        }
+        let previous = terms.get(&atom).cloned().unwrap_or_default();
+        if !charge_bigint_binary_work(&previous, &coefficient) {
+            return None;
+        }
+        let updated = previous - coefficient;
+        if updated.is_zero() {
+            terms.remove(&atom);
+        } else {
+            terms.insert(atom, updated);
+        }
+    }
+    if !charge_bigint_binary_work(&constant, &base_constant) {
+        return None;
+    }
+    Some(SignedArithmeticClaim {
+        carrier: SignedArithmeticCarrier::SignedInt32,
+        relation: SignedArithmeticRelation::LessEqual,
+        terms,
+        constant: constant - base_constant,
+    })
+}
+
 fn contains_affine_machine_operation(root: &Bitvector32Term) -> bool {
     matches!(
         root,
@@ -2570,6 +2682,103 @@ mod tests {
             Box::new(left),
             Box::new(right),
         ))
+    }
+
+    fn lt(left: Bitvector32Term, right: Bitvector32Term) -> Proposition {
+        prop(ConditionTerm::signed_less_than(left, right))
+    }
+
+    fn successor(term: Bitvector32Term, offset: i32) -> Bitvector32Term {
+        Bitvector32Term::Add(
+            Box::new(term),
+            Box::new(Bitvector32Term::Constant(offset as u32)),
+        )
+    }
+
+    #[test]
+    fn a_strict_machine_successor_premise_gives_the_nonstrict_bound() {
+        let premise = lt(x(), successor(y(), 1));
+        let goal = le(x(), y());
+        let certificate = SignedArithmeticCertificate {
+            nodes: vec![SignedArithmeticNode::StrictSuccessorPremise {
+                index: 0,
+                result: claim(&goal),
+            }],
+            conclusion: 0,
+        };
+        certificate
+            .check(&goal, std::slice::from_ref(&premise))
+            .expect("the successor law closes the nonstrict bound");
+    }
+
+    #[test]
+    fn a_wider_machine_offset_is_not_a_strict_successor() {
+        let premise = lt(x(), successor(y(), 2));
+        let goal = le(x(), y());
+        let certificate = SignedArithmeticCertificate {
+            nodes: vec![SignedArithmeticNode::StrictSuccessorPremise {
+                index: 0,
+                result: claim(&goal),
+            }],
+            conclusion: 0,
+        };
+        assert_eq!(
+            certificate.check(&goal, std::slice::from_ref(&premise)),
+            Err(SignedArithmeticCheckError::UnsupportedPremise(0))
+        );
+    }
+
+    #[test]
+    fn a_nonstrict_successor_premise_is_not_a_strict_successor() {
+        let premise = le(x(), successor(y(), 1));
+        let goal = le(x(), y());
+        let certificate = SignedArithmeticCertificate {
+            nodes: vec![SignedArithmeticNode::StrictSuccessorPremise {
+                index: 0,
+                result: claim(&goal),
+            }],
+            conclusion: 0,
+        };
+        assert_eq!(
+            certificate.check(&goal, std::slice::from_ref(&premise)),
+            Err(SignedArithmeticCheckError::UnsupportedPremise(0))
+        );
+    }
+
+    #[test]
+    fn a_strict_successor_node_may_not_claim_a_strict_bound() {
+        let premise = lt(x(), successor(y(), 1));
+        let goal = lt(x(), y());
+        let certificate = SignedArithmeticCertificate {
+            nodes: vec![SignedArithmeticNode::StrictSuccessorPremise {
+                index: 0,
+                result: claim(&goal),
+            }],
+            conclusion: 0,
+        };
+        assert_eq!(
+            certificate.check(&goal, std::slice::from_ref(&premise)),
+            Err(SignedArithmeticCheckError::NodeResultMismatch(0))
+        );
+    }
+
+    #[test]
+    fn a_strict_successor_over_a_machine_operand_is_rejected() {
+        // Decomposing `x < (y + 1) + 1` would need the inner operation to be
+        // defined; the law itself only covers an opaque base.
+        let premise = lt(x(), successor(successor(y(), 1), 1));
+        let goal = le(x(), successor(y(), 1));
+        let certificate = SignedArithmeticCertificate {
+            nodes: vec![SignedArithmeticNode::StrictSuccessorPremise {
+                index: 0,
+                result: claim(&goal),
+            }],
+            conclusion: 0,
+        };
+        assert_eq!(
+            certificate.check(&goal, std::slice::from_ref(&premise)),
+            Err(SignedArithmeticCheckError::UnsupportedPremise(0))
+        );
     }
 
     #[test]

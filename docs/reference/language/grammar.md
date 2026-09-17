@@ -69,6 +69,7 @@ documentation inventory keep the following accepted words synchronized.
 | `eq_from_bounds` | Closes an equality from opposite non-strict bounds. |
 | `trivial` | Checks a context-free affine identity. |
 | `interval_from_affine`, `interval_from_affine_direct`, `interval_atom`, `interval_intersect` | Introduce, import, or intersect, checked signed-machine intervals. `interval_from_affine_direct` is required when the cited affine premise already contains a compound machine operation; it does not silently decompose that operation. |
+| `strict_successor` | Reads an exact strict premise `value < upper + 1` as the non-strict bound `value <= upper`. The machine successor needs no definedness premise: a wrapped successor makes the strict premise unsatisfiable. The shape is exact, so a wider machine offset is not decomposed. |
 | `defined`, `interval_add`, `interval_add_bounded`, `interval_subtract`, `interval_multiply`, `interval_remainder`, `interval_shift_left`, `interval_arithmetic_shift_right`, `interval_bitwise_and`, `interval_sign_bit_flip`, `interval_compare` | Record exact definedness premises and bounded interval-operation evidence for signed-machine expressions. |
 | `affine_conclusion`, `affine_conclusion_pair` | Bridge an affine claim to a machine proposition using one, or separately named left and right, interval/definedness evidence. The pair form is required when both comparison sides contain compound operations. |
 | `conclusion` | Selects the final node of an arithmetic certificate. |

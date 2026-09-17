@@ -467,6 +467,44 @@ fn integer_surface_equality_from_bounds(
     })
 }
 
+/// The `base` of a surface machine successor `base + 1`, in either operand
+/// order.
+fn surface_machine_successor_base(expression: &ContractExpression) -> Option<&ContractExpression> {
+    let ContractExpression::Add(left, right) = expression else {
+        return None;
+    };
+    let is_one = |expression: &ContractExpression| {
+        matches!(expression, ContractExpression::IntegerLiteral(literal)
+            if literal.parse::<i64>() == Ok(1))
+    };
+    if is_one(right) {
+        return Some(left.as_ref());
+    }
+    is_one(left).then_some(right.as_ref())
+}
+
+/// Render the affine bound `value <= base` justified by a strict machine
+/// successor premise `value < base + 1`.
+///
+/// Both operands are the premise's own sub-expressions, so the rendered
+/// proposition lowers to exactly the claim the kernel node recomputes from
+/// the source premise.
+fn signed_surface_strict_successor_bound(
+    proposition: &ClickProposition,
+) -> Option<ClickProposition> {
+    let (left, operator, right) = integer_surface_ordered_parts(proposition)?;
+    let (value, successor) = match operator {
+        ComparisonOperator::LessThan => (left, right),
+        ComparisonOperator::GreaterThan => (right, left),
+        _ => return None,
+    };
+    Some(ClickProposition::Comparison {
+        left: value,
+        operator: ComparisonOperator::LessEqual,
+        right: surface_machine_successor_base(&successor)?.clone(),
+    })
+}
+
 fn integer_surface_trivial(claim: &IntegerAffineClaim) -> Option<ClickProposition> {
     if !claim.terms.is_empty() {
         return None;
@@ -772,7 +810,8 @@ impl<'a> Proof<'a> {
         for node in &plan.nodes {
             match node {
                 SignedArithmeticNode::Premise { index, .. }
-                | SignedArithmeticNode::DefinedPremise { index, .. } => {
+                | SignedArithmeticNode::DefinedPremise { index, .. }
+                | SignedArithmeticNode::StrictSuccessorPremise { index, .. } => {
                     used.insert(*index);
                 }
                 _ => {}
@@ -838,7 +877,7 @@ impl<'a> Proof<'a> {
                 right: ContractExpression::IntegerLiteral("0".into()),
             })
         };
-        for node in &plan.nodes {
+        for (node_index, node) in plan.nodes.iter().enumerate() {
             let value = match node {
                 SignedArithmeticNode::Premise { index, .. } => {
                     Some(premise_pairs.get(*index)?.1.clone())
@@ -889,6 +928,9 @@ impl<'a> Proof<'a> {
                 )
                 .or_else(|| claim_surface(result)),
                 SignedArithmeticNode::Trivial { result } => claim_surface(result),
+                SignedArithmeticNode::StrictSuccessorPremise { index, .. } => {
+                    signed_surface_strict_successor_bound(&premise_pairs.get(*index)?.1)
+                }
                 SignedArithmeticNode::IntervalCompare { .. }
                 | SignedArithmeticNode::AffineConclusion { .. }
                 | SignedArithmeticNode::AffineConclusionWithEvidence { .. } => {
@@ -896,6 +938,13 @@ impl<'a> Proof<'a> {
                 }
                 _ => None,
             };
+            // The conclusion node's claim is the goal's claim, so the written
+            // goal is always a faithful rendering of it. Reach for it only
+            // when the node's own reconstruction declines, for example when a
+            // selected premise is spelled strictly (`i < 1`) and the node
+            // combines its non-strict reading.
+            let value =
+                value.or_else(|| (node_index == plan.conclusion).then(|| surface_goal.clone()));
             surfaces.push(value);
         }
         for (node_index, node) in plan.nodes.iter().enumerate() {
@@ -987,6 +1036,13 @@ impl<'a> Proof<'a> {
                     SignedArithmeticStep::DefinedPremise {
                         index: *source_indices.get(index)?,
                         term: term(machine_term)?,
+                    }
+                }
+                SignedArithmeticNode::StrictSuccessorPremise { index, .. } => {
+                    SignedArithmeticStep::StrictSuccessorPremise {
+                        index: *source_indices.get(index)?,
+                        proposition: premise_pairs.get(*index)?.1.clone(),
+                        result: result()?,
                     }
                 }
                 SignedArithmeticNode::IntervalAdd {

@@ -4542,6 +4542,14 @@ pub enum SignedArithmeticStep {
         index: usize,
         term: ContractExpression,
     },
+    /// Read a strict premise `value < upper + 1` as the affine bound
+    /// `value <= upper`. The machine successor needs no definedness premise:
+    /// a wrapped successor makes the strict premise unsatisfiable.
+    StrictSuccessorPremise {
+        index: usize,
+        proposition: ClickProposition,
+        result: ClickProposition,
+    },
     IntervalAdd {
         left: usize,
         right: usize,
