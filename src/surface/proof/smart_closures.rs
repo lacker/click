@@ -4536,6 +4536,11 @@ impl<'a> Proof<'a> {
             if !successor.checked_facts().contains(premise) {
                 return Err(());
             }
+            // Extracting a premise can also discharge the goal. Its checked
+            // completion is sufficient; later premises require an open goal.
+            if successor.is_complete() {
+                return Ok(Some(successor));
+            }
             proof = successor;
             extracted = true;
         }

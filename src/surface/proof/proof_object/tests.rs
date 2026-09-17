@@ -96,6 +96,75 @@ fn invariant_bundle_leaf_fixture() -> (Proposition, Proposition) {
 }
 
 #[test]
+fn atomic_conjunct_extraction_returns_when_an_early_step_completes_the_goal() {
+    let x = Bitvector32Term::Variable(Variable(101));
+    let y = Bitvector32Term::Variable(Variable(102));
+    let two = Bitvector32Term::Constant(2);
+    let comparison = |left: Bitvector32Term, right: Bitvector32Term| {
+        (
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(
+                    Box::new(left.clone()),
+                    Box::new(right.clone()),
+                ),
+                true,
+            ),
+            ClickProposition::Comparison {
+                left: ContractExpression::CFragment(CExpression::Value(CValue::Int32(left))),
+                operator: ComparisonOperator::LessEqual,
+                right: ContractExpression::CFragment(CExpression::Value(CValue::Int32(right))),
+            },
+        )
+    };
+    let pairs = vec![comparison(x.clone(), y.clone()), comparison(y, two.clone())];
+    let (goal, _) = comparison(x, two);
+    let assumptions = PureFactContext::new()
+        .assume_proposition(pairs[0].0.clone())
+        .assume_proposition(pairs[1].0.clone());
+    let derivation = assumptions.derive_simp_proposition(&goal).unwrap();
+    assert!(derivation.check(&assumptions));
+    assert_eq!(derivation.context_premises().len(), 2);
+    // An alternate derivation selects two premises, but the goal is also an
+    // available conjunct. Extracting either premise completes the goal.
+    let facts = vec![Proposition::And(
+        Box::new(goal.clone()),
+        Box::new(Proposition::And(
+            Box::new(pairs[0].0.clone()),
+            Box::new(pairs[1].0.clone()),
+        )),
+    )];
+    let context = pure_identity_fixture();
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let theorems = TheoremEnvironment::new(&[]);
+    let root = Proof::for_pure_goal(
+        "early extraction completion",
+        &facts,
+        goal.clone(),
+        &context,
+        &predicates,
+        &functions,
+        &theorems,
+    );
+    let closed = root
+        .extract_special_conjunct_premises(&derivation, &pairs)
+        .expect("the checked extraction should succeed")
+        .expect("the first extraction should complete the proof");
+    assert!(closed.is_complete());
+    assert_eq!(closed.completed_proposition().unwrap().proposition(), &goal);
+    assert!(matches!(
+        closed.certificate().steps(),
+        [ProofStep::Extract(_)]
+    ));
+    assert!(root.certificate().steps().is_empty());
+    let rechecked = root
+        .try_authoritative_linear_script(&closed.certificate().to_proof_tactics())
+        .unwrap()
+        .unwrap();
+    assert!(rechecked.is_complete());
+}
+
+#[test]
 fn atomic_conjunct_extraction_requires_exact_selected_premise_on_small_stack() {
     std::thread::Builder::new()
         .name("atomic-extract-progress-small-stack".into())
