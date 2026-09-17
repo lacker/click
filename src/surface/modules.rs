@@ -24,7 +24,11 @@ pub fn resolve_click_project(
         global_array_shapes,
         qualified_objects,
         local_struct_pointers,
-    ) = verification::parse_c_layouts(entry_source, &source_context)?;
+    ) = verification::parse_c_layouts_for_target(
+        entry_source,
+        &source_context,
+        super::selected_project_c_target(project)?,
+    )?;
     resolve_click_project_with_layouts(
         project,
         struct_layouts,
@@ -327,6 +331,7 @@ fn merge_modules(
     let mut merged = ClickFile {
         imports: Vec::new(),
         verifying_sources: Vec::new(),
+        c_target: None,
         algebraic_type_definitions: Vec::new(),
         predicate_definitions: Vec::new(),
         click_function_definitions: Vec::new(),
@@ -351,6 +356,22 @@ fn merge_modules(
                     "conflicting declaration {declaration:?} in modules `{previous}` and `{owner}`"
                 )));
             }
+        }
+        // One project selects exactly one C implementation target: its
+        // sources are preprocessed once, and its proofs carry one target in
+        // their artifact identity. A module may restate the project's target
+        // but never contradict it.
+        if let Some(declared) = local.c_target {
+            if let Some(previous) = merged.c_target
+                && previous != declared
+            {
+                return Err(ClickError::new(format!(
+                    "module `{identity}` selects C target `{}`, but another module of this project selects `{}`",
+                    declared.name(),
+                    previous.name()
+                )));
+            }
+            merged.c_target = Some(declared);
         }
         if identity == entry {
             merged.imports = local.imports.clone();
@@ -471,6 +492,59 @@ abstract resource tree_token(key: int32);
                 ),
             ],
         )
+    }
+
+    /// A project preprocesses its C once and records one target in every
+    /// proof artifact, so its modules must agree on the selected target. An
+    /// imported module may restate the entry module's selection.
+    #[test]
+    fn project_modules_must_agree_on_the_selected_c_target() {
+        let agreeing = ClickProject::new(
+            "entry.click",
+            [
+                ClickModuleSource::new(
+                    "library.click",
+                    "target \"x86_64-linux-userspace\";\npredicate positive(x: int32) { x > 0 }\n",
+                    [],
+                ),
+                ClickModuleSource::new(
+                    "entry.click",
+                    "import \"library.click\";\ntarget \"x86_64-linux-userspace\";\n",
+                    ["library.click".to_string()],
+                ),
+            ],
+        );
+        assert_eq!(
+            super::super::selected_project_c_target(&agreeing).expect("agreeing targets"),
+            crate::languages::c::target::CTarget::X86_64LinuxUserspace
+        );
+        let file = resolve_click_project(&agreeing, &[]).expect("agreeing module graph resolves");
+        assert_eq!(
+            file.selected_c_target(),
+            crate::languages::c::target::CTarget::X86_64LinuxUserspace
+        );
+
+        let conflicting = ClickProject::new(
+            "entry.click",
+            [
+                ClickModuleSource::new(
+                    "library.click",
+                    "target \"x86_64-linux-userspace\";\npredicate positive(x: int32) { x > 0 }\n",
+                    [],
+                ),
+                ClickModuleSource::new(
+                    "entry.click",
+                    "import \"library.click\";\ntarget \"x86_64-linux-kernel\";\n",
+                    ["library.click".to_string()],
+                ),
+            ],
+        );
+        let error = super::super::selected_project_c_target(&conflicting)
+            .expect_err("conflicting module targets");
+        assert!(error.message().contains("selects C target"), "{error:?}");
+        let error =
+            resolve_click_project(&conflicting, &[]).expect_err("conflicting module targets");
+        assert!(error.message().contains("selects C target"), "{error:?}");
     }
 
     #[test]

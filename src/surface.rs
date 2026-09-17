@@ -120,7 +120,7 @@ pub use expansion::{
     expand_c0_tactic_source_at, expand_cpp_prepared_claim_source_by_label,
     expand_cpp_prepared_project_claim_source_by_label,
     expand_cpp_prepared_project_tactic_source_at, expand_cpp_prepared_tactic_source_at,
-    verifying_source_paths,
+    selected_c_target, selected_project_c_target, verifying_source_paths,
 };
 use expansion::{
     ExpansionCapture, ProofSite, VerificationTarget, verification_target_at,
@@ -289,6 +289,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "struct",
     "summarize",
     "symbolic_execute",
+    "target",
     "trivial",
     "theorem",
     "then",
@@ -371,6 +372,7 @@ pub const SURFACE_CLICK_FORMS: &[&str] = &[
     "resource-witness",
     "same-object",
     "separate",
+    "target",
     "theorem",
     "verifying",
     "write",
@@ -427,6 +429,9 @@ fn check_verification_deadline() -> Result<(), ClickError> {
 pub struct ClickFile {
     imports: Vec<ImportDeclaration>,
     verifying_sources: Vec<String>,
+    /// The C implementation target this file selects with a `target`
+    /// directive. `None` selects the default target.
+    c_target: Option<crate::languages::c::target::CTarget>,
     algebraic_type_definitions: Vec<AlgebraicTypeDefinition>,
     predicate_definitions: Vec<PredicateDefinition>,
     click_function_definitions: Vec<ClickFunctionDefinition>,
@@ -5128,6 +5133,10 @@ pub struct VerifiedCTheorem {
     /// denotes a theorem assembled by a legacy internal path that has not yet
     /// crossed the shared verification boundary.
     pub artifact_identity: Option<verification::CProofArtifactIdentity>,
+    /// The C implementation target this theorem was checked under. Set when
+    /// the artifact crosses the shared verification boundary; a legacy
+    /// internal path leaves the default target in place.
+    pub target: crate::languages::c::target::CTarget,
     /// The CLI proof boundary under which this artifact was produced.
     pub selection: Option<CProofSelection>,
     pub function_block: FunctionBlock,
@@ -5261,6 +5270,18 @@ impl ClickFile {
 
     pub fn verifying_sources(&self) -> &[String] {
         &self.verifying_sources
+    }
+
+    /// The declared C implementation target, if this file selects one.
+    pub fn declared_c_target(&self) -> Option<crate::languages::c::target::CTarget> {
+        self.c_target
+    }
+
+    /// The C implementation target this file's sources are preprocessed and
+    /// verified under, defaulting to the supported kernel target.
+    pub fn selected_c_target(&self) -> crate::languages::c::target::CTarget {
+        self.c_target
+            .unwrap_or(crate::languages::c::target::CTarget::SUPPORTED)
     }
 
     pub fn algebraic_type_definitions(&self) -> &[AlgebraicTypeDefinition] {
@@ -6046,7 +6067,7 @@ impl VerifiedCTheorem {
     /// The concrete C implementation assumptions used by this verifier.
     /// Results are not claims of portability to other target profiles.
     pub fn target(&self) -> crate::languages::c::target::CTarget {
-        crate::languages::c::target::CTarget::SUPPORTED
+        self.target
     }
 
     pub fn proof_kind(&self) -> ProofKind {

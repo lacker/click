@@ -621,6 +621,7 @@ impl Parser {
         self.index_algebraic_variant_fields();
         let mut imports = Vec::new();
         let mut verifying_sources = Vec::new();
+        let mut c_target = None;
         let mut algebraic_type_definitions = Vec::new();
         let mut predicate_definitions = Vec::new();
         let mut click_function_definitions = Vec::new();
@@ -635,6 +636,14 @@ impl Parser {
                 imports.push(self.parse_import()?);
             } else if self.peek_ident() == Some("verifying") {
                 verifying_sources.push(self.parse_verifying_source()?);
+            } else if self.peek_ident() == Some("target")
+                && matches!(self.peek_next(), Some(Token::String(_)))
+            {
+                let target = self.parse_c_target()?;
+                if c_target.is_some() {
+                    return Err(self.error("a Click file declares more than one `target`"));
+                }
+                c_target = Some(target);
             } else if self.peek_ident() == Some("spec") {
                 algebraic_type_definitions.push(self.parse_algebraic_type_definition()?);
             } else if self.peek_ident() == Some("predicate") {
@@ -698,6 +707,7 @@ impl Parser {
         let file = ClickFile {
             imports,
             verifying_sources,
+            c_target,
             algebraic_type_definitions,
             predicate_definitions,
             click_function_definitions,
@@ -976,6 +986,26 @@ impl Parser {
         }
         self.expect(Token::Semicolon)?;
         Ok(source_path)
+    }
+
+    /// Parses `target "x86_64-linux-kernel";`, the C implementation target
+    /// this file's C sources are preprocessed and verified under. The
+    /// accepted spellings come from `CTarget` itself, so this and the
+    /// pre-parse scan in `expansion` never drift apart.
+    fn parse_c_target(&mut self) -> Result<crate::languages::c::target::CTarget, ClickError> {
+        self.expect_ident_spelling("target")?;
+        let at = self.error_context();
+        let name = self.expect_string("C target name")?;
+        self.expect(Token::Semicolon)?;
+        crate::languages::c::target::CTarget::from_name(&name).ok_or_else(|| {
+            self.error_at(
+                at,
+                format!(
+                    "unknown C target `{name}`; accepted targets are {}",
+                    crate::languages::c::target::CTarget::accepted_names()
+                ),
+            )
+        })
     }
 
     fn is_qualified_c_name(&self) -> bool {

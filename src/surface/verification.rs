@@ -1,6 +1,7 @@
 use super::validation::combined_algebraic_type_definitions;
 use super::*;
 use crate::languages::c::compiler_import::PreparedCImport;
+use crate::languages::c::target::CTarget;
 use crate::languages::cpp::{LoweredCppFunction, PreparedCppImport, lower_import};
 use sha2::{Digest, Sha256};
 #[cfg(test)]
@@ -182,17 +183,24 @@ impl<'a> CSourceContext<'a> {
         })
     }
 
-    pub(in crate::surface) fn environment_identity(&self) -> CProofArtifactIdentity {
+    /// Identity of this context's immutable inputs under `target`. Two runs
+    /// over the same sources for different C targets are different proof
+    /// environments and must never share a session or an incremental result.
+    pub(in crate::surface) fn environment_identity(
+        &self,
+        target: CTarget,
+    ) -> CProofArtifactIdentity {
         CProofArtifactIdentity::for_components(
             self.input_digest,
             self.specification_digest.unwrap_or([0; 32]),
-            crate::languages::c::target::CTarget::SUPPORTED.name(),
+            target.name(),
         )
     }
 
     pub(in crate::surface) fn artifact_identity(
         &self,
         click_source: &str,
+        target: CTarget,
     ) -> CProofArtifactIdentity {
         let click_digest = self.specification_digest.unwrap_or_else(|| {
             digest_framed_parts([
@@ -200,11 +208,7 @@ impl<'a> CSourceContext<'a> {
                 click_source.as_bytes(),
             ])
         });
-        CProofArtifactIdentity::for_components(
-            self.input_digest,
-            click_digest,
-            crate::languages::c::target::CTarget::SUPPORTED.name(),
-        )
+        CProofArtifactIdentity::for_components(self.input_digest, click_digest, target.name())
     }
 
     pub(in crate::surface) fn with_click_project(mut self, project: &ClickProject) -> Self {
@@ -818,7 +822,11 @@ pub(in crate::surface) fn resolve_click_project_context(
         global_array_shapes,
         qualified_objects,
         local_struct_pointers,
-    ) = parse_c_layouts(click_source, sources)?;
+    ) = parse_c_layouts_for_target(
+        click_source,
+        sources,
+        super::selected_project_c_target(project)?,
+    )?;
     modules::resolve_click_project_with_layouts(
         project,
         struct_layouts,
@@ -1217,13 +1225,16 @@ fn c0_imported_headers(
                     "source bundle is missing `{path}` while tracking local C headers"
                 ))
             })?;
-            for include in crate::languages::c::source::local_include_paths(&path, source).map_err(
-                |error| {
-                    ClickError::new(format!(
-                        "failed to process local C headers for `{path}`: {error}"
-                    ))
-                },
-            )? {
+            for include in crate::languages::c::source::local_include_paths_for_target(
+                &path,
+                source,
+                file.selected_c_target(),
+            )
+            .map_err(|error| {
+                ClickError::new(format!(
+                    "failed to process local C headers for `{path}`: {error}"
+                ))
+            })? {
                 headers.insert(include.clone());
                 pending.push(include);
             }
@@ -1419,8 +1430,9 @@ pub fn verify_c0_prepared_sources_functions(
 fn ensure_environment_identity(
     expected: &CProofArtifactIdentity,
     sources: &CSourceContext<'_>,
+    target: CTarget,
 ) -> Result<(), ClickError> {
-    let actual = sources.environment_identity();
+    let actual = sources.environment_identity(target);
     if expected == &actual {
         return Ok(());
     }
@@ -1451,6 +1463,8 @@ impl C0VerificationSession {
             let (verified, verified_function_environment) =
                 verify_c0_sources_with_context(click_source, &sources, None, None, None, None)?;
             let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
+            let environment_identity =
+                sources.environment_identity(baseline_file.selected_c_target());
             Ok((
                 Self {
                     c_sources: Vec::new(),
@@ -1459,7 +1473,7 @@ impl C0VerificationSession {
                     prepared_cpp_import: None,
                     baseline_file,
                     verified_function_environment,
-                    environment_identity: sources.environment_identity(),
+                    environment_identity,
                 },
                 verified,
             ))
@@ -1475,6 +1489,8 @@ impl C0VerificationSession {
             let (verified, verified_function_environment) =
                 verify_c0_sources_with_context(click_source, &sources, None, None, None, None)?;
             let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
+            let environment_identity =
+                sources.environment_identity(baseline_file.selected_c_target());
             Ok((
                 Self {
                     c_sources: Vec::new(),
@@ -1483,7 +1499,7 @@ impl C0VerificationSession {
                     prepared_cpp_import: Some(import.clone()),
                     baseline_file,
                     verified_function_environment,
-                    environment_identity: sources.environment_identity(),
+                    environment_identity,
                 },
                 verified,
             ))
@@ -1498,6 +1514,7 @@ impl C0VerificationSession {
         let (verified, verified_function_environment) =
             verify_c0_sources_with_context(click_source, &sources, None, None, None, None)?;
         let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
+        let environment_identity = sources.environment_identity(baseline_file.selected_c_target());
         Ok((
             Self {
                 c_sources: c_sources
@@ -1509,7 +1526,7 @@ impl C0VerificationSession {
                 prepared_cpp_import: None,
                 baseline_file,
                 verified_function_environment,
-                environment_identity: sources.environment_identity(),
+                environment_identity,
             },
             verified,
         ))
@@ -1531,6 +1548,8 @@ impl C0VerificationSession {
                 None,
                 Some(baseline_file.clone()),
             )?;
+            let environment_identity =
+                sources.environment_identity(baseline_file.selected_c_target());
             Ok((
                 Self {
                     c_sources: c_sources
@@ -1542,7 +1561,7 @@ impl C0VerificationSession {
                     prepared_cpp_import: None,
                     baseline_file,
                     verified_function_environment,
-                    environment_identity: sources.environment_identity(),
+                    environment_identity,
                 },
                 verified,
             ))
@@ -1564,6 +1583,8 @@ impl C0VerificationSession {
                 None,
                 Some(baseline_file.clone()),
             )?;
+            let environment_identity =
+                sources.environment_identity(baseline_file.selected_c_target());
             Ok((
                 Self {
                     c_sources: Vec::new(),
@@ -1572,7 +1593,7 @@ impl C0VerificationSession {
                     prepared_cpp_import: None,
                     baseline_file,
                     verified_function_environment,
-                    environment_identity: sources.environment_identity(),
+                    environment_identity,
                 },
                 verified,
             ))
@@ -1594,6 +1615,8 @@ impl C0VerificationSession {
                 None,
                 Some(baseline_file.clone()),
             )?;
+            let environment_identity =
+                sources.environment_identity(baseline_file.selected_c_target());
             Ok((
                 Self {
                     c_sources: Vec::new(),
@@ -1602,7 +1625,7 @@ impl C0VerificationSession {
                     prepared_cpp_import: Some(import.clone()),
                     baseline_file,
                     verified_function_environment,
-                    environment_identity: sources.environment_identity(),
+                    environment_identity,
                 },
                 verified,
             ))
@@ -1724,7 +1747,11 @@ impl C0VerificationSession {
                     "verification session does not contain prepared imports",
                 ));
             };
-            ensure_environment_identity(&self.environment_identity, &sources)?;
+            ensure_environment_identity(
+                &self.environment_identity,
+                &sources,
+                super::selected_c_target(click_source)?,
+            )?;
             let target = verification_target_at_context(click_source, &sources, line, column)?;
             let target_exists_in_baseline = match &target {
                 VerificationTarget::Function(name) => self
@@ -1785,7 +1812,11 @@ impl C0VerificationSession {
             .map(|(name, source)| (name.as_str(), source.as_str()))
             .collect::<Vec<_>>();
         let sources = CSourceContext::bundle(&c_sources);
-        ensure_environment_identity(&self.environment_identity, &sources)?;
+        ensure_environment_identity(
+            &self.environment_identity,
+            &sources,
+            super::selected_c_target(click_source)?,
+        )?;
         let target = verification_target_at_context(click_source, &sources, line, column)?;
         let target_exists_in_baseline = match &target {
             VerificationTarget::Function(name) => self
@@ -1931,7 +1962,14 @@ fn verify_c0_sources_with_context(
             global_array_shapes,
             qualified_objects,
             local_struct_pointers,
-        ) = parse_c_layouts(click_source, c_sources)?;
+        ) = parse_c_layouts_for_target(
+            click_source,
+            c_sources,
+            match &resolved_file {
+                Some(file) => file.selected_c_target(),
+                None => super::selected_c_target(click_source)?,
+            },
+        )?;
         let resource_struct_layouts = struct_layouts.clone();
         let file = match resolved_file {
             Some(file) => file,
@@ -1990,6 +2028,7 @@ fn verify_c0_sources_with_context(
         )
     };
     check_verification_deadline()?;
+    let selected_target = file.selected_c_target();
     let external_and_user_function_blocks = combined_external_function_blocks(&file)?;
     let function_source_registry = Arc::new(FunctionSourceRegistry::from_function_blocks(
         &external_and_user_function_blocks,
@@ -3002,7 +3041,7 @@ fn verify_c0_sources_with_context(
             theorem.import_identity = c_sources.prepared_project_identity.clone();
         }
     }
-    let artifact_identity = c_sources.artifact_identity(click_source);
+    let artifact_identity = c_sources.artifact_identity(click_source, selected_target);
     let selected_proofs = match verification_target.as_ref() {
         Some(VerificationTarget::Theorem(name)) => vec![format!("theorem:{name}")],
         Some(VerificationTarget::Function(name)) => vec![format!("function:{name}")],
@@ -3050,6 +3089,7 @@ fn verify_c0_sources_with_context(
     };
     for theorem in &mut verified {
         theorem.artifact_identity = Some(artifact_identity);
+        theorem.target = selected_target;
         theorem.selection = Some(selection.clone());
     }
     Ok((verified, function_environment))
@@ -3993,24 +4033,30 @@ pub(in crate::surface) fn c_function_termination_plans(
 fn parse_c_source_unit(
     source_path: &str,
     c_sources: &CSourceContext<'_>,
+    target: CTarget,
 ) -> Result<syntax::C0TranslationUnit, ClickError> {
     if let Some(unit) = c_sources.parsed_units.borrow().get(source_path) {
         return Ok((**unit).clone());
     }
     let unit = if let Some(bundle) = &c_sources.bundle {
         let expanded =
-            crate::languages::c::source::expand_includes(source_path, bundle).map_err(|error| {
-                ClickError::new(format!(
-                    "failed to resolve includes for C source `{source_path}`: {error}"
-                ))
-            })?;
-        for header_path in expanded.dependencies() {
-            let header = crate::languages::c::source::expand_includes(header_path, bundle)
+            crate::languages::c::source::expand_includes_for_target(source_path, bundle, target)
                 .map_err(|error| {
                     ClickError::new(format!(
-                        "failed to resolve includes for C header `{header_path}`: {error}"
+                        "failed to resolve includes for C source `{source_path}`: {error}"
                     ))
                 })?;
+        for header_path in expanded.dependencies() {
+            let header = crate::languages::c::source::expand_includes_for_target(
+                header_path,
+                bundle,
+                target,
+            )
+            .map_err(|error| {
+                ClickError::new(format!(
+                    "failed to resolve includes for C header `{header_path}`: {error}"
+                ))
+            })?;
             syntax::validate_header(header.source(), header.line_map()).map_err(|error| {
                 ClickError::new(format!("failed to parse C header `{header_path}`: {error}"))
             })?;
@@ -4078,9 +4124,39 @@ fn parsed_function_for_source_name<'a>(
     Ok(Some(first))
 }
 
+/// Parses the C layouts one sidecar's contracts need, selecting the C
+/// implementation target from the sidecar itself. Include expansion runs
+/// before the sidecar is parsed, so the target comes from the pre-parse scan
+/// the parser later confirms.
 pub(in crate::surface) fn parse_c_layouts(
     click_source: &str,
     c_sources: &CSourceContext<'_>,
+) -> Result<
+    (
+        BTreeMap<String, syntax::C0StructLayout>,
+        BTreeMap<String, syntax::C0UnionLayout>,
+        BTreeMap<String, BTreeMap<String, String>>,
+        BTreeMap<String, BTreeSet<String>>,
+        BTreeMap<String, BTreeMap<String, parser::GlobalArrayShape>>,
+        BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>,
+        BTreeMap<String, BTreeMap<String, String>>,
+    ),
+    ClickError,
+> {
+    parse_c_layouts_for_target(
+        click_source,
+        c_sources,
+        super::selected_c_target(click_source)?,
+    )
+}
+
+/// Parses C layouts under an already selected target. A project selects one
+/// target for every module, so its resolved target is passed in rather than
+/// rescanned from the entry module alone.
+pub(in crate::surface) fn parse_c_layouts_for_target(
+    click_source: &str,
+    c_sources: &CSourceContext<'_>,
+    target: CTarget,
 ) -> Result<
     (
         BTreeMap<String, syntax::C0StructLayout>,
@@ -4199,7 +4275,7 @@ pub(in crate::surface) fn parse_c_layouts(
         }
     }
     for source_path in verifying_paths {
-        let unit = parse_c_source_unit(&source_path, c_sources)?;
+        let unit = parse_c_source_unit(&source_path, c_sources, target)?;
         let mut objects = BTreeMap::new();
         for (name, global) in &unit.globals {
             if let Some(pointer_type) = global.c_type().pointer_type() {
@@ -4622,7 +4698,7 @@ pub(in crate::surface) fn parse_verified_sources_context(
     let mut parsed = BTreeMap::new();
     let mut units = BTreeMap::new();
     for source_path in &file.verifying_sources {
-        let mut unit = parse_c_source_unit(source_path, c_sources)?;
+        let mut unit = parse_c_source_unit(source_path, c_sources, file.selected_c_target())?;
         for function in std::mem::take(&mut unit.functions) {
             let function_name = function.name().to_string();
             let previous = parsed.insert(function_name.clone(), (source_path.clone(), function));
@@ -6547,8 +6623,8 @@ int32 answer() {
         let forward = CSourceContext::prepared(&forward_imports);
         let reverse = CSourceContext::prepared(&reverse_imports);
         assert_eq!(
-            forward.environment_identity(),
-            reverse.environment_identity()
+            forward.environment_identity(CTarget::SUPPORTED),
+            reverse.environment_identity(CTarget::SUPPORTED)
         );
     }
 
@@ -6560,7 +6636,7 @@ int32 answer() {
         let (line, column) = position(CLICK, "execute();");
         session.environment_identity =
             CSourceContext::bundle(&[("answer.c", "int answer(void) { return 2; }")])
-                .environment_identity();
+                .environment_identity(CTarget::SUPPORTED);
         let error = session
             .verify_at(CLICK, line, column)
             .expect_err("a session identity from other inputs must be refused");
@@ -6583,8 +6659,8 @@ int32 answer() {
     #[test]
     fn artifact_identity_binds_click_source_and_target_profile() {
         let context = CSourceContext::bundle(&[("answer.c", C_SOURCE)]);
-        let changed_click = context.artifact_identity("proof A");
-        let other_click = context.artifact_identity("proof B");
+        let changed_click = context.artifact_identity("proof A", CTarget::SUPPORTED);
+        let other_click = context.artifact_identity("proof B", CTarget::SUPPORTED);
         assert_ne!(changed_click, other_click);
 
         let c_digest = [1; 32];
@@ -6596,10 +6672,52 @@ int32 answer() {
         assert_ne!(first_target, second_target);
     }
 
+    /// The same C and Click sources verified for different C implementation
+    /// targets are different proof artifacts: their preprocessing, and so
+    /// their meaning, differ. Certificates and incremental caches must never
+    /// reuse one for the other.
+    #[test]
+    fn artifact_identity_separates_the_selected_c_targets() {
+        let context = CSourceContext::bundle(&[("answer.c", C_SOURCE)]);
+        assert_ne!(
+            context.artifact_identity(CLICK, CTarget::X86_64LinuxKernel),
+            context.artifact_identity(CLICK, CTarget::X86_64LinuxUserspace)
+        );
+        assert_ne!(
+            context.environment_identity(CTarget::X86_64LinuxKernel),
+            context.environment_identity(CTarget::X86_64LinuxUserspace)
+        );
+    }
+
+    /// End to end: one C source, one Click proof, and only the directive
+    /// differing gives two different verified artifacts, each reporting its
+    /// own target.
+    #[test]
+    fn a_target_directive_changes_the_verified_artifact_identity() {
+        const USERSPACE_CLICK: &str = r#"
+target "x86_64-linux-userspace";
+verifying "answer.c";
+int32 answer() {
+    ensures result == 1;
+} by {
+    execute();
+    simp();
+}
+"#;
+        let sources = [("answer.c", C_SOURCE)];
+        let kernel = verify_c0_sources(CLICK, &sources).expect("default target verification");
+        let userspace =
+            verify_c0_sources(USERSPACE_CLICK, &sources).expect("user-space target verification");
+        assert_eq!(kernel.len(), userspace.len());
+        assert_ne!(kernel[0].artifact_identity, userspace[0].artifact_identity);
+        assert_eq!(kernel[0].target(), CTarget::X86_64LinuxKernel);
+        assert_eq!(userspace[0].target(), CTarget::X86_64LinuxUserspace);
+    }
+
     #[test]
     fn rejects_an_absent_artifact_identity() {
         let context = CSourceContext::bundle(&[("answer.c", C_SOURCE)]);
-        let identity = context.artifact_identity(CLICK);
+        let identity = context.artifact_identity(CLICK, CTarget::SUPPORTED);
         let absent_identity: Option<CProofArtifactIdentity> = None;
         assert_ne!(absent_identity, Some(identity));
     }

@@ -2,6 +2,7 @@ use std::ops::Range;
 
 use super::validation::tactic_name;
 use super::*;
+use crate::languages::c::target::CTarget;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CProofClaim {
@@ -22,6 +23,80 @@ pub fn verifying_source_paths(click_source: &str) -> Result<Vec<String>, ClickEr
         }
     }
     Ok(paths)
+}
+
+/// Finds the top-level `target "..."` directive that selects the C
+/// implementation target, before any C source is preprocessed. Include
+/// expansion needs the target, and expansion happens before the sidecar is
+/// parsed, so this scan and the parser share one accepted-name registry.
+/// Absent directive selects the default target.
+pub fn selected_c_target(click_source: &str) -> Result<CTarget, ClickError> {
+    Ok(declared_c_target(click_source)?.unwrap_or(CTarget::SUPPORTED))
+}
+
+/// The C implementation target one project selects. Modules may restate the
+/// same target, but a project has exactly one preprocessing and proof-artifact
+/// target, so two different declarations are an error.
+pub fn selected_project_c_target(project: &ClickProject) -> Result<CTarget, ClickError> {
+    let mut modules = project.modules().iter().collect::<Vec<_>>();
+    modules.sort_by_key(|module| module.identity());
+    let mut selected: Option<(&str, CTarget)> = None;
+    for module in modules {
+        let Some(declared) = declared_c_target(module.source())? else {
+            continue;
+        };
+        match selected {
+            Some((previous_identity, previous)) if previous != declared => {
+                return Err(ClickError::new(format!(
+                    "module `{}` selects C target `{}`, but module `{previous_identity}` selects `{}`",
+                    module.identity(),
+                    declared.name(),
+                    previous.name()
+                )));
+            }
+            _ => selected = Some((module.identity(), declared)),
+        }
+    }
+    Ok(selected.map_or(CTarget::SUPPORTED, |(_, target)| target))
+}
+
+fn declared_c_target(click_source: &str) -> Result<Option<CTarget>, ClickError> {
+    let tokens = scan_source_tokens(click_source)?;
+    let mut selected = None;
+    let mut depth = 0usize;
+    for window in tokens.windows(3) {
+        // The directive is a file item, so only brace depth zero can hold one.
+        // A deeper `target "..."` spelling is not a directive here and must
+        // not be one for the parser either.
+        match window[0].text.as_str() {
+            "{" => depth += 1,
+            "}" => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth > 0
+            || window[0].text != "target"
+            || !window[1].text.starts_with('"')
+            || !window[1].text.ends_with('"')
+            || window[1].text.len() < 2
+            || window[2].text != ";"
+        {
+            continue;
+        }
+        let name = &window[1].text[1..window[1].text.len() - 1];
+        let target = CTarget::from_name(name).ok_or_else(|| {
+            ClickError::new(format!(
+                "unknown C target `{name}`; accepted targets are {}",
+                CTarget::accepted_names()
+            ))
+        })?;
+        if selected.is_some() {
+            return Err(ClickError::new(
+                "a Click file declares more than one `target`".to_string(),
+            ));
+        }
+        selected = Some(target);
+    }
+    Ok(selected)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

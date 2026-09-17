@@ -934,6 +934,10 @@ id = "language.word.symbolic_execute"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
+id = "language.word.target"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
 id = "language.word.theorem"
 path = "reference/language/grammar.md#word-index"
 
@@ -993,6 +997,10 @@ path = "reference/language/grammar.md#word-index"
 [[item]]
 id = "stdlib.resource.allocation"
 path = "reference/library/index.md#allocation"
+
+[[item]]
+id = "language.target"
+path = "reference/language/c0.md#selecting-a-target"
 
 [[item]]
 id = "language.verifying"

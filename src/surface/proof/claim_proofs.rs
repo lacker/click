@@ -4607,6 +4607,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             source_path: source_path.to_string(),
                             import_identity: None,
                             artifact_identity: None,
+                            target: crate::languages::c::target::CTarget::SUPPORTED,
                             selection: None,
                             function_block: function_block.clone(),
                             claim: claim.verified_claim(),

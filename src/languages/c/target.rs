@@ -18,11 +18,31 @@ pub enum CTarget {
 impl CTarget {
     pub const SUPPORTED: Self = Self::X86_64LinuxKernel;
 
+    /// Every selectable target, in the order a diagnostic lists them.
+    pub const ALL: &'static [Self] = &[Self::X86_64LinuxKernel, Self::X86_64LinuxUserspace];
+
     pub const fn name(self) -> &'static str {
         match self {
             Self::X86_64LinuxKernel => "x86_64-linux-kernel",
             Self::X86_64LinuxUserspace => "x86_64-linux-userspace",
         }
+    }
+
+    /// Resolves the spelling used by a sidecar's `target` directive.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|target| target.name() == name)
+    }
+
+    /// The accepted directive spellings, for an unknown-target diagnostic.
+    pub fn accepted_names() -> String {
+        Self::ALL
+            .iter()
+            .map(|target| format!("`{}`", target.name()))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     pub const fn abi(self) -> CAbi {
