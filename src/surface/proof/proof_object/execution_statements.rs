@@ -269,14 +269,30 @@ impl<'a> Proof<'a> {
             // one leaf from the current execution state so the checked plan
             // can still be emitted as a source certificate; the kernel goal
             // remains the authority for the result.
+            //
+            // A member inherits its presentation from the whole bundle's, so
+            // one member with no source form, such as an invariant over a
+            // model-valued Click function, leaves every member without one.
+            // The leaf is therefore read in the bundle's own context: a
+            // ranking member names the measure at iteration entry, which has
+            // a source spelling only as `at(<iteration entry>, name)`. This
+            // is one synthesis of one leaf, not a search.
             let surface_goal = self.surface_goal().cloned().or_else(|| {
                 let context = self.execution_context()?;
                 let execution = self.execution()?;
-                synthesize_surface_proposition(
+                let bundle = context.constants.invariant_body_context.as_deref();
+                crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
                     goal,
                     context.parsed_function.parameters(),
                     context.arguments,
+                    context.old_reference_state(&execution.core.frontier, &execution.core.state),
                     &execution.core.state,
+                    bundle.and_then(|bundle| {
+                        bundle
+                            .iteration_entry_selector
+                            .as_ref()
+                            .map(|selector| (&bundle.iteration_entry_state, selector))
+                    }),
                 )
             });
             if let Some(plan) =
