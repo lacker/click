@@ -1672,6 +1672,7 @@ impl<'a> ExecutionView<'a> {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn with_proof_bindings(
         mut self,
         bindings: &'a PersistentMap<String, ContractExpression>,

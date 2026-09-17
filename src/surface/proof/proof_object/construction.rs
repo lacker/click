@@ -362,6 +362,7 @@ impl<'a> Proof<'a> {
         )
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(in crate::surface::proof) fn for_fixed_state_surface_goal(
         claim_label: &'a str,
@@ -496,7 +497,6 @@ impl<'a> Proof<'a> {
         )
     }
 
-    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(in crate::surface::proof) fn for_fixed_state_frontier(
         claim_label: &'a str,

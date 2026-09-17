@@ -2811,6 +2811,23 @@ mod tests {
                 .unwrap();
             assert_eq!(checked.is_closed(), !assumed);
             assert_eq!(checked.proposition(), &truth);
+            let falsehood =
+                Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(false), true);
+            let guarded =
+                Proposition::Implies(Box::new(falsehood.clone()), Box::new(truth.clone()));
+            let weakened = checked.with_implication_prefix(&guarded, 1).unwrap();
+            assert_eq!(weakened.proposition(), &guarded);
+            assert_eq!(weakened.is_closed(), checked.is_closed());
+            assert!(
+                weakened
+                    .root_assumptions()
+                    .shares_assumptions_with(checked.root_assumptions())
+            );
+            assert!(checked.with_implication_prefix(&guarded, 0).is_none());
+            assert!(checked.with_implication_prefix(&guarded, 2).is_none());
+            assert!(checked.with_implication_prefix(&falsehood, 0).is_none());
+            let wrong_body = Proposition::Implies(Box::new(truth.clone()), Box::new(falsehood));
+            assert!(checked.with_implication_prefix(&wrong_body, 1).is_none());
         }
     }
 

@@ -31,12 +31,27 @@ pub(in crate::surface) fn unfold_click_predicates_in_proposition_with_active(
     proposition: &ClickProposition,
     active: &mut BTreeSet<String>,
 ) -> Result<ClickProposition, String> {
-    match proposition {
-        ClickProposition::PredicateCall { name, arguments }
-            if unfolded_predicates
+    unfold_selected_predicates_in_proposition(
+        predicate_environment,
+        &|name| {
+            unfolded_predicates
                 .iter()
-                .any(|predicate| predicate == name) =>
-        {
+                .any(|predicate| predicate == name)
+        },
+        proposition,
+        active,
+    )
+}
+
+/// Uses the caller's membership index without exporting its unfolding history.
+pub(in crate::surface) fn unfold_selected_predicates_in_proposition(
+    predicate_environment: &PredicateEnvironment,
+    selected: &impl Fn(&String) -> bool,
+    proposition: &ClickProposition,
+    active: &mut BTreeSet<String>,
+) -> Result<ClickProposition, String> {
+    match proposition {
+        ClickProposition::PredicateCall { name, arguments } if selected(name) => {
             if !active.insert(name.clone()) {
                 return Err(format!("recursive unfold of predicate `{name}`"));
             }
@@ -44,9 +59,9 @@ pub(in crate::surface) fn unfold_click_predicates_in_proposition_with_active(
                 .get(name)
                 .ok_or_else(|| format!("unknown predicate `{name}`"))?;
             let unfolded = instantiate_click_predicate_definition(definition, arguments)?;
-            let unfolded = unfold_click_predicates_in_proposition_with_active(
+            let unfolded = unfold_selected_predicates_in_proposition(
                 predicate_environment,
-                unfolded_predicates,
+                selected,
                 &unfolded,
                 active,
             )?;
@@ -88,59 +103,59 @@ pub(in crate::surface) fn unfold_click_predicates_in_proposition_with_active(
             proposition,
         } => Ok(ClickProposition::At {
             selector: selector.clone(),
-            proposition: Box::new(unfold_click_predicates_in_proposition_with_active(
+            proposition: Box::new(unfold_selected_predicates_in_proposition(
                 predicate_environment,
-                unfolded_predicates,
+                selected,
                 proposition,
                 active,
             )?),
         }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
-            Box::new(unfold_click_predicates_in_proposition_with_active(
+            Box::new(unfold_selected_predicates_in_proposition(
                 predicate_environment,
-                unfolded_predicates,
+                selected,
                 left,
                 active,
             )?),
-            Box::new(unfold_click_predicates_in_proposition_with_active(
+            Box::new(unfold_selected_predicates_in_proposition(
                 predicate_environment,
-                unfolded_predicates,
+                selected,
                 right,
                 active,
             )?),
         )),
         ClickProposition::Or(left, right) => Ok(ClickProposition::Or(
-            Box::new(unfold_click_predicates_in_proposition_with_active(
+            Box::new(unfold_selected_predicates_in_proposition(
                 predicate_environment,
-                unfolded_predicates,
+                selected,
                 left,
                 active,
             )?),
-            Box::new(unfold_click_predicates_in_proposition_with_active(
+            Box::new(unfold_selected_predicates_in_proposition(
                 predicate_environment,
-                unfolded_predicates,
+                selected,
                 right,
                 active,
             )?),
         )),
         ClickProposition::Not(body) => Ok(ClickProposition::Not(Box::new(
-            unfold_click_predicates_in_proposition_with_active(
+            unfold_selected_predicates_in_proposition(
                 predicate_environment,
-                unfolded_predicates,
+                selected,
                 body,
                 active,
             )?,
         ))),
         ClickProposition::Implies(left, right) => Ok(ClickProposition::Implies(
-            Box::new(unfold_click_predicates_in_proposition_with_active(
+            Box::new(unfold_selected_predicates_in_proposition(
                 predicate_environment,
-                unfolded_predicates,
+                selected,
                 left,
                 active,
             )?),
-            Box::new(unfold_click_predicates_in_proposition_with_active(
+            Box::new(unfold_selected_predicates_in_proposition(
                 predicate_environment,
-                unfolded_predicates,
+                selected,
                 right,
                 active,
             )?),
@@ -154,9 +169,9 @@ pub(in crate::surface) fn unfold_click_predicates_in_proposition_with_active(
             click_type: c_type.clone(),
             name: name.clone(),
             written_name: written_name.clone(),
-            body: Box::new(unfold_click_predicates_in_proposition_with_active(
+            body: Box::new(unfold_selected_predicates_in_proposition(
                 predicate_environment,
-                unfolded_predicates,
+                selected,
                 body,
                 active,
             )?),
@@ -170,9 +185,9 @@ pub(in crate::surface) fn unfold_click_predicates_in_proposition_with_active(
             click_type: c_type.clone(),
             name: name.clone(),
             written_name: written_name.clone(),
-            body: Box::new(unfold_click_predicates_in_proposition_with_active(
+            body: Box::new(unfold_selected_predicates_in_proposition(
                 predicate_environment,
-                unfolded_predicates,
+                selected,
                 body,
                 active,
             )?),
@@ -188,9 +203,9 @@ pub(in crate::surface) fn unfold_click_predicates_in_proposition_with_active(
             end: end.clone(),
             item: item.clone(),
             written_item: written_item.clone(),
-            body: Box::new(unfold_click_predicates_in_proposition_with_active(
+            body: Box::new(unfold_selected_predicates_in_proposition(
                 predicate_environment,
-                unfolded_predicates,
+                selected,
                 body,
                 active,
             )?),
@@ -206,9 +221,9 @@ pub(in crate::surface) fn unfold_click_predicates_in_proposition_with_active(
             end: end.clone(),
             item: item.clone(),
             written_item: written_item.clone(),
-            body: Box::new(unfold_click_predicates_in_proposition_with_active(
+            body: Box::new(unfold_selected_predicates_in_proposition(
                 predicate_environment,
-                unfolded_predicates,
+                selected,
                 body,
                 active,
             )?),

@@ -913,6 +913,66 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// Selects the exact entry goal produced for one loop invariant. Known
+    /// leading antecedents are consumed by exact lookup; all other connectives
+    /// remain for the written body. The scope shares its phase's persistent
+    /// facts and publishes only the goal its completed body actually proved.
+    pub(in crate::surface::proof) fn begin_loop_entry_goal(
+        &self,
+        proposition: ClickProposition,
+        obligation: &crate::kernel::ProofObligation,
+    ) -> Result<ProofScope<'a>, ClickError> {
+        let mut kernel = obligation.proposition();
+        let mut stripped = 0;
+        while let Proposition::Implies(antecedent, body) = kernel {
+            if !self.facts().contains(antecedent) {
+                break;
+            }
+            kernel = body;
+            stripped += 1;
+        }
+        let introductions = obligation
+            .introductions()
+            .map(|record| record.get(stripped..).unwrap_or_default().to_vec());
+        // Entry lowering already used the phase's predicate unfolds. Give the
+        // checked body that same Surface view for binder names and connective
+        // selection, while retaining the producer's exact kernel judgment.
+        let context = match self.context.as_ref() {
+            ProofContext::FixedState(context) => context,
+            _ => return Err(self.step_error("loop entry requires a fixed-state phase")),
+        };
+        // Initialization owns its unfolds on this branch, so selection uses
+        // the persistent index. Preserve borrowed history for other fixed-state
+        // callers without exporting or cloning the branch's history.
+        let selected = |name: &String| {
+            self.focused_branch_unfolds().contains(name)
+                || context
+                    .unfolded_predicates
+                    .iter()
+                    .any(|inherited| inherited == name)
+        };
+        let body_surface = unfold_selected_predicates_in_proposition(
+            context.predicate_environment,
+            &selected,
+            &proposition,
+            &mut BTreeSet::new(),
+        )
+        .map_err(|message| self.step_error(message))?;
+        let body = self.focus_fixed_state_goal_with_surface(kernel.clone(), Some(body_surface))?;
+        let scope = ProofScope {
+            root: self.clone(),
+            structure: Box::new(ProofScopeStructure::Have {
+                proposition,
+                kernel: kernel.clone(),
+                retained_body: None,
+            }),
+            body,
+            introduced_facts: Vec::new(),
+            loop_entry_goal: Some((Arc::new(obligation.clone()), stripped)),
+        };
+        scope.with_reported_goal_introductions(kernel, introductions)
+    }
+
     /// Opens a nested proof for one surface proposition. The body has a fresh
     /// provenance root but shares the persistent semantic fact index and
     /// immutable checking context with its enclosing proof.
@@ -1146,6 +1206,7 @@ impl<'a> Proof<'a> {
             }),
             body,
             introduced_facts: Vec::new(),
+            loop_entry_goal: None,
         };
         // The lowering result is also the checked report used by the
         // presentation adapter. Validate it against the fresh body's actual
@@ -1237,6 +1298,7 @@ impl<'a> Proof<'a> {
             }),
             body,
             introduced_facts,
+            loop_entry_goal: None,
         })
     }
 }

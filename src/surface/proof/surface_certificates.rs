@@ -2746,15 +2746,10 @@ pub(super) fn plan_explicit_loadability_transport(
                 index += 1;
             }
         }
-        let selected_kernel = selected
-            .iter()
-            .map(|(kernel, _)| kernel.clone())
-            .collect::<Vec<_>>();
-        debug_assert!(
-            assumptions_from_propositions(&selected_kernel)
-                .derive_simp_proposition(goal)
-                .is_some()
-        );
+        // Selection starts with a successful search and changes only after
+        // another success. Do not repeat bounded search as an assertion: its
+        // budget can now be exhausted. The emitted transport still goes
+        // through the ordinary checked operation before it can prove anything.
         return Some(vec![
             ProofTactic::TransportUsing {
                 source: surface_source.clone(),
@@ -6313,6 +6308,79 @@ pub(super) fn public_local_result_surface(
 mod selected_premise_tests {
     use super::*;
     use crate::kernel::{PointerBlock, PointerOffsetTerm, Sort, Variable};
+
+    #[test]
+    fn loadability_planning_does_not_repeat_search_after_its_budget_is_spent() {
+        use crate::instrumentation::{
+            TacticEvent, TacticWorkLimits, VerificationEvent, emit, measure_deterministic_work,
+            with_tactic_work_limits,
+        };
+
+        let goal = Proposition::CMemoryLoadable {
+            memory: CMemory::new(),
+            base: Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            bytes: Bitvector32Term::Constant(4),
+        };
+        let surface = ClickProposition::Loadable {
+            segment: ContractSegment {
+                state: ContractSegmentState::Current,
+                base: CExpression::Variable("p".into()),
+                start: CExpression::Value(int32(0)),
+                end: CExpression::Value(int32(1)),
+                surface: ContractSegmentSurface::Range {
+                    base: ContractExpression::CFragment(CExpression::Variable("p".into())),
+                    start: ContractExpression::CFragment(CExpression::Value(int32(0))),
+                    end: ContractExpression::CFragment(CExpression::Value(int32(1))),
+                },
+            },
+        };
+        // Give planning exactly the work needed to establish its candidate.
+        // Repeating that query in a debug assertion then exhausts the budget.
+        let (derivation, work) = measure_deterministic_work(|| {
+            assumptions_from_propositions(std::slice::from_ref(&goal))
+                .derive_simp_proposition(&goal)
+        });
+        assert!(derivation.is_some());
+        assert!(work > 0);
+        let tactic = TacticEvent {
+            claim: "loadability".into(),
+            tactic_index: 0,
+            tactic_name: "simp".into(),
+            class: "smart".into(),
+            statement_index: 0,
+            source_index: 0,
+        };
+        let candidate = with_tactic_work_limits(
+            TacticWorkLimits {
+                smart: work,
+                ..TacticWorkLimits::default()
+            },
+            || {
+                emit(VerificationEvent::TacticStarted(tactic.clone()));
+                let candidate = plan_explicit_loadability_transport(
+                    &goal,
+                    &surface,
+                    &[(goal.clone(), surface.clone())],
+                );
+                emit(VerificationEvent::TacticFailed(tactic));
+                candidate
+            },
+        );
+        assert_eq!(
+            candidate,
+            Some(vec![
+                ProofTactic::TransportUsing {
+                    source: surface.clone(),
+                    target: surface.clone(),
+                    premises: vec![surface],
+                },
+                ProofTactic::Assumption,
+            ])
+        );
+    }
 
     #[test]
     fn a_historical_presentation_cannot_replace_the_selected_premise() {

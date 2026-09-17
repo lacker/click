@@ -7,6 +7,24 @@ impl<'a> ProofScope<'a> {
         self.body.is_complete()
     }
 
+    /// Retains the source body's completion, weakened only by the implication
+    /// prefix consumed when this exact entry obligation was selected.
+    pub(in crate::surface::proof) fn completed_loop_entry_goal(
+        &self,
+    ) -> Result<crate::kernel::proof::CheckedProposition, ClickError> {
+        let (goal, prefix_len) = self
+            .loop_entry_goal
+            .as_ref()
+            .ok_or_else(|| self.root.step_error("scope is not a loop entry judgment"))?;
+        self.body
+            .completed_proposition()?
+            .with_implication_prefix(goal.proposition(), *prefix_len)
+            .ok_or_else(|| {
+                self.root
+                    .step_error("completed body does not match its loop entry judgment")
+            })
+    }
+
     pub(in crate::surface::proof) fn goal(&self) -> Option<&Proposition> {
         self.body.goal()
     }

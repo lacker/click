@@ -83,6 +83,16 @@ Statement steps, mid-execution `have`, frontier-local `loop`, and resource
 scope entry/closure submit their checked successors through a frontier-shaped
 kernel operation that preserves unrelated branches, the obligation, and unfold
 state. Terminal branch-arm continuation uses the same operation.
+Loop initialization obtains exact entry judgments and introduction metadata
+from the kernel, indexed by invariant declaration even when a goal is already
+satisfied. One fixed-state proof retains the helper steps and checked invariant
+scopes. Each source body contributes its own completion and certificate; a kernel
+implication rule can restore the leading guards removed at selection without
+changing that completion's root assumptions. Initialization never checks the
+serialized body to recover its result. Expanded Surface proofs are still
+verified independently. Frontier clause binding replaces an earlier registration
+for the same C loop identity while preserving the current proof-local scope.
+
 When loop preservation produces two feasible proof-level `if` arms, the kernel
 also allocates the sibling identities and records their split topology around
 the two checked frontier results.

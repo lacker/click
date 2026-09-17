@@ -1,11 +1,10 @@
 # A quantified invariant whose range is empty at a symbolic loop entry
 
 The loop counter starts at the symbolic lower bound, so at loop entry the
-invariant's guard `lo <= k and k < i` has no model. The smart proof must
-certify that vacuous universal with an explicit `intro; intro;
-contradiction(guard)` script: the guard's order facts form a strict cycle
-over one term, which the kernel's context-free normalizer disproves. Before
-this regression only constant bounds had a certificate.
+invariant's guard `lo <= k and k < i` has no model. An explicit `intro;
+intro; contradiction(guard)` proof certifies that vacuous universal: the
+guard's order facts form a strict cycle over one term, which the kernel's
+context-free normalizer disproves.
 
 ```c filename=probe_fill.c
 int32 probe_fill(int32 p[], int32 lo, int32 hi, int32 v) {
@@ -34,7 +33,16 @@ int32 probe_fill(int32 p[], int32 lo, int32 hi, int32 v) {
         invariant lo <= i and i <= hi;
         invariant forall (k: int32) { lo <= k and k < i implies p[k] == v };
 
-        initialize by simp;
+        initialize by {
+            have lo <= i and i <= hi by {
+                both { normalize(); } and { assumption(); }
+            }
+            have forall (k: int32) { lo <= k and k < i implies p[k] == v } by {
+                intro();
+                intro();
+                contradiction(lo <= k and k < i);
+            }
+        }
         preserve by {
             step();
             step();

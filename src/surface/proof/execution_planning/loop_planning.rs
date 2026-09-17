@@ -1,5 +1,4 @@
 use super::*;
-use crate::kernel::LoweringIntroduction;
 use std::sync::Arc;
 
 /// The proof scope a loop's phase proofs are written in.
@@ -19,47 +18,6 @@ fn phase_proof_scope(
         .iter()
         .map(|(name, value)| (name.clone(), value.clone()))
         .collect()
-}
-
-/// The goal one loop-entry invariant certificate must discharge.
-///
-/// The entry obligation lowering hands back may be wrapped in leading
-/// implications: path guards and lowering-inserted loadability or definedness
-/// guards. An antecedent that is exactly one of the available facts is already
-/// discharged, so it is stripped. Every other antecedent stays in the goal and
-/// the certificate must introduce it explicitly.
-///
-/// Planning and independent validation both derive their goal here, so a
-/// retained certificate is always checked against the goal it was built for.
-/// Deciding "already known" with a prover on one side and exact containment on
-/// the other is what this function replaces.
-pub(in crate::surface::proof) fn loop_entry_checked_goal(
-    obligation: &Proposition,
-    available: &[Proposition],
-) -> Proposition {
-    loop_entry_checked_goal_with_stripped(obligation, available).0
-}
-
-/// [`loop_entry_checked_goal`], also reporting how many head nodes it
-/// stripped. The lowering record for the obligation describes those same
-/// nodes from the outside in, so dropping that many entries leaves the
-/// record that describes the checked goal.
-pub(in crate::surface::proof) fn loop_entry_checked_goal_with_stripped(
-    obligation: &Proposition,
-    available: &[Proposition],
-) -> (Proposition, usize) {
-    let facts = crate::kernel::proof::ProofFacts::from_ordered(available);
-    let mut goal = obligation.clone();
-    let mut stripped = 0;
-    while let Proposition::Implies(antecedent, body) = &goal {
-        if !facts.contains(antecedent) {
-            break;
-        }
-        let body = body.as_ref().clone();
-        goal = body;
-        stripped += 1;
-    }
-    (goal, stripped)
 }
 
 /// The first loop binder of `clause` whose name no enclosing contract binder
@@ -96,68 +54,6 @@ fn fresh_loop_binder_name(
             }
             _ => None,
         })
-}
-
-/// Whether the facts an initialization proof established discharge one entry
-/// obligation.
-///
-/// The certificate proves [`loop_entry_checked_goal`], so that goal is the
-/// first thing to look for. An obligation that lowering wrapped in leading
-/// implications is also discharged by any body of that chain: `guard implies
-/// body` follows from `body` alone. Both steps are exact lookups over this
-/// obligation's own head chain, never a proof search over the fact set.
-fn loop_entry_obligation_is_discharged(
-    obligation: &Proposition,
-    available: &[Proposition],
-) -> bool {
-    let facts = crate::kernel::proof::ProofFacts::from_ordered(available);
-    let mut goal = loop_entry_checked_goal(obligation, available);
-    loop {
-        if facts.contains(&goal) {
-            return true;
-        }
-        let Proposition::Implies(_, body) = goal else {
-            return false;
-        };
-        goal = body.as_ref().clone();
-    }
-}
-
-/// The kernel form the surface invariant itself denotes inside a checked
-/// goal that still carries leading guards, read from the lowering record.
-///
-/// Lowering wraps an entry obligation in implications that have no Surface
-/// connective: path guards and loadability or definedness premises. The
-/// certificate introduces those with `intro`, which keeps the written
-/// Surface goal focused, and the surface proposition map records the same
-/// pairing. Only the recorded chain says which leading implications are
-/// those guards, so this walks the record, not the constructor shape: it
-/// stops at the first node the spec wrote.
-///
-/// `None` means the pairing is not exact here — the record ran out before
-/// the guards did, or an already-discharged written connective was stripped
-/// from the goal — and nothing is recorded rather than pairing by shape.
-fn invariant_lowering_under_recorded_guards<'a>(
-    goal: &'a Proposition,
-    introductions: Option<&[LoweringIntroduction]>,
-) -> Option<&'a Proposition> {
-    let mut introductions = introductions?.iter();
-    let mut goal = goal;
-    loop {
-        match introductions.next() {
-            Some(LoweringIntroduction::PathFactGuard | LoweringIntroduction::ObligationGuard) => {
-                let Proposition::Implies(_, body) = goal else {
-                    // The record and the proposition disagree; refuse the
-                    // pairing instead of guessing which is right.
-                    return None;
-                };
-                goal = body;
-            }
-            // A written node, or the end of the record, is where the
-            // written invariant itself starts.
-            _ => return Some(goal),
-        }
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -242,8 +138,7 @@ struct InitializeScriptLayout<'a> {
     /// source index and the body it was written with.
     invariant_bodies: Option<Vec<(usize, &'a SourceProof)>>,
     /// The proof every invariant runs when the script does not name them
-    /// individually, and the fallback when an invariant's own body does not
-    /// close the entry goal on its own.
+    /// individually.
     shared: SourceProof,
     /// Absolute source indices of the trailing `simp()` closers: a smart
     /// tactic that stands for the whole remaining phase rather than for one
@@ -352,42 +247,42 @@ fn initialize_script_layout<'a>(
     }
 }
 
-/// The expansion of a selected whole-phase `initialize` closer.
-///
-/// A smart tactic that stands for the rest of the phase expands to the
-/// invariant steps the planner built. The helper steps the script already
-/// spells stay written where they are, so they are dropped from the
-/// replacement; an `initialize` that names every invariant already proves
-/// them, so its trailing `simp()` expands to nothing at all.
-pub(in crate::surface::proof) fn initialize_phase_closer_expansion(
-    proof: &SourceProof,
-    clause: &StructuralClause,
-    phase_start: usize,
-    selected: usize,
-    certificate: &ProofCertificate,
-) -> Option<Vec<ProofTactic>> {
-    let tactics = certificate.to_proof_tactics();
-    if matches!(proof, SourceProof::Tactic(SmartTactic::Simp)) {
-        return (selected == phase_start).then(|| tactics.to_vec());
+/// Source positions derived once with the verification layout. Expansion
+/// consumes retained provenance without interpreting the source layout again.
+struct InitializePhaseExpansion {
+    helpers: usize,
+    individual_bodies: bool,
+    sites: Vec<usize>,
+}
+
+impl InitializePhaseExpansion {
+    fn new(layout: &InitializeScriptLayout<'_>, phase_start: usize) -> Self {
+        let mut sites = layout.closers.clone();
+        if layout.is_whole_proof() {
+            sites.push(phase_start);
+        }
+        Self {
+            helpers: layout.helpers.len(),
+            individual_bodies: layout.invariant_bodies.is_some(),
+            sites,
+        }
     }
-    let invariant_items = clause.items().iter().collect::<Vec<_>>();
-    let layout = initialize_script_layout(proof, &invariant_items, phase_start);
-    // A script that names no invariant and hoists no helper is one shared
-    // proof of every invariant: its leading smart step stands for the whole
-    // phase just as a trailing `simp()` does.
-    let leading_whole_phase_site = layout.is_whole_proof() && selected == phase_start;
-    if !leading_whole_phase_site && !layout.closers.contains(&selected) {
-        return None;
+
+    fn expand(&self, selected: usize, certificate: &ProofCertificate) -> Option<Vec<ProofTactic>> {
+        if !self.sites.contains(&selected) {
+            return None;
+        }
+        if self.individual_bodies {
+            return Some(Vec::new());
+        }
+        Some(
+            certificate
+                .to_proof_tactics()
+                .into_iter()
+                .skip(self.helpers)
+                .collect(),
+        )
     }
-    if layout.invariant_bodies.is_some() {
-        return Some(Vec::new());
-    }
-    Some(
-        tactics
-            .get(layout.helpers.len()..)
-            .unwrap_or_default()
-            .to_vec(),
-    )
 }
 
 pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
@@ -398,7 +293,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
     context: &PlanningExecutionContext,
     invariant_checks: &[CLoopInvariantCheck],
     environment: &ExecutionProofEnvironment<'_>,
-) -> Result<ProofCertificate, ClickError> {
+) -> Result<CheckedLoopInitialization, ClickError> {
     let legacy_site = ProofSite::LoopPhase {
         function_name: environment.function_block.signature().name().to_string(),
         loop_index,
@@ -443,8 +338,6 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
         );
     }
     let invariant_items = clause.items().iter().collect::<Vec<_>>();
-    let initialization_surface_propositions =
-        std::cell::RefCell::new(context.surface_propositions.clone());
     // Generated initialization steps belong to the explicit phase tactic when
     // one exists, or to the enclosing `loop` keyword for an omitted phase.
     // Computing the source statement is only worth it when timings are read.
@@ -456,7 +349,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
     } else {
         0
     };
-    let entry_obligations = c_loop_invariant_obligations_at_entry(
+    let entry_goals = crate::kernel::c_loop_entry_goals(
         &context.state,
         invariant_checks,
         &assumptions_from_propositions(&context.pure_facts),
@@ -471,488 +364,181 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
             None => format!("`{claim_label}`: {message}"),
         })
     })?;
-    // Expansion lowers a shared initialize proof to optional predicate
-    // unfolds followed by one explicit `have` per invariant.  Recognize that
-    // surface-certificate shape on the next verification pass and check it
-    // directly.  Sending it back through the per-invariant planner would
-    // treat the whole certificate as the proof of every individual `have`,
-    // recursively duplicate it, and can make a valid first expansion fail.
-    let source_certificate = proof.tactics().and_then(|tactics| {
-        let invariant_start = tactics.len().checked_sub(invariant_items.len())?;
-        // A helper `have` written before the invariants is part of that same
-        // expanded shape: the planner keeps it where it was written rather
-        // than copying it into every invariant's proof.
-        let prefix_is_explicit = tactics[..invariant_start].iter().all(|tactic| {
-            matches!(
-                tactic,
-                ProofTactic::UnfoldPredicate(_) | ProofTactic::Have(_)
-            )
-        });
-        let invariants_match =
-            tactics[invariant_start..]
-                .iter()
-                .zip(&invariant_items)
-                .all(|(tactic, item)| {
-                    matches!(
-                        tactic,
-                        ProofTactic::Have(have)
-                            if item.proposition() == &have.proposition
-                    )
-                });
-        (prefix_is_explicit && invariants_match)
-            .then(|| ProofCertificate::from_proof_tactics(tactics).ok())
-            .flatten()
-            .filter(|certificate| !certificate.contains_arithmetic_using())
-    });
-    let source_contains_legacy_arithmetic = source_certificate.is_none()
-        && proof
-            .tactics()
-            .and_then(|tactics| ProofCertificate::from_proof_tactics(tactics).ok())
-            .is_some_and(|certificate| certificate.contains_arithmetic_using());
+    if entry_goals.declarations().len() != invariant_items.len() {
+        return Err(ClickError::new(format!(
+            "loop {loop_index} entry has {} lowered declarations for {} written invariants",
+            entry_goals.declarations().len(),
+            invariant_items.len(),
+        )));
+    }
     let layout = initialize_script_layout(proof, &invariant_items, initialize_source_index);
     let selected_source_index =
         selected_tactic_index_for_site(expansion_capture.as_deref(), &initialize_site);
-    let (certificate, available) = pure_goal_proof_certificate_gateway_with_checked_result(
+    let mut phase = Proof::for_fixed_state_frontier(
         &claim_label,
-        || {
-            if let Some(certificate) = source_certificate {
-                return Ok((certificate, None));
+        0,
+        &context.pure_facts,
+        environment.parsed_function.parameters(),
+        environment.arguments,
+        environment.initial_state,
+        &context.state,
+        None,
+        &recorded_snapshots,
+        &context.surface_propositions,
+        environment.predicate_environment,
+        environment.click_function_environment,
+        environment.theorem_environment,
+        &[],
+        &[],
+    )
+    .with_surface_local_scope(&phase_proof_scope(environment));
+    for (source_index, helper) in &layout.helpers {
+        let checkpoint = phase.checkpoint();
+        phase = match helper {
+            ProofTactic::UnfoldPredicate(name) => {
+                phase.apply_step(ProofStep::UnfoldPredicate(name.clone()))?
             }
-            let mut planning_available = context.pure_facts.clone();
-            let mut tactics = Vec::new();
-            let mut all_invariants_checked = true;
-            // A helper step belongs to the phase, not to one invariant: plan
-            // it once, where it was written, and let its fact reach every
-            // invariant proof below through `planning_available`.
-            for (helper_source_index, helper) in &layout.helpers {
-                match helper {
-                    ProofTactic::UnfoldPredicate(name) => {
-                        planning_available = unfold_available_predicate_facts(
-                            environment.predicate_environment,
-                            environment.click_function_environment,
-                            std::slice::from_ref(name),
-                            &planning_available,
-                        )
-                        .map_err(|message| {
-                            ClickError::new(format!("`{claim_label}` initialize prefix: {message}"))
-                        })?;
-                        tactics.push((*helper).clone());
-                    }
-                    ProofTactic::Have(have) => {
-                        let resolved = crate::surface::lowering::substitute_click_proposition(
-                            &have.proposition,
-                            &environment.proof_locals,
-                        )
-                        .map_err(|message| {
-                            ClickError::new(format!("`{claim_label}` initialize prefix: {message}"))
-                        })?;
-                        let helper_claim_label =
-                            format!("{claim_label} (loop {loop_index} entry prerequisite)");
-                        let planned = plan_fixed_state_pure_goal_certificate(
-                            None,
-                            &initialize_site,
-                            &resolved,
-                            &have.proof,
-                            &helper_claim_label,
-                            tactics.len(),
-                            &planning_available,
-                            environment.parsed_function.parameters(),
-                            environment.arguments,
-                            environment.initial_state,
-                            &context.state,
-                            &recorded_snapshots,
-                            environment.predicate_environment,
-                            environment.click_function_environment,
-                            &context.surface_propositions,
-                            None,
-                            None,
-                            None,
-                            environment.theorem_environment,
-                            &phase_proof_scope(environment),
-                        )?;
-                        all_invariants_checked &= planned.certificate_already_checked;
-                        if let Some(lowered) = invariant_lowering_under_recorded_guards(
-                            &planned.fact,
-                            planned.introductions.as_deref(),
-                        ) {
-                            initialization_surface_propositions
-                                .borrow_mut()
-                                .record_lowering(&have.proposition, lowered)?;
-                        }
-                        let step = ProofTactic::Have(ProofHave {
-                            proposition: have.proposition.clone(),
-                            proof: SourceProof::Script(
-                                planned.certificate.to_proof_tactics().to_vec(),
-                            ),
-                        });
-                        if selected_source_index == Some(*helper_source_index) {
-                            record_proof_site_tactic_expansion(
-                                expansion_capture.as_deref_mut(),
-                                &initialize_site,
-                                *helper_source_index,
-                                std::slice::from_ref(&step),
-                            );
-                        }
-                        tactics.push(step);
-                        if !planning_available.contains(&planned.fact) {
-                            planning_available.push(planned.fact);
-                        }
-                    }
-                    _ => unreachable!("only `unfold` and `have` steps are hoisted"),
-                }
+            ProofTactic::Have(have) => {
+                let scope = phase.begin_have(have.proposition.clone())?;
+                check_initialization_body(&scope, &have.proof)?.join()?
             }
-            for (invariant_index, item) in invariant_items.iter().enumerate() {
-                let written = item.proposition();
-                // Lower the invariant with the frontier's proof locals
-                // resolved; the written spelling is what the source proof's
-                // `have`s are matched against.
-                let resolved = crate::surface::lowering::substitute_click_proposition(
-                    written,
-                    &environment.proof_locals,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` loop {loop_index} invariant {invariant_index}: {message}"
-                    ))
-                })?;
-                let proposition = &resolved;
-                // A phase source certificate normally contains one `have`
-                // per invariant and can be checked as a whole.  If one of
-                // those bodies still contains the source-only arithmetic
-                // request, plan that invariant from its own body instead;
-                // passing the entire phase to each per-invariant planner
-                // would duplicate every sibling `have`.
-                let own_body = (!source_contains_legacy_arithmetic)
-                    .then_some(layout.invariant_bodies.as_ref())
-                    .flatten()
-                    .and_then(|bodies| bodies.get(invariant_index))
-                    .copied();
-                let invariant_proof = if source_contains_legacy_arithmetic {
-                    proof
-                        .tactics()
-                        .and_then(|tactics| {
-                            tactics.iter().find_map(|tactic| match tactic {
-                                ProofTactic::Have(have) if have.proposition == *written => {
-                                    Some(&have.proof)
-                                }
-                                _ => None,
-                            })
-                        })
-                        .unwrap_or(proof)
-                } else {
-                    own_body.map_or(&layout.shared, |(_, body)| body)
-                };
-                let invariant_claim_label =
-                    format!("{claim_label} (loop {loop_index} invariant {invariant_index} entry)");
-                let obligation_context =
-                    format!("loop {loop_index} invariant {invariant_index} entry");
-                let exact_expected_obligation = entry_obligations
-                    .iter()
-                    .find(|obligation| obligation.context() == Some(&obligation_context));
-                let exact_expected_goal =
-                    exact_expected_obligation.map(|obligation| obligation.proposition().clone());
-                // Stripping already-available antecedents consumes head
-                // nodes, so the record for the checked goal starts that
-                // many entries in. The kernel recorded the chain while it
-                // built this obligation; nothing is re-derived here.
-                let checked = exact_expected_goal.as_ref().map(|obligation| {
-                    loop_entry_checked_goal_with_stripped(obligation, &planning_available)
-                });
-                let checked_goal = checked.as_ref().map(|(goal, _)| goal.clone());
-                let checked_goal_introductions = checked.as_ref().and_then(|(_, stripped)| {
-                    let recorded = exact_expected_obligation?.introductions()?;
-                    Some(recorded.get(*stripped..).unwrap_or_default().to_vec())
-                });
-                // Planning an invariant's entry proof is proof search, not
-                // check. Classify it by the `by` clause the search is
-                // discharging, exactly as if it were written as a `have`.
-                let planned_step = timings_enabled.then(|| {
-                    ProofTactic::Have(ProofHave {
-                        proposition: written.clone(),
-                        proof: invariant_proof.clone(),
-                    })
-                });
-                let _timing = planned_step.as_ref().and_then(|planned_step| {
-                    TacticTiming::named_for_tactic(
-                        &claim_label,
-                        "plan_invariant_entry",
-                        planned_step,
-                        invariant_index,
-                        initialize_source_index,
-                        initialize_statement_index,
-                    )
-                });
-                let plan = |expansion_capture: Option<&mut ExpansionCapture>,
-                            invariant_proof: &SourceProof| {
-                    plan_fixed_state_pure_goal_certificate(
-                        expansion_capture,
-                        &initialize_site,
-                        proposition,
-                        invariant_proof,
-                        &invariant_claim_label,
-                        invariant_index,
-                        &planning_available,
-                        environment.parsed_function.parameters(),
-                        environment.arguments,
-                        environment.initial_state,
-                        &context.state,
-                        &recorded_snapshots,
-                        environment.predicate_environment,
-                        environment.click_function_environment,
-                        &context.surface_propositions,
-                        checked_goal.as_ref(),
-                        checked_goal.as_ref(),
-                        checked_goal_introductions.as_ref(),
-                        environment.theorem_environment,
-                        &phase_proof_scope(environment),
-                    )
-                };
-                // Nested frontier-loop phase tactics use absolute source
-                // indices in the enclosing proof, and a split phase script
-                // renumbers what the per-invariant planner sees. The pure
-                // planner sees only the proof it is handed, so route no
-                // expansion capture into it in either case; the recorder
-                // below and the phase merger keep the expansion at the
-                // absolute source site.
-                let route_capture =
-                    environment.frontier_loop_source.is_none() && layout.is_whole_proof();
-                let mut planned_own_body_index = own_body.map(|(index, _)| index);
-                let routed_capture = if route_capture {
-                    expansion_capture.as_deref_mut()
-                } else {
-                    None
-                };
-                let direct_plan = match plan(routed_capture, invariant_proof) {
-                    Ok(plan) => plan,
-                    // An invariant's own `have` body proves the invariant as
-                    // written; the entry goal it is checked against can have
-                    // been reshaped by the guards lowering introduced. Where
-                    // the body alone does not reach that goal, the phase
-                    // script as a whole still does, and did before the split.
-                    Err(error) if own_body.is_some() => {
-                        planned_own_body_index = None;
-                        plan(None, &layout.shared).map_err(|_| error)?
-                    }
-                    Err(error) => return Err(error),
-                };
-                let PlannedPointPureGoal {
-                    fact: planned_fact,
-                    certificate: planned_certificate,
-                    certificate_already_checked,
-                    introductions: planned_introductions,
-                } = direct_plan;
-                all_invariants_checked &= certificate_already_checked;
-                if let Some(lowered) = invariant_lowering_under_recorded_guards(
-                    &planned_fact,
-                    planned_introductions.as_deref(),
-                ) {
-                    initialization_surface_propositions
-                        .borrow_mut()
-                        .record_lowering(written, lowered)?;
-                }
-                // The certificate keeps the invariant's written spelling:
-                // it is what the source names and what expansion prints.
-                let step = ProofTactic::Have(ProofHave {
-                    proposition: written.clone(),
-                    proof: SourceProof::Script(planned_certificate.to_proof_tactics().to_vec()),
-                });
-                // A smart `have` inside the phase script expands to the same
-                // `have` with the planned body: the step this invariant
-                // contributes, printed where the source wrote it.
-                if planned_own_body_index.is_some()
-                    && planned_own_body_index == selected_source_index
-                {
-                    record_proof_site_tactic_expansion(
-                        expansion_capture.as_deref_mut(),
-                        &initialize_site,
-                        selected_source_index.unwrap_or_default(),
-                        std::slice::from_ref(&step),
-                    );
-                }
-                tactics.push(step);
-                if !planning_available.contains(&planned_fact) {
-                    planning_available.push(planned_fact);
-                }
-            }
-            let certificate = ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
-                ClickError::new(format!(
-                    "`{claim_label}` produced an invalid initialization certificate: {error:?}"
-                ))
-            })?;
-            Ok((
-                certificate,
-                all_invariants_checked.then_some(planning_available),
-            ))
-        },
-        |certificate| {
-            if certificate.to_proof_tactics().len() < invariant_items.len() {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` certificate has only {} steps for {} invariants",
-                    certificate.to_proof_tactics().len(),
-                    invariant_items.len()
-                )));
-            }
-            let mut certificate_available = context.pure_facts.clone();
-            let invariant_start = certificate.to_proof_tactics().len() - invariant_items.len();
-            for (certificate_index, tactic) in certificate.to_proof_tactics().iter().enumerate() {
-                // Certificate validation for the initialize phase never reaches
-                // the checked drivers' tactic loop, so time each step here in
-                // the same format and let `source_site_kind` classify it.
-                let _timing = TacticTiming::new(
-                    &claim_label,
-                    certificate_index,
-                    initialize_source_index,
-                    tactic,
-                    initialize_statement_index,
-                );
-                if certificate_index < invariant_start
-                    && let ProofTactic::UnfoldPredicate(name) = tactic
-                {
-                    if environment.predicate_environment.get(name).is_none() {
-                        return Err(ClickError::new(format!(
-                            "`{claim_label}` certificate step {certificate_index} names unknown predicate `{name}`"
-                        )));
-                    }
-                    certificate_available = unfold_available_predicate_facts(
-                        environment.predicate_environment,
-                        environment.click_function_environment,
-                        std::slice::from_ref(name),
-                        &certificate_available,
-                    )
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "`{claim_label}` certificate step {certificate_index}: {message}"
-                        ))
-                    })?;
-                    continue;
-                }
-                let ProofTactic::Have(have) = tactic else {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` certificate step {certificate_index} is not a pure `have`"
-                    )));
-                };
-                let invariant_index = certificate_index.checked_sub(invariant_start);
-                if let Some(invariant_index) = invariant_index {
-                    let proposition = invariant_items[invariant_index].proposition();
-                    if &have.proposition != proposition {
-                        return Err(ClickError::new(format!(
-                            "`{claim_label}` certificate step {certificate_index} changed invariant {invariant_index}"
-                        )));
-                    }
-                }
-                let step_claim_label = invariant_index
-                    .map(|invariant_index| {
-                        format!(
-                            "{claim_label} (loop {loop_index} invariant {invariant_index} entry)"
-                        )
-                    })
-                    .unwrap_or_else(|| format!("{claim_label} prerequisite {certificate_index}"));
-                let surface_propositions = initialization_surface_propositions.borrow();
-                // Check structured initialization through the same checked
-                // proof object that emitted it, including both/and children.
-                // Validation reads the same obligation, the same checked
-                // goal, and the same lowering record the planner read, so
-                // the certificate is rechecked against the goal it was
-                // built for and its introductions reach the same nodes.
-                let exact_entry_obligation = invariant_index.and_then(|index| {
-                    let obligation_context = format!("loop {loop_index} invariant {index} entry");
-                    entry_obligations
-                        .iter()
-                        .find(|obligation| obligation.context() == Some(&obligation_context))
-                });
-                let exact_entry_goal = exact_entry_obligation.map(|obligation| {
-                    let (goal, stripped) = loop_entry_checked_goal_with_stripped(
-                        obligation.proposition(),
-                        &certificate_available,
-                    );
-                    let introductions = obligation
-                        .introductions()
-                        .map(|recorded| recorded.get(stripped..).unwrap_or_default().to_vec());
-                    (goal, introductions)
-                });
-                let (fact, goal_introductions) = match exact_entry_goal {
-                    Some(checked) => checked,
-                    None => match surface_propositions
-                        .unique_kernel(&have.proposition)
-                        .cloned()
-                    {
-                        Some(fact) => (fact, None),
-                        None => {
-                            let (fact, recorded) =
-                                lower_fixed_state_proposition_with_assumptions_recording_introductions(
-                                    &have.proposition,
-                                    &assumptions_from_propositions(&certificate_available),
-                                    environment.parsed_function.parameters(),
-                                    environment.arguments,
-                                    environment.initial_state,
-                                    &context.state,
-                                    None,
-                                    &recorded_snapshots,
-                                    environment.predicate_environment,
-                                    environment.click_function_environment,
-                                )
-                                .map_err(ClickError::new)?;
-                            (fact, Some(recorded))
-                        }
-                    },
-                };
-                let root = Proof::for_fixed_state_surface_goal(
-                    &step_claim_label,
-                    certificate_index,
-                    &certificate_available,
-                    fact.clone(),
-                    have.proposition.clone(),
-                    environment.parsed_function.parameters(),
-                    environment.arguments,
-                    environment.initial_state,
-                    &context.state,
-                    &recorded_snapshots,
-                    &surface_propositions,
-                    environment.predicate_environment,
-                    environment.click_function_environment,
-                    environment.theorem_environment,
-                    &[],
-                    &[],
-                )
-                .with_recorded_goal_introductions(goal_introductions)
-                .with_surface_local_scope(&phase_proof_scope(environment));
-                let SourceProof::Script(tactics) = &have.proof else {
-                    return Err(ClickError::new(
-                        "invariant initialization requires an explicit proof body",
-                    ));
-                };
-                let checked = root.try_authoritative_linear_script(tactics)?;
-                if !checked.is_some_and(|proof| proof.is_complete()) {
-                    return Err(ClickError::new(
-                        "invariant initialization proof body did not close its goal",
-                    ));
-                }
-                if !certificate_available.contains(&fact) {
-                    certificate_available.push(fact);
-                }
-            }
-            Ok(certificate_available)
-        },
-    )?;
-    // The invariants hold at entry when every entry obligation the planner
-    // and the certificate checker were given is discharged by the facts the
-    // initialization proved. Re-lowering the invariants here instead would
-    // derive them from a fact set the planner never saw, and ask for a
-    // proposition the retained certificate never proved; `entry_obligations`
-    // and `loop_entry_checked_goal` are the one goal function both phases
-    // already use.
-    for obligation in entry_obligations
-        .iter()
-        .filter(|obligation| obligation.context().is_some())
-    {
-        if !loop_entry_obligation_is_discharged(obligation.proposition(), &available) {
-            return Err(ClickError::new(format!(
-                "`{claim_label}`: missing invariant fact ({})",
-                obligation.context().unwrap_or_default()
-            )));
+            _ => unreachable!("only unfold and have steps are phase helpers"),
+        };
+        if selected_source_index == Some(*source_index) {
+            record_proof_site_tactic_expansion(
+                expansion_capture.as_deref_mut(),
+                &initialize_site,
+                *source_index,
+                &phase.certificate_since(&checkpoint)?.to_proof_tactics(),
+            );
         }
     }
-    Ok(certificate)
+    let mut completions = Vec::new();
+    for (invariant_index, (item, goals)) in invariant_items
+        .iter()
+        .zip(entry_goals.declarations())
+        .enumerate()
+    {
+        let own_body = layout
+            .invariant_bodies
+            .as_ref()
+            .and_then(|bodies| bodies.get(invariant_index))
+            .copied();
+        let invariant_proof = own_body.map_or(&layout.shared, |(_, body)| body);
+        let planned_step = timings_enabled.then(|| {
+            ProofTactic::Have(ProofHave {
+                proposition: item.proposition().clone(),
+                proof: invariant_proof.clone(),
+            })
+        });
+        let _timing = planned_step.as_ref().and_then(|step| {
+            TacticTiming::named_for_tactic(
+                &claim_label,
+                "plan_invariant_entry",
+                step,
+                invariant_index,
+                initialize_source_index,
+                initialize_statement_index,
+            )
+        });
+        for obligation in goals {
+            let checkpoint = phase.checkpoint();
+            let scope = phase.begin_loop_entry_goal(item.proposition().clone(), obligation)?;
+            let body_checkpoint = scope.checkpoint();
+            let checked = check_initialization_body(&scope, invariant_proof).map_err(|error| {
+                error.with_context(format!(
+                    "loop {loop_index} invariant {invariant_index} entry"
+                ))
+            })?;
+            let body_certificate = checked.certificate_since(&body_checkpoint)?;
+            completions.push(checked.completed_loop_entry_goal()?);
+            phase = checked.join()?;
+            if let Some(selected) = selected_source_index
+                && own_body.map(|(index, _)| index) == Some(selected)
+            {
+                record_proof_site_tactic_expansion(
+                    expansion_capture.as_deref_mut(),
+                    &initialize_site,
+                    selected,
+                    &phase.certificate_since(&checkpoint)?.to_proof_tactics(),
+                );
+            } else if environment.frontier_loop_source.is_none()
+                && layout.is_whole_proof()
+                && let Some(index) = selected_source_index
+            {
+                let tactics = body_certificate.to_proof_tactics();
+                let expansion = match invariant_proof {
+                    SourceProof::Default | SourceProof::Tactic(_) => tactics,
+                    SourceProof::Script(_) => tactics.get(index).cloned().into_iter().collect(),
+                };
+                record_proof_site_tactic_expansion(
+                    expansion_capture.as_deref_mut(),
+                    &initialize_site,
+                    index,
+                    &expansion,
+                );
+            }
+        }
+    }
+    Ok(CheckedLoopInitialization {
+        expansion: InitializePhaseExpansion::new(&layout, initialize_source_index),
+        certificate: phase.certificate(),
+        entry_goals,
+        completions,
+    })
+}
+
+/// Source execution and smart planning share the checked scope. An explicit
+/// failure is final; no other phase body or certificate checker is tried.
+fn check_initialization_body<'a>(
+    scope: &proof_object::ProofScope<'a>,
+    source: &SourceProof,
+) -> Result<proof_object::ProofScope<'a>, ClickError> {
+    let checked = match source {
+        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
+            scope.try_simp_closure()?
+        }
+        SourceProof::Script(tactics) => scope.try_authoritative_linear_script(tactics)?,
+    }
+    .ok_or_else(|| ClickError::new("loop initialization body did not close its goal"))?;
+    if !checked.is_complete() {
+        return Err(ClickError::new(
+            "loop initialization body retained an open goal",
+        ));
+    }
+    Ok(checked)
+}
+
+pub(in crate::surface::proof) struct CheckedLoopInitialization {
+    pub(in crate::surface::proof) certificate: ProofCertificate,
+    entry_goals: crate::kernel::CLoopEntryGoals,
+    expansion: InitializePhaseExpansion,
+    completions: Vec<crate::kernel::proof::CheckedProposition>,
+}
+
+impl CheckedLoopInitialization {
+    pub(in crate::surface::proof) fn phase_closer_expansion(
+        &self,
+        selected: usize,
+        certificate: &ProofCertificate,
+    ) -> Option<Vec<ProofTactic>> {
+        self.expansion.expand(selected, certificate)
+    }
+
+    pub(in crate::surface::proof) fn is_complete(&self) -> bool {
+        let mut completions = self.completions.iter();
+        let matched = self
+            .entry_goals
+            .declarations()
+            .iter()
+            .flatten()
+            .all(|goal| {
+                completions
+                    .next()
+                    .is_some_and(|completion| completion.proposition() == goal.proposition())
+            });
+        matched && completions.next().is_none()
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1657,49 +1243,4 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         break_exits,
         nested_loop_rules,
     })
-}
-
-#[cfg(test)]
-mod loop_entry_goal_tests {
-    use super::*;
-
-    fn variable_is_zero(variable: u64) -> Proposition {
-        Proposition::ConditionIs(
-            ConditionTerm::Bitvector32Equal(
-                Box::new(Bitvector32Term::Variable(Variable(variable))),
-                Box::new(Bitvector32Term::Constant(0)),
-            ),
-            true,
-        )
-    }
-
-    #[test]
-    fn only_exactly_available_leading_antecedents_are_stripped() {
-        let first = variable_is_zero(1);
-        let second = variable_is_zero(2);
-        let conclusion = variable_is_zero(3);
-        let obligation = Proposition::Implies(
-            Box::new(first.clone()),
-            Box::new(Proposition::Implies(
-                Box::new(second.clone()),
-                Box::new(conclusion.clone()),
-            )),
-        );
-
-        assert_eq!(loop_entry_checked_goal(&obligation, &[]), obligation);
-        // A second antecedent is only reachable once the first one is gone:
-        // stripping stops at the first antecedent that is not exactly available.
-        assert_eq!(
-            loop_entry_checked_goal(&obligation, std::slice::from_ref(&second)),
-            obligation
-        );
-        assert_eq!(
-            loop_entry_checked_goal(&obligation, std::slice::from_ref(&first)),
-            Proposition::Implies(Box::new(second.clone()), Box::new(conclusion.clone()))
-        );
-        assert_eq!(
-            loop_entry_checked_goal(&obligation, &[first, second]),
-            conclusion
-        );
-    }
 }

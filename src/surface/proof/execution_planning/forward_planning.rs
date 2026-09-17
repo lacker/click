@@ -148,6 +148,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
             });
             let mut iteration_contexts = Vec::new();
             let mut initialization_path_certificates = Vec::new();
+            let mut checked_initializations = Vec::new();
             let mut preservation_path_certificates = Vec::new();
             let mut final_exit_candidates_by_context = Vec::with_capacity(contexts.len());
             let mut break_exits_by_context = Vec::with_capacity(contexts.len());
@@ -156,7 +157,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                 let mut break_exits = Vec::new();
                 let assumptions = assumptions_from_propositions(&context.pure_facts);
                 if let Some((clause, proof)) = initialization_proof {
-                    let certificate = verify_loop_initialization_pure_proof(
+                    let initialization = verify_loop_initialization_pure_proof(
                         expansion_capture.as_deref_mut(),
                         loop_index,
                         proof,
@@ -168,8 +169,9 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                     initialization_path_certificates.push(PathCertificate {
                         case_path: context.case_path.clone(),
                         case_offsets: None,
-                        certificate,
+                        certificate: initialization.certificate.clone(),
                     });
+                    checked_initializations.push(initialization);
                 } else {
                     c_loop_invariants_hold_at_entry(&context.state, invariant_checks, &assumptions)
                         .map_err(|message| {
@@ -309,17 +311,12 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                     // expands to the invariant steps the planner built. A
                     // smart `have` inside the script is recorded by the
                     // entry planner itself, at its own source index.
-                    if let Some(phase_start) = selected_source_index
+                    if selected_source_index.is_some()
                         && let Some(selected) =
                             selected_tactic_index_for_site(expansion_capture.as_deref(), &site)
-                        && let Some((clause, proof)) = initialization_proof
-                        && let Some(expansion) = initialize_phase_closer_expansion(
-                            proof,
-                            clause,
-                            phase_start,
-                            selected,
-                            &initialization_certificate,
-                        )
+                        && let Some(initialization) = checked_initializations.first()
+                        && let Some(expansion) = initialization
+                            .phase_closer_expansion(selected, &initialization_certificate)
                     {
                         record_proof_site_tactic_expansion(
                             expansion_capture.as_deref_mut(),
@@ -331,8 +328,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                 } else {
                     if let Some(source_index) =
                         selected_tactic_index_for_site(expansion_capture.as_deref(), &site)
-                        && let Some((clause, proof @ SourceProof::Script(source_tactics))) =
-                            initialization_proof
+                        && let Some((_, SourceProof::Script(source_tactics))) = initialization_proof
                         && !source_tactics.iter().any(|tactic| {
                             matches!(
                                 tactic,
@@ -340,13 +336,9 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                                     | ProofTactic::ApplyTheoremUsing { .. }
                             )
                         })
-                        && let Some(expansion) = initialize_phase_closer_expansion(
-                            proof,
-                            clause,
-                            0,
-                            source_index,
-                            &initialization_certificate,
-                        )
+                        && let Some(initialization) = checked_initializations.first()
+                        && let Some(expansion) = initialization
+                            .phase_closer_expansion(source_index, &initialization_certificate)
                     {
                         record_proof_site_tactic_expansion(
                             expansion_capture.as_deref_mut(),
@@ -428,7 +420,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                 } else {
                     LoopPreservationSource::Automatic
                 },
-                initialization_proof.is_some(),
+                initialization_proof.map(|_| checked_initializations.as_slice()),
                 Some(&final_exit_candidates_by_context),
                 Some(&break_exits_by_context),
             )
@@ -495,7 +487,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                 environment,
                 verified_loop_rules,
                 LoopPreservationSource::Automatic,
-                false,
+                None,
                 None,
                 None,
             )?;
@@ -549,281 +541,6 @@ fn split_execution_proof_branch_contexts(
     Ok((then_contexts, else_contexts))
 }
 
-pub(in crate::surface::proof) struct PlannedPointPureGoal {
-    pub(in crate::surface::proof) fact: Proposition,
-    pub(in crate::surface::proof) certificate: ProofCertificate,
-    /// True only when the returned certificate was retained by the same
-    /// checked `Proof` that established `fact`.
-    pub(in crate::surface::proof) certificate_already_checked: bool,
-    /// The head chain recorded for `fact`: the caller's, when it supplied an
-    /// already lowered goal and its record, and otherwise the one this
-    /// lowering produced. A caller pairs the written proposition with the
-    /// kernel form through this record instead of by constructor shape.
-    pub(in crate::surface::proof) introductions: Option<crate::kernel::LoweringIntroductions>,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
-    mut expansion_capture: Option<&mut ExpansionCapture>,
-    proof_site: &ProofSite,
-    proposition: &ClickProposition,
-    proof: &SourceProof,
-    claim_label: &str,
-    proof_index: usize,
-    available: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    state: &CState,
-    recorded_snapshots: &RecordedSnapshots,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    surface_propositions: &SurfacePropositionMap,
-    prelowered_goal: Option<&Proposition>,
-    exact_proof_goal: Option<&Proposition>,
-    goal_introductions: Option<&crate::kernel::LoweringIntroductions>,
-    theorem_environment: &TheoremEnvironment,
-    // The proof locals in scope where this goal's `by` body was written.
-    // Its nested `have`s resolve the same names their enclosing script
-    // does; a fresh root carries no scope of its own.
-    surface_local_scope: &PersistentMap<String, ContractExpression>,
-) -> Result<PlannedPointPureGoal, ClickError> {
-    // A pre-lowered goal arrives with the record its own lowering made; a
-    // goal lowered here records its chain in the same call that builds it.
-    // Either way the chain describes the exact proposition below.
-    let (fact, introductions) = if let Some(prelowered_goal) = prelowered_goal {
-        (prelowered_goal.clone(), goal_introductions.cloned())
-    } else {
-        let (fact, recorded) =
-            lower_fixed_state_proposition_with_assumptions_recording_introductions(
-                proposition,
-                &assumptions_from_propositions(available),
-                parameters,
-                arguments,
-                pre_state,
-                state,
-                None,
-                recorded_snapshots,
-                predicate_environment,
-                click_function_environment,
-            )
-            .map_err(|message| {
-                ClickError::new(format!(
-                    "`{claim_label}` proof {proof_index}: could not lower pure goal: {message}"
-                ))
-            })?;
-        (fact, Some(recorded))
-    };
-
-    // Structural fixed-state goals use the same checked source-script seam as
-    // ordinary fixed-state `have` proofs. Search may select a theorem application,
-    // but only `Proof::apply_step` installs its conclusion and provenance.
-    // This replaces the former source rewrite that copied every theorem
-    // requirement into an unchecked `apply using` certificate.
-    {
-        let proof_goal = exact_proof_goal.cloned().unwrap_or_else(|| fact.clone());
-        let root = Proof::for_fixed_state_surface_goal(
-            claim_label,
-            proof_index,
-            available,
-            proof_goal,
-            proposition.clone(),
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            recorded_snapshots,
-            surface_propositions,
-            predicate_environment,
-            click_function_environment,
-            theorem_environment,
-            &[],
-            &[],
-        )
-        // The root goal is the exact proposition the record above
-        // describes, so an introduction on it reads the chain instead of
-        // refining the written form by shape.
-        .with_recorded_goal_introductions(introductions.clone())
-        .with_surface_local_scope(surface_local_scope);
-        let checked = match proof {
-            SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
-                root.try_simp_closure()?
-            }
-            SourceProof::Script(tactics) => root.try_authoritative_linear_script(tactics)?,
-        };
-        if let Some(checked) = checked {
-            if !checked.is_complete() {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` proof {proof_index}: checked fixed-state proof retained an open goal"
-                )));
-            }
-            let certificate = checked.completed_certificate()?;
-            if let Some(source_index) =
-                selected_tactic_index_for_site(expansion_capture.as_deref(), proof_site)
-            {
-                match proof {
-                    SourceProof::Default | SourceProof::Tactic(_) => {
-                        record_proof_site_tactic_expansion(
-                            expansion_capture.as_deref_mut(),
-                            proof_site,
-                            source_index,
-                            &certificate.to_proof_tactics(),
-                        );
-                    }
-                    SourceProof::Script(_) => {
-                        if let Some(tactic) = certificate.to_proof_tactics().get(source_index) {
-                            record_proof_site_tactic_expansion(
-                                expansion_capture,
-                                proof_site,
-                                source_index,
-                                std::slice::from_ref(tactic),
-                            );
-                        }
-                    }
-                }
-            }
-            return Ok(PlannedPointPureGoal {
-                fact,
-                certificate,
-                certificate_already_checked: true,
-                introductions,
-            });
-        }
-    }
-
-    if matches!(proof, SourceProof::Script(_)) {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` proof {proof_index}: fixed-state script ended with an open goal"
-        )));
-    }
-
-    let unfolded_predicates = smart_simp_unfold_prefix(proof).ok_or_else(|| {
-        ClickError::new(format!(
-            "`{claim_label}` proof {proof_index} contains a smart pure proof that has no certificate planner"
-        ))
-    })?;
-    let have = ProofHave {
-        proposition: proposition.clone(),
-        proof: proof.clone(),
-    };
-    let (fact, plan) = plan_smart_have_in_current_state(
-        &have,
-        claim_label,
-        proof_index,
-        available,
-        parameters,
-        arguments,
-        pre_state,
-        state,
-        recorded_snapshots,
-        surface_propositions,
-        predicate_environment,
-        click_function_environment,
-        &unfolded_predicates,
-        prelowered_goal,
-        surface_local_scope,
-    )?;
-    let mut planning_surface = surface_propositions.clone();
-    planning_surface.record_lowering(proposition, &fact)?;
-    if !unfolded_predicates.is_empty() {
-        let assumptions = assumptions_from_propositions(available);
-        let recorded_unfoldings = planning_surface
-            .kernel_facts()
-            .flat_map(|kernel| {
-                planning_surface
-                    .surfaces(kernel)
-                    .filter_map(|surface| {
-                        let mut unfolded_surface = unfold_structural_invariant_proposition(
-                            predicate_environment,
-                            surface,
-                            &unfolded_predicates,
-                        )
-                        .ok()?;
-                        if unfolded_surface == *surface {
-                            return None;
-                        }
-                        if let Some(point) = predicate_call_snapshot_selector(surface) {
-                            unfolded_surface =
-                                surface_at_snapshot(&unfolded_surface, &point).ok()?;
-                        }
-                        let unfolded_kernel = unfold_predicates_in_proposition(
-                            predicate_environment,
-                            click_function_environment,
-                            &unfolded_predicates,
-                            kernel,
-                            &assumptions,
-                        )
-                        .ok()?;
-                        let available_kernel = available
-                            .iter()
-                            .find(|available| {
-                                **available == unfolded_kernel
-                                    || quantified_binder_equivalent(&unfolded_kernel, available)
-                            })?
-                            .clone();
-                        Some((unfolded_surface, available_kernel))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        for (surface, kernel) in recorded_unfoldings {
-            planning_surface.record_lowering(&surface, &kernel)?;
-        }
-        let unfolded_surface = unfold_structural_invariant_proposition(
-            predicate_environment,
-            proposition,
-            &unfolded_predicates,
-        )
-        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
-        let unfolded_fact = unfold_predicates_in_proposition(
-            predicate_environment,
-            click_function_environment,
-            &unfolded_predicates,
-            &fact,
-            &assumptions,
-        )
-        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
-        planning_surface.record_lowering(&unfolded_surface, &unfolded_fact)?;
-    }
-    let surface_proof = surface_simp_plan_proof(
-        ExecutionView::new(
-            &ExecutionFrontier::default(),
-            &[],
-            recorded_snapshots,
-            &planning_surface,
-            None,
-        )
-        .with_proof_bindings(surface_local_scope),
-        state,
-        available,
-        parameters,
-        arguments,
-        predicate_environment,
-        click_function_environment,
-        proposition,
-        &plan,
-        &unfolded_predicates,
-    )?;
-    let SourceProof::Script(tactics) = surface_proof else {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` did not lower to an explicit proof script"
-        )));
-    };
-    let certificate = ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
-        ClickError::new(format!(
-            "`{claim_label}` produced an invalid fixed-state/pure certificate: {error:?}"
-        ))
-    })?;
-    Ok(PlannedPointPureGoal {
-        fact,
-        certificate,
-        certificate_already_checked: false,
-        // The smart-`have` planner lowered its own goal; this fact is not
-        // the one the record above describes, so no chain is reported.
-        introductions: None,
-    })
-}
-
 fn advance_execution_proof_statement(
     statement: &CStatement,
     contexts: Vec<PlanningExecutionContext>,
@@ -832,7 +549,7 @@ fn advance_execution_proof_statement(
     environment: &ExecutionProofEnvironment<'_>,
     verified_loop_rules: &mut Vec<CVerifiedLoopRule>,
     loop_preservation_source: LoopPreservationSource,
-    initialization_proven: bool,
+    initializations: Option<&[CheckedLoopInitialization]>,
     loop_final_exit_candidates: Option<&[Vec<CLoopFinalExitCandidate>]>,
     loop_break_exits: Option<&[Vec<CLoopBreakExit>]>,
 ) -> Result<Vec<PlanningExecutionContext>, ClickError> {
@@ -858,6 +575,20 @@ fn advance_execution_proof_statement(
             .and_then(|exits| exits.get(context_index))
             .map(Vec::as_slice)
             .unwrap_or(&[]);
+        let initialization_proven = match initializations {
+            Some(initializations) => {
+                if !initializations
+                    .get(context_index)
+                    .is_some_and(CheckedLoopInitialization::is_complete)
+                {
+                    return Err(ClickError::new(
+                        "missing checked loop initialization completion",
+                    ));
+                }
+                true
+            }
+            None => false,
+        };
         let (transitions, loop_rule) = match (initialization_proven, preservation_proven) {
             (false, false) => certified_statement_transitions(
                 &context.state,

@@ -335,6 +335,9 @@ pub(super) struct ProofScope<'a> {
     structure: Box<ProofScopeStructure>,
     body: Proof<'a>,
     introduced_facts: Vec<Proposition>,
+    /// The selected producer judgment and its consumed implication prefix.
+    /// Shared metadata; source-step descendants never copy the original goal.
+    loop_entry_goal: Option<(Arc<crate::kernel::ProofObligation>, usize)>,
 }
 
 #[derive(Clone)]
@@ -1490,10 +1493,7 @@ impl<'a> Proof<'a> {
             state: KernelProofObject::root(self.state().locals().clone(), {
                 let context = BranchState {
                     facts,
-                    unfolded_predicates: match &outcome {
-                        Some(_) => self.focused_branch_unfolds().clone(),
-                        None => PersistentOrderedSet::default(),
-                    },
+                    unfolded_predicates: self.focused_branch_unfolds().clone(),
                     execution: match &outcome {
                         Some(_) => self.branch_execution().cloned(),
                         None => None,

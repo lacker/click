@@ -647,39 +647,6 @@ pub(in crate::surface) fn normalizes_context_free(goal: &Proposition) -> bool {
     crate::kernel::proof::fact_reasoning::normalizes_context_free(goal)
 }
 
-fn pure_goal_proof_certificate_gateway_with_checked_result<T>(
-    claim_label: &str,
-    planner: impl FnOnce() -> Result<(ProofCertificate, Option<T>), ClickError>,
-    check: impl FnOnce(&ProofCertificate) -> Result<T, ClickError>,
-) -> Result<(ProofCertificate, T), ClickError> {
-    let function = claim_label
-        .split_once('.')
-        .map_or(claim_label, |(function, _)| function);
-    let (certificate, checked_result) = crate::instrumentation::measure_operation(
-        function,
-        claim_label,
-        "surface certificate construction",
-        planner,
-    )?;
-    let checked_result = match checked_result {
-        Some(checked_result) => checked_result,
-        None => crate::instrumentation::measure_operation(
-            function,
-            claim_label,
-            "generated certificate validation",
-            || check(&certificate),
-        )
-        .map_err(|error| {
-            ClickError::new(format!(
-                "pure goal `{claim_label}` certificate failed round-trip validation:\n{}\n{}",
-                format_proof_certificate(&certificate),
-                error.message()
-            ))
-        })?,
-    };
-    Ok((certificate, checked_result))
-}
-
 #[cfg(test)]
 mod certificate_tests {
     use super::*;

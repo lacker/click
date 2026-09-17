@@ -2516,6 +2516,41 @@ fn fixed_state_context_have_publishes_checked_fact_for_later_scope() {
             &[],
             &[],
         );
+        // An entry scope selects the producer's goal without rebuilding the
+        // ambient facts. Terminal completion retains the full guarded judgment.
+        let entry_kernel = root
+            .begin_have(proposition.clone())
+            .unwrap()
+            .goal()
+            .unwrap()
+            .clone();
+        let entry_obligation = crate::kernel::ProofObligation::new(Proposition::Implies(
+            Box::new(indexed_fact(size - 1)),
+            Box::new(entry_kernel.clone()),
+        ));
+        let entry_before = fact_node_allocations();
+        let scope = root
+            .begin_loop_entry_goal(proposition.clone(), &entry_obligation)
+            .unwrap();
+        assert_eq!(scope.goal(), Some(&entry_kernel));
+        assert!(Arc::ptr_eq(&root.context, &scope.body.context));
+        let checked_scope = scope.apply_step(ProofStep::Normalize).unwrap();
+        let completion = checked_scope.completed_loop_entry_goal().unwrap();
+        assert!(
+            completion
+                .root_assumptions()
+                .shares_assumptions_with(root.facts())
+        );
+        let phase = checked_scope.join().unwrap();
+        assert_eq!(phase.certificate().steps().len(), 1);
+        assert_eq!(completion.proposition(), entry_obligation.proposition());
+        let allocations = fact_node_allocations() - entry_before;
+        let height = (u32::BITS - size.leading_zeros()) as usize;
+        assert!(
+            allocations <= 40 * height + 160,
+            "entry scope at size {size} allocated {allocations} fact nodes"
+        );
+
         let retained_root = root.clone();
         let before = fact_node_allocations();
         let first = root
@@ -13525,9 +13560,14 @@ fn source_script_compatibility_entry_points_stay_removed() {
         include_str!("scope.rs"),
         include_str!("../claim_proofs.rs"),
         include_str!("../execution_planning/forward_planning.rs"),
+        include_str!("../execution_planning/loop_planning.rs"),
+        include_str!("../../proof.rs"),
         include_str!("../checked_drivers/proof_execution.rs"),
     ] {
         for removed in [
+            "pure_goal_proof_certificate_gateway_with_checked_result",
+            "plan_fixed_state_pure_goal_certificate",
+            "source_contains_legacy_arithmetic",
             "try_linear_script(",
             "try_planned_linear_script(",
             "EXPLICIT_LINEAR_FALLBACKS",

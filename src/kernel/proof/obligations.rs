@@ -123,6 +123,32 @@ impl CheckedProposition {
         &self.proposition
     }
 
+    /// From a checked P, derive A1 implies ... implies P under the same
+    /// root assumptions and outcome. The caller supplies the prefix length,
+    /// so checking visits that prefix and compares the terminal body once.
+    /// This does not discharge or replace any assumption of the original proof.
+    pub(crate) fn with_implication_prefix(
+        &self,
+        goal: &Proposition,
+        prefix_len: usize,
+    ) -> Option<Self> {
+        let mut body = goal;
+        for _ in 0..prefix_len {
+            let Proposition::Implies(_, consequent) = body else {
+                return None;
+            };
+            body = consequent;
+        }
+        if body != self.proposition() {
+            return None;
+        }
+        Some(Self {
+            proposition: Arc::new(goal.clone()),
+            root_assumptions: self.root_assumptions.clone(),
+            outcome: self.outcome.clone(),
+        })
+    }
+
     /// The exact facts the root branch assumed. A constructor that turns this
     /// completion into an implication must check them against its own
     /// explicit premises.

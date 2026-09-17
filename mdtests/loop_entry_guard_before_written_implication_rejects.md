@@ -57,5 +57,5 @@ int32 loop_entry_guard_before_written_implication_rejects(int32 p[3]) {
 ```
 
 ```expect
-fail: certificate failed round-trip validation
+fail: `normalize` goal did not normalize to true
 ```

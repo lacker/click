@@ -14792,6 +14792,50 @@ fn a_helper_have_in_a_loop_initialize_script_is_expanded_once() {
 }
 
 #[test]
+fn loop_initialization_duplicate_clauses_keep_distinct_bodies() {
+    let click_source = LOOP_INITIALIZE_HELPER_HAVE_CLICK
+        .replace("invariant i <= n;", "invariant i >= 0;")
+        .replace(
+            "            simp();",
+            r#"            have i >= 0 by { arithmetic() using { n >= 0; } }
+            have i >= 0 by { normalize(); }"#,
+        );
+    let sources = [("spin.c", LOOP_INITIALIZE_PHASE_C)];
+    verify_c0_sources(&click_source, &sources).expect("mixed entry bodies should verify");
+    let invalid_second = click_source.replace(
+        "have i >= 0 by { normalize(); }",
+        "have i >= 0 by { apply(missing_entry_theorem()); }",
+    );
+    let error = verify_c0_sources(&invalid_second, &sources)
+        .expect_err("the second declaration's body must be checked independently");
+    assert!(
+        error.message().contains("missing_entry_theorem"),
+        "{error:?}"
+    );
+
+    let expanded = expand_c0_claim_source(&click_source, &sources, "spin", CProofClaim::Grouped)
+        .expect("entry proof should expand");
+    verify_c0_sources(&expanded, &sources).expect("expanded entry proof should verify");
+    assert_eq!(
+        expanded.matches("have (n + 0) == n").count(),
+        1,
+        "{expanded}"
+    );
+    let initialize = expanded
+        .split("initialize by")
+        .nth(1)
+        .unwrap()
+        .split("preserve by")
+        .next()
+        .unwrap();
+    assert_eq!(initialize.matches("have i >= 0").count(), 2, "{expanded}");
+    assert!(!initialize.contains("arithmetic() using"), "{expanded}");
+    let expanded_again = expand_c0_claim_source(&expanded, &sources, "spin", CProofClaim::Grouped)
+        .expect("explicit entry proof should remain checkable on a second expansion");
+    assert_eq!(expanded_again, expanded);
+}
+
+#[test]
 fn a_consumed_arm_instance_equation_is_cited_at_entry_after_its_unfold() {
     // A proof `match` arm's constructor equation is recorded under its
     // written spelling, `t.model == Tree::Node(..)`. Once the arm has

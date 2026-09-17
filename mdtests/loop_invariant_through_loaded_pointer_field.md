@@ -6,6 +6,12 @@ spelling for that base, and the smart certificate must name the owned range
 through the same field read. This pins the synthesis that spells memory
 reached through struct-pointer fields.
 
+Initialization introduces the empty range and closes its contradictory guard.
+Preservation proves the prefix through the element just written: earlier
+indices use the invariant at the store's entry, while the final index uses
+the store result. This explicit case split keeps the remaining smart closures
+small enough to verify and expand under their ordinary budgets.
+
 ```c filename=probe_contract.c
 struct job {
     int32 *p;
@@ -57,9 +63,36 @@ int32 probe_contract(struct job *j) {
         invariant j->lo <= i and i <= j->hi;
         invariant forall (k: int32) { j->lo <= k and k < i implies j->p[k] == j->v };
 
-        initialize by simp;
+        initialize by {
+            have j->lo <= i and i <= j->hi by {
+                both { normalize(); } and { assumption(); }
+            }
+            have forall (k: int32) { j->lo <= k and k < i implies j->p[k] == j->v } by {
+                intro();
+                intro();
+                contradiction(j->lo <= k and k < i);
+            }
+        }
         preserve by {
             step();
+            have forall (k: int32) { j->lo <= k and k <= i implies j->p[k] == j->v } by {
+                intro();
+                intro();
+                if k < i {
+                    extract(j->lo <= k);
+                    instantiate(at(statement(3).entry, forall (k: int32) {
+                        j->lo <= k and k < i implies j->p[k] == j->v
+                    }), k) using { j->lo <= k; k < i; }
+                    simp();
+                } else {
+                    extract(k <= i);
+                    have k == i by {
+                        apply(int32_le_and_not_lt_implies_eq(k, i)) using { k <= i; not (k < i); }
+                    }
+                    rewrite(k == i);
+                    simp();
+                }
+            }
             step();
             simp();
         }

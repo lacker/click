@@ -219,50 +219,38 @@ indexing/export work depends on the produced deltas rather than ambient size.
 Existing resource-scope, predicate-provenance, wrong-sibling, and no-body-rerun
 regressions remain in the full gate.
 
-## Inventory and work package D: loop-initialization certificate gateway
+## Inventory and work package D: loop initialization
 
-The producer prerequisite is implemented: `kernel::c_loop_entry_goals` keeps
-exact entry judgments and lowering metadata grouped by declaration, including
-satisfied and duplicate declarations. Path facts and loadability conditions
-remain guards on those judgments. The existing outstanding-obligation query
-still serves the current initialization driver until its migration lands.
+Package D is complete. `kernel::c_loop_entry_goals` keeps exact entry judgments
+and lowering metadata grouped by declaration, including satisfied and duplicate
+declarations. Path facts and loadability conditions remain guards on those
+judgments. Frontier binding replaces the prior clause for the same C loop
+identity, including its proof-local scope, without merging invariant spellings.
 
-The nested-loop clause ownership prerequisite is also implemented. Frontier
-binding replaces the previously registered clause for the same C loop identity,
-including its proof-local scope, while retaining separate invariant declarations
-within that clause. The nested-loop regression verifies and expands twice; the
-binding regression checks scope replacement and preservation of duplicate
-invariant spellings. This prevents two written inner invariants from producing
-four lowered checks when the outer proof already registered the inner clause.
+Initialization parses its layout once and retains its expansion sites. Helpers
+run once, in source order, on a shared fixed-state `Proof`. Each invariant body
+checks its exact producer goal; separate bodies are matched by declaration
+position and shared bodies remain shared source. Source arithmetic requests use
+the ordinary checked planner; arithmetic certificates check without search.
+An explicit failure is final.
 
-`execution_planning/loop_planning.rs` recognizes an expanded source layout of
-helper steps followed by one `have` per invariant. It specially dispatches
-`source_contains_legacy_arithmetic` and uses
-`pure_goal_proof_certificate_gateway_with_checked_result` to plan a certificate
-and sometimes check it again. This is an orchestration duplication, not
-permission to delete the source `arithmetic() using` operation.
+Each source body's kernel completion is retained directly. A kernel implication
+rule restores only the known leading prefix removed when selecting that goal,
+retaining the body's original assumptions and outcome identity. The loop planner
+consumes these completions along with the phase's attributed certificate. It
+never rebuilds the proved fact vector or checks the serialized body again.
+The arithmetic compatibility branch, per-invariant retry, fixed-state certificate
+planner, and last generic pure-goal certificate gateway are deleted.
 
-Parse the initialization layout once. Run helpers once in source order on a
-retained initialization Proof, then check each declared invariant against its
-exact producer-owned entry obligation. Ordinary explicit bodies apply checked
-steps directly. Source arithmetic requests plan their selected explicit
-certificate on that same proof; generated `ArithmeticCertificate` steps check
-without search. Preserve the distinction between a shared initialization body
-and separate per-invariant bodies.
-
-Retain the checked completions and attributed provenance, removing the special
-arithmetic compatibility branch and the redundant certificate-validation path.
-Once A and D remove their ordinary-verification callers, delete the two generic
-`pure_goal_proof_certificate_gateway*` helpers from `src/surface/proof.rs`.
-Keep the independent expansion verifier; do not transplant the helpers into a
-new hidden checker.
-
-Tests: two invariants with one preceding helper have, mixed explicit/arithmetic
-bodies, duplicate invariant spellings with distinct clause positions, and
-expanding then re-expanding initialization. The helper must execute once, not
-once per invariant; the expanded proof must be a fixed point and must not
-multiply sibling proof bodies. This package does not redo the already-landed
-preservation fact-correspondence repair.
+Regressions cover a shared helper, mixed explicit/arithmetic bodies, duplicate
+invariant spellings with independent negative bodies, guarded entry judgments,
+scoped nested-loop binding, independent expansion verification, and expansion
+fixed points. The symbolic empty-range and sorted-range fixtures use explicit introduction,
+contradiction, and instantiation steps for initialization. Entry failures retain
+the loop and invariant index; negative fixtures expect direct proof failures.
+Persistent-context scaling checks use multiple ambient fact sizes;
+completion weakening rejects a changed conclusion and keeps the original root
+assumptions. Preservation fact correspondence remains unchanged.
 
 ## Inventory and work package E: misleading counters and documentation
 
