@@ -13,6 +13,13 @@ because it carries no fields the model has only one value: the equation itself
 is published, which is what grants the arm's cells and lets `unfold` and proof
 `match` name the constructor.
 
+Two of the loops here never take their back edge toward the guard: `loop_exit`
+holds `i` at zero and `guard_conjunct` never changes the conjunct it waits on,
+so each runs forever whenever its guard is true on entry. They say so with the
+`diverges` marker rather than with a measure, and the publication their site
+checks still happens — `loop_exit`'s postcondition is proved at the guard-false
+exit it does reach. The counted loops carry the distance to their bound.
+
 ```c filename=arm_publication_sites.c
 struct cell {
     int32 value;
@@ -120,6 +127,7 @@ void loop_head(struct cell* node, int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         owns c: counted(node, n);
         invariant i >= 0;
         invariant i <= n;
@@ -143,7 +151,7 @@ void loop_head(struct cell* node, int32 n) {
     simp();
 }
 
-void loop_exit(struct cell* node, int32 n) {
+void loop_exit(struct cell* node, int32 n) diverges {
     owns c: counted(node, n);
     requires n >= 0;
     requires n <= 1000;
@@ -153,7 +161,7 @@ void loop_exit(struct cell* node, int32 n) {
     step();
     step();
     step();
-    loop {
+    loop diverges {
         owns c: counted(node, n);
         invariant i == 0;
         invariant n >= 0;
@@ -185,6 +193,7 @@ void back_edge(struct cell* node, int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         owns c: counted(node, n);
         invariant i >= 0;
         invariant i <= n;
@@ -194,7 +203,69 @@ void back_edge(struct cell* node, int32 n) {
         initialize by simp;
         preserve by {
             step();
-            close_invariants();
+            close_invariants by {
+                both {
+                    apply(int32_increment_greater_equal_lower_bound(at(statement(3).entry, i), at(statement(3).entry, 0), at(statement(3).entry, n))) using {
+                        at(statement(3).entry, i) >= at(statement(3).entry, 0);
+                        at(statement(3).entry, i) < at(statement(3).entry, n);
+                    }
+                } and {
+                    both {
+                        intro();
+                        apply(int32_increment_upper_bound(at(statement(3).entry, i), at(statement(3).entry, n))) using {
+                            at(statement(3).entry, i) < at(statement(3).entry, n);
+                        }
+                    } and {
+                        both {
+                            intro();
+                            intro();
+                            simp();
+                        } and {
+                            both {
+                                intro();
+                                intro();
+                                intro();
+                                simp();
+                            } and {
+                                both {
+                                    arithmetic_certificate signed_int32 {
+                                        premise 0: n > 0 => n > 0;
+                                        premise 1: at(statement(3).entry, i) >= at(statement(3).entry, 0) => at(statement(3).entry, i) >= at(statement(3).entry, 0);
+                                        premise 2: at(statement(3).entry, i) < at(statement(3).entry, n) => at(statement(3).entry, i) < at(statement(3).entry, n);
+                                        premise 3: n <= 1000 => n <= 1000;
+                                        interval_from_affine 0 (n) (1) (2147483647);
+                                        interval_from_affine 3 (n) (-2147483648) (1000);
+                                        interval_intersect 4, 5 (1) (1000);
+                                        interval_from_affine 1 (at(statement(3).entry, i)) (0) (2147483647);
+                                        interval_subtract 6, 7 6 (-2147483646) (1000);
+                                        interval_atom (1) (1) (1);
+                                        interval_subtract 8, 9 8 (-2147483647) (999);
+                                        affine_conclusion 2 10 => 0 <= ((n - at(statement(3).entry, i)) - 1);
+                                        conclusion 11;
+                                    }
+                                } and {
+                                    arithmetic_certificate signed_int32 {
+                                        premise 0: n > 0 => n > 0;
+                                        premise 1: at(statement(3).entry, i) >= at(statement(3).entry, 0) => at(statement(3).entry, i) >= at(statement(3).entry, 0);
+                                        premise 2: n <= 1000 => n <= 1000;
+                                        interval_from_affine 0 (n) (1) (2147483647);
+                                        interval_from_affine 2 (n) (-2147483648) (1000);
+                                        interval_intersect 3, 4 (1) (1000);
+                                        interval_from_affine 1 (at(statement(3).entry, i)) (0) (2147483647);
+                                        interval_subtract 5, 6 5 (-2147483646) (1000);
+                                        interval_atom (1) (1) (1);
+                                        interval_subtract 7, 8 7 (-2147483647) (999);
+                                        interval_subtract 5, 6 5 (-2147483646) (1000);
+                                        trivial => 0 <= 0;
+                                        affine_conclusion_pair 11 9 10 => ((n - at(statement(3).entry, i)) - 1) < (n - at(statement(3).entry, i));
+                                        conclusion 12;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     execute();
@@ -209,6 +280,7 @@ void case_split(struct cell* node, int32 n) {
     step();
     step();
     loop {
+        decreases n - i;
         owns c: counted(node, n);
         invariant i >= 0;
         invariant i <= n;
@@ -227,13 +299,13 @@ void case_split(struct cell* node, int32 n) {
     simp();
 }
 
-void guard_conjunct(struct cell* node, int32 n) {
+void guard_conjunct(struct cell* node, int32 n) diverges {
     owns c: counted(node, n);
     requires n != 0;
 } by {
     step();
     step();
-    loop {
+    loop diverges {
         owns c: counted(node, n);
         invariant n != 0;
 
@@ -246,10 +318,6 @@ void guard_conjunct(struct cell* node, int32 n) {
     execute();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect
