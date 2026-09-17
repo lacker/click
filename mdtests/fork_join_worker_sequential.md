@@ -8,12 +8,11 @@ ownership of exactly the job's output slice. This sequential proof establishes
 the worker's exact memory effect with no thread rule involved; it is not
 evidence that the concurrent parent verifies.
 
-The `NULL` definition stands in for `<stddef.h>` because this mdtest runs
-under the default kernel target; the probe itself selects the user-space
-target.
+The sidecar selects the probe's user-space target so the source keeps its
+`<stddef.h>` include.
 
 ```c filename=fill_range.c
-#define NULL ((void*)0)
+#include <stddef.h>
 
 struct range_job {
     int *output;
@@ -32,6 +31,7 @@ void *fill_range(void *argument) {
 ```
 
 ```click
+target "x86_64-linux-userspace";
 verifying "fill_range.c";
 
 resource range_task(job: struct range_job*) {
