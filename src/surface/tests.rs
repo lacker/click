@@ -2220,6 +2220,7 @@ mod project_tests;
 mod scaling_tests;
 mod surface_syntax;
 mod tactic_tests;
+mod thread_primitive_tests;
 
 #[test]
 fn integer_resource_fields_enforce_types_facts_and_snapshots() {

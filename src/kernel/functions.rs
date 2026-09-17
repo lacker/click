@@ -1642,6 +1642,24 @@ pub(super) fn execute_c_function_call_paths(
         }]);
     }
     if let Some(rule) = environment.get_external_function_rule(function.name()) {
+        // A thread primitive's meaning is a checked kernel transition chosen
+        // by the declaration's identity. Until those transitions exist this
+        // single match is the whole dispatch, and the create/join arms are
+        // what the transition work replaces; `Contract` keeps the ordinary
+        // opaque-assumption path below unchanged.
+        match rule.semantics() {
+            ExternalCallSemantics::Contract => {}
+            ExternalCallSemantics::ThreadCreate | ExternalCallSemantics::ThreadJoin => {
+                return Ok(vec![CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(
+                        CRuntimeError::UnsupportedThreadPrimitive(function.name().to_string()),
+                    ),
+                    facts: Vec::new(),
+                    obligations: Vec::new(),
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
+                }]);
+            }
+        }
         // External summaries use the same body-independent application
         // interface as verified rules, but remain an assumption: do not
         // repackage one as `CVerifiedFunctionRule`, whose type carries body

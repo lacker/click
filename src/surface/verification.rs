@@ -1,5 +1,6 @@
 use super::validation::combined_algebraic_type_definitions;
 use super::*;
+use crate::kernel::ExternalCallSemantics;
 use crate::languages::c::compiler_import::PreparedCImport;
 use crate::languages::c::target::CTarget;
 use crate::languages::cpp::{LoweredCppFunction, PreparedCppImport, lower_import};
@@ -548,6 +549,7 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
         local_struct_pointers,
     )?;
     let parsed_sources = parse_verified_sources_context(&file, sources)?;
+    let thread_primitives = c_thread_primitives(&file, sources)?;
     let predicate_definitions = combined_predicate_definitions(&file)?;
     let click_function_definitions = combined_click_function_definitions(&file)?;
     let resource_definitions = combined_resource_definitions(&file)?;
@@ -567,6 +569,7 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
         &predicate_environment,
         &click_function_environment,
         &resource_environment,
+        &thread_primitives,
     )?;
     let refinement_targets = file
         .theorem_definitions()
@@ -620,6 +623,7 @@ pub(in crate::surface) fn verify_click_project_theorem_context(
         .find(|definition| definition.name() == theorem_name)
         .ok_or_else(|| ClickError::new(format!("unknown theorem `{theorem_name}`")))?;
     let parsed_sources = parse_verified_sources_context(&file, sources)?;
+    let thread_primitives = c_thread_primitives(&file, sources)?;
     let predicate_definitions = combined_predicate_definitions(&file)?;
     let click_function_definitions = combined_click_function_definitions(&file)?;
     let resource_definitions = combined_resource_definitions(&file)?;
@@ -638,6 +642,7 @@ pub(in crate::surface) fn verify_click_project_theorem_context(
         &predicate_environment,
         &click_function_environment,
         &resource_environment,
+        &thread_primitives,
     )?;
     for target in contract_refinement_targets(&file, theorem_name) {
         let Some(function) = function_environment.get_function(&target).cloned() else {
@@ -1952,7 +1957,7 @@ fn verify_c0_sources_with_context(
     let _session = initial_function_environment
         .is_none()
         .then(crate::kernel::VerificationSession::enter);
-    let (file, parsed_sources, selected_functions, resource_struct_layouts) = {
+    let (file, parsed_sources, thread_primitives, selected_functions, resource_struct_layouts) = {
         let _timing = VerificationTimingPhase::new("frontend");
         let (
             struct_layouts,
@@ -2019,10 +2024,12 @@ fn verify_c0_sources_with_context(
                 None => None,
             }
         };
+        let thread_primitives = c_thread_primitives(&file, c_sources)?;
         check_verification_deadline()?;
         (
             file,
             parsed_sources,
+            thread_primitives,
             selected_functions,
             resource_struct_layouts,
         )
@@ -2109,6 +2116,7 @@ fn verify_c0_sources_with_context(
             &predicate_environment,
             &click_function_environment,
             &resource_environment,
+            &thread_primitives,
         )?;
         let mut function_environment =
             initial_function_environment.unwrap_or(built_function_environment);
@@ -4035,8 +4043,18 @@ fn parse_c_source_unit(
     c_sources: &CSourceContext<'_>,
     target: CTarget,
 ) -> Result<syntax::C0TranslationUnit, ClickError> {
+    Ok((*parse_c_source_unit_shared(source_path, c_sources, target)?).clone())
+}
+
+/// The same parse, shared rather than cloned. A reader that only inspects the
+/// unit's declarations has no reason to copy the whole translation unit.
+fn parse_c_source_unit_shared(
+    source_path: &str,
+    c_sources: &CSourceContext<'_>,
+    target: CTarget,
+) -> Result<Arc<syntax::C0TranslationUnit>, ClickError> {
     if let Some(unit) = c_sources.parsed_units.borrow().get(source_path) {
-        return Ok((**unit).clone());
+        return Ok(Arc::clone(unit));
     }
     let unit = if let Some(bundle) = &c_sources.bundle {
         let expanded =
@@ -4094,11 +4112,101 @@ fn parse_c_source_unit(
             ))
         })?
     };
+    let unit = Arc::new(unit);
     c_sources
         .parsed_units
         .borrow_mut()
-        .insert(source_path.to_string(), Arc::new(unit.clone()));
+        .insert(source_path.to_string(), Arc::clone(&unit));
     Ok(unit)
+}
+
+/// The thread primitives this verification recognizes, and the C declarations
+/// of them it found.
+///
+/// `pthread_create` and `pthread_join` are not ordinary external functions:
+/// their meaning is a checked kernel transition selected by the declaration's
+/// identity, so they carry no user contract. Under the default kernel target
+/// nothing is recognized and this is empty in every respect.
+#[derive(Clone, Debug)]
+pub(in crate::surface) struct CThreadPrimitives {
+    target: CTarget,
+    declared: Vec<(crate::kernel::CFunction, ExternalCallSemantics)>,
+}
+
+impl CThreadPrimitives {
+    /// Nothing recognized: the selected target models no thread API.
+    fn none(target: CTarget) -> Self {
+        Self {
+            target,
+            declared: Vec::new(),
+        }
+    }
+
+    /// The kernel semantics `name` carries here, whether or not this
+    /// verification's C sources happen to declare it. A sidecar `extern`
+    /// block is refused on the name alone, since supplying a contract for a
+    /// primitive is the error regardless of what the C declares.
+    fn semantics(&self, name: &str) -> Option<ExternalCallSemantics> {
+        crate::languages::c::threads::thread_primitive_semantics(self.target, name)
+    }
+}
+
+/// Collects the recognized thread-primitive declarations from this
+/// verification's C sources, after include expansion.
+///
+/// A declaration of one of these names whose shape differs from the modeled
+/// `<pthread.h>` projection is a different function than the one the kernel
+/// transition is written against, so it is a diagnostic naming the mismatch
+/// rather than a silently ordinary declaration.
+pub(in crate::surface) fn c_thread_primitives(
+    file: &ClickFile,
+    c_sources: &CSourceContext<'_>,
+) -> Result<CThreadPrimitives, ClickError> {
+    let target = file.selected_c_target();
+    // A C++ import has no C translation units to scan, and the C++ slice does
+    // not model threads at all.
+    if target != CTarget::X86_64LinuxUserspace || c_sources.cpp_import.is_some() {
+        return Ok(CThreadPrimitives::none(target));
+    }
+    let mut declared = Vec::new();
+    let mut seen = BTreeSet::new();
+    for source_path in &file.verifying_sources {
+        let unit = parse_c_source_unit_shared(source_path, c_sources, target)?;
+        for declaration in unit.function_declarations.values() {
+            let name = declaration.source_name();
+            let Some(semantics) =
+                crate::languages::c::threads::thread_primitive_semantics(target, name)
+            else {
+                continue;
+            };
+            if let Some(mismatch) =
+                crate::languages::c::threads::declaration_mismatch(name, declaration)
+            {
+                return Err(ClickError::new(format!("`{source_path}`: {mismatch}")));
+            }
+            // A body for one of these names would be shadowed by the rule
+            // registration, leaving the environment claiming a checked
+            // transition for a function Click had actually parsed. Refuse it
+            // instead of silently replacing the definition.
+            if unit
+                .functions
+                .iter()
+                .any(|function| function.source_name() == name)
+            {
+                return Err(ClickError::new(format!(
+                    "`{source_path}` defines `{name}`: the thread primitives carry checked \
+                     kernel semantics and cannot be defined by a verified source"
+                )));
+            }
+            if seen.insert(name.to_string()) {
+                declared.push((
+                    crate::languages::c::threads::primitive_kernel_function(declaration),
+                    semantics,
+                ));
+            }
+        }
+    }
+    Ok(CThreadPrimitives { target, declared })
 }
 
 /// Looks up a C definition using the spelling visible to Click. Header-local
@@ -5474,6 +5582,7 @@ pub(in crate::surface) fn build_function_environment(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
+    thread_primitives: &CThreadPrimitives,
 ) -> Result<CExecutionEnvironment, ClickError> {
     let mut environment = CExecutionEnvironment::new();
     for definition in contract_definitions {
@@ -5593,10 +5702,35 @@ pub(in crate::surface) fn build_function_environment(
         };
         environment = environment.with_function(function);
     }
+    // A recognized primitive is a known callee with the declaration's exact
+    // signature, plus a rule whose meaning is the named kernel transition.
+    // It carries no contract, so there is nothing here to certify.
+    for (function, semantics) in &thread_primitives.declared {
+        let rule = crate::kernel::c_thread_primitive_function_rule(function.clone(), *semantics)
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "thread primitive `{}` cannot be registered with its kernel semantics",
+                    function.name()
+                ))
+            })?;
+        environment = environment
+            .with_function(function.clone())
+            .with_external_function_rule(rule);
+    }
     for function_block in function_blocks
         .iter()
         .filter(|function| function.is_external())
     {
+        if thread_primitives
+            .semantics(function_block.signature().name())
+            .is_some()
+        {
+            return Err(ClickError::new(format!(
+                "`extern` block for `{}`: the thread primitives `pthread_create` and \
+                 `pthread_join` carry checked kernel semantics and take no user contract",
+                function_block.signature().name()
+            )));
+        }
         let parsed_function = external_c0_function(function_block);
         let (state, arguments, _, _) = initial_claim_context(
             function_block,

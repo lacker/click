@@ -11555,3 +11555,140 @@ fn c0_bool_header_constants_pointer_conversion_and_callbacks_are_typed() {
         "callback signatures must distinguish bool from int32"
     );
 }
+
+/// The frozen probe's parent must reach the kernel as direct calls to the
+/// two primitives, because the checked transitions are selected by the callee
+/// name. An indirect call, a synthesized wrapper, or a decayed callback
+/// argument would be a different program than the one the proof is about.
+#[test]
+fn the_frozen_probe_lowers_thread_calls_as_direct_primitive_calls() {
+    use crate::kernel::{CExpression, CStatement, CType, CValue};
+
+    fn collect<'a>(statement: &'a CStatement, calls: &mut Vec<(&'a str, &'a [CExpression])>) {
+        match statement {
+            CStatement::Call {
+                function_name,
+                arguments,
+            }
+            | CStatement::CallAssign {
+                function_name,
+                arguments,
+                ..
+            } => calls.push((function_name.as_str(), arguments.as_slice())),
+            CStatement::Seq(first, second) => {
+                collect(first, calls);
+                collect(second, calls);
+            }
+            CStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect(then_branch, calls);
+                collect(else_branch, calls);
+            }
+            CStatement::While { body, .. } => collect(body, calls),
+            _ => {}
+        }
+    }
+
+    fn is_null_pointer(expression: &CExpression) -> bool {
+        matches!(
+            expression,
+            CExpression::Cast {
+                expression,
+                target_type: CType::VoidPointer,
+                ..
+            } if matches!(
+                &**expression,
+                CExpression::Value(CValue::Int32(value)) if value.as_const() == Some(0)
+            )
+        )
+    }
+
+    let frozen = include_str!("../../../design/concurrency-probes/fork_join.c");
+    let sources = std::collections::BTreeMap::from([("fork_join.c", frozen)]);
+    let expanded = source::expand_includes_for_target(
+        "fork_join.c",
+        &sources,
+        target::CTarget::X86_64LinuxUserspace,
+    )
+    .expect("the narrow user-space headers should expand");
+    let unit = syntax::parse_translation_unit_for_source(
+        expanded.source(),
+        "fork_join.c",
+        expanded.line_map(),
+    )
+    .expect("the unchanged pthread probe should parse");
+    let parallel = unit
+        .functions
+        .iter()
+        .find(|function| function.source_name() == "fill_parallel")
+        .expect("the probe defines the parent");
+    let kernel = parallel.to_kernel_function();
+    let mut calls = Vec::new();
+    collect(kernel.body(), &mut calls);
+
+    // Two spawns, and three joins: one cleanup join on the failed-second-spawn
+    // path and the two on the success path. Nothing else is called.
+    assert_eq!(
+        calls
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>()
+            .iter()
+            .filter(|name| **name == "pthread_create")
+            .count(),
+        2,
+        "{calls:?}"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(name, _)| *name == "pthread_join")
+            .count(),
+        3,
+        "{calls:?}"
+    );
+    assert!(
+        calls
+            .iter()
+            .all(|(name, _)| *name == "pthread_create" || *name == "pthread_join"),
+        "{calls:?}"
+    );
+
+    for (index, (_, arguments)) in calls
+        .iter()
+        .filter(|(name, _)| *name == "pthread_create")
+        .enumerate()
+    {
+        let handle = ["first", "second"][index];
+        let job = ["first_job", "second_job"][index];
+        assert_eq!(arguments.len(), 4, "{arguments:?}");
+        assert_eq!(
+            arguments[0],
+            CExpression::AddressOf(Box::new(CExpression::Variable(handle.to_string()))),
+            "{arguments:?}"
+        );
+        assert!(is_null_pointer(&arguments[1]), "{arguments:?}");
+        assert_eq!(
+            arguments[2],
+            CExpression::FunctionAddress("fill_range".to_string()),
+            "the worker must stay a function address, not a value"
+        );
+        assert_eq!(
+            arguments[3],
+            CExpression::AddressOf(Box::new(CExpression::Variable(job.to_string()))),
+            "{arguments:?}"
+        );
+    }
+
+    for (_, arguments) in calls.iter().filter(|(name, _)| *name == "pthread_join") {
+        assert_eq!(arguments.len(), 2, "{arguments:?}");
+        assert!(
+            matches!(&arguments[0], CExpression::Variable(name) if name == "first" || name == "second"),
+            "{arguments:?}"
+        );
+        assert!(is_null_pointer(&arguments[1]), "{arguments:?}");
+    }
+}

@@ -705,6 +705,9 @@ pub(super) fn describe_runtime_error(
         crate::kernel::CRuntimeError::UnsupportedOpaqueFunctionContract(name) => format!(
             "cannot execute call to `{name}` opaquely: its contract refers to an internal program point that is unavailable at the call site"
         ),
+        crate::kernel::CRuntimeError::UnsupportedThreadPrimitive(name) => format!(
+            "the thread primitive `{name}` is not yet supported: its checked kernel semantics are not implemented, and it takes no user contract"
+        ),
         crate::kernel::CRuntimeError::AbstractFunctionPointerCall(name) => format!(
             "cannot verify call through function pointer `{name}`: no matching named contract is available for this value"
         ),

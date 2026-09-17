@@ -2818,6 +2818,11 @@ pub enum CRuntimeError {
     },
     MissingVerifiedFunctionRule(String),
     UnsupportedOpaqueFunctionContract(String),
+    /// A call to a recognized thread primitive whose checked kernel
+    /// transition is not implemented yet. The declaration is registered with
+    /// its semantics, so the call is never treated as an ordinary opaque
+    /// contract; it fails promptly instead.
+    UnsupportedThreadPrimitive(String),
     AbstractFunctionPointerCall(String),
     FunctionContract(String),
     InvalidFree(CInvalidFree),

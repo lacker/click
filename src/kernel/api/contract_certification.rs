@@ -1154,6 +1154,9 @@ pub(in crate::kernel) fn describe_certification_runtime_error(error: &CRuntimeEr
         CRuntimeError::UnsupportedOpaqueFunctionContract(name) => {
             format!("the contract of `{name}` refers to an unavailable program point")
         }
+        CRuntimeError::UnsupportedThreadPrimitive(name) => {
+            format!("the thread primitive `{name}` is not yet supported")
+        }
         CRuntimeError::AbstractFunctionPointerCall(name) => {
             format!("no named contract is available for function pointer `{name}`")
         }
