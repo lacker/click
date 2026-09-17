@@ -841,6 +841,15 @@ fn write_signed_int32_certificate(
             SignedArithmeticStep::DefinedPremise { index, term } => {
                 format!("defined {index} ({});", describe_contract_expression(term))
             }
+            SignedArithmeticStep::StrictSuccessorPremise {
+                index,
+                proposition,
+                result,
+            } => format!(
+                "strict_successor {index}: {} => {};",
+                source_click_proposition(proposition),
+                source_click_proposition(result)
+            ),
             SignedArithmeticStep::IntervalIntersect {
                 left,
                 right,

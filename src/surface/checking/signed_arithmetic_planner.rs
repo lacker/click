@@ -10,7 +10,7 @@
 use crate::kernel::proof::signed_arithmetic::{
     SignedArithmeticAtom, SignedArithmeticCarrier, SignedArithmeticCertificate,
     SignedArithmeticClaim, SignedArithmeticComparison, SignedArithmeticInterval,
-    SignedArithmeticNode, SignedArithmeticRelation,
+    SignedArithmeticNode, SignedArithmeticRelation, strict_successor_claim,
 };
 use crate::kernel::{Bitvector32Term, ConditionTerm, Proposition};
 use num_bigint::BigInt;
@@ -47,6 +47,18 @@ pub(in crate::surface) fn plan_signed_arithmetic_certificate(
             signed_claim(proposition).map(|claim| (index, claim))
         })
         .collect::<Vec<_>>();
+    // A strict comparison against a machine successor carries a second,
+    // decomposed reading that no definedness fact is needed for.  Record it
+    // beside the opaque affine reading so ordinary affine combination can use
+    // either one; this walks the listed premises once and nothing else.
+    let successors = premises
+        .iter()
+        .enumerate()
+        .filter_map(|(index, proposition)| {
+            charge_work(1)?;
+            strict_successor_claim(proposition).map(|claim| (index, claim))
+        })
+        .collect::<Vec<_>>();
 
     for (index, claim) in &claims {
         charge_claim_comparison(claim)?;
@@ -62,17 +74,23 @@ pub(in crate::surface) fn plan_signed_arithmetic_certificate(
     }
     if comparison_terms(goal).is_some_and(|(left, right, _)| {
         !contains_machine_operation(left) && !contains_machine_operation(right)
-    }) && let Some(plan) = plan_affine_from_selected_claims(premises, &claims, &expected)
-    {
-        return Some(plan);
+    }) {
+        if let Some(plan) =
+            plan_affine_from_selected_claims(premises, &claims, &successors, &expected)
+        {
+            return Some(plan);
+        }
+        if let Some(plan) = plan_equality_from_bounds(premises, &claims, &successors, &expected) {
+            return Some(plan);
+        }
     }
     if let Some(plan) = plan_affine_one_premise(&claims, &expected) {
         return Some(plan);
     }
-    if let Some(plan) = plan_machine_affine_goal(goal, premises, &claims) {
+    if let Some(plan) = plan_machine_affine_goal(goal, premises, &claims, &successors) {
         return Some(plan);
     }
-    if let Some(plan) = plan_interval_goal(goal, premises, &claims) {
+    if let Some(plan) = plan_interval_goal(goal, premises, &claims, &successors) {
         return Some(plan);
     }
     None
@@ -81,10 +99,45 @@ pub(in crate::surface) fn plan_signed_arithmetic_certificate(
 fn plan_affine_from_selected_claims(
     premises: &[Proposition],
     claims: &[(usize, SignedArithmeticClaim)],
+    successors: &[(usize, SignedArithmeticClaim)],
     expected: &SignedArithmeticClaim,
 ) -> Option<SignedArithmeticCertificate> {
-    let mut planner = Planner::new(premises, claims);
+    let mut planner = Planner::new(premises, claims, successors);
     let conclusion = planner.affine_claim(expected)?;
+    Some(certificate(planner.nodes, conclusion))
+}
+
+/// Close an equality goal by pinning its affine difference from both sides.
+///
+/// The kernel's `EqualityFromBounds` rule wants two `LessEqual` claims that
+/// are exact negations of each other, so this plans exactly those two bounds
+/// and nothing else; the ordinary affine route already covers every goal that
+/// one selected claim implies directly.
+fn plan_equality_from_bounds(
+    premises: &[Proposition],
+    claims: &[(usize, SignedArithmeticClaim)],
+    successors: &[(usize, SignedArithmeticClaim)],
+    expected: &SignedArithmeticClaim,
+) -> Option<SignedArithmeticCertificate> {
+    if expected.relation != SignedArithmeticRelation::Equal {
+        return None;
+    }
+    charge_claim_comparison(expected)?;
+    let lower = SignedArithmeticClaim {
+        carrier: expected.carrier,
+        relation: SignedArithmeticRelation::LessEqual,
+        terms: expected.terms.clone(),
+        constant: expected.constant.clone(),
+    };
+    let upper = equality_direction(expected, true);
+    let mut planner = Planner::new(premises, claims, successors);
+    let lower_node = planner.affine_claim(&lower)?;
+    let upper_node = planner.affine_claim(&upper)?;
+    let conclusion = planner.push(SignedArithmeticNode::EqualityFromBounds {
+        lower: lower_node,
+        upper: upper_node,
+        result: expected.clone(),
+    })?;
     Some(certificate(planner.nodes, conclusion))
 }
 
@@ -473,10 +526,11 @@ fn plan_machine_affine_goal(
     goal: &Proposition,
     premises: &[Proposition],
     claims: &[(usize, SignedArithmeticClaim)],
+    successors: &[(usize, SignedArithmeticClaim)],
 ) -> Option<SignedArithmeticCertificate> {
     let (left_operation, right_operation) = affine_operation_terms(goal)?;
     let expected = decomposed_signed_claim(goal)?;
-    let mut planner = Planner::new(premises, claims);
+    let mut planner = Planner::new(premises, claims, successors);
     let left_evidence = match left_operation {
         Some(term) => {
             // Affine conclusions decompose their operation roots using the
@@ -816,9 +870,19 @@ struct BoundCandidates {
     upper: Option<BoundCandidate>,
 }
 
+/// Where one usable affine claim comes from: the opaque reading of a listed
+/// premise, or its decomposed strict machine-successor reading.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ClaimSource {
+    Premise(usize),
+    StrictSuccessor(usize),
+}
+
 struct Planner<'a> {
     premises: &'a [Proposition],
     claims: &'a [(usize, SignedArithmeticClaim)],
+    successors: &'a [(usize, SignedArithmeticClaim)],
+    successor_cache: HashMap<usize, usize>,
     nodes: Vec<SignedArithmeticNode>,
     intervals: Vec<Option<SignedArithmeticInterval>>,
     interval_cache: HashMap<SignedArithmeticAtom, usize>,
@@ -830,10 +894,16 @@ struct Planner<'a> {
 }
 
 impl<'a> Planner<'a> {
-    fn new(premises: &'a [Proposition], claims: &'a [(usize, SignedArithmeticClaim)]) -> Self {
+    fn new(
+        premises: &'a [Proposition],
+        claims: &'a [(usize, SignedArithmeticClaim)],
+        successors: &'a [(usize, SignedArithmeticClaim)],
+    ) -> Self {
         Self {
             premises,
             claims,
+            successors,
+            successor_cache: HashMap::new(),
             nodes: Vec::new(),
             intervals: Vec::new(),
             interval_cache: HashMap::new(),
@@ -881,12 +951,46 @@ impl<'a> Planner<'a> {
         Some(node)
     }
 
+    /// Materialize the node that carries one selected source's claim.
+    fn claim_node(&mut self, source: ClaimSource, claim: &SignedArithmeticClaim) -> Option<usize> {
+        match source {
+            ClaimSource::Premise(index) => self.premise(index, claim),
+            ClaimSource::StrictSuccessor(index) => {
+                if let Some(node) = self.successor_cache.get(&index) {
+                    return Some(*node);
+                }
+                let node = self.push(SignedArithmeticNode::StrictSuccessorPremise {
+                    index,
+                    result: claim.clone(),
+                })?;
+                self.successor_cache.insert(index, node);
+                Some(node)
+            }
+        }
+    }
+
+    /// The claims this planner may select, each tagged with the reading of a
+    /// listed premise that produced it.  The list is exactly one entry per
+    /// listed premise per available reading; nothing else is consulted.
+    fn selected_claims(&self) -> Vec<(ClaimSource, SignedArithmeticClaim)> {
+        self.claims
+            .iter()
+            .map(|(index, claim)| (ClaimSource::Premise(*index), claim.clone()))
+            .chain(
+                self.successors
+                    .iter()
+                    .map(|(index, claim)| (ClaimSource::StrictSuccessor(*index), claim.clone())),
+            )
+            .collect()
+    }
+
     fn affine_claim(&mut self, target: &SignedArithmeticClaim) -> Option<usize> {
-        for (index, claim) in self.claims {
+        let selected = self.selected_claims();
+        for (source, claim) in &selected {
             charge_work(1)?;
             charge_claim_comparison(claim)?;
             if claim == target {
-                return self.premise(*index, claim);
+                return self.claim_node(*source, claim);
             }
             if claim.relation == target.relation
                 && let Some(coefficient) = scale_factor(claim, target)
@@ -895,12 +999,12 @@ impl<'a> Planner<'a> {
                         && (claim.relation != SignedArithmeticRelation::Disequal
                             || !coefficient.is_zero())))
             {
-                let source = self.premise(*index, claim)?;
+                let node = self.claim_node(*source, claim)?;
                 if coefficient == BigInt::one() {
-                    return Some(source);
+                    return Some(node);
                 }
                 return self.push(SignedArithmeticNode::Scale {
-                    source,
+                    source: node,
                     coefficient,
                     result: target.clone(),
                 });
@@ -910,10 +1014,10 @@ impl<'a> Planner<'a> {
                 && claim.terms == target.terms
                 && claim.constant >= target.constant
             {
-                let source = self.premise(*index, claim)?;
+                let node = self.claim_node(*source, claim)?;
                 let weakening = &target.constant - &claim.constant;
                 if weakening.is_zero() {
-                    return Some(source);
+                    return Some(node);
                 }
                 let trivial = self.push(SignedArithmeticNode::Trivial {
                     result: SignedArithmeticClaim {
@@ -924,7 +1028,7 @@ impl<'a> Planner<'a> {
                     },
                 })?;
                 return self.push(SignedArithmeticNode::Add {
-                    left: source,
+                    left: node,
                     right: trivial,
                     result: target.clone(),
                 });
@@ -935,14 +1039,14 @@ impl<'a> Planner<'a> {
         // preserves the useful five-premise bound case without a quadratic
         // pair scan over unrelated facts.
         let mut index: HashMap<u64, Vec<usize>> = HashMap::new();
-        for (position, (_, claim)) in self.claims.iter().enumerate() {
+        for (position, (_, claim)) in selected.iter().enumerate() {
             charge_work(1)?;
             index
                 .entry(claim_fingerprint(claim))
                 .or_default()
                 .push(position);
         }
-        for (left_index, left) in self.claims.iter() {
+        for (left_source, left) in &selected {
             if left.relation != SignedArithmeticRelation::LessEqual {
                 continue;
             }
@@ -952,12 +1056,12 @@ impl<'a> Planner<'a> {
             };
             for right_position in right_positions {
                 charge_work(1)?;
-                let (right_index, right) = &self.claims[*right_position];
-                if *right_index == *left_index || add_affine_claims(left, right)? != *target {
+                let (right_source, right) = &selected[*right_position];
+                if right_source == left_source || add_affine_claims(left, right)? != *target {
                     continue;
                 }
-                let left_node = self.premise(*left_index, left)?;
-                let right_node = self.premise(*right_index, right)?;
+                let left_node = self.claim_node(*left_source, left)?;
+                let right_node = self.claim_node(*right_source, right)?;
                 return self.push(SignedArithmeticNode::Add {
                     left: left_node,
                     right: right_node,
@@ -1696,9 +1800,10 @@ fn plan_interval_goal(
     goal: &Proposition,
     premises: &[Proposition],
     claims: &[(usize, SignedArithmeticClaim)],
+    successors: &[(usize, SignedArithmeticClaim)],
 ) -> Option<SignedArithmeticCertificate> {
     let (left, right, comparison) = comparison_terms(goal)?;
-    let mut planner = Planner::new(premises, claims);
+    let mut planner = Planner::new(premises, claims, successors);
     let left_node = planner.build_interval(left)?;
     let right_node = planner.build_interval(right)?;
     let result = SignedArithmeticComparison::from_comparison(comparison);
@@ -1921,6 +2026,83 @@ mod tests {
         let plan = plan_signed_arithmetic_certificate(&goal, &premises);
         assert!(plan.is_some(), "{plan:?}");
         plan.expect("plan").check(&goal, &premises).expect("check");
+    }
+
+    #[test]
+    fn opposite_bounds_plan_an_equality() {
+        let a = var(1);
+        let b = var(2);
+        let goal = proposition(
+            ConditionTerm::Bitvector32Equal(Box::new(a.clone()), Box::new(b.clone())),
+            true,
+        );
+        let premises = vec![le(a.clone(), b.clone()), le(b, a)];
+        let plan = check_plan(&goal, &premises);
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::EqualityFromBounds { .. }))
+        );
+    }
+
+    #[test]
+    fn one_bound_does_not_plan_an_equality() {
+        let a = var(1);
+        let b = var(2);
+        let goal = proposition(
+            ConditionTerm::Bitvector32Equal(Box::new(a.clone()), Box::new(b.clone())),
+            true,
+        );
+        let premises = vec![le(a, b)];
+        assert!(plan_signed_arithmetic_certificate(&goal, &premises).is_none());
+    }
+
+    #[test]
+    fn strict_machine_successor_premise_plans_a_bound() {
+        let a = var(1);
+        let b = var(2);
+        let successor = Bitvector32Term::Add(Box::new(b.clone()), Box::new(constant(1)));
+        let goal = le(a.clone(), b);
+        let premises = vec![lt(a, successor)];
+        let plan = check_plan(&goal, &premises);
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::StrictSuccessorPremise { .. }))
+        );
+    }
+
+    #[test]
+    fn a_wider_machine_offset_is_not_a_successor() {
+        let a = var(1);
+        let b = var(2);
+        let offset = Bitvector32Term::Add(Box::new(b.clone()), Box::new(constant(2)));
+        let goal = le(a.clone(), b);
+        let premises = vec![lt(a, offset)];
+        assert!(plan_signed_arithmetic_certificate(&goal, &premises).is_none());
+    }
+
+    #[test]
+    fn a_successor_bound_and_its_reverse_plan_an_equality() {
+        let lo = var(1);
+        let k = var(2);
+        let successor = Bitvector32Term::Add(Box::new(lo.clone()), Box::new(constant(1)));
+        let goal = proposition(
+            ConditionTerm::Bitvector32Equal(Box::new(k.clone()), Box::new(lo.clone())),
+            true,
+        );
+        let premises = vec![le(lo, k.clone()), lt(k, successor)];
+        let plan = check_plan(&goal, &premises);
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::StrictSuccessorPremise { .. }))
+        );
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::EqualityFromBounds { .. }))
+        );
     }
 
     #[test]
@@ -2405,7 +2587,7 @@ mod tests {
 
     #[test]
     fn planner_rejects_node_count_above_the_certificate_bound() {
-        let mut planner = Planner::new(&[], &[]);
+        let mut planner = Planner::new(&[], &[], &[]);
         let result = SignedArithmeticClaim {
             carrier: SignedArithmeticCarrier::SignedInt32,
             relation: SignedArithmeticRelation::LessEqual,
