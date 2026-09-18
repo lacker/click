@@ -144,9 +144,22 @@ proof. A shared replacement is validated once and its shallow root is charged
 at each occurrence.
 
 Memory loads and fold atoms retain exact snapshot identity. Alpha-equivalent
-loads from one retained snapshot may match; a different snapshot, endpoint,
-body, carrier, or definedness context does not. Snapshot identity is opaque to
+loads from one retained snapshot may match; a different snapshot, body,
+carrier, or definedness context does not. Snapshot identity is opaque to
 arithmetic and is never inferred from a raw term identifier or fingerprint.
+
+Endpoints are the one fold component compared up to equality rather than
+identity. A range fold reads nothing but its endpoints, its initial value, and
+its body, so two folds with the same initial value and the same body denote
+the same Integer once their start endpoints are equal and their end endpoints
+are equal. Endpoint equality is decided without any search over the ambient
+facts: interner identity, an exact recorded equality between exactly those two
+terms, or the two endpoints' affine normal form. The last route is what makes
+`(hi - 1) + 1` and `hi` one endpoint, which is how an induction step carries
+the append law's `end + 1` back to its goal; wrapping machine arithmetic makes
+it exact, so it needs no ordering or definedness side condition. The body
+remains exact, so a fold over a written array is never equated with the same
+fold over the snapshot before the write.
 
 ## Work budgets and certificate scaling
 
@@ -178,3 +191,5 @@ to make an Integer proof succeed.
 - [Canonical unchanged-C summation regression](https://github.com/lacker/click/blob/master/mdtests/integer_sum_range_fold.md)
 - [Missing element-bound regression](https://github.com/lacker/click/blob/master/mdtests/integer_sum_range_fold_missing_bounds.md)
 - [Intermediate-overflow regression](https://github.com/lacker/click/blob/master/mdtests/integer_sum_range_fold_intermediate_overflow.md)
+- [Endpoint congruence regression](https://github.com/lacker/click/blob/master/mdtests/fold_endpoints_rewrite_under_equality.md)
+- [Endpoint congruence refusal](https://github.com/lacker/click/blob/master/mdtests/fold_endpoints_reject_a_different_body.md)

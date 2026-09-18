@@ -8,7 +8,9 @@
 pub(crate) mod arithmetic_special;
 mod branches;
 mod execution;
-mod fact_keys;
+// `kernel::reasoning` reaches the snapshot-aware alpha identity here for the
+// range-fold endpoint congruence, the same way it reaches `term_rewrite`.
+pub(in crate::kernel) mod fact_keys;
 pub(crate) mod fact_reasoning;
 mod facts;
 mod integer_affine_atoms;

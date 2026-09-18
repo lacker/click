@@ -663,6 +663,270 @@ pub(in crate::kernel) fn range_fold_terms_alpha_equivalent(
         )
 }
 
+/// Endpoint congruence for an `Integer`-carrier range fold.
+///
+/// Two range folds denote the same Integer when they have the same initial
+/// value, the same body, and equal endpoints. `range_fold_terms_alpha_equivalent`
+/// is the same rule for the int32 carrier; the Integer carrier had no
+/// counterpart, so `a == b` never bridged `fold(lo..a)` to `fold(lo..b)` and
+/// no induction step could carry the append law's `end + 1` back to its goal.
+///
+/// Soundness. `(start..end).fold(initial, |acc, item| body)` is defined by
+/// recursion on the half-open index range alone: it is `initial` when
+/// `end <= start`, and otherwise `body[acc := fold(start..end - 1), item :=
+/// end - 1]`. The value therefore depends on nothing but `(start, end,
+/// initial, body)`, so equal components give equal values. A fold's endpoints
+/// sit outside its two binders, so re-indexing the left fold at the right
+/// fold's provably equal endpoints does not change its value. What is left is
+/// whether the two re-indexed folds are the same term up to their binders,
+/// and that question already has one checked answer in the kernel:
+/// [`crate::kernel::proof::fact_keys::integer_terms_alpha_equivalent`]. Its
+/// snapshot-aware alpha key is what keeps a memory-reading body honest --- a
+/// load carries its snapshot identity into the key, so two folds over
+/// different snapshots of one array are never equated --- and it refuses an
+/// opaque pure-function application or an algebraic match rather than
+/// guessing at their binder occurrences. Anything short of `Some(true)`,
+/// including the `None` it returns when its own work budget runs out, is a
+/// refusal here.
+///
+/// Endpoint equality is decided by [`fold_endpoint_terms_proven_equal`] and
+/// its Integer counterpart, which answer only from interner identity, an
+/// exact recorded equality between exactly those two terms, or the affine
+/// normal form of the two endpoints.
+///
+/// Cost. Two endpoint comparisons, each an interner-identity test, at most two
+/// keyed lookups in `condition_facts`, and one affine flattening linear in the
+/// two endpoint terms; then one alpha key per fold, under that key builder's
+/// own work budget. Nothing scans the ambient facts and nothing recurses back
+/// into `decide`.
+pub(in crate::kernel) fn integer_range_fold_terms_alpha_equivalent(
+    left: &SharedIntegerTerm,
+    right: &SharedIntegerTerm,
+    assumptions: &PureFactContext,
+) -> bool {
+    let (
+        IntegerTerm::RangeFold {
+            index: left_index,
+            initial: left_initial,
+            accumulator: left_accumulator,
+            item: left_item,
+            body: left_body,
+        },
+        IntegerTerm::RangeFold {
+            index: right_index, ..
+        },
+    ) = (left.as_ref(), right.as_ref())
+    else {
+        return false;
+    };
+
+    if !integer_range_fold_indices_proven_equal(left_index, right_index, assumptions) {
+        return false;
+    }
+
+    let reindexed = SharedIntegerTerm::intern(IntegerTerm::RangeFold {
+        index: right_index.clone(),
+        initial: left_initial.clone(),
+        accumulator: *left_accumulator,
+        item: *left_item,
+        body: left_body.clone(),
+    });
+    crate::kernel::proof::fact_keys::integer_terms_alpha_equivalent(&reindexed, right) == Some(true)
+}
+
+fn integer_range_fold_indices_proven_equal(
+    left: &IntegerRangeFoldIndex,
+    right: &IntegerRangeFoldIndex,
+    assumptions: &PureFactContext,
+) -> bool {
+    match (left, right) {
+        (
+            IntegerRangeFoldIndex::Int32 {
+                start: left_start,
+                end: left_end,
+            },
+            IntegerRangeFoldIndex::Int32 {
+                start: right_start,
+                end: right_end,
+            },
+        ) => {
+            fold_endpoint_terms_proven_equal(left_start.value(), right_start.value(), assumptions)
+                && fold_endpoint_terms_proven_equal(
+                    left_end.value(),
+                    right_end.value(),
+                    assumptions,
+                )
+        }
+        (
+            IntegerRangeFoldIndex::Integer {
+                start: left_start,
+                end: left_end,
+            },
+            IntegerRangeFoldIndex::Integer {
+                start: right_start,
+                end: right_end,
+            },
+        ) => {
+            integer_fold_endpoint_terms_proven_equal(left_start, right_start, assumptions)
+                && integer_fold_endpoint_terms_proven_equal(left_end, right_end, assumptions)
+        }
+        // An int32 endpoint and an Integer endpoint index different fold
+        // definitions; nothing here relates the two carriers.
+        _ => false,
+    }
+}
+
+/// Whether two int32 fold endpoints are the same value.
+///
+/// Three routes, none of them a search over the ambient facts:
+///
+/// 1. interner identity, which is the shared endpoint node's own equality;
+/// 2. an equality between exactly these two terms already recorded as a fact,
+///    found by a keyed lookup (`exact_condition_value` also tries the mirrored
+///    orientation of an int32 equality);
+/// 3. the two terms' affine normal forms, which is what makes `(hi - 1) + 1`
+///    and `hi` the same endpoint.
+///
+/// Route 3 needs no definedness fact. `Bitvector32Term`'s `Add` and `Subtract`
+/// denote wrapping 32-bit operations — a C signed overflow is a separate
+/// definedness obligation, not a change of the term's value — so a term's
+/// value is exactly its normal form's constant plus its signed atoms in
+/// Z/2^32, and equal normal forms are equal values whether or not any
+/// intermediate would overflow.
+fn fold_endpoint_terms_proven_equal(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    left == right
+        || assumptions.exact_condition_value(&ConditionTerm::equal(left.clone(), right.clone()))
+            == Some(true)
+        || bitvector_affine_forms_equal(left, right)
+}
+
+/// The Integer-endpoint counterpart of [`fold_endpoint_terms_proven_equal`].
+///
+/// `exact_condition_value` has no mirrored orientation for an Integer
+/// equality, so both orientations are looked up here. Integer `Add`,
+/// `Subtract`, and `Negate` are exact unbounded arithmetic, so the affine
+/// normal form is exact with no side condition at all.
+fn integer_fold_endpoint_terms_proven_equal(
+    left: &SharedIntegerTerm,
+    right: &SharedIntegerTerm,
+    assumptions: &PureFactContext,
+) -> bool {
+    left == right
+        || assumptions
+            .exact_condition_value(&ConditionTerm::IntegerEqual(left.clone(), right.clone()))
+            == Some(true)
+        || assumptions
+            .exact_condition_value(&ConditionTerm::IntegerEqual(right.clone(), left.clone()))
+            == Some(true)
+        || integer_affine_forms_equal(left.as_ref(), right.as_ref())
+}
+
+/// Flatten `term` into signed atoms and a wrapping 32-bit constant.
+///
+/// Only `Add`, `Subtract`, and `Constant` are interpreted; every other node,
+/// including the 64-bit constants and arithmetic that share this arena, is an
+/// opaque atom. The walk visits each node of `term` once.
+fn collect_bitvector_affine_atoms(
+    term: &Bitvector32Term,
+    positive: bool,
+    atoms: &mut Vec<(bool, Bitvector32Term)>,
+    constant: &mut u32,
+) {
+    match term {
+        Bitvector32Term::Add(left, right) => {
+            collect_bitvector_affine_atoms(left, positive, atoms, constant);
+            collect_bitvector_affine_atoms(right, positive, atoms, constant);
+        }
+        Bitvector32Term::Subtract(left, right) => {
+            collect_bitvector_affine_atoms(left, positive, atoms, constant);
+            collect_bitvector_affine_atoms(right, !positive, atoms, constant);
+        }
+        Bitvector32Term::Constant(value) => {
+            *constant = if positive {
+                constant.wrapping_add(*value)
+            } else {
+                constant.wrapping_sub(*value)
+            };
+        }
+        term => atoms.push((positive, term.clone())),
+    }
+}
+
+fn bitvector_affine_forms_equal(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    let mut left_atoms = Vec::new();
+    let mut left_constant = 0u32;
+    collect_bitvector_affine_atoms(left, true, &mut left_atoms, &mut left_constant);
+
+    let mut right_atoms = Vec::new();
+    let mut right_constant = 0u32;
+    collect_bitvector_affine_atoms(right, true, &mut right_atoms, &mut right_constant);
+
+    left_constant == right_constant && affine_atom_multisets_equal(left_atoms, right_atoms)
+}
+
+/// The Integer counterpart of [`collect_bitvector_affine_atoms`]; `Negate`
+/// flips the sign of its whole operand and the constant is exact.
+fn collect_integer_affine_atoms(
+    term: &IntegerTerm,
+    positive: bool,
+    atoms: &mut Vec<(bool, IntegerTerm)>,
+    constant: &mut num_bigint::BigInt,
+) {
+    match term {
+        IntegerTerm::Add(left, right) => {
+            collect_integer_affine_atoms(left.as_ref(), positive, atoms, constant);
+            collect_integer_affine_atoms(right.as_ref(), positive, atoms, constant);
+        }
+        IntegerTerm::Subtract(left, right) => {
+            collect_integer_affine_atoms(left.as_ref(), positive, atoms, constant);
+            collect_integer_affine_atoms(right.as_ref(), !positive, atoms, constant);
+        }
+        IntegerTerm::Negate(value) => {
+            collect_integer_affine_atoms(value.as_ref(), !positive, atoms, constant);
+        }
+        IntegerTerm::Constant(value) => {
+            if positive {
+                *constant += value;
+            } else {
+                *constant -= value;
+            }
+        }
+        term => atoms.push((positive, term.clone())),
+    }
+}
+
+fn integer_affine_forms_equal(left: &IntegerTerm, right: &IntegerTerm) -> bool {
+    let mut left_atoms = Vec::new();
+    let mut left_constant = num_bigint::BigInt::from(0);
+    collect_integer_affine_atoms(left, true, &mut left_atoms, &mut left_constant);
+
+    let mut right_atoms = Vec::new();
+    let mut right_constant = num_bigint::BigInt::from(0);
+    collect_integer_affine_atoms(right, true, &mut right_atoms, &mut right_constant);
+
+    left_constant == right_constant && affine_atom_multisets_equal(left_atoms, right_atoms)
+}
+
+fn affine_atom_multisets_equal<T: PartialEq>(
+    left: Vec<(bool, T)>,
+    mut right: Vec<(bool, T)>,
+) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    for atom in left {
+        let Some(index) = right.iter().position(|other| other == &atom) else {
+            return false;
+        };
+        right.remove(index);
+    }
+    right.is_empty()
+}
+
 fn bitvector_terms_alpha_equivalent(
     left: &Bitvector32Term,
     right: &Bitvector32Term,

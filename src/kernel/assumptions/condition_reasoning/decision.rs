@@ -335,6 +335,20 @@ impl PureFactContext {
                 {
                     return Some(true);
                 }
+                // The Integer carrier's counterpart of the fold congruence
+                // the int32 equality above reaches through
+                // `range_fold_terms_alpha_equivalent`: two range folds with
+                // the same initial value and body are equal when their
+                // endpoints are. The helper matches two `RangeFold` nodes
+                // before it consults anything, so every other Integer
+                // equality pays one enum test.
+                if let ConditionTerm::IntegerEqual(left, right) = condition
+                    && super::super::super::reasoning::integer_range_fold_terms_alpha_equivalent(
+                        left, right, self,
+                    )
+                {
+                    return Some(true);
+                }
                 // Pointer conditions are already in their canonical structural
                 // form: `simplify_condition_under_assumptions` only clones
                 // them. Avoid cloning and then deeply comparing symbolic
