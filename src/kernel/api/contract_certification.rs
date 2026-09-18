@@ -2562,40 +2562,18 @@ fn shifted_order_condition_proven(
 
 /// Compares two range folds up to renaming of their bound accumulator and
 /// item variables; bound variables are freshened per lowering pass.
+///
+/// Renaming the right fold's binders to the left fold's and comparing the two
+/// bodies syntactically is not that comparison. Substituting `right_acc :=
+/// left_acc` into the right body merges the right body's *free* occurrences of
+/// `left_acc` with the left body's *bound* ones, so a fold that returns its
+/// initial value and a fold that returns the enclosing accumulator compare
+/// equal whenever the two happen to share an id — which fold binder names,
+/// hashed into a shared id space, readily do. The kernel's snapshot-aware
+/// alpha identity keeps bound and free occurrences apart by construction, so
+/// ask it instead.
 fn range_folds_alpha_equivalent(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
-    let (
-        Bitvector32Term::RangeFold {
-            start: left_start,
-            end: left_end,
-            initial: left_initial,
-            accumulator: left_accumulator,
-            item: left_item,
-            body: left_body,
-        },
-        Bitvector32Term::RangeFold {
-            start: right_start,
-            end: right_end,
-            initial: right_initial,
-            accumulator: right_accumulator,
-            item: right_item,
-            body: right_body,
-        },
-    ) = (left, right)
-    else {
-        return false;
-    };
-    left_start == right_start && left_end == right_end && left_initial == right_initial && {
-        let renamed = crate::kernel::reasoning::substitute_bitvector_variable(
-            &crate::kernel::reasoning::substitute_bitvector_variable(
-                right_body,
-                *right_accumulator,
-                &Bitvector32Term::Variable(*left_accumulator),
-            ),
-            *right_item,
-            &Bitvector32Term::Variable(*left_item),
-        );
-        renamed == **left_body
-    }
+    crate::kernel::proof::fact_keys::bitvector_folds_alpha_equivalent(left, right) == Some(true)
 }
 
 /// Splits both offsets into non-constant atoms plus a constant shift,

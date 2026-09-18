@@ -1175,6 +1175,58 @@ pub(crate) fn integer_fold_alpha_key(term: &SharedIntegerTerm) -> Option<Integer
     })
 }
 
+/// Whether two int32-carrier range folds are the same term up to their bound
+/// accumulator and item variables.
+///
+/// This is [`integer_terms_alpha_equivalent`]'s int32 counterpart and shares
+/// its whole implementation: the snapshot-aware alpha key builder. That
+/// builder gives every binder occurrence a structural ordinal
+/// ([`AlphaVariableKey::Bound`]) and every free occurrence its own identity
+/// ([`AlphaVariableKey::Free`]), so a variable bound in one fold can never
+/// match a free variable of the same id in the other — which is exactly the
+/// distinction a `left == right` name comparison loses. Binders are restored
+/// when a nested fold's body is finished, so shadowing is handled too.
+///
+/// Only a root `Bitvector32Term::RangeFold` on each side is admitted. A
+/// caller with anything else, or a term outside the key builder's supported
+/// fragment (an opaque Click function application, an algebraic match), or
+/// one whose key exhausts the work budget, gets `None` and keeps its ordinary
+/// proof path rather than treating a partial key as authority.
+pub(crate) fn bitvector_folds_alpha_equivalent(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> Option<bool> {
+    let (left_key, left_work) = bitvector_fold_alpha_key(left)?;
+    let (right_key, right_work) = bitvector_fold_alpha_key(right)?;
+    if crate::instrumentation::deadline_exceeded_with_work(left_work.saturating_add(right_work)) {
+        return None;
+    }
+    Some(left_key == right_key)
+}
+
+/// Build the snapshot-aware alpha identity of one int32 range fold, with the
+/// work its construction charged. Mirrors [`integer_fold_alpha_key`].
+fn bitvector_fold_alpha_key(term: &Bitvector32Term) -> Option<(AlphaBitvectorKey, usize)> {
+    if !matches!(term, Bitvector32Term::RangeFold { .. }) {
+        return None;
+    }
+    let mut environment = AlphaBindings {
+        integer: BTreeMap::new(),
+        bitvector: BTreeMap::new(),
+        integer_scope: 0,
+        bitvector_scope: 0,
+        next_scope_id: 1,
+        snapshot_aware: true,
+        registered_load_stack: BTreeSet::new(),
+        registered_load_memo: HashMap::new(),
+        load_interner: None,
+        work_units: 0,
+    };
+    let mut next_binder = 0;
+    let key = alpha_bitvector_key_with_bindings::<false>(term, &mut environment, &mut next_binder)?;
+    Some((key, environment.work_units))
+}
+
 struct AlphaBindings {
     integer: BTreeMap<Variable, usize>,
     bitvector: BTreeMap<Variable, usize>,
