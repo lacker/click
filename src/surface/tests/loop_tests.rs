@@ -2167,21 +2167,14 @@ fn body_final_branch_preservation_completes_at_typed_back_edge_boundary() {
         "explicit body-final branch preservation should complete at the typed back-edge boundary",
     );
 
-    // The omitted-phase planner reaches the same boundary — it plans the
-    // branch and gets as far as the back-edge invariant bundle — but it does
-    // not yet plan the ranking members a `decreases` clause adds there. The
-    // refusal is prompt and names exactly what stayed open, and the explicit
-    // branch proof above is the repair, so this pins the frontier rather than
-    // claiming the planner covers it.
+    // The omitted-phase planner reaches the same boundary and closes the whole
+    // back-edge bundle there, including the two members the `decreases` clause
+    // adds. Both arms carry the C branch condition as a named premise, so the
+    // ranking members are ordinary arithmetic certificates over the loop head's
+    // own clauses.
     let automatic = template.replace("{preserve}", "");
-    let planned = verify_c0_sources(&automatic, &sources)
-        .expect_err("the omitted-phase planner does not yet rank a body-final branch's back edge");
-    let message = planned.message().to_string();
-    assert!(
-        message.contains("closure body did not prove every invariant obligation")
-            && message.contains("this loop declares `decreases`, so the bundle also has"),
-        "the refusal should reach the ranking members of the back-edge bundle: {message}"
-    );
+    verify_c0_sources(&automatic, &sources)
+        .expect("automatic preservation should plan through the body-final branch to the boundary");
 
     let broken = template.replace(
         "{preserve}",

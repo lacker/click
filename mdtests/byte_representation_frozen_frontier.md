@@ -1,4 +1,4 @@
-# The frozen byte-representation probe stops at the typed reload
+# The frozen byte-representation probe stops after the typed reload
 
 This is the import/load checkpoint for the P1
 [byte-representation demo](../../issues/byte-representation-demo.md). The C
@@ -9,11 +9,26 @@ record, with `memcpy` roundtripping all `sizeof(struct record)` bytes through
 `result == 18 or result == -1` contract. It is not evidence that the
 roundtrip verifies; it pins the current bounded proof frontier.
 
-`execute()` runs 33 small steps through all four allocations, the stores,
-and both `memcpy` calls (whose `bytes_equal` postcondition is established),
-then fails on the `dst->tag` typed load: owning the copied bytes does not by
-itself establish a valid typed value. That value correspondence is the next
-implementation slice.
+The direct-copy representation rule now carries the typed reload through both
+`memcpy` calls: `dst->tag` and `dst->target` read the copied values, so the
+frozen probe advances to its `free` sequence. It then stops on a pre-existing
+allocation-resource gap unrelated to the byte model: an `extern` contract's
+`owns destination[0..bytes]` over an allocation-backed buffer duplicates the
+allocation authority, so a later `free` reports a missing `owns
+allocation(...)` fact. The minimal reduction is two byte buffers with no typed
+values at all:
+
+```text
+unsigned char *a = malloc(4);
+unsigned char *b = malloc(16);
+unsigned char *c = malloc(16);
+memcpy(b, a, 4);
+memcpy(c, b, 16);
+free(a); free(b); free(c);
+```
+
+That allocation gap is the next blocker for this probe; the pointer half and
+the buffer hop's representation carrier remain in the issue.
 
 ```c filename=rep_copy.c
 void *malloc(unsigned long size);
@@ -74,5 +89,5 @@ int f() {
 ```
 
 ```expect
-fail: read of uninitialized storage
+fail: missing resource fact
 ```

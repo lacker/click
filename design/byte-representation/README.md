@@ -39,18 +39,33 @@ interface. No proof-only locals, branches, helper calls, or identifier
 changes were added to make any current proof pass: there is no passing proof
 at this checkpoint.
 
+## Direct representation copy landed
+
+The kernel now attaches a checked representation-copy effect to the exact
+standard-library `memcpy` declaration (not to the spelling): after the external
+contract's havoc, each source cell whose complete byte representation lies in
+the copied range is planted at the mapped destination offset. A partial cell, a
+symbolic range, or an unaligned destination is left alone, and an untyped source
+has no cells, so a raw byte copy still establishes nothing typed.
+
+`mdtests/byte_representation_scalar_copy.md` verifies a complete direct copy of
+an initialized `unsigned int`; `byte_representation_partial_copy_frontier.md`
+and `byte_representation_untyped_source_frontier.md` pin that a split cell and
+an untyped source still do not establish the value.
+
 ## Current frontier (2026-09-17)
 
-The frozen source parses and loads. `mdtests/byte_representation_frozen_frontier.md`
-embeds it byte for byte with the intended `result == 18 or result == -1`
-contract and records the bounded failure: `execute()` runs 33 small steps
-through all four allocations, the stores, and both `memcpy` calls (whose
-`bytes_equal` postcondition is established), then stops at
-`read of uninitialized storage` on the `dst->tag` typed load. Byte ownership
-and provenance already flow — the post-copy state owns the destination heap
-block under both byte and typed footprints — but `bytes_equal` over the
-complete representation does not establish typed-load validity. That value
-correspondence is the next implementation slice, not part of this freeze.
+`mdtests/byte_representation_frozen_frontier.md` embeds the frozen source byte
+for byte with the intended `result == 18 or result == -1` contract. The
+representation rule now carries the typed reload through both `memcpy` calls,
+so `dst->tag` and `dst->target` read the copied values. `execute()` then
+advances to the `free` sequence and stops on a pre-existing allocation-resource
+gap unrelated to the byte model: an `extern` contract's `owns
+destination[0..bytes]` over an allocation-backed buffer duplicates the
+allocation authority, so a later `free` reports a missing `owns allocation(...)`
+fact. The reduction is two byte buffers and no typed values. That gap is the
+next blocker for this probe. The representation carrier through the untyped
+buffer and the pointer-provenance negatives remain in the issue.
 
 ## Deferred scope
 

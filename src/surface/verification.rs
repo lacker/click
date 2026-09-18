@@ -1,4 +1,4 @@
-use super::validation::combined_algebraic_type_definitions;
+use super::validation::{combined_algebraic_type_definitions, standard_library_function_block};
 use super::*;
 use crate::languages::c::compiler_import::PreparedCImport;
 use crate::languages::c::target::CTarget;
@@ -2233,6 +2233,16 @@ fn verify_c0_sources_with_context(
         .iter()
         .map(|function| function.signature().name().to_string())
         .collect::<Vec<_>>();
+    // A named contract may carry the `diverges` marker too. It stands for an
+    // implementation nobody here names, so the marker is the declaration that
+    // one of them may not return, and a call through such a pointer is
+    // admitted divergence in whichever function makes it.
+    let diverging_contracts = file
+        .contract_definitions()
+        .iter()
+        .filter(|contract| contract.function_block().signature().diverges())
+        .map(|contract| contract.name().to_string())
+        .collect::<BTreeSet<_>>();
 
     for function_block in file.function_blocks {
         check_verification_deadline()?;
@@ -3055,6 +3065,7 @@ fn verify_c0_sources_with_context(
         &termination_heights,
         &assumed_terminating,
         &declared_diverging,
+        &diverging_contracts,
     )
     .map_err(|error| ClickError::new(format!("could not certify C termination: {error}")))?;
     // An `extern` contract has no body to answer for its marker: the
@@ -3847,6 +3858,12 @@ fn termination_refusal_report(
             CTerminationRefusal::UnrankedLoop { .. } => {
                 report.push_str(&format!(
                     "{current}; give it one, or mark it `loop diverges` and declare `{owner}` `diverges`"
+                ));
+                return report;
+            }
+            CTerminationRefusal::DivergingContract { .. } => {
+                report.push_str(&format!(
+                    "{current}; declare `{owner}` `diverges` too, or require a contract without the marker"
                 ));
                 return report;
             }
@@ -5789,17 +5806,41 @@ pub(in crate::surface) fn build_function_environment(
             click_function_environment,
             resource_environment,
         )?;
-        let rule = crate::kernel::c_external_function_rule(function.clone()).ok_or_else(|| {
-            ClickError::new(format!(
-                "external function `{}` has a contract that cannot be applied opaquely",
-                function_block.signature().name()
-            ))
-        })?;
+        let mut rule =
+            crate::kernel::c_external_function_rule(function.clone()).ok_or_else(|| {
+                ClickError::new(format!(
+                    "external function `{}` has a contract that cannot be applied opaquely",
+                    function_block.signature().name()
+                ))
+            })?;
+        // Bind the representation-copy effect to the exact standard-library
+        // declaration, never to the spelling. A user function that shadows the
+        // name with a different declaration keeps the plain external contract.
+        if is_recognized_representation_copy_block(function_block)? {
+            rule = rule.with_representation_copy(crate::kernel::RepresentationCopyEffect {
+                destination_argument: 0,
+                source_argument: 1,
+                bytes_argument: 2,
+            });
+        }
         environment = environment
             .with_function(function)
             .with_external_function_rule(rule);
     }
     Ok(environment)
+}
+
+/// Whether `function_block` is the standard-library declaration that carries
+/// the checked byte-copy effect. Its argument positions are fixed by that
+/// declaration's parameter order.
+fn is_recognized_representation_copy_block(
+    function_block: &FunctionBlock,
+) -> Result<bool, ClickError> {
+    let name = function_block.signature().name();
+    if name != "memcpy" {
+        return Ok(false);
+    }
+    Ok(standard_library_function_block(name)?.as_ref() == Some(function_block))
 }
 
 pub(in crate::surface) fn function_resource_summary(

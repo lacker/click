@@ -1689,7 +1689,13 @@ extern uint8* memcpy(uint8 destination[], uint8 source[], int32 bytes) {
 ```
 
 **Meaning:** Copies `bytes` bytes from a readable, non-overlapping source to
-an owned destination and returns the destination pointer.
+an owned destination and returns the destination pointer. This exact
+standard-library declaration also carries the checked representation-copy
+effect: after the call, each initialized typed cell whose complete byte
+representation lies in the copied range is established at the mapped
+destination offset. A source cell the copy would split, a symbolic range, an
+unaligned destination, and an untyped source establish no typed value. The
+effect is bound to this declaration, not to the name `memcpy`.
 
 **Kind:** external C contract. The declaration is an explicit verification assumption.
 

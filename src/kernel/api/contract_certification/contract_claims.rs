@@ -2310,7 +2310,10 @@ pub fn c_external_function_rule(function: CFunction) -> Option<CExternalFunction
         && function.opaque_contract_supported()
         && !function.contract_claims().is_empty()
         && function_contract_claims_are_complete(&function))
-    .then_some(CExternalFunctionRule { function })
+    .then_some(CExternalFunctionRule {
+        function,
+        representation_copy: None,
+    })
 }
 
 /// Builds an untrusted ranking plan. Supplying a plan is not evidence; the
@@ -2363,7 +2366,10 @@ pub(crate) fn c_unselected_function_contract_assumption(
         && function.verified_direct_contract_supported()
         && !function.contract_claims().is_empty()
         && function_contract_claims_are_complete(&function))
-    .then_some(CExternalFunctionRule { function })
+    .then_some(CExternalFunctionRule {
+        function,
+        representation_copy: None,
+    })
 }
 
 /// Structural contract coverage is part of the rule boundary, not merely a

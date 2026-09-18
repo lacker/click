@@ -2642,6 +2642,23 @@ impl Ord for CFunctionContract {
     }
 }
 
+/// A recognized byte-representation copy primitive's checked effect.
+///
+/// The effect transfers initialized typed cells from the source byte range of
+/// a call to its destination byte range whenever the copy covers each cell's
+/// complete representation. It is attached to the exact declaration the
+/// surface matched, not inferred from a function name, so a user function that
+/// happens to be called `memcpy` never acquires it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RepresentationCopyEffect {
+    /// Argument position of the destination byte pointer (`uint8[]`).
+    pub destination_argument: usize,
+    /// Argument position of the source byte pointer (`uint8[]`).
+    pub source_argument: usize,
+    /// Argument position of the runtime byte count (`int32`).
+    pub bytes_argument: usize,
+}
+
 /// A contract supplied for a C function whose implementation is outside the
 /// verified source set. External rules are intentionally distinct from
 /// [`CVerifiedFunctionRule`]: they are assumptions accepted at call sites,
@@ -2649,6 +2666,22 @@ impl Ord for CFunctionContract {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CExternalFunctionRule {
     pub(super) function: CFunction,
+    /// Set only for a recognized byte-copy declaration whose checked effect
+    /// the kernel applies after the external contract.
+    pub(super) representation_copy: Option<RepresentationCopyEffect>,
+}
+
+impl CExternalFunctionRule {
+    /// Attaches the checked representation-copy effect to this rule. The
+    /// caller must have matched an exact declaration, not a bare name.
+    pub(crate) fn with_representation_copy(mut self, effect: RepresentationCopyEffect) -> Self {
+        self.representation_copy = Some(effect);
+        self
+    }
+
+    pub(in crate::kernel) fn representation_copy(&self) -> Option<RepresentationCopyEffect> {
+        self.representation_copy
+    }
 }
 
 /// Kernel evidence that a partially-correct C function also returns.

@@ -405,26 +405,51 @@ pub(crate) struct CheckedResourceRewrite {
 /// snapshot already said about the cell — so a rewrite that names the cells it
 /// exposes stays checkable without a second state comparison rule. Bounded by
 /// the cell count, with no assumption consulted and nothing searched.
+///
+/// Returns a description of the first deviation when the rule does not hold,
+/// naming the offending cell, so the caller can report which cell or field a
+/// rejected rewrite changed.
 fn memory_only_adds_named_cells(
     before: &crate::kernel::CMemory,
     after: &crate::kernel::CMemory,
-) -> bool {
+) -> Result<(), String> {
     let mut rebased = after.clone();
     rebased.cells = before.cells.clone();
     if rebased != *before {
-        return false;
+        return Err("changed non-cell memory state".to_string());
     }
     let base = crate::kernel::intern_c_memory(before.clone());
-    after
-        .cells
-        .iter()
-        .all(|(pointer, value)| match before.cells.get(pointer) {
-            Some(existing) => existing == value,
+    for (pointer, value) in after.cells.iter() {
+        match before.cells.get(pointer) {
+            Some(existing) if existing == value => {}
+            Some(_) => {
+                return Err(format!("rewrote the existing cell at {pointer:?}"));
+            }
             None => {
                 let load = crate::kernel::canonical_form_of_load(base.clone(), pointer.clone());
-                cell_value_is_exactly_load(value, &load, pointer)
+                if !cell_value_is_exactly_load(value, &load, pointer) {
+                    return Err(format!(
+                        "added a cell at {pointer:?} that is not the canonical load of its own pointer at the pre-rewrite snapshot"
+                    ));
+                }
             }
-        })
+        }
+    }
+    Ok(())
+}
+
+/// Names the part of a state that differs when two states agree on memory and
+/// resources, for diagnostics.
+fn describe_changed_state_field(changed: &CState, original: &CState) -> &'static str {
+    if changed.locals != original.locals {
+        "local values"
+    } else if changed.instance_field_scope != original.instance_field_scope {
+        "the open resource field scope"
+    } else if changed.counted_populations != original.counted_populations {
+        "counted resource populations"
+    } else {
+        "state outside memory, locals, and resources"
+    }
 }
 
 /// Whether a materialized cell's value is exactly the given load of its own
@@ -480,7 +505,7 @@ impl CheckedResourceRewrite {
         after_state: &CState,
         after_facts: &ProofFacts,
         call_events: &CheckedCallEvents,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, String> {
         Self::check_with_children(
             function,
             before_state,
@@ -503,11 +528,11 @@ impl CheckedResourceRewrite {
         after_facts: &ProofFacts,
         call_events: &CheckedCallEvents,
         selected_children: Option<Arc<[(String, Variable)]>>,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, String> {
         if !before_state.loan_bindings_are_consistent()
             || !after_state.loan_bindings_are_consistent()
         {
-            return Err("resource rewrite carries mismatched loan dependency sidecar");
+            return Err("resource rewrite carries mismatched loan dependency sidecar".to_string());
         }
         let load_equality_capture =
             crate::kernel::CheckedLoadEqualityCapture::start_with_call_events(call_events);
@@ -515,7 +540,9 @@ impl CheckedResourceRewrite {
         if let CResource::Instance(instance) = selected.resource() {
             let definition = function
                 .composite_resource_definition(instance.name())
-                .ok_or("instance definition is not registered on the function")?;
+                .ok_or_else(|| {
+                    "instance definition is not registered on the function".to_string()
+                })?;
             let unfold = before_state
                 .resources()
                 .owned_instance(instance.identity())
@@ -528,7 +555,8 @@ impl CheckedResourceRewrite {
                 assumptions,
                 unfold,
                 selected_children.as_deref(),
-            )?;
+            )
+            .map_err(|refusal| refusal.describe())?;
             let expected = rewrite.state;
             let allowed = rewrite.semantic_facts;
             let mut unchanged = after_state.clone();
@@ -542,30 +570,43 @@ impl CheckedResourceRewrite {
                 // each added cell must hold the canonical load form of its own
                 // pointer at the pre-rewrite snapshot. That is a definitional
                 // identity, checked here per added cell with no search.
-                if !unfold
-                    || !memory_only_adds_named_cells(&before_state.memory, &after_state.memory)
+                if let Err(detail) =
+                    memory_only_adds_named_cells(&before_state.memory, &after_state.memory)
                 {
-                    return Err("instance rewrite changed an unchecked part of the state");
+                    return Err(if unfold {
+                        format!("an unfold may only name cells it exposes, but it {detail}")
+                    } else {
+                        format!("a fold may not change the memory snapshot, but it {detail}")
+                    });
+                }
+                if !unfold {
+                    return Err("a fold may not change the memory snapshot".to_string());
                 }
                 unchanged.memory = before_state.memory.clone();
                 if unchanged != *before_state {
-                    return Err("instance rewrite changed an unchecked part of the state");
+                    return Err(format!(
+                        "instance rewrite changed {} outside its own resources",
+                        describe_changed_state_field(&unchanged, before_state)
+                    ));
                 }
             }
             if !expected
                 .resources
                 .same_exchange_from(&after_state.resources, &before_state.resources)
             {
-                return Err("instance rewrite changed an unchecked part of the state");
+                return Err(
+                    "instance rewrite resource context is not the exchange its definition requires"
+                        .to_string(),
+                );
             }
-            let introduced = after_facts
-                .introduced_since(before_facts)
-                .ok_or("instance rewrite facts do not descend from their input")?;
+            let introduced = after_facts.introduced_since(before_facts).ok_or_else(|| {
+                "instance rewrite facts do not descend from their input".to_string()
+            })?;
             let allowed = allowed
                 .into_iter()
                 .collect::<std::collections::BTreeSet<_>>();
             if introduced.iter().any(|fact| !allowed.contains(fact)) {
-                return Err("instance rewrite introduced an unchecked fact");
+                return Err("instance rewrite introduced an unchecked fact".to_string());
             }
             return Ok(Self {
                 before_state: before_state.clone(),
@@ -588,17 +629,21 @@ impl CheckedResourceRewrite {
                 .directly_supporting_fact(selected, after_facts.assumptions())
                 .is_none()
         {
-            return Err("the rewritten composite is absent from both resource representations");
+            return Err(
+                "the rewritten composite is absent from both resource representations".to_string(),
+            );
         }
         let crate::kernel::CResource::Composite { name, .. } = selected.resource() else {
-            return Err("resource rewrite evidence requires a composite resource");
+            return Err("resource rewrite evidence requires a composite resource".to_string());
         };
         let definition = function
             .composite_resource_definitions()
             .iter()
             .find(|definition| definition.name() == name)
             .cloned()
-            .ok_or("the rewritten composite definition is not registered on the function")?;
+            .ok_or_else(|| {
+                "the rewritten composite definition is not registered on the function".to_string()
+            })?;
 
         let mut concrete_after = after_state.clone();
         concrete_after.set_memory(before_state.memory.clone());
@@ -617,7 +662,9 @@ impl CheckedResourceRewrite {
                 assumptions,
             )
         {
-            return Err("resource rewrite changed more than a definitional representation");
+            return Err(
+                "resource rewrite changed more than a definitional representation".to_string(),
+            );
         }
         let expansion_matches = |folded: &CState, exposed: &CState| {
             let Some(authority) = folded
@@ -688,12 +735,14 @@ impl CheckedResourceRewrite {
             && !open_borrow_matches(before_state, after_state)
             && !open_borrow_matches(after_state, before_state)
         {
-            return Err("resource rewrite does not match the selected composite definition");
+            return Err(
+                "resource rewrite does not match the selected composite definition".to_string(),
+            );
         }
 
-        let introduced = after_facts
-            .introduced_since(before_facts)
-            .ok_or("resource rewrite facts do not descend from the input facts")?;
+        let introduced = after_facts.introduced_since(before_facts).ok_or_else(|| {
+            "resource rewrite facts do not descend from the input facts".to_string()
+        })?;
         let temporary = ResourceContext::new().unchecked_with_fact(selected.clone());
         let expanded = crate::kernel::functions::expand_composite_resource_fact(
             &temporary,
@@ -702,7 +751,7 @@ impl CheckedResourceRewrite {
             after_state.memory(),
             assumptions,
         )
-        .ok_or("the rewritten composite body could not be instantiated")?;
+        .ok_or_else(|| "the rewritten composite body could not be instantiated".to_string())?;
         let children = expanded
             .facts()
             .iter()
@@ -767,7 +816,9 @@ impl CheckedResourceRewrite {
             }
             let proof = delta_premises
                 .prove_with_facts(fact, &allowed_assumptions)
-                .ok_or("resource rewrite produced an unchecked pure-fact delta")?;
+                .ok_or_else(|| {
+                    "resource rewrite produced an unchecked pure-fact delta".to_string()
+                })?;
             delta_proofs.push(proof);
         }
 
@@ -5523,7 +5574,7 @@ impl ExecutionProofCore {
         selected: &CResourceFact,
         after_state: &CState,
         after_facts: &ProofFacts,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), String> {
         self.record_resource_rewrite_with_children(
             function,
             arguments,
@@ -5545,9 +5596,9 @@ impl ExecutionProofCore {
         after_state: &CState,
         after_facts: &ProofFacts,
         selected_children: Option<Arc<[(String, Variable)]>>,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), String> {
         if self.evidence_completed {
-            return Err("a resource rewrite was recorded after the trace completed");
+            return Err("a resource rewrite was recorded after the trace completed".to_string());
         }
         let mut rewrite = CheckedResourceRewrite::check_with_children(
             function,
@@ -5562,7 +5613,9 @@ impl ExecutionProofCore {
         if self.frontier.is_at_function_entry() {
             rewrite.before_state =
                 crate::kernel::c_function_entry_state(&rewrite.before_state, function, arguments)
-                    .ok_or("resource rewrite could not bind the function entry state")?;
+                    .ok_or_else(|| {
+                    "resource rewrite could not bind the function entry state".to_string()
+                })?;
             rewrite.after_state =
                 crate::kernel::c_function_entry_state(&rewrite.after_state, function, arguments)
                     .ok_or("resource rewrite could not bind its successor entry state")?;
@@ -5586,7 +5639,7 @@ impl ExecutionProofCore {
         before_facts: &ProofFacts,
         selected: &CResourceFact,
         after_facts: &ProofFacts,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), String> {
         self.record_return_resource_rewrite_with_children(
             function,
             path_index,
@@ -5605,22 +5658,22 @@ impl ExecutionProofCore {
         selected: &CResourceFact,
         after_facts: &ProofFacts,
         selected_children: Option<Arc<[(String, Variable)]>>,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), String> {
         if !self.evidence_completed {
-            return Err("return resource rewrite requires completed execution");
+            return Err("return resource rewrite requires completed execution".to_string());
         }
         let CResource::Instance(instance) = selected.resource() else {
-            return Err("return rewrite requires a named instance");
+            return Err("return rewrite requires a named instance".to_string());
         };
         let definition = function
             .composite_resource_definition(instance.name())
-            .ok_or("instance definition is not registered on the function")?;
+            .ok_or_else(|| "instance definition is not registered on the function".to_string())?;
         let mut trace = self
             .return_resource_rewrites
             .get(&path_index)
             .or_else(|| self.execution_evidence.get(path_index))
             .cloned()
-            .ok_or("return resource rewrite selected an unknown path")?;
+            .ok_or_else(|| "return resource rewrite selected an unknown path".to_string())?;
         // Read only the completing suffix. Persistent pop does not copy the
         // path's earlier history, and no sibling path is inspected.
         let before_state = loop {
@@ -5634,7 +5687,7 @@ impl ExecutionProofCore {
                         ..
                     } = checked_evidence_conclusion(&theorem)
                     else {
-                        return Err("return resource rewrite requires a returning path");
+                        return Err("return resource rewrite requires a returning path".to_string());
                     };
                     break state.clone();
                 }
@@ -5643,7 +5696,9 @@ impl ExecutionProofCore {
                     | CheckedExecutionEvent::Call(_)
                     | CheckedExecutionEvent::ProofCase(_),
                 ) => {}
-                _ => return Err("return resource rewrite has no completing theorem"),
+                _ => {
+                    return Err("return resource rewrite has no completing theorem".to_string());
+                }
             }
         };
         // Compute the exchange in the retained C-body state, not the
@@ -5656,7 +5711,8 @@ impl ExecutionProofCore {
             before_facts.assumptions(),
             false,
             selected_children.as_deref(),
-        )?
+        )
+        .map_err(|refusal| refusal.describe())?
         .state;
         let rewrite = CheckedResourceRewrite::check_with_children(
             function,
