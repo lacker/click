@@ -228,6 +228,11 @@ pub(in crate::surface) fn prove_claim_by_tactics(
             "`{claim_label}` has an empty explicit proof script"
         )));
     }
+    if crate::surface::sorry_outside_have_bodies(tactics) {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` uses `sorry` outside a `have` body; `sorry` is only allowed as a complete contract proof body or a complete `have` body"
+        )));
+    }
     let _local_layouts =
         super::surface_synthesis::LocalStructLayoutScope::enter(parsed_function, function_block);
     let program = build_internal_proof_with_source(tactics, claim_label, tactic_source)?;
@@ -454,6 +459,11 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
     if tactics.is_empty() {
         return Err(ClickError::new(format!(
             "`{proof_label}` has an empty grouped explicit proof script"
+        )));
+    }
+    if crate::surface::sorry_outside_have_bodies(tactics) {
+        return Err(ClickError::new(format!(
+            "`{proof_label}` uses `sorry` outside a `have` body; `sorry` is only allowed as a complete contract proof body or a complete `have` body"
         )));
     }
     let program = build_internal_proof_with_source(tactics, &proof_label, tactic_source)?;

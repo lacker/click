@@ -40,7 +40,14 @@ assumptions; their proof bodies are not recursively selected.
 Given a directory, verifies every sidecar in it: either the project directory
 itself when it holds sidecars, or each immediate subdirectory that does. This
 is the command to run after applying an expansion emitted by `click expand`.
-Each sidecar has a 30-second limit by default.";
+Each sidecar has a 30-second limit by default.
+
+`--allow-sorry` enables the dev-only `sorry` proof hole: a proof unit whose
+body is exactly `sorry();` is admitted without checking. This is purely a
+debugging tool for reducing a failure to its minimal shape; it is never
+sound. Admissions are reported loudly, never recorded in incremental
+baselines or caches, and `click audit`, `click expand`, and `scripts/check.sh`
+never enable the flag, so sorry can never sneak into a passing gate.";
 
 const INCREMENTAL_CACHE_SCHEMA: &str = "click-verified-v1";
 type LoadedSidecar = (String, Vec<(String, String)>);
@@ -51,6 +58,7 @@ struct Arguments {
     time_limit: Duration,
     changed_since: Option<String>,
     explain: bool,
+    allow_sorry: bool,
 }
 
 fn main() {
@@ -70,7 +78,21 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
         println!("{USAGE}");
         return Ok(());
     }
-    run(parse_arguments(raw)?)
+    let arguments = parse_arguments(raw)?;
+    if arguments.allow_sorry {
+        // An admission records what an ordinary run did not check, so it
+        // cannot say which proofs a baseline still has to check, and it must
+        // never be recorded as verified.
+        if arguments.changed_since.is_some() {
+            return Err("`--allow-sorry` cannot be combined with `--changed-since`".to_string());
+        }
+        let arguments = Arguments {
+            allow_sorry: false,
+            ..arguments
+        };
+        return click::surface::with_allow_sorry(|| run(arguments));
+    }
+    run(arguments)
 }
 
 fn run(arguments: Arguments) -> Result<(), String> {
@@ -102,6 +124,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     let mut time_limit = DEFAULT_VERIFY_TIME_LIMIT;
     let mut changed_since = None;
     let mut explain = false;
+    let mut allow_sorry = false;
     let mut parse_options = true;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
@@ -123,6 +146,8 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
             );
         } else if parse_options && argument == "--explain" {
             explain = true;
+        } else if parse_options && argument == "--allow-sorry" {
+            allow_sorry = true;
         } else if parse_options && argument.starts_with('-') {
             return Err(format!("unknown option `{argument}`\n{USAGE}"));
         } else if target.replace(argument).is_some() {
@@ -134,6 +159,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
         time_limit,
         changed_since,
         explain,
+        allow_sorry,
     })
 }
 
@@ -681,6 +707,9 @@ fn plural(count: usize) -> &'static str {
 }
 
 fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
+    // A previous failed sidecar may have left admissions behind; each file
+    // reports only its own.
+    let _ = click::surface::take_sorry_admissions();
     let (click_source, project, inputs) = load_sidecar_inputs(click_path)?;
     let dependencies = match &inputs {
         CInput::Bundle(sources) => {
@@ -721,11 +750,28 @@ fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
         }
     };
     println!("{selected} selected proof{} verified", plural(selected));
-    if let CInput::Bundle(sources) = &inputs
-        && project.modules().len() == 1
-        && let Err(message) = record_full_verification(click_path, &click_source, sources, &[])
-    {
-        eprintln!("click-verify: warning: could not record incremental baseline: {message}");
+    let admissions = click::surface::take_sorry_admissions();
+    if admissions.is_empty() {
+        if let CInput::Bundle(sources) = &inputs
+            && project.modules().len() == 1
+            && let Err(message) = record_full_verification(click_path, &click_source, sources, &[])
+        {
+            eprintln!("click-verify: warning: could not record incremental baseline: {message}");
+        }
+    } else {
+        eprintln!(
+            "click-verify: WARNING: {} proof unit{} admitted via `sorry` in `{}`: NOTHING HERE IS PROVED. `sorry` is a dev-only hole (enabled by `--allow-sorry`); it never verifies in the gate.",
+            admissions.len(),
+            plural(admissions.len()),
+            click_path.display(),
+        );
+        for admission in &admissions {
+            eprintln!(
+                "click-verify: WARNING: sorry admitted `{}`",
+                admission.label
+            );
+        }
+        eprintln!("click-verify: WARNING: no incremental baseline recorded for a sorry run.");
     }
     Ok(())
 }
@@ -817,6 +863,29 @@ mod tests {
     }
 
     #[test]
+    fn parses_allow_sorry_and_rejects_it_with_changed_since() {
+        assert_eq!(
+            parse_arguments(["--allow-sorry".to_string(), "example.click".to_string()]),
+            Ok(Arguments {
+                target: "example.click".to_string(),
+                time_limit: DEFAULT_VERIFY_TIME_LIMIT,
+                changed_since: None,
+                explain: false,
+                allow_sorry: true,
+            })
+        );
+        assert_eq!(
+            entry_with([
+                "--allow-sorry".to_string(),
+                "--changed-since".to_string(),
+                "HEAD".to_string(),
+                "example.click".to_string(),
+            ]),
+            Err("`--allow-sorry` cannot be combined with `--changed-since`".to_string())
+        );
+    }
+
+    #[test]
     fn parses_default_and_overridden_time_limits() {
         assert_eq!(
             parse_arguments(["example.click".to_string()]),
@@ -825,6 +894,7 @@ mod tests {
                 time_limit: DEFAULT_VERIFY_TIME_LIMIT,
                 changed_since: None,
                 explain: false,
+                allow_sorry: false,
             })
         );
         assert_eq!(
@@ -838,6 +908,7 @@ mod tests {
                 time_limit: Duration::from_millis(250),
                 changed_since: None,
                 explain: false,
+                allow_sorry: false,
             })
         );
         assert_eq!(
@@ -852,6 +923,7 @@ mod tests {
                 time_limit: DEFAULT_VERIFY_TIME_LIMIT,
                 changed_since: Some("HEAD~1".to_string()),
                 explain: true,
+                allow_sorry: false,
             })
         );
     }

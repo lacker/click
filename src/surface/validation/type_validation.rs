@@ -1909,7 +1909,8 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::TransportUsing { .. }
             | ProofTactic::UnfoldResource(_)
             | ProofTactic::FoldResource(_)
-            | ProofTactic::ConstructResource(_) => {
+            | ProofTactic::ConstructResource(_)
+            | ProofTactic::Sorry => {
                 return Err(ClickError::new(format!(
                     "tactic `{}` is not available in the pure proof for theorem `{theorem_name}`",
                     tactic_name(tactic)
@@ -1948,6 +1949,7 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::Loop(_) => "loop",
         ProofTactic::ObserveResource(_) => "observe",
         ProofTactic::Witness(_) => "witness",
+        ProofTactic::Sorry => "sorry",
         ProofTactic::Choose(_) => "choose",
         ProofTactic::Assumption => "assumption",
         ProofTactic::Extract(_) => "extract",
