@@ -1240,6 +1240,71 @@ fn reject_address_escaped_ranking_component(
             }
             Ok(())
         }
+        CRankingComponent::PureInteger { source, expression } => {
+            let mut variables = BTreeSet::new();
+            if !collect_spec_integer_expression_c_variables(expression, &mut variables) {
+                return Err(error(format!(
+                    "the `decreases` component `{source}` in `{function_name}` uses a \
+                     specification form whose C variables cannot be collected, so it cannot be \
+                     checked against address-escaped locals"
+                )));
+            }
+            for variable in variables {
+                reject_address_escaped_measure(function_name, &variable, body)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// The same collection for a lowered Integer specification expression.
+///
+/// A kernel `IntegerTerm` names no source local: a local a measure reads
+/// reaches the Integer carrier through `FromMachine`, or as a pure
+/// application's machine argument, and both are walked here. That is why
+/// `Term` contributes no name rather than refusing, exactly as
+/// `SpecExpression::Value` does in the machine carrier.
+fn collect_spec_integer_expression_c_variables(
+    expression: &SpecIntegerExpression,
+    names: &mut BTreeSet<String>,
+) -> bool {
+    charge_termination_work(1);
+    let both = |left: &SpecIntegerExpression,
+                right: &SpecIntegerExpression,
+                names: &mut BTreeSet<String>| {
+        collect_spec_integer_expression_c_variables(left, names)
+            && collect_spec_integer_expression_c_variables(right, names)
+    };
+    match expression {
+        SpecIntegerExpression::Term(_) => true,
+        // A resource field reads the binder's instance, not a C local.
+        SpecIntegerExpression::ResourceField(_) => true,
+        SpecIntegerExpression::FromMachine(value) => {
+            collect_spec_expression_c_variables(value, names)
+        }
+        SpecIntegerExpression::Negate(inner) => {
+            collect_spec_integer_expression_c_variables(inner, names)
+        }
+        SpecIntegerExpression::Add(left, right)
+        | SpecIntegerExpression::Subtract(left, right)
+        | SpecIntegerExpression::Multiply(left, right) => both(left, right, names),
+        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().all(|argument| match argument {
+                SpecPureFunctionArgument::Value(value) => {
+                    collect_spec_expression_c_variables(value, names)
+                }
+                SpecPureFunctionArgument::ArrayRef { pointer, .. } => {
+                    collect_spec_expression_c_variables(pointer, names)
+                }
+                SpecPureFunctionArgument::Integer(value) => {
+                    collect_spec_integer_expression_c_variables(value, names)
+                }
+                SpecPureFunctionArgument::Algebraic(_) => false,
+            })
+        }
+        SpecIntegerExpression::AlgebraicMatch { .. } | SpecIntegerExpression::RangeFold { .. } => {
+            false
+        }
     }
 }
 
@@ -1672,7 +1737,8 @@ pub(super) struct CRankingMeasureReader<'a> {
 
 /// The kernel term for one `decreases` component at one C state.
 ///
-/// A ranking component is a scalar int32 expression, so its value at a state
+/// A ranking component is a scalar int32 or mathematical `Integer` expression,
+/// so its value at a state
 /// is a function of that state: the state's own value for each named local,
 /// and, for a memory read, the value the expression evaluator gives that read
 /// there. The arithmetic between them is read structurally and consults no
@@ -1689,7 +1755,7 @@ pub(super) fn c_ranking_measure_term(
     component: &CRankingComponent,
     state: &CState,
     reader: &mut CRankingMeasureReader<'_>,
-) -> Result<Bitvector32Term, String> {
+) -> Result<CRankingMeasureValue, String> {
     match component {
         // The declared measure is read as one affine form over the state's
         // own values. Folding it keeps `n - (i + 1)` from carrying an
@@ -1699,12 +1765,118 @@ pub(super) fn c_ranking_measure_term(
         // state.
         CRankingComponent::CExpression(expression) => {
             c_ranking_measure_term_unfolded(expression, state, reader)
-                .map(|term| canonical_ranking_term(&term))
+                .map(|term| CRankingMeasureValue::Machine(canonical_ranking_term(&term)))
         }
         CRankingComponent::Pure { expression, .. } => {
-            pure_ranking_measure_term(expression, state, reader)
+            pure_ranking_measure_term(expression, state, reader).map(CRankingMeasureValue::Machine)
+        }
+        CRankingComponent::PureInteger { expression, .. } => {
+            pure_integer_ranking_measure_term(expression, state, reader)
+                .map(CRankingMeasureValue::Integer)
         }
     }
+}
+
+/// `0 <= m` for one reading of a component, in that component's carrier.
+pub(super) fn ranking_nonnegative_proposition(value: &CRankingMeasureValue) -> Proposition {
+    Proposition::ConditionIs(
+        match value {
+            CRankingMeasureValue::Machine(term) => {
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), term.clone())
+            }
+            CRankingMeasureValue::Integer(term) => {
+                ConditionTerm::integer_less_equal(IntegerTerm::constant_i64(0), term.clone())
+            }
+        },
+        true,
+    )
+}
+
+/// `post < pre` for the two readings of one component.
+///
+/// Both readings come from the same component, whose carrier is a function of
+/// the declaration and not of the state, so the carriers always agree. A
+/// disagreement is reported rather than coerced, because a comparison across
+/// carriers would be a different relation than the one the declaration asked
+/// for.
+pub(super) fn ranking_decrease_proposition(
+    post: &CRankingMeasureValue,
+    pre: &CRankingMeasureValue,
+    component: &CRankingComponent,
+) -> Result<Proposition, String> {
+    Ok(Proposition::ConditionIs(
+        match (post, pre) {
+            (CRankingMeasureValue::Machine(post), CRankingMeasureValue::Machine(pre)) => {
+                ConditionTerm::signed_less_than(post.clone(), pre.clone())
+            }
+            (CRankingMeasureValue::Integer(post), CRankingMeasureValue::Integer(pre)) => {
+                ConditionTerm::integer_less_than(post.clone(), pre.clone())
+            }
+            _ => return Err(mixed_ranking_carrier_message(component)),
+        },
+        true,
+    ))
+}
+
+/// `post == pre`, the tie an outer lexicographic pivot stands on.
+pub(super) fn ranking_tie_proposition(
+    post: &CRankingMeasureValue,
+    pre: &CRankingMeasureValue,
+    component: &CRankingComponent,
+) -> Result<Proposition, String> {
+    Ok(Proposition::ConditionIs(
+        match (post, pre) {
+            (CRankingMeasureValue::Machine(post), CRankingMeasureValue::Machine(pre)) => {
+                ConditionTerm::equal(post.clone(), pre.clone())
+            }
+            (CRankingMeasureValue::Integer(post), CRankingMeasureValue::Integer(pre)) => {
+                ConditionTerm::integer_equal(post.clone(), pre.clone())
+            }
+            _ => return Err(mixed_ranking_carrier_message(component)),
+        },
+        true,
+    ))
+}
+
+/// The component is rendered here rather than by the caller, so a tuple pays
+/// for a display string only on the refusal path.
+fn mixed_ranking_carrier_message(component: &CRankingComponent) -> String {
+    format!(
+        "the `decreases` component `{}` read as a machine int32 at one of the two states \
+         and as a mathematical Integer at the other, so its two values cannot be ranked against \
+         each other",
+        c_ranking_measure_display(component)
+    )
+}
+
+/// The kernel term for one pure Integer `decreases` component at one C state.
+///
+/// This is [`pure_ranking_measure_term`] in the other carrier: the same
+/// evaluator a `requires` clause's Integer operand goes through, at this
+/// state, under the same assumptions, with the reads' facts published and
+/// their loadability kept. A state that splits the component into several
+/// paths is refused rather than guessed, exactly as in the machine carrier.
+fn pure_integer_ranking_measure_term(
+    expression: &SpecIntegerExpression,
+    state: &CState,
+    reader: &mut CRankingMeasureReader<'_>,
+) -> Result<IntegerTerm, String> {
+    let paths = crate::kernel::spec::evaluate_spec_integer_measure_paths(
+        state,
+        expression,
+        reader.assumptions,
+        reader.budget,
+    )
+    .map_err(|error| format!("could not evaluate a termination measure: {error:?}"))?;
+    let [path] = paths.as_slice() else {
+        return Err(format!(
+            "a termination measure must have exactly one value at this state; this one has {}",
+            paths.len()
+        ));
+    };
+    reader.reads.obligations.extend(path.obligations.clone());
+    reader.reads.facts.extend(path.facts.clone());
+    Ok(path.value.clone())
 }
 
 /// The kernel term for one pure `decreases` component at one C state.
@@ -2044,20 +2216,18 @@ pub(super) fn collect_recursion_descent_obligations(
     }
     let display = c_ranking_measure_display(component);
     obligations.push(
-        ProofObligation::verification_condition(Proposition::ConditionIs(
-            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), called.clone()),
-            true,
-        ))
-        .with_introductions(LoweringIntroductions::new())
-        .with_context(format!(
-            "{context}: `{display}` is nonnegative at the recursive call"
-        )),
+        ProofObligation::verification_condition(ranking_nonnegative_proposition(&called))
+            .with_introductions(LoweringIntroductions::new())
+            .with_context(format!(
+                "{context}: `{display}` is nonnegative at the recursive call"
+            )),
     );
     obligations.push(
-        ProofObligation::verification_condition(Proposition::ConditionIs(
-            ConditionTerm::signed_less_than(called, anchor.measure().clone()),
-            true,
-        ))
+        ProofObligation::verification_condition(ranking_decrease_proposition(
+            &called,
+            anchor.measure(),
+            component,
+        )?)
         .with_introductions(LoweringIntroductions::new())
         .with_context(format!(
             "{context}: `{display}` decreases at the recursive call"
@@ -2072,7 +2242,9 @@ pub(super) fn c_ranking_measure_display(measure: &CRankingComponent) -> String {
         CRankingComponent::CExpression(expression) => termination_measure_display(expression),
         // A pure component is shown as it was declared: its lowered form is a
         // specification tree with no source spelling of its own.
-        CRankingComponent::Pure { source, .. } => source.clone(),
+        CRankingComponent::Pure { source, .. } | CRankingComponent::PureInteger { source, .. } => {
+            source.clone()
+        }
     }
 }
 
@@ -4154,6 +4326,141 @@ mod ranking_member_tests {
         );
     }
 
+    /// The Integer reading of one local, as the Integer carrier's evaluator
+    /// produces it.
+    fn integer_reading(term: &Bitvector32Term) -> IntegerTerm {
+        IntegerTerm::from_machine(MachineIntegerType::Int32, term.clone())
+            .expect("an int32 term is a mathematical observation")
+    }
+
+    fn current_integer_local(name: &str) -> SpecIntegerExpression {
+        SpecIntegerExpression::FromMachine(Box::new(SpecExpression::CExpression(
+            CExpression::Variable(name.to_string()),
+        )))
+    }
+
+    /// An `Integer`-valued component owes the same two members in the other
+    /// carrier: `0 <= m` and `m_post < m_pre` as Integer comparisons, built
+    /// from the two readings of the one declared component.
+    #[test]
+    fn an_integer_component_builds_integer_members() {
+        let value = Bitvector32Term::Variable(Variable(13));
+        let post = Bitvector32Term::subtract(value.clone(), Bitvector32Term::Constant(1));
+        let entry = scalar_state(&[("n", value.clone())]);
+        let back_edge = scalar_state(&[("n", post.clone())]);
+        let measures = vec![CRankingComponent::PureInteger {
+            source: "level(n)".to_string(),
+            expression: current_integer_local("n"),
+        }];
+
+        let obligations = collect_loop_ranking_obligations(
+            &back_edge,
+            &entry,
+            &measures,
+            &PureFactContext::default(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("an Integer measure reads at both ends");
+
+        assert_eq!(obligations.len(), 2);
+        assert_eq!(
+            obligations[0].proposition(),
+            &Proposition::ConditionIs(
+                ConditionTerm::integer_less_equal(
+                    IntegerTerm::constant_i64(0),
+                    integer_reading(&post),
+                ),
+                true,
+            ),
+            "the nonnegativity member is an Integer comparison at the back edge"
+        );
+        assert_eq!(
+            obligations[1].proposition(),
+            &Proposition::ConditionIs(
+                ConditionTerm::integer_less_than(integer_reading(&post), integer_reading(&value)),
+                true,
+            ),
+            "the decrease member is an Integer comparison against the iteration entry"
+        );
+        assert!(
+            obligations[1]
+                .context()
+                .is_some_and(|context| context.contains("`level(n)`")),
+            "member names the declared component: {:?}",
+            obligations[1].context()
+        );
+    }
+
+    /// A tuple may mix carriers. A pivot arm only ever compares one
+    /// component's two readings, so each member is built in that component's
+    /// own carrier and no comparison crosses them.
+    #[test]
+    fn a_mixed_tuple_builds_each_member_in_its_own_carrier() {
+        let outer = Bitvector32Term::Variable(Variable(17));
+        let inner = Bitvector32Term::Variable(Variable(19));
+        let post_outer = Bitvector32Term::subtract(outer.clone(), Bitvector32Term::Constant(1));
+        let post_inner = Bitvector32Term::subtract(inner.clone(), Bitvector32Term::Constant(1));
+        let entry = scalar_state(&[("i", outer.clone()), ("n", inner.clone())]);
+        let back_edge = scalar_state(&[("i", post_outer.clone()), ("n", post_inner.clone())]);
+        let measures = vec![
+            CRankingComponent::CExpression(CExpression::Variable("i".to_string())),
+            CRankingComponent::PureInteger {
+                source: "level(n)".to_string(),
+                expression: current_integer_local("n"),
+            },
+        ];
+
+        let obligations = collect_loop_ranking_obligations(
+            &back_edge,
+            &entry,
+            &measures,
+            &PureFactContext::default(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("a mixed tuple reads each component in its own carrier");
+
+        assert_eq!(obligations.len(), 3);
+        assert_eq!(
+            obligations[0].proposition(),
+            &Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), post_outer.clone()),
+                true,
+            )
+        );
+        assert_eq!(
+            obligations[1].proposition(),
+            &Proposition::ConditionIs(
+                ConditionTerm::integer_less_equal(
+                    IntegerTerm::constant_i64(0),
+                    integer_reading(&post_inner),
+                ),
+                true,
+            )
+        );
+        let pivot_first = Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(post_outer.clone(), outer.clone()),
+            true,
+        );
+        let pivot_second = Proposition::And(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(post_outer, outer),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::integer_less_than(
+                    integer_reading(&post_inner),
+                    integer_reading(&inner),
+                ),
+                true,
+            )),
+        );
+        assert_eq!(
+            obligations[2].proposition(),
+            &Proposition::Or(Box::new(pivot_first), Box::new(pivot_second)),
+            "the machine pivot stays signed and the Integer pivot stays Integer"
+        );
+    }
+
     /// A pure component owes what its reads owe. The loadability obligations
     /// the evaluator raises join the same bundle, ahead of the ranking
     /// members, so the closer discharges them beside the invariants about
@@ -5248,7 +5555,7 @@ mod local_descent_tests {
         CRecursionAnchor {
             function: name.to_string(),
             component: declared_component(),
-            measure: Bitvector32Term::Constant(7),
+            measure: CRankingMeasureValue::Machine(Bitvector32Term::Constant(7)),
             entry_obligations: Vec::new(),
         }
     }

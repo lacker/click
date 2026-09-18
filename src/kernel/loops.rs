@@ -3106,10 +3106,9 @@ pub(super) fn collect_loop_ranking_obligations(
     }
     for (measure, post) in ranking_measures.iter().zip(post.iter()) {
         obligations.push(
-            ProofObligation::verification_condition(Proposition::ConditionIs(
-                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), post.clone()),
-                true,
-            ))
+            ProofObligation::verification_condition(
+                crate::kernel::termination::ranking_nonnegative_proposition(post),
+            )
             // A ranking member is one condition read from the declared
             // measure: no lowering wrapped it, so its recorded chain is
             // empty. Recording that keeps the bundle's member records
@@ -3121,27 +3120,34 @@ pub(super) fn collect_loop_ranking_obligations(
             )),
         );
     }
-    let arm = |pivot: usize| {
-        let strict = Proposition::ConditionIs(
-            ConditionTerm::signed_less_than(post[pivot].clone(), pre[pivot].clone()),
-            true,
-        );
-        (0..pivot).rev().fold(strict, |rest, index| {
-            Proposition::And(
-                Box::new(Proposition::ConditionIs(
-                    ConditionTerm::equal(post[index].clone(), pre[index].clone()),
-                    true,
-                )),
+    // A pivot arm compares one component's two readings, never two different
+    // components, so a tuple whose components chose different carriers needs
+    // no coercion: each arm is built in its own component's carrier.
+    let arm = |pivot: usize| -> Result<Proposition, String> {
+        let strict = crate::kernel::termination::ranking_decrease_proposition(
+            &post[pivot],
+            &pre[pivot],
+            &ranking_measures[pivot],
+        )?;
+        (0..pivot).rev().try_fold(strict, |rest, index| {
+            Ok(Proposition::And(
+                Box::new(crate::kernel::termination::ranking_tie_proposition(
+                    &post[index],
+                    &pre[index],
+                    &ranking_measures[index],
+                )?),
                 Box::new(rest),
-            )
+            ))
         })
     };
     let decrease = (0..ranking_measures.len())
         .rev()
-        .fold(None, |rest: Option<Proposition>, pivot| match rest {
-            None => Some(arm(pivot)),
-            Some(rest) => Some(Proposition::Or(Box::new(arm(pivot)), Box::new(rest))),
-        })
+        .try_fold(None, |rest: Option<Proposition>, pivot| {
+            Ok::<_, String>(match rest {
+                None => Some(arm(pivot)?),
+                Some(rest) => Some(Proposition::Or(Box::new(arm(pivot)?), Box::new(rest))),
+            })
+        })?
         .expect("a ranked loop declares at least one component");
     obligations.push(
         ProofObligation::verification_condition(decrease)

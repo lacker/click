@@ -4071,6 +4071,10 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_ranking_component(
             source: source.clone(),
             expression: substitute_bitvector_variable_in_spec_expression(expression, from, to),
         },
+        CRankingComponent::PureInteger { source, expression } => CRankingComponent::PureInteger {
+            source: source.clone(),
+            expression: substitute_bitvector_variable_in_spec_integer(expression, from, to),
+        },
     }
 }
 
@@ -7348,6 +7352,10 @@ pub(in crate::kernel) fn substitute_pointer_variable_in_c_ranking_component(
         CRankingComponent::Pure { source, expression } => CRankingComponent::Pure {
             source: source.clone(),
             expression: substitute_pointer_variable_in_spec_expression(expression, from, to),
+        },
+        CRankingComponent::PureInteger { source, expression } => CRankingComponent::PureInteger {
+            source: source.clone(),
+            expression: substitute_pointer_variable_in_spec_integer(expression, from, to),
         },
     }
 }

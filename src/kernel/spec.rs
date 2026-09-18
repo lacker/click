@@ -26,10 +26,10 @@ pub(super) struct SpecExpressionPath {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct SpecIntegerPath {
-    value: IntegerTerm,
-    facts: Vec<ExecutionPureFact>,
-    obligations: Vec<ProofObligation>,
+pub(super) struct SpecIntegerPath {
+    pub(super) value: IntegerTerm,
+    pub(super) facts: Vec<ExecutionPureFact>,
+    pub(super) obligations: Vec<ProofObligation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4831,6 +4831,27 @@ pub(in crate::kernel) fn evaluate_spec_expression_paths_with_bindings(
         None,
         assumptions,
         algebraic_bindings,
+        budget,
+    )
+}
+
+/// One lowered Integer specification expression's values at `state`.
+///
+/// A `decreases` component names no state of its own, so there is no
+/// loop-entry snapshot and no algebraic binding to supply: the kernel picks
+/// the state and this reads the one declared expression there.
+pub(super) fn evaluate_spec_integer_measure_paths(
+    state: &CState,
+    expression: &SpecIntegerExpression,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecIntegerPath>> {
+    evaluate_spec_integer_expression_paths(
+        state,
+        expression,
+        None,
+        assumptions,
+        &BTreeMap::new(),
         budget,
     )
 }

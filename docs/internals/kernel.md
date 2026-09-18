@@ -336,16 +336,35 @@ transitions across that back edge remain a separate hard-bucket recursion
 boundary.
 
 A loop ranking component is not restricted to a C expression. The loop head
-carries a `CRankingComponent`, either a current-state C expression or a pure
+carries a `CRankingComponent`: a current-state C expression, a pure
 specification expression lowered exactly as a loop invariant's expression is,
-and the kernel evaluates that one object at the iteration-entry state and
-again at the back-edge state. A pure component publishes the evaluator's facts
+or a pure mathematical `Integer` expression lowered exactly as a clause's
+Integer operand is. The kernel evaluates that one object at the
+iteration-entry state and again at the back-edge state. A pure component
+publishes the evaluator's facts
 and keeps its reads' loadability obligations, so a measure that reads memory
 owes the same loadability the invariant about those cells owes. A component
-whose value is not a single int32 at a state, because the state splits it into
+whose value is not a single value of its carrier at a state, because the state
+splits it into
 several paths or because a view it reads is gone, is refused rather than
 guessed, and a component naming a fixed state is refused at lowering, since a
 measure read twice at the same state can never decrease.
+
+The carrier is a function of the component, not of the state, so the two
+readings of one component always agree on it. `c_ranking_measure_term` returns
+a `CRankingMeasureValue`, `Machine` or `Integer`, and the members are built in
+that carrier: `0 <= m` and `m_post < m_pre` are signed int32 comparisons for a
+machine component and Integer comparisons for an Integer one. `<` on the
+nonnegative Integers is well founded for the same reason `<` on the
+nonnegative int32s is, so the termination argument is unchanged; a counting
+measure over an array range is naturally an `Integer`, because an int32 fold's
+`+` is partial in specifications and its bounds are unprovable at a symbolic
+length. A lexicographic tuple may mix the two, because a pivot arm compares
+one component's two readings and never two different components; a reading
+pair that somehow disagreed on its carrier is refused by name rather than
+coerced. An Integer component's address-escape check collects its C locals
+from the `FromMachine` and pure-argument positions that can name one, since a
+kernel `IntegerTerm` carries no source-level C name.
 
 The plan names a pure component by its declared spelling
 (`CRankingMeasureKey::Pure`), which is a weaker match than the structural
