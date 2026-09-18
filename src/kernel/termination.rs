@@ -1330,6 +1330,20 @@ fn function_object_names(function: &CFunction) -> BTreeSet<String> {
     names
 }
 
+/// The paths that continue past a join, as one bound.
+///
+/// A recursive edge is checked against every path's lower bound on the
+/// measure, so only the weakest of them decides; and a branch refines a
+/// bound as the larger of the bound and what its condition says, which is
+/// monotone, so refining the weakest bound gives the weakest refined bound.
+/// Keeping one bound per join is therefore exactly as strict as keeping
+/// every path's, and keeps the list from doubling at each sequential `if`.
+/// No path continuing, after a `return` or a `break` on every path, stays
+/// the empty list.
+fn weakest_lower_bound(paths: Vec<i64>) -> Vec<i64> {
+    paths.into_iter().min().into_iter().collect()
+}
+
 fn recursion_paths(
     statement: &CStatement,
     measure: &str,
@@ -1446,7 +1460,7 @@ fn recursion_paths(
                 parameter_indices,
                 lower_bounds,
             )?);
-            Ok(paths)
+            Ok(weakest_lower_bound(paths))
         }
         CStatement::If {
             condition,
@@ -1470,7 +1484,7 @@ fn recursion_paths(
                     vec![refined_lower_bound(condition, measure, false, lower_bound)],
                 )?);
             }
-            Ok(paths)
+            Ok(weakest_lower_bound(paths))
         }
         CStatement::While {
             condition, body, ..
@@ -1498,7 +1512,7 @@ fn recursion_paths(
                     lower_bounds.clone(),
                 )?);
             }
-            Ok(paths)
+            Ok(weakest_lower_bound(paths))
         }
     }
 }
@@ -3936,6 +3950,85 @@ mod local_descent_tests {
         let summarized = CFunction::new(CType::Void, "f", Vec::new(), summarized_loop(0))
             .with_source_body(spin(0));
         assert!(loops_executed_to_exit(&summarized).is_empty());
+    }
+
+    /// Each sequential `if` used to double the list of path bounds the
+    /// recursion checker carried, so a recursive function with a few dozen
+    /// of them before its ranked call could not be checked at all. The list
+    /// now holds one bound per join, which decides every edge the same way.
+    #[test]
+    fn a_recursion_check_is_linear_in_sequential_branches() {
+        let n = || crate::kernel::c_variable("n");
+        let literal = |value: u32| crate::kernel::c_int32_literal(value);
+        let guarded_call = |argument: CExpression| {
+            crate::kernel::c_if(
+                crate::kernel::c_greater_than(n(), literal(0)),
+                crate::kernel::c_call("countdown", vec![argument]),
+                CStatement::Skip,
+            )
+        };
+        // A balanced sequence, so the walk's depth is logarithmic and the
+        // test measures the branch count and not the nesting.
+        fn sequence(statements: &[CStatement]) -> CStatement {
+            match statements {
+                [] => CStatement::Skip,
+                [only] => only.clone(),
+                _ => {
+                    let (left, right) = statements.split_at(statements.len() / 2);
+                    CStatement::Seq(Arc::new(sequence(left)), Arc::new(sequence(right)))
+                }
+            }
+        }
+        let build = |branches: usize, descends: bool| {
+            // Branches on the measure that establish nothing about it.
+            let branches = (0..branches)
+                .map(|index| {
+                    crate::kernel::c_if(
+                        crate::kernel::c_less_than(n(), literal(index as u32 + 1_000)),
+                        CStatement::Skip,
+                        CStatement::Skip,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let mut body = sequence(&branches);
+            let argument = if descends {
+                crate::kernel::c_subtract(n(), literal(1))
+            } else {
+                n()
+            };
+            body = CStatement::Seq(Arc::new(body), Arc::new(guarded_call(argument)));
+            [CVerifiedFunctionRule {
+                function: CFunction::new(
+                    CType::Void,
+                    "countdown",
+                    vec![crate::kernel::c_parameter("n", CType::Int32)],
+                    body,
+                ),
+            }]
+        };
+        let plan = CFunctionTerminationPlan {
+            function_name: "countdown".to_string(),
+            recursive_measure: Some(CFunctionTerminationMeasure::NumericParameter(0)),
+            loop_measures: BTreeMap::new(),
+        };
+        for branches in [8, 64, 512] {
+            let rules = build(branches, true);
+            let heights = c_termination_height_plan(&rules, &[]);
+            let started = std::time::Instant::now();
+            let verdicts = check(&rules, std::slice::from_ref(&plan), &heights, &[])
+                .expect("a descending call checks");
+            assert_eq!(terminating(&verdicts), BTreeSet::from(["countdown"]));
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(5),
+                "{branches} sequential branches must not take {:?}",
+                started.elapsed()
+            );
+        }
+        let rules = build(64, false);
+        let heights = c_termination_height_plan(&rules, &[]);
+        let error = check(&rules, std::slice::from_ref(&plan), &heights, &[])
+            .expect_err("a call that passes the measure unchanged does not descend");
+        assert!(error.message.contains("must pass"), "{error:?}");
     }
 
     /// `realloc` is modeled by execution itself, so it is no node of the call
