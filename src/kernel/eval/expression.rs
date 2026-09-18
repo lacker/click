@@ -1819,8 +1819,8 @@ pub(in crate::kernel) fn read_c_lvalue_expression_paths(
             lvalue_path.obligations,
             source,
             assumptions,
-            &mut budget.next_kernel_variable,
-        ));
+            budget,
+        )?);
     }
     budget.check_path_width(paths.len())?;
     Ok(paths)
@@ -1833,9 +1833,9 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
     obligations: Vec<ProofObligation>,
     source: Option<&LoadSourceId>,
     assumptions: &PureFactContext,
-    next_kernel_variable: &mut u64,
-) -> Vec<CExpressionPath> {
-    match outcome {
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    Ok(match outcome {
         CLValueOutcome::LValue(lvalue) => match &lvalue.storage {
             CLValueStorage::Local { name } => {
                 let outcome = match state.locals.get(name) {
@@ -1863,12 +1863,12 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                     && let Some(pointer) = lvalue.pointer(state)
                 {
                     facts.push(volatile_access_fact(
-                        next_kernel_variable,
+                        budget,
                         false,
                         pointer,
                         lvalue.value_type,
                         value.clone(),
-                    ));
+                    )?);
                 }
                 vec![CExpressionPath {
                     outcome,
@@ -1884,31 +1884,31 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                     .values()
                     .any(|pending| pending.old_pointer.block == pointer.block)
                 {
-                    return vec![CExpressionPath {
+                    return Ok(vec![CExpressionPath {
                         outcome: CExpressionOutcome::RuntimeError(
                             CRuntimeError::UnresolvedAllocationOutcome,
                         ),
                         facts,
                         obligations,
-                    }];
+                    }]);
                 }
                 if state.memory.is_ended_local_address(pointer) {
-                    return vec![CExpressionPath {
+                    return Ok(vec![CExpressionPath {
                         outcome: CExpressionOutcome::UndefinedBehavior(
                             CUndefinedBehavior::InvalidMemory,
                         ),
                         facts,
                         obligations,
-                    }];
+                    }]);
                 }
                 if state.memory.is_deallocated_heap_address(pointer) {
-                    return vec![CExpressionPath {
+                    return Ok(vec![CExpressionPath {
                         outcome: CExpressionOutcome::UndefinedBehavior(
                             CUndefinedBehavior::InvalidMemory,
                         ),
                         facts,
                         obligations,
-                    }];
+                    }]);
                 }
                 let effective_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
@@ -1923,7 +1923,7 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                             &effective_assumptions,
                         ));
                 if (is_external || require_owned) && !has_read_resource {
-                    return vec![CExpressionPath {
+                    return Ok(vec![CExpressionPath {
                         outcome: CExpressionOutcome::RuntimeError(CRuntimeError::MissingResource {
                             resource: CResourceFact::view_memory(CMemoryRange::new(
                                 pointer.clone(),
@@ -1933,9 +1933,9 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                         }),
                         facts,
                         obligations,
-                    }];
+                    }]);
                 }
-                let paths = evaluate_c_memory_load_paths(
+                let mut paths = evaluate_c_memory_load_paths(
                     &state.memory,
                     pointer.clone(),
                     lvalue.value_type,
@@ -1943,27 +1943,24 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                     obligations,
                     assumptions,
                     is_external && has_read_resource,
-                    next_kernel_variable,
                     source,
                 );
                 if !lvalue.is_volatile() {
-                    return paths;
+                    return Ok(paths);
+                }
+                for path in &mut paths {
+                    if let CExpressionOutcome::Value(value) = &path.outcome {
+                        let value = value.clone();
+                        path.facts.push(volatile_access_fact(
+                            budget,
+                            false,
+                            pointer.clone(),
+                            lvalue.value_type,
+                            value,
+                        )?);
+                    }
                 }
                 paths
-                    .into_iter()
-                    .map(|mut path| {
-                        if let CExpressionOutcome::Value(value) = &path.outcome {
-                            path.facts.push(volatile_access_fact(
-                                next_kernel_variable,
-                                false,
-                                pointer.clone(),
-                                lvalue.value_type,
-                                value.clone(),
-                            ));
-                        }
-                        path
-                    })
-                    .collect()
             }
         },
         CLValueOutcome::UndefinedBehavior(undefined_behavior) => vec![CExpressionPath {
@@ -1976,7 +1973,7 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
             facts,
             obligations,
         }],
-    }
+    })
 }
 
 pub(in crate::kernel) fn address_of_lvalue_paths(

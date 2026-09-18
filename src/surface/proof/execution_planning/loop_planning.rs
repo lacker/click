@@ -877,16 +877,27 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     } else {
         usize::MAX
     };
+    // The body runs on a head state that already carries the identities the
+    // head invented: the havoc of every local and mutable cell the body
+    // writes, a re-bound binder's model fields, an arbitrary algebraic
+    // binding. Starting this proof's counter at the base of the identity
+    // range would hand the body's first heap allocation, opaque call result
+    // or nested join one of them.
+    let mut body_execution = ExecutionProofState::at_entry(
+        preservation.state().clone(),
+        frontier,
+        recorded_snapshots,
+        surface_propositions,
+        PersistentSequence::default(),
+    );
+    body_execution
+        .core
+        .advance_kernel_variable_mark(preservation.next_kernel_variable())
+        .map_err(|message| ClickError::new(format!("`{claim_label}`.preserve: {message}")))?;
     let root = Proof::for_execution_frontier(
         &claim_label,
         internal_proof_first_index(&program).unwrap_or(0),
-        ExecutionProofState::at_entry(
-            preservation.state().clone(),
-            frontier,
-            recorded_snapshots,
-            surface_propositions,
-            PersistentSequence::default(),
-        ),
+        body_execution,
         pure_facts.to_vec(),
         constants.clone(),
         environment.function_block,

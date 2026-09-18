@@ -4725,6 +4725,20 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables(
             | PointerBlock::ExternalArgument
             | PointerBlock::Heap(_) => {}
         }
+        // A memory-havoc marker spells the identity it was minted with in its
+        // block name instead of carrying it in a term, so a scan of the
+        // state's terms alone does not see it. Reserving it here is what lets
+        // every caller that must avoid what a state already mentions -- a
+        // branch join's abstraction, a loop head's stream, a constructor
+        // witness -- see it without harvesting block names by hand.
+        for prefix in ["havoc:", "call-havoc:"] {
+            if let Some(index) = block
+                .strip_prefix(prefix)
+                .and_then(|index| index.parse::<u64>().ok())
+            {
+                variables.insert(Variable(index));
+            }
+        }
         collect_bitvector_variables(contents.size(), variables);
     }
     for (pointer, value) in memory.cells.iter() {

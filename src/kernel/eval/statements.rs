@@ -83,8 +83,8 @@ pub(in crate::kernel) fn execute_c_lvalue_assignment_paths(
                     facts,
                     obligations,
                     assumptions,
-                    &mut budget.next_kernel_variable,
-                )),
+                    budget,
+                )?),
                 CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
                     paths.push(CStatementExecutionPath {
                         outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
@@ -179,8 +179,8 @@ fn execute_c_lvalue_update_paths(
             obligations,
             source,
             assumptions,
-            &mut budget.next_kernel_variable,
-        ) {
+            budget,
+        )? {
             let CExpressionPath {
                 outcome: current_outcome,
                 facts: current_facts,
@@ -280,8 +280,8 @@ fn execute_c_lvalue_update_paths(
                             facts,
                             obligations,
                             assumptions,
-                            &mut budget.next_kernel_variable,
-                        )),
+                            budget,
+                        )?),
                         CExpressionOutcome::UndefinedBehavior(error) => {
                             paths.push(CStatementExecutionPath {
                                 outcome: CStatementOutcome::UndefinedBehavior(error),
@@ -366,16 +366,16 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
-    next_kernel_variable: &mut u64,
-) -> Vec<CStatementExecutionPath> {
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     if lvalue.is_constant() {
-        return vec![CStatementExecutionPath {
+        return Ok(vec![CStatementExecutionPath {
             outcome: CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
             facts,
             obligations,
 
             loan_evidence: empty_checked_loan_evidence_sequence(),
-        }];
+        }]);
     }
     let mut obligations = obligations;
     let effective_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
@@ -412,7 +412,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             _ => Some(()),
         };
         if range_result.is_none() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
     }
     let Some(value) = crate::kernel::functions::coerce_c_value_with_pointee_constant(
@@ -422,13 +422,13 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
         &mut obligations,
         &effective_assumptions,
     ) else {
-        return vec![CStatementExecutionPath {
+        return Ok(vec![CStatementExecutionPath {
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts,
             obligations,
 
             loan_evidence: empty_checked_loan_evidence_sequence(),
-        }];
+        }]);
     };
 
     match lvalue.storage {
@@ -441,23 +441,23 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     &effective_assumptions,
                 )
             {
-                return vec![CStatementExecutionPath {
+                return Ok(vec![CStatementExecutionPath {
                     outcome,
                     facts,
                     obligations,
                     loan_evidence: empty_checked_loan_evidence_sequence(),
-                }];
+                }]);
             }
             let mut state = state.clone();
             sync_stack_local(&mut state, &name, &value);
             if let Some(pointer) = volatile_pointer {
                 facts.push(volatile_access_fact(
-                    next_kernel_variable,
+                    budget,
                     true,
                     pointer,
                     value_type,
                     value.clone(),
-                ));
+                )?);
             }
             state.locals.set_typed_with_all_qualifiers(
                 name,
@@ -468,13 +468,13 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 false,
                 pointee_constant,
             );
-            vec![CStatementExecutionPath {
+            Ok(vec![CStatementExecutionPath {
                 outcome: CStatementOutcome::Normal(state),
                 facts,
                 obligations,
 
                 loan_evidence: empty_checked_loan_evidence_sequence(),
-            }]
+            }])
         }
         CLValueStorage::Memory { pointer } => {
             let pointer = resolve_local_pointer_alias(state, &pointer, &effective_assumptions);
@@ -485,7 +485,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 .values()
                 .any(|pending| pending.old_pointer.block == pointer.block)
             {
-                return vec![CStatementExecutionPath {
+                return Ok(vec![CStatementExecutionPath {
                     outcome: CStatementOutcome::RuntimeError(
                         CRuntimeError::UnresolvedAllocationOutcome,
                     ),
@@ -493,10 +493,10 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     obligations,
 
                     loan_evidence: empty_checked_loan_evidence_sequence(),
-                }];
+                }]);
             }
             if state.memory.is_ended_local_address(&pointer) {
-                return vec![CStatementExecutionPath {
+                return Ok(vec![CStatementExecutionPath {
                     outcome: CStatementOutcome::UndefinedBehavior(
                         CUndefinedBehavior::InvalidMemory,
                     ),
@@ -504,10 +504,10 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     obligations,
 
                     loan_evidence: empty_checked_loan_evidence_sequence(),
-                }];
+                }]);
             }
             if state.memory.is_deallocated_heap_address(&pointer) {
-                return vec![CStatementExecutionPath {
+                return Ok(vec![CStatementExecutionPath {
                     outcome: CStatementOutcome::UndefinedBehavior(
                         CUndefinedBehavior::InvalidMemory,
                     ),
@@ -515,10 +515,10 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     obligations,
 
                     loan_evidence: empty_checked_loan_evidence_sequence(),
-                }];
+                }]);
             }
             if state.memory.is_read_only_block(&pointer.block) {
-                return vec![CStatementExecutionPath {
+                return Ok(vec![CStatementExecutionPath {
                     outcome: CStatementOutcome::UndefinedBehavior(
                         CUndefinedBehavior::InvalidMemory,
                     ),
@@ -526,7 +526,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     obligations,
 
                     loan_evidence: empty_checked_loan_evidence_sequence(),
-                }];
+                }]);
             }
             let is_external = is_external_memory_pointer(&pointer);
             let authorized_range = is_external
@@ -541,7 +541,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 .cloned();
             let has_external_write_resource = is_external && authorized_range.is_some();
             if is_external_memory_pointer(&pointer) && !has_external_write_resource {
-                return vec![CStatementExecutionPath {
+                return Ok(vec![CStatementExecutionPath {
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
                         resource: CResourceFact::own_memory(CMemoryRange::new(
                             pointer.clone(),
@@ -553,7 +553,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     obligations,
 
                     loan_evidence: empty_checked_loan_evidence_sequence(),
-                }];
+                }]);
             }
             // The write is owner-authorized here, so a refusal below names the
             // stable loan it conflicts with rather than masking the ordinary
@@ -564,12 +564,12 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 value.byte_width(),
                 &effective_assumptions,
             ) {
-                return vec![CStatementExecutionPath {
+                return Ok(vec![CStatementExecutionPath {
                     outcome,
                     facts,
                     obligations,
                     loan_evidence: empty_checked_loan_evidence_sequence(),
-                }];
+                }]);
             }
             let obligations = if has_external_write_resource {
                 obligations
@@ -581,7 +581,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     obligations,
                     &effective_assumptions,
                 ) else {
-                    return Vec::new();
+                    return Ok(Vec::new());
                 };
                 obligations
             };
@@ -632,20 +632,16 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             }
             if is_volatile {
                 facts.push(volatile_access_fact(
-                    next_kernel_variable,
-                    true,
-                    pointer,
-                    value_type,
-                    value,
-                ));
+                    budget, true, pointer, value_type, value,
+                )?);
             }
-            vec![CStatementExecutionPath {
+            Ok(vec![CStatementExecutionPath {
                 outcome: CStatementOutcome::Normal(state),
                 facts,
                 obligations,
 
                 loan_evidence: empty_checked_loan_evidence_sequence(),
-            }]
+            }])
         }
     }
 }

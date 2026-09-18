@@ -588,7 +588,30 @@ maximum of the arms' counters — the arms' abstractions are compared for
 equality, so they must count from one shared lower bound — and return a
 `CStateJoinAbstraction` carrying the state beside the mark the joined
 execution continues from. Returning the pair is deliberate: a caller cannot
-take the abstract state and keep the old counter.
+take the abstract state and keep the old counter. A loop head's
+`CLoopPreservationContext` reports its mark the same way, and both the
+iteration that continues past the loop and the body proof that runs inside it
+start from that mark rather than at the base of the range.
+
+**Within one execution the counter only moves forward, and only the kernel
+moves it.** `ExecutionProofCore::next_kernel_variable` is private: a caller
+reads it with `kernel_variable_mark` and can only change it through
+`advance_kernel_variable_mark`, which refuses a mark below the current one. A
+rewound counter re-issues identities that a loop havoc, a join abstraction, a
+heap block, an opaque call result or a resource model field is still using,
+which is a false-theorem hazard rather than merely wasted identities. Where a
+step's evaluation advances the counter, the surface reads a copy, runs the
+evaluation, and installs the result through that setter; where a join invents
+identities, the kernel installs the mark of the abstraction it recomputed
+itself (`ExecutionProofCore::record_interface_branch_join`), so a surface-
+chosen successor counter cannot survive the check.
+
+The mark is execution-relative — an offset from `KERNEL_VARIABLE_BASE`, which
+is the representation `ExecutionBudget::with_next_kernel_variable` takes and
+`ExecutionBudget::next_kernel_variable` returns. A freshness probe that
+compares a candidate `Variable` against it must add the base back:
+`ExecutionProofCore::issued_kernel_variable_bound` closes the range
+`KERNEL_VARIABLE_BASE .. bound` holding everything this execution has issued.
 
 The counter's range is bounded at both ends. It starts at
 `ExecutionBudget::KERNEL_VARIABLE_BASE` and refuses at

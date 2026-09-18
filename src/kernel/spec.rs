@@ -5326,7 +5326,6 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                             pointer_path.facts,
                             pointer_path.obligations,
                             assumptions,
-                            &mut budget.next_kernel_variable,
                         ),
                         budget,
                     ));
@@ -5350,7 +5349,6 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                         &pointer,
                         &stored,
                         *value_type,
-                        &mut budget.next_kernel_variable,
                         &mut facts,
                         assumptions,
                         None,
@@ -5362,7 +5360,6 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                         memory,
                         &pointer,
                         *value_type,
-                        &mut budget.next_kernel_variable,
                         &mut facts,
                         assumptions,
                     );

@@ -11,24 +11,30 @@ mod statements;
 /// stream, so repeated accesses remain distinct even when they have the same
 /// address and value. This is deliberately an access trace only: it does not
 /// model threads, atomicity, signals, or external device state.
+///
+/// The id comes through [`ExecutionBudget::allocate_kernel_variable`] like
+/// every other kernel allocation. It used to be taken by incrementing the
+/// counter directly, which skipped the range check: a long enough run of
+/// volatile accesses walked the counter past the ceiling into the ranges the
+/// surface's quantifier and binder variables reserve, silently, instead of
+/// refusing.
 fn volatile_access_fact(
-    next_kernel_variable: &mut u64,
+    budget: &mut ExecutionBudget,
     write: bool,
     pointer: Pointer,
     value_type: CType,
     value: CValue,
-) -> ExecutionPureFact {
-    let event_id = *next_kernel_variable;
-    *next_kernel_variable += 1;
+) -> ExecutionResult<ExecutionPureFact> {
+    let event_id = budget.allocate_kernel_variable()?.0;
     let operation = if write { "write" } else { "read" };
     let pointer_type = value_type.pointer_to().unwrap_or(CType::UInt8Pointer);
-    ExecutionPureFact::certified(Proposition::Predicate {
+    Ok(ExecutionPureFact::certified(Proposition::Predicate {
         name: format!("__click_volatile_{operation}_{event_id}"),
         arguments: vec![
             Term::CValue(CValue::typed_pointer(pointer, pointer_type)),
             Term::CValue(value),
         ],
-    })
+    }))
 }
 
 pub(super) use expression::*;

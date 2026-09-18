@@ -209,6 +209,16 @@ pub struct CLoopPreservationContext {
     /// The back edge binds those names again on whatever the body ends
     /// holding, so the join needs them beside the head state.
     binders: Vec<crate::kernel::CLoopBinder>,
+    /// The execution's fresh-variable counter after building this head.
+    ///
+    /// Preparing the head invents identities -- the havoc of every local and
+    /// every mutable cell the body writes, a re-bound binder's model fields,
+    /// an arbitrary algebraic binding -- from the execution's one counter,
+    /// which this context is built with. Carrying the mark back is what makes
+    /// it impossible to take the head state and keep the old counter: the
+    /// iteration that continues past the loop, and the body proof that runs
+    /// inside it, both continue from here.
+    next_kernel_variable: u64,
 }
 
 /// A body state produced by a checked preservation proof that may be the
@@ -325,6 +335,13 @@ impl CLoopPreservationContext {
     pub fn binders(&self) -> &[crate::kernel::CLoopBinder] {
         &self.binders
     }
+
+    /// The execution's fresh-variable counter after this head was built. It
+    /// is never below the counter the head was built from, so an execution
+    /// that continues from it only moves forward.
+    pub fn next_kernel_variable(&self) -> u64 {
+        self.next_kernel_variable
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -337,6 +354,7 @@ pub fn c_loop_preservation_contexts(
     definitions: &[CCompositeResourceDefinition],
     body: &CStatement,
     assumptions: &PureFactContext,
+    next_kernel_variable: u64,
 ) -> Result<Vec<CLoopPreservationContext>, String> {
     c_loop_preservation_contexts_with_mode(
         loop_entry_state,
@@ -347,6 +365,7 @@ pub fn c_loop_preservation_contexts(
         definitions,
         body,
         assumptions,
+        next_kernel_variable,
         false,
     )
 }
@@ -363,6 +382,7 @@ pub fn c_do_while_preservation_contexts(
     definitions: &[CCompositeResourceDefinition],
     body: &CStatement,
     assumptions: &PureFactContext,
+    next_kernel_variable: u64,
 ) -> Result<Vec<CLoopPreservationContext>, String> {
     c_loop_preservation_contexts_with_mode(
         loop_entry_state,
@@ -373,6 +393,7 @@ pub fn c_do_while_preservation_contexts(
         definitions,
         body,
         assumptions,
+        next_kernel_variable,
         true,
     )
 }
@@ -387,9 +408,15 @@ fn c_loop_preservation_contexts_with_mode(
     definitions: &[CCompositeResourceDefinition],
     body: &CStatement,
     assumptions: &PureFactContext,
+    next_kernel_variable: u64,
     do_while: bool,
 ) -> Result<Vec<CLoopPreservationContext>, String> {
-    let mut budget = ExecutionBudget::default();
+    // The head inherits the execution's counter instead of restarting at the
+    // base of the identity range. Restarting it in the middle of an execution
+    // is how a havocked local, a re-bound binder's model field or an
+    // arbitrary algebraic binding comes to carry an identity the execution
+    // has already handed to something live.
+    let mut budget = ExecutionBudget::default().with_next_kernel_variable(next_kernel_variable);
     let mut existing_variables = BTreeSet::new();
     collect_c_state_bitvector_variables(loop_entry_state, &mut existing_variables);
     collect_c_expression_bitvector_variables(condition, &mut existing_variables);
@@ -543,8 +570,19 @@ fn c_loop_preservation_contexts_with_mode(
                 invariant_propositions: invariant_propositions.iter().cloned().collect(),
                 whole_loop_effect_facts: whole_loop_effect_summaries.clone(),
                 binders: crate::kernel::c_loop_binders(resource_specs),
+                // Filled in below from the one budget every context here was
+                // built with, so each reports the same high-water mark rather
+                // than the mark at the moment it happened to be pushed.
+                next_kernel_variable,
             });
         }
+    }
+    // One budget served every context above, so its final mark bounds every
+    // identity any of them carries. An execution continuing from any of them
+    // continues from here.
+    let reached = budget.next_kernel_variable();
+    for context in &mut contexts {
+        context.next_kernel_variable = reached;
     }
     Ok(contexts)
 }
@@ -879,15 +917,9 @@ fn abstract_c_state_for_join_across_with_policy(
                 + sibling.resources().facts().len()
                 + sibling.counted_populations.len(),
         );
+        // The state scan reserves the `havoc:N` and `call-havoc:N` marker
+        // blocks' identities itself; the join no longer harvests block names.
         collect_c_state_bitvector_variables(sibling, &mut existing_variables);
-        for block in sibling.memory.blocks.keys() {
-            if let Some(index) = block
-                .strip_prefix("havoc:")
-                .and_then(|index| index.parse::<u64>().ok())
-            {
-                existing_variables.insert(Variable(index));
-            }
-        }
     }
     for value in stable_entry_locals.values() {
         crate::instrumentation::record_deterministic_work(1);

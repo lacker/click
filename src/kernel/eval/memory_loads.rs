@@ -58,7 +58,6 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
     has_external_read_resource: bool,
-    next_kernel_variable: &mut u64,
     source: Option<&LoadSourceId>,
 ) -> Vec<CExpressionPath> {
     let _assumptions_id_scope = assumptions.enter_id_scope();
@@ -80,7 +79,6 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
         has_external_read_resource,
         false,
         &mut alias_cache,
-        next_kernel_variable,
         source,
     )
 }
@@ -93,7 +91,6 @@ pub(in crate::kernel) fn evaluate_spec_memory_load_paths(
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
-    next_kernel_variable: &mut u64,
 ) -> Vec<CExpressionPath> {
     let _assumptions_id_scope = assumptions.enter_id_scope();
     if has_pending_reallocation_for_pointer(memory, &pointer) {
@@ -114,7 +111,6 @@ pub(in crate::kernel) fn evaluate_spec_memory_load_paths(
         false,
         true,
         &mut alias_cache,
-        next_kernel_variable,
         None,
     )
 }
@@ -138,7 +134,6 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     has_external_read_resource: bool,
     preserve_provisional_loadability: bool,
     alias_cache: &mut MemoryLoadAliasCache,
-    next_kernel_variable: &mut u64,
     source: Option<&LoadSourceId>,
 ) -> Vec<CExpressionPath> {
     let use_symbolic_pointer_identity =
@@ -230,7 +225,6 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             memory,
             &pointer,
             value_type,
-            next_kernel_variable,
             &mut facts,
             assumptions,
             use_symbolic_pointer_identity,
@@ -284,7 +278,6 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             &pointer,
             &value,
             value_type,
-            next_kernel_variable,
             &mut facts,
             assumptions,
             source,
@@ -336,7 +329,6 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             &pointer,
             &value,
             value_type,
-            next_kernel_variable,
             &mut facts,
             assumptions,
             source,
@@ -393,7 +385,6 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             memory,
             &pointer,
             value_type,
-            next_kernel_variable,
             &mut facts,
             assumptions,
             use_symbolic_pointer_identity,
@@ -446,7 +437,6 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             &memory,
             &pointer,
             value_type,
-            next_kernel_variable,
             &mut facts,
             assumptions,
             use_symbolic_pointer_identity,
@@ -505,7 +495,6 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 &pointer,
                 &stored_value,
                 value_type,
-                next_kernel_variable,
                 &mut facts,
                 assumptions,
                 source,
@@ -547,7 +536,6 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 has_external_read_resource,
                 preserve_provisional_loadability,
                 alias_cache,
-                next_kernel_variable,
                 source,
             ));
         }
@@ -591,7 +579,6 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             &memory,
             &pointer,
             value_type,
-            next_kernel_variable,
             &mut facts,
             assumptions,
             use_symbolic_pointer_identity,
@@ -659,7 +646,6 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         &memory,
         &pointer,
         value_type,
-        next_kernel_variable,
         &mut facts,
         assumptions,
         use_symbolic_pointer_identity,
@@ -723,7 +709,6 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
     pointer: &Pointer,
     value: &CValue,
     value_type: CType,
-    next_kernel_variable: &mut u64,
     facts: &mut Vec<ExecutionPureFact>,
     assumptions: &PureFactContext,
     source: Option<&LoadSourceId>,
@@ -731,11 +716,11 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
     let pointee_byte_width = value_type.pointee_type()?.byte_width();
     let fresh = match value {
         CValue::Int16(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
+            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
             return Some(CValue::Int16(Bitvector32Term::Variable(fresh)));
         }
         CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?
+            mint_load_variable(bits, facts, assumptions, source)?
         }
         // A cell materialized with its load variable (canonicalizing at
         // creation) already carries the variable; record its defining fact
@@ -774,7 +759,6 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
     memory: &CMemory,
     pointer: &Pointer,
     value_type: CType,
-    next_kernel_variable: &mut u64,
     facts: &mut Vec<ExecutionPureFact>,
     assumptions: &PureFactContext,
 ) -> Option<CValue> {
@@ -782,7 +766,6 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
         memory,
         pointer,
         value_type,
-        next_kernel_variable,
         facts,
         assumptions,
         should_use_symbolic_pointer_identity(memory, pointer, value_type),
@@ -816,7 +799,6 @@ fn canonicalized_symbolic_load_value_with_identity(
     memory: &CMemory,
     pointer: &Pointer,
     value_type: CType,
-    next_kernel_variable: &mut u64,
     facts: &mut Vec<ExecutionPureFact>,
     assumptions: &PureFactContext,
     use_symbolic_identity: bool,
@@ -828,19 +810,19 @@ fn canonicalized_symbolic_load_value_with_identity(
     // offset, and range built from the value is canonical.
     match &value {
         CValue::Int16(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
+            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
             return Some(CValue::Int16(Bitvector32Term::Variable(fresh)));
         }
         CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
+            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
             return Some(CValue::Int32(Bitvector32Term::Variable(fresh)));
         }
         CValue::UInt8(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
+            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
             return Some(CValue::UInt8(Bitvector32Term::Variable(fresh)));
         }
         CValue::UInt16(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
+            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
             return Some(CValue::UInt16(Bitvector32Term::Variable(fresh)));
         }
         // The wider integer scalars name their loads for the same reason.
@@ -854,15 +836,15 @@ fn canonicalized_symbolic_load_value_with_identity(
         // sibling cell of the same node, which the fold after that write
         // needs.
         CValue::UInt32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
+            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
             return Some(CValue::UInt32(Bitvector32Term::Variable(fresh)));
         }
         CValue::Int64(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
+            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
             return Some(CValue::Int64(Bitvector32Term::Variable(fresh)));
         }
         CValue::UInt64(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
+            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
             return Some(CValue::UInt64(Bitvector32Term::Variable(fresh)));
         }
         _ => {}
@@ -884,7 +866,7 @@ fn canonicalized_symbolic_load_value_with_identity(
     if !matches!(bits.as_ref(), Bitvector32Term::MemoryLoad(_, _)) {
         return Some(value);
     }
-    let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
+    let fresh = mint_load_variable(bits, facts, assumptions, source)?;
     let pointer = if use_symbolic_identity {
         Pointer::symbolic(fresh)
     } else {
@@ -2487,7 +2469,6 @@ fn load_variable_for_term_uncached(bits: &Bitvector32Term) -> Option<(Variable, 
 /// downstream.
 fn mint_load_variable(
     bits: &Bitvector32Term,
-    _next_kernel_variable: &mut u64,
     facts: &mut Vec<ExecutionPureFact>,
     _assumptions: &PureFactContext,
     source: Option<&LoadSourceId>,
@@ -2739,11 +2720,9 @@ mod tests {
         let first_load =
             Bitvector32Term::MemoryLoad(first_memory.clone(), Box::new(pointer.clone()));
         let mut facts = Vec::new();
-        let mut next_variable = 0;
         let source = test_load_source(0);
         let variable = mint_load_variable(
             &first_load,
-            &mut next_variable,
             &mut facts,
             &PureFactContext::new(),
             Some(&source),

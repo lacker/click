@@ -1687,6 +1687,11 @@ pub(crate) struct CheckedExecutionBranch {
     // Keep the actual selected lowering results, not just their boolean verdicts.
     // Every retained judgment has a completed local proof.
     interface_lowerings: Arc<Vec<[CheckedInterfaceLowering; 3]>>,
+    /// The fresh-variable counter the joined execution continues from, from
+    /// the abstraction this check recomputed itself. A structural join invents
+    /// no identity and leaves this `None`; an interface join does, and the
+    /// recorder installs this mark rather than trusting a caller's.
+    interface_next_kernel_variable: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -1826,6 +1831,7 @@ impl CheckedExecutionBranch {
             interface_effect_facts,
             interface_resource_definitions: None,
             interface_lowerings: Arc::new(Vec::new()),
+            interface_next_kernel_variable: None,
         })
     }
 
@@ -2144,7 +2150,14 @@ impl CheckedExecutionBranch {
                 function.composite_resource_definitions().to_vec(),
             ),
             interface_lowerings: Arc::new(interface_lowerings),
+            interface_next_kernel_variable: Some(abstract_then.next_kernel_variable),
         })
+    }
+
+    /// The counter the joined execution continues from, when this join
+    /// invented identities of its own.
+    pub(crate) fn interface_next_kernel_variable(&self) -> Option<u64> {
+        self.interface_next_kernel_variable
     }
 
     pub(crate) fn matches_source(
@@ -3269,8 +3282,8 @@ pub(crate) struct ExecutionProofCore {
     /// Every variable `initial_match_scope` mentions, built once and shared by
     /// every branch forked from this region. A constructor witness introduced
     /// anywhere in the region must avoid these; everything the kernel has
-    /// issued since is below `next_kernel_variable`, which the same freshness
-    /// probe checks without a second scan.
+    /// issued since lies in this execution's issued range, which the same
+    /// freshness probe checks without a second scan.
     initial_match_reserved: Arc<std::sync::OnceLock<std::collections::BTreeSet<Variable>>>,
     /// The state the retained evidence has reached on the open trace: the
     /// outcome of the last recorded theorem, observation, rewrite, or
@@ -3327,7 +3340,19 @@ pub(crate) struct ExecutionProofCore {
     /// Complete lowerings prepared for this exact execution and premise store.
     pub(crate) checked_invariant_lowerings: Option<Arc<CheckedLoopInvariantLowerings>>,
     pub(crate) next_opaque_call: u64,
-    pub(crate) next_kernel_variable: u64,
+    /// This execution's one fresh-variable counter, as an offset from
+    /// [`ExecutionBudget::KERNEL_VARIABLE_BASE`] -- the representation
+    /// [`ExecutionBudget::with_next_kernel_variable`] takes and
+    /// [`ExecutionBudget::next_kernel_variable`] returns. Every identity the
+    /// kernel has issued for this execution lies below it.
+    ///
+    /// The field is private on purpose: within one execution the counter only
+    /// moves forward, and only the kernel moves it. A caller reads it with
+    /// [`Self::kernel_variable_mark`] and can only move it with
+    /// [`Self::advance_kernel_variable_mark`], which refuses a rewind. A
+    /// rewound counter re-issues an identity something live still carries,
+    /// which is a false-theorem hazard, not merely wasted identities.
+    next_kernel_variable: u64,
     pub(crate) has_empty_execution_branch_leaf: bool,
     pub(crate) has_structured_branch_history: bool,
     pub(crate) unfolded_predicates: SharedVec<String>,
@@ -5235,11 +5260,43 @@ impl ExecutionProofCore {
         true
     }
 
+    /// This execution's fresh-variable counter, execution-relative: the
+    /// offset an [`ExecutionBudget`] is built from and reports back.
+    pub(crate) fn kernel_variable_mark(&self) -> u64 {
+        self.next_kernel_variable
+    }
+
+    /// The first identity this execution has not issued, as a `Variable` id.
+    ///
+    /// [`Self::kernel_variable_mark`] is execution-relative, so a freshness
+    /// probe against a candidate identity must add the range base back before
+    /// comparing: the identities this execution has issued are exactly
+    /// `KERNEL_VARIABLE_BASE .. issued_kernel_variable_bound()`.
+    pub(crate) fn issued_kernel_variable_bound(&self) -> u64 {
+        ExecutionBudget::KERNEL_VARIABLE_BASE + self.next_kernel_variable
+    }
+
+    /// Moves this execution's counter forward to `mark`.
+    ///
+    /// This is the only way anything outside this module changes the counter,
+    /// and it refuses a rewind. A lower mark would re-issue identities that
+    /// loop havocs, opaque call results, heap allocations, join abstractions
+    /// and resource model fields are still using, which is how two unrelated
+    /// things come to be the same `Variable`.
+    pub(crate) fn advance_kernel_variable_mark(&mut self, mark: u64) -> Result<(), &'static str> {
+        if mark < self.next_kernel_variable {
+            return Err("an execution's fresh-variable counter cannot move backwards");
+        }
+        self.next_kernel_variable = mark;
+        Ok(())
+    }
+
     /// Every variable the region this proof started in already mentions,
     /// built once and shared by every branch forked from it. This is the
     /// frontier-independent half of a constructor witness's freshness: the
-    /// other half is `next_kernel_variable`, which bounds everything the
-    /// kernel has issued since, so no later frontier rescans the state.
+    /// other half is [`Self::issued_kernel_variable_bound`], which closes the
+    /// range holding everything the kernel has issued since, so no later
+    /// frontier rescans the state.
     fn initial_match_reserved_variables(&self) -> &std::collections::BTreeSet<Variable> {
         self.initial_match_reserved.get_or_init(|| {
             use crate::kernel::CFunctionOutcome;
@@ -5277,8 +5334,9 @@ impl ExecutionProofCore {
     /// The witnesses are fresh against everything the region can name. Its
     /// entry state (and, at a function entry, the entry theorem) is reserved
     /// once by [`Self::initial_match_reserved_variables`]; every variable the
-    /// kernel has issued since lies below `next_kernel_variable`, so the probe
-    /// is one comparison rather than a rescan of the current state. The
+    /// kernel has issued since lies in
+    /// `KERNEL_VARIABLE_BASE .. issued_kernel_variable_bound()`, so the probe
+    /// is one range test rather than a rescan of the current state. The
     /// environment, the scrutinee, and the persistent fact index are queried
     /// per candidate as before.
     pub(crate) fn algebraic_case_partition(
@@ -5309,7 +5367,13 @@ impl ExecutionProofCore {
         let facts =
             &self.model_arm_refutations_for(facts, value, definitions, matched_resource_field);
         let reserved = self.initial_match_reserved_variables();
-        let issued = self.next_kernel_variable;
+        // The identities this execution has issued are exactly
+        // `KERNEL_VARIABLE_BASE .. issued_kernel_variable_bound()`.
+        // `next_kernel_variable` is execution-relative, so comparing a
+        // candidate's absolute id against it directly was comparing an
+        // identity with an offset: the probe read as `candidate >= issued`
+        // but `issued` was a few dozen, and every candidate cleared it.
+        let issued = ExecutionBudget::KERNEL_VARIABLE_BASE..self.issued_kernel_variable_bound();
         let environment_variables =
             crate::kernel::reasoning::execution_environment_variable_index(environment);
         let value_variables = crate::kernel::proposition_variables(&Proposition::Equal(
@@ -5330,7 +5394,7 @@ impl ExecutionProofCore {
                         overflow = true;
                         return candidate;
                     }
-                    if candidate.0 >= issued
+                    if !issued.contains(&candidate.0)
                         && !reserved.contains(&candidate)
                         && !environment_variables.contains(&candidate)
                         && !value_variables.contains(&candidate)
@@ -5831,6 +5895,16 @@ impl ExecutionProofCore {
         )?;
         let interface_effect_facts = branch.interface_effect_facts().to_vec();
         let joined_state = branch.joined_state().clone();
+        // The kernel recomputed the abstraction, so it also knows where the
+        // abstraction left the counter. Installing that mark here is what
+        // makes the successor's counter kernel-owned: a caller cannot take
+        // the joined state and keep a counter that knows nothing about the
+        // identities the join spent. It only ever moves the counter forward --
+        // the mark is above both arms', which are above the parent's.
+        let join_mark = branch
+            .interface_next_kernel_variable()
+            .ok_or("the checked interface join did not report its fresh-variable counter")?;
+        self.advance_kernel_variable_mark(join_mark)?;
         let source = parent.source_after_branch(function, &branch)?;
         let mut trace = parent_trace.clone();
         trace.push(CheckedExecutionEvent::Branch(branch));
@@ -6483,12 +6557,54 @@ mod tests {
             .expect("a loop-body frontier issues its partition");
         assert!(fields.iter().flatten().all(|(var, _)| *var != occupied));
 
+        // `next_kernel_variable` is execution-relative, so an execution that
+        // has issued 200_000 identities occupies
+        // `1_000_000 .. 1_200_000` and a probe starting inside that range
+        // must walk out of it. The field used to be set here as if it were an
+        // absolute id, which is how the comparison against it stayed vacuous:
+        // the partition's own candidates start at 4_000_000, above every
+        // identity an execution can issue.
         let mut issued = core.clone();
-        issued.next_kernel_variable = 4_200_000;
+        issued
+            .advance_kernel_variable_mark(200_000)
+            .expect("the counter moves forward");
+        assert_eq!(issued.issued_kernel_variable_bound(), 1_200_000);
         let (_, fields, _) = issued
-            .algebraic_case_partition(&root, &value, &env, &[], None, 4_000_000, 65_536)
+            .algebraic_case_partition(&root, &value, &env, &[], None, 1_000_000, 65_536)
             .expect("a partition skips the issued range");
-        assert!(fields.iter().flatten().all(|(var, _)| var.0 >= 4_200_000));
+        assert!(fields.iter().flatten().all(|(var, _)| var.0 >= 1_200_000));
+        // The same probe at the range the surface actually uses is unaffected:
+        // 4_000_000 is above `KERNEL_VARIABLE_CEILING`, so range separation
+        // already covers it and the first candidate is taken.
+        let (_, fields, _) = issued
+            .algebraic_case_partition(&root, &value, &env, &[], None, 4_065_536, 65_536)
+            .expect("a partition above the execution range is unconstrained by it");
+        assert!(fields.iter().flatten().any(|(var, _)| var.0 == 4_065_536));
+    }
+
+    /// The counter is the kernel's: it moves forward through
+    /// [`ExecutionProofCore::advance_kernel_variable_mark`] and a rewind is
+    /// refused rather than silently re-issuing identities a live value carries.
+    #[test]
+    fn an_execution_counter_cannot_be_rewound() {
+        let mut core = ExecutionProofCore::at_entry(CState::new(), ExecutionFrontier::default());
+        assert_eq!(core.kernel_variable_mark(), 0);
+        assert_eq!(
+            core.issued_kernel_variable_bound(),
+            ExecutionBudget::KERNEL_VARIABLE_BASE
+        );
+        assert!(core.advance_kernel_variable_mark(12).is_ok());
+        assert!(core.advance_kernel_variable_mark(12).is_ok());
+        assert!(core.advance_kernel_variable_mark(30).is_ok());
+        assert_eq!(
+            core.advance_kernel_variable_mark(29),
+            Err("an execution's fresh-variable counter cannot move backwards")
+        );
+        assert_eq!(core.kernel_variable_mark(), 30);
+        assert_eq!(
+            core.issued_kernel_variable_bound(),
+            ExecutionBudget::KERNEL_VARIABLE_BASE + 30
+        );
     }
 
     #[test]

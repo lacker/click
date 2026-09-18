@@ -181,6 +181,9 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                             ))
                         })?;
                 }
+                // The loop head invents identities for everything the body can
+                // change, from this execution's counter rather than from the
+                // base of the identity range.
                 let preservation_contexts = if *do_while {
                     c_do_while_preservation_contexts(
                         &context.state,
@@ -191,6 +194,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         environment.function.composite_resource_definitions(),
                         body,
                         &assumptions,
+                        context.next_kernel_variable,
                     )
                 } else {
                     c_loop_preservation_contexts(
@@ -202,6 +206,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         environment.function.composite_resource_definitions(),
                         body,
                         &assumptions,
+                        context.next_kernel_variable,
                     )
                 }
                 .map_err(|message| {
@@ -273,7 +278,10 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         recorded_snapshots: context.recorded_snapshots.clone(),
                         case_path: context.case_path.clone(),
                         next_opaque_call: context.next_opaque_call,
-                        next_kernel_variable: context.next_kernel_variable,
+                        // The head state this context carries holds the
+                        // identities the head invented; continue from where
+                        // that left the counter, not from where it started.
+                        next_kernel_variable: preservation.next_kernel_variable(),
                         resume_at_statement: context.resume_at_statement,
                     });
                 }

@@ -125,11 +125,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
         ))
     })?;
     let mut abstract_state = abstraction.state;
-    // The abstraction issued identities from the execution's one counter, and
-    // the joined execution continues from where it left it. Keeping the old
-    // counter here is what would let the next loop head, opaque call or heap
-    // allocation hand a live abstracted value's identity to something else.
-    execution.core.next_kernel_variable = abstraction.next_kernel_variable;
+    let join_kernel_variable_mark = abstraction.next_kernel_variable;
 
     // Branch abstraction discards incidental source-boundary snapshots, but
     // an explicit proof mark is a deliberate historical dependency. Preserve
@@ -249,6 +245,20 @@ pub(super) fn apply_branch_interface_with_proof_facts(
         .recorded_snapshots
         .insert(target.clone(), abstract_state.clone());
     *state = abstract_state;
+    // The abstraction issued identities from the execution's one counter, and
+    // the joined execution continues from where it left it. Keeping the old
+    // counter here is what would let the next loop head, opaque call or heap
+    // allocation hand a live abstracted value's identity to something else.
+    // The kernel owns the counter, so this moves it forward through the
+    // kernel's checked forward-only setter rather than writing the field.
+    execution
+        .core
+        .advance_kernel_variable_mark(join_kernel_variable_mark)
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `branch` join abstraction: {message}"
+            ))
+        })?;
     *available_pure_facts = ProofFacts::from_ordered(&exported_pure_facts);
     Ok(())
 }
@@ -1772,7 +1782,10 @@ fn execute_step_from_frontier_position_selecting_path(
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
     let next_opaque_call_before_step = execution.core.next_opaque_call;
-    let next_kernel_variable_before_step = execution.core.next_kernel_variable;
+    let next_kernel_variable_before_step = execution.core.kernel_variable_mark();
+    // The kernel owns the counter: the step reads a copy, the evaluation
+    // advances it, and the checked setter installs the result.
+    let mut stepped_kernel_variable = next_kernel_variable_before_step;
     let mut transitions = certified_statement_transitions(
         &current_state,
         available_pure_facts,
@@ -1782,12 +1795,16 @@ fn execute_step_from_frontier_position_selecting_path(
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         &transition_label,
         &mut execution.core.next_opaque_call,
-        &mut execution.core.next_kernel_variable,
+        &mut stepped_kernel_variable,
         prerequisite_policy,
         fact_transport_policy,
         context,
     )?
     .0;
+    execution
+        .core
+        .advance_kernel_variable_mark(stepped_kernel_variable)
+        .map_err(|message| ClickError::new(format!("{transition_label}: {message}")))?;
     if let Some(selected_path_fact) = selected_path_fact {
         transitions.retain(|transition| transition.path_facts.contains(selected_path_fact));
     }
@@ -1898,7 +1915,16 @@ fn execute_step_from_frontier_position_selecting_path(
             step_statement = whole_suffix;
             transitions = suffix_transitions;
             execution.core.next_opaque_call = next_opaque_call;
-            execution.core.next_kernel_variable = next_kernel_variable;
+            // The suffix evaluation re-ran the step from the counter it had
+            // before, so this is not below what the step above installed only
+            // when the suffix allocated at least as much. Take the higher of
+            // the two: the counter never moves back.
+            execution
+                .core
+                .advance_kernel_variable_mark(
+                    next_kernel_variable.max(execution.core.kernel_variable_mark()),
+                )
+                .map_err(|message| ClickError::new(format!("{transition_label}: {message}")))?;
         }
     }
     if transitions.len() > 1
@@ -2865,7 +2891,7 @@ pub(super) fn bounded_execute_from_frontier_position(
                 ))
             })?;
             let mut next_opaque_call = frontier.execution.core.next_opaque_call;
-            let mut next_kernel_variable = frontier.execution.core.next_kernel_variable;
+            let mut next_kernel_variable = frontier.execution.core.kernel_variable_mark();
             let (transitions, _) = certified_statement_transitions(
                 &frontier.execution.core.state,
                 &frontier.pure_facts,

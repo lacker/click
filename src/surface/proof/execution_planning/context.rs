@@ -698,7 +698,7 @@ pub(in crate::surface::proof) fn append_statement_transition_certificate(
         .push(PlannedStatementTransition {
             transition: transition.clone(),
             next_opaque_call: execution.core.next_opaque_call,
-            next_kernel_variable: execution.core.next_kernel_variable,
+            next_kernel_variable: execution.core.kernel_variable_mark(),
         });
     if let Some(construction) = construction.as_mut() {
         let environments = construction.environments;

@@ -439,7 +439,7 @@ impl<'a> Proof<'a> {
         let mut execution = arm.execution.clone();
         let mut facts = arm.facts.clone();
         let facts_before_interface = facts.clone();
-        let join_next_kernel_variable = execution.core.next_kernel_variable;
+        let join_next_kernel_variable = execution.core.kernel_variable_mark();
         apply_branch_interface_with_proof_facts(
             &target,
             &assertions,
@@ -771,8 +771,8 @@ impl<'a> Proof<'a> {
         let join_next_kernel_variable = arms[0]
             .execution
             .core
-            .next_kernel_variable
-            .max(arms[1].execution.core.next_kernel_variable);
+            .kernel_variable_mark()
+            .max(arms[1].execution.core.kernel_variable_mark());
 
         let abstract_arm = |arm: &CheckedExecutionJoinArm<'_>| -> Result<
             (ExecutionProofState, ProofFacts),
@@ -902,10 +902,11 @@ impl<'a> Proof<'a> {
             .core
             .next_opaque_call
             .max(else_abstract.core.next_opaque_call);
-        execution.core.next_kernel_variable = then_abstract
-            .core
-            .next_kernel_variable
-            .max(else_abstract.core.next_kernel_variable);
+        // The fresh-variable counter is not carried across from the arms here.
+        // This join invents identities, so the kernel recomputes the
+        // abstraction below and installs the mark that abstraction reached
+        // (`record_interface_branch_join`). A counter the surface chose is
+        // exactly what was not being checked.
         migrate_arm_metadata(&mut execution, &arms, false);
         execution.presentation.branch_path.clear();
         let ProofContext::Execution(context) = self.context.as_ref() else {
@@ -1389,11 +1390,12 @@ impl<'a> Proof<'a> {
             .core
             .next_opaque_call
             .max(arms[1].execution.core.next_opaque_call);
-        execution.core.next_kernel_variable = arms[0]
-            .execution
-            .core
-            .next_kernel_variable
-            .max(arms[1].execution.core.next_kernel_variable);
+        // A structural join invents no identity: it keeps the arms' own
+        // states, so the successor only has to stay clear of what either arm
+        // spent. The checked setter is what makes that a forward move rather
+        // than a surface-chosen counter.
+        advance_joined_kernel_variable_mark(&mut execution, &arms)
+            .map_err(|message| self.step_error(message))?;
         for effect in arms[0]
             .introduced_effect_facts
             .iter()
@@ -1674,11 +1676,11 @@ impl<'a> Proof<'a> {
             .core
             .next_opaque_call
             .max(arms[1].execution.core.next_opaque_call);
-        execution.core.next_kernel_variable = arms[0]
-            .execution
-            .core
-            .next_kernel_variable
-            .max(arms[1].execution.core.next_kernel_variable);
+        // As above: a structural join keeps an arm's state and invents
+        // nothing, so the successor continues from the higher arm counter
+        // through the kernel's checked forward-only setter.
+        advance_joined_kernel_variable_mark(&mut execution, &arms)
+            .map_err(|message| self.step_error(message))?;
         append_execution_effect_facts(&mut execution.core.effect_facts, &joined_effect);
         migrate_arm_metadata(&mut execution, &arms, true);
         execution.presentation.branch_path.clear();
@@ -2886,6 +2888,28 @@ fn arm_entry_steps_match(steps: &[ProofStep], expected: &[ProofStep]) -> bool {
             .iter()
             .zip(expected)
             .all(|(actual, expected)| actual == expected)
+}
+
+/// Continues a joined execution from the higher of its arms' fresh-variable
+/// counters, through the kernel's forward-only setter.
+///
+/// Both arms forked from this execution, so neither counter is below the
+/// successor's and the move always succeeds; the setter is what says so
+/// rather than a comment. A join that invents identities of its own does not
+/// use this -- the kernel installs the abstraction's own mark there.
+fn advance_joined_kernel_variable_mark(
+    execution: &mut ExecutionProofState,
+    arms: &[CheckedExecutionJoinArm<'_>; 2],
+) -> Result<(), String> {
+    let mark = arms[0]
+        .execution
+        .core
+        .kernel_variable_mark()
+        .max(arms[1].execution.core.kernel_variable_mark());
+    execution
+        .core
+        .advance_kernel_variable_mark(mark)
+        .map_err(|message| format!("branch join: {message}"))
 }
 
 /// Applies the shared metadata policy for a two-arm join. Entry

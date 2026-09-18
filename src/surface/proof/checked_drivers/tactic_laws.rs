@@ -207,7 +207,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
             recorded_snapshots: execution.presentation.recorded_snapshots.clone(),
             case_path,
             next_opaque_call: execution.core.next_opaque_call,
-            next_kernel_variable: execution.core.next_kernel_variable,
+            next_kernel_variable: execution.core.kernel_variable_mark(),
             resume_at_statement: None,
         }],
         &mut next_statement_index,

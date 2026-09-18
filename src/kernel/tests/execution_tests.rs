@@ -247,6 +247,58 @@ fn volatile_parameter_accesses_emit_ordered_facts() {
     assert!(accesses[0].starts_with("__click_volatile_write_"));
     assert!(accesses[1].starts_with("__click_volatile_read_"));
     assert_ne!(accesses[0], accesses[1]);
+
+    // A volatile event id is one allocation from the execution's counter like
+    // any other. It used to be taken by incrementing the counter's field
+    // directly, which skipped the range check: an execution could walk past
+    // the ceiling into the ranges the surface's quantifier and binder
+    // variables reserve without a word. It refuses there now.
+    let span = ExecutionBudget::KERNEL_VARIABLE_CEILING - ExecutionBudget::KERNEL_VARIABLE_BASE;
+    let mut exhausted = ExecutionBudget::default().with_next_kernel_variable(span);
+    assert_eq!(
+        execute_c_statement_paths(
+            &bound,
+            function.body(),
+            &PureFactContext::new(),
+            &CExecutionEnvironment::new(),
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut exhausted,
+        ),
+        Err(ExecutionLimit::KernelVariables {
+            ceiling: ExecutionBudget::KERNEL_VARIABLE_CEILING,
+        })
+    );
+}
+
+/// A memory-havoc marker spells its identity in a block name rather than
+/// carrying it in a term, so a scan of a state's terms did not see it and the
+/// branch join harvested block names itself -- for `havoc:` only, and only in
+/// that one place. The state scan reserves both marker forms now, so every
+/// caller that must avoid what a state already mentions sees them.
+#[test]
+fn a_state_scan_reserves_memory_havoc_marker_identities() {
+    let state = CState::new().with_memory(
+        CMemory::new()
+            .with_block("havoc:1000004", 0)
+            .with_block("call-havoc:1000009", 0)
+            .with_block("local:x", 4),
+    );
+    let mut reserved = BTreeSet::new();
+    crate::kernel::reasoning::collect_c_state_bitvector_variables(&state, &mut reserved);
+    assert!(reserved.contains(&Variable(1_000_004)));
+    assert!(reserved.contains(&Variable(1_000_009)));
+
+    // A fresh stream over that state therefore avoids both without the
+    // caller naming the marker convention.
+    let mut budget = ExecutionBudget::default().with_next_kernel_variable(4);
+    let mut variables = KernelVariableGenerator::fresh_for_execution(reserved);
+    for _ in 0..8 {
+        let identity = variables
+            .next_in(&mut budget)
+            .expect("the counter is nowhere near its ceiling");
+        assert_ne!(identity, Variable(1_000_004));
+        assert_ne!(identity, Variable(1_000_009));
+    }
 }
 
 #[test]
@@ -2304,6 +2356,58 @@ fn a_post_join_allocation_never_reuses_a_join_abstracted_variable() {
     }
 }
 
+/// The counter a joined execution continues with is the kernel's, not a
+/// caller's. `ExecutionProofCore::next_kernel_variable` is private and moves
+/// only through `advance_kernel_variable_mark`, which refuses a rewind, and
+/// `record_interface_branch_join` installs the mark of the abstraction the
+/// kernel recomputed itself. The surface used to choose the successor's
+/// counter -- the maximum of the two arms', neither of which the join had
+/// moved -- and nothing checked it.
+#[test]
+fn a_join_successor_cannot_continue_from_a_rewound_counter() {
+    use crate::kernel::proof::{ExecutionFrontier, ExecutionProofCore};
+
+    let then_state = CState::new()
+        .with_local("kept", int32(7))
+        .with_local("picked", int32(1));
+    let else_state = then_state.clone().with_local("picked", int32(2));
+    let siblings = [&then_state, &else_state];
+    let stable = BTreeMap::from([("kept".to_string(), int32(7))]);
+
+    let arms_next_kernel_variable = 0;
+    let abstraction = abstract_c_state_for_interface_join_across(
+        &then_state,
+        &siblings,
+        &stable,
+        arms_next_kernel_variable,
+    )
+    .expect("the arms have one deterministic abstraction");
+    assert!(
+        abstraction.next_kernel_variable > arms_next_kernel_variable,
+        "the join spent identities, so its mark is above the arms'"
+    );
+
+    let mut successor =
+        ExecutionProofCore::at_entry(abstraction.state.clone(), ExecutionFrontier::default());
+    successor
+        .advance_kernel_variable_mark(abstraction.next_kernel_variable)
+        .expect("the join's mark is above the successor's counter");
+    assert_eq!(
+        successor.kernel_variable_mark(),
+        abstraction.next_kernel_variable
+    );
+    assert_eq!(
+        successor.advance_kernel_variable_mark(arms_next_kernel_variable),
+        Err("an execution's fresh-variable counter cannot move backwards"),
+        "carrying the arms' counter across the join is exactly what is refused"
+    );
+    assert_eq!(
+        successor.kernel_variable_mark(),
+        abstraction.next_kernel_variable,
+        "a refused rewind leaves the counter where the kernel put it"
+    );
+}
+
 /// Every kernel allocation counts up from one base, and the ranges above it
 /// belong to producers that pick identities by a constant base and a hash:
 /// the surface's quantifier variables, the spec fold binders, the algebraic
@@ -2386,4 +2490,87 @@ fn a_rebound_binder_field_never_reuses_a_havocked_local_variable() {
             "a re-bound binder's model field reused {field:?}"
         );
     }
+}
+
+/// A loop head's preservation contexts are built by their own evaluation, and
+/// that evaluation used to start a fresh `ExecutionBudget` -- restarting the
+/// execution's identity counter at the base of its range in the middle of the
+/// execution. Everything the head then invented (the havoc of every local the
+/// body modifies, the memory-havoc marker, a re-bound binder's model fields,
+/// an arbitrary algebraic binding) could carry an identity the enclosing
+/// execution had already handed to something live.
+///
+/// The head now counts from the execution's counter and reports where it left
+/// it, so neither the iteration that continues past the loop nor the body
+/// proof that runs inside it can start below what the head spent.
+#[test]
+fn loop_preservation_contexts_allocate_above_the_executions_counter() {
+    let loop_entry_state = CState::new()
+        .with_local("i", int32(0))
+        .with_local("n", int32(Bitvector32Term::Variable(Variable(7))));
+    let condition = c_less_than(c_variable("i"), c_variable("n"));
+    let body = c_assign("i", c_add(c_variable("i"), c_int32_literal(1)));
+
+    let head_identities = |spent: u64| -> (BTreeSet<Variable>, u64) {
+        let contexts = c_loop_preservation_contexts(
+            &loop_entry_state,
+            &condition,
+            &[],
+            &[],
+            &[],
+            &[],
+            &body,
+            &PureFactContext::new(),
+            spent,
+        )
+        .expect("a bare counting loop has a preservation context");
+        let [context] = contexts.as_slice() else {
+            panic!("a single-guard loop has one preservation context");
+        };
+        let mut identities = BTreeSet::new();
+        crate::kernel::reasoning::collect_c_state_bitvector_variables(
+            context.state(),
+            &mut identities,
+        );
+        // Keep only what an execution can issue: the parameter's own identity
+        // is below the range and says nothing about the head's allocations.
+        identities.retain(|variable| {
+            variable.0 >= ExecutionBudget::KERNEL_VARIABLE_BASE
+                && variable.0 < ExecutionBudget::KERNEL_VARIABLE_CEILING
+        });
+        (identities, context.next_kernel_variable())
+    };
+
+    let (fresh_head, fresh_mark) = head_identities(0);
+    assert!(
+        !fresh_head.is_empty(),
+        "the head havocs the local the body modifies"
+    );
+    assert!(
+        fresh_mark > 0,
+        "the head reports the identities it spent: {fresh_mark}"
+    );
+
+    // An execution that has already issued identities gets a head above them,
+    // and a mark above what it inherited.
+    let spent = 64;
+    let (later_head, later_mark) = head_identities(spent);
+    let floor = ExecutionBudget::KERNEL_VARIABLE_BASE + spent;
+    for identity in &later_head {
+        assert!(
+            identity.0 >= floor,
+            "a loop head reused {identity:?}, which the execution had already issued"
+        );
+    }
+    assert_eq!(
+        later_mark,
+        spent + fresh_mark,
+        "the head spends the same identities wherever it starts, and reports where it left off"
+    );
+    assert!(
+        fresh_head
+            .iter()
+            .all(|identity| !later_head.contains(identity)),
+        "the two heads must not agree on an identity: the second counts from {spent}"
+    );
 }
