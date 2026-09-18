@@ -425,6 +425,7 @@ pub(super) fn materialize_counted_population_bodies(
     _arguments: &[CExpression],
     mut state: CState,
     observed_population_families: &BTreeSet<String>,
+    symbolic_population_families: &BTreeSet<String>,
     _predicate_environment: &PredicateEnvironment,
     _click_function_environment: &ClickFunctionEnvironment,
     _claim_label: &str,
@@ -480,7 +481,7 @@ pub(super) fn materialize_counted_population_bodies(
         {
             continue;
         }
-        let count = if observes_population || tracks_population_in_body {
+        let count = if observes_population || symbolic_population_families.contains(&name) {
             let count = Bitvector32Term::Variable(Variable(next_variable));
             next_variable = next_variable.saturating_add(1);
             count

@@ -1998,12 +1998,29 @@ pub(super) fn initial_claim_context_with_caller_owner(
     for family in &observed_population_families {
         state = state.with_observed_population_family(family.clone());
     }
+    let symbolic_population_families = function_block
+        .requires()
+        .iter()
+        .filter_map(|requirement| match requirement.inner() {
+            Requirement::Resource(resource) => Some(resource),
+            _ => None,
+        })
+        .filter(|resource| {
+            !function_block.ensures().iter().any(|ensure| {
+                ensure.borrowed()
+                    && matches!(ensure.ensure(), Ensure::Resource(ensured) if *resource == ensured)
+            })
+        })
+        .filter_map(|resource| declared_resource_family(resource))
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
     let (population_state, population_facts) = materialize_counted_population_bodies(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
         state,
         &observed_population_families,
+        &symbolic_population_families,
         predicate_environment,
         click_function_environment,
         claim_label,
@@ -2416,6 +2433,18 @@ pub(super) fn initial_claim_context_with_caller_owner(
         entry_fact_origins,
         surface_propositions,
     })
+}
+
+fn declared_resource_family(resource: &ResourceClause) -> Option<&str> {
+    match resource {
+        ResourceClause::Named { resource, .. } | ResourceClause::Quantified { resource, .. } => {
+            declared_resource_family(resource)
+        }
+        ResourceClause::Declared { name, .. } => Some(name),
+        ResourceClause::ViewMemory(_)
+        | ResourceClause::OwnMemory(_)
+        | ResourceClause::MemoryAggregate { .. } => None,
+    }
 }
 
 /// Removes loadability that projection derived as an entry-evaluator fact.
