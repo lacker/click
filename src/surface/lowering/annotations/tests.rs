@@ -234,3 +234,41 @@ fn nested_snapshot_propositions_lower_with_small_frames_and_linear_visits() {
         .join()
         .unwrap();
 }
+
+/// A `decreases` component is refused when it names a state of its own,
+/// wherever inside the component that state is named. The kernel reads the one
+/// declared component at two states and ranks the values; a component that
+/// fixes its own state reads one state twice, so both `old(...)` and any
+/// `at(...)` snapshot, including a loop's own entry, are refused.
+#[test]
+fn a_fixed_state_anywhere_in_a_measure_is_found() {
+    let current = ContractExpression::CBinding("n".to_string());
+    assert!(fixed_measure_state(&current).is_none());
+
+    let old = ContractExpression::Subtract(
+        Box::new(current.clone()),
+        Box::new(ContractExpression::Old(Box::new(current.clone()))),
+    );
+    assert!(matches!(
+        fixed_measure_state(&old),
+        Some(FixedMeasureState::Old)
+    ));
+
+    let loop_entry = SnapshotSelector::ProgramPoint(ProgramPointRef {
+        region: CodeRegionRef::Loop(0),
+        kind: ProgramPointKind::Entry,
+    });
+    let at = ContractExpression::Call {
+        name: "head".to_string(),
+        arguments: vec![ContractExpression::At {
+            selector: loop_entry.clone(),
+            expression: Box::new(current),
+        }],
+    };
+    let found = fixed_measure_state(&at).expect("a snapshot in a call argument is a snapshot");
+    let FixedMeasureState::At(selector) = &found else {
+        panic!("the refusal names the snapshot, not `old`");
+    };
+    assert_eq!(selector, &loop_entry);
+    assert_eq!(found.spelling(), "at(loop(0).entry, ...)");
+}

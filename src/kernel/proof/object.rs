@@ -1253,7 +1253,7 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
         loop_entry: &crate::kernel::CState,
         iteration_entry: &crate::kernel::CState,
         checks: &[crate::kernel::CLoopInvariantCheck],
-        ranking_measures: &[crate::kernel::CExpression],
+        ranking_measures: &[crate::kernel::CRankingComponent],
         binders: &[crate::kernel::CLoopBinder],
         definitions: &[crate::kernel::CCompositeResourceDefinition],
         presentation: impl FnOnce(
@@ -1561,7 +1561,7 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
     pub(crate) fn validate_checked_invariant_lowerings(
         &self,
         checks: &[crate::kernel::CLoopInvariantCheck],
-        ranking_measures: &[crate::kernel::CExpression],
+        ranking_measures: &[crate::kernel::CRankingComponent],
     ) -> Result<(), String> {
         let (branch, execution) = self
             .focused_frontier_execution()

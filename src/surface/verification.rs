@@ -3916,27 +3916,108 @@ pub(in crate::surface) fn termination_measure_name(
     }
 }
 
-pub(in crate::surface) fn termination_measure_expression(
-    expression: &ContractExpression,
-    context: &str,
-) -> Result<CExpression, ClickError> {
-    resource_argument_to_c_expression(expression).map_err(|error| {
-        ClickError::new(format!(
-            "{context} must be a current int32 C expression: {}",
-            error.message()
-        ))
-    })
-}
-
-pub(in crate::surface) fn termination_measure_expressions(
+/// How the whole-function termination plan names each declared component.
+///
+/// The plan is built before specification lowering has an environment, so a
+/// component that is not a current-state C expression is named here by its
+/// declared spelling. The loop head, which is lowered with that environment,
+/// records the same spelling beside the expression it evaluates, and the
+/// termination check matches the two. Both sides read the one clause.
+pub(in crate::surface) fn termination_measure_keys(
     measure: &TerminationMeasure,
-    context: &str,
-) -> Result<Vec<CExpression>, ClickError> {
-    measure
+    _context: &str,
+) -> Result<Vec<crate::kernel::CRankingMeasureKey>, ClickError> {
+    Ok(measure
         .components()
         .iter()
-        .map(|expression| termination_measure_expression(expression, context))
-        .collect()
+        .map(
+            |expression| match resource_argument_to_c_expression(expression) {
+                Ok(expression) => crate::kernel::CRankingMeasureKey::CExpression(expression),
+                Err(_) => {
+                    crate::kernel::CRankingMeasureKey::Pure(termination_measure_source(expression))
+                }
+            },
+        )
+        .collect())
+}
+
+/// The spelling a pure `decreases` component is named by.
+///
+/// This is a rendering of the declared contract expression, not a lowering:
+/// the plan and the loop head render the same clause, so the two agree by
+/// construction. It exists so a diagnostic can print what the user wrote,
+/// since a lowered specification expression has no source spelling.
+pub(in crate::surface) fn termination_measure_source(expression: &ContractExpression) -> String {
+    let binary = |left: &ContractExpression, right: &ContractExpression, operator: &str| {
+        format!(
+            "{} {operator} {}",
+            termination_measure_source(left),
+            termination_measure_source(right)
+        )
+    };
+    match expression {
+        ContractExpression::IntegerLiteral(literal) => literal.clone(),
+        ContractExpression::Binding(name)
+        | ContractExpression::CBinding(name)
+        | ContractExpression::QualifiedC { name, .. } => name.clone(),
+        ContractExpression::CFragment(expression) => crate::kernel::c_ranking_measure_source(
+            &crate::kernel::CRankingComponent::CExpression(expression.clone()),
+        ),
+        ContractExpression::Field { base, field, .. } => {
+            format!("{}.{field}", termination_measure_source(base))
+        }
+        ContractExpression::Call { name, arguments } => format!(
+            "{name}({})",
+            arguments
+                .iter()
+                .map(termination_measure_source)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ContractExpression::ResourceField(access) => {
+            format!("{}.{}", access.owner, access.field)
+        }
+        ContractExpression::Old(inner) => format!("old({})", termination_measure_source(inner)),
+        ContractExpression::At {
+            selector,
+            expression,
+        } => format!(
+            "at({}, {})",
+            crate::surface::diagnostics::describe_snapshot_selector(selector),
+            termination_measure_source(expression)
+        ),
+        ContractExpression::Negate(inner) => format!("-{}", termination_measure_source(inner)),
+        ContractExpression::Add(left, right) => binary(left, right, "+"),
+        ContractExpression::Subtract(left, right) => binary(left, right, "-"),
+        ContractExpression::Multiply(left, right) => binary(left, right, "*"),
+        ContractExpression::Divide(left, right) => binary(left, right, "/"),
+        ContractExpression::Remainder(left, right) => binary(left, right, "%"),
+        ContractExpression::Index(base, index) => format!(
+            "{}[{}]",
+            termination_measure_source(base),
+            termination_measure_source(index)
+        ),
+        // A form without a rendering here still needs a stable identity, and
+        // both sides render the same clause, so the structural form is one.
+        expression => format!("{expression:?}"),
+    }
+}
+
+/// The loop resource binder a `decreases` clause names, if it is a structural
+/// measure. Both the plan and the loop-head lowering classify with this, so
+/// they cannot disagree about which kind of measure the clause declares.
+pub(in crate::surface) fn loop_structural_measure_binder(
+    clause: &StructuralClause,
+) -> Option<String> {
+    let measure = clause.decreases()?;
+    let name = termination_measure_binder_name(measure)?;
+    clause
+        .resources()
+        .iter()
+        .any(|resource| {
+            matches!(resource, ResourceClause::Named { binding, .. } if binding.name == name)
+        })
+        .then(|| name.to_string())
 }
 
 /// The bare source name a one-component `decreases` clause spells, if any.
@@ -3965,17 +4046,13 @@ pub(in crate::surface) fn loop_termination_measure(
     let Some(measure) = clause.decreases() else {
         return Ok(None);
     };
-    if let Some(name) = termination_measure_binder_name(measure)
-        && clause.resources().iter().any(|resource| {
-            matches!(resource, ResourceClause::Named { binding, .. } if binding.name == name)
-        })
-    {
+    if let Some(name) = loop_structural_measure_binder(clause) {
         return Ok(Some(crate::kernel::CLoopTerminationMeasure::Structural(
-            name.to_string(),
+            name,
         )));
     }
     Ok(Some(crate::kernel::CLoopTerminationMeasure::Ranking(
-        termination_measure_expressions(measure, context)?,
+        termination_measure_keys(measure, context)?,
     )))
 }
 

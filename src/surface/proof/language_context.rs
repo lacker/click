@@ -62,7 +62,7 @@ pub(in crate::surface::proof) struct InvariantBodyContext {
     /// surface spells them `at(<selector>, name)`.
     pub(in crate::surface::proof) iteration_entry_selector: Option<SnapshotSelector>,
     pub(in crate::surface::proof) checks: Vec<CLoopInvariantCheck>,
-    pub(in crate::surface::proof) ranking_measures: Vec<CExpression>,
+    pub(in crate::surface::proof) ranking_measures: Vec<crate::kernel::CRankingComponent>,
     /// The loop's structural `decreases` binder, when the clause named one
     /// instead of int32 components (D6). It is not a bundle member: the back
     /// edge decides the descent against the loop head.

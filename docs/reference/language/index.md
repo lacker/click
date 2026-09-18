@@ -207,13 +207,19 @@ consume or mutate resources; postorder recursive deallocation is supported.
 This proves descent of the finite resource witness, not descent of a pointer
 value.
 
-The numeric proof shape is deliberately small but loop measures may be
-arbitrary current int32 expressions or a nonempty lexicographic tuple of
-expressions. A component may read memory, as `decreases box->len - i` does for
+The numeric proof shape is deliberately small but a loop measure is one
+component, or a nonempty lexicographic tuple of components, and each component
+is any pure `int32` expression: a C fragment, a memory read, an application of
+a pure Click function, a resource model field. Click evaluates the one
+declared component at the iteration's entry state and again at the back-edge
+state, exactly as it evaluates an invariant about the same cells at those two
+states, and ranks the two values it gets. A component that reads memory owes
+the same loadability an invariant reading those cells owes.
+
+A component may read memory, as `decreases box->len - i` does for
 a loop whose bound is a field the C keeps no local copy of: the read is
 evaluated in the back-edge memory and again in the memory the iteration
-started from, exactly as an invariant about the same cell is, so a body that
-writes the cell is judged by what it wrote. See
+started from, so a body that writes the cell is judged by what it wrote. See
 `mdtests/loop_decreases_reads_a_field.md`,
 `mdtests/loop_decreases_reads_a_field_the_body_writes.md`, and
 `mdtests/loop_decreases_rejects_a_field_that_moves.md`. A measure is never
@@ -221,6 +227,34 @@ executed, so a read in it is not a C access; a volatile object cannot be
 read, since its value is not a function of the state. A loop back edge must keep every component nonnegative and make
 one component strictly smaller while keeping all earlier components equal. For
 example, `decreases n - i` ranks a loop that increments `i` toward `n`.
+
+A pure function of the cells the loop writes ranks a loop whose real measure
+has no C spelling:
+
+<!-- verified-example: mdtests/loop_decreases_pure_expression.md -->
+```click
+loop {
+  decreases head(box);
+  invariant 0 <= box[0];
+  invariant head(box) == box[0];
+}
+```
+
+The application stays opaque, so the proof unfolds it where it has to. The
+invariant `head(box) == box[0]` is the idiom that names the entry occurrence
+for the closer: without it the back-edge goal holds two applications of `head`
+at two memories and the closer has nothing relating either to a value it can
+reason about. `decreases box[0]` would need the same `have`.
+
+A measure must be a function of the current state alone, so a component may
+not mention `old(...)` or `at(...)`. Such a component reads one fixed state
+twice, so its two values are equal and the back edge could never close;
+Click refuses it at the declaration and says so, rather than leaving a bundle
+member permanently open. See
+`mdtests/loop_decreases_rejects_a_snapshot_measure.md`. A pure component earns
+no leniency about the descent itself: a measure the body does not move leaves
+the ranking member open exactly as a C one does, as in
+`mdtests/loop_decreases_pure_expression_must_decrease.md`.
 
 A loop's ranking obligations are members of the back-edge invariant bundle,
 not a separate kernel pass. When a loop declares `decreases`, the bundle its

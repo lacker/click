@@ -448,6 +448,7 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
             invariant,
             invariant_checks,
             effect_checks,
+            ranking_measures,
             body,
             ..
         } => {
@@ -460,6 +461,21 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
             }
             for check in effect_checks {
                 collect_loop_effect_bitvector_variables(check.effect(), variables);
+            }
+            // A `decreases` component is read at the loop head like an
+            // invariant is, and substitution rewrites it like one, so the
+            // variables it already names are reserved like an invariant
+            // check's. Skipping them would let a fresh execution variable be
+            // handed out with a name the measure already uses.
+            for measure in ranking_measures {
+                match measure {
+                    CRankingComponent::CExpression(expression) => {
+                        collect_c_expression_bitvector_variables(expression, variables);
+                    }
+                    CRankingComponent::Pure { expression, .. } => {
+                        collect_spec_expression_bitvector_variables(expression, variables);
+                    }
+                }
             }
             collect_c_statement_bitvector_variables(body, variables);
         }

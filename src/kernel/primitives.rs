@@ -1871,12 +1871,12 @@ pub enum CStatement {
         /// else the enclosing frame owns viewed rather than owned.
         resource_specs: Vec<CResourceSpec>,
         /// The loop's declared `decreases` components, in source order. An
-        /// empty list means the loop is unranked. Each component is a scalar
-        /// int32 C expression evaluated at the iteration entry and again at
-        /// the back edge; the back-edge invariant bundle carries one
+        /// empty list means the loop is unranked. Each component is one
+        /// int32-valued expression evaluated at the iteration entry and again
+        /// at the back edge; the back-edge invariant bundle carries one
         /// nonnegativity obligation per component and one lexicographic
         /// decrease obligation over them.
-        ranking_measures: Vec<CExpression>,
+        ranking_measures: Vec<CRankingComponent>,
         /// The loop's declared structural `decreases` binder, when the clause
         /// named a loop resource binder instead of int32 components (D6).
         /// The back edge checks that the instance the binder ends holding is
@@ -2712,10 +2712,91 @@ pub struct CFunctionTerminationPlan {
 pub enum CLoopTerminationMeasure {
     /// Scalar int32 components, in source order, ranked lexicographically by
     /// the back-edge invariant bundle.
-    Ranking(Vec<CExpression>),
+    Ranking(Vec<CRankingMeasureKey>),
     /// A loop resource binder whose instance must descend to a direct
     /// contained child of the instance it held at the loop head.
     Structural(String),
+}
+
+/// One `decreases` component as the loop head carries it.
+///
+/// A component is either a current-state C expression, which the ranking
+/// reader folds structurally, or a pure specification expression lowered
+/// exactly as a loop invariant's expression is. Either way the kernel holds
+/// ONE component per declared slot and evaluates that one object itself at
+/// the iteration-entry state and again at the back-edge state; the surface
+/// never hands the kernel a separate "pre" and "post" term.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CRankingComponent {
+    /// Today's measure: a scalar int32 C expression over locals and reads.
+    CExpression(CExpression),
+    /// A pure int32 specification expression: C fragments, memory reads and
+    /// pure function applications, evaluated by the spec evaluator at each of
+    /// the two states the ranking obligation compares.
+    Pure {
+        /// The declared spelling. The whole-function termination plan is
+        /// built before specification lowering has an environment, so it
+        /// names a pure component by this spelling and the check matches it
+        /// against the spelling this certified component carries.
+        source: String,
+        expression: SpecExpression,
+    },
+}
+
+impl CRankingComponent {
+    /// How the whole-function termination plan names this component.
+    pub(super) fn key(&self) -> CRankingMeasureKey {
+        match self {
+            Self::CExpression(expression) => CRankingMeasureKey::CExpression(expression.clone()),
+            Self::Pure { source, .. } => CRankingMeasureKey::Pure(source.clone()),
+        }
+    }
+}
+
+/// How an untrusted termination plan names one declared `decreases`
+/// component, for matching the plan against the loop rule that certified the
+/// back-edge bundle. A C component is matched as the expression it is; a pure
+/// component is matched by its declared spelling, because both the plan and
+/// the loop head read that spelling from the same source clause.
+///
+/// # Why the weaker match is not a soundness question
+///
+/// `Pure` matches by declared spelling, which is weaker than the structural
+/// equality `CExpression` gets: two different lowered expressions declared
+/// with the same spelling compare equal here. That is deliberate, and it does
+/// not widen what can be proved, because this comparison is not the
+/// termination evidence.
+///
+/// The evidence is the certified loop's own back-edge invariant bundle. That
+/// bundle carries one `0 <= m` member and one lexicographic `m_post < m_pre`
+/// member per declared component, built by the kernel from the
+/// `CRankingComponent` the rule's loop head carries and evaluated by the
+/// kernel at the iteration-entry and back-edge states. A loop whose bundle
+/// closed has a nonnegative int32 quantity that strictly decreases on every
+/// back edge, which is what makes it terminate; *which* int32 quantity it was
+/// does not enter that argument, so no spelling can make a loop that does not
+/// descend look as if it does.
+///
+/// What the plan supplies is only an index: for each loop of the source body,
+/// which rule's certification to point at. `check_loops` in
+/// `crate::kernel::termination` matches by loop index and refuses any loop
+/// that the plan ranks but no rule certified; `verified_loop_ranking_measures`
+/// binds a rule to its source loop by index and executable shape, and the
+/// shape comparison ignores the measure entirely. Comparing measures on top of
+/// that is a consistency check that turns a plan describing one measure and a
+/// certificate carrying another into a named refusal rather than a silent
+/// mismatch. Weakening it can only produce a worse diagnostic, never a
+/// theorem.
+///
+/// The one thing the plan is trusted for beyond identification, the
+/// address-escape refusal, does not read this key for a pure component: the
+/// check runs on the certified side against the lowered expression, in
+/// `reject_address_escaped_ranking_component`. See
+/// `docs/internals/kernel.md`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CRankingMeasureKey {
+    CExpression(CExpression),
+    Pure(String),
 }
 
 impl CFunctionTerminationPlan {

@@ -607,7 +607,7 @@ pub fn c_loop_invariant_obligations_at_back_edge(
 /// through an escaped address. See the termination module for the rule.
 pub fn c_reject_address_escaped_loop_measures(
     function_name: &str,
-    measures: &[CExpression],
+    measures: &[CRankingComponent],
     body: &CStatement,
 ) -> Result<(), String> {
     crate::kernel::termination::c_reject_address_escaped_loop_measures(
@@ -618,12 +618,12 @@ pub fn c_reject_address_escaped_loop_measures(
 }
 
 /// The source form of one declared `decreases` component, for diagnostics.
-pub fn c_ranking_measure_source(measure: &CExpression) -> String {
+pub fn c_ranking_measure_source(measure: &CRankingComponent) -> String {
     crate::kernel::termination::c_ranking_measure_display(measure)
 }
 
 /// The source form of a whole declared `decreases` clause, for diagnostics.
-pub fn c_ranking_measures_source(measures: &[CExpression]) -> String {
+pub fn c_ranking_measures_source(measures: &[CRankingComponent]) -> String {
     crate::kernel::termination::c_ranking_measures_display(measures)
 }
 
@@ -635,7 +635,7 @@ pub fn c_ranking_measures_source(measures: &[CExpression]) -> String {
 pub fn c_loop_ranking_obligations_at_back_edge(
     state: &CState,
     iteration_entry_state: &CState,
-    ranking_measures: &[CExpression],
+    ranking_measures: &[CRankingComponent],
     assumptions: &PureFactContext,
 ) -> Result<Vec<ProofObligation>, String> {
     collect_loop_ranking_obligations(
@@ -1733,7 +1733,7 @@ impl CStatement {
     /// loop without a `decreases` clause is. The components travel with the
     /// loop head so the back-edge invariant bundle and the whole-function
     /// termination pass agree on exactly which measure was checked.
-    pub fn with_loop_ranking_measures(mut self, measures: Vec<CExpression>) -> Self {
+    pub fn with_loop_ranking_measures(mut self, measures: Vec<CRankingComponent>) -> Self {
         if measures.is_empty() {
             return self;
         }

@@ -1186,11 +1186,11 @@ fn reject_address_escaped_measure(
 /// ranked update, so the declaration is refused rather than proved.
 pub(super) fn c_reject_address_escaped_loop_measures(
     function_name: &str,
-    measures: &[CExpression],
+    measures: &[CRankingComponent],
     body: &CStatement,
 ) -> Result<(), String> {
     for measure in measures {
-        reject_address_escaped_expression_measure(function_name, measure, body)
+        reject_address_escaped_ranking_component(function_name, measure, body)
             .map_err(|error| error.message)?;
     }
     Ok(())
@@ -1207,6 +1207,104 @@ fn reject_address_escaped_expression_measure(
         reject_address_escaped_measure(function_name, &variable, body)?;
     }
     Ok(())
+}
+
+/// The same check for one certified `decreases` component.
+///
+/// A measure names a local's *value*, so a local whose address escapes is not
+/// one the measure can read; that is what the C form already refuses. A pure
+/// component reaches the same locals through its lowered C fragments, so the
+/// names it reads are collected from the lowered expression. A lowered form
+/// this collection does not cover is refused outright rather than passed
+/// unchecked: the escape check is the kernel's, not the surface's.
+fn reject_address_escaped_ranking_component(
+    function_name: &str,
+    component: &CRankingComponent,
+    body: &CStatement,
+) -> Result<(), CTerminationError> {
+    match component {
+        CRankingComponent::CExpression(expression) => {
+            reject_address_escaped_expression_measure(function_name, expression, body)
+        }
+        CRankingComponent::Pure { source, expression } => {
+            let mut variables = BTreeSet::new();
+            if !collect_spec_expression_c_variables(expression, &mut variables) {
+                return Err(error(format!(
+                    "the `decreases` component `{source}` in `{function_name}` uses a \
+                     specification form whose C variables cannot be collected, so it cannot be \
+                     checked against address-escaped locals"
+                )));
+            }
+            for variable in variables {
+                reject_address_escaped_measure(function_name, &variable, body)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Collects the C locals one lowered specification expression reads, or
+/// reports that it contains a form this collection does not cover.
+///
+/// Work is linear in the expression, which is the declared component; nothing
+/// ambient is scanned.
+fn collect_spec_expression_c_variables(
+    expression: &SpecExpression,
+    names: &mut BTreeSet<String>,
+) -> bool {
+    charge_termination_work(1);
+    let both = |left: &SpecExpression, right: &SpecExpression, names: &mut BTreeSet<String>| {
+        collect_spec_expression_c_variables(left, names)
+            && collect_spec_expression_c_variables(right, names)
+    };
+    match expression {
+        SpecExpression::Value(_) => true,
+        SpecExpression::CExpression(expression) => {
+            collect_c_expression_variables(expression, names);
+            true
+        }
+        SpecExpression::Add(left, right)
+        | SpecExpression::Subtract(left, right)
+        | SpecExpression::Multiply(left, right)
+        | SpecExpression::Divide(left, right)
+        | SpecExpression::Remainder(left, right)
+        | SpecExpression::ShiftLeft(left, right)
+        | SpecExpression::ShiftRight(left, right)
+        | SpecExpression::BitwiseAnd(left, right)
+        | SpecExpression::BitwiseOr(left, right)
+        | SpecExpression::BitwiseXor(left, right) => both(left, right, names),
+        SpecExpression::BitwiseNot(value) | SpecExpression::Cast(value, _) => {
+            collect_spec_expression_c_variables(value, names)
+        }
+        SpecExpression::PointerOffset {
+            pointer, elements, ..
+        } => both(pointer, elements, names),
+        SpecExpression::MemoryLoad { pointer, .. } => {
+            collect_spec_expression_c_variables(pointer, names)
+        }
+        SpecExpression::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().all(|argument| match argument {
+                SpecPureFunctionArgument::Value(value) => {
+                    collect_spec_expression_c_variables(value, names)
+                }
+                SpecPureFunctionArgument::ArrayRef { pointer, .. } => {
+                    collect_spec_expression_c_variables(pointer, names)
+                }
+                SpecPureFunctionArgument::Integer(_) | SpecPureFunctionArgument::Algebraic(_) => {
+                    false
+                }
+            })
+        }
+        // A resource field reads the binder's instance, not a C local.
+        SpecExpression::ResourceField { .. } => true,
+        SpecExpression::IntegerToMachine { .. }
+        | SpecExpression::AlgebraicMatch { .. }
+        | SpecExpression::CountedResourceCount { .. }
+        | SpecExpression::If { .. }
+        | SpecExpression::RangeFold { .. }
+        | SpecExpression::Let { .. }
+        | SpecExpression::LoopEntrySnapshot(_) => false,
+    }
 }
 
 fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
@@ -1588,17 +1686,65 @@ pub(super) struct CRankingMeasureReader<'a> {
 /// an obligation, so the value a proof reasons about is one the program could
 /// observe. A volatile read is refused, since it is not a function of state.
 pub(super) fn c_ranking_measure_term(
-    expression: &CExpression,
+    component: &CRankingComponent,
     state: &CState,
     reader: &mut CRankingMeasureReader<'_>,
 ) -> Result<Bitvector32Term, String> {
-    // The declared measure is read as one affine form over the state's own
-    // values. Folding it keeps `n - (i + 1)` from carrying an intermediate
-    // `i + 1` whose definedness would need a bound the measure never claims,
-    // and makes the member a stable function of the declaration rather than
-    // of the assignment order that produced the state.
-    c_ranking_measure_term_unfolded(expression, state, reader)
-        .map(|term| canonical_ranking_term(&term))
+    match component {
+        // The declared measure is read as one affine form over the state's
+        // own values. Folding it keeps `n - (i + 1)` from carrying an
+        // intermediate `i + 1` whose definedness would need a bound the
+        // measure never claims, and makes the member a stable function of the
+        // declaration rather than of the assignment order that produced the
+        // state.
+        CRankingComponent::CExpression(expression) => {
+            c_ranking_measure_term_unfolded(expression, state, reader)
+                .map(|term| canonical_ranking_term(&term))
+        }
+        CRankingComponent::Pure { expression, .. } => {
+            pure_ranking_measure_term(expression, state, reader)
+        }
+    }
+}
+
+/// The kernel term for one pure `decreases` component at one C state.
+///
+/// The component is the same lowered specification expression a loop
+/// invariant's expression is, so it is evaluated here by the same evaluator,
+/// at this state, under the same assumptions. The caller evaluates the one
+/// declared expression twice, once per state; nothing the surface supplies
+/// names a state, so the two terms are the same function of two states.
+///
+/// A component that reads memory publishes the evaluator's facts and keeps
+/// its unfulfilled obligations, which are the reads' loadability, exactly as
+/// the C-expression reader does. A component whose value is not a single
+/// int32 at this state -- because the state splits it into several paths, or
+/// because a view it reads is gone -- is refused rather than guessed.
+fn pure_ranking_measure_term(
+    expression: &SpecExpression,
+    state: &CState,
+    reader: &mut CRankingMeasureReader<'_>,
+) -> Result<Bitvector32Term, String> {
+    let paths = crate::kernel::spec::evaluate_spec_expression_paths_with_loop_entry(
+        state,
+        expression,
+        None,
+        reader.assumptions,
+        reader.budget,
+    )
+    .map_err(|error| format!("could not evaluate a termination measure: {error:?}"))?;
+    let [path] = paths.as_slice() else {
+        return Err(format!(
+            "a termination measure must have exactly one value at this state; this one has {}",
+            paths.len()
+        ));
+    };
+    let (CValue::Int32(value) | CValue::UInt8(value)) = &path.value else {
+        return Err("termination measures must be int32 expressions".into());
+    };
+    reader.reads.obligations.extend(path.obligations.clone());
+    reader.reads.facts.extend(path.facts.clone());
+    Ok(canonical_ranking_term(value))
 }
 
 /// The value of one memory read inside a measure, at `state`.
@@ -1793,28 +1939,37 @@ fn c_ranking_measure_condition_term(
 }
 
 /// The display form of one `decreases` component, for bundle member contexts.
-pub(super) fn c_ranking_measure_display(measure: &CExpression) -> String {
-    termination_measure_display(measure)
+pub(super) fn c_ranking_measure_display(measure: &CRankingComponent) -> String {
+    match measure {
+        CRankingComponent::CExpression(expression) => termination_measure_display(expression),
+        // A pure component is shown as it was declared: its lowered form is a
+        // specification tree with no source spelling of its own.
+        CRankingComponent::Pure { source, .. } => source.clone(),
+    }
 }
 
 /// The display form of a whole `decreases` clause.
-pub(super) fn c_ranking_measures_display(measures: &[CExpression]) -> String {
-    termination_measures_display(measures)
+pub(super) fn c_ranking_measures_display(measures: &[CRankingComponent]) -> String {
+    join_measure_components(measures.iter().map(c_ranking_measure_display))
 }
 
 /// The display form of one loop's declared measure, for plan diagnostics.
 fn loop_termination_measure_display(measure: &CLoopTerminationMeasure) -> String {
     match measure {
-        CLoopTerminationMeasure::Ranking(measures) => termination_measures_display(measures),
+        CLoopTerminationMeasure::Ranking(measures) => {
+            join_measure_components(measures.iter().map(|measure| match measure {
+                CRankingMeasureKey::CExpression(expression) => {
+                    termination_measure_display(expression)
+                }
+                CRankingMeasureKey::Pure(source) => source.clone(),
+            }))
+        }
         CLoopTerminationMeasure::Structural(binder) => binder.clone(),
     }
 }
 
-fn termination_measures_display(measures: &[CExpression]) -> String {
-    let components = measures
-        .iter()
-        .map(termination_measure_display)
-        .collect::<Vec<_>>();
+fn join_measure_components(components: impl Iterator<Item = String>) -> String {
+    let components = components.collect::<Vec<_>>();
     if components.len() == 1 {
         components[0].clone()
     } else {
@@ -1982,10 +2137,18 @@ fn verified_loop_ranking_measures(
                 "verified loop rule for `{function_name}` is not a while loop"
             )));
         };
+        for component in ranking_measures {
+            reject_address_escaped_ranking_component(function_name, component, source_body)?;
+        }
         let measure = match structural_measure {
             Some(binder) => CLoopTerminationMeasure::Structural(binder.clone()),
             None if ranking_measures.is_empty() => continue,
-            None => CLoopTerminationMeasure::Ranking(ranking_measures.clone()),
+            None => CLoopTerminationMeasure::Ranking(
+                ranking_measures
+                    .iter()
+                    .map(CRankingComponent::key)
+                    .collect(),
+            ),
         };
         if let Some(existing) = certified.get(&index) {
             if existing != &measure {
@@ -3134,6 +3297,14 @@ pub fn c_verified_function_termination_rules(
                         continue;
                     };
                     for measure in measures {
+                        // A pure component reaches this pass only as the
+                        // spelling the plan names it by; the lowered
+                        // expression, and so its escape check, lives on the
+                        // certified loop head that
+                        // `verified_loop_ranking_measures` reads below.
+                        let CRankingMeasureKey::CExpression(measure) = measure else {
+                            continue;
+                        };
                         reject_address_escaped_expression_measure(
                             name,
                             measure,
@@ -3406,10 +3577,10 @@ mod ranking_member_tests {
             volatile: true,
             source: CExpressionLoadSource::none(),
         };
-        let measures = vec![CExpression::Subtract(
+        let measures = vec![CRankingComponent::CExpression(CExpression::Subtract(
             Box::new(volatile_read),
             Box::new(CExpression::Variable("i".to_string())),
-        )];
+        ))];
         let error = collect_loop_ranking_obligations(
             &state,
             &state,
@@ -3430,8 +3601,8 @@ mod ranking_member_tests {
         let post_inner = Bitvector32Term::add(inner.clone(), Bitvector32Term::Constant(1));
         let back_edge = scalar_state(&[("i", post_outer.clone()), ("j", post_inner.clone())]);
         let measures = vec![
-            CExpression::Variable("i".to_string()),
-            CExpression::Variable("j".to_string()),
+            CRankingComponent::CExpression(CExpression::Variable("i".to_string())),
+            CRankingComponent::CExpression(CExpression::Variable("j".to_string())),
         ];
         let obligations = collect_loop_ranking_obligations(
             &back_edge,
@@ -3491,7 +3662,9 @@ mod ranking_member_tests {
         let entry = scalar_state(&[("n", value.clone())]);
         let post = Bitvector32Term::subtract(value.clone(), Bitvector32Term::Constant(1));
         let back_edge = scalar_state(&[("n", post.clone())]);
-        let measures = vec![CExpression::Variable("n".to_string())];
+        let measures = vec![CRankingComponent::CExpression(CExpression::Variable(
+            "n".to_string(),
+        ))];
         let obligations = collect_loop_ranking_obligations(
             &back_edge,
             &entry,
@@ -3504,6 +3677,131 @@ mod ranking_member_tests {
         assert_eq!(
             obligations[1].proposition(),
             &Proposition::ConditionIs(ConditionTerm::signed_less_than(post, value), true)
+        );
+    }
+
+    fn int32_cell(name: &str) -> Pointer {
+        Pointer {
+            block: PointerBlock::Concrete(name.to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    /// A pure component that reads memory: the load is against the state the
+    /// component is read at, not a state the surface named.
+    fn current_load(cell: &Pointer) -> SpecExpression {
+        SpecExpression::MemoryLoad {
+            memory: SpecMemory::Current,
+            pointer: Box::new(SpecExpression::Value(CValue::Pointer(CPointerValue::new(
+                cell.clone(),
+                CType::Int32Pointer,
+            )))),
+            value_type: CType::Int32,
+        }
+    }
+
+    /// The surface hands the kernel ONE pure component, and the kernel is what
+    /// picks the two states to read it at. Nothing in the declaration names a
+    /// state, so the entry and back-edge sides of the decrease member are the
+    /// values that one expression takes at the two states it is read at.
+    #[test]
+    fn a_pure_component_is_read_at_both_states() {
+        let cell = int32_cell("counter");
+        let value = Bitvector32Term::Variable(Variable(11));
+        let post = Bitvector32Term::subtract(value.clone(), Bitvector32Term::Constant(1));
+        let mut entry = CState::new();
+        entry.memory = CMemory::new().store(cell.clone(), CValue::Int32(value.clone()));
+        let mut back_edge = CState::new();
+        back_edge.memory = CMemory::new().store(cell.clone(), CValue::Int32(post.clone()));
+        let measures = vec![CRankingComponent::Pure {
+            source: "count(counter)".to_string(),
+            expression: current_load(&cell),
+        }];
+
+        let obligations = collect_loop_ranking_obligations(
+            &back_edge,
+            &entry,
+            &measures,
+            &PureFactContext::default(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("a pure measure reads at both ends");
+
+        assert_eq!(obligations.len(), 2);
+        assert_eq!(
+            obligations[0].proposition(),
+            &Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), post.clone()),
+                true,
+            ),
+            "the nonnegativity member reads the back-edge state"
+        );
+        assert_eq!(
+            obligations[1].proposition(),
+            &Proposition::ConditionIs(ConditionTerm::signed_less_than(post, value), true),
+            "the decrease member compares the back edge against the iteration entry"
+        );
+        // A pure component has no source spelling of its own once lowered, so
+        // the member is named by the spelling the declaration carried.
+        assert!(
+            obligations[1]
+                .context()
+                .is_some_and(|context| context.contains("`count(counter)`")),
+            "member names the declared component: {:?}",
+            obligations[1].context()
+        );
+    }
+
+    /// A pure component owes what its reads owe. The loadability obligations
+    /// the evaluator raises join the same bundle, ahead of the ranking
+    /// members, so the closer discharges them beside the invariants about
+    /// those cells rather than the kernel assuming them.
+    #[test]
+    fn a_pure_component_publishes_its_loadability_obligations() {
+        let cell = int32_cell("counter");
+        let entry = CState::new();
+        let back_edge = CState::new();
+        let measures = vec![CRankingComponent::Pure {
+            source: "count(counter)".to_string(),
+            expression: current_load(&cell),
+        }];
+
+        let obligations = collect_loop_ranking_obligations(
+            &back_edge,
+            &entry,
+            &measures,
+            &PureFactContext::default(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("an unknown cell still has a symbolic value");
+
+        let loadable = obligations
+            .iter()
+            .filter(|obligation| {
+                matches!(
+                    obligation.proposition(),
+                    Proposition::CMemoryLoadable { .. }
+                )
+            })
+            .count();
+        assert!(
+            loadable > 0,
+            "the read's loadability is a member, not an assumption: {:?}",
+            obligations
+                .iter()
+                .map(ProofObligation::proposition)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            obligations[..loadable].iter().all(|obligation| obligation
+                .context()
+                .is_some_and(|context| context.contains("loadable"))),
+            "loadability members come first and say what they are"
+        );
+        assert_eq!(
+            obligations.len(),
+            loadable + 2,
+            "the ranking members follow the loadability members"
         );
     }
 
@@ -4332,7 +4630,9 @@ mod local_descent_tests {
         };
         ranks_second.extend_loop_measures([(
             1,
-            CLoopTerminationMeasure::Ranking(vec![CExpression::Variable("n".to_string())]),
+            CLoopTerminationMeasure::Ranking(vec![CRankingMeasureKey::CExpression(
+                CExpression::Variable("n".to_string()),
+            )]),
         )]);
         let error = check(&rules, &[ranks_second], &plan, &[])
             .expect_err("loop 1 is planned but was never certified");

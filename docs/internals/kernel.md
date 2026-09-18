@@ -279,6 +279,36 @@ the observed resource at the loop back edge. Resource-consuming or mutating
 transitions across that back edge remain a separate hard-bucket recursion
 boundary.
 
+A loop ranking component is not restricted to a C expression. The loop head
+carries a `CRankingComponent`, either a current-state C expression or a pure
+specification expression lowered exactly as a loop invariant's expression is,
+and the kernel evaluates that one object at the iteration-entry state and
+again at the back-edge state. A pure component publishes the evaluator's facts
+and keeps its reads' loadability obligations, so a measure that reads memory
+owes the same loadability the invariant about those cells owes. A component
+whose value is not a single int32 at a state, because the state splits it into
+several paths or because a view it reads is gone, is refused rather than
+guessed, and a component naming a fixed state is refused at lowering, since a
+measure read twice at the same state can never decrease.
+
+The plan names a pure component by its declared spelling
+(`CRankingMeasureKey::Pure`), which is a weaker match than the structural
+equality a C component gets, because the whole-function plan is built before
+specification lowering has an environment. The weaker match is not soundness
+relevant. Termination evidence is the certified loop's own back-edge bundle,
+which discharged `0 <= m` and `m_post < m_pre` for the component the kernel
+holds on that rule's loop head; a loop with a nonnegative int32 quantity that
+strictly descends on every back edge terminates whichever quantity it was.
+The plan only says which loop to point at, and a rule is bound to its source
+loop by index and executable shape, a comparison that ignores the measure.
+Matching the measures on top of that turns a plan describing one measure and a
+certificate carrying another into a named refusal instead of a silent
+mismatch, so weakening it can cost a diagnostic and not a theorem. The
+address-escape refusal, the one place the plan's measure is read for more than
+identification, runs on the certified side for a pure component, where the
+lowered expression is available; a lowered form whose C variables cannot be
+collected is refused rather than passed unchecked.
+
 Termination rules live in their own execution-environment map. Constructing or
 applying `CVerifiedFunctionRule` does not consult that map, so a termination
 feature cannot accidentally turn ordinary `ensures` into total correctness.

@@ -2964,7 +2964,17 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
             condition: substitute_bitvector_variable_in_c_expression(condition, from, to),
             ranking_measures: ranking_measures
                 .iter()
-                .map(|measure| substitute_bitvector_variable_in_c_expression(measure, from, to))
+                .map(|measure| match measure {
+                    CRankingComponent::CExpression(expression) => CRankingComponent::CExpression(
+                        substitute_bitvector_variable_in_c_expression(expression, from, to),
+                    ),
+                    CRankingComponent::Pure { source, expression } => CRankingComponent::Pure {
+                        source: source.clone(),
+                        expression: substitute_bitvector_variable_in_spec_expression(
+                            expression, from, to,
+                        ),
+                    },
+                })
                 .collect(),
             resource_specs: resource_specs
                 .iter()
@@ -6111,7 +6121,17 @@ fn substitute_pointer_variable_in_c_statement(
             condition: substitute_pointer_variable_in_c_expression(condition, from, to),
             ranking_measures: ranking_measures
                 .iter()
-                .map(|measure| substitute_pointer_variable_in_c_expression(measure, from, to))
+                .map(|measure| match measure {
+                    CRankingComponent::CExpression(expression) => CRankingComponent::CExpression(
+                        substitute_pointer_variable_in_c_expression(expression, from, to),
+                    ),
+                    CRankingComponent::Pure { source, expression } => CRankingComponent::Pure {
+                        source: source.clone(),
+                        expression: substitute_pointer_variable_in_spec_expression(
+                            expression, from, to,
+                        ),
+                    },
+                })
                 .collect(),
             resource_specs: resource_specs
                 .iter()

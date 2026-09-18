@@ -475,8 +475,18 @@ impl Renderer {
             PureFunctionArgument::Value(value) => self.cvalue(value),
             PureFunctionArgument::Integer(value) => self.integer_shared(value),
             PureFunctionArgument::Algebraic(value) => self.algebraic(value),
-            PureFunctionArgument::ArrayRef { pointer, .. } => {
-                self.push("array-ref(<memory snapshot>, ");
+            // The snapshot identity is printed, not elided. A goal that
+            // compares the same pure function at two states -- a loop
+            // invariant about a sequence, or a ranking measure's pre and post
+            // -- differs only in this argument's memory, so eliding it
+            // rendered `count(a) < count(a)`: a reader could not tell the two
+            // sides apart, and a true goal read as a false one.
+            PureFunctionArgument::ArrayRef {
+                memory, pointer, ..
+            } => {
+                self.push("array-ref(");
+                self.memory(memory);
+                self.push(", ");
                 self.cvalue(pointer);
                 self.push(")");
             }
@@ -649,7 +659,8 @@ impl Renderer {
         }
         self.depth += 1;
         if let Bitvector32Term::MemoryLoad(snapshot, pointer) = v {
-            self.push("load(snapshot=");
+            // `memory` prints its own `snapshot=` prefix.
+            self.push("load(");
             self.memory(snapshot.as_ref());
             self.push(", pointer=");
             self.pointer(pointer);

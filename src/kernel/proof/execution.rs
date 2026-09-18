@@ -3341,7 +3341,7 @@ pub(crate) struct CheckedLoopInvariantLowerings {
     /// The loop's declared `decreases` components, whose back-edge members
     /// the retained body also closed. Validation compares them exactly, so a
     /// body checked before a `decreases` clause existed cannot be reused.
-    pub(super) ranking_measures: Vec<crate::kernel::CExpression>,
+    pub(super) ranking_measures: Vec<crate::kernel::CRankingComponent>,
     pub(super) facts: super::ProofFacts,
     pub(super) effects: SharedVec<ExecutionPureFact>,
 }

@@ -723,7 +723,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     preservation: &crate::kernel::CLoopPreservationContext,
     pure_facts: &[Proposition],
     invariant_checks: &[CLoopInvariantCheck],
-    ranking_measures: &[CExpression],
+    ranking_measures: &[crate::kernel::CRankingComponent],
     structural_measure: Option<&str>,
     condition: &CExpression,
     body: &CStatement,

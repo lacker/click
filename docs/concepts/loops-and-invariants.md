@@ -44,8 +44,14 @@ the available function preconditions and invariants must establish that every
 component is nonnegative. A tuple decreases lexicographically: an earlier
 component must remain equal and a later component must be strictly smaller at
 some pivot. This supports count-up loops as well as countdowns, for example
-`decreases limit - index;` when the body increments `index`. Each component is
-checked as C int32 arithmetic, so its arithmetic must also be defined under
+`decreases limit - index;` when the body increments `index`. A component need
+not be a C expression: it is any pure `int32` expression, including a memory
+read, an application of a pure Click function, or a resource model field, and
+Click reads the one declared component at the iteration's entry and again at
+the back edge, exactly as it reads an invariant about the same cells. It may
+not mention `old` or `at`, because a measure that names a fixed state reads
+the same state twice and so can never decrease. Each component is checked as
+int32 arithmetic, so its arithmetic must also be defined under
 those assumptions. This produces separate termination evidence; it does not
 change what an invariant or a postcondition means. A separately ranked nested loop is
 treated as a terminating phase when checking its enclosing loop; an outer

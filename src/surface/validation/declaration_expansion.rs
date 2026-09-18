@@ -470,6 +470,27 @@ fn expand_declared_resource_structural_clause(
         .take()
         .map(|proof| expand_declared_resource_proof(proof, resource_definitions))
         .transpose()?;
+    // A `decreases` component is an ordinary contract expression now that the
+    // slot takes pure expressions, so a resource field it reads needs the same
+    // declared-resource expansion an invariant's does. Without it the field's
+    // declared type never reaches the component and lowering refuses a
+    // perfectly ordinary `decreases c.rank`.
+    clause.decreases = clause
+        .decreases
+        .take()
+        .map(|measure| {
+            Ok::<_, ClickError>(TerminationMeasure::new(
+                measure
+                    .components()
+                    .iter()
+                    .cloned()
+                    .map(|component| {
+                        expand_declared_resource_expression(component, resource_definitions)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            ))
+        })
+        .transpose()?;
     Ok(clause)
 }
 

@@ -1318,7 +1318,7 @@ pub(super) fn execute_c_while_verification_paths(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
-    ranking_measures: &[CExpression],
+    ranking_measures: &[CRankingComponent],
     structural_measure: Option<&str>,
     body: &CStatement,
     assumptions: &PureFactContext,
@@ -1532,7 +1532,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
-    ranking_measures: &[CExpression],
+    ranking_measures: &[CRankingComponent],
     structural_measure: Option<&str>,
     body: &CStatement,
     assumptions: &PureFactContext,
@@ -2513,7 +2513,7 @@ fn execute_c_while_exit_paths(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
-    ranking_measures: &[CExpression],
+    ranking_measures: &[CRankingComponent],
     structural_measure: Option<&str>,
     body: &CStatement,
     assumptions: &PureFactContext,
@@ -3066,7 +3066,7 @@ fn collect_invariant_check_obligations_with_mode(
 pub(super) fn collect_loop_ranking_obligations(
     state: &CState,
     iteration_entry_state: &CState,
-    ranking_measures: &[CExpression],
+    ranking_measures: &[CRankingComponent],
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> Result<Vec<ProofObligation>, String> {
@@ -3161,7 +3161,7 @@ pub(super) fn collect_loop_ranking_obligations(
 pub(super) fn loop_ranking_obligations_or_refusal(
     state: &CState,
     iteration_entry_state: &CState,
-    ranking_measures: &[CExpression],
+    ranking_measures: &[CRankingComponent],
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> Vec<ProofObligation> {
@@ -3197,7 +3197,7 @@ pub(super) fn collect_loop_preservation_summary(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
-    ranking_measures: &[CExpression],
+    ranking_measures: &[CRankingComponent],
     structural_measure: Option<&str>,
     composite_resource_definitions: &[CCompositeResourceDefinition],
     whole_loop_effect_summaries: &[Proposition],

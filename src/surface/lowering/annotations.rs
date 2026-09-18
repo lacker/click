@@ -29,6 +29,107 @@ fn is_unsuffixed_integer_literal_expression(expression: &ContractExpression) -> 
     }
 }
 
+/// One loop's declared measure as the loop head carries it: the lowered
+/// ranking components, or the resource binder a structural measure names.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum LoopMeasureClauses {
+    Ranking(Vec<crate::kernel::CRankingComponent>),
+    Structural(String),
+}
+
+/// The state a `decreases` component names, when it names one at all.
+///
+/// A measure is read at two states, so a component that fixes its own state
+/// is not a measure. This says which form fixed it, so the refusal can name
+/// the spelling the user wrote.
+enum FixedMeasureState {
+    /// `old(...)`: the function's entry state.
+    Old,
+    /// `at(<selector>, ...)`: a recorded snapshot, including a loop's entry.
+    At(SnapshotSelector),
+}
+
+impl FixedMeasureState {
+    fn spelling(&self) -> String {
+        match self {
+            Self::Old => "old(...)".to_string(),
+            Self::At(selector) => format!(
+                "at({}, ...)",
+                crate::surface::diagnostics::describe_snapshot_selector(selector)
+            ),
+        }
+    }
+}
+
+/// The fixed state one declared `decreases` component names, if any.
+///
+/// Work is linear in the component, which is the declared expression; nothing
+/// ambient is walked.
+fn fixed_measure_state(expression: &ContractExpression) -> Option<FixedMeasureState> {
+    let either = |left: &ContractExpression, right: &ContractExpression| {
+        fixed_measure_state(left).or_else(|| fixed_measure_state(right))
+    };
+    match expression {
+        ContractExpression::Old(_) => Some(FixedMeasureState::Old),
+        ContractExpression::At { selector, .. } => Some(FixedMeasureState::At(selector.clone())),
+        ContractExpression::IntegerLiteral(_)
+        | ContractExpression::QualifiedC { .. }
+        | ContractExpression::ResourceField(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_)
+        | ContractExpression::CBinding(_)
+        | ContractExpression::CFragment(_)
+        | ContractExpression::ResourceWildcard => None,
+        ContractExpression::AlgebraicConstructor { arguments, .. }
+        | ContractExpression::Call { arguments, .. } => {
+            arguments.iter().find_map(fixed_measure_state)
+        }
+        ContractExpression::SequenceLiteral(elements) => {
+            elements.iter().find_map(fixed_measure_state)
+        }
+        ContractExpression::ResourceCount(resource) => match resource.as_ref() {
+            ResourceClause::Declared { arguments, .. } => {
+                arguments.iter().find_map(fixed_measure_state)
+            }
+            _ => None,
+        },
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => fixed_measure_state(scrutinee)
+            .or_else(|| arms.iter().find_map(|arm| fixed_measure_state(&arm.body))),
+        ContractExpression::Field { base, .. }
+        | ContractExpression::Negate(base)
+        | ContractExpression::BitwiseNot(base) => fixed_measure_state(base),
+        ContractExpression::ArrayIndex { base, .. } => fixed_measure_state(base),
+        ContractExpression::SequenceConcat(left, right)
+        | ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
+        | ContractExpression::Divide(left, right)
+        | ContractExpression::Remainder(left, right)
+        | ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right)
+        | ContractExpression::Index(left, right) => either(left, right),
+        ContractExpression::If {
+            then_branch,
+            else_branch,
+            ..
+        } => either(then_branch, else_branch),
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => fixed_measure_state(start)
+            .or_else(|| fixed_measure_state(end))
+            .or_else(|| fixed_measure_state(initial))
+            .or_else(|| fixed_measure_state(body)),
+        ContractExpression::Let { value, body, .. } => either(value, body),
+    }
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -1991,45 +2092,111 @@ impl AnnotationLowerer<'_> {
     /// pass all read the one declared clause rather than agreeing by
     /// coincidence.
     fn loop_ranking_measures(
-        &self,
+        &mut self,
         loop_index: usize,
-    ) -> Result<Option<crate::kernel::CLoopTerminationMeasure>, ClickError> {
-        let mut measures: Option<crate::kernel::CLoopTerminationMeasure> = None;
-        for clause in self
+    ) -> Result<Option<LoopMeasureClauses>, ClickError> {
+        let mut measures: Option<LoopMeasureClauses> = None;
+        let clauses = self
             .structural_clauses
             .iter()
             .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-        {
-            let Some(expressions) = crate::surface::verification::loop_termination_measure(
-                clause,
-                &format!("loop {loop_index} `decreases`"),
-            )?
-            else {
+            .cloned()
+            .collect::<Vec<_>>();
+        for clause in &clauses {
+            if clause.decreases().is_none() {
                 continue;
-            };
+            }
+            let declared =
+                match crate::surface::verification::loop_structural_measure_binder(clause) {
+                    Some(binder) => LoopMeasureClauses::Structural(binder),
+                    None => LoopMeasureClauses::Ranking(
+                        self.loop_ranking_components(loop_index, clause)?,
+                    ),
+                };
             match &measures {
-                Some(existing) if existing != &expressions => {
+                Some(existing) if existing != &declared => {
                     return Err(ClickError::new(format!(
                         "loop {loop_index} has conflicting `decreases` measures"
                     )));
                 }
-                _ => measures = Some(expressions),
+                _ => measures = Some(declared),
             }
         }
         Ok(measures)
     }
 
+    /// One loop's `decreases` components as the loop head carries them.
+    ///
+    /// A component that reads as a current-state C expression stays one, so
+    /// every measure that verifies today lowers to exactly the object it
+    /// lowered to before. Anything else is lowered as a loop invariant's
+    /// expression is, in the loop-invariant elaboration context: locals stay
+    /// C fragments and memory stays `SpecMemory::Current`, so the result
+    /// names no state and the kernel is the one that picks the two states to
+    /// evaluate it at.
+    fn loop_ranking_components(
+        &mut self,
+        loop_index: usize,
+        clause: &StructuralClause,
+    ) -> Result<Vec<crate::kernel::CRankingComponent>, ClickError> {
+        let Some(measure) = clause.decreases() else {
+            return Ok(Vec::new());
+        };
+        let mut components = Vec::with_capacity(measure.components().len());
+        for expression in measure.components() {
+            // A measure is one expression the kernel reads at the iteration's
+            // entry state and again at the back-edge state, and ranks the two
+            // values against each other. A component that names a state of
+            // its own reads the same state twice, so its two values are equal
+            // and it can never decrease: `decreases old(m)` used to lower and
+            // then leave the back edge permanently open, and a loop-entry
+            // `at(...)` reported only that a measure "could not be
+            // evaluated". Refuse it here, where the declaration is still
+            // readable and the reason can be stated.
+            if let Some(fixed) = fixed_measure_state(expression) {
+                return Err(ClickError::new(format!(
+                    "loop {loop_index} `decreases` component `{}` names the fixed state `{}`; a \
+                     termination measure must be a function of the current state alone, because \
+                     the kernel evaluates the one declared component at the iteration's entry and \
+                     again at the back edge and requires the second value to be smaller. Write the \
+                     measure over current values, and use an invariant to relate them to an \
+                     earlier state.",
+                    crate::surface::verification::termination_measure_source(expression),
+                    fixed.spelling()
+                )));
+            }
+            if let Ok(c_expression) = resource_argument_to_c_expression(expression) {
+                components.push(crate::kernel::CRankingComponent::CExpression(c_expression));
+                continue;
+            }
+            let lowered = self
+                .lower_contract_expression_to_spec(
+                    expression,
+                    &SpecElaborationContext::for_loop_invariant(loop_index),
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "loop {loop_index} `decreases` component `{}`: {message}",
+                        crate::surface::verification::termination_measure_source(expression)
+                    ))
+                })?;
+            components.push(crate::kernel::CRankingComponent::Pure {
+                source: crate::surface::verification::termination_measure_source(expression),
+                expression: lowered,
+            });
+        }
+        Ok(components)
+    }
+
     /// The loop head's declared measure, split into the two clauses the
     /// kernel loop statement carries.
     fn loop_measure_clauses(
-        &self,
+        &mut self,
         loop_index: usize,
-    ) -> Result<(Vec<CExpression>, Option<String>), ClickError> {
+    ) -> Result<(Vec<crate::kernel::CRankingComponent>, Option<String>), ClickError> {
         Ok(match self.loop_ranking_measures(loop_index)? {
-            Some(crate::kernel::CLoopTerminationMeasure::Ranking(components)) => (components, None),
-            Some(crate::kernel::CLoopTerminationMeasure::Structural(binder)) => {
-                (Vec::new(), Some(binder))
-            }
+            Some(LoopMeasureClauses::Ranking(components)) => (components, None),
+            Some(LoopMeasureClauses::Structural(binder)) => (Vec::new(), Some(binder)),
             None => (Vec::new(), None),
         })
     }

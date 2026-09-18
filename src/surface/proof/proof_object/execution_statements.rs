@@ -6,7 +6,7 @@ use crate::surface::planning::proposition_search::PropositionSearch;
 /// Names the ranking members a ranked loop's bundle carries, so an explicit
 /// `preserve by` body written before the `decreases` clause existed reports
 /// what it now has to close instead of only that the bundle stayed open.
-fn ranking_member_diagnostic(ranking_measures: &[CExpression]) -> String {
+fn ranking_member_diagnostic(ranking_measures: &[crate::kernel::CRankingComponent]) -> String {
     if ranking_measures.is_empty() {
         return String::new();
     }
@@ -981,7 +981,7 @@ impl<'a> Proof<'a> {
         loop_head_state: &CState,
         condition: &CExpression,
         invariant_checks: &[CLoopInvariantCheck],
-        ranking_measures: &[CExpression],
+        ranking_measures: &[crate::kernel::CRankingComponent],
         structural_measure: Option<&str>,
         invariant_surfaces: &[ClickProposition],
         binders: &[crate::kernel::CLoopBinder],
@@ -1050,7 +1050,7 @@ impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn validate_loop_invariant_bundle(
         &self,
         invariant_checks: &[CLoopInvariantCheck],
-        ranking_measures: &[CExpression],
+        ranking_measures: &[crate::kernel::CRankingComponent],
     ) -> Result<(), ClickError> {
         self.state
             .validate_checked_invariant_lowerings(invariant_checks, ranking_measures)
@@ -1068,7 +1068,7 @@ impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn certify_loop_invariant_bundle(
         &self,
         invariant_checks: &[CLoopInvariantCheck],
-        ranking_measures: &[CExpression],
+        ranking_measures: &[crate::kernel::CRankingComponent],
     ) -> Result<Self, ClickError> {
         self.validate_loop_invariant_bundle(invariant_checks, ranking_measures)?;
         let execution = self
