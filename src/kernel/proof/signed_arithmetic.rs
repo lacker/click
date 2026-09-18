@@ -2587,10 +2587,21 @@ fn affine_difference(
     Some((terms, constant))
 }
 
+/// Whether two claims are both unconditionally true constant comparisons on
+/// the same carrier (for example, a rebuilt `0 <= 0` conclusion against a
+/// `0 == 0` goal spelling). Accepting such a pair proves a true goal from a
+/// true conclusion; anything with variables or a false constant still
+/// requires exact claim equality.
+fn trivially_true_claims(left: &SignedArithmeticClaim, right: &SignedArithmeticClaim) -> bool {
+    left.carrier == right.carrier && is_trivial(left) && is_trivial(right)
+}
+
 fn conclusion_matches(value: &CheckedValue, goal: &Proposition) -> bool {
     match value {
-        CheckedValue::Affine(claim) => affine_claim(goal)
-            .is_some_and(|expected| charge_claim_pair_work(&expected, claim) && expected == *claim),
+        CheckedValue::Affine(claim) => affine_claim(goal).is_some_and(|expected| {
+            charge_claim_pair_work(&expected, claim)
+                && (expected == *claim || trivially_true_claims(&expected, claim))
+        }),
         CheckedValue::Proposition(proposition) => propositions_match(proposition, goal),
         CheckedValue::Interval { .. } | CheckedValue::Defined { .. } => false,
     }
@@ -3150,6 +3161,47 @@ mod tests {
         assert_eq!(
             added_disequalities.check(&disequality, std::slice::from_ref(&disequality)),
             Err(SignedArithmeticCheckError::InvalidRelation(2))
+        );
+    }
+
+    #[test]
+    fn trivially_true_constant_spellings_match_across_relations() {
+        let le_zero = le(Bitvector32Term::Constant(0), Bitvector32Term::Constant(0));
+        let eq_zero = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Constant(0)),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        let le_certificate = SignedArithmeticCertificate {
+            nodes: vec![SignedArithmeticNode::Trivial {
+                result: claim(&le_zero),
+            }],
+            conclusion: 0,
+        };
+        // A rebuilt `0 <= 0` conclusion closes a `0 == 0` goal spelling and
+        // vice versa: both denote unconditional truth.
+        le_certificate.check(&eq_zero, &[]).unwrap();
+        let eq_certificate = SignedArithmeticCertificate {
+            nodes: vec![SignedArithmeticNode::Trivial {
+                result: claim(&eq_zero),
+            }],
+            conclusion: 0,
+        };
+        eq_certificate.check(&le_zero, &[]).unwrap();
+        // A false constant goal still fails, even against a true conclusion.
+        let one_le_zero = le(Bitvector32Term::Constant(1), Bitvector32Term::Constant(0));
+        assert_eq!(
+            le_certificate.check(&one_le_zero, &[]),
+            Err(SignedArithmeticCheckError::DoesNotFollow)
+        );
+        // A conclusion with variables still requires an exact claim match,
+        // even against a trivially true goal.
+        let var_le_five = le(x(), Bitvector32Term::Constant(5));
+        assert_eq!(
+            eq_certificate.check(&var_le_five, &[]),
+            Err(SignedArithmeticCheckError::DoesNotFollow)
         );
     }
 
