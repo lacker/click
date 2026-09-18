@@ -632,19 +632,8 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
     }
     have run_length == count by {
         cases(
-            (i < arena->capacity and not (run_length < count)) or
-                not (i < arena->capacity)
+            not (i < arena->capacity) or not (run_length < count)
         ) {
-            extract(not (run_length < count));
-            apply(int32_le_and_not_lt_implies_eq(
-                run_length,
-                count
-            )) using {
-                run_length <= count;
-                not (run_length < count);
-            }
-            assumption();
-        } {
             have i >= arena->capacity by {
                 apply(int32_not_lt_implies_ge(
                     i,
@@ -683,6 +672,15 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
                     count <= run_length;
                 }
             }
+            apply(int32_le_and_not_lt_implies_eq(
+                run_length,
+                count
+            )) using {
+                run_length <= count;
+                not (run_length < count);
+            }
+            assumption();
+        } {
             apply(int32_le_and_not_lt_implies_eq(
                 run_length,
                 count

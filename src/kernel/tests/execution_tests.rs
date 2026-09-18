@@ -2154,3 +2154,58 @@ fn loop_entry_goals_preserve_guarded_judgments() {
         outstanding
     );
 }
+
+/// `a != 0` as the kernel spells a short-circuit guard operand's fact.
+fn guard_operand_fact(variable: u64, nonzero: bool) -> Proposition {
+    Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::Variable(Variable(variable))),
+            Box::new(Bitvector32Term::Constant(0)),
+        ),
+        !nonzero,
+    )
+}
+
+/// The guard paths' disjunction reads in short-circuit order however the
+/// kernel enumerated the paths, and drops the conjunct the short-circuit path
+/// refutes. `while (a || b)` is entered by `a != 0`, or by `a == 0 && b != 0`;
+/// what a proof writes is `a != 0 or b != 0`.
+#[test]
+fn guard_path_disjunction_reads_in_short_circuit_order() {
+    let (a_nonzero, a_zero) = (guard_operand_fact(0, true), guard_operand_fact(0, false));
+    let b_nonzero = guard_operand_fact(1, true);
+    let expected = Proposition::Or(Box::new(a_nonzero.clone()), Box::new(b_nonzero.clone()));
+    let short_circuit_first = vec![
+        vec![a_nonzero.clone()],
+        vec![a_zero.clone(), b_nonzero.clone()],
+    ];
+    let short_circuit_last = vec![vec![a_zero, b_nonzero], vec![a_nonzero]];
+    for paths in [short_circuit_first, short_circuit_last] {
+        assert_eq!(
+            crate::kernel::loops::guard_path_disjunction(&paths),
+            Some(expected.clone()),
+            "the disjunction must not depend on the order the paths were enumerated in"
+        );
+    }
+}
+
+/// A path that states nothing of its own makes the disjunction vacuously
+/// true, and a single path is not a disjunction at all. Neither exports
+/// anything for a proof to split on.
+#[test]
+fn guard_path_disjunction_has_nothing_to_export_without_two_stating_paths() {
+    let a_nonzero = guard_operand_fact(0, true);
+    let b_nonzero = guard_operand_fact(1, true);
+    assert_eq!(
+        crate::kernel::loops::guard_path_disjunction(&[
+            vec![a_nonzero.clone()],
+            vec![b_nonzero],
+            Vec::new(),
+        ]),
+        None
+    );
+    assert_eq!(
+        crate::kernel::loops::guard_path_disjunction(std::slice::from_ref(&vec![a_nonzero])),
+        None
+    );
+}
