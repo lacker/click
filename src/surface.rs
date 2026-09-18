@@ -2184,6 +2184,26 @@ struct RecordedSnapshotChange {
     parent: Option<std::sync::Arc<RecordedSnapshotChange>>,
 }
 
+/// The history is one node per recorded change, so a proof that steps a few
+/// thousand statements owns a chain that long. Dropping it through the
+/// derived `Drop` recurses once per node and overflowed the 8 MB main thread
+/// of `click verify` at about 6,000 recorded steps, well inside the budget an
+/// `auto` proof may spend; the test harness only hid it behind a 64 MB
+/// worker. The chain is unlinked here instead, node by node, for as long as
+/// this drop holds the last reference to the next one; a node another
+/// version still shares stops the walk and is dropped by that version later.
+impl Drop for RecordedSnapshotChange {
+    fn drop(&mut self) {
+        let mut next = self.parent.take();
+        while let Some(node) = next {
+            next = match std::sync::Arc::try_unwrap(node) {
+                Ok(mut node) => node.parent.take(),
+                Err(_) => None,
+            };
+        }
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     static RECORDED_SNAPSHOT_NODE_ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

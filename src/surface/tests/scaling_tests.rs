@@ -1235,6 +1235,42 @@ fn scaling_assertion_rejects_a_quadratic_curve() {
     assert!(named_growth_diagnostic(&quadratic).contains("quadratic reference"));
 }
 
+/// The change history is one node per recorded snapshot. Dropping a long
+/// history through the derived `Drop` recursed once per node and overflowed
+/// `click verify`'s 8 MB main thread at about 6,000 recorded steps. A history
+/// far longer than any budgeted proof records is dropped here on a 256 KB
+/// thread, and dropped twice more with a shared suffix, since a node another
+/// version still holds must stop the walk rather than be unlinked from under
+/// it.
+#[test]
+fn recorded_snapshot_history_drops_without_recursing() {
+    let build = |size: usize| {
+        let mut snapshots = RecordedSnapshots::new();
+        for index in 0..size {
+            snapshots.insert(
+                SnapshotSelector::Mark(format!("step-{index:06}")),
+                CState::new(),
+            );
+        }
+        snapshots
+    };
+    std::thread::Builder::new()
+        .name("recorded-snapshot-history-drop".into())
+        .stack_size(256 * 1024)
+        .spawn(move || {
+            drop(build(200_000));
+            let shared = build(100_000);
+            let mut longer = shared.clone();
+            longer.insert(SnapshotSelector::Mark("tip".to_string()), CState::new());
+            drop(longer);
+            assert!(shared.contains_key(&SnapshotSelector::Mark("step-000000".to_string())));
+            drop(shared);
+        })
+        .expect("thread")
+        .join()
+        .expect("dropping a recorded snapshot history must not recurse per node");
+}
+
 #[test]
 fn recorded_snapshot_branch_merge_visits_only_fork_local_changes() {
     let mark_selector = |name: String| SnapshotSelector::Mark(name);
