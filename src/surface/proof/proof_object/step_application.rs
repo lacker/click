@@ -248,6 +248,13 @@ fn signed_add_surface_shape(
         if signed_term_constant_value(second) == Some(0) && signed_atom_matches(target, first) {
             return true;
         }
+        // A zero on either side folds away in lowering: `(0 + u)` is read as
+        // `u`, so the sum of `0 <= u` and `u <= v` never reaches the `Add`
+        // arm below and a plain transitivity was refused as not encoding
+        // its child sum.
+        if signed_term_constant_value(first) == Some(0) && signed_atom_matches(target, second) {
+            return true;
+        }
         if let crate::kernel::Bitvector32Term::Add(target_first, target_second) = target {
             return signed_atom_matches(target_first, first)
                 && (signed_atom_matches(target_second, second)
