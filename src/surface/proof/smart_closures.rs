@@ -344,8 +344,14 @@ fn integer_surface_ordered_parts(
         ComparisonOperator::GreaterEqual => {
             Some((right.clone(), ComparisonOperator::LessEqual, left.clone()))
         }
-        ComparisonOperator::LessThan | ComparisonOperator::GreaterThan => {
-            Some((left.clone(), *operator, right.clone()))
+        ComparisonOperator::LessThan => Some((left.clone(), *operator, right.clone())),
+        // `a > 0` is the ordered pair of `0 < a`, exactly as `a >= 0` is the
+        // ordered pair of `0 <= a`.  Handing back the "greater" spelling's
+        // sides unswapped paired the wrong sides of two addends, so the sum
+        // of `a > 0` and `b >= 0` printed as `(a + 0) < (0 + b)` instead of
+        // `(0 + 0) < (a + b)` and no longer lowered to the kernel's sum.
+        ComparisonOperator::GreaterThan => {
+            Some((right.clone(), ComparisonOperator::LessThan, left.clone()))
         }
         ComparisonOperator::NotEqual | ComparisonOperator::In => None,
     }
@@ -394,10 +400,11 @@ fn integer_surface_add(
         (ComparisonOperator::LessEqual, ComparisonOperator::LessEqual) => {
             ComparisonOperator::LessEqual
         }
-        (ComparisonOperator::LessThan, _)
-        | (_, ComparisonOperator::LessThan)
-        | (ComparisonOperator::GreaterThan, _)
-        | (_, ComparisonOperator::GreaterThan) => ComparisonOperator::LessThan,
+        // `integer_surface_ordered_parts` never hands back a "greater"
+        // spelling, so a strict addend is always `LessThan` here.
+        (ComparisonOperator::LessThan, _) | (_, ComparisonOperator::LessThan) => {
+            ComparisonOperator::LessThan
+        }
         _ if operator == right_operator => operator,
         _ => return None,
     };
@@ -6375,5 +6382,56 @@ mod synthesized_literal_tests {
             ContractExpression::Negate(inner)
                 if matches!(inner.as_ref(), ContractExpression::IntegerLiteral(value) if value == "17")
         ));
+    }
+
+    fn comparison(left: &str, operator: ComparisonOperator, right: &str) -> ClickProposition {
+        let expression = |text: &str| match text.parse::<i64>() {
+            Ok(_) => ContractExpression::IntegerLiteral(text.to_string()),
+            Err(_) => ContractExpression::Binding(text.to_string()),
+        };
+        ClickProposition::Comparison {
+            left: expression(left),
+            operator,
+            right: expression(right),
+        }
+    }
+
+    /// A `>`-spelled premise is the same ordered pair as its `<` restatement,
+    /// so adding it to a `>=`-spelled premise must pair the lower sides with
+    /// each other.  Leaving the "greater" sides unswapped printed
+    /// `(a + 0) < (0 + b)`, which no longer lowered to the kernel's sum.
+    #[test]
+    fn printed_sum_orders_a_greater_than_premise_like_its_less_than_spelling() {
+        let strict = comparison("a", ComparisonOperator::GreaterThan, "0");
+        let loose = comparison("b", ComparisonOperator::GreaterEqual, "0");
+        let sum = integer_surface_add(&strict, &loose).expect("the sum is printable");
+
+        let restated = comparison("0", ComparisonOperator::LessThan, "a");
+        let restated_sum = integer_surface_add(&restated, &loose).expect("the sum is printable");
+        assert_eq!(sum, restated_sum);
+
+        let ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } = &sum
+        else {
+            panic!("the printed sum is a comparison");
+        };
+        assert_eq!(*operator, ComparisonOperator::LessThan);
+        assert_eq!(
+            *left,
+            ContractExpression::Add(
+                Box::new(ContractExpression::IntegerLiteral("0".into())),
+                Box::new(ContractExpression::IntegerLiteral("0".into())),
+            )
+        );
+        assert_eq!(
+            *right,
+            ContractExpression::Add(
+                Box::new(ContractExpression::Binding("a".into())),
+                Box::new(ContractExpression::Binding("b".into())),
+            )
+        );
     }
 }
