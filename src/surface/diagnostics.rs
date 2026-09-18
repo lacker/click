@@ -725,10 +725,17 @@ pub(super) fn describe_runtime_error(
         crate::kernel::CRuntimeError::UnresolvedAllocationOutcome => {
             "malloc result was neither refined by a null check nor returned".to_string()
         }
-        crate::kernel::CRuntimeError::LiveAllocationLeak { allocation } => format!(
-            "live allocation obligation was neither returned nor freed: `{}`",
-            describe_resource_fact(allocation, parameters, arguments)
-        ),
+        crate::kernel::CRuntimeError::LiveAllocationLeak { allocation, hint } => {
+            let mut message = format!(
+                "live allocation obligation was neither returned nor freed: `{}`",
+                describe_resource_fact(allocation, parameters, arguments)
+            );
+            if let Some(hint) = hint {
+                message.push(' ');
+                message.push_str(hint);
+            }
+            message
+        }
         crate::kernel::CRuntimeError::StaleResourceAfterFree { resource } => format!(
             "resource would remain usable after its allocation is freed: `{}`",
             describe_resource_fact(resource, parameters, arguments)

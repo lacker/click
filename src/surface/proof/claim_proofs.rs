@@ -3858,7 +3858,10 @@ pub(super) fn finish_ordered_proof<'a>(
                         return Err(ClickError::new(format!(
                             "`{proof_label}` path {path_index}: runtime error: {}",
                             describe_runtime_error(
-                                &crate::kernel::CRuntimeError::LiveAllocationLeak { allocation },
+                                &crate::kernel::CRuntimeError::LiveAllocationLeak {
+                                    allocation,
+                                    hint: None,
+                                },
                                 parsed_function.parameters(),
                                 arguments,
                             )

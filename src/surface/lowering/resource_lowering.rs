@@ -1596,10 +1596,15 @@ pub(in crate::surface) fn resource_argument_to_c_expression(
         | ContractExpression::At { .. }
         | ContractExpression::If { .. }
         | ContractExpression::RangeFold { .. }
-        | ContractExpression::Let { .. }
         | ContractExpression::Call { .. } => Err(ClickError::new(
             "declared resource arguments currently support current-state C expressions only",
         )),
+        ContractExpression::Let { body, .. } => {
+            // `apply_contract_lets_to_expression` already substituted every
+            // referenced value into the body; the wrapper only preserves
+            // sharing for later passes. Unwrap to the substituted body.
+            resource_argument_to_c_expression(body)
+        }
     }
 }
 

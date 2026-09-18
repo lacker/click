@@ -18479,6 +18479,34 @@ fn resource_fact_transfer_priority(resource: &CResourceFact) -> u8 {
     }
 }
 
+/// Advisory hint for a leaked allocation that may belong to a counted
+/// population body retired by clause arithmetic. Names counted families with
+/// population-wide bodies so the author can prove non-emptiness
+/// (`count(family(...)) != 0`) instead of freeing. Advisory only; never
+/// affects checking.
+fn counted_population_leak_hint(function: &CFunction) -> Option<String> {
+    let mut names = Vec::new();
+    for definition in function.composite_resource_definitions() {
+        if definition.is_counted_population()
+            && definition_has_population_wide_body(definition)
+            && !names.contains(&definition.name().to_string())
+        {
+            names.push(definition.name().to_string());
+        }
+    }
+    if names.is_empty() {
+        return None;
+    }
+    let counts = names
+        .iter()
+        .map(|name| format!("count({name}(...)) != 0"))
+        .collect::<Vec<_>>()
+        .join(" or ");
+    Some(format!(
+        "To fix, either free it on this path or, if it belongs to a counted population that is actually non-empty here, prove that {counts}."
+    ))
+}
+
 fn unreturned_allocation_obligation(
     actual_state: &CState,
     returned_resources: &ResourceContext,
@@ -18853,8 +18881,12 @@ fn function_outcome_from_body_with_resource_transfer(
         || unreturned_allocation_obligation(&state, &return_resources, function, assumptions),
     ) {
         Ok(Some(allocation)) => {
+            let hint = counted_population_leak_hint(function);
             return Ok((
-                CFunctionOutcome::RuntimeError(CRuntimeError::LiveAllocationLeak { allocation }),
+                CFunctionOutcome::RuntimeError(CRuntimeError::LiveAllocationLeak {
+                    allocation,
+                    hint,
+                }),
                 obligations,
                 None,
             ));
