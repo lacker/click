@@ -449,6 +449,17 @@ Scalar `int64` and `uint64` retain their signedness through arithmetic,
 comparisons, shifts, and bitwise operations; both occupy eight bytes in the
 modeled LP64 ABI.
 
+`PureFactContext` reconstructs a conservative signed interval for a term over
+the term's own structure, using it to decide overflow and exact equality. A
+pure conditional denotes one of its two arms, so its interval is the hull of
+the arms' intervals: `if c { 1 } else { 0 }` ranges over `0..1` without the
+condition being decided either way. A signed comparison consults that interval
+only when one of its sides is a conditional. An ordinary comparison keeps the
+indexed order-fact routes and reaches no interval reconstruction, while a
+conditional, which no order fact is ever written about, gets the bounds its
+arms already state. The hull is a bound, not a case split: a claim that holds
+on one arm and fails on the other stays undecided.
+
 ## C ABI and memory layout
 
 The C0 importer models one explicit ABI: LP64. In that ABI, `int16` and

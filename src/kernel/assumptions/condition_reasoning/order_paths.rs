@@ -255,7 +255,7 @@ impl PureFactContext {
                 {
                     Some(false)
                 } else {
-                    None
+                    self.decide_signed_order_from_conditional_interval(&left, &right, true)
                 }
             }
             ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
@@ -327,12 +327,13 @@ impl PureFactContext {
                     || self.order_facts_force_equal(&left, &right)
                 {
                     Some(true)
-                } else if self
-                    .has_condition_fact(ConditionTerm::signed_greater_than(left, right), true)
-                {
+                } else if self.has_condition_fact(
+                    ConditionTerm::signed_greater_than(left.clone(), right.clone()),
+                    true,
+                ) {
                     Some(false)
                 } else {
-                    None
+                    self.decide_signed_order_from_conditional_interval(&left, &right, false)
                 }
             }
             ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
@@ -371,7 +372,7 @@ impl PureFactContext {
                 {
                     Some(false)
                 } else {
-                    None
+                    self.decide_signed_order_from_conditional_interval(&right, &left, true)
                 }
             }
             ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
@@ -409,12 +410,13 @@ impl PureFactContext {
                     || self.order_facts_force_equal(&left, &right)
                 {
                     Some(true)
-                } else if self
-                    .has_condition_fact(ConditionTerm::signed_less_than(left, right), true)
-                {
+                } else if self.has_condition_fact(
+                    ConditionTerm::signed_less_than(left.clone(), right.clone()),
+                    true,
+                ) {
                     Some(false)
                 } else {
-                    None
+                    self.decide_signed_order_from_conditional_interval(&right, &left, false)
                 }
             }
             _ => None,
