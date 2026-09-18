@@ -3641,3 +3641,27 @@ fn range_fold_unrolls_concrete_ranges_of_any_length() {
         );
     }
 }
+
+#[test]
+fn symbolic_blocks_are_never_proven_distinct_by_structure() {
+    let symbolic = Pointer {
+        block: PointerBlock::Symbolic(Variable(77)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let heap = Pointer {
+        block: PointerBlock::Heap(1000001),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    // A logic variable may later be constrained to any address (a contract
+    // postcondition such as `result == destination` does exactly that), so
+    // structure alone must not separate it. Otherwise the equality folds to
+    // false, gets assumed, and poisons later reasoning.
+    assert!(!symbolic.blocks_proven_distinct(&heap));
+    assert!(!heap.blocks_proven_distinct(&symbolic));
+    // Distinct heap identities remain distinct.
+    let other_heap = Pointer {
+        block: PointerBlock::Heap(1000002),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    assert!(heap.blocks_proven_distinct(&other_heap));
+}

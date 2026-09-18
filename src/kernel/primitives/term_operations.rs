@@ -2891,6 +2891,16 @@ impl Pointer {
     }
 
     pub(in crate::kernel) fn blocks_proven_distinct(&self, other: &Self) -> bool {
+        // A symbolic block is a logic variable that later facts may constrain
+        // to any address, including a heap block named below (a contract
+        // postcondition such as `result == destination` does exactly that).
+        // It is therefore never proven distinct by structure alone; only an
+        // explicit disequality in the assumptions can separate it.
+        if matches!(self.block, PointerBlock::Symbolic(_))
+            || matches!(other.block, PointerBlock::Symbolic(_))
+        {
+            return false;
+        }
         // A function's own scalar locals (`local:` blocks) are storage the
         // function declared; memory reached through a parameter
         // (`ExternalArgument`) existed before the call and cannot be one of
