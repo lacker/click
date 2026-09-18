@@ -961,6 +961,7 @@ int32 stop_at(int32 n) {
     step();
     step();
     loop {
+        decreases i;
         invariant i >= 0;
     }
     step();

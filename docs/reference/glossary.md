@@ -687,8 +687,8 @@ exclusive access from a C pointer alone.
 ### Partial correctness
 
 The guarantee that every terminating execution satisfies its specification,
-without claiming that execution terminates. A loop or function needs separate
-termination evidence to establish total correctness.
+without claiming that execution terminates. It is what a `diverges` contract
+keeps: Click's ordinary judgment adds termination on top of it.
 
 ### Path condition
 
@@ -1041,9 +1041,12 @@ produce terms, and different scalar terms can denote one value.
 
 ### Termination
 
-The property that execution cannot continue forever. Click records termination
-separately from partial correctness and requires a checked decreasing measure
-for supported loops and recursive calls.
+The property that execution cannot continue forever. Every verified C
+function must have termination evidence unless its signature says `diverges`,
+and Click records that evidence separately from the partial-correctness rule.
+Loops the proof summarizes and recursive cycles need a checked decreasing
+measure; a call graph with no cycle is ranked by planner-assigned heights the
+kernel rechecks at every call site.
 
 ### Theorem
 

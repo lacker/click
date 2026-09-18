@@ -43,14 +43,15 @@ Those are program or frontend-boundary changes, not proof workarounds.
 A Click proof says:
 
 - if the function is called in a state satisfying its `requires` clauses,
-- no finite modeled execution reaches checked C undefined behavior, and
-- if the function returns, its return state satisfies every stated `ensures`
-  clause.
+- no finite modeled execution reaches checked C undefined behavior,
+- the function returns, and
+- its return state satisfies every stated `ensures` clause.
 
-This is a partial-correctness guarantee. A C function may intentionally run
-forever; an ordinary Click contract does not claim that it terminates. Loop
-invariants prove safety across every finite number of iterations and describe
-any exit that does occur.
+Termination is part of the claim, not an extra one. A C function that may
+intentionally run forever says so in its signature, with the `diverges`
+marker; such a contract drops the third line above and keeps the rest, which
+is the partial-correctness guarantee. Loop invariants prove safety across
+every finite number of iterations and describe any exit that does occur.
 
 The guarantee covers the modeled C0 execution and resources, not the physical
 machine running the verifier or program. In particular, a verified function
@@ -64,8 +65,9 @@ Click has no host-resource budget. It does not predict stack depth, address
 space, operating-system allocation failure, or the amount of local storage a
 machine can provide. The verifier's own worker-stack size and tactic budgets
 are implementation limits, not facts established about the verified program.
-An optional `decreases` clause proves a separate logical termination judgment;
-it does not turn those host limits into modeled C behavior. A future bounded
+Termination is a logical judgment about the modeled execution; it does not
+turn those host limits into modeled C behavior, so a function Click proves
+returns can still exhaust the machine. A future bounded
 mode must introduce explicit kernel-checked limits rather than infer them from
 the verifier process.
 

@@ -64,11 +64,12 @@ facts must prove `0 <= value <= 255`.
 Each `ensures` clause is a separate guarantee. A guarantee may be labeled with
 `label:`. Omitting a proof clause uses the default prover, currently `auto`.
 
-An `ensures` clause describes every return state; it does not assert that a
-return state exists. C contracts are partial-correctness contracts by default.
-Checked undefined behavior, resource authority, and declared write footprints
-remain safety properties of every finite execution prefix, including prefixes
-of an execution that never returns.
+An `ensures` clause describes every return state, and a C contract also
+asserts that a return state exists: every verified C function returns unless
+its signature says `diverges`. See [C termination](#c-termination). Checked
+undefined behavior, resource authority, and declared write footprints remain
+safety properties of every finite execution prefix, including prefixes of an
+execution that never returns, which is what a `diverges` contract keeps.
 
 A function may declare one checked exceptional result channel by placing
 `throws int32` after its parameter list. Its `exceptional ensures` clauses are
@@ -124,16 +125,18 @@ C functions may call themselves or participate in mutual recursion without a
 special Click keyword. Their ordinary contracts are the modular interfaces for
 recursive calls. Click checks all functions in the selected call-graph
 transaction before returning any verified rules, so declaration order does not
-control whether a callee contract is available. This remains partial
-correctness: `ensures` applies if a recursive call returns and the contract by
-itself is not a termination proof. Recursive pure Click functions follow a
-different rule: because a pure call must produce a value, every recursive
-component requires a checked `decreases` measure.
+control whether a callee contract is available. A recursive component is a
+real cycle, so it carries a function-level `decreases` measure of its own; see
+[C termination](#c-termination). Recursive pure Click functions carry the same
+obligation for a different reason, and cannot waive it: a pure call must
+produce a value, so there is no `diverges` marker for one.
 
-### Optional C termination
+### C termination
 
-Use `decreases` only when a caller needs separate evidence that a C function
-returns. A `decreases` clause is always one expression, and what it names
+Every verified C function must have termination evidence for every reachable
+loop, every recursive cycle, and every callee. Write `decreases` wherever
+there is a real cycle that Click does not already rank: a loop the proof
+summarizes, or a recursive call. A `decreases` clause is always one expression, and what it names
 decides which measure it is: an `int32` parameter, a resource application such
 as `list(node)`, or a contract or loop resource binder such as `t`. Functions
 and resources share one namespace, so that classification happens after name
@@ -320,32 +323,32 @@ hard-bucket `issues/recursion.md`.
 Recursive calls whose descent depends on a changing lexicographic caller
 measure remain unsupported.
 
-Supplying any C `decreases` clause asks Click to certify termination of the
-whole function, so every reachable loop and recursive component must be ranked
-and every callee must itself have termination evidence. A loop the proof does
-not summarize needs no measure: Click executes such a loop concretely, one
-bounded iteration at a time, and that execution succeeds only when every
+Click certifies termination of the whole function, so every reachable loop and
+recursive component must be ranked and every callee must itself have
+termination evidence. Much of that costs nothing to write. A loop the proof
+does not summarize needs no measure: Click executes such a loop concretely,
+one bounded iteration at a time, and that execution succeeds only when every
 feasible path has left the loop, so it is the loop's termination evidence; see
 `mdtests/bounded_loop.md`. A loop proved through a `loop` block is summarized
-by its invariants and needs a `decreases` clause. A verified callee
-supplies its own; an `extern` contract is trusted to return, as its `ensures`
-is trusted. A call through a function pointer returns when every function
-whose address the project takes returns without calling through a function
-pointer itself, directly or in anything it calls: a comparator, a visitor, or
-an augment callback qualifies, and a function that hands itself to the helper
-that calls it does not. Until that holds no pointer call supplies evidence,
-and once termination is required the refusal is reported where the address is
-taken; see `mdtests/termination_callback_self_application_rejected.md`. A
-callback that itself takes callbacks needs a measure on its named contract,
-which is not supported yet. The refusal
-names the unranked loop or the callee responsible. The kernel records
-that evidence separately from `CVerifiedFunctionRule`. Ordinary calls and
-ordinary `ensures` continue to use partial correctness and do not silently
-depend on it. A perpetual service loop should therefore have an invariant but
-no `decreases` clause.
+by its invariants and needs a `decreases` clause. A verified callee supplies
+its own; an `extern` contract is trusted to return, as its `ensures` is
+trusted. Calls that form a directed acyclic graph are ranked by the planner's
+call-graph heights, which are never written in source. A call through a
+function pointer returns when every function whose address the project takes
+returns without calling through a function pointer itself, directly or in
+anything it calls: a comparator, a visitor, or an augment callback qualifies,
+and a function that hands itself to the helper that calls it does not. Where
+that does not hold the refusal is reported at the place the address is taken;
+see `mdtests/termination_callback_self_application_rejected.md`. A callback
+that itself takes callbacks needs a measure on its named contract, which is
+not supported yet. The refusal names the unranked loop or the callee
+responsible, and offers the two repairs: a `decreases` clause, or the
+`diverges` marker. The kernel records termination evidence separately from
+`CVerifiedFunctionRule`, so an ordinary `ensures` is still exactly a statement
+about return states.
 
-The `diverges` marker lets that loop say so in the contract instead of leaving
-it to the reader. It sits after the parameter list, beside `throws` and after
+A perpetual service loop is the exception, and it says so in the contract.
+The `diverges` marker sits after the parameter list, beside `throws` and after
 it when a signature carries both, and on a `loop` head, which has no signature
 of its own:
 
@@ -361,9 +364,9 @@ int32 wait_for_zero(int32 x) diverges {
 ```
 
 The marker declares that the function, or that loop, may not return; it makes
-no other claim and yields no evidence. The contract keeps exactly the partial
-correctness it already had: safety is checked on every execution prefix, and
-the `ensures` holds if the function returns. Because a marked function never
+no other claim and yields no evidence. A marked contract is judged by partial
+correctness: safety is checked on every execution prefix, and the `ensures`
+holds if the function returns. Because a marked function never
 yields termination evidence, it cannot also carry a function-level `decreases`
 clause, a marked loop cannot also carry a loop `decreases`, and a `loop
 diverges` is refused unless its enclosing function is declared `diverges` too.
@@ -378,16 +381,16 @@ function whose every loop is ranked and whose every call descends has nothing
 to justify the marker, and declaring it `diverges` is refused; see
 `mdtests/diverges_rejects_unjustified_marker.md`. An `extern` contract is
 exempt, because the declaration is all that is known about it. The marker is
-contagious: a caller that asks for termination evidence and calls a marked
-function is refused, and the refusal names the callee and the repair, which is
-to declare the caller `diverges` too.
+contagious: an unmarked caller of a marked function is refused, and the
+refusal names the callee and the repair, which is to declare the caller
+`diverges` too.
 
 Termination and host capacity are separate judgments. Click does not model
 process stack exhaustion, address-space exhaustion, operating-system
 allocation failure, or local-storage limits. A verified function can still
 run out of those host resources; the worker's stack size and verifier budgets
 are not program guarantees. The perpetual-loop regressions in the [examples
-reference](../examples.md) pin this partial-correctness boundary.
+reference](../examples.md) pin what a `diverges` contract still promises.
 
 A function with several postcondition clauses may instead use one grouped
 execution proof after the contract block:
@@ -2070,8 +2073,8 @@ nested matches on already-smaller fields, multiple recursive fields, and
 mutually recursive datatype groups are checked the same way. Calls remain
 symbolic. Explicit `unfold` exposes one defining equation and leaves the next
 recursive application opaque, so verification never guesses a recursion
-depth. This total value semantics is intentionally different from
-partial-correctness C recursion.
+depth. This total value semantics is intentionally stricter than C recursion,
+which a `diverges` marker may opt out of; a pure function has no such marker.
 
 General properties of symbolic recursive calls use theorem-level
 `induct(parameter) as hypothesis`. For `int32`, induction is explicit and

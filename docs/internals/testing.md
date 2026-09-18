@@ -418,42 +418,16 @@ Negative tests use an expected diagnostic substring:
 fail: expected diagnostic substring
 ```
 
-### The termination ratchet
+### Termination is part of an mdtest's verdict
 
-Every mdtest is verified with termination required — the default the
-[termination issue](https://github.com/lacker/click/blob/master/issues/termination-required.md)
-is migrating the corpus to — unless the file says it is not there yet:
-
-````text
-```termination
-pending: unranked loop
-```text
-````
-
-The body is exactly `pending: REASON`, where the reason is the root cause of
-the refusal the file currently gets: `unranked loop`, `unmeasured recursion`,
-`indirect call`, `callee`, or `diverging callee`. The block goes immediately
-before the `expect` block. It is temporary migration scaffolding and is
-deleted, file by file, as measures land.
-
-The marker is per file, not a central list, because the campaign removes these
-one fixture at a time and a shared list would make every such commit conflict.
-
-A file with the block is verified twice: once ordinarily, held to its `expect`
-block as usual, and once with termination required, which must still refuse it
-and refuse it for the recorded reason. A refusal for a different reason, a
-failure that is not a termination refusal, and a file that now holds under the
-rule all fail the gate, the last one telling the reader to delete the block.
-The set therefore only shrinks and cannot go stale. The extra run contributes
-nothing to the body-rerun census below; only the ordinary run does. On
-2026-09-17, 204 of the 1,580 mdtests were pending, and their second runs cost
-the mdtest harness 3.2 seconds over its 24.
-
-`tests/examples.rs` applies the same rule to example sidecars, and
-`tests/bitcoin_core_money_range.rs` to the one integration fixture. Example
-sidecars are few, so their markers are the checked-in `TERMINATION_PENDING`
-list of `(sidecar, reason)` pairs beside `QUARANTINED`, with the same
-shrink-only rule.
+An mdtest is verified once, by the ordinary entry points, and termination is
+part of what those check. A fixture whose summarized loop carries no
+`decreases` clause, whose recursion carries no measure, or which calls a
+`diverges` function without the marker is refused, and a fixture that expects
+a pass must supply the evidence. There is no switch, no second run, and no
+pending marker: a new mdtest is held to the rule from the day it is written.
+`tests/examples.rs` and `tests/bitcoin_core_money_range.rs` hold example
+sidecars and the one integration fixture to the same rule.
 
 Use mdtests for focused language, lowering, proof, and diagnostic behavior.
 For a focused C++ case, replace the C fence with exactly one C++ translation

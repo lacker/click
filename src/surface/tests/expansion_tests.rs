@@ -11062,6 +11062,7 @@ fn bound_universal_outcome_retains_instantiation_and_transport() {
             step();
             step();
             loop {
+                decreases 2 - j;
                 invariant j >= 0 and j <= 2;
                 invariant all_le_range(p, 0, j, p[j]);
                 initialize by {
@@ -11922,6 +11923,7 @@ fn outcome_simp_retains_checked_unchanged_old_equality_on_the_proof() {
             step();
             step();
             loop {
+                decreases n - i;
                 owns (p + 1)[0..n - 1];
                 invariant i >= 1;
                 invariant i <= n;
@@ -12132,6 +12134,7 @@ fn quantified_old_transport_substitutes_its_introduced_binder_on_the_checked_pro
             step();
             step();
             loop {
+                decreases n - i;
                 invariant i >= 1;
                 invariant i <= n;
             }
@@ -13624,6 +13627,7 @@ fn loop_preservation_case_after_step_expands_in_place() {
             step();
             step();
             loop {
+                decreases 1 - i;
                 invariant i >= 0;
                 invariant i <= 1;
                 initialize by simp;
@@ -13681,6 +13685,7 @@ fn loop_preservation_case_before_step_expands_in_place() {
             step();
             step();
             loop {
+                decreases 1 - i;
                 invariant i >= 0;
                 invariant i <= 1;
                 initialize by simp;
@@ -13813,6 +13818,7 @@ fn loop_entry_lowering_guard_expands_to_an_explicit_introduction() {
             step();
             step();
             loop {
+                decreases 3 - i;
                 invariant i >= 0 and i <= 3;
                 invariant forall (k: int32) { 0 <= k and k < i implies p[k] == k };
                 initialize by simp;
@@ -14549,6 +14555,7 @@ fn omitted_preservation_over_two_sibling_c_ifs_expands_and_reverifies() {
             step();
             step();
             loop {
+                decreases n - i;
                 invariant i >= 0;
             }
             step();
@@ -14609,6 +14616,7 @@ fn omitted_preservation_over_two_body_breaks_expands_and_reverifies() {
             step();
             step();
             loop {
+                decreases i;
                 invariant i >= 0;
             }
             step();
@@ -14655,6 +14663,7 @@ int spin(int n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 0;
         invariant i <= n;
 
@@ -14680,6 +14689,7 @@ int spin(int n) {
     step();
     step();
     loop {
+        decreases n - i;
         invariant i >= 0;
         invariant i <= n;
 

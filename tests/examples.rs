@@ -4,15 +4,12 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use click::cli::{
-    CInput, RequiredRun, TerminationPending, files_with_extension, read_c_inputs,
-    read_click_project, read_verifying_sources, run_parallel, source_refs,
-    termination_pending_verdict,
+    CInput, files_with_extension, read_c_inputs, read_click_project, read_verifying_sources,
+    run_parallel, source_refs,
 };
 use click::instrumentation::{self, ArtifactReuseRejection};
 use click::languages::refresh_compiler_import;
-use click::surface::{
-    self, verify_c0_prepared_project, verify_c0_sources, verify_cpp_prepared_project,
-};
+use click::surface::{verify_c0_prepared_project, verify_c0_sources, verify_cpp_prepared_project};
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const SOURCE_MANIFEST: &str = "SOURCE.sha256";
@@ -30,17 +27,6 @@ const QUARANTINED: &[(&str, &str)] = &[(
 /// The artifact reuse rejection ratchet (`docs/internals/testing.md`) over
 /// every example project; see `tests/mdtests.rs` for the rule.
 const ARTIFACT_REUSE_REJECTION_BASELINE: &[(ArtifactReuseRejection, usize)] = &[];
-
-/// Example sidecars that do not yet certify termination, each with the root
-/// cause of the refusal it currently gets. Every other sidecar is verified
-/// with termination required.
-///
-/// This is temporary migration scaffolding for
-/// `issues/termination-required.md`; an mdtest carries the same marker as a
-/// ```termination block in its own file. The set only shrinks: a listed
-/// sidecar that verifies with termination required fails the gate until its
-/// line is removed, so the list cannot go stale.
-const TERMINATION_PENDING: &[(&str, TerminationPending)] = &[];
 
 #[test]
 fn example_projects() {
@@ -135,17 +121,6 @@ fn example_projects() {
         )
     {
         panic!("artifact reuse rejection ratchet (tests/examples.rs baselines):\n{mismatch}");
-    }
-}
-
-#[test]
-fn termination_pending_sidecars_exist() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for (fixture, _) in TERMINATION_PENDING {
-        assert!(
-            root.join(fixture).is_file(),
-            "`{fixture}` is listed as termination-pending but is not a sidecar; remove its line"
-        );
     }
 }
 
@@ -335,32 +310,7 @@ fn run_example_project(project: &Path) -> Result<(), String> {
                     .map_err(|error| error.message().to_string())
                 };
                 let fixture = fixture_name(&click_path);
-                let failed = |message: String| format!("sidecar `{fixture}` failed: {message}");
-                // Every sidecar is held to the termination rule unless it is
-                // listed as pending (`issues/termination-required.md`). A
-                // listed one is verified ordinarily first, so its proof is
-                // still gated, and then again under the rule. That second run
-                // is a migration check, not part of the corpus the baseline
-                // above describes, so it contributes no counts.
-                let pending = pending_termination(&fixture);
-                let required = if pending.is_some() {
-                    verify().map_err(failed)?;
-                    instrumentation::without_artifact_reuse_rejection_census(|| {
-                        surface::with_termination_required(verify)
-                    })
-                } else {
-                    surface::with_termination_required(verify)
-                };
-                let outcome = match &required {
-                    Ok(()) => RequiredRun::Satisfied,
-                    Err(message) => RequiredRun::Unsatisfied(message),
-                };
-                termination_pending_verdict(
-                    &fixture,
-                    "`TERMINATION_PENDING` line in tests/examples.rs",
-                    pending,
-                    outcome,
-                )?;
+                verify().map_err(|message| format!("sidecar `{fixture}` failed: {message}"))?;
                 eprintln!("verified {}", click_path.display());
             }
         }
@@ -368,8 +318,7 @@ fn run_example_project(project: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Names a sidecar by its repository-relative path, which is how the pending
-/// list spells it.
+/// Names a sidecar by its repository-relative path.
 fn fixture_name(click_path: &Path) -> String {
     click_path
         .strip_prefix(env!("CARGO_MANIFEST_DIR"))
@@ -378,13 +327,6 @@ fn fixture_name(click_path: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
-}
-
-fn pending_termination(fixture: &str) -> Option<TerminationPending> {
-    TERMINATION_PENDING
-        .iter()
-        .find(|(listed, _)| *listed == fixture)
-        .map(|(_, reason)| *reason)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

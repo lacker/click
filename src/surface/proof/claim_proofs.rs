@@ -4559,8 +4559,8 @@ mod evidence_tests {
     fn outcome_vacuity_requires_the_checked_divergent_path() {
         let source = r#"
             verifying "spin.c";
-            int32 spin() { ensures 0 == 1; } by {
-                loop { invariant 0 == 0; initialize by simp;
+            int32 spin() diverges { ensures 0 == 1; } by {
+                loop diverges { invariant 0 == 0; initialize by simp;
                     preserve by { step(); close_invariants(); }
                 }
                 simp();

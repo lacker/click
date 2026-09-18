@@ -50,18 +50,9 @@ Negative tests use:
 fail: expected diagnostic substring
 ```
 
-A file that does not yet certify termination adds one more block, immediately
-before its `expect` block:
-
-````text
-```termination
-pending: unranked loop
-```text
-````
-
-That is temporary migration scaffolding for the termination campaign; the
-reasons and the shrink-only ratchet are described in
-[Testing Click](testing.md#the-termination-ratchet).
+Termination is part of the verdict, so a fixture whose summarized loop carries
+no `decreases` clause is refused; see
+[Testing Click](testing.md#termination-is-part-of-an-mdtests-verdict).
 
 The harness is `tests/mdtests.rs`. It runs every markdown file in `mdtests/`,
 so keep examples deterministic and reasonably small.

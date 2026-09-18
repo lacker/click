@@ -159,7 +159,6 @@ pub use verification::{
     verify_c0_project_at, verify_c0_project_functions, verify_c0_sources, verify_c0_sources_at,
     verify_c0_sources_functions, verify_click_theorems, verify_cpp_prepared_project,
     verify_cpp_prepared_project_at, verify_cpp_prepared_sources_at, verify_standard_library,
-    with_termination_required,
 };
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;

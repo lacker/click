@@ -41,7 +41,6 @@ sidecar and project count.
 | `--time-limit DURATION` | Set the outer deadline independently for each selected sidecar or proof unit. The default is `30s`. |
 | `--changed-since REVISION` | Select claims affected since a Git revision. Reuse requires a valid full-verification marker for the baseline and verifier binary. |
 | `--explain` | With `--changed-since`, print the incremental selection without verifying it. |
-| `--require-termination` | Temporary migration switch: require termination evidence for every selected C function, not only those that declare `decreases`. Cannot be combined with `--changed-since`. It is removed when termination becomes the default. |
 | `-h`, `--help` | Print command help and exit successfully. |
 | `--` | Stop option parsing; the remaining argument is the target path. |
 

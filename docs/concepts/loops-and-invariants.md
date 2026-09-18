@@ -9,13 +9,14 @@ A loop invariant is a fact that must hold:
 - at the start of every iteration,
 - and after one iteration preserves it.
 
-These checks establish partial correctness, not termination. They prove that
-every finite iteration prefix is safe and that the invariant is available if
-the loop exits. A constant-true service loop can therefore have a useful
-invariant even though it has no exit state.
+These checks prove that every finite iteration prefix is safe and that the
+invariant is available if the loop exits. They say nothing about whether the
+loop exits, so a summarized loop also declares why it ends: every `loop`
+block carries either a `decreases` clause or the `diverges` marker. A
+constant-true service loop writes `loop diverges { ... }` and can still have a
+useful invariant even though it has no exit state.
 
-When termination itself matters, the loop tactic may additionally declare a
-`decreases` clause. The clause is one expression, and what it names decides
+The `decreases` clause is one expression, and what it names decides
 which measure it is: a nonempty int32 ranking expression, a lexicographic
 tuple of them, or one of the loop's own resource binders. The same uniform
 rule applies to a C function's own `decreases`; there is no `decreases
@@ -46,8 +47,7 @@ some pivot. This supports count-up loops as well as countdowns, for example
 `decreases limit - index;` when the body increments `index`. Each component is
 checked as C int32 arithmetic, so its arithmetic must also be defined under
 those assumptions. This produces separate termination evidence; it does not
-change what an invariant or a postcondition means. Loops without `decreases`
-remain valid partial-correctness proofs. A separately ranked nested loop is
+change what an invariant or a postcondition means. A separately ranked nested loop is
 treated as a terminating phase when checking its enclosing loop; an outer
 ranking variable that phase writes takes an unknown value on the way out,
 because the inner loop's final state is not reconstructed here. The enclosing
@@ -90,8 +90,8 @@ which is what lets the plan reach the function the call site names
 (`mdtests/inline_helper_ranked_loop.md`).
 
 The [`perpetual-service`](https://github.com/lacker/click/tree/master/examples/perpetual-service) example
-combines this partial-correctness boundary with an opaque verified call and a
-composite resource transferred through every iteration.
+combines a `diverges` contract with an opaque verified call and a composite
+resource transferred through every iteration.
 
 An execution proof has a frontier: the boundary between C that has already
 been checked and C that remains. `loop { ... }` handles the C loop exactly at

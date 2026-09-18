@@ -398,7 +398,7 @@ termination checker independently rechecks the declared child against the
 exact resource definition. The recursive call path must establish the resource
 guard (for example, `node != 0` or the equivalent nonnull arm of
 `if (!node)`), either from an entry requirement or from C control flow. The
-ordinary partial-correctness proof checks resource transfer,
+ordinary contract proof checks resource transfer,
 so the traversal may consume and deallocate nodes after descending.
 
 A child named through a `let` witness has no C spelling, so the checker
@@ -409,7 +409,7 @@ that state, and the pure kernel must decide that the argument is the witness
 pointer. In the marked list, `(struct node *)(node->word & ~1)` is the
 witness because the `where` fact and the alignment evidence determine it.
 Loads on the call path are the same uninterpreted reads the syntactic
-comparison relies on; the partial-correctness proof remains responsible for
+comparison relies on; the ordinary contract proof remains responsible for
 the actual resource the call receives.
 
 When code needs the contained owned resources, use `unfold(resource)`. When

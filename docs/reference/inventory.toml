@@ -1052,11 +1052,11 @@ path = "reference/language/index.md#file-shape"
 
 [[item]]
 id = "language.decreases"
-path = "reference/language/index.md#optional-c-termination"
+path = "reference/language/index.md#c-termination"
 
 [[item]]
 id = "language.diverges"
-path = "reference/language/index.md#optional-c-termination"
+path = "reference/language/index.md#c-termination"
 
 [[item]]
 id = "language.ensures"
@@ -1644,10 +1644,6 @@ path = "reference/cli/verify.md#options"
 
 [[item]]
 id = "cli.verify.--explain"
-path = "reference/cli/verify.md#options"
-
-[[item]]
-id = "cli.verify.--require-termination"
 path = "reference/cli/verify.md#options"
 
 [[item]]

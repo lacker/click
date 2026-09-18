@@ -189,13 +189,19 @@ assumption that recursion terminates. Any returning execution has a finite
 recursive call tree, so induction on its maximum depth validates each contract
 use. An infinite recursive execution owes no return postcondition, while any
 undefined behavior or footprint violation still occurs in some finite prefix
-and is rejected. Consequently recursive C verification needs no mandatory
-decrease annotation and does not create termination evidence.
+and is rejected. Consequently the recursive contract rule itself needs no
+decrease annotation and creates no termination evidence.
 
-Optional C termination is a second judgment. Surface `decreases` clauses are
-lowered to an untrusted `CFunctionTerminationPlan`; the kernel checks the exact
+C termination is a second judgment, and the language layer demands it of every
+verified function whose signature does not say `diverges`; a marked function
+is judged by the contract rule alone. Surface `decreases` clauses are lowered
+to an untrusted `CFunctionTerminationPlan`; the kernel checks the exact
 partially verified function bodies, loop indices, integer types, guards, and
-decreasing edges before constructing `CVerifiedFunctionTerminationRule`.
+decreasing edges before constructing `CVerifiedFunctionTerminationRule`. The
+two rules stay separate in the environment: applying a
+`CVerifiedFunctionRule` never consults termination evidence, so the demand is
+a language-layer policy over kernel-checked evidence rather than a change to
+what a contract means.
 
 The judgment is local descent. An untrusted planner proposes a height for
 every function, the longest path below it in the direct-call graph with the

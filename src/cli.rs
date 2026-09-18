@@ -736,8 +736,6 @@ pub struct MdTest {
     pub click_start_line: usize,
     /// The ```expect block, if the file has one.
     pub expectation: Option<MdTestExpectation>,
-    /// The ```termination block, if the file still owes a measure.
-    pub termination_pending: Option<TerminationPending>,
 }
 
 /// A deliberately small C++ mdtest profile: one translation unit and one
@@ -812,141 +810,6 @@ pub enum MdTestExpectation {
     FailContains(String),
 }
 
-/// Why a corpus fixture is not yet held to the termination rule, taken from
-/// the root cause of the refusal it currently gets.
-///
-/// This is temporary migration scaffolding for
-/// `issues/termination-required.md`, and the marker is per file on purpose:
-/// the campaign removes these one fixture at a time, and a central list would
-/// make every such commit conflict. The set may only shrink, so a fixture
-/// that passes with termination required fails its gate until its marker is
-/// deleted.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TerminationPending {
-    /// A loop in the fixture declares no `decreases` measure.
-    UnrankedLoop,
-    /// A recursive call is ranked by no function-level `decreases` measure.
-    UnmeasuredRecursion,
-    /// A call through a pointer has no declared callee to descend to.
-    IndirectCall,
-    /// Some callee has no termination evidence of its own.
-    Callee,
-    /// Some callee is declared `diverges`.
-    DivergingCallee,
-}
-
-impl TerminationPending {
-    /// Every reason, in the order they are listed in the documentation.
-    pub const ALL: &'static [Self] = &[
-        Self::UnrankedLoop,
-        Self::UnmeasuredRecursion,
-        Self::IndirectCall,
-        Self::Callee,
-        Self::DivergingCallee,
-    ];
-
-    /// The reason's spelling in a ```termination block and in a fixture list.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::UnrankedLoop => "unranked loop",
-            Self::UnmeasuredRecursion => "unmeasured recursion",
-            Self::IndirectCall => "indirect call",
-            Self::Callee => "callee",
-            Self::DivergingCallee => "diverging callee",
-        }
-    }
-
-    /// Parses one of the fixed reasons.
-    pub fn parse(reason: &str) -> Option<Self> {
-        Self::ALL
-            .iter()
-            .copied()
-            .find(|candidate| candidate.as_str() == reason)
-    }
-
-    /// Classifies a termination refusal by the root cause at its end, so a
-    /// fixture's recorded reason can be checked against the refusal it
-    /// actually gets. Returns `None` for any other verifier message.
-    pub fn classify_refusal(message: &str) -> Option<Self> {
-        if !message.starts_with("could not certify termination for `") {
-            return None;
-        }
-        // The report is a chain of callees ending at one root cause, so the
-        // last link decides the reason. A bare `callee` tail means the chain
-        // stopped at a callee with no recorded refusal of its own.
-        if message.contains("is ranked by no function-level `decreases` measure") {
-            Some(Self::UnmeasuredRecursion)
-        } else if message.contains("declares no `decreases` measure") {
-            Some(Self::UnrankedLoop)
-        } else if message.contains("has no declared callee to descend to") {
-            Some(Self::IndirectCall)
-        } else if message.contains("it is declared `diverges`") {
-            Some(Self::DivergingCallee)
-        } else if message.ends_with("has no termination evidence") {
-            Some(Self::Callee)
-        } else {
-            None
-        }
-    }
-}
-
-impl std::fmt::Display for TerminationPending {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-/// What a pending fixture's extra termination-required run did.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RequiredRun<'a> {
-    /// It satisfied the fixture's recorded expectation, so the fixture is no
-    /// longer pending.
-    Satisfied,
-    /// It did not, with this verifier message.
-    Unsatisfied(&'a str),
-}
-
-/// Judges one fixture's termination-required run against what the fixture
-/// records about itself.
-///
-/// The set of pending fixtures only shrinks: a recorded fixture must still be
-/// refused, and refused for the recorded reason, and an unrecorded one must
-/// hold. `name` names the fixture and `marker` names the marker to add or
-/// delete, since mdtests carry a ```termination block and the other fixture
-/// gates carry a list entry.
-pub fn termination_pending_verdict(
-    name: &str,
-    marker: &str,
-    pending: Option<TerminationPending>,
-    run: RequiredRun<'_>,
-) -> Result<(), String> {
-    match (pending, run) {
-        (None, RequiredRun::Satisfied) => Ok(()),
-        (None, RequiredRun::Unsatisfied(message)) => {
-            Err(match TerminationPending::classify_refusal(message) {
-                Some(_) => format!(
-                    "`{name}` no longer certifies termination: {message}; rank it, or record it pending with a {marker}"
-                ),
-                None => format!("`{name}` failed: {message}"),
-            })
-        }
-        (Some(_), RequiredRun::Satisfied) => Err(format!(
-            "`{name}` now holds with termination required; delete its {marker}: the pending set only shrinks"
-        )),
-        (Some(pending), RequiredRun::Unsatisfied(message)) => {
-            match TerminationPending::classify_refusal(message) {
-                Some(actual) if actual == pending => Ok(()),
-                Some(actual) => Err(format!(
-                    "`{name}` is recorded pending `{pending}`, but with termination required its refusal is `{actual}`: {message}"
-                )),
-                None => Err(format!(
-                    "`{name}` is recorded pending `{pending}`, but with termination required it failed for another reason: {message}"
-                )),
-            }
-        }
-    }
-}
-
 /// Extracts the fenced blocks of an mdtest.
 ///
 /// `path` only names the file in diagnostics; the content comes from `source`.
@@ -957,7 +820,6 @@ pub fn parse_mdtest(path: &Path, source: &str) -> Result<MdTest, String> {
         click_source: None,
         click_start_line: 1,
         expectation: None,
-        termination_pending: None,
     };
     let lines = source.lines().collect::<Vec<_>>();
     let mut index = 0;
@@ -1036,15 +898,6 @@ pub fn parse_mdtest(path: &Path, source: &str) -> Result<MdTest, String> {
                 if mdtest.expectation.replace(expectation).is_some() {
                     return Err(format!(
                         "`{}` has more than one ```expect block",
-                        path.display()
-                    ));
-                }
-            }
-            Some(BlockKind::Termination) => {
-                let pending = parse_termination_pending(path, start_line, &body)?;
-                if mdtest.termination_pending.replace(pending).is_some() {
-                    return Err(format!(
-                        "`{}` has more than one ```termination block",
                         path.display()
                     ));
                 }
@@ -1177,7 +1030,6 @@ enum BlockKind {
     },
     Click,
     Expect,
-    Termination,
 }
 
 fn block_kind(path: &Path, line: usize, info: &str) -> Result<Option<BlockKind>, String> {
@@ -1208,6 +1060,19 @@ fn block_kind(path: &Path, line: usize, info: &str) -> Result<Option<BlockKind>,
             }
             Ok(Some(BlockKind::C {
                 filename: filename.to_string(),
+            }))
+        }
+        "click" | "expect" => {
+            if let Some(extra) = parts.next() {
+                return Err(format!(
+                    "`{}` has unexpected `{extra}` metadata on the `{kind}` fence at line {line}",
+                    path.display()
+                ));
+            }
+            Ok(Some(if kind == "click" {
+                BlockKind::Click
+            } else {
+                BlockKind::Expect
             }))
         }
         "cpp" => {
@@ -1263,19 +1128,6 @@ fn block_kind(path: &Path, line: usize, info: &str) -> Result<Option<BlockKind>,
                 profile: profile.to_string(),
             }))
         }
-        "click" | "expect" | "termination" => {
-            if let Some(extra) = parts.next() {
-                return Err(format!(
-                    "`{}` has unexpected `{extra}` metadata on the `{kind}` fence at line {line}",
-                    path.display()
-                ));
-            }
-            Ok(Some(match kind {
-                "click" => BlockKind::Click,
-                "expect" => BlockKind::Expect,
-                _ => BlockKind::Termination,
-            }))
-        }
         _ => Ok(None),
     }
 }
@@ -1292,27 +1144,6 @@ fn parse_expectation(path: &Path, line: usize, body: &str) -> Result<MdTestExpec
         "`{}` has invalid expectation at line {line}: expected `pass` or `fail: substring`, got `{body}`",
         path.display()
     ))
-}
-
-fn parse_termination_pending(
-    path: &Path,
-    line: usize,
-    body: &str,
-) -> Result<TerminationPending, String> {
-    let reasons = TerminationPending::ALL
-        .iter()
-        .map(|reason| reason.as_str())
-        .collect::<Vec<_>>()
-        .join("`, `");
-    let invalid = |body: &str| {
-        format!(
-            "`{}` has invalid termination marker at line {line}: expected `pending: REASON` with REASON one of `{reasons}`, got `{body}`",
-            path.display()
-        )
-    };
-    let body = body.trim();
-    let reason = body.strip_prefix("pending:").ok_or_else(|| invalid(body))?;
-    TerminationPending::parse(reason.trim()).ok_or_else(|| invalid(body))
 }
 
 /// Lists the `.md` files under `path`: `path` itself when it is one, or the
@@ -1596,124 +1427,6 @@ mod tests {
         assert!(parse_mdtest(path, mixed).is_err());
         let duplicate = "```cpp filename=a.cpp function=a profile=normal_only\nint a();\n```\n```cpp filename=b.cpp function=b profile=normal_only\nint b();\n```\n";
         assert!(parse_mdtest(path, duplicate).is_err());
-    }
-
-    #[test]
-    fn mdtest_termination_marker_accepts_exactly_the_migration_reasons() {
-        let path = Path::new("pending.md");
-        for reason in TerminationPending::ALL {
-            let source = format!("```termination\npending: {reason}\n```\n```expect\npass\n```\n");
-            let mdtest = parse_mdtest(path, &source).unwrap();
-            assert_eq!(mdtest.termination_pending, Some(*reason));
-        }
-        let missing = parse_mdtest(path, "```expect\npass\n```\n").unwrap();
-        assert_eq!(missing.termination_pending, None);
-    }
-
-    #[test]
-    fn mdtest_termination_marker_rejects_malformed_and_duplicate_blocks() {
-        let path = Path::new("pending.md");
-        for source in [
-            "```termination\npending: unknown reason\n```\n",
-            "```termination\npending:\n```\n",
-            "```termination\nunranked loop\n```\n",
-            "```termination\n```\n",
-            "```termination extra\npending: unranked loop\n```\n",
-            "```termination\npending: unranked loop\npending: callee\n```\n",
-            "```termination\npending: unranked loop\n```\n```termination\npending: callee\n```\n",
-        ] {
-            let error = parse_mdtest(path, source).unwrap_err();
-            assert!(
-                error.contains("termination marker")
-                    || error.contains("```termination block")
-                    || error.contains("on the `termination` fence"),
-                "{source}: {error}"
-            );
-        }
-    }
-
-    #[test]
-    fn termination_refusals_classify_by_their_root_cause() {
-        for (message, expected) in [
-            (
-                "could not certify termination for `f`: loop 0 declares no `decreases` measure; give it one, or mark it `loop diverges` and declare `f` `diverges`",
-                Some(TerminationPending::UnrankedLoop),
-            ),
-            (
-                "could not certify termination for `f`: the recursive call to `f` is ranked by no function-level `decreases` measure; rank it with function-level `decreases` clauses, or declare `f` `diverges`",
-                Some(TerminationPending::UnmeasuredRecursion),
-            ),
-            (
-                "could not certify termination for `f`: the call through `callback` has no declared callee to descend to; declare `f` `diverges`",
-                Some(TerminationPending::IndirectCall),
-            ),
-            (
-                "could not certify termination for `f`: callee `g` has no termination evidence",
-                Some(TerminationPending::Callee),
-            ),
-            (
-                "could not certify termination for `f`: callee `g` has no termination evidence: it is declared `diverges`; declare `f` `diverges` too",
-                Some(TerminationPending::DivergingCallee),
-            ),
-            (
-                // The root cause is the end of the chain, not its first link.
-                "could not certify termination for `f`: callee `g` has no termination evidence: loop 0 declares no `decreases` measure; give it one, or mark it `loop diverges` and declare `g` `diverges`",
-                Some(TerminationPending::UnrankedLoop),
-            ),
-            ("`f` does not satisfy its `ensures`", None),
-        ] {
-            assert_eq!(
-                TerminationPending::classify_refusal(message),
-                expected,
-                "{message}"
-            );
-        }
-    }
-
-    #[test]
-    fn termination_pending_fixtures_may_only_shrink() {
-        let refusal = "could not certify termination for `f`: loop 0 declares no `decreases` measure; give it one, or mark it `loop diverges` and declare `f` `diverges`";
-        let verdict = |pending, run| termination_pending_verdict("t.md", "marker", pending, run);
-
-        assert_eq!(verdict(None, RequiredRun::Satisfied), Ok(()));
-        assert_eq!(
-            verdict(
-                Some(TerminationPending::UnrankedLoop),
-                RequiredRun::Unsatisfied(refusal)
-            ),
-            Ok(())
-        );
-
-        let now_passing = verdict(
-            Some(TerminationPending::UnrankedLoop),
-            RequiredRun::Satisfied,
-        )
-        .unwrap_err();
-        assert!(now_passing.contains("delete its marker"), "{now_passing}");
-
-        let wrong_reason = verdict(
-            Some(TerminationPending::Callee),
-            RequiredRun::Unsatisfied(refusal),
-        )
-        .unwrap_err();
-        assert!(
-            wrong_reason.contains("recorded pending `callee`")
-                && wrong_reason.contains("refusal is `unranked loop`"),
-            "{wrong_reason}"
-        );
-
-        let other_failure = verdict(
-            Some(TerminationPending::UnrankedLoop),
-            RequiredRun::Unsatisfied("`f` does not satisfy its `ensures`"),
-        )
-        .unwrap_err();
-        assert!(
-            other_failure.contains("failed for another reason"),
-            "{other_failure}"
-        );
-
-        let unrecorded = verdict(None, RequiredRun::Unsatisfied(refusal)).unwrap_err();
-        assert!(unrecorded.contains("record it pending"), "{unrecorded}");
     }
 
     #[test]

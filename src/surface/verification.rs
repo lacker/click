@@ -4,6 +4,7 @@ use crate::languages::c::compiler_import::PreparedCImport;
 use crate::languages::c::target::CTarget;
 use crate::languages::cpp::{LoweredCppFunction, PreparedCppImport, lower_import};
 use sha2::{Digest, Sha256};
+#[cfg(test)]
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -48,32 +49,6 @@ fn digest_framed_parts<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> [u8; 32
         digest.update(part);
     }
     digest.finalize().into()
-}
-
-thread_local! {
-    static TERMINATION_REQUIRED: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Runs `verify` with termination required of every selected C function, not
-/// only of those that declare a `decreases` clause.
-///
-/// This is the migration switch for `issues/termination-required.md` and is
-/// deleted when that rule becomes the default. It scopes the calling thread,
-/// which is the thread that runs the whole-function termination check, and
-/// restores the previous setting when `verify` returns or unwinds.
-pub fn with_termination_required<T>(verify: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            TERMINATION_REQUIRED.with(|required| required.set(self.0));
-        }
-    }
-    let _restore = Restore(TERMINATION_REQUIRED.with(|required| required.replace(true)));
-    verify()
-}
-
-fn termination_is_required() -> bool {
-    TERMINATION_REQUIRED.with(Cell::get)
 }
 
 /// Typed input boundary for C verification. The bundle variant preserves the
@@ -3049,8 +3024,8 @@ fn verify_c0_sources_with_context(
     let inline_bodies = function_environment.linked_functions();
     // Heights are a proposal the kernel checks at every call site. A callee
     // outside the verified set is an assumption, as its postconditions are:
-    // an external contract always, and an unselected function once every
-    // function owes termination evidence to the run that does select it.
+    // an external contract always, and an unselected function because it owes
+    // termination evidence to the run that does select it.
     let termination_heights = c_termination_height_plan(&partial_rules, &inline_bodies);
     let declared_diverging = external_and_user_function_blocks
         .iter()
@@ -3063,12 +3038,7 @@ fn verify_c0_sources_with_context(
         .iter()
         .filter(|function| function.is_external())
         .map(|function| function.signature().name())
-        .chain(
-            assumed_unselected_names
-                .iter()
-                .filter(|_| termination_is_required())
-                .map(String::as_str),
-        )
+        .chain(assumed_unselected_names.iter().map(String::as_str))
         .map(|name| executing_function_name(&termination_kernel_names, name))
         .filter(|name| !declared_diverging.contains(name))
         .collect::<BTreeSet<_>>();
@@ -3107,12 +3077,10 @@ fn verify_c0_sources_with_context(
     }
     // A function whose address is taken may be reached through any function
     // pointer, so it must return without going through one itself; otherwise
-    // no pointer call in the run is known to return. Once every function owes
-    // termination that is an error where the address is taken, and it names
-    // what the callback lacks.
-    if termination_is_required()
-        && let Some(unsuitable) = unsuitable_callbacks.first()
-    {
+    // no pointer call in the run is known to return. Every function owes
+    // termination, so that is an error where the address is taken, and it
+    // names what the callback lacks.
+    if let Some(unsuitable) = unsuitable_callbacks.first() {
         let spelling = |name: &str| {
             name.split_once('#')
                 .map_or(name, |(name, _)| name)
@@ -4222,13 +4190,10 @@ pub(in crate::surface) fn c_function_termination_plans(
         // ranked loops, which lets the check say whether the marker was
         // needed.
         let requests = selected && !function.signature().diverges();
-        if requests && termination_is_required() {
+        if requests {
             requested.insert(function.signature().name().to_string());
         }
         if selected && (recursive_measure.is_some() || !loop_measures.is_empty()) {
-            if requests {
-                requested.insert(function.signature().name().to_string());
-            }
             plans.push(c_function_termination_plan(
                 executing_function_name(executing_names, function.signature().name()),
                 recursive_measure,

@@ -2,20 +2,17 @@
 
 ## Priority
 
-P1. Click's default judgment is partial correctness: a verified `ensures`
-holds only if the function returns, and nothing requires that it does. A
-verified function can therefore contain a loop that never exits, and every
-caller's conclusions silently become conditional on a return nobody proved.
-That is the wrong default for a verifier whose claim is that the verified C
-does what its contract says. Divergence must be something a contract admits
-out loud, not something every contract permits.
+P1, and nearly closed. The rule landed: termination is now Click's only
+judgment for C, and divergence is something a contract admits out loud with
+`diverges` rather than something every contract permits. What remains is one
+acceptance criterion, counted-loop measure inference; see
+"Migration: done, except one criterion" below.
 
-This blocks [the concurrency demo](concurrency-demo.md). A `pthread_join` on a
-worker with no termination evidence may never return, so the fork/join slice
-cannot state what its parent proves until a worker's contract says whether it
-terminates. The unfinished slice is parked on the branch
-`claude/concurrency-demo-slice2-parked`; its
-`design/concurrency-probes/PARKED.md` lists what to fix on resume.
+This no longer blocks [the concurrency demo](concurrency-demo.md): a worker's
+contract now says whether it terminates, so the parked fork/join slice on
+`claude/concurrency-demo-slice2-parked` can state what a `pthread_join`
+parent proves. Its `design/concurrency-probes/PARKED.md` lists what to fix on
+resume.
 
 ## What holds today, so it is not redone
 
@@ -26,29 +23,26 @@ iteration. A non-returning loop that writes memory its function does not own
 is refused at the store. Only the `ensures`, and liveness itself, are
 conditional.
 
-The termination machinery already exists behind an opt-in. A C `decreases`
-clause on a function asks Click to certify termination of the whole function:
-every reachable loop and recursive component must be ranked, every callee must
-have termination evidence of its own, and the kernel records that evidence
-separately from `CVerifiedFunctionRule`. Measures are an `int32` ranking
-expression, a lexicographic tuple of them, or a structural resource binder.
-See "Optional C termination" in `docs/reference/language/index.md` and
-`docs/concepts/loops-and-invariants.md`. This issue inverts the default and
-makes the judgment modular; the loop and recursion ranking checks it relies
-on already exist.
+Click certifies termination of the whole function: every reachable loop and
+recursive component must be ranked, every callee must have termination
+evidence of its own, and the kernel records that evidence separately from
+`CVerifiedFunctionRule`. Measures are an `int32` ranking expression, a
+lexicographic tuple of them, or a structural resource binder. See "C
+termination" in `docs/reference/language/index.md` and
+`docs/concepts/loops-and-invariants.md`.
 
 ## Violated invariant
 
 A verified function returns on every execution its `requires` admits, unless
-its contract explicitly says it may not. Today the reverse holds: termination
-is certified only for a function that asks, and the absence of a `decreases`
-clause means "unknown", which callers cannot distinguish from "terminates".
+its contract explicitly says it may not. This now holds. Before the flip the
+reverse did: termination was certified only for a function that asked, and the
+absence of a `decreases` clause meant "unknown", which callers could not
+distinguish from "terminates".
 
 ## Intended regression
 
-This verifies today and must be refused, with a diagnostic that names the
-unranked loop and offers the two repairs: a `decreases` clause or the
-`diverges` marker.
+This is refused, with a diagnostic that names the unranked loop and offers the
+two repairs: a `decreases` clause or the `diverges` marker.
 
 ```c
 int wait_for_zero(int x) {
@@ -86,7 +80,8 @@ Three companions are required:
   names the callee;
 - a counted loop, `for (int i = 0; i < n; ++i)`, verifies with no
   hand-written measure once inference lands, and `click expand` prints the
-  `decreases` clause it chose.
+  `decreases` clause it chose. This one is still missing; inference was never
+  built.
 
 ## Decided design
 
@@ -148,7 +143,7 @@ dispatch table whose handler `i` re-dispatches only to entries `j < i`,
 terminates for a reason only a measure can state: a `decreases` clause on the
 named contract, against which the pointer call descends and under which the
 function must fit when the contract is formed at `&g`. Build that when an
-example needs it. Until then such a function stays pending; it is not marked
+example needs it. Until then such a function is refused; it is not marked
 `diverges` to get past the rule.
 
 **The marker is `diverges`, in the signature.** It sits after the parameter
@@ -233,63 +228,36 @@ is landed, with no change of syntax. Ranking obligations are still built from
 the declared C expression, but each read in it is now evaluated by the
 ordinary expression evaluator at the iteration's two states.
 
-## Migration
+## Migration: done, except one criterion
 
-Every loop and recursive function in `mdtests/`, `examples/`,
-`integrations/`, and the documentation's verified examples currently verifies
-with no measure. Do not migrate on a long-lived branch. The new rule lands on
-master early, behind a switch, and the corpus is burned down against it in
-small green commits.
+The flip landed: termination is the only judgment, and the migration
+scaffolding is gone. `with_termination_required`, `click verify
+--require-termination`, the per-file ```termination `pending:` marker, the
+`TERMINATION_PENDING` list, and their shrink-only ratchet were deleted once
+the corpus was green under the rule. Every mdtest, example, and integration
+fixture, and the in-process proof fixtures in `src/`, now carries a
+`decreases` clause, a `diverges` marker, or a loop the verifier executes
+concretely.
 
-**The switch.** `with_termination_required(|| ...)`, off by default, scoped
-to the verification it wraps in the way `with_deadline` is, and reachable as
-`click verify --require-termination`. It is not an environment variable or a
-child mode. It is temporary: the flip deletes it.
+Stages 1, 2, 4, 5, and 6 are done. Stage 3 was not built, and it is the only
+reason this file still exists:
 
-**The pending marker.** A corpus file that does not yet pass with the switch
-on says so itself, with a `termination` block holding `pending: <reason>`,
-where the reason is the refusal's root cause. The marker is per-file so that
-many agents can clear files in parallel without editing one shared list; the
-small `examples/` and `integrations/` sets keep a list beside their harness.
-The gate holds every unmarked file to the new rule. A marked file is verified
-with the switch off, and again with it on, where it must still be refused for
-the recorded reason: a marked file that now passes fails the gate until its
-block is deleted, so the pending set can only shrink and never goes stale. A
-new test is held to the new rule from the day it is written, and the count of
-blocks, by reason, is the campaign's progress number.
+3. **Counted-loop measure inference.** The plan was to infer the measure for
+   a loop whose guard compares an induction variable with a bound the body
+   does not write and whose step moves the variable toward the bound, and to
+   have `click expand` print the `decreases` clause it chose. The corpus was
+   ground out by hand instead, so nothing in the tree infers a loop measure
+   today. Until this lands, the acceptance criterion "inferred loop measures
+   expand to explicit clauses that verify unchanged" has nothing to hold: it
+   is unmet rather than satisfied. The recognizer must key on the counted
+   shape and not on the `for` keyword, and the inferred measure must expand to
+   an explicit clause that verifies unchanged, per "Simple tactics first"
+   above. Search completeness is a non-goal.
 
-**Migration commits are green either way.** A `decreases` clause is already
-legal and already certified under today's opt-in rule, so a commit that adds
-measures to a handful of tests and deletes their `termination` blocks is
-valid under both settings. No commit depends on the flip.
-
-**Keep the termination refusal last.** It must run after ordinary
-verification, as the current pass does, so an `expect fail` test keeps failing
-for the reason it records and does not start failing on a missing measure.
-
-Stages, each a green commit or a short run of them:
-
-1. Done. The `diverges` marker (7f12d1ab); the local-descent judgment with
-   planned heights, the marker's contagion and the unjustified-marker
-   refusal, the switch, and refusals that carry one machine-readable reason
-   (932e13e8). In flight: the pending marker with its ratchet and the seeding
-   run, and the scaling regression.
-2. Read the seeded counts by reason: unranked loop, unmeasured recursion,
-   indirect call, callee, diverging callee. Split the unranked loops into
-   counted and other by shape. These counts, not a guess, decide the shape of
-   loop inference and what to do next.
-3. Counted-loop inference with expansion. Delete the blocks it clears.
-4. Done. The function-pointer rule above cleared all 81 `indirect call`
-   files with no edit to any of them, and the modeled `realloc` cleared the
-   10 `callee` files. Remaining: 109 `unranked loop`, 4 `unmeasured
-   recursion`, and 4 examples.
-5. Grind the remaining buckets by hand in small commits: explicit
-   `decreases` clauses, or the marker where divergence is intended. A loop
-   that cannot be ranked with today's measures is a finding: report it, leave
-   its block in place, and do not mark it `diverges` to get past it.
-6. When no block is left, flip the default, delete the switch and the
-   pending-marker machinery, and rewrite "Optional C termination" and the
-   partial correctness paragraphs in the loops concept page.
+The intended regression for stage 3 is the one companion of the three that is
+still missing: a counted loop, `for (int i = 0; i < n; ++i)`, verifies with no
+hand-written measure, and `click expand` prints the `decreases` clause it
+chose. The other two companions are in place.
 
 ## Acceptance criteria
 

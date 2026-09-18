@@ -271,6 +271,7 @@ fn symbolic_loop_bound_invariant_completes_without_a_body_rerun() {
                 step();
                 step();
                 loop {
+                    decreases n - i;
                     invariant i >= 0 and i <= n;
                 }
                 step();
@@ -388,10 +389,12 @@ fn have_after_loop_completes_without_a_body_rerun() {
                 step();
                 step();
                 loop {
+                    decreases 1 - i;
                     invariant i >= 0 and i <= 1;
                 }
                 step();
                 loop {
+                    decreases 1 - j;
                     invariant j >= 0 and j <= 1;
                 }
                 have i == 1 by simp;
@@ -473,6 +476,7 @@ fn verified_loop_summary_completes_without_a_body_rerun() {
                     simp();
                 }
                 loop {
+                    decreases 3 - i;
                     invariant i >= 0;
                     invariant i <= 3;
                 }

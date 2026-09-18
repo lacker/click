@@ -2,11 +2,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use click::cli::{
-    CInput, MdTestExpectation, RequiredRun, prepare_mdtest_inputs, read_click_project, read_mdtest,
-    run_parallel, source_refs, termination_pending_verdict,
+    CInput, MdTestExpectation, prepare_mdtest_inputs, read_click_project, read_mdtest,
+    run_parallel, source_refs,
 };
 use click::instrumentation::{self, ArtifactReuseRejection};
-use click::surface::{self, verify_c0_project, verify_c0_sources, verify_cpp_prepared_project};
+use click::surface::{verify_c0_project, verify_c0_sources, verify_cpp_prepared_project};
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
@@ -184,38 +184,7 @@ fn run_mdtest(path: &Path) -> Result<(), String> {
         .map_err(|error| error.message().to_string())
     };
 
-    // Every mdtest is held to the termination rule unless it says it is
-    // pending, so a new test is written against the new rule from the day it
-    // lands (`issues/termination-required.md`).
-    let Some(pending) = mdtest.termination_pending else {
-        return check_expectation(
-            path,
-            expectation,
-            surface::with_termination_required(verify),
-        );
-    };
-    check_expectation(path, expectation, verify())?;
-    // The pending run is a migration check, not part of the corpus the
-    // instrumentation baselines above describe, so it contributes no counts.
-    let required = instrumentation::without_artifact_reuse_rejection_census(|| {
-        surface::with_termination_required(verify)
-    });
-    let outcome = match (expectation, &required) {
-        (MdTestExpectation::Pass, Ok(())) => RequiredRun::Satisfied,
-        (MdTestExpectation::FailContains(expected), Err(message)) if message.contains(expected) => {
-            RequiredRun::Satisfied
-        }
-        (_, Err(message)) => RequiredRun::Unsatisfied(message),
-        (MdTestExpectation::FailContains(_), Ok(())) => {
-            RequiredRun::Unsatisfied("verification passed")
-        }
-    };
-    termination_pending_verdict(
-        &path.display().to_string(),
-        "```termination block",
-        Some(pending),
-        outcome,
-    )
+    check_expectation(path, expectation, verify())
 }
 
 fn check_expectation(
