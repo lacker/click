@@ -2408,6 +2408,61 @@ fn termination_callees(function: &CFunction) -> BTreeSet<String> {
         .collect()
 }
 
+/// The named contracts this function's own `requires` clauses bind to a
+/// function-pointer object, keeping only those declared `diverges`, keyed by
+/// the object each clause names.
+///
+/// A contract is the whole of what a call through a pointer may assume: the
+/// implementation behind the pointer is not known here, and one that never
+/// returns satisfies a contract that admits divergence. So a requirement of
+/// such a contract is this function's own admission that a pointer call of
+/// its may not return, read from its own clauses with work linear in them.
+fn diverging_contract_objects(
+    function: &CFunction,
+    diverging_contracts: &BTreeSet<String>,
+) -> BTreeMap<String, String> {
+    fn collect(
+        requirement: &SpecProposition,
+        diverging_contracts: &BTreeSet<String>,
+        found: &mut BTreeMap<String, String>,
+    ) {
+        charge_termination_work(1);
+        match requirement {
+            SpecProposition::And(left, right) => {
+                collect(left, diverging_contracts, found);
+                collect(right, diverging_contracts, found);
+            }
+            SpecProposition::Predicate { name, arguments } => {
+                let Some(contract) = CFunctionContract::surface_name_from_predicate(name) else {
+                    return;
+                };
+                if !diverging_contracts.contains(contract) {
+                    return;
+                }
+                let [
+                    SpecPredicateArgument::Value(SpecExpression::CExpression(
+                        CExpression::Variable(object),
+                    )),
+                ] = arguments.as_slice()
+                else {
+                    return;
+                };
+                found.insert(object.clone(), contract.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    let mut found = BTreeMap::new();
+    if diverging_contracts.is_empty() {
+        return found;
+    }
+    for requirement in function.contract_requires() {
+        collect(requirement, diverging_contracts, &mut found);
+    }
+    found
+}
+
 /// The function a pointer value names, if it names one.
 fn value_function_address(value: &CValue) -> Option<&str> {
     let CValue::Pointer(pointer) = value else {
@@ -2793,6 +2848,11 @@ pub enum CTerminationRefusal {
     UnmeasuredRecursion { callee: String },
     /// `callee` has no termination evidence of its own.
     Callee { callee: String },
+    /// A call through the object `object` is authorized by the named contract
+    /// `contract`, which is declared `diverges`. A contract is the whole of
+    /// what a pointer call may assume, so one that admits divergence admits an
+    /// execution of this call that never returns.
+    DivergingContract { object: String, contract: String },
     /// A call through the object `object` has no declared callee.
     IndirectCall { object: String },
     /// The function declares that it may not return, and nothing else about
@@ -2813,6 +2873,10 @@ impl std::fmt::Display for CTerminationRefusal {
             Self::Callee { callee } => {
                 write!(formatter, "callee `{callee}` has no termination evidence")
             }
+            Self::DivergingContract { object, contract } => write!(
+                formatter,
+                "the named contract `{contract}` is declared `diverges`, so the call through `{object}` may not return"
+            ),
             Self::IndirectCall { object } => write!(
                 formatter,
                 "the call through `{object}` has no declared callee to descend to"
@@ -2869,6 +2933,12 @@ pub struct CTerminationVerdicts {
 /// may not return. Such a function is checked like any other, so the verdict
 /// can say whether the declaration was needed, but it never receives
 /// evidence and its callers are refused for it.
+///
+/// `diverging_contracts` names the named function-pointer contracts whose
+/// declarations say the same. A contract is the whole of what a call through
+/// a pointer may assume, so a function that requires one of these admits an
+/// execution of its pointer calls that never returns, and receives no
+/// evidence whatever its callees do.
 pub fn c_verified_function_termination_rules(
     partial_rules: &[CVerifiedFunctionRule],
     plan_entries: &[CFunctionTerminationPlan],
@@ -2877,6 +2947,7 @@ pub fn c_verified_function_termination_rules(
     heights: &BTreeMap<String, usize>,
     assumed_terminating: &BTreeSet<String>,
     declared_diverging: &BTreeSet<String>,
+    diverging_contracts: &BTreeSet<String>,
 ) -> Result<CTerminationVerdicts, CTerminationError> {
     let (functions, calls) = termination_call_graph(partial_rules, inline_bodies);
     let ruled = partial_rules
@@ -2929,6 +3000,7 @@ pub fn c_verified_function_termination_rules(
                 let function = functions[name];
                 let mut refusal = None;
                 let mut recursive_callees = BTreeSet::<String>::new();
+                let diverging_objects = diverging_contract_objects(function, diverging_contracts);
                 for callee in &calls[name] {
                     charge_termination_work(1);
                     // `realloc` is a call in the syntax and a primitive in the
@@ -2939,7 +3011,25 @@ pub fn c_verified_function_termination_rules(
                         continue;
                     }
                     if let Some(object) = callee.strip_suffix("#indirect") {
-                        if !allow_pointer_calls && refusal.is_none() {
+                        // A requirement names the object it constrains, and a
+                        // pointer held in another of this function's objects
+                        // may carry the same value, so one diverging contract
+                        // withholds evidence from every pointer call here.
+                        // The refusal names the contract the requirement puts
+                        // on the object called, when there is one.
+                        let diverging = diverging_objects
+                            .get(object)
+                            .or_else(|| diverging_objects.values().next());
+                        if let Some(contract) = diverging {
+                            if refusal.is_none()
+                                || matches!(refusal, Some(CTerminationRefusal::IndirectCall { .. }))
+                            {
+                                refusal = Some(CTerminationRefusal::DivergingContract {
+                                    object: object.to_string(),
+                                    contract: contract.clone(),
+                                });
+                            }
+                        } else if !allow_pointer_calls && refusal.is_none() {
                             refusal = Some(CTerminationRefusal::IndirectCall {
                                 object: object.to_string(),
                             });
@@ -3514,6 +3604,7 @@ mod local_descent_tests {
             heights,
             &assumed.iter().map(|name| name.to_string()).collect(),
             &BTreeSet::new(),
+            &BTreeSet::new(),
         )
     }
 
@@ -3657,6 +3748,7 @@ mod local_descent_tests {
             &plan,
             &BTreeSet::new(),
             &BTreeSet::from(["spins".to_string(), "idle".to_string()]),
+            &BTreeSet::new(),
         )
         .expect("the plan checks");
         assert!(terminating(&verdicts).is_empty());
@@ -3917,6 +4009,86 @@ mod local_descent_tests {
         );
     }
 
+    /// No address is taken here, so nothing refuses the pointer call for a
+    /// callback of this run's. The contract the caller requires is then the
+    /// whole of what the call may assume, and it is declared `diverges`, so
+    /// the call admits an implementation that never returns. `applies` is
+    /// refused for it whether or not it says `diverges` itself; saying so
+    /// justifies the marker rather than certifying the function.
+    #[test]
+    fn a_diverging_named_contract_refuses_the_pointer_call_that_applies_it() {
+        let mut applies = pointer_rule("applies", &[], Some("callback"), &[]);
+        applies
+            .function
+            .contract_interface
+            .contract_requires
+            .push(SpecProposition::Predicate {
+                name: CFunctionContract::predicate_name_for("Spinner"),
+                arguments: vec![SpecPredicateArgument::Value(SpecExpression::CExpression(
+                    CExpression::Variable("callback".to_string()),
+                ))],
+            });
+        let rules = [pointer_rule("caller", &["applies"], None, &[]), applies];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let contracts = BTreeSet::from(["Spinner".to_string()]);
+
+        // A contract with no marker leaves the pointer call authorized.
+        let verdicts = check(&rules, &[], &plan, &[]).expect("the plan checks");
+        assert_eq!(
+            terminating(&verdicts),
+            BTreeSet::from(["applies", "caller"])
+        );
+
+        let verdicts = c_verified_function_termination_rules(
+            &rules,
+            &[],
+            &BTreeMap::new(),
+            &[],
+            &plan,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &contracts,
+        )
+        .expect("the plan checks");
+        assert!(terminating(&verdicts).is_empty(), "{verdicts:?}");
+        assert_eq!(
+            verdicts.refusals["applies"],
+            CTerminationRefusal::DivergingContract {
+                object: "callback".to_string(),
+                contract: "Spinner".to_string(),
+            }
+        );
+        assert_eq!(
+            verdicts.refusals["caller"],
+            CTerminationRefusal::Callee {
+                callee: "applies".to_string()
+            }
+        );
+        assert!(verdicts.unjustified_diverging.is_empty());
+
+        // The marker on `applies` answers for exactly this call, so it is
+        // needed, not redundant.
+        let verdicts = c_verified_function_termination_rules(
+            &rules,
+            &[],
+            &BTreeMap::new(),
+            &[],
+            &plan,
+            &BTreeSet::new(),
+            &BTreeSet::from(["applies".to_string()]),
+            &contracts,
+        )
+        .expect("the plan checks");
+        assert_eq!(
+            verdicts.refusals["applies"],
+            CTerminationRefusal::DivergingContract {
+                object: "callback".to_string(),
+                contract: "Spinner".to_string(),
+            }
+        );
+        assert!(verdicts.unjustified_diverging.is_empty());
+    }
+
     /// A loop with no annotation has one route through execution, the
     /// concrete one, which returns only when every feasible path has left the
     /// loop. A function certified with such a loop ran it to its exit, so it
@@ -3958,6 +4130,7 @@ mod local_descent_tests {
             &BTreeMap::new(),
             &bodies,
             &plan,
+            &BTreeSet::new(),
             &BTreeSet::new(),
             &BTreeSet::new(),
         )
@@ -4268,6 +4441,7 @@ mod termination_scaling_tests {
                 &BTreeMap::new(),
                 &[],
                 &heights,
+                &BTreeSet::new(),
                 &BTreeSet::new(),
                 &BTreeSet::new(),
             )

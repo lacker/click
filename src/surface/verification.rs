@@ -2233,6 +2233,16 @@ fn verify_c0_sources_with_context(
         .iter()
         .map(|function| function.signature().name().to_string())
         .collect::<Vec<_>>();
+    // A named contract may carry the `diverges` marker too. It stands for an
+    // implementation nobody here names, so the marker is the declaration that
+    // one of them may not return, and a call through such a pointer is
+    // admitted divergence in whichever function makes it.
+    let diverging_contracts = file
+        .contract_definitions()
+        .iter()
+        .filter(|contract| contract.function_block().signature().diverges())
+        .map(|contract| contract.name().to_string())
+        .collect::<BTreeSet<_>>();
 
     for function_block in file.function_blocks {
         check_verification_deadline()?;
@@ -3055,6 +3065,7 @@ fn verify_c0_sources_with_context(
         &termination_heights,
         &assumed_terminating,
         &declared_diverging,
+        &diverging_contracts,
     )
     .map_err(|error| ClickError::new(format!("could not certify C termination: {error}")))?;
     // An `extern` contract has no body to answer for its marker: the
@@ -3847,6 +3858,12 @@ fn termination_refusal_report(
             CTerminationRefusal::UnrankedLoop { .. } => {
                 report.push_str(&format!(
                     "{current}; give it one, or mark it `loop diverges` and declare `{owner}` `diverges`"
+                ));
+                return report;
+            }
+            CTerminationRefusal::DivergingContract { .. } => {
+                report.push_str(&format!(
+                    "{current}; declare `{owner}` `diverges` too, or require a contract without the marker"
                 ));
                 return report;
             }

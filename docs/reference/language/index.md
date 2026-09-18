@@ -385,6 +385,27 @@ contagious: an unmarked caller of a marked function is refused, and the
 refusal names the callee and the repair, which is to declare the caller
 `diverges` too.
 
+A named contract takes the marker in the same signature
+position. A contract stands for an implementation this project need not name,
+so the marker says that a call through a pointer carrying it may not return:
+the function that makes the call must be declared `diverges` too, and the
+refusal names the contract and offers the two repairs, which are that marker
+or a contract without one. Such a call is itself what justifies the caller's
+marker, so the unjustified-marker refusal does not then ask for it back; see
+`mdtests/diverges_named_contract_requires_marked_caller.md`.
+
+<!-- verified-example: mdtests/diverges_named_contract_in_marked_caller.md -->
+```click
+contract int32 Spinner(int32 x) diverges {
+    ensures result == 1;
+}
+
+int32 run(int32 (*step)(int32), int32 x) diverges {
+    requires Spinner(step);
+    ensures result == 1 by auto;
+}
+```
+
 Termination and host capacity are separate judgments. Click does not model
 process stack exhaustion, address-space exhaustion, operating-system
 allocation failure, or local-storage limits. A verified function can still
