@@ -2186,11 +2186,28 @@ impl AnnotationLowerer<'_> {
                 components.push(crate::kernel::CRankingComponent::CExpression(c_expression));
                 continue;
             }
+            let context = SpecElaborationContext::for_loop_invariant(loop_index);
+            // A measure whose declared type is `Integer` is lowered in the
+            // Integer carrier, by the same rule that picks the carrier for an
+            // invariant's operand. Its two obligations are the same two, built
+            // over `Integer`.
+            if self.contract_expression_is_integer(expression, &context) {
+                let lowered = self
+                    .lower_contract_integer_to_spec(expression, &context)
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "loop {loop_index} `decreases` component `{}`: {message}",
+                            crate::surface::verification::termination_measure_source(expression)
+                        ))
+                    })?;
+                components.push(crate::kernel::CRankingComponent::PureInteger {
+                    source: crate::surface::verification::termination_measure_source(expression),
+                    expression: lowered,
+                });
+                continue;
+            }
             let lowered = self
-                .lower_contract_expression_to_spec(
-                    expression,
-                    &SpecElaborationContext::for_loop_invariant(loop_index),
-                )
+                .lower_contract_expression_to_spec(expression, &context)
                 .map_err(|message| {
                     ClickError::new(format!(
                         "loop {loop_index} `decreases` component `{}`: {message}",
@@ -2254,6 +2271,23 @@ impl AnnotationLowerer<'_> {
                 crate::surface::verification::termination_measure_source(expression),
                 fixed.spelling()
             )));
+        }
+        // The carrier is chosen exactly as the loop slot chooses it: an
+        // `Integer`-typed measure lowers into the Integer carrier and owes the
+        // same two obligations there.
+        if self.contract_expression_is_integer(expression, context) {
+            let lowered = self
+                .lower_contract_integer_to_spec(expression, context)
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "function-level `decreases` component `{}` in `{name}`: {message}",
+                        crate::surface::verification::termination_measure_source(expression)
+                    ))
+                })?;
+            return Ok(Some(crate::kernel::CRankingComponent::PureInteger {
+                source: crate::surface::verification::termination_measure_source(expression),
+                expression: lowered,
+            }));
         }
         let lowered = self
             .lower_contract_expression_to_spec(expression, context)

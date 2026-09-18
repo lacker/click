@@ -139,7 +139,8 @@ there is a real cycle that Click does not already rank: a loop the proof
 summarizes, or a recursive call. A `decreases` clause is always one expression, and what it names
 decides which measure it is: an `int32` parameter, a resource application such
 as `list(node)`, a contract or loop resource binder such as `t`, or, on a
-self-recursive function, any pure `int32` expression. Functions
+self-recursive function, any pure `int32` or mathematical `Integer`
+expression. Functions
 and resources share one namespace, so that classification happens after name
 resolution rather than from a keyword; there is no `decreases resource`
 spelling. A function-level measure ranks recursive calls:
@@ -216,6 +217,16 @@ counterpart of the `invariant head(box) == box[0]` idiom a loop uses. See
 call does not lower leaves the descent obligation open exactly as a loop's
 does: `mdtests/c_decreases_pure_expression_recursion_must_descend.md`.
 
+The measure may instead be `Integer`-valued, and then the two members are
+Integer comparisons. A counting measure is naturally a mathematical `Integer`:
+an int32 fold's `+` is partial in specifications, so its bounds are unprovable
+at a symbolic length. `<` on the nonnegative Integers is well founded for the
+same reason `<` on the nonnegative int32s is, so nothing about the argument
+changes — only the carrier the two obligations are stated in. The prelude's
+`int32_less_equal_to_integer` and `int32_subtract_to_integer` carry the int32
+the C counts into the Integer the measure names. See
+`mdtests/c_decreases_integer_measure_recursion.md`.
+
 The same rule about fixed states applies: a function-level component may not
 mention `old(...)` or `at(...)`, because Click reads the one declared
 component at two states itself.
@@ -280,7 +291,8 @@ value.
 
 The numeric proof shape is deliberately small but a loop measure is one
 component, or a nonempty lexicographic tuple of components, and each component
-is any pure `int32` expression: a C fragment, a memory read, an application of
+is any pure `int32` or mathematical `Integer` expression: a C fragment, a
+memory read, an application of
 a pure Click function, a resource model field. Click evaluates the one
 declared component at the iteration's entry state and again at the back-edge
 state, exactly as it evaluates an invariant about the same cells at those two
@@ -326,6 +338,25 @@ member permanently open. See
 no leniency about the descent itself: a measure the body does not move leaves
 the ranking member open exactly as a C one does, as in
 `mdtests/loop_decreases_pure_expression_must_decrease.md`.
+
+A component whose type is `Integer` ranks the loop in that carrier:
+
+<!-- verified-example: mdtests/loop_decreases_integer_measure.md -->
+```click
+loop {
+  decreases level(n);
+  invariant 0 <= n;
+}
+```
+
+Here `level(n: int32) -> Integer` returns `to_integer(n)`, so the bundle's two
+ranking members are `0 <= level(n)` and `level(n_post) < level(n_pre)` over the
+Integers. A lexicographic tuple may mix the carriers, because a pivot arm only
+ever compares one component's two readings. The strictness is the same one an
+int32 measure owes: `mdtests/loop_decreases_integer_measure_must_decrease.md`.
+State the two members as `have`s before the body's last step, where they are
+ordinary Integer goals with a source spelling, and the closer then has them as
+exact facts.
 
 A loop's ranking obligations are members of the back-edge invariant bundle,
 not a separate kernel pass. When a loop declares `decreases`, the bundle its

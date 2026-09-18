@@ -6907,3 +6907,249 @@ fn required_obligation_discharge_is_exact_and_refuses_logical_structure() {
     assert!(!obligations[0].is_assumable());
     assert_eq!(obligations[0].context(), Some("callee precondition"));
 }
+
+#[test]
+fn range_fold_alpha_identity_separates_a_bound_accumulator_from_a_free_variable() {
+    // `left` returns its initial value; `right` returns the free `shared`
+    // whenever its range is non-empty. The two folds denote different values,
+    // and the only thing that could make them look alike is that `shared` is
+    // the name `left` binds as its accumulator.
+    let shared = Variable(152);
+    let item = Variable(153);
+    let right_accumulator = Variable(154);
+    let start = Bitvector32Term::Variable(Variable(150));
+    let end = Bitvector32Term::Variable(Variable(151));
+
+    let left = Bitvector32Term::range_fold(
+        start.clone(),
+        end.clone(),
+        Bitvector32Term::Constant(0),
+        shared,
+        item,
+        Bitvector32Term::Variable(shared),
+    );
+    let right = Bitvector32Term::range_fold(
+        start,
+        end,
+        Bitvector32Term::Constant(0),
+        right_accumulator,
+        item,
+        Bitvector32Term::Variable(shared),
+    );
+
+    let assumptions = PureFactContext::new();
+    assert!(
+        !assumptions.range_fold_terms_alpha_equivalent(&left, &right),
+        "a bound accumulator occurrence must not match a free variable of the same id"
+    );
+    assert!(!assumptions.bitvector_terms_proven_equal(&left, &right));
+    // Contract certification asks the same question of the same identity.
+    assert_eq!(
+        crate::kernel::proof::fact_keys::bitvector_folds_alpha_equivalent(&left, &right),
+        Some(false)
+    );
+}
+
+/// A fold whose body rebinds the enclosing accumulator's name against one
+/// whose body reads it. This is the shape `mdtests/
+/// fold_binder_is_not_an_enclosing_accumulator.md` writes in Click: fold
+/// binder ids are hashed from the binder's name, so two `|acc, ..|` folds bind
+/// one id and an inner `|acc, ..|` shadows an outer one.
+#[test]
+fn a_shadowing_fold_binder_differs_from_a_read_of_the_enclosing_accumulator() {
+    let outer_accumulator = Variable(160);
+    let outer_item = Variable(161);
+    let inner_item = Variable(162);
+    let inner_accumulator = Variable(163);
+    let start = Bitvector32Term::Variable(Variable(164));
+    let end = Bitvector32Term::Variable(Variable(165));
+
+    let nest = |inner_accumulator, inner_body| {
+        Bitvector32Term::range_fold(
+            start.clone(),
+            end.clone(),
+            Bitvector32Term::Constant(0),
+            outer_accumulator,
+            outer_item,
+            Bitvector32Term::add(
+                Bitvector32Term::range_fold(
+                    start.clone(),
+                    end.clone(),
+                    Bitvector32Term::Constant(0),
+                    inner_accumulator,
+                    inner_item,
+                    inner_body,
+                ),
+                Bitvector32Term::Constant(1),
+            ),
+        )
+    };
+
+    // The inner fold rebinds `outer_accumulator`, so its body reads its own
+    // accumulator and it returns its initial value.
+    let shadowing = nest(
+        outer_accumulator,
+        Bitvector32Term::Variable(outer_accumulator),
+    );
+    // The inner fold binds a different name, so the same body reads the
+    // enclosing accumulator.
+    let reading = nest(
+        inner_accumulator,
+        Bitvector32Term::Variable(outer_accumulator),
+    );
+
+    let assumptions = PureFactContext::new();
+    assert!(!assumptions.range_fold_terms_alpha_equivalent(&shadowing, &reading));
+    assert!(!assumptions.bitvector_terms_proven_equal(&shadowing, &reading));
+
+    // Renaming every binder of either one keeps it equal to itself: the
+    // distinction above is about binding, not about spelling.
+    let renamed_shadowing = Bitvector32Term::range_fold(
+        start.clone(),
+        end.clone(),
+        Bitvector32Term::Constant(0),
+        Variable(170),
+        Variable(171),
+        Bitvector32Term::add(
+            Bitvector32Term::range_fold(
+                start.clone(),
+                end.clone(),
+                Bitvector32Term::Constant(0),
+                Variable(172),
+                Variable(173),
+                Bitvector32Term::Variable(Variable(172)),
+            ),
+            Bitvector32Term::Constant(1),
+        ),
+    );
+    assert!(assumptions.range_fold_terms_alpha_equivalent(&shadowing, &renamed_shadowing));
+
+    let renamed_reading = Bitvector32Term::range_fold(
+        start,
+        end,
+        Bitvector32Term::Constant(0),
+        Variable(180),
+        Variable(181),
+        Bitvector32Term::add(
+            Bitvector32Term::range_fold(
+                Bitvector32Term::Variable(Variable(164)),
+                Bitvector32Term::Variable(Variable(165)),
+                Bitvector32Term::Constant(0),
+                Variable(182),
+                Variable(183),
+                Bitvector32Term::Variable(Variable(180)),
+            ),
+            Bitvector32Term::Constant(1),
+        ),
+    );
+    assert!(assumptions.range_fold_terms_alpha_equivalent(&reading, &renamed_reading));
+    assert!(!assumptions.range_fold_terms_alpha_equivalent(&shadowing, &renamed_reading));
+}
+
+#[test]
+fn range_fold_alpha_identity_keeps_renamed_binders_and_shared_free_variables_equal() {
+    let free = Variable(190);
+    let start = Bitvector32Term::Variable(Variable(191));
+    let end = Bitvector32Term::Variable(Variable(192));
+
+    // `acc + item + free`, under two disjoint sets of binder names.
+    let summed = |accumulator, item| {
+        Bitvector32Term::range_fold(
+            start.clone(),
+            end.clone(),
+            Bitvector32Term::Constant(0),
+            accumulator,
+            item,
+            Bitvector32Term::add(
+                Bitvector32Term::add(
+                    Bitvector32Term::Variable(accumulator),
+                    Bitvector32Term::Variable(item),
+                ),
+                Bitvector32Term::Variable(free),
+            ),
+        )
+    };
+    let left = summed(Variable(193), Variable(194));
+    let right = summed(Variable(195), Variable(196));
+
+    let assumptions = PureFactContext::new();
+    assert!(assumptions.range_fold_terms_alpha_equivalent(&left, &right));
+    assert!(assumptions.bitvector_terms_proven_equal(&left, &right));
+    assert_eq!(
+        crate::kernel::proof::fact_keys::bitvector_folds_alpha_equivalent(&left, &right),
+        Some(true)
+    );
+
+    // A different free variable in the same position is a different fold.
+    let other_free = summed(Variable(193), Variable(194));
+    let other_free = crate::kernel::reasoning::substitute_bitvector_variable(
+        &other_free,
+        free,
+        &Bitvector32Term::Variable(Variable(197)),
+    );
+    assert!(!assumptions.range_fold_terms_alpha_equivalent(&left, &other_free));
+}
+
+#[test]
+fn range_fold_alpha_identity_equates_nested_folds_under_renamed_binders() {
+    let start = Bitvector32Term::Variable(Variable(200));
+    let end = Bitvector32Term::Variable(Variable(201));
+
+    // `fold(|acc, k| acc + fold(|total, j| total + k))`: the inner body reads
+    // the enclosing item binder, so the two nestings only match when that
+    // outer binder is aligned as well.
+    let nested = |accumulator, item, inner_accumulator, inner_item| {
+        Bitvector32Term::range_fold(
+            start.clone(),
+            end.clone(),
+            Bitvector32Term::Constant(0),
+            accumulator,
+            item,
+            Bitvector32Term::add(
+                Bitvector32Term::Variable(accumulator),
+                Bitvector32Term::range_fold(
+                    start.clone(),
+                    end.clone(),
+                    Bitvector32Term::Constant(0),
+                    inner_accumulator,
+                    inner_item,
+                    Bitvector32Term::add(
+                        Bitvector32Term::Variable(inner_accumulator),
+                        Bitvector32Term::Variable(item),
+                    ),
+                ),
+            ),
+        )
+    };
+    let left = nested(Variable(202), Variable(203), Variable(204), Variable(205));
+    let right = nested(Variable(206), Variable(207), Variable(208), Variable(209));
+
+    let assumptions = PureFactContext::new();
+    assert!(assumptions.range_fold_terms_alpha_equivalent(&left, &right));
+    assert!(assumptions.bitvector_terms_proven_equal(&left, &right));
+
+    // Reading the inner item binder instead of the outer one is a different
+    // fold, and renaming cannot hide that either.
+    let inner_item_instead = Bitvector32Term::range_fold(
+        start.clone(),
+        end.clone(),
+        Bitvector32Term::Constant(0),
+        Variable(206),
+        Variable(207),
+        Bitvector32Term::add(
+            Bitvector32Term::Variable(Variable(206)),
+            Bitvector32Term::range_fold(
+                start,
+                end,
+                Bitvector32Term::Constant(0),
+                Variable(208),
+                Variable(209),
+                Bitvector32Term::add(
+                    Bitvector32Term::Variable(Variable(208)),
+                    Bitvector32Term::Variable(Variable(209)),
+                ),
+            ),
+        ),
+    );
+    assert!(!assumptions.range_fold_terms_alpha_equivalent(&left, &inner_item_instead));
+}

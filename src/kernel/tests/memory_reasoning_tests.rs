@@ -2506,6 +2506,175 @@ fn count_shaped_range_fold_split_is_proven_equal() {
     )));
 }
 
+/// An `Integer`-carrier fold over an array cell, with the memory snapshot the
+/// body reads left open.
+fn integer_array_fold(
+    memory: &CMemory,
+    start: Bitvector32Term,
+    end: Bitvector32Term,
+    accumulator: Variable,
+    item: Variable,
+) -> IntegerTerm {
+    let load = Bitvector32Term::MemoryLoad(
+        intern_c_memory_ref(memory),
+        Box::new(Pointer {
+            block: "array".into(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(Bitvector32Term::Variable(item)),
+                byte_width: 4,
+            },
+        }),
+    );
+    IntegerTerm::range_fold(
+        IntegerRangeFoldIndex::Int32 {
+            start: SharedIntegerRangeEndpoint::intern(start),
+            end: SharedIntegerRangeEndpoint::intern(end),
+        },
+        IntegerTerm::constant_i64(0),
+        accumulator,
+        item,
+        IntegerTerm::add(
+            IntegerTerm::var(accumulator),
+            IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                MachineIntegerType::Int32,
+                load,
+            )),
+        ),
+    )
+}
+
+#[test]
+fn integer_range_fold_endpoints_are_congruent_under_an_equality() {
+    let memory = CMemory::new().with_block("array", 12);
+    let lo = Bitvector32Term::Variable(Variable(110));
+    let a = Bitvector32Term::Variable(Variable(111));
+    let b = Bitvector32Term::Variable(Variable(112));
+    let left = integer_array_fold(&memory, lo.clone(), a.clone(), Variable(113), Variable(114));
+    let right = integer_array_fold(&memory, lo, b.clone(), Variable(115), Variable(116));
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::integer_equal(left.clone(), right.clone()),
+        true,
+    );
+
+    // The two end endpoints are unrelated terms, so nothing equates the folds
+    // until the equality is an available fact.
+    assert!(!PureFactContext::new().proves(&goal));
+    assert!(
+        PureFactContext::new()
+            .assume_condition(ConditionTerm::equal(a, b), true)
+            .proves(&goal)
+    );
+}
+
+#[test]
+fn integer_range_fold_endpoint_congruence_normalizes_an_affine_endpoint() {
+    let memory = CMemory::new().with_block("array", 12);
+    let lo = Bitvector32Term::Variable(Variable(120));
+    let hi = Bitvector32Term::Variable(Variable(121));
+    // `(hi - 1) + 1` is the endpoint every induction step carries back to
+    // `hi`. It needs no ordering or definedness fact: 32-bit `Add` and
+    // `Subtract` wrap, so the two affine normal forms are equal outright.
+    let successor_of_predecessor = Bitvector32Term::Add(
+        Box::new(Bitvector32Term::Subtract(
+            Box::new(hi.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        )),
+        Box::new(Bitvector32Term::Constant(1)),
+    );
+    let left = integer_array_fold(
+        &memory,
+        lo.clone(),
+        successor_of_predecessor,
+        Variable(122),
+        Variable(123),
+    );
+    let right = integer_array_fold(&memory, lo, hi, Variable(124), Variable(125));
+
+    assert!(PureFactContext::new().proves(&Proposition::ConditionIs(
+        ConditionTerm::integer_equal(left, right),
+        true,
+    )));
+}
+
+#[test]
+fn integer_range_fold_endpoint_congruence_rejects_a_free_binder_occurrence() {
+    let lo = SharedIntegerRangeEndpoint::intern(Bitvector32Term::Variable(Variable(140)));
+    let a = SharedIntegerRangeEndpoint::intern(Bitvector32Term::Variable(Variable(141)));
+    let b = SharedIntegerRangeEndpoint::intern(Bitvector32Term::Variable(Variable(142)));
+    let bound_accumulator = Variable(143);
+    // One body names `bound_accumulator`. In the left fold that is the
+    // accumulator binder; in the right fold, which binds a different
+    // accumulator, the same name is a free variable standing for something
+    // else entirely. Comparing binder names, or accepting an occurrence
+    // because the two variables happen to be spelled alike, would equate two
+    // folds that mean different things.
+    let fold = |end: &SharedIntegerRangeEndpoint, accumulator: Variable| {
+        IntegerTerm::range_fold(
+            IntegerRangeFoldIndex::Int32 {
+                start: lo.clone(),
+                end: end.clone(),
+            },
+            IntegerTerm::constant_i64(0),
+            accumulator,
+            Variable(144),
+            IntegerTerm::var(bound_accumulator),
+        )
+    };
+    let bound = fold(&a, bound_accumulator);
+    let free = fold(&b, Variable(145));
+
+    let assumptions = PureFactContext::new().assume_condition(
+        ConditionTerm::equal(a.value().clone(), b.value().clone()),
+        true,
+    );
+    assert!(!assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::integer_equal(bound.clone(), free),
+        true,
+    )));
+
+    // The same pair with the accumulator bound on both sides is equated, so
+    // the refusal above is the free occurrence and not the shape.
+    let also_bound = fold(&b, bound_accumulator);
+    assert!(assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::integer_equal(bound, also_bound),
+        true,
+    )));
+}
+
+#[test]
+fn integer_range_fold_endpoint_congruence_requires_one_memory_snapshot() {
+    let cell = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let before = CMemory::new().with_block("array", 12);
+    let after = before.clone().store(cell, int32(7));
+    let lo = Bitvector32Term::Variable(Variable(130));
+    let a = Bitvector32Term::Variable(Variable(131));
+    let b = Bitvector32Term::Variable(Variable(132));
+    let assumptions =
+        PureFactContext::new().assume_condition(ConditionTerm::equal(a.clone(), b.clone()), true);
+
+    // Equal endpoints and the same body shape, but the two bodies read
+    // different snapshots of the same array. The fold values may genuinely
+    // differ, so the congruence must not fire.
+    let left = integer_array_fold(&before, lo.clone(), a.clone(), Variable(133), Variable(134));
+    let across_a_write =
+        integer_array_fold(&after, lo.clone(), b.clone(), Variable(135), Variable(136));
+    assert!(!assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::integer_equal(left.clone(), across_a_write),
+        true,
+    )));
+
+    // The same pair at one snapshot is equated, so the refusal above is the
+    // snapshot check and not some other mismatch.
+    let same_snapshot = integer_array_fold(&before, lo, b, Variable(135), Variable(136));
+    assert!(assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::integer_equal(left, same_snapshot),
+        true,
+    )));
+}
+
 #[test]
 fn symbolic_store_invalidates_only_possible_aliasing_cells() {
     let i = Variable(81);

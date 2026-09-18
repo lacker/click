@@ -250,6 +250,40 @@ Pure theorem induction is also unrelated to a C function's optional
 termination evidence: it proves a proposition about specification values, not
 that a C call returns.
 
+### Unfolding a fold-bodied function over a symbolic range
+
+A function whose body is exactly a range fold is the usual way to summarize an
+array range, and for those the raw defining equation is rarely the layer a
+proof wants: it replaces the call with a fold nobody can then reason about
+without retyping it. `unfold(function(args)) using { ... }` opens a different
+layer — the range-fold law the listed guards select, stated over the call:
+
+<!-- verified-example: mdtests/unfold_fold_function_empty_range.md -->
+```click
+function icount(p: int32[], lo: int32, hi: int32, x: int32) -> Integer {
+    (lo..hi).fold(0, |acc, k| {
+        acc + to_integer(if p[k] == x { 1 } else { 0 })
+    })
+}
+```
+
+With `hi <= lo` listed, the step opens `icount(p, lo, hi, x) == 0`. With
+`lo <= hi - 1` and `hi - 1 < 2147483647` listed, it opens
+`icount(p, lo, hi, x) == icount(p, lo, hi - 1, x) + <the cell at hi - 1>`. Both
+sides of that equation are the same function, so the shorter range is the term
+an induction hypothesis already speaks about, and a range property follows by
+the ordinary `induct(hi)` over a nonnegative `int32` parameter.
+
+Two consequences are worth stating plainly. The body's memory reads stay inside
+the declaration, where the caller's `loadable` premise covers them: the proof
+site never writes `v[k]` at the fold's bound index, which a pure theorem cannot
+lower. And the step is a derived use of the kernel's two fold laws, not a new
+axiom — the defining equation and its predecessor instance are the law's own
+premises, so nothing about the declaration is assumed twice. The append form
+therefore requires the fold's end to be a parameter of the function that the
+fold reads nowhere else; otherwise the shorter fold would not be that function
+at a smaller endpoint.
+
 ## When to use pure functions
 
 Use a pure Click function when:

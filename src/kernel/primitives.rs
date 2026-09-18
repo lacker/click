@@ -2760,6 +2760,20 @@ pub enum CRankingComponent {
         source: String,
         expression: SpecExpression,
     },
+    /// A pure mathematical `Integer` specification expression, evaluated by
+    /// the same Integer evaluator a `requires` clause's Integer operand is,
+    /// at each of the two states the ranking obligation compares.
+    ///
+    /// A counting measure over an array range is naturally an `Integer`: an
+    /// int32 fold's `+` is partial in specifications, so its bounds are not
+    /// provable at a symbolic length. The two obligations are the same two,
+    /// built over `Integer` instead of int32; `<` on the nonnegative Integers
+    /// is well founded for the same reason `<` on the nonnegative int32s is.
+    PureInteger {
+        /// The declared spelling, read exactly as [`Self::Pure`]'s is.
+        source: String,
+        expression: SpecIntegerExpression,
+    },
 }
 
 impl CRankingComponent {
@@ -2767,9 +2781,27 @@ impl CRankingComponent {
     pub(super) fn key(&self) -> CRankingMeasureKey {
         match self {
             Self::CExpression(expression) => CRankingMeasureKey::CExpression(expression.clone()),
-            Self::Pure { source, .. } => CRankingMeasureKey::Pure(source.clone()),
+            Self::Pure { source, .. } | Self::PureInteger { source, .. } => {
+                CRankingMeasureKey::Pure(source.clone())
+            }
         }
     }
+}
+
+/// The value of one `decreases` component at one state, in the carrier its
+/// declaration chose.
+///
+/// The carrier is a function of the component, not of the state: a
+/// [`CRankingComponent::PureInteger`] reads as an `Integer` at every state and
+/// the other two read as a machine int32 at every state. That is what lets the
+/// two obligations be built from the two readings of one component without
+/// asking which carrier each reading happened to land in.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CRankingMeasureValue {
+    /// A machine int32 quantity, ranked by signed comparison.
+    Machine(Bitvector32Term),
+    /// A mathematical Integer quantity, ranked by Integer comparison.
+    Integer(IntegerTerm),
 }
 
 /// How an untrusted termination plan names one declared `decreases`
@@ -2866,7 +2898,7 @@ pub enum CFunctionTerminationMeasure {
 pub struct CRecursionAnchor {
     pub(super) function: String,
     pub(super) component: CRankingComponent,
-    pub(super) measure: Bitvector32Term,
+    pub(super) measure: CRankingMeasureValue,
     pub(super) entry_obligations: Vec<ProofObligation>,
 }
 
@@ -2875,7 +2907,7 @@ impl CRecursionAnchor {
         &self.function
     }
 
-    pub(super) fn measure(&self) -> &Bitvector32Term {
+    pub(super) fn measure(&self) -> &CRankingMeasureValue {
         &self.measure
     }
 

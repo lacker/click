@@ -313,6 +313,46 @@ impl PureFactContext {
         .map(|_| false)
     }
 
+    /// Decide a signed comparison from the two sides' intervals, when one of
+    /// them is a pure conditional.
+    ///
+    /// The gate is deliberate. A conditional has no order facts of its own --
+    /// nothing writes `0 <= if c { 1 } else { 0 }` down -- so the indexed
+    /// routes an ordinary comparison uses cannot reach it, while its arms are
+    /// written terms whose hull is immediate. An ordinary comparison returns
+    /// here before any interval is reconstructed, so this adds no work to the
+    /// comparisons that already had an answer.
+    pub(super) fn decide_signed_order_from_conditional_interval(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        strict: bool,
+    ) -> Option<bool> {
+        if !matches!(left, Bitvector32Term::If { .. })
+            && !matches!(right, Bitvector32Term::If { .. })
+        {
+            return None;
+        }
+        let (left_lower, left_upper) = self.signed_interval(left)?;
+        let (right_lower, right_upper) = self.signed_interval(right)?;
+        if strict {
+            if left_upper < right_lower {
+                return Some(true);
+            }
+            if left_lower >= right_upper {
+                return Some(false);
+            }
+        } else {
+            if left_upper <= right_lower {
+                return Some(true);
+            }
+            if left_lower > right_upper {
+                return Some(false);
+            }
+        }
+        None
+    }
+
     /// Returns a conservative signed range for `term`. Unknown endpoints use
     /// the full int32 range, so callers can still prove identities such as
     /// `x + 0`. Compound arithmetic is ranged only when its own signed
@@ -432,6 +472,20 @@ impl PureFactContext {
                     return None;
                 }
                 return Some((lower as i64, upper as i64));
+            }
+            Bitvector32Term::If {
+                then_term,
+                else_term,
+                ..
+            } => {
+                // A conditional denotes one of its two arms, so any interval
+                // containing both contains it. The condition is not consulted:
+                // deciding it is condition reasoning, and the hull is sound
+                // whichever way it goes. This is two recursive calls on the
+                // written arms, memoized like every other node, not a scan.
+                let (then_lower, then_upper) = self.signed_interval(then_term)?;
+                let (else_lower, else_upper) = self.signed_interval(else_term)?;
+                return Some((then_lower.min(else_lower), then_upper.max(else_upper)));
             }
             _ => {}
         }
@@ -630,6 +684,128 @@ mod tests {
                 Bitvector32Term::Variable(Variable(93_005)),
             )),
             Some(false)
+        );
+    }
+
+    fn indicator(variable: u64) -> Bitvector32Term {
+        Bitvector32Term::If {
+            condition: Box::new(ConditionTerm::equal(
+                Bitvector32Term::Variable(Variable(variable)),
+                Bitvector32Term::Constant(0),
+            )),
+            then_term: Box::new(Bitvector32Term::Constant(1)),
+            else_term: Box::new(Bitvector32Term::Constant(0)),
+        }
+    }
+
+    #[test]
+    fn a_conditional_is_ranged_by_the_hull_of_its_arms() {
+        let assumptions = PureFactContext::new();
+        let indicator = indicator(93_006);
+
+        // Both hull bounds are decided, with the condition left undecided.
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::signed_less_equal(
+                Bitvector32Term::Constant(0),
+                indicator.clone(),
+            )),
+            Some(true)
+        );
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::signed_less_equal(
+                indicator.clone(),
+                Bitvector32Term::Constant(1),
+            )),
+            Some(true)
+        );
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::signed_greater_equal(
+                indicator.clone(),
+                Bitvector32Term::Constant(0),
+            )),
+            Some(true)
+        );
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::signed_less_than(
+                indicator.clone(),
+                Bitvector32Term::Constant(2),
+            )),
+            Some(true)
+        );
+
+        // A bound that only one arm satisfies stays undecided, and one that
+        // neither arm satisfies is decided false.
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::signed_less_equal(
+                indicator.clone(),
+                Bitvector32Term::Constant(0),
+            )),
+            None
+        );
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::signed_less_than(
+                Bitvector32Term::Constant(1),
+                indicator,
+            )),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn a_conditional_over_bounded_variables_uses_their_intervals() {
+        let x = Bitvector32Term::Variable(Variable(93_007));
+        let assumptions = PureFactContext::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(x.clone(), Bitvector32Term::Constant(3)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(x.clone(), Bitvector32Term::Constant(9)),
+                true,
+            );
+        let conditional = Bitvector32Term::If {
+            condition: Box::new(ConditionTerm::equal(
+                x.clone(),
+                Bitvector32Term::Constant(5),
+            )),
+            then_term: Box::new(x),
+            else_term: Box::new(Bitvector32Term::Constant(4)),
+        };
+
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::signed_less_equal(
+                Bitvector32Term::Constant(3),
+                conditional.clone(),
+            )),
+            Some(true)
+        );
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::signed_less_equal(
+                conditional.clone(),
+                Bitvector32Term::Constant(9),
+            )),
+            Some(true)
+        );
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::signed_less_equal(
+                conditional,
+                Bitvector32Term::Constant(8),
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn an_ordinary_comparison_does_not_reach_the_interval_route() {
+        // The route is gated on a conditional, so a comparison between two
+        // unbounded variables is still undecided rather than newly ranged.
+        let assumptions = PureFactContext::new();
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::signed_less_equal(
+                Bitvector32Term::Variable(Variable(93_008)),
+                Bitvector32Term::Variable(Variable(93_009)),
+            )),
+            None
         );
     }
 }

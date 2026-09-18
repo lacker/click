@@ -49,7 +49,9 @@ pub use pure_functions::{
 };
 pub(crate) mod reasoning;
 mod spec;
-pub(crate) use spec::{capture_spec_algebraic_value, capture_spec_integer_value};
+pub(crate) use spec::{
+    SpecCaptureRefusal, capture_spec_algebraic_value, capture_spec_integer_value,
+};
 mod termination;
 
 pub use api::*;

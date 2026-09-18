@@ -58,6 +58,11 @@ path = "mdtests/pure_function_unfold.md"
 needle = "unfold(clamp_nonpositive(n));"
 
 [[form]]
+id = "unfold-function-using"
+path = "mdtests/unfold_fold_function_empty_range.md"
+needle = "unfold(icount(p, lo, hi, x)) using {"
+
+[[form]]
 id = "unfold-resource"
 path = "mdtests/composite_resource_composes_token.md"
 needle = "unfold(live_server(fd, state));"

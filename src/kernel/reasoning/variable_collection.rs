@@ -497,6 +497,9 @@ pub(in crate::kernel) fn collect_c_ranking_component_variables(
         CRankingComponent::Pure { expression, .. } => {
             collect_spec_expression_bitvector_variables(expression, variables);
         }
+        CRankingComponent::PureInteger { expression, .. } => {
+            collect_spec_integer_variables(expression, variables);
+        }
     }
 }
 
@@ -1753,7 +1756,15 @@ fn collect_execution_environment_variables_uncached(
     // Its variables are named by later call steps, so a fresh identity must
     // not be handed out on top of one, exactly as for a loop head's measure.
     if let Some(anchor) = environment.recursion_anchor() {
-        collect_bitvector_variables(anchor.measure(), variables);
+        match anchor.measure() {
+            CRankingMeasureValue::Machine(term) => collect_bitvector_variables(term, variables),
+            // An Integer measure's reserved names are the C carriers it reads
+            // plus its own Integer binders; both are named by later call steps.
+            CRankingMeasureValue::Integer(term) => {
+                collect_integer_capture_bitvector_variables(term, variables);
+                collect_integer_variables(term, variables);
+            }
+        }
         collect_c_ranking_component_variables(anchor.component(), variables);
         for obligation in anchor.entry_obligations() {
             collect_proposition_bitvector_variables(obligation.proposition(), variables);

@@ -61,6 +61,17 @@ Every checked conversion and every future checked division must establish its
 definedness in the current proof context before a theorem or execution
 certificate is accepted. Evaluation facts are not arbitrary assumptions.
 
+Capturing an Integer expression as one symbolic term follows the same rule.
+A partial machine operation inside the expression -- the `hi - 1` of a fold
+range `(lo..(hi - 1))`, for instance -- makes the captured value the value of
+only one evaluation path, guarded by that operation's definedness condition.
+The capture is accepted when the proof context already states that condition
+by an exact route, because then the guarded path is the only live one and
+admitting the condition adds nothing to what the captured term asserts. It is
+refused when the condition is not available, and the refusal names the
+offending subterm -- the fold's range endpoint, initializer, or body -- along
+with the condition that is missing. A missing condition is never dropped.
+
 ## Specification coverage
 
 Integer is supported in:
@@ -112,6 +123,28 @@ a symbolic range or invent an arithmetic assumption. The unchanged C
 summation regression proves exact functional correctness with an `Integer`
 prefix sum while separately proving that each machine addition is defined.
 
+Both laws take the raw fold term, which forces a proof to retype the fold at
+the proof site. `prove_integer_range_fold_over_equal_terms` restates either law
+over a term the caller proves equal to the fold — in practice the opaque
+application of the pure function whose declared body *is* that fold. Those
+equalities are premises of the produced theorem, beside the law's own guards,
+so the entry point assumes nothing the two laws do not already prove. The
+append form instantiates the append law at the predecessor index `start..end -
+1` and checks, against an empty fact context, that the law's
+`fold(start..(end - 1) + 1)` and the caller's `fold(start..end)` are the same
+fold by endpoint affine normalization; substituting the caller's term for the
+equal shorter fold inside the next-element step is congruence under the second
+premise. `integer_range_fold_predecessor_application` builds the predecessor
+application so its int32 argument and that index agree by construction.
+
+`substitute_integer_term_in_proposition` is the matching goal refresh. It is
+Leibniz for a step that already holds the two terms' proved equality, so it is
+deliberately shallow: it descends only the arithmetic spine — negation,
+addition, subtraction, multiplication — and compares interned identity
+everywhere else, never entering a range fold's binders. Rewriting only some
+occurrences of an equal term is sound, and the walk stays linear in the
+proposition it rebuilds.
+
 ## Sharing, scope, and identity
 
 Integer expressions use immutable shared nodes. A chain of aliases such as
@@ -133,9 +166,22 @@ proof. A shared replacement is validated once and its shallow root is charged
 at each occurrence.
 
 Memory loads and fold atoms retain exact snapshot identity. Alpha-equivalent
-loads from one retained snapshot may match; a different snapshot, endpoint,
-body, carrier, or definedness context does not. Snapshot identity is opaque to
+loads from one retained snapshot may match; a different snapshot, body,
+carrier, or definedness context does not. Snapshot identity is opaque to
 arithmetic and is never inferred from a raw term identifier or fingerprint.
+
+Endpoints are the one fold component compared up to equality rather than
+identity. A range fold reads nothing but its endpoints, its initial value, and
+its body, so two folds with the same initial value and the same body denote
+the same Integer once their start endpoints are equal and their end endpoints
+are equal. Endpoint equality is decided without any search over the ambient
+facts: interner identity, an exact recorded equality between exactly those two
+terms, or the two endpoints' affine normal form. The last route is what makes
+`(hi - 1) + 1` and `hi` one endpoint, which is how an induction step carries
+the append law's `end + 1` back to its goal; wrapping machine arithmetic makes
+it exact, so it needs no ordering or definedness side condition. The body
+remains exact, so a fold over a written array is never equated with the same
+fold over the snapshot before the write.
 
 ## Work budgets and certificate scaling
 
@@ -167,3 +213,5 @@ to make an Integer proof succeed.
 - [Canonical unchanged-C summation regression](https://github.com/lacker/click/blob/master/mdtests/integer_sum_range_fold.md)
 - [Missing element-bound regression](https://github.com/lacker/click/blob/master/mdtests/integer_sum_range_fold_missing_bounds.md)
 - [Intermediate-overflow regression](https://github.com/lacker/click/blob/master/mdtests/integer_sum_range_fold_intermediate_overflow.md)
+- [Endpoint congruence regression](https://github.com/lacker/click/blob/master/mdtests/fold_endpoints_rewrite_under_equality.md)
+- [Endpoint congruence refusal](https://github.com/lacker/click/blob/master/mdtests/fold_endpoints_reject_a_different_body.md)

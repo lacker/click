@@ -1,6 +1,7 @@
 //! Predicate and resource unfold/fold/observation steps.
 
 use super::*;
+use crate::kernel::{IntegerTerm, SharedIntegerTerm};
 
 impl<'a> Proof<'a> {
     fn apply_instance_rewrite(
@@ -288,12 +289,14 @@ impl<'a> Proof<'a> {
     pub(super) fn apply_function_unfold(
         &self,
         application: &ClickFunctionApplication,
+        premises: Option<&[ClickProposition]>,
     ) -> Result<CheckedFocusedTransition, ClickError> {
         match self.context.as_ref() {
             ProofContext::Pure(context) => {
                 let state = CState::new().with_memory(context.theorem_context.memory.clone());
                 self.apply_function_unfold_in_state(
                     application,
+                    premises,
                     context.theorem_context.values.clone(),
                     context.theorem_context.array_refs.clone(),
                     context
@@ -319,6 +322,7 @@ impl<'a> Proof<'a> {
                     contract_environment_at_state(&values, &array_refs, context.state);
                 self.apply_function_unfold_in_state(
                     application,
+                    premises,
                     values,
                     array_refs,
                     BTreeMap::new(),
@@ -343,6 +347,7 @@ impl<'a> Proof<'a> {
                     contract_environment_at_state(&values, &array_refs, view.state);
                 self.apply_function_unfold_in_state(
                     application,
+                    premises,
                     values,
                     array_refs,
                     BTreeMap::new(),
@@ -373,6 +378,7 @@ impl<'a> Proof<'a> {
                     context.old_reference_state(&execution.core.frontier, &execution.core.state);
                 self.apply_function_unfold_in_state(
                     application,
+                    premises,
                     values,
                     array_refs,
                     BTreeMap::new(),
@@ -395,6 +401,7 @@ impl<'a> Proof<'a> {
     fn apply_function_unfold_in_state(
         &self,
         application: &ClickFunctionApplication,
+        premises: Option<&[ClickProposition]>,
         values: BTreeMap<String, CValue>,
         array_refs: ClickArrayRefs,
         algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
@@ -457,7 +464,7 @@ impl<'a> Proof<'a> {
         let checked_equality = ClickProposition::Comparison {
             left: ContractExpression::Call {
                 name: application.name.clone(),
-                arguments: checked_arguments,
+                arguments: checked_arguments.clone(),
             },
             operator: ComparisonOperator::Equal,
             right: checked_body,
@@ -485,6 +492,78 @@ impl<'a> Proof<'a> {
                     application.name
                 ))
             })?;
+
+        // `unfold(f(args)) using { ... }` opens one layer too, but the layer
+        // it opens is the range-fold law the listed guards select, stated
+        // over `f(args)` rather than over the fold the declaration writes.
+        // Its single fact is that equation, and the goal is refreshed through
+        // it; the raw defining equation stays inside the step, where the
+        // kernel law consumes it.
+        if let Some(premises) = premises {
+            let derived = self.derive_function_range_fold_equation(
+                application,
+                &definition,
+                premises,
+                &equality,
+                &values,
+                &array_refs,
+                &algebraic_values,
+                integer_values,
+                pre_state,
+                state,
+                result,
+                recorded_snapshots,
+                predicate_environment,
+                click_function_environment,
+                &parameter_pointer_element_widths,
+            )?;
+            let mut facts = self.facts().clone();
+            let added = (!facts.contains_top_level(&derived))
+                .then(|| derived.clone())
+                .into_iter()
+                .collect::<Vec<_>>();
+            facts = facts.with_kernel_checked_fact(derived.clone());
+            let branch = match self.focused_obligation() {
+                Some(Obligation::Proposition(goal)) => {
+                    let Proposition::ConditionIs(
+                        ConditionTerm::IntegerEqual(unfolded, replacement),
+                        true,
+                    ) = &derived
+                    else {
+                        return Err(self.step_error(
+                            "the restated fold law did not produce an Integer equation",
+                        ));
+                    };
+                    let kernel = crate::kernel::substitute_integer_term_in_proposition(
+                        goal.kernel(),
+                        unfolded,
+                        replacement,
+                    )
+                    .unwrap_or_else(|| goal.kernel().clone());
+                    let complete = facts.contains(&kernel);
+                    (!complete).then(|| {
+                        self.refined_proposition(
+                            self.refined_branch_state(facts.clone()),
+                            kernel,
+                            None,
+                            false,
+                        )
+                    })
+                }
+                Some(Obligation::Frontier(_) | Obligation::FunctionOutcome(_)) => Some(
+                    self.focused_branch()
+                        .expect("function unfold requires an open branch")
+                        .with_state(self.refined_branch_state(facts.clone())),
+                ),
+                None => return Err(self.step_error("function `unfold` requires an open goal")),
+            };
+            return Ok(CheckedFocusedTransition {
+                locals: self.state().locals().clone(),
+                branch,
+                added_facts: added.clone(),
+                checked_facts: added,
+            });
+        }
 
         let mut facts = self.facts().clone();
         let added_facts = (!facts.contains_top_level(&equality))
@@ -625,6 +704,251 @@ impl<'a> Proof<'a> {
             added_facts: added_facts.clone(),
             checked_facts: added_facts,
         })
+    }
+
+    /// The `using` half of a pure-function unfold: the range-fold law the
+    /// listed guards select, restated over the function application by
+    /// `crate::kernel::prove_integer_range_fold_over_equal_terms`.
+    ///
+    /// Returns the facts to publish beside the defining equation: the
+    /// predecessor instance of that equation for the append form, then the
+    /// law's conclusion. Every premise the kernel theorem carries -- the two
+    /// defining equations and the law's own guards -- is discharged here
+    /// against exactly the listed evidence; nothing is searched.
+    #[allow(clippy::too_many_arguments)]
+    fn derive_function_range_fold_equation(
+        &self,
+        application: &ClickFunctionApplication,
+        definition: &ClickFunctionDefinition,
+        premises: &[ClickProposition],
+        equality: &Proposition,
+        values: &BTreeMap<String, CValue>,
+        array_refs: &ClickArrayRefs,
+        algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
+        integer_values: &crate::persistent::PersistentMap<
+            String,
+            crate::kernel::SpecIntegerExpression,
+        >,
+        pre_state: &CState,
+        state: &CState,
+        result: Option<&CValue>,
+        recorded_snapshots: &RecordedSnapshots,
+        predicate_environment: &PredicateEnvironment,
+        click_function_environment: &ClickFunctionEnvironment,
+        parameter_pointer_element_widths: &BTreeMap<String, u32>,
+    ) -> Result<Proposition, ClickError> {
+        let name = &application.name;
+        let lower =
+            |proposition: &ClickProposition, what: &str| -> Result<Proposition, ClickError> {
+                let proposition = self.substitute_fixed_state_locals_in_proposition(proposition)?;
+                let mut opaque_calls = BTreeSet::new();
+                crate::surface::validation::collect_click_function_calls_in_proposition(
+                    &proposition,
+                    &mut opaque_calls,
+                );
+                lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
+                    &proposition,
+                    self.facts().assumptions(),
+                    values,
+                    array_refs,
+                    algebraic_values,
+                    integer_values,
+                    pre_state,
+                    state,
+                    result,
+                    recorded_snapshots,
+                    predicate_environment,
+                    click_function_environment,
+                    &opaque_calls,
+                    parameter_pointer_element_widths.clone(),
+                )
+                .map_err(|message| self.step_error(format!("could not lower {what}: {message}")))
+            };
+
+        // Exactly the listed premises, each of which must already hold.
+        let mut available = Vec::new();
+        for premise in premises {
+            let lowered = lower(premise, "an `unfold ... using` premise")?;
+            if !self.facts().exact_available_across_effects(&lowered, &[]) {
+                return Err(self.step_error(format!(
+                    "`unfold({name}(...)) using` requires an unavailable exact premise: {}",
+                    describe_pure_fact(&lowered, &[], &[])
+                )));
+            }
+            available.push(lowered);
+        }
+
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(whole, folded), true) = equality
+        else {
+            return Err(self.step_error(format!(
+                "`unfold({name}(...)) using` applies to an `Integer`-valued pure function whose body is a range fold"
+            )));
+        };
+        let IntegerTerm::RangeFold {
+            index,
+            initial,
+            accumulator,
+            item,
+            body,
+        } = folded.as_ref()
+        else {
+            return Err(self.step_error(format!(
+                "`unfold({name}(...)) using` requires the body of `{name}` to be a range fold over a symbolic range; this call's range is already reduced"
+            )));
+        };
+
+        let empty = crate::kernel::prove_integer_range_fold_over_equal_terms(
+            index.clone(),
+            initial.as_ref().clone(),
+            *accumulator,
+            *item,
+            body.as_ref().clone(),
+            whole.as_ref().clone(),
+            None,
+        )
+        .map_err(|reason| {
+            self.step_error(format!(
+                "the Integer fold empty law could not be stated over `{name}`: {reason}"
+            ))
+        })?;
+        available.push(equality.clone());
+        let mut empty_missing = Vec::new();
+        if discharge_restated_fold_law(&empty, &available, &mut empty_missing) {
+            let Proposition::Implies(_, conclusion) = empty.proposition() else {
+                return Err(
+                    self.step_error("the Integer fold law did not produce a guarded theorem")
+                );
+            };
+            return Ok(conclusion.as_ref().clone());
+        }
+
+        let prior =
+            self.function_range_fold_predecessor_application(application, definition, whole)?;
+        let append = crate::kernel::prove_integer_range_fold_over_equal_terms(
+            index.clone(),
+            initial.as_ref().clone(),
+            *accumulator,
+            *item,
+            body.as_ref().clone(),
+            whole.as_ref().clone(),
+            Some(prior.clone()),
+        )
+        .map_err(|reason| {
+            self.step_error(format!(
+                "the Integer fold append law could not be stated over `{name}` at the predecessor endpoint: {reason}"
+            ))
+        })?;
+        let Proposition::Implies(append_guard, append_conclusion) = append.proposition() else {
+            return Err(self.step_error("the Integer fold law did not produce a guarded theorem"));
+        };
+        // The law carries two defining equations beside its guards. One is
+        // the equation this step just published; the other is that equation
+        // at the predecessor endpoint, which only the surface can supply
+        // because only it knows the declaration. Recognize it against the
+        // predecessor application, and publish it beside the conclusion.
+        let mut required = Vec::new();
+        collect_conjunctive_premises(append_guard, &mut required);
+        let mut predecessor_equality = false;
+        let mut append_missing = Vec::new();
+        for premise in required {
+            if premise == equality {
+                continue;
+            }
+            if let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, right), true) =
+                premise
+                && left.as_ref() == &prior
+                && matches!(right.as_ref(), IntegerTerm::RangeFold { .. })
+            {
+                predecessor_equality = true;
+                continue;
+            }
+            if !exact_fact_is_available(premise, &available)
+                && !matches!(normalize_proposition(premise), SimpProposition::True)
+            {
+                append_missing.push(premise.clone());
+            }
+        }
+        if !append_missing.is_empty() {
+            return Err(self.step_error(format!(
+                "`unfold({name}(...)) using` found no listed guard that decides the range. The empty-range equation needs {}; the append-last-cell equation needs {}.",
+                describe_missing_fold_guards(&empty_missing),
+                describe_missing_fold_guards(&append_missing)
+            )));
+        }
+        if !predecessor_equality {
+            return Err(self.step_error(format!(
+                "the Integer fold append law over `{name}` did not state its predecessor endpoint"
+            )));
+        }
+        Ok(append_conclusion.as_ref().clone())
+    }
+
+    /// `f(args)` with the argument that supplies the fold's end replaced by
+    /// its predecessor, as a kernel term.
+    ///
+    /// The append form states the shorter fold as this application, so the
+    /// fold's end must be a parameter of `f` and that parameter must not
+    /// appear anywhere else in the fold. Under those two conditions the
+    /// declared initial value and body are the same terms at both argument
+    /// lists, and the two applications differ only in the fold's end
+    /// endpoint. Nothing about the body is lowered again here: its reads
+    /// were already checked over the longer range, and the append guards
+    /// this step discharges keep the predecessor range inside it.
+    fn function_range_fold_predecessor_application(
+        &self,
+        application: &ClickFunctionApplication,
+        definition: &ClickFunctionDefinition,
+        whole: &SharedIntegerTerm,
+    ) -> Result<IntegerTerm, ClickError> {
+        let name = &application.name;
+        let ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } = definition.body()
+        else {
+            return Err(self.step_error(format!(
+                "`unfold({name}(...)) using` requires the body of `{name}` to be exactly a range fold"
+            )));
+        };
+        let end_parameter = match end.as_ref() {
+            ContractExpression::Binding(binding)
+            | ContractExpression::CBinding(binding)
+            | ContractExpression::CFragment(CExpression::Variable(binding)) => binding.clone(),
+            _ => {
+                return Err(self.step_error(format!(
+                    "`unfold({name}(...)) using`: the append-last-cell equation restates the shorter fold as `{name}` at the predecessor endpoint, so the fold's end must be a parameter of `{name}`"
+                )));
+            }
+        };
+        for (part, what) in [
+            (start.as_ref(), "start"),
+            (initial.as_ref(), "initial value"),
+            (body.as_ref(), "body"),
+        ] {
+            if contract_expression_reads_binding(part, &end_parameter) {
+                return Err(self.step_error(format!(
+                    "`unfold({name}(...)) using`: the fold's {what} also reads `{end_parameter}`, so the shorter fold is not `{name}` at the predecessor endpoint"
+                )));
+            }
+        }
+        let position = definition
+            .parameters()
+            .iter()
+            .position(|parameter| parameter.name() == end_parameter)
+            .ok_or_else(|| {
+                self.step_error(format!(
+                    "`unfold({name}(...)) using`: `{end_parameter}` is not a parameter of `{name}`"
+                ))
+            })?;
+        crate::kernel::integer_range_fold_predecessor_application(whole.as_ref(), position)
+            .ok_or_else(|| {
+                self.step_error(format!(
+                    "`unfold({name}(...)) using` requires the call to remain the opaque application `{name}(...)` with an `int32` argument for `{end_parameter}`"
+                ))
+            })
     }
 
     pub(super) fn apply_predicate_unfold(
@@ -1286,4 +1610,82 @@ impl<'a> Proof<'a> {
             checked_facts: Vec::new(),
         })
     }
+}
+
+/// Whether every premise of a restated fold law is exactly available,
+/// collecting the ones that are not. A premise that normalizes to `true`
+/// without any evidence counts as discharged, exactly as `apply ... using`
+/// treats the fold laws' own guards.
+fn discharge_restated_fold_law(
+    theorem: &crate::kernel::Theorem,
+    available: &[Proposition],
+    missing: &mut Vec<Proposition>,
+) -> bool {
+    let Proposition::Implies(guard, _) = theorem.proposition() else {
+        return false;
+    };
+    let mut required = Vec::new();
+    collect_conjunctive_premises(guard, &mut required);
+    for premise in required {
+        if !exact_fact_is_available(premise, available)
+            && !matches!(normalize_proposition(premise), SimpProposition::True)
+        {
+            missing.push(premise.clone());
+        }
+    }
+    missing.is_empty()
+}
+
+/// Whether substituting this binding changes the expression. The parts of a
+/// range fold other than its end must not read the parameter that supplies
+/// that end, or the shorter fold would not be the same function applied at a
+/// smaller endpoint. A substitution failure counts as an occurrence: the
+/// check refuses rather than guesses.
+fn contract_expression_reads_binding(expression: &ContractExpression, binding: &str) -> bool {
+    let substitutions = BTreeMap::from([(
+        binding.to_string(),
+        ContractExpression::IntegerLiteral("0".to_string()),
+    )]);
+    substitute_contract_expression(expression, &substitutions)
+        .map(|substituted| &substituted != expression)
+        .unwrap_or(true)
+}
+
+fn collect_conjunctive_premises<'a>(
+    proposition: &'a Proposition,
+    facts: &mut Vec<&'a Proposition>,
+) {
+    match proposition {
+        Proposition::And(left, right) => {
+            collect_conjunctive_premises(left, facts);
+            collect_conjunctive_premises(right, facts);
+        }
+        proposition => facts.push(proposition),
+    }
+}
+
+/// The guards a restated fold law still wants, in the order the kernel
+/// states them. A defining-equation premise is never listed: the step
+/// produces those itself, so naming one would point the reader at evidence
+/// they cannot write.
+fn describe_missing_fold_guards(missing: &[Proposition]) -> String {
+    let rendered = missing
+        .iter()
+        .filter(|premise| {
+            !matches!(
+                premise,
+                Proposition::ConditionIs(ConditionTerm::IntegerEqual(_, _), true)
+            )
+        })
+        .map(|premise| {
+            format!(
+                "`{}`",
+                crate::surface::proof_diagnostics::render::render_proposition(premise)
+            )
+        })
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
+        return "no further guard".to_string();
+    }
+    rendered.join(" and ")
 }

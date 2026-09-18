@@ -588,6 +588,9 @@ pub(in crate::surface::proof) fn capture_fixed_state_integer_expression(
         Some(&states.entry_state),
         assumptions,
     )
+    .map_err(|refusal| {
+        crate::surface::proof_diagnostics::render::describe_spec_capture_refusal(&refusal)
+    })
 }
 
 /// Captures an algebraic expression as the symbolic spec term it denotes at
@@ -729,6 +732,9 @@ pub(in crate::surface::proof) fn capture_resource_field_initializer(
                 assumptions,
             )
             .map(crate::kernel::AlgebraicValue::Integer)
+            .map_err(|refusal| {
+                crate::surface::proof_diagnostics::render::describe_spec_capture_refusal(&refusal)
+            })
         }
         crate::kernel::ResourceFieldType::Algebraic(_) => {
             let spec = crate::surface::lowering::elaborate_fixed_state_algebraic_expression(

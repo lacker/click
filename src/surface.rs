@@ -2824,6 +2824,12 @@ pub enum ProofTactic {
     ExecuteUntil(CodeRegionRef),
     UnfoldPredicate(String),
     UnfoldFunction(ClickFunctionApplication),
+    /// `unfold(f(args)) using { ... }`: the same defining equation, plus
+    /// the range-fold law the listed guards select, stated over `f(args)`.
+    UnfoldFunctionUsing {
+        application: ClickFunctionApplication,
+        premises: Vec<ClickProposition>,
+    },
     UnfoldResource(ResourceClause),
     FoldResource(ResourceClause),
     Induct {
@@ -3111,6 +3117,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
         class: "simple",
     },
     PublicTacticForm {
+        id: "unfold-function-using",
+        syntax: "unfold(function(args)) using { P; ... }",
+        class: "simple",
+    },
+    PublicTacticForm {
         id: "unfold-resource",
         syntax: "unfold(resource(args))",
         class: "simple",
@@ -3374,6 +3385,12 @@ pub enum ProofStep {
     StepCall(CallBinderTransport),
     UnfoldPredicate(String),
     UnfoldFunction(ClickFunctionApplication),
+    /// `unfold(f(args)) using { ... }`: the same defining equation, plus
+    /// the range-fold law the listed guards select, stated over `f(args)`.
+    UnfoldFunctionUsing {
+        application: ClickFunctionApplication,
+        premises: Vec<ClickProposition>,
+    },
     UnfoldResource(ResourceClause),
     FoldResource(ResourceClause),
     Induct {
@@ -3677,6 +3694,13 @@ impl ProofStep {
             ProofTactic::StepCall(transport) => Self::StepCall(transport.clone()),
             ProofTactic::UnfoldPredicate(name) => Self::UnfoldPredicate(name.clone()),
             ProofTactic::UnfoldFunction(application) => Self::UnfoldFunction(application.clone()),
+            ProofTactic::UnfoldFunctionUsing {
+                application,
+                premises,
+            } => Self::UnfoldFunctionUsing {
+                application: application.clone(),
+                premises: premises.clone(),
+            },
             ProofTactic::UnfoldResource(resource) => Self::UnfoldResource(resource.clone()),
             ProofTactic::FoldResource(resource) => Self::FoldResource(resource.clone()),
             ProofTactic::ConstructResource(resource) => Self::ConstructResource(resource.clone()),
@@ -3910,6 +3934,13 @@ impl ProofStep {
             Self::StepCall(transport) => ProofTactic::StepCall(transport.clone()),
             Self::UnfoldPredicate(name) => ProofTactic::UnfoldPredicate(name.clone()),
             Self::UnfoldFunction(application) => ProofTactic::UnfoldFunction(application.clone()),
+            Self::UnfoldFunctionUsing {
+                application,
+                premises,
+            } => ProofTactic::UnfoldFunctionUsing {
+                application: application.clone(),
+                premises: premises.clone(),
+            },
             Self::UnfoldResource(resource) => ProofTactic::UnfoldResource(resource.clone()),
             Self::FoldResource(resource) => ProofTactic::FoldResource(resource.clone()),
             Self::ConstructResource(resource) => ProofTactic::ConstructResource(resource.clone()),
@@ -4152,7 +4183,9 @@ fn certificate_step_class(step: &ProofStep) -> TacticClass {
             TacticClass::Simple(SimpleTactic::StatementTransition)
         }
         ProofStep::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
-        ProofStep::UnfoldFunction(_) => TacticClass::Simple(SimpleTactic::UnfoldFunction),
+        ProofStep::UnfoldFunction(_) | ProofStep::UnfoldFunctionUsing { .. } => {
+            TacticClass::Simple(SimpleTactic::UnfoldFunction)
+        }
         ProofStep::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
         ProofStep::ObserveResource(_) => TacticClass::Simple(SimpleTactic::ObserveResource),
         ProofStep::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
@@ -4462,7 +4495,9 @@ impl ProofTactic {
                 TacticClass::Simple(SimpleTactic::StatementTransition)
             }
             Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
-            Self::UnfoldFunction(_) => TacticClass::Simple(SimpleTactic::UnfoldFunction),
+            Self::UnfoldFunction(_) | Self::UnfoldFunctionUsing { .. } => {
+                TacticClass::Simple(SimpleTactic::UnfoldFunction)
+            }
             Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
             Self::ObserveResource(_) => TacticClass::Simple(SimpleTactic::ObserveResource),
             Self::Induct { .. } => TacticClass::Simple(SimpleTactic::Induct),

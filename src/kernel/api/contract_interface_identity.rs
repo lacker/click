@@ -52,6 +52,10 @@ fn normalize(interface: &CFunctionContractInterface) -> CFunctionContractInterfa
                 source.clear();
                 names.expression(expression);
             }
+            CRankingComponent::PureInteger { source, expression } => {
+                source.clear();
+                names.integer(expression);
+            }
         }
     }
     interface

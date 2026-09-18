@@ -26,10 +26,10 @@ pub(super) struct SpecExpressionPath {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct SpecIntegerPath {
-    value: IntegerTerm,
-    facts: Vec<ExecutionPureFact>,
-    obligations: Vec<ProofObligation>,
+pub(super) struct SpecIntegerPath {
+    pub(super) value: IntegerTerm,
+    pub(super) facts: Vec<ExecutionPureFact>,
+    pub(super) obligations: Vec<ProofObligation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,6 +77,47 @@ pub(crate) fn capture_spec_algebraic_value(
     Ok(path.value.clone())
 }
 
+/// The written subterm of a captured Integer expression that an evaluation
+/// condition came from. A capture refusal names it so the reader is pointed
+/// at the part of the source that has to change, rather than at whichever
+/// node the capture entry point happens to be called for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SpecCaptureSubterm {
+    RangeEndpoint,
+    FoldInitializer,
+    FoldBody,
+    Expression,
+}
+
+impl SpecCaptureSubterm {
+    pub fn describe(self) -> &'static str {
+        match self {
+            SpecCaptureSubterm::RangeEndpoint => "the fold's range endpoint",
+            SpecCaptureSubterm::FoldInitializer => "the fold's initializer",
+            SpecCaptureSubterm::FoldBody => "the fold's body",
+            SpecCaptureSubterm::Expression => "this Integer expression",
+        }
+    }
+}
+
+/// Why capturing an Integer expression as one symbolic term was refused.
+#[derive(Clone, Debug)]
+pub enum SpecCaptureRefusal {
+    Message(String),
+    /// Evaluating `subterm` is only valid where `proposition` holds, and the
+    /// proof context does not state it.
+    Undischarged {
+        subterm: SpecCaptureSubterm,
+        proposition: Proposition,
+    },
+}
+
+impl From<String> for SpecCaptureRefusal {
+    fn from(message: String) -> Self {
+        SpecCaptureRefusal::Message(message)
+    }
+}
+
 /// Capture a symbolic Integer value without admitting case assumptions or
 /// unresolved memory reads into a resource initializer.
 pub(crate) fn capture_spec_integer_value(
@@ -84,7 +125,7 @@ pub(crate) fn capture_spec_integer_value(
     expression: &SpecIntegerExpression,
     entry_state: Option<&CState>,
     assumptions: &PureFactContext,
-) -> Result<IntegerTerm, String> {
+) -> Result<IntegerTerm, SpecCaptureRefusal> {
     let paths = evaluate_spec_integer_expression_paths(
         state,
         expression,
@@ -93,19 +134,92 @@ pub(crate) fn capture_spec_integer_value(
         &BTreeMap::new(),
         &mut ExecutionBudget::beside_live_state(),
     )
-    .map_err(|limit| format!("Integer initializer evaluation hit {limit:?}"))?;
+    .map_err(|limit| {
+        SpecCaptureRefusal::Message(format!("Integer expression evaluation hit {limit:?}"))
+    })?;
     let [path] = paths.as_slice() else {
-        return Err("Integer initializer must denote one symbolic value".into());
+        return Err(SpecCaptureRefusal::Message(format!(
+            "this Integer expression does not denote one symbolic value here: \
+             evaluating it produced {} paths rather than one, so a partial \
+             operation or a condition inside it is not decided here",
+            paths.len()
+        )));
     };
-    if !path.facts.is_empty()
-        || path
-            .obligations
-            .iter()
-            .any(|o| !required_obligation_is_exactly_discharged(assumptions, o.proposition()))
-    {
-        return Err("Integer initializer has unproved evaluation obligations".into());
+    // A path fact guards the evaluation path this value was read off: an
+    // int32 endpoint `hi - 1` is this value only where the subtraction does
+    // not overflow. Where the ambient context already states that guard, the
+    // guarded path is the only live one, so admitting the fact changes
+    // nothing about what the captured term asserts. Discharge it by the same
+    // exact routes an obligation uses -- no search -- and keep refusing a
+    // fact that is genuinely unavailable, which is the case below.
+    let undischarged = path
+        .facts
+        .iter()
+        .map(|fact| fact.proposition())
+        .chain(path.obligations.iter().map(|o| o.proposition()))
+        .find(|proposition| !required_obligation_is_exactly_discharged(assumptions, proposition));
+    if let Some(proposition) = undischarged {
+        let subterm = locate_spec_integer_capture_condition(
+            state,
+            expression,
+            entry_state,
+            assumptions,
+            proposition,
+        );
+        return Err(SpecCaptureRefusal::Undischarged {
+            subterm,
+            proposition: proposition.clone(),
+        });
     }
     Ok(path.value.clone())
+}
+
+/// Which written subterm contributed `proposition` to a capture path.
+///
+/// This runs only on the refusal path, where naming the offending subterm is
+/// worth re-evaluating the two small header subterms of a fold; a successful
+/// capture never reaches it.
+fn locate_spec_integer_capture_condition(
+    state: &CState,
+    expression: &SpecIntegerExpression,
+    entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    proposition: &Proposition,
+) -> SpecCaptureSubterm {
+    let SpecIntegerExpression::RangeFold { index, initial, .. } = expression else {
+        return SpecCaptureSubterm::Expression;
+    };
+    let contributed = |facts: &[ExecutionPureFact], obligations: &[ProofObligation]| {
+        facts.iter().any(|fact| fact.proposition() == proposition)
+            || obligations.iter().any(|o| o.proposition() == proposition)
+    };
+    if let Ok(index_paths) = evaluate_spec_integer_range_fold_indices(
+        state,
+        index,
+        entry_state,
+        assumptions,
+        &BTreeMap::new(),
+        &mut ExecutionBudget::beside_live_state(),
+    ) && index_paths
+        .iter()
+        .any(|(_, facts, obligations)| contributed(facts, obligations))
+    {
+        return SpecCaptureSubterm::RangeEndpoint;
+    }
+    if let Ok(initial_paths) = evaluate_spec_integer_expression_paths(
+        state,
+        initial,
+        entry_state,
+        assumptions,
+        &BTreeMap::new(),
+        &mut ExecutionBudget::beside_live_state(),
+    ) && initial_paths
+        .iter()
+        .any(|path| contributed(&path.facts, &path.obligations))
+    {
+        return SpecCaptureSubterm::FoldInitializer;
+    }
+    SpecCaptureSubterm::FoldBody
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4721,6 +4835,27 @@ pub(in crate::kernel) fn evaluate_spec_expression_paths_with_bindings(
     )
 }
 
+/// One lowered Integer specification expression's values at `state`.
+///
+/// A `decreases` component names no state of its own, so there is no
+/// loop-entry snapshot and no algebraic binding to supply: the kernel picks
+/// the state and this reads the one declared expression there.
+pub(super) fn evaluate_spec_integer_measure_paths(
+    state: &CState,
+    expression: &SpecIntegerExpression,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecIntegerPath>> {
+    evaluate_spec_integer_expression_paths(
+        state,
+        expression,
+        None,
+        assumptions,
+        &BTreeMap::new(),
+        budget,
+    )
+}
+
 pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
     state: &CState,
     expression: &SpecExpression,
@@ -8093,5 +8228,139 @@ mod no_value_path_tests {
         let summary = width_mismatch().kernel_summary();
         assert!(summary.starts_with("a 4-byte Int32 load at "), "{summary}");
         assert!(summary.contains("found "), "{summary}");
+    }
+}
+
+#[cfg(test)]
+mod integer_capture_condition_tests {
+    use super::*;
+
+    const HI: Variable = Variable(72_201);
+    const ACCUMULATOR: Variable = Variable(72_202);
+    const ITEM: Variable = Variable(72_203);
+
+    fn int32(term: Bitvector32Term) -> SpecExpression {
+        SpecExpression::Value(CValue::Int32(term))
+    }
+
+    fn predecessor_of_hi() -> SpecExpression {
+        SpecExpression::Subtract(
+            Box::new(int32(Bitvector32Term::Variable(HI))),
+            Box::new(int32(Bitvector32Term::Constant(1))),
+        )
+    }
+
+    fn fold(
+        start: SpecExpression,
+        end: SpecExpression,
+        initial: SpecIntegerExpression,
+        body: SpecIntegerExpression,
+    ) -> SpecIntegerExpression {
+        SpecIntegerExpression::RangeFold {
+            index: SpecIntegerRangeFoldIndex::Int32 {
+                start: Box::new(start),
+                end: Box::new(end),
+            },
+            initial: Box::new(initial),
+            accumulator: ACCUMULATOR,
+            item: ITEM,
+            body: Box::new(body),
+        }
+    }
+
+    fn zero() -> SpecIntegerExpression {
+        SpecIntegerExpression::Term(IntegerTerm::constant_i64(0))
+    }
+
+    fn hi_is_positive() -> PureFactContext {
+        PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(
+                Bitvector32Term::Constant(1),
+                Bitvector32Term::Variable(HI),
+            ),
+            true,
+        ))
+    }
+
+    fn subtraction_is_defined() -> Proposition {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedSubtractOverflows(
+                Box::new(Bitvector32Term::Variable(HI)),
+                Box::new(Bitvector32Term::Constant(1)),
+            ),
+            false,
+        )
+    }
+
+    #[test]
+    fn endpoint_definedness_the_context_decides_is_discharged() {
+        let expression = fold(
+            int32(Bitvector32Term::Constant(0)),
+            predecessor_of_hi(),
+            zero(),
+            zero(),
+        );
+
+        // Without the guard the capture is refused, and the refusal names the
+        // endpoint rather than the constant initializer.
+        let refusal = capture_spec_integer_value(
+            &CState::default(),
+            &expression,
+            None,
+            &PureFactContext::new(),
+        )
+        .expect_err("an endpoint of unknown definedness is not capturable");
+        let SpecCaptureRefusal::Undischarged {
+            subterm,
+            proposition,
+        } = refusal
+        else {
+            panic!("an undischarged evaluation condition must name its subterm");
+        };
+        assert_eq!(subterm, SpecCaptureSubterm::RangeEndpoint);
+        assert_eq!(proposition, subtraction_is_defined());
+
+        // The same capture succeeds once the context decides that condition.
+        capture_spec_integer_value(&CState::default(), &expression, None, &hi_is_positive())
+            .expect("an endpoint whose definedness the context proves is capturable");
+    }
+
+    #[test]
+    fn an_exactly_stated_endpoint_condition_is_discharged() {
+        let expression = fold(
+            int32(Bitvector32Term::Constant(0)),
+            predecessor_of_hi(),
+            zero(),
+            zero(),
+        );
+        let stated = PureFactContext::new().assume_proposition(subtraction_is_defined());
+        capture_spec_integer_value(&CState::default(), &expression, None, &stated)
+            .expect("the exact stated condition discharges the endpoint path fact");
+    }
+
+    #[test]
+    fn an_initializer_condition_is_named_as_the_initializer() {
+        let expression = fold(
+            int32(Bitvector32Term::Constant(0)),
+            int32(Bitvector32Term::Constant(0)),
+            SpecIntegerExpression::FromMachine(Box::new(predecessor_of_hi())),
+            zero(),
+        );
+        let refusal = capture_spec_integer_value(
+            &CState::default(),
+            &expression,
+            None,
+            &PureFactContext::new(),
+        )
+        .expect_err("an initializer of unknown definedness is not capturable");
+        let SpecCaptureRefusal::Undischarged {
+            subterm,
+            proposition,
+        } = refusal
+        else {
+            panic!("an undischarged evaluation condition must name its subterm");
+        };
+        assert_eq!(subterm, SpecCaptureSubterm::FoldInitializer);
+        assert_eq!(proposition, subtraction_is_defined());
     }
 }

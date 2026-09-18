@@ -735,6 +735,8 @@ fn tactic_form_inventory_is_bidirectional() {
             "transport-using" => surface == "`transport(P, Q) using { R; ... }`",
             "simp" => surface == "`simp()`",
             "simp-using" => surface == "`simp() using { P; ... }`",
+            "unfold-function" => surface == "`unfold(function(args))`",
+            "unfold-function-using" => surface == "`unfold(function(args)) using { P; ... }`",
             _ => surface.contains(form.syntax),
         };
         let matching = rows

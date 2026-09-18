@@ -6015,6 +6015,300 @@ pub fn prove_integer_range_fold_append(
     )))
 }
 
+/// The predecessor of a range fold's end endpoint, in the endpoint's own
+/// carrier. The Int32 carrier subtracts in wrapping bitvector arithmetic, so
+/// the predecessor endpoint always exists as a term; whether the *written*
+/// `hi - 1` denotes it is the surface's separate definedness question, and
+/// the append law's own `start <= end - 1` guard is what makes the range
+/// nonempty.
+fn integer_range_fold_predecessor_index(
+    index: &IntegerRangeFoldIndex,
+) -> Option<(IntegerRangeFoldIndex, IntegerTerm)> {
+    match index {
+        IntegerRangeFoldIndex::Int32 { start, end } => {
+            let predecessor =
+                Bitvector32Term::subtract(end.value().clone(), Bitvector32Term::Constant(1));
+            Some((
+                IntegerRangeFoldIndex::Int32 {
+                    start: start.clone(),
+                    end: SharedIntegerRangeEndpoint::intern(predecessor.clone()),
+                },
+                IntegerTerm::from_machine(MachineIntegerType::Int32, predecessor)?,
+            ))
+        }
+        IntegerRangeFoldIndex::Integer { start, end } => {
+            let predecessor =
+                IntegerTerm::subtract(end.as_ref().clone(), IntegerTerm::constant_i64(1));
+            Some((
+                IntegerRangeFoldIndex::Integer {
+                    start: start.clone(),
+                    end: predecessor.clone().into(),
+                },
+                predecessor,
+            ))
+        }
+    }
+}
+
+/// Replaces one Integer term by another inside a proposition's Integer
+/// comparisons, returning `None` when nothing changed.
+///
+/// This is Leibniz for a proof step that already holds the two terms' proved
+/// equality: rewriting *some* occurrences is sound, so the walk is
+/// deliberately shallow. It descends only the arithmetic spine -- negation,
+/// addition, subtraction, multiplication -- and compares interned identity
+/// everywhere else, so it never enters a range fold's binders and its work is
+/// linear in the proposition it rebuilds.
+pub fn substitute_integer_term_in_proposition(
+    proposition: &Proposition,
+    from: &SharedIntegerTerm,
+    to: &SharedIntegerTerm,
+) -> Option<Proposition> {
+    fn walk_term(
+        term: &SharedIntegerTerm,
+        from: &SharedIntegerTerm,
+        to: &SharedIntegerTerm,
+        changed: &mut bool,
+    ) -> SharedIntegerTerm {
+        crate::instrumentation::record_deterministic_work(1);
+        if term == from {
+            *changed = true;
+            return to.clone();
+        }
+        let rebuilt = match term.as_ref() {
+            IntegerTerm::Negate(inner) => IntegerTerm::Negate(walk_term(inner, from, to, changed)),
+            IntegerTerm::Add(left, right) => IntegerTerm::Add(
+                walk_term(left, from, to, changed),
+                walk_term(right, from, to, changed),
+            ),
+            IntegerTerm::Subtract(left, right) => IntegerTerm::Subtract(
+                walk_term(left, from, to, changed),
+                walk_term(right, from, to, changed),
+            ),
+            IntegerTerm::Multiply(left, right) => IntegerTerm::Multiply(
+                walk_term(left, from, to, changed),
+                walk_term(right, from, to, changed),
+            ),
+            _ => return term.clone(),
+        };
+        SharedIntegerTerm::intern(rebuilt)
+    }
+
+    fn walk_condition(
+        condition: &ConditionTerm,
+        from: &SharedIntegerTerm,
+        to: &SharedIntegerTerm,
+        changed: &mut bool,
+    ) -> ConditionTerm {
+        let rebuild = |constructor: fn(SharedIntegerTerm, SharedIntegerTerm) -> ConditionTerm,
+                       left: &SharedIntegerTerm,
+                       right: &SharedIntegerTerm,
+                       changed: &mut bool| {
+            constructor(
+                walk_term(left, from, to, changed),
+                walk_term(right, from, to, changed),
+            )
+        };
+        match condition {
+            ConditionTerm::IntegerLessThan(left, right) => {
+                rebuild(ConditionTerm::IntegerLessThan, left, right, changed)
+            }
+            ConditionTerm::IntegerLessEqual(left, right) => {
+                rebuild(ConditionTerm::IntegerLessEqual, left, right, changed)
+            }
+            ConditionTerm::IntegerGreaterThan(left, right) => {
+                rebuild(ConditionTerm::IntegerGreaterThan, left, right, changed)
+            }
+            ConditionTerm::IntegerGreaterEqual(left, right) => {
+                rebuild(ConditionTerm::IntegerGreaterEqual, left, right, changed)
+            }
+            ConditionTerm::IntegerEqual(left, right) => {
+                rebuild(ConditionTerm::IntegerEqual, left, right, changed)
+            }
+            ConditionTerm::IntegerNotEqual(left, right) => {
+                rebuild(ConditionTerm::IntegerNotEqual, left, right, changed)
+            }
+            condition => condition.clone(),
+        }
+    }
+
+    fn walk(
+        proposition: &Proposition,
+        from: &SharedIntegerTerm,
+        to: &SharedIntegerTerm,
+        changed: &mut bool,
+    ) -> Proposition {
+        match proposition {
+            Proposition::ConditionIs(condition, expected) => {
+                Proposition::ConditionIs(walk_condition(condition, from, to, changed), *expected)
+            }
+            Proposition::And(left, right) => Proposition::And(
+                Box::new(walk(left, from, to, changed)),
+                Box::new(walk(right, from, to, changed)),
+            ),
+            Proposition::Or(left, right) => Proposition::Or(
+                Box::new(walk(left, from, to, changed)),
+                Box::new(walk(right, from, to, changed)),
+            ),
+            Proposition::Not(body) => Proposition::Not(Box::new(walk(body, from, to, changed))),
+            Proposition::Implies(antecedent, consequent) => Proposition::Implies(
+                Box::new(walk(antecedent, from, to, changed)),
+                Box::new(walk(consequent, from, to, changed)),
+            ),
+            proposition => proposition.clone(),
+        }
+    }
+
+    let mut changed = false;
+    let rewritten = walk(proposition, from, to, &mut changed);
+    changed.then_some(rewritten)
+}
+
+/// The opaque application `f(args)` with the int32 argument at `position`
+/// replaced by its predecessor, for restating a range fold one endpoint
+/// lower. The subtraction is wrapping bitvector arithmetic, matching the
+/// endpoint `integer_range_fold_predecessor_index` builds, so the two agree
+/// by construction.
+pub fn integer_range_fold_predecessor_application(
+    whole: &IntegerTerm,
+    position: usize,
+) -> Option<IntegerTerm> {
+    let IntegerTerm::PureFunctionApplication(applied) = whole else {
+        return None;
+    };
+    let mut arguments = applied.arguments().to_vec();
+    let PureFunctionArgument::Value(CValue::Int32(endpoint)) = arguments.get(position)? else {
+        return None;
+    };
+    arguments[position] = PureFunctionArgument::Value(CValue::Int32(Bitvector32Term::subtract(
+        endpoint.clone(),
+        Bitvector32Term::Constant(1),
+    )));
+    Some(IntegerTerm::PureFunctionApplication(
+        SharedIntegerApplication::intern(applied.name().to_string(), arguments),
+    ))
+}
+
+/// A range-fold law restated over the terms a pure function's defining
+/// equation gives its folds, so a proof can reason about the whole range
+/// through the function application instead of retyping the fold.
+///
+/// `whole` is a term the caller must prove equal to `fold(start..end)`: in
+/// practice the opaque application `f(args)` whose declared body is that
+/// fold. `prior`, when present, selects the append form and is a term the
+/// caller must prove equal to `fold(start..end - 1)` -- the same application
+/// at the predecessor endpoint. Those equalities are *premises* of the
+/// produced theorem, beside the underlying law's own guards, so the surface
+/// discharges each of them exactly and this entry point assumes nothing the
+/// existing laws do not already prove.
+///
+/// Empty form: from `whole == fold` and `end <= start`, conclude
+/// `whole == initial`, by `prove_integer_range_fold_empty`.
+///
+/// Append form: instantiate `prove_integer_range_fold_append` at the
+/// predecessor index `start..end - 1`, whose conclusion is stated over
+/// `fold(start..(end - 1) + 1)`. That fold and `fold(start..end)` are the
+/// same Integer by endpoint affine normalization, checked here against an
+/// empty fact context so no ambient fact can be borrowed. Substituting
+/// `prior` for the equal `fold(start..end - 1)` inside the law's next-element
+/// step is congruence under the second premise.
+pub fn prove_integer_range_fold_over_equal_terms(
+    index: IntegerRangeFoldIndex,
+    initial: IntegerTerm,
+    accumulator: Variable,
+    item: Variable,
+    body: IntegerTerm,
+    whole: IntegerTerm,
+    prior: Option<IntegerTerm>,
+) -> Result<Theorem, &'static str> {
+    let fold = IntegerTerm::range_fold(
+        index.clone(),
+        initial.clone(),
+        accumulator,
+        item,
+        body.clone(),
+    );
+    let whole_is_fold = Proposition::ConditionIs(
+        ConditionTerm::IntegerEqual(whole.clone().into(), fold.clone().into()),
+        true,
+    );
+    let Some(prior) = prior else {
+        let empty = prove_integer_range_fold_empty(index, initial.clone(), accumulator, item, body);
+        let Proposition::Implies(guard, _) = empty.proposition() else {
+            return Err("the Integer fold empty law is not a guarded theorem");
+        };
+        return Ok(Theorem::new(Proposition::Implies(
+            Box::new(Proposition::And(
+                Box::new(whole_is_fold),
+                Box::new(guard.as_ref().clone()),
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::IntegerEqual(whole.into(), initial.into()),
+                true,
+            )),
+        )));
+    };
+
+    let (predecessor_index, item_value) = integer_range_fold_predecessor_index(&index)
+        .ok_or("the fold end endpoint has no Integer predecessor in its own carrier")?;
+    let c_item = matches!(&predecessor_index, IntegerRangeFoldIndex::Int32 { .. });
+    let append = prove_integer_range_fold_append(
+        predecessor_index.clone(),
+        initial.clone(),
+        accumulator,
+        item,
+        body.clone(),
+    )
+    .ok_or("the Integer fold append law could not instantiate its next-element step")?;
+    let Proposition::Implies(guard, conclusion) = append.proposition() else {
+        return Err("the Integer fold append law is not a guarded theorem");
+    };
+    let Proposition::ConditionIs(ConditionTerm::IntegerEqual(extended, _), true) =
+        conclusion.as_ref()
+    else {
+        return Err("the Integer fold append law did not conclude an equation");
+    };
+    // The law is stated at `start..(end - 1) + 1`; the caller's `whole` is
+    // proved equal to `start..end`. Refuse unless those are the same fold.
+    if !crate::kernel::reasoning::integer_range_fold_terms_alpha_equivalent(
+        extended,
+        &SharedIntegerTerm::from(fold.clone()),
+        &PureFactContext::new(),
+    ) {
+        return Err("the fold at the successor of the predecessor endpoint is not the fold itself");
+    }
+    let prior_fold =
+        IntegerTerm::range_fold(predecessor_index, initial, accumulator, item, body.clone());
+    let prior_is_fold = Proposition::ConditionIs(
+        ConditionTerm::IntegerEqual(prior.clone().into(), prior_fold.into()),
+        true,
+    );
+    let stepped = crate::kernel::reasoning::instantiate_integer_range_fold_step(
+        &body,
+        accumulator,
+        &prior,
+        item,
+        &item_value,
+        c_item,
+    )
+    .map_err(|_| {
+        "the fold body could not take the previous accumulator and the last item; a fold whose item indexes a pure call is not yet supported"
+    })?;
+    Ok(Theorem::new(Proposition::Implies(
+        Box::new(Proposition::And(
+            Box::new(Proposition::And(
+                Box::new(whole_is_fold),
+                Box::new(prior_is_fold),
+            )),
+            Box::new(guard.as_ref().clone()),
+        )),
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(whole.into(), stepped.into()),
+            true,
+        )),
+    )))
+}
+
 /// Incrementing a signed int32 value below `INT_MAX` is defined.
 pub fn prove_int32_increment_below_max_is_defined(value: Bitvector32Term) -> Theorem {
     let premise = Proposition::ConditionIs(
