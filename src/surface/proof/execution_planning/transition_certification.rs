@@ -387,9 +387,8 @@ pub(in crate::surface) fn certified_statement_transitions(
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) {
         assumptions = assumptions.defer_non_exact_condition_reasoning();
     }
-    let mut budget = ExecutionBudget::default()
-        .with_next_opaque_call(*next_opaque_call)
-        .with_next_kernel_variable(*next_kernel_variable);
+    let mut budget = ExecutionBudget::continuing_from(*next_kernel_variable)
+        .with_next_opaque_call(*next_opaque_call);
     let executed_under = assumptions.clone();
     let execute = || {
         prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
@@ -560,9 +559,8 @@ pub(in crate::surface::proof) fn certified_loop_exit_transitions_with_proven_pha
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     let assumptions = assumptions_from_propositions(pure_facts);
     let executed_under = assumptions.clone();
-    let mut budget = ExecutionBudget::default()
-        .with_next_opaque_call(*next_opaque_call)
-        .with_next_kernel_variable(*next_kernel_variable);
+    let mut budget = ExecutionBudget::continuing_from(*next_kernel_variable)
+        .with_next_opaque_call(*next_opaque_call);
     let (execution, loop_rule) = prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         state.clone(),
         statement.clone(),

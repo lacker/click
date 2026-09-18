@@ -1095,18 +1095,16 @@ impl PureFactContext {
     }
 }
 
+/// A budget is either the start of an execution or a continuation of one;
+/// there is no default. `Default` would let a mid-execution evaluation
+/// restart the fresh-identity counter at the base of the range by writing
+/// nothing at all, which is how one `Variable` comes to name two unrelated
+/// things. Tests that build a budget over no live state say so through this
+/// impl, which is exactly [`ExecutionBudget::for_new_execution`].
+#[cfg(test)]
 impl Default for ExecutionBudget {
     fn default() -> Self {
-        Self {
-            expression_steps: 10_000,
-            statement_steps: 10_000,
-            function_calls: 1_000,
-            loop_unrolls: 256,
-            paths: 10_000,
-            next_opaque_call: 0,
-            next_kernel_variable: Self::KERNEL_VARIABLE_BASE,
-            dropped_runtime_error: None,
-        }
+        Self::for_new_execution()
     }
 }
 
@@ -1129,8 +1127,90 @@ impl ExecutionBudget {
         self.dropped_runtime_error.as_ref()
     }
 
-    pub fn new() -> Self {
-        Self::default()
+    /// The fixed work allowances every budget starts from, beside the one
+    /// field a caller must choose. Private, so "the other fields' defaults"
+    /// stays a convenience and never becomes a way to leave the
+    /// fresh-identity counter unspecified.
+    fn with_kernel_variable_counter(next_kernel_variable: u64) -> Self {
+        Self {
+            expression_steps: 10_000,
+            statement_steps: 10_000,
+            function_calls: 1_000,
+            loop_unrolls: 256,
+            paths: 10_000,
+            next_opaque_call: 0,
+            next_kernel_variable,
+            dropped_runtime_error: None,
+        }
+    }
+
+    /// A budget for an execution that has issued nothing yet: the
+    /// fresh-identity counter starts at [`Self::KERNEL_VARIABLE_BASE`].
+    ///
+    /// Legitimate only where no live state carries identities some execution
+    /// issued -- a brand-new symbolic execution, or a check of a closed
+    /// theorem whose state the caller did not execute into. Anything
+    /// evaluated against a live execution state uses
+    /// [`Self::continuing_from`] instead: restarting the counter beside live
+    /// state is how a loop-havocked local and a re-bound model field, or a
+    /// join-abstracted pointer and a later heap block, became one `Variable`.
+    pub(crate) fn for_new_execution() -> Self {
+        Self::with_kernel_variable_counter(Self::KERNEL_VARIABLE_BASE)
+    }
+
+    /// A budget that continues an execution which has already reached `mark`,
+    /// the execution-relative offset [`Self::next_kernel_variable`] reports
+    /// and `ExecutionProofCore::kernel_variable_mark` holds.
+    ///
+    /// Everything this budget invents counts up from there, so it cannot name
+    /// anything the execution has already handed out. Where the evaluation's
+    /// result flows back into the live state, the caller reads the reached
+    /// mark back with [`Self::next_kernel_variable`] and installs it with
+    /// `ExecutionProofCore::advance_kernel_variable_mark`.
+    pub(crate) fn continuing_from(mark: u64) -> Self {
+        Self::with_kernel_variable_counter(Self::KERNEL_VARIABLE_BASE + mark)
+    }
+
+    /// A budget that restarts the counter although the state it evaluates
+    /// against belongs to a live execution. **This is the hazard, named.**
+    ///
+    /// It exists so that no call site can restart the counter by writing
+    /// nothing: a site whose execution mark has not been threaded to it has
+    /// to say so here, and one `grep` finds every one of them. Each such site
+    /// can hand a match binder, a witness, an opaque call result or a
+    /// re-bound model field an identity the enclosing execution already gave
+    /// to a havocked local or a join abstraction.
+    ///
+    /// The remaining users are the proof-side evaluation families reached
+    /// from the surface's `have`, `fold`, `unfold` and theorem-application
+    /// drivers, which do not carry the execution's mark. Threading it to them
+    /// is a change across the proof engine rather than a mechanical one;
+    /// `docs/internals/kernel.md` records the gap.
+    pub(crate) fn restarting_beside_live_state() -> Self {
+        Self::for_new_execution()
+    }
+
+    /// [`Self::for_new_execution`] under its historical name, for tests that
+    /// build a budget over a state they constructed themselves.
+    #[cfg(test)]
+    pub(crate) fn new() -> Self {
+        Self::for_new_execution()
+    }
+
+    /// The work allowance of one selected C expression over a new execution,
+    /// for tests. Production callers open the budget explicitly and add the
+    /// cost with [`Self::with_c_expression_cost`].
+    #[cfg(test)]
+    pub(crate) fn for_c_expression(expression: &CExpression) -> Self {
+        Self::for_new_execution().with_c_expression_cost(expression)
+    }
+
+    /// [`Self::continuing_from`] as a builder step, for tests that set the
+    /// counter on a budget they already built.
+    #[cfg(test)]
+    pub(crate) fn with_next_kernel_variable(mut self, next_kernel_variable: u64) -> Self {
+        self.next_kernel_variable = Self::KERNEL_VARIABLE_BASE + next_kernel_variable;
+        self
     }
 
     pub fn with_expression_steps(mut self, expression_steps: usize) -> Self {
@@ -1163,33 +1243,43 @@ impl ExecutionBudget {
     /// The ordinary fixed allowance remains available for work repeated by
     /// dynamic execution, such as short-circuit path amplification. Explicit
     /// budgets supplied to `*_with_budget` APIs are intentionally not adjusted.
-    pub(crate) fn for_c_expression(expression: &CExpression) -> Self {
-        Self::default().with_c_source_cost(c_expression_source_cost(expression))
+    ///
+    /// This is a work allowance, not a counter: it is added to a budget the
+    /// caller has already opened with [`Self::for_new_execution`] or
+    /// [`Self::continuing_from`], so the choice between the two stays at the
+    /// call site rather than hiding inside a constructor.
+    pub(crate) fn with_c_expression_cost(self, expression: &CExpression) -> Self {
+        self.with_c_source_cost(c_expression_source_cost(expression))
     }
 
     /// Adds the evaluator work inherent in one selected C statement tree.
-    pub(crate) fn for_c_statement(statement: &CStatement) -> Self {
-        Self::default().with_c_source_cost(c_statement_source_cost(statement))
+    pub(crate) fn with_c_statement_cost(self, statement: &CStatement) -> Self {
+        self.with_c_source_cost(c_statement_source_cost(statement))
     }
 
     /// Adds the structural work of the independent verification evaluator.
     /// Ordinary leaf statements cross both its verification dispatcher and
     /// the shared statement evaluator, so their baseline contains two visits.
-    pub(crate) fn for_c_statement_verification(statement: &CStatement) -> Self {
-        Self::default().with_c_source_cost(c_statement_verification_source_cost(statement))
+    pub(crate) fn with_c_statement_verification_cost(self, statement: &CStatement) -> Self {
+        self.with_c_source_cost(c_statement_verification_source_cost(statement))
     }
 
     /// Adds the evaluator work inherent in one selected whole-function
     /// judgment, including evaluation of its caller-side arguments.
-    pub(crate) fn for_c_function(function: &CFunction, arguments: &[CExpression]) -> Self {
+    pub(crate) fn with_c_function_cost(
+        self,
+        function: &CFunction,
+        arguments: &[CExpression],
+    ) -> Self {
         let mut cost = c_statement_source_cost(function.body());
         for argument in arguments {
             cost.add_expression(c_expression_source_cost(argument).expression_steps);
         }
-        Self::default().with_c_source_cost(cost)
+        self.with_c_source_cost(cost)
     }
 
-    pub(crate) fn for_c_function_verification(
+    pub(crate) fn with_c_function_verification_cost(
+        self,
         function: &CFunction,
         arguments: &[CExpression],
     ) -> Self {
@@ -1197,7 +1287,7 @@ impl ExecutionBudget {
         for argument in arguments {
             cost.add_expression(c_expression_source_cost(argument).expression_steps);
         }
-        Self::default().with_c_source_cost(cost)
+        self.with_c_source_cost(cost)
     }
 
     fn with_c_source_cost(mut self, cost: CSourceCost) -> Self {
@@ -1215,11 +1305,10 @@ impl ExecutionBudget {
         self.next_opaque_call
     }
 
-    pub(crate) fn with_next_kernel_variable(mut self, next_kernel_variable: u64) -> Self {
-        self.next_kernel_variable = Self::KERNEL_VARIABLE_BASE + next_kernel_variable;
-        self
-    }
-
+    /// The mark this budget's evaluation has reached, execution-relative: the
+    /// value a caller installs with
+    /// `ExecutionProofCore::advance_kernel_variable_mark` when the
+    /// evaluation's result flows back into the live state.
     pub(crate) fn next_kernel_variable(&self) -> u64 {
         self.next_kernel_variable - Self::KERNEL_VARIABLE_BASE
     }

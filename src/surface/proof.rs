@@ -2662,7 +2662,7 @@ fn evaluate_entry_resource_context(
         click_function_environment,
     )?;
     let mut assumptions = assumptions;
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::for_new_execution();
     let quantity_assumptions = match crate::kernel::quantified_resource_requirement_assumptions(
         &evaluation_state,
         &resource_specs,

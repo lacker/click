@@ -5416,6 +5416,9 @@ pub struct CFunctionContractRefinementContext {
     pub(super) source_contract: Option<CFunctionContract>,
     pub(super) argument_values: Vec<CValue>,
     pub(super) result_variable: Variable,
+    /// The mark the budget that invented `argument_values` reached,
+    /// execution-relative: the refinement obligations continue from it
+    /// rather than restarting the counter over arguments already issued.
     pub(super) next_kernel_variable: u64,
 }
 

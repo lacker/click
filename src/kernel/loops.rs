@@ -1390,7 +1390,8 @@ fn c_loop_condition_feasibility(
     condition: &CExpression,
     assumptions: &PureFactContext,
 ) -> ExecutionResult<(bool, bool)> {
-    let mut budget = ExecutionBudget::for_c_expression(condition);
+    let mut budget =
+        ExecutionBudget::restarting_beside_live_state().with_c_expression_cost(condition);
     let expression_paths = evaluate_c_expression_paths(state, condition, assumptions, &mut budget)?;
     let mut may_continue = false;
     let mut may_exit = false;
@@ -4206,7 +4207,7 @@ pub(crate) fn c_loop_state_with_loop_binders_rebound(
         // body that assigned `root = root->left` therefore hands the loop the
         // `tree_at(root)` at the new cursor, not the one it started from.
         let declared = binder.spec.as_ref().and_then(|spec| {
-            let mut budget = ExecutionBudget::default();
+            let mut budget = ExecutionBudget::restarting_beside_live_state();
             loop_binder_declared_arguments(state, spec, assumptions, &mut budget)
                 .ok()
                 .flatten()

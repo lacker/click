@@ -12,7 +12,7 @@ pub(in crate::kernel) fn execute_c_statement(
         assumptions,
         &CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::for_new_execution(),
     )
     .ok()?;
     let mut paths = paths.into_iter();

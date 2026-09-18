@@ -1077,7 +1077,7 @@ pub(super) fn construct_c_function_resource(
     if function.return_type() != CType::Void {
         set_function_result(&mut evaluation_state, function, result.clone());
     }
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let mut authorized = false;
     for specification in function.resource_constructors() {
         let candidate = match evaluate_function_resource_spec(
@@ -4132,7 +4132,7 @@ pub(super) fn contract_refinement_context_for_interface(
         source_contract: None,
         argument_values,
         result_variable,
-        next_kernel_variable: budget.next_kernel_variable,
+        next_kernel_variable: budget.next_kernel_variable(),
     })
 }
 
@@ -4151,10 +4151,7 @@ pub(super) fn prepare_contract_refinement_obligations(
 ) -> Option<CFunctionContractRefinementObligations> {
     let target = context.contract.interface();
     let source = &context.function_interface;
-    let mut budget = ExecutionBudget {
-        next_kernel_variable: context.next_kernel_variable,
-        ..ExecutionBudget::default()
-    };
+    let mut budget = ExecutionBudget::continuing_from(context.next_kernel_variable);
     let entry = function_contract_refinement_entry_state(context);
     let source_entry =
         with_contract_interface_argument_views(&CState::new(), source, &context.argument_values);
@@ -4846,7 +4843,7 @@ pub(crate) fn storage_writes_outside_owned_footprint(
     let owned = if let Some(projection) = prepared_projection {
         projection.ranges().to_vec()
     } else {
-        let mut budget = ExecutionBudget::default();
+        let mut budget = ExecutionBudget::restarting_beside_live_state();
         match project_contract_memory_effects(
             entry,
             contract.contract_interface(),
@@ -13326,7 +13323,7 @@ pub(super) fn bind_composite_witnesses_with_held(
             .iter()
             .find_map(|fact| witness_origin_word(fact, witness.name()))
             .and_then(|word| {
-                let mut budget = ExecutionBudget::default();
+                let mut budget = ExecutionBudget::restarting_beside_live_state();
                 let paths = super::spec::evaluate_spec_expression_paths_with_loop_entry(
                     state,
                     word,
@@ -13830,7 +13827,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         return Err("fold result identity is already in use".into());
     }
     let mut evaluation = instance_body_evaluation(state, instance, definition)?;
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let mut algebraic_bindings = BTreeMap::new();
     let mut integer_bindings = BTreeMap::new();
     let mut constructor_fields = Vec::new();
@@ -14321,7 +14318,7 @@ pub(in crate::kernel) fn matched_resource_instance_case_clauses(
         }
     }
 
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let Some(active) = evaluate_composite_resource_body_condition(
         definition,
         &evaluation,
@@ -14734,7 +14731,7 @@ pub(in crate::kernel) fn instance_body_guard_case(
         definition,
         &evaluation,
         assumptions,
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::restarting_beside_live_state(),
     )
 }
 
@@ -14847,7 +14844,7 @@ pub(super) fn expand_composite_resource_fact_with_children(
         );
     }
     bind_composite_witnesses(definition, arguments, &mut state, assumptions)?;
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let evaluation_assumptions = assumptions
         .clone()
         .allow_symbolic_contract_loads()
@@ -15487,7 +15484,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                     &mut population_state,
                     assumptions,
                 )?;
-                let mut budget = ExecutionBudget::default();
+                let mut budget = ExecutionBudget::restarting_beside_live_state();
                 let evaluation_assumptions = assumptions
                     .clone()
                     .allow_symbolic_contract_loads()
@@ -15518,7 +15515,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                     &mut population_state,
                     assumptions,
                 )?;
-                let mut budget = ExecutionBudget::default();
+                let mut budget = ExecutionBudget::restarting_beside_live_state();
                 let evaluation_assumptions = assumptions
                     .clone()
                     .allow_symbolic_contract_loads()
@@ -15551,7 +15548,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
             );
         }
         bind_composite_witnesses(definition, &arguments, &mut population_state, assumptions)?;
-        let mut budget = ExecutionBudget::default();
+        let mut budget = ExecutionBudget::restarting_beside_live_state();
         let evaluation_assumptions = assumptions
             .clone()
             .allow_symbolic_contract_loads()
@@ -15698,7 +15695,7 @@ pub(super) fn evaluate_composite_resource_relation_propositions(
         );
     }
     bind_composite_witnesses(definition, arguments, &mut state, assumptions)?;
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let evaluation_assumptions = assumptions
         .clone()
         .allow_symbolic_contract_loads()
@@ -15781,7 +15778,7 @@ pub(super) fn evaluate_composite_resource_loadable_propositions(
         );
     }
     bind_composite_witnesses(definition, arguments, &mut state, assumptions)?;
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let evaluation_assumptions = assumptions
         .clone()
         .allow_symbolic_contract_loads()
@@ -15859,7 +15856,7 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
     }
     bind_composite_witnesses(definition, arguments, &mut state, assumptions)?;
     let mut result = Vec::new();
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let mut fact_assumptions = assumptions.clone();
     let evaluation_assumptions = assumptions
         .clone()
@@ -16010,7 +16007,7 @@ pub(super) fn function_return_resources_definitionally_established(
             .locals
             .set_typed("result".to_string(), value.clone(), function.return_type());
     }
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let entry_resource_state =
         with_contract_argument_views(caller_state, function, &argument_values);
     let Ok(Ok(expected)) = evaluate_function_return_resource_context(
@@ -17411,7 +17408,7 @@ fn instance_arm_memory_views(
         .clone()
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let Ok(Ok(body_resources)) = evaluate_function_resource_context_with_normalization(
         evaluation,
         &arm.contains,
@@ -17661,7 +17658,7 @@ fn arm_is_refuted_by_a_predicate_fact(
     ) else {
         return false;
     };
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     premises.iter().any(|premise| {
         crate::instrumentation::record_deterministic_work(1);
         predicate_fact_refutes_constructor(
@@ -17824,7 +17821,7 @@ fn arm_premises_at_symbolic_bindings(
             AlgebraicValue::Integer(_) => return None,
         }
     }
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let Ok(Ok(body_resources)) = evaluate_function_resource_context_with_normalization(
         &body_state,
         &arm.contains,
@@ -17915,7 +17912,7 @@ fn arm_binding_free_facts(
     if binding_free.is_empty() {
         return Vec::new();
     }
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let Ok(Ok(body_resources)) = evaluate_function_resource_context_with_normalization(
         evaluation,
         &arm.contains,
@@ -18498,7 +18495,7 @@ fn unreturned_allocation_obligation(
             "could not inspect allocation obligations at function return".to_string(),
         ));
     };
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let population_bodies = match evaluate_resource_population_body_resources(
         returned_resources,
         actual_state,

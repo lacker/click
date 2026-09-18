@@ -2574,3 +2574,89 @@ fn loop_preservation_contexts_allocate_above_the_executions_counter() {
         "the two heads must not agree on an identity: the second counts from {spent}"
     );
 }
+
+/// A budget is either the start of an execution or a continuation of one.
+///
+/// `ExecutionBudget` used to hand a fresh-identity counter to whoever wrote
+/// nothing at all: `Default` started it at the base of the range, so an
+/// evaluation in the middle of an execution restarted it by omission. There is
+/// no default outside tests now, and the two constructors cannot issue the
+/// same identity.
+#[test]
+fn a_budget_starts_an_execution_or_continues_one() {
+    let mut start = ExecutionBudget::for_new_execution();
+    assert_eq!(start.next_kernel_variable(), 0, "a start has spent nothing");
+    let first = start.allocate_kernel_variable().expect("an identity");
+    assert_eq!(
+        first,
+        Variable(ExecutionBudget::KERNEL_VARIABLE_BASE),
+        "a new execution counts from the base of the range"
+    );
+
+    let spent = 64;
+    let mut continuation = ExecutionBudget::continuing_from(spent);
+    assert_eq!(continuation.next_kernel_variable(), spent);
+    let continued = continuation
+        .allocate_kernel_variable()
+        .expect("an identity above the mark");
+    assert_eq!(
+        continued,
+        Variable(ExecutionBudget::KERNEL_VARIABLE_BASE + spent),
+        "a continuation counts from the mark it was given"
+    );
+    assert_ne!(
+        first, continued,
+        "a continuation must not re-issue what the execution already spent"
+    );
+}
+
+/// The mark is execution-relative, and reading it out of one budget and into
+/// the next must not lose the base.
+///
+/// `CFunctionContractRefinementContext` carried the counter as a raw absolute
+/// field and rebuilt its obligations' budget from that field directly. It now
+/// reads the mark through `next_kernel_variable` and rebuilds with
+/// `continuing_from`, which is correct exactly while the two agree on the
+/// representation. This is that agreement, stated once.
+#[test]
+fn a_reached_mark_round_trips_into_the_next_budget() {
+    let mut first = ExecutionBudget::for_new_execution();
+    let issued = (0..5)
+        .map(|_| first.allocate_kernel_variable().expect("an identity"))
+        .collect::<BTreeSet<_>>();
+
+    let mut next = ExecutionBudget::continuing_from(first.next_kernel_variable());
+    for _ in 0..5 {
+        let identity = next.allocate_kernel_variable().expect("an identity");
+        assert!(
+            !issued.contains(&identity),
+            "{identity:?} was already issued by the budget this one continues"
+        );
+        assert!(
+            identity.0 >= ExecutionBudget::KERNEL_VARIABLE_BASE + 5,
+            "{identity:?} is below the mark the first budget reached"
+        );
+    }
+}
+
+/// The remaining restarting sites are named, not hidden.
+///
+/// `ExecutionBudget::restarting_beside_live_state` restarts the counter at the
+/// base although the state its evaluation runs over belongs to a live
+/// execution. It exists so that a site whose mark has not been threaded to it
+/// has to say so. This states what it does, so that threading a family off it
+/// is a visible change rather than a silent one.
+#[test]
+fn a_restarting_budget_says_so_and_starts_at_the_base() {
+    let mut restarting = ExecutionBudget::restarting_beside_live_state();
+    assert_eq!(
+        restarting.next_kernel_variable(),
+        0,
+        "the named restart is a restart: it reports no identities spent"
+    );
+    assert_eq!(
+        restarting.allocate_kernel_variable().expect("an identity"),
+        Variable(ExecutionBudget::KERNEL_VARIABLE_BASE),
+        "and it counts from the base, beside whatever the live state already uses"
+    );
+}

@@ -641,7 +641,7 @@ fn call_passes_witness_child(
     if arm.witness_children.is_empty() {
         return false;
     }
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::for_new_execution();
     let entry_assumptions = PureFactContext::new()
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();

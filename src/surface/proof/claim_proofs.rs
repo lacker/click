@@ -3830,7 +3830,7 @@ pub(super) fn finish_ordered_proof<'a>(
                     } = &outcome
                     {
                         let lifetime_assumptions = path_requirements.assumptions();
-                        let mut lifetime_budget = ExecutionBudget::default();
+                        let mut lifetime_budget = ExecutionBudget::restarting_beside_live_state();
                         match crate::kernel::unreturned_allocation_at_function_exit(
                     post_state,
                     value,

@@ -416,7 +416,7 @@ fn c_loop_preservation_contexts_with_mode(
     // is how a havocked local, a re-bound binder's model field or an
     // arbitrary algebraic binding comes to carry an identity the execution
     // has already handed to something live.
-    let mut budget = ExecutionBudget::default().with_next_kernel_variable(next_kernel_variable);
+    let mut budget = ExecutionBudget::continuing_from(next_kernel_variable);
     let mut existing_variables = BTreeSet::new();
     collect_c_state_bitvector_variables(loop_entry_state, &mut existing_variables);
     collect_c_expression_bitvector_variables(condition, &mut existing_variables);
@@ -601,7 +601,7 @@ fn loop_head_invariant_failure(
     assumptions: &PureFactContext,
     error: ExecutionLimit,
 ) -> String {
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     for check in invariant_checks {
         if assume_invariant_checks(
             top_state,
@@ -636,7 +636,7 @@ pub fn c_loop_invariant_obligations_at_back_edge(
         invariant_checks,
         InvariantPhase::Preservation,
         assumptions,
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::restarting_beside_live_state(),
     )
     .map_err(|error| format!("could not lower back-edge invariants: {error:?}"))
 }
@@ -699,7 +699,7 @@ pub fn c_execution_environment_with_recursion_anchor(
         function,
         &entry_state,
         &PureFactContext::new(),
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::restarting_beside_live_state(),
     )?;
     Ok(match anchor {
         Some(anchor) => environment.with_recursion_anchor(anchor),
@@ -723,7 +723,7 @@ pub fn c_loop_ranking_obligations_at_back_edge(
         iteration_entry_state,
         ranking_measures,
         assumptions,
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::restarting_beside_live_state(),
     )
 }
 
@@ -753,7 +753,7 @@ pub fn c_loop_entry_goals(
         state,
         invariant_checks,
         assumptions,
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::restarting_beside_live_state(),
         &mut declarations,
     )
     .map_err(|error| format!("could not lower entry invariants: {error:?}"))?;
@@ -771,7 +771,7 @@ pub fn c_loop_invariant_obligations_at_entry(
         invariant_checks,
         InvariantPhase::Entry,
         assumptions,
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::restarting_beside_live_state(),
     )
     .map_err(|error| format!("could not lower entry invariants: {error:?}"))
 }
@@ -795,7 +795,7 @@ pub fn c_loop_effects_hold_at_back_edge(
         &execution_facts,
         &[],
         assumptions,
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::restarting_beside_live_state(),
     )
     .map_err(|error| format!("could not lower back-edge effects: {error:?}"))?;
     if let Some(obligation) = obligations.first() {
@@ -822,7 +822,7 @@ pub fn c_loop_invariants_hold_at_entry(
         invariant_checks,
         InvariantPhase::Entry,
         assumptions,
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::restarting_beside_live_state(),
     )
     .map_err(|error| format!("could not lower entry invariants: {error:?}"))?;
     if let Some(obligation) = obligations.first() {
@@ -972,7 +972,7 @@ fn abstract_c_state_for_join_across_with_policy(
     // at the arms' counter rather than at the range's base keeps a join off
     // identities an arm already spent; returning the mark below keeps the
     // continuation off the identities this join spends.
-    let mut budget = ExecutionBudget::default().with_next_kernel_variable(next_kernel_variable);
+    let mut budget = ExecutionBudget::continuing_from(next_kernel_variable);
     let mut variables = KernelVariableGenerator::fresh_for_execution(existing_variables);
     let mut abstract_state = state.clone();
     // A nested arm may already carry a memory-havoc marker from an inner
@@ -2060,7 +2060,7 @@ pub(crate) fn c_lower_spec_proposition_with_checked_obligations(
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads()
         .defer_non_exact_loadability_obligations();
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let paths = lower_spec_proposition_at_state_with_loop_entry(
         state,
         proposition,
@@ -2125,7 +2125,7 @@ pub(crate) fn c_evaluate_spec_expression_with_checked_obligations(
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads()
         .defer_non_exact_loadability_obligations();
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let paths = evaluate_spec_expression_paths_with_loop_entry(
         state,
         expression,
@@ -2209,7 +2209,7 @@ fn install_borrowed_contract_inputs(
 ) -> Result<CState, LoanRefusalDiagnostic> {
     let entry = c_function_entry_state(&state, function, arguments)
         .ok_or_else(|| LoanRefusal::MissingBacking.diagnostic(LoanRefusalOperation::Entry))?;
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let (_, checked_inputs) = evaluate_function_resource_context_with_metadata(
         &entry,
         function.resource_requires(),
@@ -2453,7 +2453,7 @@ pub fn c_function_contract_entry_state(
         })
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| "contract entry arguments must be concrete symbolic values".to_string())?;
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     match prepare_function_contract_entry_state_with_values(
         caller_state,
         function,
@@ -2505,7 +2505,7 @@ pub fn apply_c_function_contract_resource_transition(
         arguments,
         outcome,
         assumptions,
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::restarting_beside_live_state(),
     ) {
         Ok(Ok(result)) => Ok(result),
         Ok(Err(error)) => Err(format!(
@@ -2628,7 +2628,7 @@ pub fn c_expression_definedness_proposition(
     state: &CState,
     expression: &CExpression,
 ) -> Result<Proposition, ExecutionLimit> {
-    let mut budget = ExecutionBudget::for_c_expression(expression);
+    let mut budget = ExecutionBudget::for_new_execution().with_c_expression_cost(expression);
     let paths =
         evaluate_c_expression_paths(state, expression, &PureFactContext::new(), &mut budget)?;
     let mut normal_paths = paths.into_iter().filter_map(|path| {
@@ -2774,7 +2774,7 @@ pub fn c_max_lt_condition(a: Bitvector32Term, b: Bitvector32Term) -> ConditionTe
 }
 
 pub fn prove_c_expression_evaluation(state: CState, expression: CExpression) -> Option<Theorem> {
-    let mut budget = ExecutionBudget::for_c_expression(&expression);
+    let mut budget = ExecutionBudget::for_new_execution().with_c_expression_cost(&expression);
     let outcome = evaluate_c_expression(&state, &expression, &PureFactContext::new(), &mut budget)?;
     Some(Theorem::new(Proposition::CExpressionEvaluates {
         state,
@@ -2788,7 +2788,8 @@ pub fn prove_symbolic_c_condition_evaluation(
     condition: CExpression,
     assumptions: PureFactContext,
 ) -> SymbolicCConditionEvaluation {
-    let mut budget = ExecutionBudget::for_c_expression(&condition);
+    let mut budget =
+        ExecutionBudget::restarting_beside_live_state().with_c_expression_cost(&condition);
     let expression_paths =
         match evaluate_c_expression_paths(&state, &condition, &assumptions, &mut budget) {
             Ok(paths) => paths,
@@ -2870,7 +2871,7 @@ pub fn prove_symbolic_c_execution(
     statement: CStatement,
     assumptions: PureFactContext,
 ) -> Option<Theorem> {
-    let budget = ExecutionBudget::for_c_statement(&statement);
+    let budget = ExecutionBudget::for_new_execution().with_c_statement_cost(&statement);
     prove_symbolic_c_execution_with_budget(state, statement, assumptions, budget)
 }
 
@@ -2897,7 +2898,7 @@ pub fn prove_symbolic_c_execution_with_environment(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> Option<Theorem> {
-    let budget = ExecutionBudget::for_c_statement(&statement);
+    let budget = ExecutionBudget::for_new_execution().with_c_statement_cost(&statement);
     prove_symbolic_c_execution_with_environment_and_budget(
         state,
         statement,
@@ -2940,7 +2941,7 @@ pub fn prove_symbolic_c_execution_paths(
     statement: CStatement,
     assumptions: PureFactContext,
 ) -> SymbolicCExecution {
-    let budget = ExecutionBudget::for_c_statement(&statement);
+    let budget = ExecutionBudget::for_new_execution().with_c_statement_cost(&statement);
     prove_symbolic_c_execution_paths_with_budget(state, statement, assumptions, budget)
 }
 
@@ -2967,7 +2968,7 @@ pub fn prove_symbolic_c_execution_paths_with_environment(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
-    let budget = ExecutionBudget::for_c_statement(&statement);
+    let budget = ExecutionBudget::for_new_execution().with_c_statement_cost(&statement);
     prove_symbolic_c_execution_paths_with_environment_and_budget(
         state,
         statement,
@@ -3073,7 +3074,8 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_r
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
-    let mut budget = ExecutionBudget::for_c_statement_verification(&statement);
+    let mut budget =
+        ExecutionBudget::for_new_execution().with_c_statement_verification_cost(&statement);
     prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
         state,
         statement,
@@ -3173,7 +3175,8 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
     final_exit_candidates: Vec<CLoopFinalExitCandidate>,
     break_exits: Vec<CLoopBreakExit>,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
-    let mut budget = ExecutionBudget::for_c_statement_verification(&statement);
+    let mut budget =
+        ExecutionBudget::for_new_execution().with_c_statement_verification_cost(&statement);
     prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         state,
         statement,
@@ -3313,7 +3316,7 @@ pub fn prove_symbolic_c_function_execution(
     arguments: Vec<CExpression>,
     assumptions: PureFactContext,
 ) -> Option<Theorem> {
-    let budget = ExecutionBudget::for_c_function(&function, &arguments);
+    let budget = ExecutionBudget::for_new_execution().with_c_function_cost(&function, &arguments);
     prove_symbolic_c_function_execution_with_budget(state, function, arguments, assumptions, budget)
 }
 
@@ -3343,7 +3346,7 @@ pub fn prove_symbolic_c_function_execution_with_environment(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> Option<Theorem> {
-    let budget = ExecutionBudget::for_c_function(&function, &arguments);
+    let budget = ExecutionBudget::for_new_execution().with_c_function_cost(&function, &arguments);
     prove_symbolic_c_function_execution_with_environment_and_budget(
         state,
         function,
@@ -3390,7 +3393,7 @@ pub fn prove_symbolic_c_function_execution_paths(
     arguments: Vec<CExpression>,
     assumptions: PureFactContext,
 ) -> SymbolicCExecution {
-    let budget = ExecutionBudget::for_c_function(&function, &arguments);
+    let budget = ExecutionBudget::for_new_execution().with_c_function_cost(&function, &arguments);
     prove_symbolic_c_function_execution_paths_with_budget(
         state,
         function,
@@ -3426,7 +3429,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
-    let budget = ExecutionBudget::for_c_function(&function, &arguments);
+    let budget = ExecutionBudget::for_new_execution().with_c_function_cost(&function, &arguments);
     prove_symbolic_c_function_execution_paths_with_environment_and_budget(
         state,
         function,
@@ -3537,7 +3540,8 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
-    let budget = ExecutionBudget::for_c_function_verification(&function, &arguments);
+    let budget = ExecutionBudget::for_new_execution()
+        .with_c_function_verification_cost(&function, &arguments);
     prove_symbolic_c_function_verification_paths_with_environment_and_budget(
         state,
         function,
@@ -3583,7 +3587,8 @@ pub fn prove_symbolic_c_function_contract_verification_paths_with_environment(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
-    let budget = ExecutionBudget::for_c_function_verification(&function, &arguments);
+    let budget = ExecutionBudget::for_new_execution()
+        .with_c_function_verification_cost(&function, &arguments);
     prove_symbolic_c_function_verification_paths(
         state,
         function,
@@ -3618,7 +3623,8 @@ pub fn prove_checked_c_function_execution_with_environment(
                 assumptions.clone(),
                 environment.clone(),
                 execution_semantics,
-                ExecutionBudget::for_c_function_verification(&function, &arguments),
+                ExecutionBudget::for_new_execution()
+                    .with_c_function_verification_cost(&function, &arguments),
                 true,
             )
         }
@@ -3630,7 +3636,7 @@ pub fn prove_checked_c_function_execution_with_environment(
                 assumptions.clone(),
                 environment.clone(),
                 execution_semantics,
-                ExecutionBudget::for_c_function(&function, &arguments),
+                ExecutionBudget::for_new_execution().with_c_function_cost(&function, &arguments),
                 true,
             )
         }
@@ -5031,7 +5037,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
         let raw_entry_state = c_function_entry_state(&state, &function, &arguments);
         let mut reuse_assumptions = assumptions.clone();
         if let Some(raw_entry_state) = raw_entry_state.as_ref() {
-            let mut budget = ExecutionBudget::default();
+            let mut budget = ExecutionBudget::for_new_execution();
             for unfolding in function.predicate_unfoldings() {
                 let Some((predicate, body)) =
                     contract_certification::instantiate_contract_predicate_unfolding(
@@ -5402,7 +5408,7 @@ pub fn prove_c_function_satisfies_specification_with_environment(
         &specification_assumptions,
         &environment,
         execution_semantics,
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::for_new_execution(),
     )
     .ok()?;
     let mut paths = paths.into_iter();
@@ -6114,7 +6120,7 @@ pub fn c_function_contract_refinement_context(
     prepare_function_contract_refinement_context(
         contract,
         function,
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::for_new_execution(),
     )
 }
 
@@ -6177,7 +6183,7 @@ pub fn c_contract_refinement_context(
         target,
         source.name(),
         source.interface(),
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::for_new_execution(),
     )?;
     context.pointer = pointer.clone();
     context.source_contract = Some(source.clone());

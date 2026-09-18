@@ -887,7 +887,7 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
                         ))
                     })?,
             };
-            let mut budget = crate::kernel::ExecutionBudget::default();
+            let mut budget = crate::kernel::ExecutionBudget::for_new_execution();
             match crate::kernel::establish_resource_derived_loop_frames(
                 function,
                 &checked_entry,

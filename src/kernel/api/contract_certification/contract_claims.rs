@@ -862,7 +862,7 @@ fn prepare_function_claim_path(
     let Some(mut entry_state) = c_function_entry_state(caller_state, function, arguments) else {
         return Err("the function entry state cannot be reconstructed".to_string());
     };
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let (required_resources, checked_required_resources) =
         match evaluate_function_resource_context_with_metadata(
             &entry_state,
@@ -1096,7 +1096,7 @@ fn function_claim_holds_on_prepared_path(
         assumptions,
         effect_facts,
     } = path;
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     match claim.target() {
         CFunctionContractClaimTarget::BodySafety => true,
         CFunctionContractClaimTarget::EnsureProposition(_index)
@@ -1166,7 +1166,7 @@ fn function_claim_holds_on_prepared_path(
                                 }
                                 Proposition::Predicate { .. } => {
                                     function.predicate_unfoldings().iter().any(|unfolding| {
-                                        let mut budget = ExecutionBudget::default();
+                                        let mut budget = ExecutionBudget::restarting_beside_live_state();
                                         let Some((
                                             predicate,
                                             predicate_obligations,
@@ -1745,7 +1745,7 @@ pub fn c_function_ensure_goals(
         .clone()
         .allow_symbolic_contract_loads()
         .defer_non_exact_loadability_obligations();
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let paths = lower_spec_proposition_at_state_with_loop_entry(
         &post_state,
         ensure,
@@ -1824,7 +1824,7 @@ pub(crate) fn c_function_exceptional_ensure_goals(
         .clone()
         .allow_symbolic_contract_loads()
         .defer_non_exact_loadability_obligations();
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::restarting_beside_live_state();
     let paths = lower_spec_proposition_at_state_with_loop_entry(
         &post_state,
         ensure,

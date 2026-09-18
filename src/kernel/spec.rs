@@ -60,7 +60,7 @@ pub(crate) fn capture_spec_algebraic_value(
         entry_state,
         assumptions,
         &BTreeMap::new(),
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::restarting_beside_live_state(),
     )
     .map_err(|limit| format!("algebraic initializer evaluation hit {limit:?}"))?;
     let [path] = paths.as_slice() else {
@@ -91,7 +91,7 @@ pub(crate) fn capture_spec_integer_value(
         entry_state,
         assumptions,
         &BTreeMap::new(),
-        &mut ExecutionBudget::default(),
+        &mut ExecutionBudget::restarting_beside_live_state(),
     )
     .map_err(|limit| format!("Integer initializer evaluation hit {limit:?}"))?;
     let [path] = paths.as_slice() else {

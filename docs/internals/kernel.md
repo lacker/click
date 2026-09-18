@@ -637,8 +637,53 @@ identities, the kernel installs the mark of the abstraction it recomputed
 itself (`ExecutionProofCore::record_interface_branch_join`), so a surface-
 chosen successor counter cannot survive the check.
 
+**A budget is either the start of an execution or a continuation of one;
+there is no default.** `ExecutionBudget` has no `Default` outside tests, and
+no constructor that supplies a fresh-identity counter to a caller who wrote
+nothing. Every construction says which it is:
+`ExecutionBudget::for_new_execution` starts the counter at
+`KERNEL_VARIABLE_BASE` and is legitimate only where no live state carries
+identities some execution issued — a symbolic execution over a state the
+caller built, a whole-function contract certification, a refinement context
+invented from two contract interfaces. `ExecutionBudget::continuing_from`
+takes the mark an execution has already reached and counts up from there.
+The work allowances of a selected expression, statement or function are
+builder steps (`with_c_expression_cost` and its siblings) added to whichever
+of the two the call site opened, so the choice stays visible there rather
+than hiding inside a constructor. Restarting the counter by writing nothing
+was how a loop-havocked local and a re-bound model field, and a
+join-abstracted pointer and a later heap block, became one `Variable`.
+
+`ExecutionBudget::restarting_beside_live_state` is the third constructor and
+it is the hazard, named. It restarts the counter although the state being
+evaluated belongs to a live execution, and it exists so that a site whose
+mark has not been threaded to it has to say so, and one `grep` finds every
+one. Its users are the proof-side evaluation families reached from the
+surface's `have`, `fold`, `unfold` and theorem-application drivers — the
+fixed-state spec lowering and capture entry points, the composite-resource
+proposition evaluators, the instance fold/unfold rewrites, the arm-premise
+and witness binders, the loop invariant and effect obligation APIs, and
+independent contract certification. Those drivers do not carry the
+execution's mark, and threading it to them is a change across the proof
+engine rather than a mechanical one. Each such site can hand a match binder,
+a witness, an opaque call result or a re-bound model field an identity the
+enclosing execution already gave to a havocked local or a join abstraction.
+Measured over the mdtest corpus, exactly one of those sites issues an identity
+at all: `c_lower_spec_proposition_with_checked_obligations`, the lowering every
+proof-side proposition and contract clause shares, which hands out the first
+identities of the range through `symbolic_algebraic_bindings` — one binder per
+field of a symbolic `match` on a non-literal scrutinee. The rest allocate
+nothing on any fixture, which is why no false theorem has come out of them yet.
+That is an observation about the corpus, not an invariant. The binders that
+site does invent are bound variables of the lowered `Match` term, so a
+collision with a free execution identity is harmless exactly while every
+rewrite that eliminates a binder renames on capture.
+`rewrite_integer_match_typed_fields` substitutes binder for field without a
+capture check, so an arm body that mentions a loop-havocked local whose
+identity equals the binder's would be rewritten too.
+
 The mark is execution-relative — an offset from `KERNEL_VARIABLE_BASE`, which
-is the representation `ExecutionBudget::with_next_kernel_variable` takes and
+is the representation `ExecutionBudget::continuing_from` takes and
 `ExecutionBudget::next_kernel_variable` returns. A freshness probe that
 compares a candidate `Variable` against it must add the base back:
 `ExecutionProofCore::issued_kernel_variable_bound` closes the range

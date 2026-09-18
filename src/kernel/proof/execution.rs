@@ -2603,7 +2603,7 @@ fn interface_spec_paths(
         spec,
         Some(reference_state),
         &PureFactContext::new(),
-        &mut ExecutionBudget::new(),
+        &mut ExecutionBudget::restarting_beside_live_state(),
     )
     .ok()
 }
@@ -2617,7 +2617,7 @@ fn evaluate_interface_resource_spec(
         state,
         spec,
         facts.assumptions(),
-        &mut ExecutionBudget::new(),
+        &mut ExecutionBudget::restarting_beside_live_state(),
     )
     .ok()?)
     .ok()
@@ -2942,9 +2942,8 @@ impl CheckedCallOutcomeSplit {
         ) {
             return Err(CheckedCallOutcomeSplitError::InvalidEvidence);
         }
-        let mut budget = ExecutionBudget::default()
-            .with_next_opaque_call(next_opaque_call)
-            .with_next_kernel_variable(next_kernel_variable);
+        let mut budget = ExecutionBudget::continuing_from(next_kernel_variable)
+            .with_next_opaque_call(next_opaque_call);
         let (execution, _) = crate::kernel::api::prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
             state.clone(),
             statement.clone(),
@@ -3342,7 +3341,7 @@ pub(crate) struct ExecutionProofCore {
     pub(crate) next_opaque_call: u64,
     /// This execution's one fresh-variable counter, as an offset from
     /// [`ExecutionBudget::KERNEL_VARIABLE_BASE`] -- the representation
-    /// [`ExecutionBudget::with_next_kernel_variable`] takes and
+    /// [`ExecutionBudget::continuing_from`] takes and
     /// [`ExecutionBudget::next_kernel_variable`] returns. Every identity the
     /// kernel has issued for this execution lies below it.
     ///
@@ -6142,7 +6141,7 @@ impl ExecutionProofCore {
                     completed,
                     obligations,
                     &statement_assumptions,
-                    &mut ExecutionBudget::default(),
+                    &mut ExecutionBudget::restarting_beside_live_state(),
                     // A path that lent at entry recovers at exit; one that
                     // entered from the contract's declared resources reads
                     // the outcome through them definitionally.
