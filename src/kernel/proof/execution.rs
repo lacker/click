@@ -482,7 +482,7 @@ pre-rewrite snapshot ({base_arena},{base_id}), {epoch_note}"
         ));
     }
     detail.push_str(
-        "; the surface named this cell while unfolding and the kernel recomputed a different canonical name \
+        "; the surface named this cell while unfolding and the kernel recomputed a different load variable \
 (see issues/load-variable-naming-epoch.md): the unfold is not at fault, this is a verifier naming divergence",
     );
     detail
