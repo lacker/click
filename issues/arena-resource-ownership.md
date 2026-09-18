@@ -2,6 +2,14 @@
 
 ## Status
 
+Blocked on
+[load-variable-naming-epoch.md](load-variable-naming-epoch.md). Unfolding the
+arena's region shape (two-level pointer with a payload-indexed range and a
+same-typed consumed descriptor) is refused because the load-variable name the
+surface installs is not the name the kernel independently recomputes. That is
+an independent tooling defect; the arena characterization cannot continue
+until it is fixed.
+
 The fixed C0 implementation lives in `examples/arena/`; do not change it
 merely to make the proof easier. The sidecar now defines an `arena_region`
 composite resource and verifies `arena_region_length` through a scoped open.

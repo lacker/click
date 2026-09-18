@@ -15,7 +15,13 @@ const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
 /// green gate. Run one with `MDTEST_FILTER=<name>`, or all of them with
 /// `CLICK_RUN_QUARANTINED=1`. Each entry names the reason; remove entries as
 /// they are fixed (see docs/internals/testing.md).
-const QUARANTINED: &[(&str, &str)] = &[];
+const QUARANTINED: &[(&str, &str)] = &[(
+    "load_variable_naming_epoch.md",
+    "blocked on issues/load-variable-naming-epoch.md: an unfold installs the same \
+     load variable the kernel recomputes only when the epoch walk sees the same \
+     facts, and it does not for a two-level loaded range with a same-typed \
+     consumed object; remove this entry when that issue is fixed",
+)];
 
 /// The artifact reuse rejection ratchet (`docs/internals/testing.md`): count
 /// contract certification rejections of checked execution artifacts over the
