@@ -707,6 +707,7 @@ impl CFunctionContractInterface {
             opaque_contract_supported: true,
             composite_resource_definitions: Vec::new(),
             predicate_unfoldings: Vec::new(),
+            recursion_measure: None,
         }
     }
 
@@ -753,6 +754,11 @@ impl CFunctionContractInterface {
 
     pub fn contract_requires(&self) -> &[SpecProposition] {
         &self.contract_requires
+    }
+
+    /// The declared expression `decreases` measure, if the function has one.
+    pub fn recursion_measure(&self) -> Option<&CRankingComponent> {
+        self.recursion_measure.as_ref()
     }
 
     pub(crate) fn contract_requirement_sources(&self) -> &[Option<usize>] {
@@ -866,6 +872,7 @@ impl CFunctionContractInterface {
             && self.resource_derived_frame_mixed == other.resource_derived_frame_mixed
             && self.composite_resource_definitions == other.composite_resource_definitions
             && self.predicate_unfoldings == other.predicate_unfoldings
+            && self.recursion_measure == other.recursion_measure
     }
 
     /// Compare the signature and resource vocabulary used by automatic
@@ -1084,6 +1091,17 @@ impl CFunction {
         self.contract_interface.resource_derived_mutable_frame = false;
         self.contract_interface.contract_claims = claims;
         self.contract_interface.opaque_contract_supported = opaque_supported;
+        self
+    }
+
+    /// Records the function's declared expression `decreases` measure.
+    ///
+    /// The measure is part of the contract interface, so it is part of this
+    /// function's semantic identity: a verified rule, and every claim bound
+    /// to it, names the function that declared the measure, and a function
+    /// that declares none is a different `CFunction`.
+    pub fn with_recursion_measure(mut self, measure: CRankingComponent) -> Self {
+        self.contract_interface.recursion_measure = Some(measure);
         self
     }
 
@@ -2105,6 +2123,22 @@ impl CExecutionEnvironment {
         std::sync::Arc::make_mut(&mut self.verified_loop_rules).extend(rules);
         self.variable_index = CExecutionEnvironmentVariableIndex::default();
         self
+    }
+
+    /// Installs the recursion anchor for the function being certified.
+    ///
+    /// There is no public constructor for [`CRecursionAnchor`], so this is
+    /// reached only through
+    /// [`crate::kernel::c_execution_environment_with_recursion_anchor`],
+    /// which derives the anchor from the function's own declared measure.
+    pub(in crate::kernel) fn with_recursion_anchor(mut self, anchor: CRecursionAnchor) -> Self {
+        self.recursion_anchor = Some(std::sync::Arc::new(anchor));
+        self.variable_index = CExecutionEnvironmentVariableIndex::default();
+        self
+    }
+
+    pub(in crate::kernel) fn recursion_anchor(&self) -> Option<&CRecursionAnchor> {
+        self.recursion_anchor.as_deref()
     }
 
     #[cfg(test)]

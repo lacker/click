@@ -363,6 +363,7 @@ type FunctionContractSummary = (
     Vec<CFunctionContractClaim>,
     bool,
     Vec<CPredicateUnfolding>,
+    Option<crate::kernel::CRankingComponent>,
 );
 
 /// Records each declared memory-independent pure function's body with the
@@ -723,6 +724,7 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
         contract_claims,
         opaque_contract_supported,
         predicate_unfoldings,
+        recursion_measure,
     ) = function_contract_summary(
         function_block,
         parsed_function,
@@ -862,6 +864,9 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
             opaque_contract_supported,
         )
         .with_contract_requirement_sources(contract_requirement_sources);
+    if let Some(measure) = recursion_measure {
+        function = function.with_recursion_measure(measure);
+    }
     if function_block.signature().exceptional_type().is_some() {
         function = function
             .with_int32_exceptional_outcome()
@@ -1555,6 +1560,7 @@ pub(in crate::surface) fn function_contract_summary(
         }
         claims
     };
+    let recursion_measure = lowerer.function_recursion_measure(function_block, &context)?;
     Ok((
         requires,
         contract_requirement_sources,
@@ -1564,6 +1570,7 @@ pub(in crate::surface) fn function_contract_summary(
         claims,
         opaque_contract_supported,
         predicate_unfoldings,
+        recursion_measure,
     ))
 }
 
@@ -2186,6 +2193,70 @@ impl AnnotationLowerer<'_> {
             });
         }
         Ok(components)
+    }
+
+    /// The function's declared `decreases` measure as its contract interface
+    /// carries it, or `None` when the clause is one of the two measures the
+    /// termination checker resolves by itself.
+    ///
+    /// `decreases n` for a parameter `n`, and a structural resource measure,
+    /// keep naming exactly what they named before: those clauses are read by
+    /// `c_function_termination_plans` and analysed by the checker, and nothing
+    /// about them reaches the interface. Anything else is a pure expression,
+    /// lowered here the way a `requires` is, in this same function-contract
+    /// context, so it names no state of its own and the kernel is the one
+    /// that picks the two states to read it at.
+    fn function_recursion_measure(
+        &mut self,
+        function_block: &FunctionBlock,
+        context: &SpecElaborationContext,
+    ) -> Result<Option<crate::kernel::CRankingComponent>, ClickError> {
+        let name = function_block.signature().name();
+        let Some(CFunctionDecrease::Numeric(expression)) = function_block.decreases() else {
+            return Ok(None);
+        };
+        // A bare name is today's numeric measure, resolved against the
+        // parameter list by the termination plan, which is also what refuses
+        // a name that is no parameter of this function. Leave it there: a
+        // bare `decreases` name has always meant a parameter, and lowering it
+        // here would answer a misspelling with an evaluation failure.
+        if matches!(
+            expression,
+            ContractExpression::Binding(_)
+                | ContractExpression::CBinding(_)
+                | ContractExpression::CFragment(CExpression::Variable(_))
+        ) {
+            return Ok(None);
+        }
+        // The kernel reads the one declared measure at the function's entry
+        // and again at each recursive call, and requires the second value to
+        // be smaller. A component that names a state of its own reads one
+        // state twice, so it can never decrease -- the same rule the loop
+        // slot states, for the same reason.
+        if let Some(fixed) = fixed_measure_state(expression) {
+            return Err(ClickError::new(format!(
+                "function-level `decreases` component `{}` in `{name}` names the fixed state `{}`; \
+                 a termination measure must be a function of the current state alone, because the \
+                 kernel evaluates the one declared component at the function's entry and again at \
+                 each recursive call and requires the second value to be smaller. Write the \
+                 measure over current values, and use a `requires` clause to relate them to an \
+                 earlier state.",
+                crate::surface::verification::termination_measure_source(expression),
+                fixed.spelling()
+            )));
+        }
+        let lowered = self
+            .lower_contract_expression_to_spec(expression, context)
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "function-level `decreases` component `{}` in `{name}`: {message}",
+                    crate::surface::verification::termination_measure_source(expression)
+                ))
+            })?;
+        Ok(Some(crate::kernel::CRankingComponent::Pure {
+            source: crate::surface::verification::termination_measure_source(expression),
+            expression: lowered,
+        }))
     }
 
     /// The loop head's declared measure, split into the two clauses the

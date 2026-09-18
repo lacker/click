@@ -296,6 +296,21 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         c_function_entry_state(&state, &function, &arguments).ok_or_else(|| {
             ClickError::new(format!("`{claim_label}` could not bind function arguments"))
         })?;
+    // The proof of a function that declares an expression `decreases` measure
+    // steps under that function's recursion anchor, which is what makes a
+    // self-call raise the descent obligations. Certification derives the same
+    // anchor for itself and reuses only an artifact whose environment carries
+    // it, so this is not a step the proof may skip: without it the completed
+    // execution is refused.
+    let anchored_function_environment =
+        crate::kernel::c_execution_environment_with_recursion_anchor(
+            function_environment.clone(),
+            &function,
+            &state,
+            &arguments,
+        )
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+    let function_environment = &anchored_function_environment;
     let proof_claims = [*claim];
     let constants = ExecutionProofConstants {
         proof_site: proof_site_for_claims(function_block, &proof_claims, false),
@@ -507,6 +522,16 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         c_function_entry_state(&state, &function, &arguments).ok_or_else(|| {
             ClickError::new(format!("`{proof_label}` could not bind function arguments"))
         })?;
+    // Same anchor as the single-claim route; see `prove_claim_by_tactics`.
+    let anchored_function_environment =
+        crate::kernel::c_execution_environment_with_recursion_anchor(
+            function_environment.clone(),
+            &function,
+            &state,
+            &arguments,
+        )
+        .map_err(|message| ClickError::new(format!("`{proof_label}`: {message}")))?;
+    let function_environment = &anchored_function_environment;
     let constants = ExecutionProofConstants {
         proof_site: proof_site_for_claims(function_block, claims, true),
         source_layout: SourceExecutionLayout::for_function(parsed_function)?,

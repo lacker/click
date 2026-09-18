@@ -665,6 +665,48 @@ pub fn c_ranking_measures_source(measures: &[CRankingComponent]) -> String {
     crate::kernel::termination::c_ranking_measures_display(measures)
 }
 
+/// The environment one C function is certified under, carrying its recursion
+/// anchor when it declares an expression `decreases` measure.
+///
+/// The caller says which function is being certified and at which entry; the
+/// kernel reads the measure off that function's own contract interface and
+/// evaluates it, so nothing about what the recursion is ranked by comes from
+/// the caller. A function with no declared measure gets the environment back
+/// unchanged, and today that is every function, so no existing certification
+/// changes shape.
+///
+/// Both sides of contract certification derive the anchor here, from the same
+/// function and the same arguments, which is why an artifact stepped without
+/// an anchor does not satisfy `checked.environment == environment`: the
+/// anchor is part of the environment's identity.
+pub fn c_execution_environment_with_recursion_anchor(
+    environment: CExecutionEnvironment,
+    function: &CFunction,
+    caller_state: &CState,
+    arguments: &[CExpression],
+) -> Result<CExecutionEnvironment, String> {
+    if function.contract_interface().recursion_measure().is_none() {
+        return Ok(environment);
+    }
+    let entry_state =
+        c_function_entry_state(caller_state, function, arguments).ok_or_else(|| {
+            format!(
+                "could not bind `{}`'s arguments to read its `decreases` measure at entry",
+                function.name()
+            )
+        })?;
+    let anchor = crate::kernel::termination::c_function_recursion_anchor(
+        function,
+        &entry_state,
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )?;
+    Ok(match anchor {
+        Some(anchor) => environment.with_recursion_anchor(anchor),
+        None => environment,
+    })
+}
+
 /// The ranked loop's back-edge bundle members, after its invariants.
 ///
 /// `iteration_entry_state` reads each declared component at preserve entry
@@ -4663,6 +4705,21 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
     checked_artifacts: &[CCheckedFunctionExecution],
     pure_theorems: &[CVerifiedPureTheorem],
 ) -> CFunctionContractExecution {
+    // Certification derives the anchor itself rather than trusting the one
+    // the caller stepped with. An artifact whose environment carries no
+    // anchor, or a different one, then fails `matches_execution_metadata`
+    // below and is not reused: a body stepped without the anchor emitted no
+    // descent obligation at its self-calls, and certifying a contract from it
+    // would grant a recursive function everything but the descent.
+    let environment = match c_execution_environment_with_recursion_anchor(
+        environment,
+        &function,
+        &state,
+        &arguments,
+    ) {
+        Ok(environment) => environment,
+        Err(reason) => return CFunctionContractExecution::failed(reason),
+    };
     let pure_theorem_facts = pure_theorems
         .iter()
         .map(|verified| verified.theorem.proposition().clone())

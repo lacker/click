@@ -249,6 +249,37 @@ function carries one reason, its own first unranked loop or the first call
 not shown to descend, which the surface reports by following refused callees
 to the defect that refused them.
 
+An expression `decreases` on a self-recursive function is the one
+function-level measure the checker does not analyse a body for. The lowered
+component travels on the function's `CFunctionContractInterface`, beside its
+`contract_requires`, because the call site is where the descent is owed. At
+the entry of the function being certified the kernel reads that component once
+and installs a `CRecursionAnchor { function, component, measure: M0,
+entry_obligations }` on the `CExecutionEnvironment`; the anchor has no public
+constructor, and `c_execution_environment_with_recursion_anchor` reads the
+measure off the named function's own interface, so asking for an anchor cannot
+choose what it ranks. At a call step whose callee is the anchored function,
+`prepare_verified_function_call` reads the same component at the state the
+callee's preconditions are read at and emits `0 <= m` and `m < M0`, plus the
+loadability the two readings owe, as ordinary verification conditions. A proof
+that does not discharge them does not get past the `step()`, and one that
+somehow retained them carries them as premises of its path theorem.
+
+The anchor is part of `CExecutionEnvironment`'s identity. Contract
+certification derives it itself from the function and arguments in hand rather
+than trusting the caller's, and reuses a checked artifact only when
+`checked.environment == environment`, so an execution stepped without the
+anchor — which raised no descent obligation at its self-calls — is not reused
+to certify a contract whose function declares a measure. `checked_function_execution`
+refuses such an execution outright as well. What is left for the termination
+judgment is that the obligations were reachable and complete: the certified
+`CFunction` must carry the measure (the plan names only a spelling, and
+`c_verified_function_rule` binds every claim to the same `CFunction`), the
+component's only recursive edge must be the self-call, the function must not
+have an inline body, and no self-call may sit inside a loop, whose summary
+would swallow it. The last three are refusals by name; `decreases <int32
+parameter>` still ranks those shapes.
+
 For a structural `decreases`, the plan contains only an index into the exact entry
 resource requirements. The kernel resolves that requirement and the exact
 composite definition again, instantiates its guard and direct recursive

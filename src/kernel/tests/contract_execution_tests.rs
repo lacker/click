@@ -4851,3 +4851,206 @@ fn call_requirement_obligations_carry_their_lowering_record() {
         proposition = body;
     }
 }
+
+/// A self-recursive function that declares an expression `decreases` measure.
+/// Its body is irrelevant here: what is exercised is the call step.
+fn drain_with_expression_measure() -> CFunction {
+    c_function(
+        CType::Int32,
+        "drain",
+        vec![c_parameter("n", CType::Int32)],
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        Vec::new(),
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("result")),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::CExpression(c_int32_literal(0)),
+        }],
+        Vec::new(),
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
+        true,
+    )
+    .with_recursion_measure(CRankingComponent::Pure {
+        source: "level(n)".to_string(),
+        expression: SpecExpression::CExpression(c_variable("n")),
+    })
+}
+
+fn opaque_rule_environment(function: CFunction) -> CExecutionEnvironment {
+    CExecutionEnvironment::new()
+        .with_function(function.clone())
+        .with_verified_function_rule(CVerifiedFunctionRule {
+            function,
+            loop_semantics: CLoopSemantics::Verify,
+        })
+}
+
+fn symbolic_caller_state() -> CState {
+    CState::new().with_local("n", int32(Bitvector32Term::Variable(Variable(31_000))))
+}
+
+/// The entry `drain` is anchored at: its parameter bound to the same symbolic
+/// value the caller state holds, which is what makes M0 that value.
+fn symbolic_entry_arguments() -> Vec<CExpression> {
+    vec![CExpression::Value(int32(Bitvector32Term::Variable(
+        Variable(31_000),
+    )))]
+}
+
+/// The contexts of the ranking members a call step emitted, in order.
+fn recursion_measure_contexts(path: &SymbolicCExecutionPath) -> Vec<String> {
+    path.obligations()
+        .iter()
+        .filter_map(|obligation| obligation.context())
+        .filter(|context| context.contains("recursion measure"))
+        .map(str::to_string)
+        .collect()
+}
+
+fn call_path(
+    environment: CExecutionEnvironment,
+    callee: &str,
+    argument: CExpression,
+) -> SymbolicCExecution {
+    prove_symbolic_c_execution_paths_with_environment(
+        symbolic_caller_state(),
+        c_call_assign("result", callee, vec![argument]),
+        PureFactContext::new(),
+        environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    )
+}
+
+/// The descent is owed at the call step, not by an analysis of the body. The
+/// anchor is derived by the kernel from the function's own interface at its
+/// own entry, so applying that function's contract under it emits the two
+/// ranking members a loop's back edge also owes.
+#[test]
+fn a_self_call_under_a_recursion_anchor_owes_the_two_ranking_members() {
+    let drain = drain_with_expression_measure();
+    let environment = c_execution_environment_with_recursion_anchor(
+        opaque_rule_environment(drain.clone()),
+        &drain,
+        &symbolic_caller_state(),
+        &symbolic_entry_arguments(),
+    )
+    .expect("the declared measure reads at the entry state");
+    let execution = call_path(
+        environment,
+        "drain",
+        c_subtract(c_variable("n"), c_int32_literal(1)),
+    );
+    let path = execution.paths().first().expect("verified call path");
+    assert_eq!(
+        recursion_measure_contexts(path),
+        vec![
+            "drain recursion measure: `level(n)` is nonnegative at the recursive call".to_string(),
+            "drain recursion measure: `level(n)` decreases at the recursive call".to_string(),
+        ],
+        "{:#?}",
+        path.obligations()
+    );
+}
+
+/// Without the anchor the same call is an ordinary opaque application. A
+/// measure on the interface changes nothing by itself: it is the
+/// certification of `drain` that owes the descent, and only there.
+#[test]
+fn a_call_without_a_recursion_anchor_owes_no_ranking_member() {
+    let drain = drain_with_expression_measure();
+    let execution = call_path(
+        opaque_rule_environment(drain),
+        "drain",
+        c_subtract(c_variable("n"), c_int32_literal(1)),
+    );
+    let path = execution.paths().first().expect("verified call path");
+    assert!(
+        recursion_measure_contexts(path).is_empty(),
+        "{:#?}",
+        path.obligations()
+    );
+}
+
+/// The anchor names one function. A call to any other verified function,
+/// while it is installed, is untouched.
+#[test]
+fn an_anchor_ranks_only_calls_to_the_function_it_names() {
+    let drain = drain_with_expression_measure();
+    let other = c_function(
+        CType::Int32,
+        "other",
+        vec![c_parameter("n", CType::Int32)],
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        Vec::new(),
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("result")),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::CExpression(c_int32_literal(0)),
+        }],
+        Vec::new(),
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
+        true,
+    );
+    let environment = c_execution_environment_with_recursion_anchor(
+        opaque_rule_environment(drain.clone())
+            .with_function(other.clone())
+            .with_verified_function_rule(CVerifiedFunctionRule {
+                function: other,
+                loop_semantics: CLoopSemantics::Verify,
+            }),
+        &drain,
+        &symbolic_caller_state(),
+        &symbolic_entry_arguments(),
+    )
+    .expect("the declared measure reads at the entry state");
+    let execution = call_path(environment, "other", c_variable("n"));
+    let path = execution.paths().first().expect("verified call path");
+    assert!(
+        recursion_measure_contexts(path).is_empty(),
+        "{:#?}",
+        path.obligations()
+    );
+}
+
+/// A function that declares no measure gets its environment back unchanged,
+/// so no certification that exists today changes shape or identity.
+#[test]
+fn a_function_without_a_declared_measure_installs_no_anchor() {
+    let plain = c_function(
+        CType::Int32,
+        "plain",
+        vec![c_parameter("n", CType::Int32)],
+        c_return(c_int32_literal(0)),
+    );
+    let environment = opaque_rule_environment(plain.clone());
+    let anchored = c_execution_environment_with_recursion_anchor(
+        environment.clone(),
+        &plain,
+        &symbolic_caller_state(),
+        &symbolic_entry_arguments(),
+    )
+    .expect("no declared measure is no work");
+    assert_eq!(anchored, environment);
+}
+
+/// An anchored environment is a different environment. This is what stops a
+/// checked execution recorded without the anchor -- one that raised no
+/// descent obligation at its self-calls -- from being reused to certify a
+/// contract whose function declares a measure.
+#[test]
+fn a_recursion_anchor_is_part_of_the_environment_identity() {
+    let drain = drain_with_expression_measure();
+    let plain = opaque_rule_environment(drain.clone());
+    let anchored = c_execution_environment_with_recursion_anchor(
+        plain.clone(),
+        &drain,
+        &symbolic_caller_state(),
+        &symbolic_entry_arguments(),
+    )
+    .expect("the declared measure reads at the entry state");
+    assert_ne!(anchored, plain);
+}

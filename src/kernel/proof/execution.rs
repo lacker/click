@@ -5932,6 +5932,25 @@ impl ExecutionProofCore {
         execution_semantics: crate::kernel::CExecutionSemantics,
         mode: crate::kernel::CFunctionContractExecutionMode,
     ) -> Result<crate::kernel::CCheckedFunctionExecution, &'static str> {
+        // A function that declares an expression `decreases` measure owes a
+        // descent obligation at each self-call, and the environment's anchor
+        // is what makes the call step emit one. The proof stepped under the
+        // environment it publishes here, so refusing an environment without
+        // the anchor refuses exactly the executions in which those
+        // obligations were never raised.
+        if checked_function
+            .contract_interface()
+            .recursion_measure()
+            .is_some()
+            && environment
+                .recursion_anchor()
+                .is_none_or(|anchor| anchor.function() != checked_function.name())
+        {
+            return Err(
+                "the checked execution of a function with a `decreases` measure carries no \
+                 recursion anchor for it",
+            );
+        }
         let (paths, has_checked_entry) =
             self.checked_execution_paths(candidates, checked_function, &assumptions, None)?;
         Ok(crate::kernel::CCheckedFunctionExecution {

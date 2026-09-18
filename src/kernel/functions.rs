@@ -1503,6 +1503,34 @@ pub(super) fn execute_c_function_verification_paths(
         } else {
             (callee_state, None)
         };
+        // A body that is judged as a whole is judged from its own entry, so
+        // this is where the declared `decreases` measure is read and the
+        // recursion anchor installed. The anchor is derived from the function
+        // in hand, not from anything a caller supplies, and a function that
+        // declares no measure gets the environment unchanged.
+        let anchored_environment = match crate::kernel::termination::c_function_recursion_anchor(
+            function,
+            &callee_state,
+            &body_assumptions,
+            budget,
+        ) {
+            Ok(Some(anchor)) => {
+                std::borrow::Cow::Owned(environment.clone().with_recursion_anchor(anchor))
+            }
+            Ok(None) => std::borrow::Cow::Borrowed(environment),
+            Err(message) => {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                        message,
+                    )),
+                    facts: arguments_path.facts,
+                    obligations: argument_obligations,
+
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
+                });
+                continue;
+            }
+        };
         let body_paths = crate::instrumentation::measure_operation(
             function.name(),
             "independent kernel execution",
@@ -1512,7 +1540,7 @@ pub(super) fn execute_c_function_verification_paths(
                     &callee_state,
                     function,
                     &body_assumptions,
-                    environment,
+                    &anchored_environment,
                     execution_semantics,
                     budget,
                     variables,
@@ -3382,6 +3410,56 @@ fn prepare_verified_function_call<'a>(
 
             loan_evidence: empty_checked_loan_evidence_sequence(),
         }));
+    }
+
+    // A self-call inside the certification of a function that declares an
+    // expression `decreases` measure owes the descent, after the callee's
+    // preconditions and read at the same state they were read at: the
+    // callee's parameters hold this call's arguments there, and a measure
+    // that reads memory sees the memory the callee will see. The obligations
+    // are ordinary verification conditions on this path, so a proof that does
+    // not discharge them does not get past the step, and an undischarged one
+    // is a premise of the path theorem.
+    //
+    // The anchor names one function and is installed only for the function
+    // being certified, so an ordinary call to another verified function is
+    // untouched, and so is every function that declares no measure. It is
+    // placed after the applicability gate above so a callback candidate is
+    // still selected by its preconditions alone.
+    if let Some(anchor) = environment.recursion_anchor()
+        && anchor.function() == application.name
+    {
+        // The measure ranked here is the one the anchor was derived from, so
+        // the two states being compared are readings of one declared object.
+        // An interface applied under this name that declares a different
+        // measure is refused rather than ranked by the wrong one.
+        if contract_interface.recursion_measure() != Some(anchor.component()) {
+            obligations.push(
+                ProofObligation::verification_condition(false_equals_true_proposition())
+                    .with_context(format!(
+                        "the contract applied for the recursive call to `{}` declares a different \
+                         `decreases` measure than the one being certified",
+                        application.name
+                    )),
+            );
+        } else {
+            let descent_assumptions =
+                assumptions_with_path_context(&path_assumptions, &facts, &obligations);
+            match crate::kernel::termination::collect_recursion_descent_obligations(
+                anchor,
+                &precondition_state,
+                &descent_assumptions,
+                budget,
+            ) {
+                Ok(descent) => obligations.extend(descent),
+                // A measure with no value at the call state is a proof failure
+                // at the call, never a silently skipped descent.
+                Err(message) => obligations.push(
+                    ProofObligation::verification_condition(false_equals_true_proposition())
+                        .with_context(message),
+                ),
+            }
+        }
     }
 
     let call_entry_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);

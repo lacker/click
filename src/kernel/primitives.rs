@@ -2307,6 +2307,16 @@ pub struct CFunctionContractInterface {
     /// Contract-local definitions for opaque Click predicate requirements.
     /// Both sides are instantiated at the exact function entry state.
     pub(crate) predicate_unfoldings: Vec<CPredicateUnfolding>,
+    /// The function's declared `decreases` measure, when it is a pure
+    /// expression rather than one int32 parameter or a structural resource.
+    ///
+    /// It lives on the interface, beside `contract_requires`, because that is
+    /// what a call site reads: applying this contract is the only way a
+    /// recursive call happens, and the descent obligation is owed there. It
+    /// is lowered exactly as a `requires` is, in the function-contract
+    /// elaboration context, so it names no state of its own and the kernel
+    /// picks the two states it is read at.
+    pub(crate) recursion_measure: Option<CRankingComponent>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2501,6 +2511,13 @@ pub struct CExecutionEnvironment {
     pub(super) verified_function_termination_rules:
         std::sync::Arc<BTreeMap<String, CVerifiedFunctionTerminationRule>>,
     pub(super) verified_loop_rules: std::sync::Arc<Vec<CVerifiedLoopRule>>,
+    /// The function currently being certified, when it declares an expression
+    /// `decreases` measure. It is part of this environment's identity below,
+    /// so a checked execution recorded without it is not reused to certify a
+    /// contract whose function declares one: an artifact stepped with no
+    /// anchor emitted no descent obligation, and certification must not take
+    /// it for one that did.
+    pub(super) recursion_anchor: Option<std::sync::Arc<CRecursionAnchor>>,
     pub(super) variable_index: CExecutionEnvironmentVariableIndex,
 }
 
@@ -2523,6 +2540,7 @@ impl std::fmt::Debug for CExecutionEnvironment {
                 &self.verified_function_termination_rules,
             )
             .field("verified_loop_rules", &self.verified_loop_rules)
+            .field("recursion_anchor", &self.recursion_anchor)
             .finish()
     }
 }
@@ -2538,6 +2556,7 @@ impl PartialEq for CExecutionEnvironment {
             && self.verified_function_rules == other.verified_function_rules
             && self.verified_function_termination_rules == other.verified_function_termination_rules
             && self.verified_loop_rules == other.verified_loop_rules
+            && self.recursion_anchor == other.recursion_anchor
     }
 }
 
@@ -2815,10 +2834,58 @@ impl CFunctionTerminationPlan {
 /// An untrusted description of the function-level ranking candidate. The
 /// termination checker resolves the selected parameter or exact contract
 /// resource again against the verified function.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///
+/// `Expression` names the declared spelling only. Unlike the other two, it
+/// selects no analysis of the body: the descent is owed as an ordinary
+/// obligation at each self-call, and the check this variant asks for is that
+/// the certified function's own interface carries the measure, so that those
+/// obligations were emitted. See [`CRecursionAnchor`].
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CFunctionTerminationMeasure {
     NumericParameter(usize),
     ResourceRequirement(usize),
+    Expression(String),
+}
+
+/// The kernel's record, while one C function is being certified, that a call
+/// to that same function owes a descent obligation.
+///
+/// `measure` is the declared measure read once at the function's own entry
+/// state, so it is the value the recursion starts from. A self-call is
+/// checked against this one term, never against a term the call site
+/// supplies: the surface can ask for an anchor (naming a function and an
+/// entry) but cannot choose what the anchor holds, because
+/// [`crate::kernel::c_execution_environment_with_recursion_anchor`] reads the
+/// measure off the function's own contract interface and evaluates it itself.
+///
+/// `entry_obligations` are what reading the measure at the entry owes: the
+/// loadability of its reads. They travel with the anchor and are emitted at
+/// the self-call, where the path context can discharge them, rather than
+/// being dropped.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CRecursionAnchor {
+    pub(super) function: String,
+    pub(super) component: CRankingComponent,
+    pub(super) measure: Bitvector32Term,
+    pub(super) entry_obligations: Vec<ProofObligation>,
+}
+
+impl CRecursionAnchor {
+    pub(super) fn function(&self) -> &str {
+        &self.function
+    }
+
+    pub(super) fn measure(&self) -> &Bitvector32Term {
+        &self.measure
+    }
+
+    pub(super) fn component(&self) -> &CRankingComponent {
+        &self.component
+    }
+
+    pub(super) fn entry_obligations(&self) -> &[ProofObligation] {
+        &self.entry_obligations
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

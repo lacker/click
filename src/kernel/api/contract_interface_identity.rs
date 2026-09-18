@@ -38,6 +38,22 @@ fn normalize(interface: &CFunctionContractInterface) -> CFunctionContractInterfa
     for segment in &mut interface.contract_mutable {
         names.segment(segment);
     }
+    // The declared `decreases` measure reads the same parameters the clauses
+    // read, so it is renamed with them; two declarations that differ only in
+    // what they call a parameter stay one interface.
+    if let Some(measure) = &mut interface.recursion_measure {
+        match measure {
+            CRankingComponent::CExpression(expression) => names.c(expression),
+            // The declared spelling is what a diagnostic prints, not part of
+            // the interface, exactly as a resource binder's spelling is not.
+            // Erase it so two declarations that differ only in what they call
+            // a parameter stay one interface.
+            CRankingComponent::Pure { source, expression } => {
+                source.clear();
+                names.expression(expression);
+            }
+        }
+    }
     interface
 }
 

@@ -468,14 +468,7 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
             // check's. Skipping them would let a fresh execution variable be
             // handed out with a name the measure already uses.
             for measure in ranking_measures {
-                match measure {
-                    CRankingComponent::CExpression(expression) => {
-                        collect_c_expression_bitvector_variables(expression, variables);
-                    }
-                    CRankingComponent::Pure { expression, .. } => {
-                        collect_spec_expression_bitvector_variables(expression, variables);
-                    }
-                }
+                collect_c_ranking_component_variables(measure, variables);
             }
             collect_c_statement_bitvector_variables(body, variables);
         }
@@ -484,6 +477,25 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
             for case in cases {
                 collect_c_statement_bitvector_variables(&case.body, variables);
             }
+        }
+    }
+}
+
+/// The variables one declared `decreases` component already names.
+///
+/// A component is read at the states the kernel picks and substitution
+/// rewrites it, so its variables are reserved wherever it travels: on a loop
+/// head, and on the recursion anchor of the function that declared it.
+pub(in crate::kernel) fn collect_c_ranking_component_variables(
+    component: &CRankingComponent,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match component {
+        CRankingComponent::CExpression(expression) => {
+            collect_c_expression_bitvector_variables(expression, variables);
+        }
+        CRankingComponent::Pure { expression, .. } => {
+            collect_spec_expression_bitvector_variables(expression, variables);
         }
     }
 }
@@ -1599,6 +1611,9 @@ pub(in crate::kernel) fn collect_c_function_contract_interface_bitvector_variabl
             collect_spec_proposition_bitvector_variables(guard, variables);
         }
     }
+    if let Some(measure) = interface.recursion_measure() {
+        collect_c_ranking_component_variables(measure, variables);
+    }
 }
 
 pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
@@ -1732,6 +1747,17 @@ fn collect_execution_environment_variables_uncached(
                 collect_proposition_bitvector_variables(obligation.proposition(), variables);
                 collect_proposition_bound_variables(obligation.proposition(), variables);
             }
+        }
+    }
+    // The anchor holds the certified function's measure read at its entry.
+    // Its variables are named by later call steps, so a fresh identity must
+    // not be handed out on top of one, exactly as for a loop head's measure.
+    if let Some(anchor) = environment.recursion_anchor() {
+        collect_bitvector_variables(anchor.measure(), variables);
+        collect_c_ranking_component_variables(anchor.component(), variables);
+        for obligation in anchor.entry_obligations() {
+            collect_proposition_bitvector_variables(obligation.proposition(), variables);
+            collect_proposition_bound_variables(obligation.proposition(), variables);
         }
     }
 }

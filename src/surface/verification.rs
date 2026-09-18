@@ -4149,13 +4149,23 @@ pub(in crate::surface) fn c_function_termination_plans(
                     Ok(crate::kernel::CFunctionTerminationMeasure::ResourceRequirement(index))
                 }
                 CFunctionDecrease::Numeric(measure) => {
-                    let name = termination_measure_name(
-                        measure,
-                        &format!(
-                            "function-level `decreases` in `{}`",
-                            function.signature().name()
-                        ),
-                    )?;
+                    // A bare name stays the measure it has always been: an
+                    // int32 parameter, resolved to an index the termination
+                    // checker analyses the body for, and refused by the same
+                    // message when it names nothing this function has. A
+                    // compound expression is ranked by obligations at the
+                    // recursive calls instead, so the plan carries only the
+                    // declared spelling and the lowered measure travels on the
+                    // contract interface.
+                    let context = format!(
+                        "function-level `decreases` in `{}`",
+                        function.signature().name()
+                    );
+                    let Ok(name) = termination_measure_name(measure, &context) else {
+                        return Ok(crate::kernel::CFunctionTerminationMeasure::Expression(
+                            termination_measure_source(measure),
+                        ));
+                    };
                     let index = function
                         .signature()
                         .parameters()
@@ -5817,6 +5827,7 @@ pub(in crate::surface) fn build_function_environment(
                     contract_claims,
                     opaque_supported,
                     predicate_unfoldings,
+                    recursion_measure,
                 ) = function_contract_summary(
                     function_block,
                     function,
@@ -5846,6 +5857,9 @@ pub(in crate::surface) fn build_function_environment(
                         opaque_supported,
                     )
                     .with_contract_requirement_sources(contract_requirement_sources);
+                if let Some(measure) = recursion_measure {
+                    function = function.with_recursion_measure(measure);
+                }
                 if function_block.signature().exceptional_type().is_some() {
                     function = function
                         .with_int32_exceptional_outcome()

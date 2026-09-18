@@ -2964,16 +2964,8 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
             condition: substitute_bitvector_variable_in_c_expression(condition, from, to),
             ranking_measures: ranking_measures
                 .iter()
-                .map(|measure| match measure {
-                    CRankingComponent::CExpression(expression) => CRankingComponent::CExpression(
-                        substitute_bitvector_variable_in_c_expression(expression, from, to),
-                    ),
-                    CRankingComponent::Pure { source, expression } => CRankingComponent::Pure {
-                        source: source.clone(),
-                        expression: substitute_bitvector_variable_in_spec_expression(
-                            expression, from, to,
-                        ),
-                    },
+                .map(|measure| {
+                    substitute_bitvector_variable_in_c_ranking_component(measure, from, to)
                 })
                 .collect(),
             resource_specs: resource_specs
@@ -4065,6 +4057,23 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_resource(
     }
 }
 
+/// One declared `decreases` component under a bitvector substitution.
+pub(in crate::kernel) fn substitute_bitvector_variable_in_c_ranking_component(
+    measure: &CRankingComponent,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CRankingComponent {
+    match measure {
+        CRankingComponent::CExpression(expression) => CRankingComponent::CExpression(
+            substitute_bitvector_variable_in_c_expression(expression, from, to),
+        ),
+        CRankingComponent::Pure { source, expression } => CRankingComponent::Pure {
+            source: source.clone(),
+            expression: substitute_bitvector_variable_in_spec_expression(expression, from, to),
+        },
+    }
+}
+
 pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
     function: &CFunction,
     from: Variable,
@@ -4106,6 +4115,13 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
         .iter()
         .map(|segment| substitute_bitvector_variable_in_c_memory_segment(segment, from, to))
         .collect();
+    // The declared measure is read at states like a `requires` is, so it is
+    // rewritten with them; leaving it behind would make a substituted
+    // interface rank the recursion by the pre-substitution names.
+    interface.recursion_measure = interface
+        .recursion_measure
+        .as_ref()
+        .map(|measure| substitute_bitvector_variable_in_c_ranking_component(measure, from, to));
     interface.composite_resource_definitions = function
         .composite_resource_definitions()
         .iter()
@@ -6121,16 +6137,8 @@ fn substitute_pointer_variable_in_c_statement(
             condition: substitute_pointer_variable_in_c_expression(condition, from, to),
             ranking_measures: ranking_measures
                 .iter()
-                .map(|measure| match measure {
-                    CRankingComponent::CExpression(expression) => CRankingComponent::CExpression(
-                        substitute_pointer_variable_in_c_expression(expression, from, to),
-                    ),
-                    CRankingComponent::Pure { source, expression } => CRankingComponent::Pure {
-                        source: source.clone(),
-                        expression: substitute_pointer_variable_in_spec_expression(
-                            expression, from, to,
-                        ),
-                    },
+                .map(|measure| {
+                    substitute_pointer_variable_in_c_ranking_component(measure, from, to)
                 })
                 .collect(),
             resource_specs: resource_specs
@@ -7327,6 +7335,23 @@ fn substitute_pointer_variable_in_spec_resource(
     }
 }
 
+/// One declared `decreases` component under a pointer substitution.
+pub(in crate::kernel) fn substitute_pointer_variable_in_c_ranking_component(
+    measure: &CRankingComponent,
+    from: Variable,
+    to: &Pointer,
+) -> CRankingComponent {
+    match measure {
+        CRankingComponent::CExpression(expression) => CRankingComponent::CExpression(
+            substitute_pointer_variable_in_c_expression(expression, from, to),
+        ),
+        CRankingComponent::Pure { source, expression } => CRankingComponent::Pure {
+            source: source.clone(),
+            expression: substitute_pointer_variable_in_spec_expression(expression, from, to),
+        },
+    }
+}
+
 fn substitute_pointer_variable_in_c_function(
     function: &CFunction,
     from: Variable,
@@ -7368,6 +7393,12 @@ fn substitute_pointer_variable_in_c_function(
         .iter()
         .map(|segment| substitute_pointer_variable_in_c_memory_segment(segment, from, to))
         .collect();
+    // See `substitute_bitvector_variable_in_c_function`: the declared measure
+    // is rewritten with the clauses it is read beside.
+    interface.recursion_measure = interface
+        .recursion_measure
+        .as_ref()
+        .map(|measure| substitute_pointer_variable_in_c_ranking_component(measure, from, to));
     interface.composite_resource_definitions = function
         .composite_resource_definitions()
         .iter()

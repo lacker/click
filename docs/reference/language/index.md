@@ -138,7 +138,8 @@ loop, every recursive cycle, and every callee. Write `decreases` wherever
 there is a real cycle that Click does not already rank: a loop the proof
 summarizes, or a recursive call. A `decreases` clause is always one expression, and what it names
 decides which measure it is: an `int32` parameter, a resource application such
-as `list(node)`, or a contract or loop resource binder such as `t`. Functions
+as `list(node)`, a contract or loop resource binder such as `t`, or, on a
+self-recursive function, any pure `int32` expression. Functions
 and resources share one namespace, so that classification happens after name
 resolution rather than from a keyword; there is no `decreases resource`
 spelling. A function-level measure ranks recursive calls:
@@ -174,6 +175,56 @@ int32 list_destroy(struct node* node) {
     ensures result == 0;
 }
 ```
+
+A self-recursive function may instead rank itself by any pure `int32`
+expression: a C fragment, a memory read, an application of a pure Click
+function, a resource model field — the same vocabulary a loop component has.
+This is what ranks a recursion whose real measure has no parameter to name,
+such as one that walks a cell the same pointer keeps pointing at:
+
+<!-- verified-example: mdtests/c_decreases_memory_measure_recursion.md -->
+```click
+int32 drain(int32 box[4]) {
+    decreases head(box);
+    owns box[0..4];
+    requires box[0] >= 0;
+    ensures result == 0;
+}
+```
+
+An expression measure is not an analysis of the body, and this is the one
+place the two function-level shapes differ. Click reads the declared
+expression once at the function's own entry, giving the value M0 the recursion
+starts from, and again at each call to that function inside it, at the state
+the callee's preconditions are read at. The call then owes two ordinary
+verification conditions, which the proof discharges before its `step()`, just
+as it discharges a precondition:
+
+* the measure at the call is nonnegative, and
+* the measure at the call is strictly below M0.
+
+The application stays opaque, so each obligation is stated with a `have` that
+unfolds it, and `old(...)` names the entry reading — the function-level
+counterpart of the `invariant head(box) == box[0]` idiom a loop uses. See
+`mdtests/c_decreases_pure_expression_recursion.md` and
+`mdtests/c_decreases_memory_measure_recursion.md`. A measure the recursive
+call does not lower leaves the descent obligation open exactly as a loop's
+does: `mdtests/c_decreases_pure_expression_recursion_must_descend.md`.
+
+The same rule about fixed states applies: a function-level component may not
+mention `old(...)` or `at(...)`, because Click reads the one declared
+component at two states itself.
+
+An expression measure currently ranks **direct self-recursion only**. The
+descent is owed at a call to the function that declared the measure, so a
+recursive component with more than one function would leave its other edges
+ranked by nothing; Click refuses such a declaration by name
+(`mdtests/c_decreases_pure_expression_rejects_mutual_recursion.md`). For the
+same reason it refuses a self-recursive `static inline` helper, whose body
+executes at each call site instead of applying a contract, and a self-call
+inside a loop, which the loop's summary swallows before any step of the
+function's proof takes it. `decreases <int32 parameter>`, whose analysis reads
+the body rather than the call steps, still ranks all three shapes.
 
 A binder the contract already declares names the same measure without
 repeating its arguments:

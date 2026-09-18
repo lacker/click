@@ -1938,6 +1938,134 @@ fn c_ranking_measure_condition_term(
     }
 }
 
+/// The recursion anchor for one C function at its own entry state, or `None`
+/// when the function declares no expression `decreases` measure.
+///
+/// This is the only construction of a [`CRecursionAnchor`]. The measure is
+/// read off `function`'s contract interface, never from a caller argument, so
+/// asking for an anchor cannot choose what the anchor ranks; the caller
+/// chooses only which function and which entry. Reading it once here, at the
+/// entry, is what makes M0 the value the whole recursion starts from: every
+/// self-call inside this certification is compared to this one term.
+///
+/// A measure that reads memory owes the loadability of its reads. Those
+/// obligations are kept on the anchor and emitted at the self-call, where the
+/// path context can discharge them, rather than dropped.
+///
+/// Work is the declared measure, and the evaluation it needs; nothing
+/// ambient is scanned.
+pub(super) fn c_function_recursion_anchor(
+    function: &CFunction,
+    entry_state: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> Result<Option<CRecursionAnchor>, String> {
+    let Some(component) = function.contract_interface().recursion_measure() else {
+        return Ok(None);
+    };
+    let mut reader = CRankingMeasureReader {
+        assumptions,
+        budget,
+        reads: Default::default(),
+    };
+    let measure = c_ranking_measure_term(component, entry_state, &mut reader).map_err(|error| {
+        format!(
+            "the `decreases` measure `{}` of `{}` could not be read at its own entry state: \
+             {error}",
+            c_ranking_measure_display(component),
+            function.name()
+        )
+    })?;
+    let reads = reader.reads;
+    let read_assumptions = assumptions_with_path_context(assumptions, &reads.facts, &[]);
+    let mut entry_obligations = Vec::new();
+    for obligation in &reads.obligations {
+        add_required_proof_obligation_without_search(
+            &mut entry_obligations,
+            &read_assumptions,
+            obligation.proposition().clone(),
+            Some("a recursion measure's read is loadable at the function entry"),
+            None,
+        );
+    }
+    Ok(Some(CRecursionAnchor {
+        function: function.name().to_string(),
+        component: component.clone(),
+        measure,
+        entry_obligations,
+    }))
+}
+
+/// The ranking members one self-call owes, against the anchor's M0.
+///
+/// The callee's declared measure is read at `state`, the same state the
+/// callee's preconditions are read at, so the parameters it names hold the
+/// arguments this call passes and a read it performs sees the memory the
+/// callee will see. The two members are the function-level form of the loop's
+/// back-edge bundle: the callee's measure is nonnegative, and it is strictly
+/// below the value the caller's own entry gave. A recursion whose every step
+/// satisfies both cannot be infinite, whatever the measure counts.
+pub(super) fn collect_recursion_descent_obligations(
+    anchor: &CRecursionAnchor,
+    state: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> Result<Vec<ProofObligation>, String> {
+    let component = anchor.component();
+    let mut reader = CRankingMeasureReader {
+        assumptions,
+        budget,
+        reads: Default::default(),
+    };
+    let called = c_ranking_measure_term(component, state, &mut reader).map_err(|error| {
+        format!(
+            "the `decreases` measure `{}` of `{}` could not be read at the recursive call: \
+             {error}",
+            c_ranking_measure_display(component),
+            anchor.function()
+        )
+    })?;
+    let reads = reader.reads;
+    let read_assumptions = assumptions_with_path_context(assumptions, &reads.facts, &[]);
+    let context = format!("{} recursion measure", anchor.function());
+    let mut obligations = Vec::new();
+    for obligation in anchor
+        .entry_obligations()
+        .iter()
+        .chain(reads.obligations.iter())
+    {
+        add_required_proof_obligation_without_search(
+            &mut obligations,
+            &read_assumptions,
+            obligation.proposition().clone(),
+            Some(&context),
+            None,
+        );
+    }
+    let display = c_ranking_measure_display(component);
+    obligations.push(
+        ProofObligation::verification_condition(Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), called.clone()),
+            true,
+        ))
+        .with_introductions(LoweringIntroductions::new())
+        .with_context(format!(
+            "{context}: `{display}` is nonnegative at the recursive call"
+        )),
+    );
+    obligations.push(
+        ProofObligation::verification_condition(Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(called, anchor.measure().clone()),
+            true,
+        ))
+        .with_introductions(LoweringIntroductions::new())
+        .with_context(format!(
+            "{context}: `{display}` decreases at the recursive call"
+        )),
+    );
+    Ok(obligations)
+}
+
 /// The display form of one `decreases` component, for bundle member contexts.
 pub(super) fn c_ranking_measure_display(measure: &CRankingComponent) -> String {
     match measure {
@@ -2895,6 +3023,129 @@ fn termination_call_graph<'a>(
     (functions, calls)
 }
 
+/// What an expression `decreases` measure asks of the function that declares
+/// it (D6, slice 1: direct self-recursion).
+///
+/// The other two function-level measures are analyses of the body: the
+/// checker walks the recursion paths itself and decides that the named
+/// parameter or resource descends. This one is not. The descent is an
+/// ordinary proof obligation, emitted by the kernel at every application of
+/// this function's contract while this function is being certified, and
+/// discharged in the proof like any other. So the only thing left for this
+/// judgment is to check that those obligations were reachable and complete:
+///
+/// * the certified function's own contract interface carries the measure.
+///   The plan is untrusted and names only a spelling; the interface is what
+///   [`crate::kernel::c_execution_environment_with_recursion_anchor`] reads
+///   to build the anchor, and the certified [`CFunction`] here is the one the
+///   rule was issued for, so a measure present here is a measure that was
+///   anchored. A plan claiming a measure the interface does not carry is a
+///   plan for obligations nobody emitted, and it is refused.
+/// * every recursive edge of this component is a call to this function
+///   itself. The anchor names one function, so a call to a *different*
+///   member of the cycle owes nothing, and a two-function cycle would be
+///   certified with no descent anywhere. Such a component is refused by name
+///   rather than admitted; `decreases <parameter>` still ranks it.
+/// * the function does not have an inline body. An inline body executes at
+///   the call site instead of applying a contract, so no call step reads the
+///   anchor and no obligation is emitted at all.
+///
+/// Work is the component's own members, which is the caller's recursive-edge
+/// set; nothing ambient is scanned.
+fn check_expression_measure_recursion(
+    name: &str,
+    source: &str,
+    function: &CFunction,
+    recursive_callees: &BTreeSet<String>,
+    plans: &BTreeMap<String, &CFunctionTerminationPlan>,
+) -> Result<(), CTerminationError> {
+    if function.contract_interface().recursion_measure().is_none() {
+        return Err(error(format!(
+            "the termination plan ranks `{name}` by the expression measure `{source}`, but the \
+             certified `{name}` carries no declared measure, so no recursive call of it owed a \
+             descent obligation"
+        )));
+    }
+    if function.has_inline_body() {
+        return Err(error(format!(
+            "`{name}` declares the expression `decreases` measure `{source}` and has an inline \
+             body. An inline body executes at each call site instead of applying `{name}`'s \
+             contract, so a self-call inside it is never ranked. Give `{name}` a Click contract, \
+             or rank it with `decreases <int32 parameter>`"
+        )));
+    }
+    for callee in recursive_callees {
+        charge_termination_work(1);
+        if callee == name {
+            continue;
+        }
+        return Err(error(format!(
+            "`{name}` declares the expression `decreases` measure `{source}` and is in a \
+             recursive component with `{callee}`. An expression measure currently ranks direct \
+             self-recursion only: the descent is owed at a call to the function that declared \
+             the measure, so a call to `{callee}` would be ranked by nothing. Rank this component \
+             with `decreases <int32 parameter>`"
+        )));
+    }
+    // Every member of a settled component agrees on its measure kind. With
+    // the loop above, the component is `{name}` alone, so this reads one plan.
+    if !matches!(
+        plans
+            .get(name)
+            .and_then(|plan| plan.recursive_measure.as_ref()),
+        Some(CFunctionTerminationMeasure::Expression(_))
+    ) {
+        return Err(error(
+            "a recursive component cannot mix an expression measure with another measure kind",
+        ));
+    }
+    // A loop is verified once, as its own judgment, and then applied as a
+    // summary. The anchor belongs to the whole-function proof, so a self-call
+    // the loop summary swallowed is a call no step of this function's proof
+    // ever took, and the descent would be owed by nobody. Refuse it by name
+    // instead of certifying a recursion with a gap in it; `decreases
+    // <int32 parameter>`, whose analysis reads the body rather than the call
+    // steps, still ranks this shape.
+    if statement_calls_under_loop(&function.source_body, name, false) {
+        return Err(error(format!(
+            "`{name}` declares the expression `decreases` measure `{source}` and calls itself \
+             inside a loop. A loop is verified as its own judgment and then applied as a summary, \
+             so the descent at that call would be owed by no step of `{name}`'s proof. Rank this \
+             function with `decreases <int32 parameter>`, or lift the recursive call out of the \
+             loop"
+        )));
+    }
+    Ok(())
+}
+
+/// Whether `body` calls `callee` from inside a loop.
+///
+/// Work is the statement tree, which is this function's own body; nothing
+/// outside it is read.
+fn statement_calls_under_loop(body: &CStatement, callee: &str, inside_loop: bool) -> bool {
+    charge_termination_work(1);
+    let both = |left: &CStatement, right: &CStatement| {
+        statement_calls_under_loop(left, callee, inside_loop)
+            || statement_calls_under_loop(right, callee, inside_loop)
+    };
+    match body {
+        CStatement::Call { function_name, .. } | CStatement::CallAssign { function_name, .. } => {
+            inside_loop && function_name == callee
+        }
+        CStatement::While { body, .. } => statement_calls_under_loop(body, callee, true),
+        CStatement::Seq(left, right) => both(left, right),
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => both(then_branch, else_branch),
+        CStatement::Switch { cases, .. } => cases
+            .iter()
+            .any(|case| statement_calls_under_loop(&case.body, callee, inside_loop)),
+        _ => false,
+    }
+}
+
 /// Proposes a height for every node of the termination call graph: zero for a
 /// function that calls no other node, and otherwise one more than its highest
 /// callee outside its own recursive cycle. The members of a cycle share a
@@ -3224,7 +3475,7 @@ pub fn c_verified_function_termination_rules(
                 }
 
                 let plan = plans.get(name);
-                let recursive_measure = plan.and_then(|plan| plan.recursive_measure);
+                let recursive_measure = plan.and_then(|plan| plan.recursive_measure.clone());
                 let mut parameter_indices = BTreeMap::new();
                 let mut structural_requirement = None;
                 if recursive_callees.is_empty() {
@@ -3264,6 +3515,16 @@ pub fn c_verified_function_termination_rules(
                         ));
                     }
                     structural_requirement = Some(index);
+                } else if let Some(CFunctionTerminationMeasure::Expression(source)) =
+                    &recursive_measure
+                {
+                    check_expression_measure_recursion(
+                        name,
+                        source,
+                        function,
+                        &recursive_callees,
+                        &plans,
+                    )?;
                 } else {
                     for member in std::iter::once(name).chain(recursive_callees.iter()) {
                         charge_termination_work(1);
@@ -4663,6 +4924,146 @@ mod local_descent_tests {
         assert_eq!(plan[&name(LENGTH - 1)], 0);
         let verdicts = check(&rules, &[], &plan, &[]).expect("the plan checks");
         assert_eq!(verdicts.rules.len(), LENGTH);
+    }
+
+    /// A rule for a self-recursive `name` that also calls each of `callees`,
+    /// carrying the declared measure on its contract interface when `measure`
+    /// says so. `inline` makes the body a header-provided inline helper.
+    fn recursive_rule(
+        name: &str,
+        callees: &[&str],
+        measure: bool,
+        inline: bool,
+        in_loop: bool,
+    ) -> CVerifiedFunctionRule {
+        let mut body = CStatement::Skip;
+        for callee in std::iter::once(&name).chain(callees) {
+            let call = crate::kernel::c_call(*callee, Vec::new());
+            let call = if in_loop {
+                crate::kernel::c_while(crate::kernel::c_int32_literal(1), Vec::new(), call)
+            } else {
+                call
+            };
+            body = CStatement::Seq(Arc::new(body), Arc::new(call));
+        }
+        let mut function = CFunction::new(CType::Void, name, Vec::new(), body);
+        if measure {
+            function = function.with_recursion_measure(CRankingComponent::Pure {
+                source: "level(n)".to_string(),
+                expression: SpecExpression::CExpression(CExpression::Variable("n".to_string())),
+            });
+        }
+        if inline {
+            function = function.with_inline_body();
+        }
+        CVerifiedFunctionRule {
+            function,
+            loop_semantics: CLoopSemantics::ApplyVerifiedRules,
+        }
+    }
+
+    fn expression_plan(name: &str) -> CFunctionTerminationPlan {
+        CFunctionTerminationPlan {
+            function_name: name.to_string(),
+            recursive_measure: Some(CFunctionTerminationMeasure::Expression(
+                "level(n)".to_string(),
+            )),
+            loop_measures: BTreeMap::new(),
+        }
+    }
+
+    /// The expression measure certifies direct self-recursion. Nothing about
+    /// the body is analysed: the descent rides on obligations the call steps
+    /// raised while this rule was being certified.
+    #[test]
+    fn an_expression_measure_ranks_direct_self_recursion() {
+        let rules = [recursive_rule("drain", &[], true, false, false)];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let verdicts =
+            check(&rules, &[expression_plan("drain")], &plan, &[]).expect("the plan checks");
+        assert_eq!(terminating(&verdicts), BTreeSet::from(["drain"]));
+    }
+
+    /// The plan is untrusted. A plan claiming an expression measure for a
+    /// function whose certified interface declares none is a plan for
+    /// obligations no call step emitted.
+    #[test]
+    fn an_expression_plan_without_a_declared_measure_is_rejected() {
+        let rules = [recursive_rule("drain", &[], false, false, false)];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let error = check(&rules, &[expression_plan("drain")], &plan, &[])
+            .expect_err("an undeclared measure must not check");
+        assert!(
+            error.message.contains("carries no declared measure"),
+            "{error:?}"
+        );
+    }
+
+    /// The anchor names one function, so a second member of the cycle owes
+    /// nothing. Slice 1 refuses such a component rather than certifying a
+    /// recursion with an unranked edge.
+    #[test]
+    fn an_expression_measure_refuses_a_mutually_recursive_component() {
+        let rules = [
+            recursive_rule("even", &["odd"], true, false, false),
+            recursive_rule("odd", &["even"], true, false, false),
+        ];
+        let heights = heights(&[("even", 0), ("odd", 0)]);
+        let error = check(
+            &rules,
+            &[expression_plan("even"), expression_plan("odd")],
+            &heights,
+            &[],
+        )
+        .expect_err("a two-function cycle must not check");
+        assert!(
+            error.message.contains("recursive component with"),
+            "{error:?}"
+        );
+    }
+
+    /// An inline body executes at the call site instead of applying a
+    /// contract, so no call step reads the anchor and no descent is ever
+    /// owed.
+    #[test]
+    fn an_expression_measure_refuses_an_inline_bodied_helper() {
+        let rules = [recursive_rule("drain", &[], true, true, false)];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let error = check(&rules, &[expression_plan("drain")], &plan, &[])
+            .expect_err("an inline self-recursive helper must not check");
+        assert!(error.message.contains("inline body"), "{error:?}");
+    }
+
+    /// A loop is verified once and then applied as a summary, so a self-call
+    /// inside one is a call no step of this function's proof takes.
+    #[test]
+    fn an_expression_measure_refuses_a_self_call_inside_a_loop() {
+        let rules = [recursive_rule("drain", &[], true, false, true)];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let error = check(&rules, &[expression_plan("drain")], &plan, &[])
+            .expect_err("a self-call under a loop must not check");
+        assert!(error.message.contains("inside a loop"), "{error:?}");
+    }
+
+    /// `decreases <parameter>` is untouched: it still resolves the index
+    /// against the verified function and analyses the recursion paths.
+    #[test]
+    fn a_parameter_measure_is_unaffected_by_a_declared_expression_measure() {
+        let rules = [recursive_rule("drain", &[], false, false, false)];
+        let plan = c_termination_height_plan(&rules, &[]);
+        let numeric = CFunctionTerminationPlan {
+            function_name: "drain".to_string(),
+            recursive_measure: Some(CFunctionTerminationMeasure::NumericParameter(0)),
+            loop_measures: BTreeMap::new(),
+        };
+        let error = check(&rules, &[numeric], &plan, &[])
+            .expect_err("`drain` has no parameter to rank, as before");
+        assert!(
+            error
+                .message
+                .contains("termination parameter index is invalid"),
+            "{error:?}"
+        );
     }
 }
 
