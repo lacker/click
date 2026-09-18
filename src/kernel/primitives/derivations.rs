@@ -1120,6 +1120,43 @@ impl ExecutionBudget {
     /// that has counted into their range; the execution refuses instead.
     pub(in crate::kernel) const KERNEL_VARIABLE_CEILING: u64 = 2_000_000;
 
+    /// The first identity a lowered match arm's binder may use.
+    ///
+    /// A match binder is a *bound* variable of the term it is lowered into,
+    /// so its identity has to be distinguishable from every *free* identity
+    /// any state or term around it can carry. Reserving a range for it is
+    /// what makes that distinction structural: nothing else mints an
+    /// identity here, so an occurrence of one of these in an arm body is a
+    /// bound occurrence of that arm's binder and nothing else.
+    ///
+    /// The range overlaps none of the reserved ones: the execution counter
+    /// runs `1_000_000 .. 2_000_000`, the surface's quantifier variables
+    /// start at `2_000_000`, the spec fold binders span
+    /// `3_000_000 .. 1_003_000_000`, the surface's algebraic binders step by
+    /// `65_536` from `4_000_000`, symbolic pointer blocks span
+    /// `4_000_000_000 .. 8_000_000_000`, and the load variables span
+    /// `1 << 40 .. 1 << 41`. The kernel test
+    /// `the_match_binder_range_is_disjoint_from_every_other_producer` asserts
+    /// that rather than leaving it to this comment.
+    pub(in crate::kernel) const MATCH_BINDER_VARIABLE_BASE: u64 = 1 << 41;
+
+    /// The first identity past the match-binder range. One lowering that
+    /// needed more binders than this would start naming something else, so
+    /// it refuses here exactly as the execution counter refuses at
+    /// [`Self::KERNEL_VARIABLE_CEILING`].
+    pub(in crate::kernel) const MATCH_BINDER_VARIABLE_CEILING: u64 = 1 << 42;
+
+    /// Whether `variable` is a match-arm binder identity.
+    ///
+    /// A rewrite that eliminates a binder asks this before substituting: an
+    /// identity outside the range is a free variable of some execution or
+    /// producer, and substituting it would be a capture rather than a
+    /// binder elimination.
+    pub(in crate::kernel) fn is_match_binder_variable(variable: Variable) -> bool {
+        (Self::MATCH_BINDER_VARIABLE_BASE..Self::MATCH_BINDER_VARIABLE_CEILING)
+            .contains(&variable.0)
+    }
+
     /// The first runtime error an evaluation under this budget dropped
     /// because every path of a sub-evaluation ended in one, for the message
     /// a caller writes when the evaluation produced no value path at all.
@@ -1140,6 +1177,8 @@ impl ExecutionBudget {
             paths: 10_000,
             next_opaque_call: 0,
             next_kernel_variable,
+            next_match_binder_variable: Self::MATCH_BINDER_VARIABLE_BASE,
+            refuses_execution_identities: false,
             dropped_runtime_error: None,
         }
     }
@@ -1171,23 +1210,30 @@ impl ExecutionBudget {
         Self::with_kernel_variable_counter(Self::KERNEL_VARIABLE_BASE + mark)
     }
 
-    /// A budget that restarts the counter although the state it evaluates
-    /// against belongs to a live execution. **This is the hazard, named.**
+    /// A budget for evaluating against a state that belongs to a live
+    /// execution, from a site the execution's mark has not been threaded to.
+    /// **It cannot allocate an execution identity at all.**
     ///
-    /// It exists so that no call site can restart the counter by writing
-    /// nothing: a site whose execution mark has not been threaded to it has
-    /// to say so here, and one `grep` finds every one of them. Each such site
-    /// can hand a match binder, a witness, an opaque call result or a
-    /// re-bound model field an identity the enclosing execution already gave
-    /// to a havocked local or a join abstraction.
+    /// It used to restart the counter at [`Self::KERNEL_VARIABLE_BASE`] and
+    /// say so in its name, which made the hazard greppable but left it live:
+    /// the one site that did allocate handed match binders the identities a
+    /// loop havoc had already given to a local, and the binder-elimination
+    /// rewrite substituted the local along with the binder. Match binders
+    /// now come from [`Self::MATCH_BINDER_VARIABLE_BASE`], a range no
+    /// execution can reach, so nothing these sites invent needs the
+    /// execution counter — and asking for one is a defect in the caller
+    /// rather than a silent collision. The request refuses with
+    /// [`ExecutionLimit::ExecutionIdentityBesideLiveState`].
     ///
-    /// The remaining users are the proof-side evaluation families reached
-    /// from the surface's `have`, `fold`, `unfold` and theorem-application
-    /// drivers, which do not carry the execution's mark. Threading it to them
-    /// is a change across the proof engine rather than a mechanical one;
-    /// `docs/internals/kernel.md` records the gap.
+    /// The users are the proof-side evaluation families reached from the
+    /// surface's `have`, `fold`, `unfold` and theorem-application drivers,
+    /// which do not carry the execution's mark. A site that genuinely has to
+    /// invent an execution identity must be given that mark and use
+    /// [`Self::continuing_from`]; `docs/internals/kernel.md` records why.
     pub(crate) fn restarting_beside_live_state() -> Self {
-        Self::for_new_execution()
+        let mut budget = Self::for_new_execution();
+        budget.refuses_execution_identities = true;
+        budget
     }
 
     /// [`Self::for_new_execution`] under its historical name, for tests that
@@ -1328,7 +1374,14 @@ impl ExecutionBudget {
     /// quantifier variables, then the spec fold binders, then the algebraic
     /// binders, silently: each of those ranges is chosen to be disjoint from
     /// this one and nothing else enforces it. The check is one comparison.
+    ///
+    /// A budget built by [`Self::restarting_beside_live_state`] cannot issue
+    /// one at all: its counter would restart over identities the live state
+    /// already holds, and nothing it evaluates needs an execution identity.
     pub(in crate::kernel) fn allocate_kernel_variable(&mut self) -> ExecutionResult<Variable> {
+        if self.refuses_execution_identities {
+            return Err(ExecutionLimit::ExecutionIdentityBesideLiveState);
+        }
         if self.next_kernel_variable >= Self::KERNEL_VARIABLE_CEILING {
             return Err(ExecutionLimit::KernelVariables {
                 ceiling: Self::KERNEL_VARIABLE_CEILING,
@@ -1336,6 +1389,36 @@ impl ExecutionBudget {
         }
         let variable = Variable(self.next_kernel_variable);
         self.next_kernel_variable += 1;
+        Ok(variable)
+    }
+
+    /// One binder identity for a match arm this lowering is building.
+    ///
+    /// The counter is this budget's own and counts through
+    /// [`Self::MATCH_BINDER_VARIABLE_BASE`], so two binders of one lowering
+    /// -- including a nested match's, whose arms are lowered while the
+    /// enclosing arm is being built -- are always distinct, and no binder can
+    /// equal a free identity of any execution, quantifier, fold, load or
+    /// pointer producer.
+    ///
+    /// Two separately lowered terms do reuse these identities, because each
+    /// budget starts its binder counter at the base. That is safe exactly
+    /// because they are bound: substituting one term under the other's binder
+    /// goes through `TermRewrite`, which alpha-renames a binder that would
+    /// capture a free variable of the replacement and stops substituting
+    /// under a binder that shadows the variable being replaced. Alpha-
+    /// equivalent terms are interchangeable; a free identity shared with
+    /// something live is not.
+    pub(in crate::kernel) fn allocate_match_binder_variable(
+        &mut self,
+    ) -> ExecutionResult<Variable> {
+        if self.next_match_binder_variable >= Self::MATCH_BINDER_VARIABLE_CEILING {
+            return Err(ExecutionLimit::MatchBinderVariables {
+                ceiling: Self::MATCH_BINDER_VARIABLE_CEILING,
+            });
+        }
+        let variable = Variable(self.next_match_binder_variable);
+        self.next_match_binder_variable += 1;
         Ok(variable)
     }
 

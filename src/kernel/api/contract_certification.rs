@@ -1282,6 +1282,10 @@ pub(super) fn describe_execution_limit(limit: ExecutionLimit) -> &'static str {
             "an unsupported integer existential body"
         }
         ExecutionLimit::KernelVariables { .. } => "the execution's fresh-identity range",
+        ExecutionLimit::MatchBinderVariables { .. } => "the match-binder identity range",
+        ExecutionLimit::ExecutionIdentityBesideLiveState => {
+            "an internal request for an execution identity beside a live state"
+        }
     }
 }
 

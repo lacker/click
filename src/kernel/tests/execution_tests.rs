@@ -2639,24 +2639,84 @@ fn a_reached_mark_round_trips_into_the_next_budget() {
     }
 }
 
-/// The remaining restarting sites are named, not hidden.
+/// A budget beside a live state cannot invent an execution identity at all.
 ///
-/// `ExecutionBudget::restarting_beside_live_state` restarts the counter at the
-/// base although the state its evaluation runs over belongs to a live
-/// execution. It exists so that a site whose mark has not been threaded to it
-/// has to say so. This states what it does, so that threading a family off it
-/// is a visible change rather than a silent one.
+/// `ExecutionBudget::restarting_beside_live_state` evaluates over a state that
+/// belongs to an execution whose mark the caller does not carry, so an
+/// identity counted from the base would name a havocked local, a join
+/// abstraction or a heap block that state already holds. Nothing those sites
+/// invent needs one: a match binder comes from the reserved binder range, and
+/// anything else has to be given the execution's mark. The request is a defect
+/// in the caller and refuses as one.
 #[test]
-fn a_restarting_budget_says_so_and_starts_at_the_base() {
-    let mut restarting = ExecutionBudget::restarting_beside_live_state();
+fn a_budget_beside_a_live_state_refuses_an_execution_identity() {
+    let mut beside = ExecutionBudget::restarting_beside_live_state();
     assert_eq!(
-        restarting.next_kernel_variable(),
-        0,
-        "the named restart is a restart: it reports no identities spent"
+        beside.allocate_kernel_variable(),
+        Err(ExecutionLimit::ExecutionIdentityBesideLiveState),
+        "an execution identity beside a live state is a defect, not a restart"
     );
     assert_eq!(
-        restarting.allocate_kernel_variable().expect("an identity"),
-        Variable(ExecutionBudget::KERNEL_VARIABLE_BASE),
-        "and it counts from the base, beside whatever the live state already uses"
+        beside.allocate_match_binder_variable(),
+        Ok(Variable(ExecutionBudget::MATCH_BINDER_VARIABLE_BASE)),
+        "a bound variable is not an execution identity and stays available"
+    );
+}
+
+/// Match binders are bound variables, and their range overlaps nothing that
+/// can appear free beside them.
+///
+/// The execution counter runs `1_000_000 .. 2_000_000`; the surface's
+/// quantifier variables start at `2_000_000`; the spec fold binders span
+/// `3_000_000 .. 1_003_000_000`, which contains the surface's algebraic
+/// binders stepping by `65_536` from `4_000_000`; symbolic pointer blocks span
+/// `4_000_000_000 .. 8_000_000_000`; load variables span `1 << 40 .. 1 << 41`.
+/// The match-binder range has to miss all of them, because a binder that
+/// equals a free identity is exactly the capture the binder-elimination
+/// rewrite cannot see.
+#[test]
+fn the_match_binder_range_is_disjoint_from_every_other_producer() {
+    let binders =
+        ExecutionBudget::MATCH_BINDER_VARIABLE_BASE..ExecutionBudget::MATCH_BINDER_VARIABLE_CEILING;
+    let reserved: [(&str, std::ops::Range<u64>); 5] = [
+        (
+            "the execution counter",
+            ExecutionBudget::KERNEL_VARIABLE_BASE..ExecutionBudget::KERNEL_VARIABLE_CEILING,
+        ),
+        (
+            "the surface quantifier, fold and algebraic binder bases",
+            2_000_000..1_003_000_000,
+        ),
+        ("symbolic pointer blocks", 4_000_000_000..8_000_000_000),
+        ("load variables", (1 << 40)..(1 << 41)),
+        ("the C identities below every reserved base", 0..1_000_000),
+    ];
+    for (name, range) in reserved {
+        assert!(
+            binders.end <= range.start || range.end <= binders.start,
+            "the match-binder range {binders:?} overlaps {name} at {range:?}"
+        );
+    }
+
+    let mut budget = ExecutionBudget::for_new_execution();
+    let first = budget
+        .allocate_match_binder_variable()
+        .expect("a match binder");
+    let second = budget
+        .allocate_match_binder_variable()
+        .expect("a second match binder");
+    assert_ne!(
+        first, second,
+        "two binders of one lowering -- a nested match's included -- are distinct"
+    );
+    for binder in [first, second] {
+        assert!(
+            ExecutionBudget::is_match_binder_variable(binder),
+            "{binder:?} is not recognized as a binder, so a rewrite would refuse it"
+        );
+    }
+    assert!(
+        !ExecutionBudget::is_match_binder_variable(Variable(ExecutionBudget::KERNEL_VARIABLE_BASE)),
+        "the first identity a loop havoc issues must never pass as a binder"
     );
 }

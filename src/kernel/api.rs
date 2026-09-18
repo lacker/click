@@ -2072,6 +2072,15 @@ pub(crate) fn c_lower_spec_proposition_with_checked_obligations(
         ExecutionLimit::UnsupportedIntegerExistentialBody => {
             "Integer existential bodies must currently be pure and total".to_string()
         }
+        // The lowering runs beside a live execution whose identity mark it
+        // does not carry, so an identity from the base of that range would
+        // name a havocked local or a join abstraction. Everything this
+        // lowering invents is a bound variable drawn from the match-binder
+        // range instead; a request for an execution identity is a defect in
+        // the kernel, and it is reported as one rather than satisfied.
+        ExecutionLimit::ExecutionIdentityBesideLiveState => {
+            "internal: execution identity requested beside a live state".to_string()
+        }
         limit => format!("the kernel lowering hit {limit:?}"),
     })?;
     let Some(path) = exactly_selected_spec_proposition_path(&paths, assumptions) else {

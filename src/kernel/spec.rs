@@ -1895,8 +1895,11 @@ fn evaluate_spec_integer_algebraic_match_paths(
                 .iter()
                 .find(|schema| schema.name == arm.variant)
                 .ok_or(ExecutionLimit::Paths)?;
-            let bindings =
-                symbolic_algebraic_bindings(&scrutinee_path.value.algebraic_type, schema, budget)?;
+            let bindings = symbolic_algebraic_match_binders(
+                &scrutinee_path.value.algebraic_type,
+                schema,
+                budget,
+            )?;
             let mut body_state = state.clone();
             let mut body_algebraic_bindings = algebraic_bindings.clone();
             for (binding, value) in arm.bindings.iter().zip(bindings.clone()) {
@@ -2078,6 +2081,43 @@ mod integer_match_metadata_tests {
             ),
         ));
     }
+
+    /// The arm body reaches the binder-elimination rewrite without the match
+    /// that bound it, so a free variable sharing the binder's identity is
+    /// indistinguishable from the binder itself. The rewrite therefore
+    /// substitutes only identities from the reserved match-binder range,
+    /// which nothing free can carry.
+    #[test]
+    fn binder_elimination_refuses_an_execution_identity_as_a_binder() {
+        let havocked = Variable(ExecutionBudget::KERNEL_VARIABLE_BASE);
+        assert_eq!(
+            rewrite_integer_match_typed_fields(
+                IntegerTerm::var(havocked),
+                &[AlgebraicValue::Integer(IntegerTerm::var(havocked))],
+                &[AlgebraicValue::Integer(IntegerTerm::constant_i64(7))],
+            ),
+            None,
+            "a loop-havocked local's identity is not a binder, and rewriting \
+             the body under it would capture the local"
+        );
+    }
+
+    /// A genuine binder is eliminated, and a free identity beside it in the
+    /// same body is left exactly as it was.
+    #[test]
+    fn binder_elimination_leaves_a_free_identity_alone() {
+        let binder = Variable(ExecutionBudget::MATCH_BINDER_VARIABLE_BASE);
+        let havocked = Variable(ExecutionBudget::KERNEL_VARIABLE_BASE);
+        let field = IntegerTerm::constant_i64(7);
+        assert_eq!(
+            rewrite_integer_match_typed_fields(
+                IntegerTerm::add(IntegerTerm::var(binder), IntegerTerm::var(havocked)),
+                &[AlgebraicValue::Integer(IntegerTerm::var(binder))],
+                &[AlgebraicValue::Integer(field.clone())],
+            ),
+            Some(IntegerTerm::add(field, IntegerTerm::var(havocked))),
+        );
+    }
 }
 
 fn rewrite_integer_match_typed_body(
@@ -2101,6 +2141,21 @@ fn rewrite_integer_match_typed_body(
     Some(value)
 }
 
+/// Eliminates an arm's binders by substituting the selected constructor's
+/// fields into the arm body.
+///
+/// The body is the arm body alone, lifted out of the `Match` that bound it,
+/// so nothing in the term itself distinguishes a bound occurrence of a binder
+/// from a free variable that happens to carry the same identity. The check
+/// that makes the substitution capture-correct is therefore on the binders:
+/// every one has to be a match-binder identity
+/// ([`ExecutionBudget::is_match_binder_variable`]), a range no execution,
+/// quantifier, fold, load or pointer producer mints from. Given that, an
+/// occurrence of a binder's identity in the arm body is a bound occurrence of
+/// that binder -- or of a nested match's binder that shadows it, which the
+/// rewrite walker stops at. A binder from any other range is a live free
+/// identity and substituting it would be a capture, so the rewrite refuses
+/// instead of performing it.
 fn rewrite_integer_match_typed_fields(
     body: IntegerTerm,
     bindings: &[AlgebraicValue],
@@ -2115,6 +2170,9 @@ fn rewrite_integer_match_typed_fields(
     for (binding, field) in bindings.iter().zip(fields) {
         match (binding, field) {
             (AlgebraicValue::Integer(IntegerTerm::Variable(from)), AlgebraicValue::Integer(to)) => {
+                if !ExecutionBudget::is_match_binder_variable(*from) {
+                    return None;
+                }
                 if integer_replacements.insert(*from, to.clone()).is_some() {
                     return None;
                 }
@@ -2126,6 +2184,9 @@ fn rewrite_integer_match_typed_fields(
                     let Bitvector32Term::Variable(from) = from else {
                         return None;
                     };
+                    if !ExecutionBudget::is_match_binder_variable(from) {
+                        return None;
+                    }
                     let to = c_value_bitvector_term(to)?;
                     if c_replacements
                         .insert(
@@ -2143,6 +2204,9 @@ fn rewrite_integer_match_typed_fields(
                     else {
                         return None;
                     };
+                    if !ExecutionBudget::is_match_binder_variable(*from) {
+                        return None;
+                    }
                     if c_replacements
                         .insert(
                             *from,
@@ -2161,6 +2225,9 @@ fn rewrite_integer_match_typed_fields(
                 let AlgebraicTermNode::Variable(from) = &from.node else {
                     return None;
                 };
+                if !ExecutionBudget::is_match_binder_variable(*from) {
+                    return None;
+                }
                 if algebraic_replacements.insert(*from, to.clone()).is_some() {
                     return None;
                 }
@@ -2506,7 +2573,7 @@ fn evaluate_spec_algebraic_at_state_with_bindings(
                         else {
                             return Err(ExecutionLimit::Paths);
                         };
-                        let bindings = symbolic_algebraic_bindings(
+                        let bindings = symbolic_algebraic_match_binders(
                             &scrutinee_path.value.algebraic_type,
                             schema,
                             budget,
@@ -2785,16 +2852,53 @@ fn evaluate_spec_algebraic_at_state_with_bindings(
     }
 }
 
-fn symbolic_algebraic_bindings(
+/// One symbolic value per field of `variant`, to bind a match arm's patterns
+/// to.
+///
+/// The identities come from the budget's match-binder range, not from the
+/// execution counter: they are *bound* variables of the match term being
+/// lowered, and a bound variable that happens to equal a live execution's
+/// free identity is what let the binder-elimination rewrite substitute a
+/// loop-havocked local along with the binder it was named after.
+fn symbolic_algebraic_match_binders(
     algebraic_type: &AlgebraicType,
     variant: &AlgebraicVariantType,
     budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<AlgebraicValue>> {
+    symbolic_algebraic_fields(algebraic_type, variant, || {
+        budget.allocate_match_binder_variable()
+    })
+}
+
+/// One symbolic value per field of `variant`, as the arbitrary witness of a
+/// case split on a scrutinee whose constructor is not known.
+///
+/// These are *free* variables of the constructor equation this case
+/// publishes, so they must be fresh for the execution the state belongs to
+/// and come from its counter. A budget that cannot invent execution
+/// identities refuses here, which is the point: a case witness minted beside
+/// a live state from a restarted counter would name something that state
+/// already holds.
+fn symbolic_algebraic_case_witnesses(
+    algebraic_type: &AlgebraicType,
+    variant: &AlgebraicVariantType,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<AlgebraicValue>> {
+    symbolic_algebraic_fields(algebraic_type, variant, || {
+        budget.allocate_kernel_variable()
+    })
+}
+
+fn symbolic_algebraic_fields(
+    algebraic_type: &AlgebraicType,
+    variant: &AlgebraicVariantType,
+    mut allocate: impl FnMut() -> ExecutionResult<Variable>,
 ) -> ExecutionResult<Vec<AlgebraicValue>> {
     variant
         .fields
         .iter()
         .map(|value_type| {
-            let variable = budget.allocate_kernel_variable()?;
+            let variable = allocate()?;
             match value_type {
                 AlgebraicValueType::C(c_type) => {
                     Ok(AlgebraicValue::C(symbolic_call_result(*c_type, variable)))
@@ -2937,7 +3041,8 @@ fn algebraic_case_paths(
         | AlgebraicTermNode::PureFunctionApplication { .. } => {
             let mut paths = Vec::with_capacity(term.algebraic_type.variants.len());
             for variant in term.algebraic_type.variants.iter() {
-                let fields = symbolic_algebraic_bindings(&term.algebraic_type, variant, budget)?;
+                let fields =
+                    symbolic_algebraic_case_witnesses(&term.algebraic_type, variant, budget)?;
                 let constructor = AlgebraicTerm {
                     algebraic_type: term.algebraic_type.clone(),
                     node: AlgebraicTermNode::Constructor {
@@ -4750,7 +4855,7 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                         else {
                             return Err(ExecutionLimit::Paths);
                         };
-                        let bindings = symbolic_algebraic_bindings(
+                        let bindings = symbolic_algebraic_match_binders(
                             &scrutinee_path.value.algebraic_type,
                             schema,
                             budget,

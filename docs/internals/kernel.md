@@ -654,33 +654,53 @@ than hiding inside a constructor. Restarting the counter by writing nothing
 was how a loop-havocked local and a re-bound model field, and a
 join-abstracted pointer and a later heap block, became one `Variable`.
 
-`ExecutionBudget::restarting_beside_live_state` is the third constructor and
-it is the hazard, named. It restarts the counter although the state being
-evaluated belongs to a live execution, and it exists so that a site whose
-mark has not been threaded to it has to say so, and one `grep` finds every
-one. Its users are the proof-side evaluation families reached from the
-surface's `have`, `fold`, `unfold` and theorem-application drivers — the
-fixed-state spec lowering and capture entry points, the composite-resource
-proposition evaluators, the instance fold/unfold rewrites, the arm-premise
-and witness binders, the loop invariant and effect obligation APIs, and
-independent contract certification. Those drivers do not carry the
-execution's mark, and threading it to them is a change across the proof
-engine rather than a mechanical one. Each such site can hand a match binder,
-a witness, an opaque call result or a re-bound model field an identity the
-enclosing execution already gave to a havocked local or a join abstraction.
-Measured over the mdtest corpus, exactly one of those sites issues an identity
-at all: `c_lower_spec_proposition_with_checked_obligations`, the lowering every
-proof-side proposition and contract clause shares, which hands out the first
-identities of the range through `symbolic_algebraic_bindings` — one binder per
-field of a symbolic `match` on a non-literal scrutinee. The rest allocate
-nothing on any fixture, which is why no false theorem has come out of them yet.
-That is an observation about the corpus, not an invariant. The binders that
-site does invent are bound variables of the lowered `Match` term, so a
-collision with a free execution identity is harmless exactly while every
-rewrite that eliminates a binder renames on capture.
-`rewrite_integer_match_typed_fields` substitutes binder for field without a
-capture check, so an arm body that mentions a loop-havocked local whose
-identity equals the binder's would be rewritten too.
+`ExecutionBudget::restarting_beside_live_state` is the third constructor, and
+**it cannot invent an execution identity at all.** Its users are the
+proof-side evaluation families reached from the surface's `have`, `fold`,
+`unfold` and theorem-application drivers — the fixed-state spec lowering and
+capture entry points, the composite-resource proposition evaluators, the
+instance fold/unfold rewrites, the arm-premise and witness binders, the loop
+invariant and effect obligation APIs, and independent contract certification.
+Those drivers do not carry the execution's mark, so a counter started at the
+base of the range would name what the live state already holds: a havocked
+local, a join abstraction, a heap block. `allocate_kernel_variable` refuses
+with `ExecutionLimit::ExecutionIdentityBesideLiveState` — "internal: execution
+identity requested beside a live state" — rather than restarting silently.
+Fifty-one named-hazard sites become enforced cannot-allocate sites without
+threading anything through the proof engine; a site that genuinely needs an
+execution identity has to be given the mark and use `continuing_from`.
+
+This is enforceable because the one site that did allocate no longer needs to.
+`c_lower_spec_proposition_with_checked_obligations`, the lowering every
+proof-side proposition and contract clause shares, handed out the first
+identities of the range as match-arm binders — one per constructor field of a
+`match` whose scrutinee is not a literal. Those binders are *bound* variables
+of the lowered term, and a bound variable that equals a live free identity is
+only harmless while every rewrite that eliminates a binder renames on capture.
+`rewrite_integer_match_typed_fields` does not see the binding at all: it is
+handed the arm body alone, lifted out of its `Match`, where a bound occurrence
+of the binder and a free occurrence of a loop-havocked local with the same
+identity are the same syntax. It substituted both, so `have match Box::Wrap(m)
+{ Box::Wrap(h) => to_integer(i) } == to_integer(m)` proved `i == m` for the
+loop's arbitrary `i` (`mdtests/match_binder_captures_havocked_local.md`).
+
+Binders now come from `ExecutionBudget::MATCH_BINDER_VARIABLE_BASE` through a
+counter the budget owns, so nested matches within one lowering get distinct
+binders and no binder can equal a free identity of any execution. Two
+separately lowered terms do reuse binder identities, because each budget
+starts that counter at the base; that is safe because they are bound.
+Substituting one such term under the other's binder goes through `TermRewrite`,
+which alpha-renames a binder that would capture a free variable of the
+replacement and stops substituting under a binder that shadows the variable
+being replaced, and alpha-equivalent terms are interchangeable. A shared
+*free* identity is not, which is why the case witnesses of
+`algebraic_case_paths` — free variables of the constructor equation they
+publish, not binders — still come from the execution counter and therefore
+refuse beside a live state. `rewrite_integer_match_typed_fields` also checks
+what it is given: every identity it substitutes must satisfy
+`ExecutionBudget::is_match_binder_variable`, which is what makes the
+substitution capture-correct on its own terms rather than by trusting its
+caller.
 
 The mark is execution-relative — an offset from `KERNEL_VARIABLE_BASE`, which
 is the representation `ExecutionBudget::continuing_from` takes and
@@ -692,12 +712,26 @@ compares a candidate `Variable` against it must add the base back:
 The counter's range is bounded at both ends. It starts at
 `ExecutionBudget::KERNEL_VARIABLE_BASE` and refuses at
 `ExecutionBudget::KERNEL_VARIABLE_CEILING`, which is the lowest identity a
-producer outside the execution reserves by a constant base: the surface's
-quantifier variables, then the spec fold binders, then the algebraic binders,
-then the load variables. Those producers pick identities by a constant and a
-hash and so cannot avoid an execution that has counted into their range; the
-execution refuses with `ExecutionLimit::KernelVariables` instead, which is one
-comparison per allocation.
+producer outside the execution reserves by a constant base. Those producers
+pick identities by a constant and a hash and so cannot avoid an execution that
+has counted into their range; the execution refuses with
+`ExecutionLimit::KernelVariables` instead, which is one comparison per
+allocation. The reserved ranges are:
+
+| Range | Producer |
+| --- | --- |
+| `1_000_000 .. 2_000_000` | the execution's fresh-identity counter |
+| `2_000_000 ..` | the surface's quantifier variables |
+| `3_000_000 .. 1_003_000_000` | the spec fold binders (`spec_fold_bound_variable`, base plus hash) |
+| `4_000_000` by `65_536` | the surface's algebraic binders (`ALGEBRAIC_VARIABLE_BASE`) |
+| `4_000_000_000 .. 8_000_000_000` | symbolic pointer blocks |
+| `1 << 40 .. 1 << 41` | load variables (`LOAD_VARIABLE_BASE`) |
+| `1 << 41 .. 1 << 42` | match-arm binders (`MATCH_BINDER_VARIABLE_BASE`) |
+
+The match-binder range is the one that carries a soundness obligation rather
+than a hygiene one, so `the_match_binder_range_is_disjoint_from_every_other_producer`
+asserts the disjointness instead of leaving it to this table. A lowering that
+exhausts it refuses with `ExecutionLimit::MatchBinderVariables`.
 
 Call and loop behavior are explicit inputs to kernel execution. The common
 configurations are:
