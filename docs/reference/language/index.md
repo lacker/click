@@ -164,6 +164,11 @@ by {
 }
 ```
 
+That frontier may be one a `branch` arm or a proof-level `if` arm reached, so a
+loop guarded by a C `if` declares its measure inside that arm. Termination is
+judged from the rule the arm constructed, and an arm that omits `decreases` is
+refused like any other unranked loop (`mdtests/loop_inside_a_branch_arm.md`).
+
 Recursive traversal of an inductive resource may instead use its hidden
 structural rank:
 

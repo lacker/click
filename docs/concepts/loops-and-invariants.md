@@ -110,6 +110,26 @@ frontier to the loop exit. Since a loop head can be reached more than once, the
 preservation proof is about an arbitrary visit rather than one concrete
 iteration.
 
+That frontier does not have to be the top level of the script. A C loop
+guarded by an `if` is reached on one path only, and the proof reaches it by
+splitting the `if` first: `loop { ... }` is then written in the arm whose
+frontier is at the loop. Both conditional spellings take it. A `branch` arm
+runs the loop rule and joins its sibling at the statement after the `if`,
+which needs an `ensuring` interface whenever the arms leave the loop's locals
+in different states — the summarizing arm holds the loop's abstract exit while
+the other still holds what it had (`mdtests/loop_inside_a_branch_arm.md`,
+`mdtests/loop_inside_a_branch_else_arm.md`). A proof-level `if` arm runs the
+loop rule and then continues to its own function exit, since those arms never
+join (`mdtests/loop_inside_a_proof_if_arm.md`). Either way the invariants are
+established from the arm's own state, with the arm's path condition available
+as a premise, and the arm owes the whole bundle: a `decreases` the enclosing
+function's termination judgment still requires, and an invariant the body does
+not preserve is refused exactly as at the top level
+(`mdtests/loop_inside_a_branch_arm_rejects_a_false_invariant.md`). Smart
+execution is not an alternative here: `execute()` reaches the guarded loop and
+stops, because the loop condition has two feasible paths and the tactic
+invents no invariants.
+
 A labeled loop can also expose its entry visit to the invariant:
 
 <!-- verified-example: mdtests/count_to_n_loop_invariant.md -->

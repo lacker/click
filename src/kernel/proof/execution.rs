@@ -3745,6 +3745,56 @@ fn statement_sequence_is_prefix(
     actual_statements.starts_with(&expected_statements)
 }
 
+/// Whether a statement theorem's statement is the C source statement it is
+/// checked against.
+///
+/// A summarized loop's theorem names the loop with the proof's own clauses
+/// attached: the `loop { ... }` tactic re-annotates the C loop at the frontier
+/// before its rule is certified. A `branch` arm is checked against the C source
+/// captured when the branch split, which still carries that loop bare. The two
+/// are the same C program — same condition, same body, same `do`-ness — and the
+/// annotated theorem is the stronger claim, since every attached clause was
+/// discharged to obtain it. So a bare source loop accepts its annotated proof.
+///
+/// A source loop that already carries clauses of its own must match exactly, so
+/// this can never drop an obligation the source asked for.
+fn checked_source_statement_matches(proved: &CStatement, source: &CStatement) -> bool {
+    if proved == source {
+        return true;
+    }
+    let (
+        CStatement::While {
+            condition: proved_condition,
+            do_while: proved_do_while,
+            body: proved_body,
+            ..
+        },
+        CStatement::While {
+            condition: source_condition,
+            invariant,
+            invariant_checks,
+            effect_checks,
+            resource_specs,
+            ranking_measures,
+            structural_measure,
+            do_while: source_do_while,
+            body: source_body,
+        },
+    ) = (proved, source)
+    else {
+        return false;
+    };
+    invariant.is_empty()
+        && invariant_checks.is_empty()
+        && effect_checks.is_empty()
+        && resource_specs.is_empty()
+        && ranking_measures.is_empty()
+        && structural_measure.is_none()
+        && proved_condition == source_condition
+        && proved_do_while == source_do_while
+        && proved_body == source_body
+}
+
 fn checked_statement_event(
     theorem: &Theorem,
     facts: &ProofFacts,
@@ -3767,7 +3817,8 @@ fn checked_statement_event(
         } => (state, statement, outcome),
         _ => return None,
     };
-    (proved_state == state && proved_statement == statement).then(|| outcome.clone())
+    (proved_state == state && checked_source_statement_matches(proved_statement, statement))
+        .then(|| outcome.clone())
 }
 
 fn checked_condition_event(
@@ -8388,6 +8439,62 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn a_summarized_loop_matches_only_a_less_annotated_source_loop() {
+        fn loop_statement(invariant: Vec<Proposition>, body: CStatement) -> CStatement {
+            CStatement::While {
+                condition: CExpression::Variable("c".to_string()),
+                invariant,
+                invariant_checks: Vec::new(),
+                effect_checks: Vec::new(),
+                resource_specs: Vec::new(),
+                ranking_measures: Vec::new(),
+                structural_measure: None,
+                do_while: false,
+                body: Box::new(body),
+            }
+        }
+        let clause = Proposition::ConditionIs(
+            crate::kernel::ConditionTerm::Bitvector32SignedGreaterEqual(
+                Box::new(Bitvector32Term::Constant(0)),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        let body = CStatement::Skip;
+        let bare = loop_statement(Vec::new(), body.clone());
+        let annotated = loop_statement(vec![clause], body.clone());
+
+        // The `loop { ... }` tactic's own clauses may be added to a source
+        // loop that carries none: the C program is the same and the theorem
+        // discharged more.
+        assert!(checked_source_statement_matches(&annotated, &bare));
+        assert!(checked_source_statement_matches(&bare, &bare));
+        assert!(checked_source_statement_matches(&annotated, &annotated));
+        // The reverse would drop an obligation the source asked for.
+        assert!(!checked_source_statement_matches(&bare, &annotated));
+        // The C itself is still exact.
+        assert!(!checked_source_statement_matches(
+            &loop_statement(Vec::new(), CStatement::Break),
+            &bare
+        ));
+        let mut other_condition = bare.clone();
+        if let CStatement::While { condition, .. } = &mut other_condition {
+            *condition = CExpression::Variable("d".to_string());
+        }
+        assert!(!checked_source_statement_matches(&other_condition, &bare));
+        let mut do_while = bare.clone();
+        if let CStatement::While { do_while: flag, .. } = &mut do_while {
+            *flag = true;
+        }
+        assert!(!checked_source_statement_matches(&do_while, &bare));
+        // Only loops have proof clauses; nothing else relaxes.
+        assert!(!checked_source_statement_matches(
+            &CStatement::Skip,
+            &CStatement::Break
+        ));
     }
 
     #[test]

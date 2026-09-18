@@ -169,9 +169,16 @@ fn checked_execution_arm_tactics_end(
             at_function_exit = true;
             continue;
         }
+        // A `loop` summarizes the C loop at the frontier and lands on its exit
+        // successor. When the loop is the last statement of the function body
+        // that successor is function exit, so a `loop` classifies like a
+        // `step()`: it may exit, and the driver checks the actual frontier.
         if matches!(
             indexed.tactic,
-            ProofTactic::Step | ProofTactic::StepContract(_) | ProofTactic::StepCall(_)
+            ProofTactic::Step
+                | ProofTactic::StepContract(_)
+                | ProofTactic::StepCall(_)
+                | ProofTactic::Loop(_)
         ) {
             may_exit = true;
             continue;
