@@ -8,7 +8,7 @@
 use crate::kernel::{
     AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, Bitvector32Term, CExpressionOutcome, CMemory,
     CResource, CState, ConditionTerm, IntegerRangeFoldIndex, IntegerTerm, Pointer,
-    PointerOffsetTerm, Proposition, PureFunctionArgument, Term,
+    PointerOffsetTerm, Proposition, PureFunctionArgument, SpecCaptureRefusal, Term,
 };
 use std::fmt::Write;
 
@@ -56,6 +56,22 @@ pub(crate) fn render_integer_term(term: &IntegerTerm) -> String {
         renderer.output.push('…');
     }
     renderer.output
+}
+
+/// Describe a refused Integer capture: which written subterm carries an
+/// evaluation condition, and which condition the proof context is missing.
+pub(crate) fn describe_spec_capture_refusal(refusal: &SpecCaptureRefusal) -> String {
+    match refusal {
+        SpecCaptureRefusal::Message(message) => message.clone(),
+        SpecCaptureRefusal::Undischarged {
+            subterm,
+            proposition,
+        } => format!(
+            "{} denotes this value only where `{}` holds, and that is not available here",
+            subterm.describe(),
+            render_proposition(proposition)
+        ),
+    }
 }
 
 struct Renderer {
@@ -544,6 +560,39 @@ impl Renderer {
                 self.push(" = ");
                 self.pointer(b);
             }
+            // Definedness of a partial machine operation is the condition a
+            // capture or evaluation refusal most often names, so print the
+            // operation instead of a placeholder.
+            ConditionTerm::Bitvector32SignedAddOverflows(a, b) => {
+                self.overflow_condition_bv(a, b, "int32", "+")
+            }
+            ConditionTerm::Bitvector32SignedSubtractOverflows(a, b) => {
+                self.overflow_condition_bv(a, b, "int32", "-")
+            }
+            ConditionTerm::Bitvector32SignedMultiplyOverflows(a, b) => {
+                self.overflow_condition_bv(a, b, "int32", "*")
+            }
+            ConditionTerm::Bitvector32SignedDivideOverflows(a, b) => {
+                self.overflow_condition_bv(a, b, "int32", "/")
+            }
+            ConditionTerm::Bitvector32SignedShiftLeftOverflows(a, b) => {
+                self.overflow_condition_bv(a, b, "int32", "<<")
+            }
+            ConditionTerm::Bitvector64SignedAddOverflows(a, b) => {
+                self.overflow_condition_bv(a, b, "int64", "+")
+            }
+            ConditionTerm::Bitvector64SignedSubtractOverflows(a, b) => {
+                self.overflow_condition_bv(a, b, "int64", "-")
+            }
+            ConditionTerm::Bitvector64SignedMultiplyOverflows(a, b) => {
+                self.overflow_condition_bv(a, b, "int64", "*")
+            }
+            ConditionTerm::Bitvector64SignedDivideOverflows(a, b) => {
+                self.overflow_condition_bv(a, b, "int64", "/")
+            }
+            ConditionTerm::Bitvector64SignedShiftLeftOverflows(a, b) => {
+                self.overflow_condition_bv(a, b, "int64", "<<")
+            }
             _ => self.push("condition(<bounded operation>)"),
         }
     }
@@ -552,6 +601,22 @@ impl Renderer {
         self.push("(");
         self.bitvector(a);
         self.push(", ");
+        self.bitvector(b);
+        self.push(")");
+    }
+    fn overflow_condition_bv(
+        &mut self,
+        a: &Bitvector32Term,
+        b: &Bitvector32Term,
+        width: &str,
+        operator: &str,
+    ) {
+        self.push(width);
+        self.push(" overflow(");
+        self.bitvector(a);
+        self.push(" ");
+        self.push(operator);
+        self.push(" ");
         self.bitvector(b);
         self.push(")");
     }

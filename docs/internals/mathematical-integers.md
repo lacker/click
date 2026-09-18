@@ -61,6 +61,17 @@ Every checked conversion and every future checked division must establish its
 definedness in the current proof context before a theorem or execution
 certificate is accepted. Evaluation facts are not arbitrary assumptions.
 
+Capturing an Integer expression as one symbolic term follows the same rule.
+A partial machine operation inside the expression -- the `hi - 1` of a fold
+range `(lo..(hi - 1))`, for instance -- makes the captured value the value of
+only one evaluation path, guarded by that operation's definedness condition.
+The capture is accepted when the proof context already states that condition
+by an exact route, because then the guarded path is the only live one and
+admitting the condition adds nothing to what the captured term asserts. It is
+refused when the condition is not available, and the refusal names the
+offending subterm -- the fold's range endpoint, initializer, or body -- along
+with the condition that is missing. A missing condition is never dropped.
+
 ## Specification coverage
 
 Integer is supported in:

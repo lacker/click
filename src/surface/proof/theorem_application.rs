@@ -427,17 +427,10 @@ fn instantiate_integer_range_fold_theorem_application(
         click_function_environment,
     )
     .map_err(|message| {
-        // A fold argument is a value-producing expression, so an empty or
-        // multiply-branched capture path means that its initializer/body has
-        // not supplied a single checked evaluation path. Keep that failure
-        // distinct from the later non-fold shape check; callers need the
-        // source-level definedness diagnostic rather than the kernel's generic
-        // symbolic-value wording.
-        let message = if message == "Integer initializer must denote one symbolic value" {
-            "Integer initializer has unproved evaluation obligations".to_string()
-        } else {
-            message
-        };
+        // The capture refusal already names which written subterm of the fold
+        // carries the undischarged condition, or says that the argument did
+        // not denote one value at all. Keep that failure distinct from the
+        // later non-fold shape check and pass its wording through.
         error(format!(
             "could not capture Integer fold argument: {message}"
         ))

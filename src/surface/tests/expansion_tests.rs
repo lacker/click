@@ -954,7 +954,7 @@ theorem machine_fold_argument_missing_definedness(divisor: int32) {
     }
 }
 "#,
-            "Integer initializer has unproved evaluation obligations",
+            "this Integer expression does not denote one symbolic value here",
         ),
         (
             r#"

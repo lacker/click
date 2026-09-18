@@ -1168,7 +1168,11 @@ impl<'a> Proof<'a> {
             Some(&states.entry_state),
             self.facts().assumptions(),
         )
-        .map_err(|message| self.step_error(format!("could not capture Integer witness: {message}")))
+        .map_err(|refusal| {
+            let message =
+                crate::surface::proof_diagnostics::render::describe_spec_capture_refusal(&refusal);
+            self.step_error(format!("could not capture Integer witness: {message}"))
+        })
     }
 
     /// Capture only the written argument in the current proof context. Pure
