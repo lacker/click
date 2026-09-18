@@ -196,6 +196,18 @@ fn concurrency_fork_join_source_is_fixed_before_thread_rules() {
     );
 }
 
+#[test]
+fn byte_representation_source_is_fixed_before_byte_rules() {
+    let source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("design/byte-representation/rep_copy.c");
+    let bytes = fs::read(&source).expect("the frozen byte-representation C source exists");
+    assert_eq!(
+        hex_digest(sha256(&bytes)),
+        "4d5a08408323753ddae195ae33c4a776a4499a7aa9e8d0abf68c491245fe6847",
+        "the byte-representation proof must use the selected C source unchanged"
+    );
+}
+
 fn run_example_in_thread(project: &Path) -> Result<(), String> {
     let project = project.to_path_buf();
     std::thread::Builder::new()
