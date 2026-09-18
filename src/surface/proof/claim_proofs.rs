@@ -1212,11 +1212,25 @@ fn close_claim_directly_from_outcome<'a>(
                 .ok()
             };
             match (evaluate(left), evaluate(right)) {
-                (Some(left), Some(right)) => format!(
-                    "; left side evaluated to {}, right side evaluated to {}",
-                    describe_c_value(&left, parameters, arguments),
-                    describe_c_value(&right, parameters, arguments)
-                ),
+                (Some(left), Some(right)) => {
+                    let rendered_left = describe_c_value(&left, parameters, arguments);
+                    let rendered_right = describe_c_value(&right, parameters, arguments);
+                    // Two distinct load variables over the same pointer
+                    // render identically, which reads as an unprovable
+                    // `x == x`. Name the actual obligation instead: the two
+                    // loads live in different memory snapshots, so closing
+                    // the goal requires equating them across the writes in
+                    // between.
+                    if rendered_left == rendered_right && left != right {
+                        format!(
+                            "; both sides evaluate to `{rendered_left}`, but they are distinct kernel loads (the same cell read in different memory snapshots): closing the goal requires equating the two loads, and no checked proof step did"
+                        )
+                    } else {
+                        format!(
+                            "; left side evaluated to {rendered_left}, right side evaluated to {rendered_right}"
+                        )
+                    }
+                }
                 _ => String::new(),
             }
         }
