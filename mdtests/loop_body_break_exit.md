@@ -20,6 +20,12 @@ guard-false exit at all, with every way out a `break` inside an `if`. The
 successor is the join of the two `break` exits alone, and the post-loop claim
 reads their disjunction.
 
+Every loop here is ranked by `decreases i;`. A `break` path owes no decrease,
+so `break_once` proves nothing about its measure; `stop_at` has one path that
+does reach the back edge, and its `0 < i` comes from the C `if` that path
+declined, which the closer names beside the invariants
+([`close_invariants_cites_a_branch_condition.md`](close_invariants_cites_a_branch_condition.md)).
+
 A `break` path whose state differs from the loop's other exits — one that
 assigns or stores before leaving — is described through the loop's binders and
 one fresh name per component the exits disagree about, with the disjunction of
@@ -106,6 +112,7 @@ int32 break_once(int32 n) {
     step();
     step();
     loop {
+        decreases i;
         invariant i >= 0;
 
         initialize by simp;
@@ -124,6 +131,7 @@ int32 stop_at(int32 n) {
     step();
     step();
     loop {
+        decreases i;
         invariant i >= 0;
 
         initialize by simp;
@@ -157,6 +165,7 @@ int32 break_once_automatically(int32 n) {
     step();
     step();
     loop {
+        decreases i;
         invariant i >= 0;
     }
     step();
@@ -170,15 +179,12 @@ int32 stop_at_automatically(int32 n) {
     step();
     step();
     loop {
+        decreases i;
         invariant i >= 0;
     }
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

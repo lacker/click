@@ -474,26 +474,17 @@ fn integer_surface_equality_from_bounds(
     })
 }
 
-/// `l <= r` sharpened by `l != r` (either spelling) is `l < r`.
-fn integer_surface_strict_from_disequal(
-    bound: &ClickProposition,
-    disequal: &ClickProposition,
-) -> Option<ClickProposition> {
+/// `l <= r` sharpened by a disequality on the same two values is `l < r`.
+///
+/// The result is spelled from the bound's own sides. The disequality is not
+/// compared syntactically: two spellings of one kernel term, such as a value
+/// read at two snapshots the body did not separate, are the same premise to
+/// the checker, and the kernel node checks that the disequality names the
+/// bound's affine form. Pairing the printed operands here discarded plans the
+/// kernel had already accepted.
+fn integer_surface_strict_from_disequal(bound: &ClickProposition) -> Option<ClickProposition> {
     let (left, operator, right) = integer_surface_ordered_parts(bound)?;
     if operator != ComparisonOperator::LessEqual {
-        return None;
-    }
-    let ClickProposition::Comparison {
-        left: disequal_left,
-        operator: ComparisonOperator::NotEqual,
-        right: disequal_right,
-    } = disequal
-    else {
-        return None;
-    };
-    if !((*disequal_left == left && *disequal_right == right)
-        || (*disequal_left == right && *disequal_right == left))
-    {
         return None;
     }
     Some(ClickProposition::Comparison {
@@ -923,15 +914,10 @@ impl<'a> Proof<'a> {
                     surfaces.get(*upper)?.as_ref()?,
                 )
                 .or_else(|| claim_surface(result)),
-                SignedArithmeticNode::StrictFromDisequal {
-                    bound,
-                    disequal,
-                    result,
-                } => integer_surface_strict_from_disequal(
-                    surfaces.get(*bound)?.as_ref()?,
-                    surfaces.get(*disequal)?.as_ref()?,
-                )
-                .or_else(|| claim_surface(result)),
+                SignedArithmeticNode::StrictFromDisequal { bound, result, .. } => {
+                    integer_surface_strict_from_disequal(surfaces.get(*bound)?.as_ref()?)
+                        .or_else(|| claim_surface(result))
+                }
                 SignedArithmeticNode::Trivial { result } => claim_surface(result),
                 SignedArithmeticNode::IntervalCompare { .. }
                 | SignedArithmeticNode::AffineConclusion { .. }
@@ -1444,6 +1430,18 @@ impl<'a> Proof<'a> {
         if let Some(enumerated) = self.try_finite_forall_enumeration(&surface_goal)? {
             return Ok(Some(enumerated));
         }
+        // A pure goal that its own signed bounds already decide gets the one
+        // checked arithmetic certificate, not a case split over those same
+        // bounds. The certificate reads the goal's own bound buckets and
+        // emits a single leaf, while the split searches for a pivot and then
+        // owes a proof on each arm — including a dead arm closed only by a
+        // contradiction between the pivot and a premise. Keep this ahead of
+        // the split so the cheaper, smaller expansion wins whenever it
+        // applies; the split still runs for everything the certificate
+        // declines.
+        if let Some(arithmetic) = self.try_pure_signed_arithmetic() {
+            return Ok(Some(arithmetic));
+        }
         if let Some(split) = self.try_upper_bound_split_closure(introduced_surfaces)? {
             return Ok(Some(split));
         }
@@ -1534,10 +1532,13 @@ impl<'a> Proof<'a> {
                 }
             }
         }
-        // Signed arithmetic is the final fallback. All established
-        // equality, transport, quantifier, structural, and function-unfold
-        // routes must get first choice so their selected proof steps remain
-        // visible in expansion.
+        // Signed arithmetic over the selected premises is the final
+        // fallback. All established equality, transport, quantifier,
+        // structural, and function-unfold routes must get first choice so
+        // their selected proof steps remain visible in expansion. Only the
+        // pure form above, which selects its own bounds from the goal's
+        // buckets, runs earlier, and only ahead of the case split it would
+        // otherwise be hidden behind.
         if let Some(surface_goal) = self.surface_goal()
             && let Some(goal) = self.goal()
             && !anchored_pairs.is_empty()
@@ -1557,9 +1558,11 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(proof));
         }
-        let selected = self.try_pure_signed_arithmetic();
+        // The pure signed certificate already ran above on this same proof
+        // state; repeating it here would redo identical work for an
+        // identical answer.
         check_verification_deadline()?;
-        Ok(selected)
+        Ok(None)
     }
 
     /// Select signed bounds only from the goal variables' persistent buckets.

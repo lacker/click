@@ -240,6 +240,31 @@ a conjunct that refutes an arm of a folded modeled instance can give the next
 conjunct the authority to read through it. That is the arm selection described
 under [structural loop measures](#structural-loop-measures).
 
+A `||` guard is the mirror image, and joins the same way on the way *in*.
+`while (a > 0 || b > 0)` has one way out and one way in per operand that can
+start an iteration, and the body is proved once against every entry path. So
+the entry paths export their join too: everything they all state, plus the
+disjunction of what each one states alone, here `a > 0 or b > 0`, in the
+guard's short-circuit order rather than the order the paths were enumerated.
+One written `preserve` body then serves every entry path, because `cases` over
+that disjunction reads the same way on all of them:
+
+<!-- verified-example: mdtests/loop_disjunctive_guard_entry_join.md -->
+```click
+have 0 < a + b by {
+    cases(a > 0 or b > 0) {
+        arithmetic() using { a > 0; b >= 0; a <= 1; b <= 1; }
+    } {
+        arithmetic() using { b > 0; a >= 0; a <= 1; b <= 1; }
+    }
+}
+```
+
+As at the exit, the first disjunct alone is not assumed: the loop really is
+entered with `a` zero and `b` nonzero, and a `preserve` body that cites the
+first operand's fact on its own is refused
+(`mdtests/loop_disjunctive_guard_entry_join_is_a_disjunction.md`).
+
 ### `break` and `continue` in the body
 
 One certified iteration is a path that reaches the body's end, a `continue`, or

@@ -502,6 +502,14 @@ pub(in crate::surface::proof) struct ExecutionProofPresentation {
         PersistentSequence<crate::surface::proof::resources::ResourceClausePresentation>,
     /// Case assumptions introduced on this path by proof-level splits.
     pub(in crate::surface::proof) case_assumptions: PersistentSequence<CaseAssumption>,
+    /// The C `if` conditions this path took, in the order it took them, each
+    /// spelled at the branching statement's entry snapshot and carrying the
+    /// polarity of the arm the path entered. A C branch the body took is as
+    /// written as the loop guard is, so the smart invariant-bundle closer may
+    /// name these too. The list is what execution recorded on this path; it
+    /// is never a search over ambient facts, and a join restores the parent's
+    /// list with the arms' entries dropped.
+    pub(in crate::surface::proof) path_branch_premises: PersistentSequence<ClickProposition>,
     /// Frontier-local loop clauses, paired with the kernel-owned verified
     /// rules and migrated across joins as arm deltas.
     pub(in crate::surface::proof) frontier_loop_clauses: PersistentSequence<StructuralClause>,
@@ -667,6 +675,7 @@ impl ExecutionProofState {
                 surface_propositions,
                 resource_body_clauses: PersistentSequence::default(),
                 case_assumptions: PersistentSequence::default(),
+                path_branch_premises: PersistentSequence::default(),
                 frontier_loop_clauses: PersistentSequence::default(),
                 post_execution_tactics: PersistentSequence::default(),
                 call_outcome_edges: None,

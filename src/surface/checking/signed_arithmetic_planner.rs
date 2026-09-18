@@ -1388,6 +1388,13 @@ impl<'a> Planner<'a> {
             },
         )?;
         if let Some((upper_node, upper_bound)) = upper {
+            // Contradictory bounds intersect to an empty interval, which the
+            // kernel refuses outright. Decline here so the tactic reports a
+            // prompt arithmetic failure instead of emitting a certificate
+            // that cannot be checked.
+            if lower_bound > upper_bound {
+                return None;
+            }
             let upper_interval = self.push_interval(
                 affine_interval_node(upper_node, SIGNED_MIN, upper_bound),
                 SignedArithmeticInterval {
@@ -2107,6 +2114,26 @@ mod tests {
             SignedArithmeticNode::AffineConclusion { .. }
                 | SignedArithmeticNode::AffineConclusionWithEvidence { .. }
         )));
+    }
+
+    /// `x < 0` and `x >= 0` bound `x` into an empty interval. Planning an
+    /// interval node for it produced a certificate the kernel then refused,
+    /// which reached the user as `certificate rejected: DoesNotFollow`
+    /// instead of the tactic's own prompt arithmetic failure. Declining is
+    /// the honest answer: no interval exists.
+    #[test]
+    fn contradictory_bounds_plan_no_interval() {
+        let x = var(91);
+        let y = var(92);
+        let goal = lt(
+            y.clone(),
+            Bitvector32Term::Subtract(Box::new(y), Box::new(x.clone())),
+        );
+        let premises = vec![lt(x.clone(), constant(0)), ge(x, constant(0))];
+        assert!(
+            plan_signed_arithmetic_certificate(&goal, &premises).is_none(),
+            "an empty interval must not be planned as a certificate"
+        );
     }
 
     #[test]

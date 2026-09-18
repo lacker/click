@@ -65,20 +65,71 @@ fn written_conjuncts(
     Ok(())
 }
 
+/// The C `if` condition standing at this frontier, spelled at that
+/// statement's entry snapshot, when the case split about to happen is exactly
+/// that C branch.
+///
+/// A proof-level case over anything else records nothing: only a decision the
+/// C program itself makes is as written as the loop guard, and only a
+/// condition that matches the statement at the frontier is one of those. The
+/// check is one indexed source lookup and one comparison against the written
+/// condition, so it reads no fact context.
+fn c_branch_condition_at_frontier(
+    execution: &ExecutionProofState,
+    context: &ExecutionProofContext<'_>,
+    condition: &ClickProposition,
+) -> Result<Option<ClickProposition>, ClickError> {
+    let statement_index = execution.core.frontier.next_statement_index;
+    if !context
+        .constants
+        .source_layout
+        .statement(statement_index)
+        .is_some_and(|region| matches!(region.kind, SourceStatementKind::If { .. }))
+    {
+        return Ok(None);
+    }
+    let FrontierPosition::StatementEntry { remaining } = &execution.core.frontier.position else {
+        return Ok(None);
+    };
+    let Ok((
+        CStatement::If {
+            condition: source, ..
+        },
+        _,
+    )) = split_next_source_operation(remaining)
+    else {
+        return Ok(None);
+    };
+    if surface_c_condition(&source) != *condition {
+        return Ok(None);
+    }
+    Ok(Some(surface_at_snapshot(
+        condition,
+        &ProgramPointRef {
+            region: CodeRegionRef::Statement(statement_index),
+            kind: ProgramPointKind::Entry,
+        },
+    )?))
+}
+
 impl<'a> Proof<'a> {
     /// The named premises a smart bundle closure may cite for a ranking
     /// member: the loop guard and the declared invariants, both read at
-    /// iteration entry, then the function's written preconditions.
+    /// iteration entry, then the function's written preconditions, then the
+    /// C branch conditions this path took, each read at the entry of the
+    /// statement that branched.
     ///
-    /// The candidate list is exactly what the loop head and the contract
-    /// name. A candidate is kept only when it lowers here, is exactly
-    /// available, and is a premise the arithmetic checker supports, so the
-    /// work is one indexed lookup and one classification per named clause and
-    /// does not grow with unrelated ambient facts.
+    /// The candidate list is exactly what the loop head, the contract, and
+    /// this path's own C branches name. A candidate is kept only when it
+    /// lowers here, is exactly available, and is a premise the arithmetic
+    /// checker supports, so the work is one indexed lookup and one
+    /// classification per named clause and does not grow with unrelated
+    /// ambient facts.
     fn named_arithmetic_premises(
         &self,
         bundle: &InvariantBodyContext,
         requires: &[Requirement],
+        path_branch_premises: &[ClickProposition],
     ) -> Result<(Self, Vec<NamedArithmeticPremise>), ClickError> {
         let mut candidates = bundle.loop_head_premises.clone();
         for requirement in requires {
@@ -86,6 +137,7 @@ impl<'a> Proof<'a> {
                 written_conjuncts(proposition, &mut candidates)?;
             }
         }
+        candidates.extend(path_branch_premises.iter().cloned());
         // Loop-head invariants are recorded as written, including a
         // conjunction such as `0 <= i and i <= 100`.  Arithmetic consumes
         // atomic premises, so materialize only the exact proper conjuncts it
@@ -648,6 +700,25 @@ impl<'a> Proof<'a> {
                 self.step_error("the invariant bundle was closed more than once on one path")
             );
         }
+        // The C branches this path took, recorded when it took them. They are
+        // read here, before the bundle scope opens, so the closer names this
+        // path's decisions and no sibling arm's.
+        //
+        // Each is named twice, exactly as a declared invariant is: once
+        // re-read at iteration entry, where it shares the invariants' own
+        // spelling so one arithmetic certificate can pair the two, and once
+        // at the statement that branched, which is the spelling that still
+        // holds when the body has since written the cells the condition read.
+        // The closer keeps whichever lowers exactly and cites the fact once.
+        let mut path_branch_premises = Vec::new();
+        for recorded in execution.presentation.path_branch_premises.iter() {
+            if let Some(selector) = bundle.iteration_entry_selector.as_ref()
+                && let Ok(at_iteration_entry) = surface_at_snapshot(recorded, selector)
+            {
+                path_branch_premises.push(at_iteration_entry);
+            }
+            path_branch_premises.push(recorded.clone());
+        }
         let (state, scope) = self
             .state
             .open_invariant_body(
@@ -725,8 +796,11 @@ impl<'a> Proof<'a> {
             match root.try_simp_closure()? {
                 Some(completed) => Ok(Some(completed)),
                 None => {
-                    let (candidate, premises) =
-                        root.named_arithmetic_premises(bundle, context.function_block.requires())?;
+                    let (candidate, premises) = root.named_arithmetic_premises(
+                        bundle,
+                        context.function_block.requires(),
+                        &path_branch_premises,
+                    )?;
                     candidate.plan_invariant_bundle_closure(&premises)
                 }
             }
@@ -1044,11 +1118,27 @@ impl<'a> Proof<'a> {
             tactic_index,
             "if",
         )?;
+        // A split that is this statement's own C `if` records the decision the
+        // C program made, at the entry snapshot where it was made, so a later
+        // bundle closer can name it after the loop body has overwritten the
+        // cells the condition read.
+        let c_branch_condition =
+            c_branch_condition_at_frontier(&base_execution, context, condition)?;
         let mut arms: [Option<(ProofFacts, ExecutionProofState, Vec<Proposition>)>; 2] =
             [None, None];
         let lowering_condition = self.substitute_fixed_state_locals_in_proposition(condition)?;
         for value in [true, false] {
             let mut arm_execution = base_execution.clone();
+            if let Some(branch_condition) = &c_branch_condition {
+                arm_execution
+                    .presentation
+                    .path_branch_premises
+                    .push(if value {
+                        branch_condition.clone()
+                    } else {
+                        negate_click_proposition(branch_condition)
+                    });
+            }
             let mut arm_facts = self.facts().to_vec();
             let base_facts = arm_facts.len();
             let feasible = introduce_proof_case_assumption(

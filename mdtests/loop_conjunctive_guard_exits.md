@@ -16,8 +16,10 @@ the first conjunct's negation alone is not assumed.
 
 `for` lowers to the same `while`, so its guard joins the same way. A
 disjunctive guard is the mirror image: `while (a != 0 || b != 0)` has two ways
-*in* and one way out, and the single exit states both conjuncts false as
-before.
+*in* and one way out. The single exit states both conjuncts false as before,
+and the entry paths export the disjunction of what each one states alone, which
+is what `either`'s `cases(a != 0 or b != 0)` below splits on;
+`mdtests/loop_disjunctive_guard_entry_join.md` is that join on its own.
 
 An operand the function cannot read still refuses, in both spellings:
 `mdtests/while_guard_unreadable_operand_rejected.md` and
@@ -60,8 +62,14 @@ int32 uprec_owned(int32 a, int32* p) {
     ensures result <= 10;
 } by {
     loop {
+        decreases a;
         invariant a >= 0;
         invariant a <= 10;
+        preserve by {
+            have 0 < a by { arithmetic() using { a >= 0; a != 0; } }
+            step();
+            close_invariants();
+        }
     }
     step();
     simp();
@@ -77,8 +85,15 @@ int32 ufor_owned(int32 a, int32* p) {
     step();
     step();
     loop {
+        decreases i;
         invariant i >= 0;
         invariant i <= 10;
+        preserve by {
+            have 0 < i by { arithmetic() using { i >= 0; i != 0; } }
+            step();
+            step();
+            close_invariants();
+        }
     }
     step();
     simp();
@@ -92,18 +107,29 @@ int32 either(int32 a, int32 b) {
     ensures result == 0;
 } by {
     loop {
+        decreases a + b;
         invariant a >= 0;
         invariant a <= 1;
         invariant b >= 0;
         invariant b <= 1;
+        preserve by {
+            have 0 < a + b by {
+                cases(a != 0 or b != 0) {
+                    have 0 < a by { arithmetic() using { a >= 0; a != 0; } }
+                    arithmetic() using { 0 < a; b >= 0; a <= 1; b <= 1; }
+                } {
+                    have 0 < b by { arithmetic() using { b >= 0; b != 0; } }
+                    arithmetic() using { 0 < b; a >= 0; a <= 1; b <= 1; }
+                }
+            }
+            step();
+            step();
+            close_invariants();
+        }
     }
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

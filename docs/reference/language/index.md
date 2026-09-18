@@ -241,18 +241,36 @@ closed with `arithmetic() using { ... }` naming the guard, precondition, and
 invariant facts it needs. The iteration's entry values are available as
 `at(statement(N).entry, x)`, the same spelling loop-body premises use. The
 smart closer cites from one named set: the loop's declared invariants, the
-loop guard, and the function's written preconditions, each in whichever of
-those two spellings holds where the member is proved. An inequality that is
-in scope but is none of those is not a candidate, so a member that needs one
-fails at that member instead of being closed by a search over ambient facts;
-cite it by hand in a `close_invariants by { ... }` body, or declare it as an
-invariant.
+loop guard, the function's written preconditions, and the C branch conditions
+this path took to reach the back edge, each in whichever of those two
+spellings holds where the member is proved. An inequality that is in scope but
+is none of those is not a candidate, so a member that needs one fails at that
+member instead of being closed by a search over ambient facts; cite it by hand
+in a `close_invariants by { ... }` body, or declare it as an invariant.
 <!-- verified-example: mdtests/c_decreases_lexicographic_loop.md -->
 ```click
 loop {
     decreases (outer, inner);
     invariant outer >= 0;
     invariant inner >= 0;
+}
+```
+A C `if` the body took is as written as the guard is, which is why it is the
+fourth member of that set. Each branch condition is recorded where the path
+decided it, spelled at the branching statement's entry as
+`at(statement(N).entry, x)`, and is also offered re-read at iteration entry,
+the spelling that pairs with the invariants whenever the body has not since
+written the cells the condition read. The list is one entry per branch the
+path took, in the order it took them, so it is named by the path rather than
+selected from the facts in scope. A measure that depends on which arm ran
+closes from it: `stop_at_zero` leaves through a `break` inside an `if`, so the
+only path that reaches the back edge is the one where `i == 0` was false, and
+`0 < i` follows from that disequality and the declared `i >= 0`.
+<!-- verified-example: mdtests/close_invariants_cites_a_branch_condition.md -->
+```click
+loop {
+    decreases i;
+    invariant i >= 0;
 }
 ```
 Function-level numeric measures remain one unchanged `int32` parameter, and a

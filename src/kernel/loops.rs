@@ -1583,6 +1583,58 @@ fn condition_fact_refutes(fact: &Proposition, other: &Proposition) -> bool {
     }
 }
 
+/// The disjunction of what each short-circuit guard path states on its own.
+///
+/// One entry per path, holding only the facts that path added. A conjunct an
+/// earlier disjunct contradicts is dropped, which only weakens that disjunct
+/// and so keeps the disjunction true, turning `!a | (a & !b)` into the
+/// `!a | !b` a proof can name. A path that states nothing of its own makes the
+/// whole disjunction vacuous, so there is nothing to export.
+///
+/// The disjuncts come out in short-circuit evaluation order, which is a stable
+/// sort of the paths by how many facts each states: the path that decided the
+/// guard on an earlier operand states fewer of them, and ties keep the order
+/// the paths were enumerated in. The kernel enumerates a disjunctive guard's
+/// entry paths with the operand-false one first, so `a || b` would otherwise
+/// read `(a == 0 and b != 0) or a != 0` instead of the `a != 0 or b != 0` a
+/// proof writes. Narrowing runs after the sort, so it drops the conjunct the
+/// short-circuit path refutes rather than the other way round. Both the entry
+/// join and the exit join come through here, so they agree on the spelling.
+pub(super) fn guard_path_disjunction(own_facts: &[Vec<Proposition>]) -> Option<Proposition> {
+    if own_facts.len() <= 1 {
+        return None;
+    }
+    let mut ordered = own_facts.iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|own| own.len());
+    let mut disjuncts = Vec::new();
+    for (index, own) in ordered.iter().enumerate() {
+        let narrowed = own
+            .iter()
+            .filter(|fact| {
+                !ordered[..index].iter().any(|facts| {
+                    facts
+                        .iter()
+                        .any(|earlier| condition_fact_refutes(earlier, fact))
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut own = if narrowed.is_empty() {
+            own.iter().collect::<Vec<_>>().into_iter()
+        } else {
+            narrowed.into_iter()
+        };
+        let first = own.next()?;
+        disjuncts.push(own.fold(first.clone(), |left, right| {
+            Proposition::And(Box::new(left), Box::new(right.clone()))
+        }));
+    }
+    let mut disjunction = disjuncts.pop()?;
+    while let Some(disjunct) = disjuncts.pop() {
+        disjunction = Proposition::Or(Box::new(disjunct), Box::new(disjunction));
+    }
+    Some(disjunction)
+}
+
 /// Joins the exit paths of one loop guard into the single exit the loop rule
 /// certifies.
 ///
@@ -1649,42 +1701,8 @@ fn join_loop_exit_paths(
     // conjunct another disjunct contradicts is dropped, which only weakens
     // that disjunct and so keeps the disjunction true, and turns
     // `!a | (a & !b)` into the `!a | !b` a proof can name.
-    let mut disjuncts = Vec::new();
-    for (index, own) in own_facts.iter().enumerate() {
-        let narrowed = own
-            .iter()
-            .filter(|fact| {
-                !own_facts[..index].iter().any(|facts| {
-                    facts
-                        .iter()
-                        .any(|earlier| condition_fact_refutes(earlier, fact))
-                })
-            })
-            .collect::<Vec<_>>();
-        // Dropping every conjunct would make this disjunct, and with it the
-        // whole disjunction, vacuous. Keep what the path actually stated.
-        let mut own = if narrowed.is_empty() {
-            own.iter().collect::<Vec<_>>().into_iter()
-        } else {
-            narrowed.into_iter()
-        };
-        match own.next() {
-            Some(first) => disjuncts.push(own.fold(first.clone(), |left, right| {
-                Proposition::And(Box::new(left), Box::new(right.clone()))
-            })),
-            // A path that states nothing of its own makes the disjunction
-            // vacuously true, so the shared facts are the whole join.
-            None => {
-                disjuncts.clear();
-                break;
-            }
-        }
-    }
     let mut facts = shared;
-    if let Some(mut disjunction) = disjuncts.pop() {
-        while let Some(disjunct) = disjuncts.pop() {
-            disjunction = Proposition::Or(Box::new(disjunct), Box::new(disjunction));
-        }
+    if let Some(disjunction) = guard_path_disjunction(&own_facts) {
         facts.push(ExecutionPureFact::new(disjunction));
     }
     let mut obligations = first_obligations;

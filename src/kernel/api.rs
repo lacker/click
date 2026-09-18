@@ -464,6 +464,29 @@ fn c_loop_preservation_contexts_with_mode(
             )
             .map_err(|error| format!("could not assume the loop condition: {error:?}"))?
         };
+        // A disjunctive guard such as `while (a || b)` has one way *in* per
+        // disjunct, and the body runs on each of them with only that path's
+        // own guard facts. The mirror of the exit join: export the
+        // disjunction of what each entry path states alone, so one written
+        // proof can reason by cases over the ways the guard was true instead
+        // of needing a different certificate per entry path.
+        let entry_disjunction = crate::kernel::loops::guard_path_disjunction(
+            &condition_contexts
+                .iter()
+                .map(|assumption| {
+                    assumption
+                        .facts
+                        .iter()
+                        .map(|fact| fact.proposition().clone())
+                        .filter(|proposition| {
+                            !invariant_facts
+                                .iter()
+                                .any(|fact| fact.proposition() == proposition)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>(),
+        );
         for assumption in condition_contexts {
             // A guard operand this function may not read leaves the head's
             // premises undefined; there is no iteration to describe here.
@@ -509,6 +532,9 @@ fn c_loop_preservation_contexts_with_mode(
                 )
                 .model_facts,
             );
+            if let Some(disjunction) = &entry_disjunction {
+                pure_facts.push(disjunction.clone());
+            }
             pure_facts.sort();
             pure_facts.dedup();
             contexts.push(CLoopPreservationContext {
