@@ -25,6 +25,7 @@ mod expression_tests;
 mod fact_publication_tests;
 mod memory_reasoning_tests;
 mod proof_reasoning_tests;
+mod representation_copy_tests;
 mod resource_tests;
 mod state_identity_tests;
 

@@ -1,4 +1,4 @@
-use super::validation::combined_algebraic_type_definitions;
+use super::validation::{combined_algebraic_type_definitions, standard_library_function_block};
 use super::*;
 use crate::languages::c::compiler_import::PreparedCImport;
 use crate::languages::c::target::CTarget;
@@ -5806,17 +5806,41 @@ pub(in crate::surface) fn build_function_environment(
             click_function_environment,
             resource_environment,
         )?;
-        let rule = crate::kernel::c_external_function_rule(function.clone()).ok_or_else(|| {
-            ClickError::new(format!(
-                "external function `{}` has a contract that cannot be applied opaquely",
-                function_block.signature().name()
-            ))
-        })?;
+        let mut rule =
+            crate::kernel::c_external_function_rule(function.clone()).ok_or_else(|| {
+                ClickError::new(format!(
+                    "external function `{}` has a contract that cannot be applied opaquely",
+                    function_block.signature().name()
+                ))
+            })?;
+        // Bind the representation-copy effect to the exact standard-library
+        // declaration, never to the spelling. A user function that shadows the
+        // name with a different declaration keeps the plain external contract.
+        if is_recognized_representation_copy_block(function_block)? {
+            rule = rule.with_representation_copy(crate::kernel::RepresentationCopyEffect {
+                destination_argument: 0,
+                source_argument: 1,
+                bytes_argument: 2,
+            });
+        }
         environment = environment
             .with_function(function)
             .with_external_function_rule(rule);
     }
     Ok(environment)
+}
+
+/// Whether `function_block` is the standard-library declaration that carries
+/// the checked byte-copy effect. Its argument positions are fixed by that
+/// declaration's parameter order.
+fn is_recognized_representation_copy_block(
+    function_block: &FunctionBlock,
+) -> Result<bool, ClickError> {
+    let name = function_block.signature().name();
+    if name != "memcpy" {
+        return Ok(false);
+    }
+    Ok(standard_library_function_block(name)?.as_ref() == Some(function_block))
 }
 
 pub(in crate::surface) fn function_resource_summary(

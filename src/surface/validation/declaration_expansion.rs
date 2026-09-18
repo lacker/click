@@ -115,6 +115,20 @@ pub(in crate::surface) fn combined_external_function_blocks(
     Ok(function_blocks)
 }
 
+/// The parsed standard-library function block whose declaration name is
+/// `name`, if the library declares one. A recognized builtin effect is bound
+/// to this exact declaration: matching a bare name would let an unrelated
+/// user function acquire the effect when it merely shares the spelling.
+pub(in crate::surface) fn standard_library_function_block(
+    name: &str,
+) -> Result<Option<FunctionBlock>, ClickError> {
+    Ok(standard_library()?
+        .function_blocks()
+        .iter()
+        .find(|function| function.signature().name() == name)
+        .cloned())
+}
+
 /// Every matched-arm child slot of `definition`, mapped to the resource it
 /// declares. A slot two arms spell with different resources maps to `None`;
 /// the proof's own `fold` spelling then decides, and this pass checks

@@ -1664,6 +1664,7 @@ pub(super) fn execute_c_function_call_paths(
                 interface: rule.function.contract_interface(),
                 storage: Some(&rule.function),
                 evidence: None,
+                representation_copy: rule.representation_copy(),
             }],
             None,
             binder_application
@@ -1930,6 +1931,7 @@ fn execute_verified_function_rule(
             interface: rule.function.contract_interface(),
             storage: Some(&rule.function),
             evidence: Some(&rule.function),
+            representation_copy: None,
         }],
         None,
         binder_application
@@ -1985,6 +1987,90 @@ struct CFunctionContractApplication<'a> {
     interface: &'a CFunctionContractInterface,
     storage: Option<&'a CFunction>,
     evidence: Option<&'a CFunction>,
+    /// The checked representation-copy effect of a recognized byte-copy
+    /// declaration, if this application is one.
+    representation_copy: Option<RepresentationCopyEffect>,
+}
+
+/// Transfers initialized typed cells across a recognized byte-copy call.
+///
+/// Only a cell whose complete byte representation lies inside the copied
+/// source range moves, and only when both endpoints are constant so the offset
+/// mapping and the alignment test are exact. A cell the copy would split, a
+/// symbolic range, or a misaligned destination is left alone: the destination
+/// keeps its post-havoc state, so the transfer can only add observations the
+/// copy's `bytes_equal` guarantee already justified. An untyped source has no
+/// cells, so a raw byte copy still establishes nothing typed.
+pub(in crate::kernel) fn transfer_representation_copy_cells(
+    entry_memory: &CMemory,
+    argument_values: &[CValue],
+    mut memory: CMemory,
+    effect: RepresentationCopyEffect,
+) -> CMemory {
+    let (Some(destination), Some(source), Some(bytes)) = (
+        argument_values.get(effect.destination_argument),
+        argument_values.get(effect.source_argument),
+        argument_values.get(effect.bytes_argument),
+    ) else {
+        return memory;
+    };
+    let (CValue::Pointer(destination), CValue::Pointer(source)) = (destination, source) else {
+        return memory;
+    };
+    let CValue::Int32(bytes) = bytes else {
+        return memory;
+    };
+    let (Some(source_offset), Some(destination_offset), Some(bytes)) = (
+        source.pointer().offset.as_const(),
+        destination.pointer().offset.as_const(),
+        bytes.as_const(),
+    ) else {
+        return memory;
+    };
+    let bytes = i64::from(bytes);
+    if bytes <= 0 {
+        return memory;
+    }
+    let source_block = source.pointer().block.clone();
+    let destination_block = destination.pointer().block.clone();
+    // A checked byte copy requires the ranges be separate, so a self-copy in
+    // one block is not the recognized effect.
+    if source_block == destination_block {
+        return memory;
+    }
+    let source_cells = entry_memory
+        .cells
+        .iter()
+        .filter(|(cell, _)| cell.block == source_block)
+        .map(|(cell, value)| (cell.offset.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    for (cell_offset, value) in source_cells {
+        let Some(cell_offset) = cell_offset.as_const() else {
+            continue;
+        };
+        let width = i64::from(value.byte_width());
+        if width == 0 {
+            continue;
+        }
+        let relative = cell_offset - source_offset;
+        if relative < 0 || relative + width > bytes {
+            continue;
+        }
+        let destination_cell_offset = destination_offset + relative;
+        // The copied bytes preserve the source value, but a typed observation
+        // at a misaligned destination is not a defined load.
+        if destination_cell_offset % width != 0 {
+            continue;
+        }
+        memory = memory.store(
+            Pointer {
+                block: destination_block.clone(),
+                offset: PointerOffsetTerm::Constant(destination_cell_offset),
+            },
+            value,
+        );
+    }
+    memory
 }
 
 fn execute_verified_function_applications(
@@ -2251,6 +2337,21 @@ fn execute_verified_function_applications(
                 &transfer.memory_effects,
                 &effective_assumptions,
             )
+        };
+        // A recognized byte-copy declaration transfers initialized typed
+        // cells across the copy. It runs after the external contract's havoc,
+        // so the copies' `bytes_equal` guarantee is what makes the transferred
+        // values the checked ones, and it is the only thing that turns the
+        // destination's freshly owned bytes into typed observations.
+        let memory = if let Some(effect) = application.representation_copy {
+            transfer_representation_copy_cells(
+                &entry_state.memory,
+                &argument_values,
+                memory,
+                effect,
+            )
+        } else {
+            memory
         };
         if !transfer.memory_effects.is_empty() {
             facts.push(
@@ -3594,6 +3695,7 @@ pub(super) fn execute_c_function_contracts_paths(
             interface: contract.interface(),
             storage: None,
             evidence: None,
+            representation_copy: None,
         })
         .collect::<Vec<_>>();
     execute_verified_function_applications(

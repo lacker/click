@@ -90,7 +90,13 @@ applies those contracts as explicit assumptions, so the callee implementation
 is not checked by Click and its preconditions remain caller obligations. The
 standard library includes narrow byte-oriented contracts for `memcpy`,
 `memcmp`, `memset`, and `strlen`. `click verify` reports the transitive external
-assumptions used by each verified function. These contracts still describe
+assumptions used by each verified function. The standard-library `memcpy`
+declaration additionally carries a checked representation-copy effect: a copy
+that covers the complete representation of an initialized source cell
+establishes that cell's value at the mapped destination offset. The effect is
+bound to that exact declaration, so a user function named `memcpy` does not
+acquire it, and a partial, unaligned, or untyped copy establishes no typed
+value. These contracts still describe
 only the supported C0 types; `void *` dereference or ownership, `size_t`,
 overlap semantics, and unbounded string loadability remain outside the model.
 

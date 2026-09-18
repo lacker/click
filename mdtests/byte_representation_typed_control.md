@@ -1,12 +1,11 @@
 # A typed field copy establishes the destination value
 
-The typed control for the byte-representation scalar frontier. Two heap
-records at the same allocation shapes as
-[`byte_representation_scalar_copy_frontier.md`](byte_representation_scalar_copy_frontier.md),
+The typed control for the byte-representation direct copy. Two heap records at
+the same allocation shapes as
+[`byte_representation_scalar_copy.md`](byte_representation_scalar_copy.md),
 the only difference being `dst->x = src->x` instead of a `sizeof`-wide
-`memcpy`. This verifies, which isolates the frontier there to the
-representation-copy rule: allocation refinement, null handling, ownership,
-and the typed load are all in the shared part.
+`memcpy`. Both verify: a complete, initialized representation copy and a typed
+field copy establish the same destination observation.
 
 ```c filename=typed_field_copy.c
 void *malloc(unsigned long size);
