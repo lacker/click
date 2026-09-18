@@ -300,6 +300,13 @@ impl<'a> Proof<'a> {
                 .presentation
                 .branch_surface_facts
                 .insert(kernel_path_fact.clone());
+            // `surface_path_fact` already reads the `if` statement's entry
+            // snapshot, so it survives the body's later stores and a bundle
+            // closer on this arm may name it.
+            arm_execution
+                .presentation
+                .path_branch_premises
+                .push(surface_path_fact.clone());
             arm_execution
                 .presentation
                 .branch_decisions
