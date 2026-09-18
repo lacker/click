@@ -93,7 +93,6 @@ goto, C++, or concurrency.
 Specification and proof:
 
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
-- [Require termination by default](termination-required.md)
 
 ## P2: after launch (26)
 

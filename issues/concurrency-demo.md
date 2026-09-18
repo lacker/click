@@ -22,10 +22,11 @@ this milestone also requires modular rules and deterministic scaling tests.
 
 ## Current checkpoint and scope
 
-**Blocked on [termination-required.md](termination-required.md).** A join on a
-worker with no termination evidence may never return, so the fork/join slice
-waits for termination to become the default. The unfinished slice is parked,
-not green, on the branch `claude/concurrency-demo-slice2-parked`; read its
+**Unblocked.** Termination is now Click's only judgment for C (see "C
+termination" in `docs/reference/language/index.md`), so a worker's contract
+says whether it returns and a join on it can state what the parent proves.
+The unfinished fork/join slice is parked, not green, on the branch
+`claude/concurrency-demo-slice2-parked`; read its
 `design/concurrency-probes/PARKED.md` before resuming.
 
 The source-selection checkpoint is
