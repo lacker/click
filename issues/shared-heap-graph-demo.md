@@ -97,6 +97,35 @@ payload protocols, and arbitrary cyclic-graph proofs remain deferred. The
 small diamond establishes sharing, not cycle reclamation. Follow `AGENTS.md`
 when proof tooling exposes a blocker.
 
+## Current status, 2026-09-18
+
+The first verifier chunk is green, but the complete frozen two-parent lifecycle
+is not finished. The companion encoding is the supported shape for the next
+steps: each parent owns its link cell and keeps a top-level `child_ref(kid)`
+unit; the parent resource does not nest the memory-bearing counted family.
+
+Landed and covered by the normal gate:
+
+- `mdtests/child_release_branch_on_count.md` proves the single C
+  branch-on-count release, including the explicit nonempty-population goal on
+  the non-final path.
+- `mdtests/parent_attach_call_frame.md` covers attach, a disjoint retain call,
+  the post-call parent fold, and a payload read through the companion link.
+- The call/frame transport now resolves a pointer-valued load through the
+  checked memory-DAG history when the call excludes that cell. The fallback is
+  scoped to explicit resource-body pointer facts; unrelated general fact
+  discharge does not gain a new search route.
+- `scripts/check.sh` passes, including the full unit, integration, example,
+  and mdtest gates.
+
+The full frozen `shared_parent.c` diamond is still open. In particular, the
+parent-detach path decrements a counted child reference and then clears
+`p->kid`; the surviving counted unit must still be returned under the old
+child pointer. The current companion representation cannot express that
+post-state handoff, and attempts to close it fail with a live-allocation or
+resource-population obligation. No parent resource nesting workaround was
+accepted.
+
 ## Completed chunk, 2026-09-18: one branch-on-count release
 
 The reduced blocker is the single `child_release` in the frozen
@@ -115,3 +144,16 @@ the final-path free requirement.
 
 The leak error names counted families and suggests proving
 `count(...) != 0`.
+
+## Completed chunk, 2026-09-18: disjoint-call load transport
+
+The focused `parent_attach_call_frame` regression also verifies the formerly
+blocked shape where `parent_attach` stores `p->kid`, calls `child_retain(kid)`,
+and only then folds `parent(p)`. The pointer-valued `p->kid` fact is recovered
+from the checked memory-DAG call frame because the retain call excludes that
+cell. Calls that may write the field do not receive this transport.
+
+The remaining next chunk is the parent-detach handoff: preserve the surviving
+`child_ref` and its allocation under the pre-store child pointer while the
+parent link transitions after `p->kid = 0`. Then wire both destruction orders,
+allocation-failure paths, and the negative regressions from the frozen probe.
