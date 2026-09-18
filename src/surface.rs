@@ -258,6 +258,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "load_uint8_pointer",
     "loadable",
     "loop",
+    "lt_from_neq",
     "mark",
     "match",
     "memory",
@@ -2184,6 +2185,26 @@ struct RecordedSnapshotChange {
     parent: Option<std::sync::Arc<RecordedSnapshotChange>>,
 }
 
+/// The history is one node per recorded change, so a proof that steps a few
+/// thousand statements owns a chain that long. Dropping it through the
+/// derived `Drop` recurses once per node and overflowed the 8 MB main thread
+/// of `click verify` at about 6,000 recorded steps, well inside the budget an
+/// `auto` proof may spend; the test harness only hid it behind a 64 MB
+/// worker. The chain is unlinked here instead, node by node, for as long as
+/// this drop holds the last reference to the next one; a node another
+/// version still shares stops the walk and is dropped by that version later.
+impl Drop for RecordedSnapshotChange {
+    fn drop(&mut self) {
+        let mut next = self.parent.take();
+        while let Some(node) = next {
+            next = match std::sync::Arc::try_unwrap(node) {
+                Ok(mut node) => node.parent.take(),
+                Err(_) => None,
+            };
+        }
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     static RECORDED_SNAPSHOT_NODE_ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -2606,10 +2627,15 @@ impl SpecElaborationContext {
             .map(|(name, value)| (name.clone(), SpecExpression::Value(value.clone())))
             .collect::<BTreeMap<_, _>>();
 
-        // A binding the proof holds as an expression (a function parameter
-        // bound to its argument, a `let` name) reads the same at the entry.
+        // A `let` name the proof holds as an expression reads the same at
+        // the entry. A name the entry records is a local, and a parameter's
+        // binding in a proof is that local, not its argument: letting it win
+        // here read `old(n)` as the current `n` once the body had reassigned
+        // it, while the contract's `old(n)` correctly read the argument.
         for (name, value) in &self.values {
-            values.insert(name.clone(), value.clone());
+            if !values.contains_key(name) {
+                values.insert(name.clone(), value.clone());
+            }
         }
 
         Ok(Self {
@@ -4528,6 +4554,11 @@ pub enum SignedArithmeticStep {
     EqualityFromBounds {
         lower: usize,
         upper: usize,
+        result: ClickProposition,
+    },
+    StrictFromDisequal {
+        bound: usize,
+        disequal: usize,
         result: ClickProposition,
     },
     Trivial {

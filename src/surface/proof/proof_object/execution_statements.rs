@@ -295,6 +295,19 @@ impl<'a> Proof<'a> {
                     }),
                 )
             });
+            // A plan that exists but cannot be printed is not an unproved
+            // leaf, and repairing the proof does not help it; say so, or the
+            // report below names the leaf as open and sends the user after a
+            // premise it does not lack.
+            if surface_goal.is_none()
+                && crate::surface::checking::plan_signed_arithmetic_certificate(goal, &kernels)
+                    .is_some()
+            {
+                let diagnostic = self.step_error(
+                    "checked loop invariant bundle leaf was proved by arithmetic from the loop head's premises, but the certificate cannot be printed: neither the bundle nor this leaf has a source form",
+                );
+                attempt::record_unclosed_goal("loop invariant bundle leaf", &diagnostic);
+            }
             if let Some(plan) =
                 crate::surface::checking::plan_signed_arithmetic_certificate(goal, &kernels)
                 && let Some(surface_goal) = surface_goal.as_ref()

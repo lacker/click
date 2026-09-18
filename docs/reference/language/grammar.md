@@ -68,6 +68,7 @@ documentation inventory keep the following accepted words synchronized.
 | `add` | Adds two earlier arithmetic certificate nodes. |
 | `eq_to_le` | Converts an equality certificate node to a non-strict bound. |
 | `eq_from_bounds` | Closes an equality from opposite non-strict bounds. |
+| `lt_from_neq` | Sharpens a non-strict bound to a strict one with a disequality on the same sides. |
 | `trivial` | Checks a context-free affine identity. |
 | `interval_from_affine`, `interval_from_affine_direct`, `interval_atom`, `interval_intersect` | Introduce, import, or intersect, checked signed-machine intervals. `interval_from_affine_direct` is required when the cited affine premise already contains a compound machine operation; it does not silently decompose that operation. |
 | `defined`, `interval_add`, `interval_add_bounded`, `interval_subtract`, `interval_multiply`, `interval_remainder`, `interval_shift_left`, `interval_arithmetic_shift_right`, `interval_bitwise_and`, `interval_sign_bit_flip`, `interval_compare` | Record exact definedness premises and bounded interval-operation evidence for signed-machine expressions. |

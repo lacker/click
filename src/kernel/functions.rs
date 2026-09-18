@@ -13401,6 +13401,30 @@ pub(crate) struct ResourceInstanceRewriteResult {
     pub(crate) body_clauses: Vec<ResourceBodyClauseRecord>,
 }
 
+/// Whether an undischarged proposition only says that an arithmetic
+/// evaluation does not hit undefined behavior (for example, `x + 2` cannot
+/// overflow). Unfold exposes such conditions alongside the body fact instead
+/// of refusing; anything else keeps the generic conditional-proof
+/// diagnostic.
+fn is_pure_undefined_behavior_condition(proposition: &Proposition) -> bool {
+    let Proposition::ConditionIs(condition, false) = proposition else {
+        return false;
+    };
+    matches!(
+        condition,
+        ConditionTerm::Bitvector32SignedAddOverflows(..)
+            | ConditionTerm::Bitvector32SignedSubtractOverflows(..)
+            | ConditionTerm::Bitvector32SignedMultiplyOverflows(..)
+            | ConditionTerm::Bitvector32SignedDivideOverflows(..)
+            | ConditionTerm::Bitvector32SignedShiftLeftOverflows(..)
+            | ConditionTerm::Bitvector64SignedAddOverflows(..)
+            | ConditionTerm::Bitvector64SignedSubtractOverflows(..)
+            | ConditionTerm::Bitvector64SignedMultiplyOverflows(..)
+            | ConditionTerm::Bitvector64SignedDivideOverflows(..)
+            | ConditionTerm::Bitvector64SignedShiftLeftOverflows(..)
+    )
+}
+
 /// Lower one selected body in source order. A body clause is available to a
 /// later clause only after the selected resource justified it (unfold/match),
 /// or after the fold's existing facts established it. Routing facts for a
@@ -13416,7 +13440,7 @@ fn lower_selected_resource_body_clauses(
     body_assumptions: &PureFactContext,
     established_assumptions: Option<&PureFactContext>,
     budget: &mut ExecutionBudget,
-) -> Result<Vec<ResourceBodyClauseRecord>, ResourceRewriteRefusal> {
+) -> Result<(Vec<ResourceBodyClauseRecord>, Vec<Proposition>), ResourceRewriteRefusal> {
     let c_replacements = BTreeMap::new();
     let algebraic_replacements = BTreeMap::new();
     let mut rewrite = crate::kernel::proof::term_rewrite::TermRewrite::for_checked_typed_variables(
@@ -13430,6 +13454,7 @@ fn lower_selected_resource_body_clauses(
         .map_err(|_| "resource match Integer binding substitution exceeded its checked scope")?;
     let mut context = body_assumptions.clone();
     let mut records = Vec::with_capacity(source.len());
+    let mut retained_conditions = Vec::new();
     for (ordinal, clause) in source.iter().enumerate() {
         crate::instrumentation::record_deterministic_work(1);
         let clause = rewrite.spec_proposition(clause).map_err(
@@ -13446,19 +13471,39 @@ fn lower_selected_resource_body_clauses(
         .map_err(|_| "could not evaluate instance body fact")?;
         let path = crate::kernel::api::exactly_selected_spec_proposition_path(&paths, &context)
             .ok_or("instance body fact needs an unsupported conditional proof")?;
-        if path
-            .facts
-            .iter()
-            .any(|fact| !required_obligation_is_exactly_discharged(&context, fact.proposition()))
-            || path.obligations.iter().any(|goal| {
-                !required_obligation_is_exactly_discharged(&context, goal.proposition())
-                    && !quantified_resource_fact_memory_obligation_is_discharged(
-                        &context,
-                        goal.proposition(),
-                    )
-            })
-        {
+        // An undischarged pure undefined-behavior condition (unchecked
+        // arithmetic) is exposed alongside the body fact instead of
+        // refusing the rewrite: the author asserted the C meaning, which
+        // includes definedness, and every later use re-checks it. Anything
+        // else still refuses as before.
+        let retained_start = retained_conditions.len();
+        for fact in &path.facts {
+            if required_obligation_is_exactly_discharged(&context, fact.proposition()) {
+                continue;
+            }
+            if is_pure_undefined_behavior_condition(fact.proposition()) {
+                retained_conditions.push(fact.proposition().clone());
+                continue;
+            }
             return Err("instance body fact needs an unsupported conditional proof".into());
+        }
+        for goal in &path.obligations {
+            if required_obligation_is_exactly_discharged(&context, goal.proposition())
+                || quantified_resource_fact_memory_obligation_is_discharged(
+                    &context,
+                    goal.proposition(),
+                )
+            {
+                continue;
+            }
+            if is_pure_undefined_behavior_condition(goal.proposition()) {
+                retained_conditions.push(goal.proposition().clone());
+                continue;
+            }
+            return Err("instance body fact needs an unsupported conditional proof".into());
+        }
+        for condition in &retained_conditions[retained_start..] {
+            context = context.assume_proposition(condition.clone());
         }
         if let Some(established) = established_assumptions
             && !required_obligation_is_exactly_discharged(established, &path.proposition)
@@ -13478,7 +13523,7 @@ fn lower_selected_resource_body_clauses(
         context = context.assume_proposition(path.proposition.clone());
         records.push(record);
     }
-    Ok(records)
+    Ok((records, retained_conditions))
 }
 
 /// Exchange one exclusive instance for its immediate memory body, or back.
@@ -13949,7 +13994,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         body_assumptions = body_assumptions.assume_proposition(fact.clone());
     }
     let facts_to_rewrite = selected.map_or(&definition.facts, |arm| &arm.facts);
-    let body_clauses = if active {
+    let (body_clauses, retained_conditions) = if active {
         lower_selected_resource_body_clauses(
             &evaluation,
             facts_to_rewrite,
@@ -13961,9 +14006,10 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             &mut budget,
         )?
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
     facts.extend(body_clauses.iter().map(|clause| clause.proposition.clone()));
+    facts.extend(retained_conditions);
     if unfold {
         // The arm this unfold opened is the one the premises standing here
         // leave, so the model fact that forced it is published with the
@@ -14183,6 +14229,7 @@ pub(in crate::kernel) fn matched_resource_instance_case_clauses(
         None,
         &mut budget,
     )
+    .map(|(records, _retained)| records)
     .unwrap_or_default()
 }
 
@@ -19190,6 +19237,7 @@ mod verified_call_initialization_tests {
         let environment =
             CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
                 function: function.clone(),
+                loop_semantics: CLoopSemantics::Verify,
             });
         execute_c_function_call_paths(
             state,
@@ -19487,6 +19535,7 @@ mod stable_view_call_tests {
     fn environment(function: &CFunction) -> CExecutionEnvironment {
         CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
             function: function.clone(),
+            loop_semantics: CLoopSemantics::Verify,
         })
     }
 
@@ -20075,6 +20124,7 @@ mod stable_view_call_tests {
         let environment =
             CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
                 function: function.clone(),
+                loop_semantics: CLoopSemantics::Verify,
             });
         let paths = execute_c_function_call_paths(
             &caller(&pointer),
@@ -20835,7 +20885,10 @@ mod stable_view_call_tests {
         .with_resource_summary(vec![CResourceSpec::viewed_memory(segment)], Vec::new());
         let environment = CExecutionEnvironment::new()
             .with_function(inner.clone())
-            .with_verified_function_rule(CVerifiedFunctionRule { function: inner });
+            .with_verified_function_rule(CVerifiedFunctionRule {
+                function: inner,
+                loop_semantics: CLoopSemantics::Verify,
+            });
 
         let paths = execute_c_function_paths(
             &caller(&pointer),
@@ -21886,6 +21939,7 @@ mod stable_view_call_tests {
             let environment =
                 CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
                     function: function.clone(),
+                    loop_semantics: CLoopSemantics::Verify,
                 });
             let paths = execute_c_function_call_paths(
                 &caller,

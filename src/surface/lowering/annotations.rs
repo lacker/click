@@ -4585,6 +4585,15 @@ impl AnnotationLowerer<'_> {
     ) -> Option<SpecElaborationContext> {
         let state = self.snapshots?.get(selector)?;
         let mut values = environment.values.clone();
+        // A parameter reads as its entry value at any snapshot that does not
+        // bind it as a local, which is every snapshot taken before its first
+        // statement. The context's own binding is the current value, and a
+        // mark taken before a reassignment used to read the value after it.
+        values.extend(
+            self.entry_values
+                .iter()
+                .map(|(name, value)| (name.clone(), SpecExpression::Value(value.clone()))),
+        );
         values.extend(
             state
                 .locals()

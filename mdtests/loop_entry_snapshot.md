@@ -21,6 +21,7 @@ int32 drain_to_zero(int32 n) {
     ensures returns_zero: result == 0;
 } by {
     loop as drain {
+        decreases n;
         invariant n >= 0;
         invariant n <= at(drain.entry, n);
         preserve by {
@@ -34,17 +35,19 @@ int32 drain_to_zero(int32 n) {
             step();
             close_invariants by {
                 both { arithmetic() using { 0 <= n; } }
-                and { simp(); }
+                and {
+                    both { simp(); }
+                    and {
+                        both { arithmetic() using { 0 <= n; } }
+                        and { simp(); }
+                    }
+                }
             }
         }
     }
     step();
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

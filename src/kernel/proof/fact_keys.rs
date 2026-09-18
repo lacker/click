@@ -2097,8 +2097,73 @@ pub(crate) fn propositions_are_alpha_equal(left: &Proposition, right: &Propositi
     ) {
         (Some(left), Some(right)) => left == right,
         // A pair of unsupported propositions must not compare equal merely
-        // because both key walks declined to represent them.
+        // because both key walks declined to represent them. They are equal
+        // when they are the same proposition up to the numbering of their
+        // own binders, which one renumbering of each decides exactly.
+        (None, None) => renumbered_binders(left, 0) == renumbered_binders(right, 0),
         _ => false,
+    }
+}
+
+/// A variable range no lowering mints, for renumbering binders.
+const RENUMBERED_BINDER_BASE: u64 = 9_600_000_000;
+
+/// `proposition` with each quantifier's variable replaced, outermost first,
+/// by the variable numbered for its depth, so two propositions that differ
+/// only in how their binders are numbered become the same value. The walk is
+/// over the connectives and quantifiers only, and each renaming is the
+/// ordinary capture-avoiding substitution; a binder inside a term is left as
+/// written, and such a pair then compares equal only when it is written the
+/// same. Work is one substitution per binder.
+fn renumbered_binders(proposition: &Proposition, depth: u64) -> Proposition {
+    use crate::kernel::reasoning::substitute_bitvector_variable_in_proposition;
+    match proposition {
+        Proposition::And(left, right) => Proposition::And(
+            Box::new(renumbered_binders(left, depth)),
+            Box::new(renumbered_binders(right, depth)),
+        ),
+        Proposition::Or(left, right) => Proposition::Or(
+            Box::new(renumbered_binders(left, depth)),
+            Box::new(renumbered_binders(right, depth)),
+        ),
+        Proposition::Implies(left, right) => Proposition::Implies(
+            Box::new(renumbered_binders(left, depth)),
+            Box::new(renumbered_binders(right, depth)),
+        ),
+        Proposition::Not(body) => Proposition::Not(Box::new(renumbered_binders(body, depth))),
+        Proposition::ForAll { var, sort, body } => {
+            let fresh = Variable(RENUMBERED_BINDER_BASE + depth);
+            let body = substitute_bitvector_variable_in_proposition(
+                body,
+                *var,
+                &Bitvector32Term::Variable(fresh),
+            );
+            Proposition::ForAll {
+                var: fresh,
+                sort: sort.clone(),
+                body: Box::new(renumbered_binders(&body, depth + 1)),
+            }
+        }
+        Proposition::Exists {
+            name,
+            var,
+            sort,
+            body,
+        } => {
+            let fresh = Variable(RENUMBERED_BINDER_BASE + depth);
+            let body = substitute_bitvector_variable_in_proposition(
+                body,
+                *var,
+                &Bitvector32Term::Variable(fresh),
+            );
+            Proposition::Exists {
+                name: name.clone(),
+                var: fresh,
+                sort: sort.clone(),
+                body: Box::new(renumbered_binders(&body, depth + 1)),
+            }
+        }
+        _ => proposition.clone(),
     }
 }
 
@@ -2120,6 +2185,31 @@ mod proposition_identity_tests {
             sort: Sort::Bitvector32,
             body: Box::new(body),
         }
+    }
+
+    /// A Click function application has no identity key, so two quantified
+    /// propositions over one, equal but for their binders' numbers, used to
+    /// compare unequal: a bundle presented with one binder number and lowered
+    /// again with another could then not be split.
+    #[test]
+    fn unkeyed_propositions_compare_equal_up_to_binder_numbering() {
+        let application = |bound: u64| {
+            equal(
+                Bitvector32Term::ClickFunctionApplication {
+                    name: "count".to_string(),
+                    arguments: vec![crate::kernel::PureFunctionArgument::Value(CValue::Int32(
+                        Bitvector32Term::Variable(Variable(bound)),
+                    ))],
+                },
+                Bitvector32Term::Constant(1),
+            )
+        };
+        let left = forall(2_000_000, application(2_000_000));
+        let right = forall(3_000_000, application(3_000_000));
+        assert!(proposition_identity_key(&left).is_none());
+        assert!(propositions_are_alpha_equal(&left, &right));
+        let other = forall(3_000_000, application(7));
+        assert!(!propositions_are_alpha_equal(&left, &other));
     }
 
     #[test]

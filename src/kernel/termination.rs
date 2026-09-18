@@ -1330,6 +1330,20 @@ fn function_object_names(function: &CFunction) -> BTreeSet<String> {
     names
 }
 
+/// The paths that continue past a join, as one bound.
+///
+/// A recursive edge is checked against every path's lower bound on the
+/// measure, so only the weakest of them decides; and a branch refines a
+/// bound as the larger of the bound and what its condition says, which is
+/// monotone, so refining the weakest bound gives the weakest refined bound.
+/// Keeping one bound per join is therefore exactly as strict as keeping
+/// every path's, and keeps the list from doubling at each sequential `if`.
+/// No path continuing, after a `return` or a `break` on every path, stays
+/// the empty list.
+fn weakest_lower_bound(paths: Vec<i64>) -> Vec<i64> {
+    paths.into_iter().min().into_iter().collect()
+}
+
 fn recursion_paths(
     statement: &CStatement,
     measure: &str,
@@ -1446,7 +1460,7 @@ fn recursion_paths(
                 parameter_indices,
                 lower_bounds,
             )?);
-            Ok(paths)
+            Ok(weakest_lower_bound(paths))
         }
         CStatement::If {
             condition,
@@ -1470,7 +1484,7 @@ fn recursion_paths(
                     vec![refined_lower_bound(condition, measure, false, lower_bound)],
                 )?);
             }
-            Ok(paths)
+            Ok(weakest_lower_bound(paths))
         }
         CStatement::While {
             condition, body, ..
@@ -1498,7 +1512,7 @@ fn recursion_paths(
                     lower_bounds.clone(),
                 )?);
             }
-            Ok(paths)
+            Ok(weakest_lower_bound(paths))
         }
     }
 }
@@ -2151,10 +2165,21 @@ fn collect_loops<'a>(statement: &'a CStatement, loops: &mut Vec<&'a CStatement>)
 /// iteration at a time and returns only when every feasible path has left it.
 /// A function's verified rule exists because certification executed exactly
 /// this body, so such a loop was run to its exit on every path the contract
-/// admits and owes no measure. Nothing is granted unless the certified body's
-/// loops are the source body's loops, shape for shape, since the indices
-/// name source loops.
-fn loops_executed_to_exit(function: &CFunction) -> BTreeSet<usize> {
+/// admits and owes no measure.
+///
+/// A loop whose only annotation is the frame check a function's owned
+/// memory gives every loop has two routes, and the rule says which ran:
+/// certified under `ApplyVerifiedRules`, an annotated loop is replaced by a
+/// verified loop rule or, with none, yields no paths, so a certified body
+/// ran such a loop concretely wherever no rule names it; certified under
+/// `Verify`, it may have been summarized, and nothing is granted. Nothing is
+/// granted either unless the certified body's loops are the source body's
+/// loops, shape for shape, since the indices name source loops.
+fn loops_executed_to_exit(
+    function: &CFunction,
+    loop_semantics: CLoopSemantics,
+    ruled_loops: &BTreeSet<usize>,
+) -> BTreeSet<usize> {
     let mut source_loops = Vec::new();
     collect_loops(&function.source_body, &mut source_loops);
     let mut certified_loops = Vec::new();
@@ -2170,23 +2195,35 @@ fn loops_executed_to_exit(function: &CFunction) -> BTreeSet<usize> {
     certified_loops
         .iter()
         .enumerate()
-        .filter(|(_, certified)| {
-            matches!(
-                certified,
-                CStatement::While {
-                    invariant,
-                    invariant_checks,
-                    effect_checks,
-                    resource_specs,
-                    ranking_measures,
-                    structural_measure: None,
-                    ..
-                } if invariant.is_empty()
-                    && invariant_checks.is_empty()
-                    && effect_checks.is_empty()
-                    && resource_specs.is_empty()
-                    && ranking_measures.is_empty()
-            )
+        .filter(|(index, certified)| {
+            let CStatement::While {
+                invariant,
+                invariant_checks,
+                effect_checks,
+                resource_specs,
+                ranking_measures,
+                structural_measure,
+                ..
+            } = certified
+            else {
+                return false;
+            };
+            let unsummarized = invariant.is_empty()
+                && invariant_checks.is_empty()
+                && resource_specs.is_empty()
+                && ranking_measures.is_empty()
+                && structural_measure.is_none();
+            if !unsummarized {
+                return false;
+            }
+            if effect_checks.is_empty() {
+                return true;
+            }
+            effect_checks
+                .iter()
+                .all(|check| check.origin() == CLoopEffectOrigin::InheritedResourceDerived)
+                && loop_semantics == CLoopSemantics::ApplyVerifiedRules
+                && !ruled_loops.contains(index)
         })
         .map(|(index, _)| index)
         .collect()
@@ -2844,8 +2881,8 @@ pub fn c_verified_function_termination_rules(
     let (functions, calls) = termination_call_graph(partial_rules, inline_bodies);
     let ruled = partial_rules
         .iter()
-        .map(|rule| rule.function.name())
-        .collect::<BTreeSet<_>>();
+        .map(|rule| (rule.function.name(), rule))
+        .collect::<BTreeMap<_, _>>();
     charge_termination_work(plan_entries.len());
     let plans = plan_entries
         .iter()
@@ -3037,8 +3074,18 @@ pub fn c_verified_function_termination_rules(
                 }
                 // Only a function certified on its own is known to have had
                 // this body executed; a linked body with no rule is not.
-                if ruled.contains(name.as_str()) {
-                    let executed = loops_executed_to_exit(function);
+                if let Some(rule) = ruled.get(name.as_str()) {
+                    let ruled_loops = verified_loop_rules
+                        .get(name)
+                        .map(|rules| {
+                            rules
+                                .iter()
+                                .filter_map(|rule| rule.loop_index)
+                                .collect::<BTreeSet<_>>()
+                        })
+                        .unwrap_or_default();
+                    let executed =
+                        loops_executed_to_exit(function, rule.loop_semantics(), &ruled_loops);
                     unranked.retain(|index| !executed.contains(index));
                 }
                 if let Some(index) = unranked.first() {
@@ -3449,6 +3496,7 @@ mod local_descent_tests {
         }
         CVerifiedFunctionRule {
             function: CFunction::new(CType::Void, name, Vec::new(), body),
+            loop_semantics: CLoopSemantics::ApplyVerifiedRules,
         }
     }
 
@@ -3652,6 +3700,7 @@ mod local_descent_tests {
                 body = CStatement::Seq(Arc::new(body), Arc::new(summarized_loop(1)));
             }
             CVerifiedFunctionRule {
+                loop_semantics: CLoopSemantics::ApplyVerifiedRules,
                 function: CFunction::new(
                     CType::Void,
                     name,
@@ -3769,6 +3818,7 @@ mod local_descent_tests {
         };
         CVerifiedFunctionRule {
             function: CFunction::new(CType::Void, name, parameters, body),
+            loop_semantics: CLoopSemantics::ApplyVerifiedRules,
         }
     }
 
@@ -3875,6 +3925,7 @@ mod local_descent_tests {
     #[test]
     fn a_loop_certification_executed_to_its_exit_owes_no_measure() {
         let bare = |name: &str| CVerifiedFunctionRule {
+            loop_semantics: CLoopSemantics::ApplyVerifiedRules,
             function: CFunction::new(
                 CType::Void,
                 name,
@@ -3917,6 +3968,57 @@ mod local_descent_tests {
         );
     }
 
+    /// A loop whose only annotation is the inherited frame check ran
+    /// concretely if the rule was certified under `ApplyVerifiedRules` and no
+    /// loop rule names it; certified under `Verify` it may have been
+    /// summarized, and a loop a rule names was.
+    #[test]
+    fn a_frame_checked_loop_is_granted_only_from_a_concrete_certification() {
+        let framed = crate::kernel::c_while_with_invariant_and_effect_checks(
+            crate::kernel::c_int32_literal(0),
+            Vec::new(),
+            Vec::new(),
+            vec![crate::kernel::CLoopEffectCheck::new_with_origin(
+                crate::kernel::CLoopEffect::Mutable(Vec::new()),
+                crate::kernel::CLoopEffectSpan::Whole,
+                CLoopEffectOrigin::InheritedResourceDerived,
+                None,
+            )],
+            CStatement::Skip,
+        );
+        let function = CFunction::new(CType::Void, "f", Vec::new(), framed);
+        let none = BTreeSet::new();
+        assert_eq!(
+            loops_executed_to_exit(&function, CLoopSemantics::ApplyVerifiedRules, &none),
+            BTreeSet::from([0])
+        );
+        assert!(loops_executed_to_exit(&function, CLoopSemantics::Verify, &none).is_empty());
+        assert!(
+            loops_executed_to_exit(
+                &function,
+                CLoopSemantics::ApplyVerifiedRules,
+                &BTreeSet::from([0])
+            )
+            .is_empty()
+        );
+        let explicit = crate::kernel::c_while_with_invariant_and_effect_checks(
+            crate::kernel::c_int32_literal(0),
+            Vec::new(),
+            Vec::new(),
+            vec![crate::kernel::CLoopEffectCheck::new_with_origin(
+                crate::kernel::CLoopEffect::Mutable(Vec::new()),
+                crate::kernel::CLoopEffectSpan::Whole,
+                CLoopEffectOrigin::Explicit,
+                None,
+            )],
+            CStatement::Skip,
+        );
+        let function = CFunction::new(CType::Void, "f", Vec::new(), explicit);
+        assert!(
+            loops_executed_to_exit(&function, CLoopSemantics::ApplyVerifiedRules, &none).is_empty()
+        );
+    }
+
     /// The indices name source loops, so nothing is granted when the
     /// certified body's loops are not the source body's loops.
     #[test]
@@ -3929,13 +4031,101 @@ mod local_descent_tests {
             )
         };
         let agrees = CFunction::new(CType::Void, "f", Vec::new(), spin(0));
-        assert_eq!(loops_executed_to_exit(&agrees), BTreeSet::from([0]));
+        assert_eq!(
+            loops_executed_to_exit(&agrees, CLoopSemantics::Verify, &BTreeSet::new()),
+            BTreeSet::from([0])
+        );
         let differs =
             CFunction::new(CType::Void, "f", Vec::new(), spin(0)).with_source_body(spin(1));
-        assert!(loops_executed_to_exit(&differs).is_empty());
+        assert!(
+            loops_executed_to_exit(&differs, CLoopSemantics::Verify, &BTreeSet::new()).is_empty()
+        );
         let summarized = CFunction::new(CType::Void, "f", Vec::new(), summarized_loop(0))
             .with_source_body(spin(0));
-        assert!(loops_executed_to_exit(&summarized).is_empty());
+        assert!(
+            loops_executed_to_exit(&summarized, CLoopSemantics::Verify, &BTreeSet::new())
+                .is_empty()
+        );
+    }
+
+    /// Each sequential `if` used to double the list of path bounds the
+    /// recursion checker carried, so a recursive function with a few dozen
+    /// of them before its ranked call could not be checked at all. The list
+    /// now holds one bound per join, which decides every edge the same way.
+    #[test]
+    fn a_recursion_check_is_linear_in_sequential_branches() {
+        let n = || crate::kernel::c_variable("n");
+        let literal = |value: u32| crate::kernel::c_int32_literal(value);
+        let guarded_call = |argument: CExpression| {
+            crate::kernel::c_if(
+                crate::kernel::c_greater_than(n(), literal(0)),
+                crate::kernel::c_call("countdown", vec![argument]),
+                CStatement::Skip,
+            )
+        };
+        // A balanced sequence, so the walk's depth is logarithmic and the
+        // test measures the branch count and not the nesting.
+        fn sequence(statements: &[CStatement]) -> CStatement {
+            match statements {
+                [] => CStatement::Skip,
+                [only] => only.clone(),
+                _ => {
+                    let (left, right) = statements.split_at(statements.len() / 2);
+                    CStatement::Seq(Arc::new(sequence(left)), Arc::new(sequence(right)))
+                }
+            }
+        }
+        let build = |branches: usize, descends: bool| {
+            // Branches on the measure that establish nothing about it.
+            let branches = (0..branches)
+                .map(|index| {
+                    crate::kernel::c_if(
+                        crate::kernel::c_less_than(n(), literal(index as u32 + 1_000)),
+                        CStatement::Skip,
+                        CStatement::Skip,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let mut body = sequence(&branches);
+            let argument = if descends {
+                crate::kernel::c_subtract(n(), literal(1))
+            } else {
+                n()
+            };
+            body = CStatement::Seq(Arc::new(body), Arc::new(guarded_call(argument)));
+            [CVerifiedFunctionRule {
+                loop_semantics: CLoopSemantics::ApplyVerifiedRules,
+                function: CFunction::new(
+                    CType::Void,
+                    "countdown",
+                    vec![crate::kernel::c_parameter("n", CType::Int32)],
+                    body,
+                ),
+            }]
+        };
+        let plan = CFunctionTerminationPlan {
+            function_name: "countdown".to_string(),
+            recursive_measure: Some(CFunctionTerminationMeasure::NumericParameter(0)),
+            loop_measures: BTreeMap::new(),
+        };
+        for branches in [8, 64, 512] {
+            let rules = build(branches, true);
+            let heights = c_termination_height_plan(&rules, &[]);
+            let started = std::time::Instant::now();
+            let verdicts = check(&rules, std::slice::from_ref(&plan), &heights, &[])
+                .expect("a descending call checks");
+            assert_eq!(terminating(&verdicts), BTreeSet::from(["countdown"]));
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(5),
+                "{branches} sequential branches must not take {:?}",
+                started.elapsed()
+            );
+        }
+        let rules = build(64, false);
+        let heights = c_termination_height_plan(&rules, &[]);
+        let error = check(&rules, std::slice::from_ref(&plan), &heights, &[])
+            .expect_err("a call that passes the measure unchanged does not descend");
+        assert!(error.message.contains("must pass"), "{error:?}");
     }
 
     /// `realloc` is modeled by execution itself, so it is no node of the call
@@ -4047,6 +4237,7 @@ mod termination_scaling_tests {
     fn rule(name: &str, callees: &[String]) -> CVerifiedFunctionRule {
         CVerifiedFunctionRule {
             function: CFunction::new(CType::Void, name, Vec::new(), calls_body(callees)),
+            loop_semantics: CLoopSemantics::ApplyVerifiedRules,
         }
     }
 

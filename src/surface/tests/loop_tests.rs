@@ -291,10 +291,15 @@ fn smart_ranking_closure_expands_to_explicit_bundle_members() {
         closer.contains("both {"),
         "the expanded closer must split the bundle conjunction: {expanded}"
     );
+    // The two ranking members and both invariants. `i <= n` closes since
+    // `i < n` and `n <= 2147483647` together bound `i + 1`; it needed a lemma
+    // application while the planner bounded each atom only by premises naming
+    // it alone. `i >= 0` is `i + 1 >= 0` at the back edge; it needed
+    // `normalize` while the planner read no `>=` goal over an operation.
     assert_eq!(
         arithmetic_certificate_premises(closer).len(),
-        2,
-        "both ranking members must be closed by one signed certificate: {expanded}"
+        4,
+        "both ranking members and both invariants must be closed by one signed certificate each: {expanded}"
     );
     let (result, planning) = crate::surface::proof::count_planning_statement_transitions(|| {
         verify_c0_sources(&expanded, &sources)

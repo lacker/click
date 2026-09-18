@@ -600,6 +600,13 @@ pub(crate) enum SignedArithmeticNode {
         upper: usize,
         result: SignedArithmeticClaim,
     },
+    /// Sharpen a non-strict bound with a disequality over the same affine
+    /// form: `t <= 0` and `t != 0` give `t + 1 <= 0`, an integer fact.
+    StrictFromDisequal {
+        bound: usize,
+        disequal: usize,
+        result: SignedArithmeticClaim,
+    },
     Trivial {
         result: SignedArithmeticClaim,
     },
@@ -864,6 +871,28 @@ impl SignedArithmeticCertificate {
                         return Err(SignedArithmeticCheckError::Overflow(node_index));
                     }
                     let expected = equality_from_bounds(lower, upper)
+                        .ok_or(SignedArithmeticCheckError::InvalidRelation(node_index))?;
+                    if !same_int32_claim(&expected, result) {
+                        return Err(SignedArithmeticCheckError::NodeResultMismatch(node_index));
+                    }
+                    CheckedValue::Affine(expected)
+                }
+                SignedArithmeticNode::StrictFromDisequal {
+                    bound,
+                    disequal,
+                    result,
+                } => {
+                    let bound = affine_at(&checked, *bound)?;
+                    let disequal = affine_at(&checked, *disequal)?;
+                    if bound.relation != SignedArithmeticRelation::LessEqual
+                        || disequal.relation != SignedArithmeticRelation::Disequal
+                    {
+                        return Err(SignedArithmeticCheckError::InvalidRelation(node_index));
+                    }
+                    if !charge_claim_pair_work(bound, disequal) {
+                        return Err(SignedArithmeticCheckError::Overflow(node_index));
+                    }
+                    let expected = strict_from_disequal(bound, disequal)
                         .ok_or(SignedArithmeticCheckError::InvalidRelation(node_index))?;
                     if !same_int32_claim(&expected, result) {
                         return Err(SignedArithmeticCheckError::NodeResultMismatch(node_index));
@@ -1673,6 +1702,43 @@ fn negate_claim(
             .collect(),
         constant: -&source.constant,
     }
+}
+
+/// `t <= 0` and `t != 0` give `t < 0`, which the integer claim form spells
+/// `t + 1 <= 0`.  The disequality may name the bound's affine form with
+/// either sign, since `t != 0` and `-t != 0` are the same fact.
+fn strict_from_disequal(
+    bound: &SignedArithmeticClaim,
+    disequal: &SignedArithmeticClaim,
+) -> Option<SignedArithmeticClaim> {
+    if bound.carrier != disequal.carrier {
+        return None;
+    }
+    if !charge_affine_map_work(&bound.terms) || !charge_affine_map_work(&disequal.terms) {
+        return None;
+    }
+    if !charge_bigint_binary_work(&bound.constant, &disequal.constant) {
+        return None;
+    }
+    let same_form = bound.terms == disequal.terms && bound.constant == disequal.constant;
+    let opposite_form = || {
+        bound.constant == -&disequal.constant
+            && bound.terms.len() == disequal.terms.len()
+            && bound.terms.iter().zip(disequal.terms.iter()).all(
+                |((atom, coefficient), (other_atom, other_coefficient))| {
+                    atom == other_atom && *coefficient == -other_coefficient
+                },
+            )
+    };
+    if !same_form && !opposite_form() {
+        return None;
+    }
+    Some(SignedArithmeticClaim {
+        carrier: bound.carrier,
+        relation: SignedArithmeticRelation::LessEqual,
+        terms: bound.terms.clone(),
+        constant: &bound.constant + BigInt::one(),
+    })
 }
 
 fn equality_from_bounds(
@@ -2572,6 +2638,43 @@ mod tests {
         ))
     }
 
+    fn lt(left: Bitvector32Term, right: Bitvector32Term) -> Proposition {
+        prop(ConditionTerm::signed_less_than(left, right))
+    }
+
+    fn disequal(left: Bitvector32Term, right: Bitvector32Term) -> Proposition {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+            false,
+        )
+    }
+
+    /// The two-premise shape every `StrictFromDisequal` check exercises: a
+    /// bound node, a disequality node, and the sharpening step over both.
+    fn strict_from_disequal_certificate(
+        premises: &[Proposition; 2],
+        result: SignedArithmeticClaim,
+    ) -> SignedArithmeticCertificate {
+        SignedArithmeticCertificate {
+            nodes: vec![
+                SignedArithmeticNode::Premise {
+                    index: 0,
+                    result: claim(&premises[0]),
+                },
+                SignedArithmeticNode::Premise {
+                    index: 1,
+                    result: claim(&premises[1]),
+                },
+                SignedArithmeticNode::StrictFromDisequal {
+                    bound: 0,
+                    disequal: 1,
+                    result,
+                },
+            ],
+            conclusion: 2,
+        }
+    }
+
     #[test]
     fn affine_claims_use_one_zero_centered_constant_convention() {
         let premise = equal(x(), Bitvector32Term::Constant(5));
@@ -2771,6 +2874,68 @@ mod tests {
         assert_eq!(
             bad_reference.check(&goal, std::slice::from_ref(&premise)),
             Err(SignedArithmeticCheckError::InvalidNodeReference(1))
+        );
+    }
+
+    #[test]
+    fn strict_from_disequal_accepts_either_disequality_orientation() {
+        let zero = Bitvector32Term::Constant(0);
+        let goal = lt(zero.clone(), x());
+        for disequality in [disequal(x(), zero.clone()), disequal(zero.clone(), x())] {
+            let premises = [le(zero.clone(), x()), disequality];
+            let certificate = strict_from_disequal_certificate(&premises, claim(&goal));
+            certificate.check(&goal, &premises).unwrap();
+        }
+    }
+
+    #[test]
+    fn strict_from_disequal_rejects_a_disequality_on_another_affine_form() {
+        let zero = Bitvector32Term::Constant(0);
+        let goal = lt(zero.clone(), x());
+        let premises = [le(zero, x()), disequal(x(), Bitvector32Term::Constant(1))];
+        let certificate = strict_from_disequal_certificate(&premises, claim(&goal));
+        assert_eq!(
+            certificate.check(&goal, &premises),
+            Err(SignedArithmeticCheckError::InvalidRelation(2))
+        );
+    }
+
+    #[test]
+    fn strict_from_disequal_rejects_a_bound_that_is_not_a_non_strict_bound() {
+        let zero = Bitvector32Term::Constant(0);
+        let goal = lt(zero.clone(), x());
+        for bound in [equal(x(), zero.clone()), disequal(x(), zero.clone())] {
+            let premises = [bound, disequal(x(), zero.clone())];
+            let certificate = strict_from_disequal_certificate(&premises, claim(&goal));
+            assert_eq!(
+                certificate.check(&goal, &premises),
+                Err(SignedArithmeticCheckError::InvalidRelation(2))
+            );
+        }
+    }
+
+    #[test]
+    fn strict_from_disequal_rejects_a_bound_cited_as_the_disequality() {
+        let zero = Bitvector32Term::Constant(0);
+        let goal = lt(zero.clone(), x());
+        let premises = [le(zero.clone(), x()), le(zero, x())];
+        let certificate = strict_from_disequal_certificate(&premises, claim(&goal));
+        assert_eq!(
+            certificate.check(&goal, &premises),
+            Err(SignedArithmeticCheckError::InvalidRelation(2))
+        );
+    }
+
+    #[test]
+    fn strict_from_disequal_rejects_a_result_sharpened_by_more_than_one() {
+        let zero = Bitvector32Term::Constant(0);
+        let goal = lt(zero.clone(), x());
+        let premises = [le(zero, x()), disequal(x(), Bitvector32Term::Constant(0))];
+        let overshot = claim(&lt(Bitvector32Term::Constant(1), x()));
+        let certificate = strict_from_disequal_certificate(&premises, overshot);
+        assert_eq!(
+            certificate.check(&goal, &premises),
+            Err(SignedArithmeticCheckError::NodeResultMismatch(2))
         );
     }
 

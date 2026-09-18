@@ -56,6 +56,7 @@ fn signed_step_result_surface(step: &SignedArithmeticStep) -> Option<&ClickPropo
         | SignedArithmeticStep::Add { result, .. }
         | SignedArithmeticStep::EqualityToLessEqual { result, .. }
         | SignedArithmeticStep::EqualityFromBounds { result, .. }
+        | SignedArithmeticStep::StrictFromDisequal { result, .. }
         | SignedArithmeticStep::Trivial { result }
         | SignedArithmeticStep::IntervalCompare { result, .. }
         | SignedArithmeticStep::AffineConclusion { result, .. } => Some(result),
@@ -248,6 +249,13 @@ fn signed_add_surface_shape(
         if signed_term_constant_value(second) == Some(0) && signed_atom_matches(target, first) {
             return true;
         }
+        // A zero on either side folds away in lowering: `(0 + u)` is read as
+        // `u`, so the sum of `0 <= u` and `u <= v` never reaches the `Add`
+        // arm below and a plain transitivity was refused as not encoding
+        // its child sum.
+        if signed_term_constant_value(first) == Some(0) && signed_atom_matches(target, second) {
+            return true;
+        }
         if let crate::kernel::Bitvector32Term::Add(target_first, target_second) = target {
             return signed_atom_matches(target_first, first)
                 && (signed_atom_matches(target_second, second)
@@ -293,12 +301,20 @@ fn signed_ordered_surface_parts(
     let crate::kernel::Proposition::ConditionIs(condition, value) = proposition else {
         return None;
     };
+    // A premise written `i >= 0` is the same ordered pair as `0 <= i`; the
+    // planner adds them alike, so the printed sum is read alike.
     let (left, right, strict) = match condition {
         crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
             (left.as_ref(), right.as_ref(), false)
         }
         crate::kernel::ConditionTerm::Bitvector32SignedLessThan(left, right) => {
             (left.as_ref(), right.as_ref(), true)
+        }
+        crate::kernel::ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            (right.as_ref(), left.as_ref(), false)
+        }
+        crate::kernel::ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            (right.as_ref(), left.as_ref(), true)
         }
         _ => return None,
     };
@@ -1334,6 +1350,18 @@ impl<'a> Proof<'a> {
                     result: claim(
                         &lower_prop(self, result, "signed_int32 equality")?,
                         "signed_int32 equality",
+                    )?,
+                },
+                SignedArithmeticStep::StrictFromDisequal {
+                    bound,
+                    disequal,
+                    result,
+                } => SignedArithmeticNode::StrictFromDisequal {
+                    bound: *bound,
+                    disequal: *disequal,
+                    result: claim(
+                        &lower_prop(self, result, "signed_int32 strict bound")?,
+                        "signed_int32 strict bound",
                     )?,
                 },
                 SignedArithmeticStep::Trivial { result } => {

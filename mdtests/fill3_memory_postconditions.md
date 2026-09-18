@@ -27,10 +27,6 @@ int32 fill3_memory(int32* p) {
 }
 ```
 
-```termination
-pending: unranked loop
-```
-
 ```expect
 pass
 ```

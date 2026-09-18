@@ -467,6 +467,35 @@ fn integer_surface_equality_from_bounds(
     })
 }
 
+/// `l <= r` sharpened by `l != r` (either spelling) is `l < r`.
+fn integer_surface_strict_from_disequal(
+    bound: &ClickProposition,
+    disequal: &ClickProposition,
+) -> Option<ClickProposition> {
+    let (left, operator, right) = integer_surface_ordered_parts(bound)?;
+    if operator != ComparisonOperator::LessEqual {
+        return None;
+    }
+    let ClickProposition::Comparison {
+        left: disequal_left,
+        operator: ComparisonOperator::NotEqual,
+        right: disequal_right,
+    } = disequal
+    else {
+        return None;
+    };
+    if !((*disequal_left == left && *disequal_right == right)
+        || (*disequal_left == right && *disequal_right == left))
+    {
+        return None;
+    }
+    Some(ClickProposition::Comparison {
+        left,
+        operator: ComparisonOperator::LessThan,
+        right,
+    })
+}
+
 fn integer_surface_trivial(claim: &IntegerAffineClaim) -> Option<ClickProposition> {
     if !claim.terms.is_empty() {
         return None;
@@ -887,6 +916,15 @@ impl<'a> Proof<'a> {
                     surfaces.get(*upper)?.as_ref()?,
                 )
                 .or_else(|| claim_surface(result)),
+                SignedArithmeticNode::StrictFromDisequal {
+                    bound,
+                    disequal,
+                    result,
+                } => integer_surface_strict_from_disequal(
+                    surfaces.get(*bound)?.as_ref()?,
+                    surfaces.get(*disequal)?.as_ref()?,
+                )
+                .or_else(|| claim_surface(result)),
                 SignedArithmeticNode::Trivial { result } => claim_surface(result),
                 SignedArithmeticNode::IntervalCompare { .. }
                 | SignedArithmeticNode::AffineConclusion { .. }
@@ -930,6 +968,13 @@ impl<'a> Proof<'a> {
                         result: result()?,
                     }
                 }
+                SignedArithmeticNode::StrictFromDisequal {
+                    bound, disequal, ..
+                } => SignedArithmeticStep::StrictFromDisequal {
+                    bound: r(*bound),
+                    disequal: r(*disequal),
+                    result: result()?,
+                },
                 SignedArithmeticNode::Trivial { .. } => {
                     SignedArithmeticStep::Trivial { result: result()? }
                 }

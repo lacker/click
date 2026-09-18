@@ -10,7 +10,7 @@
 use crate::kernel::proof::signed_arithmetic::{
     SignedArithmeticAtom, SignedArithmeticCarrier, SignedArithmeticCertificate,
     SignedArithmeticClaim, SignedArithmeticComparison, SignedArithmeticInterval,
-    SignedArithmeticNode, SignedArithmeticRelation,
+    SignedArithmeticNode, SignedArithmeticRelation, add_claim,
 };
 use crate::kernel::{Bitvector32Term, ConditionTerm, Proposition};
 use num_bigint::BigInt;
@@ -810,6 +810,12 @@ struct BoundCandidate {
     bound: i64,
 }
 
+#[derive(Clone, Copy)]
+enum BoundSide {
+    Lower,
+    Upper,
+}
+
 #[derive(Default)]
 struct BoundCandidates {
     lower: Option<BoundCandidate>,
@@ -942,6 +948,9 @@ impl<'a> Planner<'a> {
                 .or_default()
                 .push(position);
         }
+        if let Some(node) = self.strict_from_disequal(target, &index)? {
+            return Some(node);
+        }
         for (left_index, left) in self.claims.iter() {
             if left.relation != SignedArithmeticRelation::LessEqual {
                 continue;
@@ -966,6 +975,73 @@ impl<'a> Planner<'a> {
             }
         }
         None
+    }
+
+    /// A non-strict bound one unit short of the target closes it together
+    /// with a disequality on the bound's own affine form (in either sign):
+    /// `t <= 0` and `t != 0` give `t + 1 <= 0`.  Both premises are found by
+    /// fingerprint lookup, never by a pair scan.  The outer `Option` is the
+    /// work budget; the inner one is whether such premises exist.
+    fn strict_from_disequal(
+        &mut self,
+        target: &SignedArithmeticClaim,
+        index: &HashMap<u64, Vec<usize>>,
+    ) -> Option<Option<usize>> {
+        if target.relation != SignedArithmeticRelation::LessEqual || target.terms.is_empty() {
+            return Some(None);
+        }
+        charge_claim_comparison(target)?;
+        let short = SignedArithmeticClaim {
+            carrier: target.carrier,
+            relation: SignedArithmeticRelation::LessEqual,
+            terms: target.terms.clone(),
+            constant: &target.constant - BigInt::one(),
+        };
+        let Some(bound_positions) = index.get(&claim_fingerprint(&short)) else {
+            return Some(None);
+        };
+        let disequalities = [
+            SignedArithmeticClaim {
+                carrier: short.carrier,
+                relation: SignedArithmeticRelation::Disequal,
+                terms: short.terms.clone(),
+                constant: short.constant.clone(),
+            },
+            SignedArithmeticClaim {
+                carrier: short.carrier,
+                relation: SignedArithmeticRelation::Disequal,
+                terms: short.terms.iter().map(|(a, c)| (a.clone(), -c)).collect(),
+                constant: -&short.constant,
+            },
+        ];
+        for bound_position in bound_positions {
+            charge_work(1)?;
+            let (bound_index, bound) = &self.claims[*bound_position];
+            if *bound != short {
+                continue;
+            }
+            for disequal in &disequalities {
+                let Some(disequal_positions) = index.get(&claim_fingerprint(disequal)) else {
+                    continue;
+                };
+                for disequal_position in disequal_positions {
+                    charge_work(1)?;
+                    let (disequal_index, candidate) = &self.claims[*disequal_position];
+                    if candidate != disequal {
+                        continue;
+                    }
+                    let bound_node = self.premise(*bound_index, bound)?;
+                    let disequal_node = self.premise(*disequal_index, candidate)?;
+                    let node = self.push(SignedArithmeticNode::StrictFromDisequal {
+                        bound: bound_node,
+                        disequal: disequal_node,
+                        result: target.clone(),
+                    })?;
+                    return Some(Some(node));
+                }
+            }
+        }
+        Some(None)
     }
 
     fn defined(&mut self, term: &Bitvector32Term) -> Option<usize> {
@@ -1220,20 +1296,39 @@ impl<'a> Planner<'a> {
         let atom = SignedArithmeticAtom::from_term(term)?;
         self.ensure_bound_index()?;
         let candidates = self.bound_index.as_ref()?.get(&atom);
-        let lower = candidates
-            .and_then(|candidates| candidates.lower)
-            .and_then(|candidate| {
-                self.claims
+        let direct = |candidate: Option<BoundCandidate>,
+                      claims: &[(usize, SignedArithmeticClaim)]| {
+            candidate.and_then(|candidate| {
+                claims
                     .get(candidate.position)
                     .map(|(_, claim)| (candidate.premise, claim.clone(), candidate.bound))
-            });
-        let upper = candidates
-            .and_then(|candidates| candidates.upper)
-            .and_then(|candidate| {
-                self.claims
-                    .get(candidate.position)
-                    .map(|(_, claim)| (candidate.premise, claim.clone(), candidate.bound))
-            });
+            })
+        };
+        let direct_lower = direct(
+            candidates.and_then(|candidates| candidates.lower),
+            self.claims,
+        );
+        let direct_upper = direct(
+            candidates.and_then(|candidates| candidates.upper),
+            self.claims,
+        );
+        // A bound the premises state for this atom alone is one premise
+        // node; one they state through another atom is that premise added
+        // to the other atom's own bound, which is still one affine node.
+        let lower = match direct_lower {
+            Some((index, claim, bound)) => {
+                let node = self.premise(index, &claim)?;
+                Some((node, bound))
+            }
+            None => self.derived_bound(&atom, BoundSide::Lower)?,
+        };
+        let upper = match direct_upper {
+            Some((index, claim, bound)) => {
+                let node = self.premise(index, &claim)?;
+                Some((node, bound))
+            }
+            None => self.derived_bound(&atom, BoundSide::Upper)?,
+        };
         if lower.is_none() && upper.is_none() {
             if !safe_atom {
                 return None;
@@ -1271,9 +1366,8 @@ impl<'a> Planner<'a> {
                 }
             }
         };
-        let Some((lower_index, lower_claim, lower_bound)) = lower else {
-            let (upper_index, upper_claim, upper_bound) = upper?;
-            let upper_node = self.premise(upper_index, &upper_claim)?;
+        let Some((lower_node, lower_bound)) = lower else {
+            let (upper_node, upper_bound) = upper?;
             let index = self.push_interval(
                 affine_interval_node(upper_node, SIGNED_MIN, upper_bound),
                 SignedArithmeticInterval {
@@ -1285,7 +1379,6 @@ impl<'a> Planner<'a> {
             self.interval_cache.insert(cache_key, index);
             return Some(index);
         };
-        let lower_node = self.premise(lower_index, &lower_claim)?;
         let lower_node_index = self.push_interval(
             affine_interval_node(lower_node, lower_bound, SIGNED_MAX),
             SignedArithmeticInterval {
@@ -1294,8 +1387,7 @@ impl<'a> Planner<'a> {
                 upper: SIGNED_MAX,
             },
         )?;
-        if let Some((upper_index, upper_claim, upper_bound)) = upper {
-            let upper_node = self.premise(upper_index, &upper_claim)?;
+        if let Some((upper_node, upper_bound)) = upper {
             let upper_interval = self.push_interval(
                 affine_interval_node(upper_node, SIGNED_MIN, upper_bound),
                 SignedArithmeticInterval {
@@ -1326,6 +1418,107 @@ impl<'a> Planner<'a> {
         }
         self.interval_cache.insert(cache_key, lower_node_index);
         Some(lower_node_index)
+    }
+
+    /// A bound on `atom` that the premises state through one other atom: a
+    /// premise relating the two, `atom >= other - c` for a lower bound or
+    /// `atom <= other + c` for an upper one, added to the other atom's own
+    /// direct bound of the same side, which cancels the other atom and
+    /// leaves a bound on `atom` alone. `i >= 0` and `i < n` give `n >= 1`
+    /// this way, which is what shows `n - i` defined.
+    ///
+    /// The result is `Ok(None)` when no premise pair states one, and `None`
+    /// only when the work budget is spent. The scan reads each claim once
+    /// and looks the other atom's bound up in the index, so it is linear in
+    /// the premises; it never chains through a third atom.
+    fn derived_bound(
+        &mut self,
+        atom: &SignedArithmeticAtom,
+        side: BoundSide,
+    ) -> Option<Option<(usize, i64)>> {
+        let (own_coefficient, other_coefficient) = match side {
+            BoundSide::Lower => (BigInt::from(-1), BigInt::one()),
+            BoundSide::Upper => (BigInt::one(), BigInt::from(-1)),
+        };
+        let mut best: Option<(
+            usize,
+            SignedArithmeticClaim,
+            usize,
+            SignedArithmeticClaim,
+            i64,
+        )> = None;
+        for (premise, claim) in self.claims {
+            charge_work(1)?;
+            if claim.relation != SignedArithmeticRelation::LessEqual || claim.terms.len() != 2 {
+                continue;
+            }
+            let Some(own) = claim.terms.get(atom) else {
+                continue;
+            };
+            if own != &own_coefficient {
+                continue;
+            }
+            let Some((other, coefficient)) = claim.terms.iter().find(|(term, _)| *term != atom)
+            else {
+                continue;
+            };
+            if coefficient != &other_coefficient {
+                continue;
+            }
+            let candidate =
+                self.bound_index
+                    .as_ref()?
+                    .get(other)
+                    .and_then(|candidates| match side {
+                        BoundSide::Lower => candidates.lower,
+                        BoundSide::Upper => candidates.upper,
+                    });
+            let Some(candidate) = candidate else {
+                continue;
+            };
+            let Some((other_premise, other_claim)) = self.claims.get(candidate.position) else {
+                continue;
+            };
+            let Some(sum) = add_claim(claim, other_claim) else {
+                continue;
+            };
+            // The sum names `atom` alone, with the coefficient of this side.
+            if sum.terms.len() != 1 || sum.terms.get(atom) != Some(&own_coefficient) {
+                continue;
+            }
+            let Some(bound) = (match side {
+                BoundSide::Lower => sum.constant.to_i64().map(|value| value.max(SIGNED_MIN)),
+                BoundSide::Upper => (-&sum.constant).to_i64().map(|value| value.min(SIGNED_MAX)),
+            }) else {
+                continue;
+            };
+            let better = match (&best, side) {
+                (None, _) => true,
+                (Some((_, _, _, _, current)), BoundSide::Lower) => bound > *current,
+                (Some((_, _, _, _, current)), BoundSide::Upper) => bound < *current,
+            };
+            if better {
+                best = Some((
+                    *premise,
+                    claim.clone(),
+                    *other_premise,
+                    other_claim.clone(),
+                    bound,
+                ));
+            }
+        }
+        let Some((premise, claim, other_premise, other_claim, bound)) = best else {
+            return Some(None);
+        };
+        let left = self.premise(premise, &claim)?;
+        let right = self.premise(other_premise, &other_claim)?;
+        let result = add_claim(&claim, &other_claim)?;
+        let node = self.push(SignedArithmeticNode::Add {
+            left,
+            right,
+            result,
+        })?;
+        Some(Some((node, bound)))
     }
 
     fn is_safe_interval_atom(term: &Bitvector32Term) -> bool {
@@ -1753,6 +1946,18 @@ fn comparison_terms(
         (ConditionTerm::Bitvector32Equal(left, right), false) => {
             Some((left.as_ref(), right.as_ref(), Comparison::Disequal))
         }
+        // The remaining orderings are the same comparisons read from the
+        // other side, in the orientation the kernel's evidence check uses.
+        (ConditionTerm::Bitvector32SignedGreaterThan(left, right), true)
+        | (ConditionTerm::Bitvector32SignedLessEqual(left, right), false)
+        | (ConditionTerm::Bitvector32SignedGreaterEqual(right, left), false) => {
+            Some((right.as_ref(), left.as_ref(), Comparison::LessThan))
+        }
+        (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), true)
+        | (ConditionTerm::Bitvector32SignedLessThan(left, right), false)
+        | (ConditionTerm::Bitvector32SignedGreaterThan(right, left), false) => {
+            Some((right.as_ref(), left.as_ref(), Comparison::LessEqual))
+        }
         _ => None,
     }
 }
@@ -1819,6 +2024,20 @@ mod tests {
         proposition(
             ConditionTerm::Bitvector32SignedLessThan(Box::new(left), Box::new(right)),
             true,
+        )
+    }
+
+    fn ge(left: Bitvector32Term, right: Bitvector32Term) -> Proposition {
+        proposition(
+            ConditionTerm::Bitvector32SignedGreaterEqual(Box::new(left), Box::new(right)),
+            true,
+        )
+    }
+
+    fn neq(left: Bitvector32Term, right: Bitvector32Term) -> Proposition {
+        proposition(
+            ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+            false,
         )
     }
 
@@ -2401,6 +2620,49 @@ mod tests {
             );
             assert!(plan.nodes.len() <= 12 * depth + 32);
         }
+    }
+
+    #[test]
+    fn a_nonnegative_nonzero_value_plans_a_strict_lower_bound() {
+        let n = var(41);
+        let goal = lt(constant(0), n.clone());
+        let premises = [ge(n.clone(), constant(0)), neq(n, constant(0))];
+        let plan = check_plan(&goal, &premises);
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::StrictFromDisequal { .. }))
+        );
+    }
+
+    #[test]
+    fn the_reversed_disequality_spelling_plans_the_same_strict_lower_bound() {
+        let n = var(42);
+        let goal = lt(constant(0), n.clone());
+        let premises = [ge(n.clone(), constant(0)), neq(constant(0), n)];
+        let plan = check_plan(&goal, &premises);
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::StrictFromDisequal { .. }))
+        );
+    }
+
+    #[test]
+    fn a_greater_equal_goal_over_a_subtraction_is_planned() {
+        let n = var(43);
+        let predecessor = Bitvector32Term::Subtract(Box::new(n.clone()), Box::new(constant(1)));
+        let goal = ge(predecessor, constant(0));
+        let premises = [ge(n, constant(1))];
+        check_plan(&goal, &premises);
+    }
+
+    #[test]
+    fn a_disequality_on_another_value_plans_no_strict_lower_bound() {
+        let n = var(44);
+        let goal = lt(constant(0), n.clone());
+        let premises = [ge(n.clone(), constant(0)), neq(n, constant(1))];
+        assert!(plan_signed_arithmetic_certificate(&goal, &premises).is_none());
     }
 
     #[test]

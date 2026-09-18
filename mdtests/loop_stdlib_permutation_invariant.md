@@ -26,6 +26,7 @@ int32 loop_stdlib_permutation_invariant(int32 p[3]) {
     step();
     step();
     loop {
+        decreases 3 - i;
         invariant i >= 0 and i <= 3;
         invariant permutation(p, old(p), 0, 3);
         initialize by {
@@ -33,20 +34,23 @@ int32 loop_stdlib_permutation_invariant(int32 p[3]) {
             simp();
         }
         preserve by {
+            mark iteration;
             unfold(permutation);
             step();
             have i >= 0 and i <= 3 by simp;
-            close_invariants by { intro(); simp(); }
+            close_invariants by {
+                both { intro(); simp(); }
+                and {
+                    both { arithmetic() using { at(iteration, i) < 3; at(iteration, i) >= 0; } }
+                    and { arithmetic() using { at(iteration, i) < 3; at(iteration, i) >= 0; } }
+                }
+            }
         }
     }
     step();
     unfold(permutation);
     simp();
 }
-```
-
-```termination
-pending: unranked loop
 ```
 
 ```expect

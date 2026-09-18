@@ -5362,6 +5362,19 @@ impl Parser {
                         result,
                     }
                 }
+                "lt_from_neq" => {
+                    let bound = self.expect_index("non-strict bound")?;
+                    self.expect(Token::Comma)?;
+                    let disequal = self.expect_index("disequality")?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::StrictFromDisequal {
+                        bound,
+                        disequal,
+                        result,
+                    }
+                }
                 "trivial" => {
                     self.expect(Token::FatArrow)?;
                     let result = self.parse_proposition()?;
