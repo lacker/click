@@ -300,12 +300,20 @@ fn signed_ordered_surface_parts(
     let crate::kernel::Proposition::ConditionIs(condition, value) = proposition else {
         return None;
     };
+    // A premise written `i >= 0` is the same ordered pair as `0 <= i`; the
+    // planner adds them alike, so the printed sum is read alike.
     let (left, right, strict) = match condition {
         crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
             (left.as_ref(), right.as_ref(), false)
         }
         crate::kernel::ConditionTerm::Bitvector32SignedLessThan(left, right) => {
             (left.as_ref(), right.as_ref(), true)
+        }
+        crate::kernel::ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            (right.as_ref(), left.as_ref(), false)
+        }
+        crate::kernel::ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            (right.as_ref(), left.as_ref(), true)
         }
         _ => return None,
     };
