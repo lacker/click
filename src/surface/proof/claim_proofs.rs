@@ -1106,7 +1106,8 @@ fn begin_outcome_existence_proof<'a>(
 /// completion is what claim certification matches. When neither closes the
 /// claim the reason names what stood in the way: the goal's lowering, a
 /// rewrite that did not apply, or the goal left unclosed with the sides it
-/// evaluated to.
+/// evaluated to and the checked proof context. The context is reported, not a
+/// guess at which step was missing.
 #[allow(clippy::too_many_arguments)]
 fn close_claim_directly_from_outcome<'a>(
     outcome_root: &Proof<'a>,
@@ -1187,7 +1188,9 @@ fn close_claim_directly_from_outcome<'a>(
     }
     check_verification_deadline()?;
     // A comparison reports what each side evaluates to at the outcome, by
-    // the same kernel evaluation every proof-side expression gets.
+    // the same kernel evaluation every proof-side expression gets. Two
+    // distinct load variables over one address render identically, so that
+    // case names the surface spellings and which snapshot each reads.
     let evaluated_sides = match (surface_goal, outcome) {
         (
             ClickProposition::Comparison { left, right, .. },
@@ -1215,14 +1218,6 @@ fn close_claim_directly_from_outcome<'a>(
                 (Some(kernel_left), Some(kernel_right)) => {
                     let rendered_left = describe_c_value(&kernel_left, parameters, arguments);
                     let rendered_right = describe_c_value(&kernel_right, parameters, arguments);
-                    // Two distinct load variables over the same address
-                    // render identically, which reads as an unprovable
-                    // `x == x`. The kernel rendering uses internal names, so
-                    // report the surface spellings and which snapshot each
-                    // reads: `old(...)` is function entry, `at(...)` is a
-                    // recorded snapshot, anything else is the outcome state.
-                    // The obligation is showing the cell was unchanged by the
-                    // writes in between.
                     if rendered_left == rendered_right && kernel_left != kernel_right {
                         let snapshot_role = |expression: &ContractExpression| {
                             if contains_old_expression(expression) {
@@ -1245,7 +1240,7 @@ fn close_claim_directly_from_outcome<'a>(
                             )
                         };
                         format!(
-                            "; the two sides read the same address in different memory snapshots ({snapshot_note}); closing the goal needs a checked step showing the cell was unchanged by the writes in between, and no checked proof step did"
+                            "; the two sides read the same address in different memory snapshots ({snapshot_note})"
                         )
                     } else {
                         format!(
@@ -1258,8 +1253,26 @@ fn close_claim_directly_from_outcome<'a>(
         }
         _ => String::new(),
     };
+    // Which checked step is missing is not knowable here, so the diagnostic
+    // also reports the checked proof context every other failure path
+    // reports, rather than guessing at the absent reasoning.
+    let resource_facts: &[CResourceFact] = match outcome {
+        CFunctionOutcome::Return { state, .. } | CFunctionOutcome::Throw { state, .. } => {
+            state.resources().facts()
+        }
+        CFunctionOutcome::VerificationDiverges
+        | CFunctionOutcome::UndefinedBehavior(_)
+        | CFunctionOutcome::RuntimeError(_) => &[],
+    };
+    let context = describe_proof_context(
+        &root.facts().propositions().cloned().collect::<Vec<_>>(),
+        resource_facts,
+        parameters,
+        arguments,
+        &[],
+    );
     let error = proof.step_error(format!(
-        "`ensures {surface}` failed for `{claim_label}` path {path_index}: unclosed goal: {surface}{evaluated_sides}"
+        "`ensures {surface}` failed for `{claim_label}` path {path_index}: unclosed goal: {surface}{evaluated_sides}\n{context}"
     ));
     Ok(Err(error.with_search_failures(search.finish())))
 }

@@ -768,9 +768,9 @@ fn loan_refusal_diagnostic_renders_a_range_subject_without_ledger_state() {
 /// Two distinct loads over the same address used to render identically
 /// (`left side evaluated to load(p[0]), right side evaluated to load(p[0])`),
 /// which reads as an unprovable `x == x`. The message now reports each side's
-/// surface spelling and which snapshot it reads, instead of the internal
-/// kernel load names: the cell must be shown unchanged across the writes in
-/// between.
+/// surface spelling and which snapshot it reads, and appends the checked proof
+/// context every other failed goal reports. It does not guess which step was
+/// missing.
 #[test]
 fn identical_load_renders_name_distinct_snapshot_loads() {
     let c_source = r#"
@@ -804,10 +804,15 @@ fn identical_load_renders_name_distinct_snapshot_loads() {
         message.contains("`old(p[0])` reads function entry"),
         "{message}"
     );
+    assert!(message.contains("proof context:"), "{message}");
     assert!(
-        message.contains("unchanged by the writes in between"),
+        message.contains("resource facts: [owns p[0..2]"),
         "{message}"
     );
     assert!(!message.contains("distinct kernel loads"), "{message}");
     assert!(!message.contains("left side evaluated to"), "{message}");
+    assert!(
+        !message.contains("unchanged by the writes in between"),
+        "{message}"
+    );
 }
