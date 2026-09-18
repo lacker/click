@@ -955,6 +955,7 @@ fn signed_int32_arithmetic_certificate_round_trips_every_step_spelling() {
                     interval_sign_bit_flip 8 -2147483648 2147483647;
                     interval_compare 8, 9 le => n <= n;
                     affine_conclusion 3 8 => n == n;
+                    lt_from_neq 4, 5 => n < n;
                     conclusion 20;
                 }
             }
@@ -970,12 +971,18 @@ fn signed_int32_arithmetic_certificate_round_trips_every_step_spelling() {
     let ArithmeticCertificateFamily::SignedInt32(certificate) = &certificate.family else {
         panic!("expected the signed_int32 family");
     };
-    assert_eq!(certificate.nodes.len(), 21);
+    assert_eq!(certificate.nodes.len(), 22);
     assert!(
         certificate
             .nodes
             .iter()
             .any(|node| matches!(node, SignedArithmeticStep::IntervalAddBounded { .. }))
+    );
+    assert!(
+        certificate
+            .nodes
+            .iter()
+            .any(|node| matches!(node, SignedArithmeticStep::StrictFromDisequal { .. }))
     );
     assert!(
         certificate
@@ -991,6 +998,7 @@ fn signed_int32_arithmetic_certificate_round_trips_every_step_spelling() {
     );
     assert!(printed.contains("interval_add_bounded"), "{printed}");
     assert!(printed.contains("affine_conclusion"), "{printed}");
+    assert!(printed.contains("lt_from_neq 4, 5 =>"), "{printed}");
     let reparsed = parse(&format!(
         "theorem signed_certificate_forms(n: int32) {{ ensures n == n by {{ {printed} }} }}"
     ))

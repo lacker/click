@@ -948,6 +948,9 @@ impl<'a> Planner<'a> {
                 .or_default()
                 .push(position);
         }
+        if let Some(node) = self.strict_from_disequal(target, &index)? {
+            return Some(node);
+        }
         for (left_index, left) in self.claims.iter() {
             if left.relation != SignedArithmeticRelation::LessEqual {
                 continue;
@@ -972,6 +975,73 @@ impl<'a> Planner<'a> {
             }
         }
         None
+    }
+
+    /// A non-strict bound one unit short of the target closes it together
+    /// with a disequality on the bound's own affine form (in either sign):
+    /// `t <= 0` and `t != 0` give `t + 1 <= 0`.  Both premises are found by
+    /// fingerprint lookup, never by a pair scan.  The outer `Option` is the
+    /// work budget; the inner one is whether such premises exist.
+    fn strict_from_disequal(
+        &mut self,
+        target: &SignedArithmeticClaim,
+        index: &HashMap<u64, Vec<usize>>,
+    ) -> Option<Option<usize>> {
+        if target.relation != SignedArithmeticRelation::LessEqual || target.terms.is_empty() {
+            return Some(None);
+        }
+        charge_claim_comparison(target)?;
+        let short = SignedArithmeticClaim {
+            carrier: target.carrier,
+            relation: SignedArithmeticRelation::LessEqual,
+            terms: target.terms.clone(),
+            constant: &target.constant - BigInt::one(),
+        };
+        let Some(bound_positions) = index.get(&claim_fingerprint(&short)) else {
+            return Some(None);
+        };
+        let disequalities = [
+            SignedArithmeticClaim {
+                carrier: short.carrier,
+                relation: SignedArithmeticRelation::Disequal,
+                terms: short.terms.clone(),
+                constant: short.constant.clone(),
+            },
+            SignedArithmeticClaim {
+                carrier: short.carrier,
+                relation: SignedArithmeticRelation::Disequal,
+                terms: short.terms.iter().map(|(a, c)| (a.clone(), -c)).collect(),
+                constant: -&short.constant,
+            },
+        ];
+        for bound_position in bound_positions {
+            charge_work(1)?;
+            let (bound_index, bound) = &self.claims[*bound_position];
+            if *bound != short {
+                continue;
+            }
+            for disequal in &disequalities {
+                let Some(disequal_positions) = index.get(&claim_fingerprint(disequal)) else {
+                    continue;
+                };
+                for disequal_position in disequal_positions {
+                    charge_work(1)?;
+                    let (disequal_index, candidate) = &self.claims[*disequal_position];
+                    if candidate != disequal {
+                        continue;
+                    }
+                    let bound_node = self.premise(*bound_index, bound)?;
+                    let disequal_node = self.premise(*disequal_index, candidate)?;
+                    let node = self.push(SignedArithmeticNode::StrictFromDisequal {
+                        bound: bound_node,
+                        disequal: disequal_node,
+                        result: target.clone(),
+                    })?;
+                    return Some(Some(node));
+                }
+            }
+        }
+        Some(None)
     }
 
     fn defined(&mut self, term: &Bitvector32Term) -> Option<usize> {
@@ -1876,6 +1946,18 @@ fn comparison_terms(
         (ConditionTerm::Bitvector32Equal(left, right), false) => {
             Some((left.as_ref(), right.as_ref(), Comparison::Disequal))
         }
+        // The remaining orderings are the same comparisons read from the
+        // other side, in the orientation the kernel's evidence check uses.
+        (ConditionTerm::Bitvector32SignedGreaterThan(left, right), true)
+        | (ConditionTerm::Bitvector32SignedLessEqual(left, right), false)
+        | (ConditionTerm::Bitvector32SignedGreaterEqual(right, left), false) => {
+            Some((right.as_ref(), left.as_ref(), Comparison::LessThan))
+        }
+        (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), true)
+        | (ConditionTerm::Bitvector32SignedLessThan(left, right), false)
+        | (ConditionTerm::Bitvector32SignedGreaterThan(right, left), false) => {
+            Some((right.as_ref(), left.as_ref(), Comparison::LessEqual))
+        }
         _ => None,
     }
 }
@@ -1942,6 +2024,20 @@ mod tests {
         proposition(
             ConditionTerm::Bitvector32SignedLessThan(Box::new(left), Box::new(right)),
             true,
+        )
+    }
+
+    fn ge(left: Bitvector32Term, right: Bitvector32Term) -> Proposition {
+        proposition(
+            ConditionTerm::Bitvector32SignedGreaterEqual(Box::new(left), Box::new(right)),
+            true,
+        )
+    }
+
+    fn neq(left: Bitvector32Term, right: Bitvector32Term) -> Proposition {
+        proposition(
+            ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+            false,
         )
     }
 
@@ -2524,6 +2620,49 @@ mod tests {
             );
             assert!(plan.nodes.len() <= 12 * depth + 32);
         }
+    }
+
+    #[test]
+    fn a_nonnegative_nonzero_value_plans_a_strict_lower_bound() {
+        let n = var(41);
+        let goal = lt(constant(0), n.clone());
+        let premises = [ge(n.clone(), constant(0)), neq(n, constant(0))];
+        let plan = check_plan(&goal, &premises);
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::StrictFromDisequal { .. }))
+        );
+    }
+
+    #[test]
+    fn the_reversed_disequality_spelling_plans_the_same_strict_lower_bound() {
+        let n = var(42);
+        let goal = lt(constant(0), n.clone());
+        let premises = [ge(n.clone(), constant(0)), neq(constant(0), n)];
+        let plan = check_plan(&goal, &premises);
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::StrictFromDisequal { .. }))
+        );
+    }
+
+    #[test]
+    fn a_greater_equal_goal_over_a_subtraction_is_planned() {
+        let n = var(43);
+        let predecessor = Bitvector32Term::Subtract(Box::new(n.clone()), Box::new(constant(1)));
+        let goal = ge(predecessor, constant(0));
+        let premises = [ge(n, constant(1))];
+        check_plan(&goal, &premises);
+    }
+
+    #[test]
+    fn a_disequality_on_another_value_plans_no_strict_lower_bound() {
+        let n = var(44);
+        let goal = lt(constant(0), n.clone());
+        let premises = [ge(n.clone(), constant(0)), neq(n, constant(1))];
+        assert!(plan_signed_arithmetic_certificate(&goal, &premises).is_none());
     }
 
     #[test]

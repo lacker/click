@@ -818,6 +818,14 @@ fn write_signed_int32_certificate(
                 "eq_from_bounds {lower}, {upper} => {};",
                 source_click_proposition(result)
             ),
+            SignedArithmeticStep::StrictFromDisequal {
+                bound,
+                disequal,
+                result,
+            } => format!(
+                "lt_from_neq {bound}, {disequal} => {};",
+                source_click_proposition(result)
+            ),
             SignedArithmeticStep::Trivial { result } => {
                 format!("trivial => {};", source_click_proposition(result))
             }

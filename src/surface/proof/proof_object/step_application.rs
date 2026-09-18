@@ -56,6 +56,7 @@ fn signed_step_result_surface(step: &SignedArithmeticStep) -> Option<&ClickPropo
         | SignedArithmeticStep::Add { result, .. }
         | SignedArithmeticStep::EqualityToLessEqual { result, .. }
         | SignedArithmeticStep::EqualityFromBounds { result, .. }
+        | SignedArithmeticStep::StrictFromDisequal { result, .. }
         | SignedArithmeticStep::Trivial { result }
         | SignedArithmeticStep::IntervalCompare { result, .. }
         | SignedArithmeticStep::AffineConclusion { result, .. } => Some(result),
@@ -1349,6 +1350,18 @@ impl<'a> Proof<'a> {
                     result: claim(
                         &lower_prop(self, result, "signed_int32 equality")?,
                         "signed_int32 equality",
+                    )?,
+                },
+                SignedArithmeticStep::StrictFromDisequal {
+                    bound,
+                    disequal,
+                    result,
+                } => SignedArithmeticNode::StrictFromDisequal {
+                    bound: *bound,
+                    disequal: *disequal,
+                    result: claim(
+                        &lower_prop(self, result, "signed_int32 strict bound")?,
+                        "signed_int32 strict bound",
                     )?,
                 },
                 SignedArithmeticStep::Trivial { result } => {

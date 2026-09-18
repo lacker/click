@@ -258,6 +258,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "load_uint8_pointer",
     "loadable",
     "loop",
+    "lt_from_neq",
     "mark",
     "match",
     "memory",
@@ -4553,6 +4554,11 @@ pub enum SignedArithmeticStep {
     EqualityFromBounds {
         lower: usize,
         upper: usize,
+        result: ClickProposition,
+    },
+    StrictFromDisequal {
+        bound: usize,
+        disequal: usize,
         result: ClickProposition,
     },
     Trivial {
