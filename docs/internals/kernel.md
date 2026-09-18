@@ -544,6 +544,32 @@ path. It does not turn arbitrary outcomes into theorems. The separate
 Budget exhaustion is represented as `ExecutionLimit`. It is a proof/executor
 failure, not C undefined behavior.
 
+One symbolic execution has exactly one fresh-identity counter, and it lives on
+that execution's `ExecutionBudget`. A loop head's havoc of modified locals, a
+re-bound binder's model fields, an opaque call result, a heap allocation, an
+aggregate field, and a branch join's abstraction all draw from it, so two of
+them cannot hand the same identity to two different things. Reserved-set
+probing narrows what an individual stream will issue; it is not the mechanism
+that keeps allocators apart, because several allocators do not probe at all.
+
+A rule that abstracts a state therefore both takes the counter and reports
+where it left it. `abstract_c_state_for_join` and its siblings take the
+maximum of the arms' counters — the arms' abstractions are compared for
+equality, so they must count from one shared lower bound — and return a
+`CStateJoinAbstraction` carrying the state beside the mark the joined
+execution continues from. Returning the pair is deliberate: a caller cannot
+take the abstract state and keep the old counter.
+
+The counter's range is bounded at both ends. It starts at
+`ExecutionBudget::KERNEL_VARIABLE_BASE` and refuses at
+`ExecutionBudget::KERNEL_VARIABLE_CEILING`, which is the lowest identity a
+producer outside the execution reserves by a constant base: the surface's
+quantifier variables, then the spec fold binders, then the algebraic binders,
+then the load variables. Those producers pick identities by a constant and a
+hash and so cannot avoid an execution that has counted into their range; the
+execution refuses with `ExecutionLimit::KernelVariables` instead, which is one
+comparison per allocation.
+
 Call and loop behavior are explicit inputs to kernel execution. The common
 configurations are:
 

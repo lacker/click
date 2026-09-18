@@ -439,6 +439,7 @@ impl<'a> Proof<'a> {
         let mut execution = arm.execution.clone();
         let mut facts = arm.facts.clone();
         let facts_before_interface = facts.clone();
+        let join_next_kernel_variable = execution.core.next_kernel_variable;
         apply_branch_interface_with_proof_facts(
             &target,
             &assertions,
@@ -447,6 +448,7 @@ impl<'a> Proof<'a> {
             &mut facts,
             &BTreeMap::new(),
             None,
+            join_next_kernel_variable,
             false,
         )
         .map_err(|error| add_proof_branch_path(error, &execution.presentation.branch_path))?;
@@ -762,6 +764,15 @@ impl<'a> Proof<'a> {
             .retain(|name, value| arms[1].execution.core.state.locals().get(name) == Some(value));
         let sibling_join_states: [&CState; 2] =
             [&arms[0].execution.core.state, &arms[1].execution.core.state];
+        // Both arms abstract from the higher of their two counters: their
+        // abstractions are compared for equality below, so one shared lower
+        // bound is what makes them agree, and taking the maximum is what
+        // keeps the join off an identity either arm has already spent.
+        let join_next_kernel_variable = arms[0]
+            .execution
+            .core
+            .next_kernel_variable
+            .max(arms[1].execution.core.next_kernel_variable);
 
         let abstract_arm = |arm: &CheckedExecutionJoinArm<'_>| -> Result<
             (ExecutionProofState, ProofFacts),
@@ -780,6 +791,7 @@ impl<'a> Proof<'a> {
                 &mut facts,
                 &stable_join_locals,
                 Some(&sibling_join_states),
+                join_next_kernel_variable,
                 true)
             .map_err(|error| add_proof_branch_path(error, &execution.presentation.branch_path))?;
             Ok((execution, facts))

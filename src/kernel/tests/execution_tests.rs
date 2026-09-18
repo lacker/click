@@ -374,10 +374,15 @@ fn join_state_forgets_changed_scalars_and_memory() {
         );
     let stable = BTreeMap::from([("x".to_string(), stable_x.clone())]);
 
-    let abstract_zero = abstract_c_state_for_join(&state_zero, &stable).expect("join abstraction");
-    let abstract_one = abstract_c_state_for_join(&state_one, &stable).expect("join abstraction");
+    let abstract_zero =
+        abstract_c_state_for_join(&state_zero, &stable, 0).expect("join abstraction");
+    let abstract_one = abstract_c_state_for_join(&state_one, &stable, 0).expect("join abstraction");
 
     assert_eq!(abstract_zero, abstract_one);
+    // The abstraction issued an identity, and it says so: the joined
+    // execution continues above everything the join spent.
+    assert!(abstract_zero.next_kernel_variable > 0);
+    let abstract_zero = abstract_zero.state;
     assert_eq!(abstract_zero.locals().get("x"), Some(&stable_x));
     assert_ne!(abstract_zero.locals().get("y"), Some(&int32(0)));
     assert!(abstract_zero.resources().is_empty());
@@ -396,16 +401,18 @@ fn join_state_abstracts_changed_pointer_locals() {
     let abstract_left = abstract_c_state_for_join(
         &CState::new().with_local("selected", CValue::pointer(left)),
         &BTreeMap::new(),
+        0,
     )
     .expect("pointer join abstraction");
     let abstract_right = abstract_c_state_for_join(
         &CState::new().with_local("selected", CValue::pointer(right)),
         &BTreeMap::new(),
+        0,
     )
     .expect("pointer join abstraction");
 
     assert_eq!(abstract_left, abstract_right);
-    let Some(CValue::Pointer(selected)) = abstract_left.locals().get("selected") else {
+    let Some(CValue::Pointer(selected)) = abstract_left.state.locals().get("selected") else {
         panic!("selected should remain a pointer local");
     };
     assert!(selected.has_symbolic_block());
@@ -418,8 +425,13 @@ fn join_state_fresh_variables_do_not_collide_with_symbolic_pointer_blocks() {
         CValue::pointer(Pointer::symbolic(Variable(1_000_000))),
     );
     let abstract_state =
-        abstract_c_state_for_join(&state, &BTreeMap::new()).expect("pointer join abstraction");
-    let Some(CValue::Pointer(selected)) = abstract_state.locals().get("selected") else {
+        abstract_c_state_for_join(&state, &BTreeMap::new(), 0).expect("pointer join abstraction");
+    // `v1000000` was reserved by the state, so the abstraction issued
+    // `v1000001` for the local and `v1000002` for its memory-havoc marker.
+    // The counter it returns is above both, and the joined execution
+    // continues from there.
+    assert_eq!(abstract_state.next_kernel_variable, 3);
+    let Some(CValue::Pointer(selected)) = abstract_state.state.locals().get("selected") else {
         panic!("selected should remain a pointer local");
     };
 
@@ -429,29 +441,48 @@ fn join_state_fresh_variables_do_not_collide_with_symbolic_pointer_blocks() {
 #[test]
 fn sibling_join_abstraction_is_deterministic_after_a_nested_join() {
     let nested_source = CState::new().with_local("y", int32(0));
-    let nested = abstract_c_state_for_join(&nested_source, &BTreeMap::new())
+    let nested = abstract_c_state_for_join(&nested_source, &BTreeMap::new(), 0)
         .expect("nested join abstraction");
     let sibling = CState::new().with_local("y", int32(1));
-    let states = [&nested, &sibling];
+    let states = [&nested.state, &sibling];
 
-    let abstract_nested = abstract_c_state_for_join_across(&nested, &states, &BTreeMap::new())
-        .expect("outer nested-arm abstraction");
-    let abstract_sibling = abstract_c_state_for_join_across(&sibling, &states, &BTreeMap::new())
-        .expect("outer sibling abstraction");
+    let abstract_nested = abstract_c_state_for_join_across(
+        &nested.state,
+        &states,
+        &BTreeMap::new(),
+        nested.next_kernel_variable,
+    )
+    .expect("outer nested-arm abstraction");
+    let abstract_sibling = abstract_c_state_for_join_across(
+        &sibling,
+        &states,
+        &BTreeMap::new(),
+        nested.next_kernel_variable,
+    )
+    .expect("outer sibling abstraction");
 
     assert_eq!(abstract_nested, abstract_sibling);
 
-    let inner_empty = abstract_c_state_for_join(&CState::new(), &BTreeMap::new())
+    let inner_empty = abstract_c_state_for_join(&CState::new(), &BTreeMap::new(), 0)
         .expect("inner empty-state abstraction");
     let raw_empty = CState::new();
-    let empty_states = [&inner_empty, &raw_empty];
-    let outer_nested =
-        abstract_c_state_for_join_across(&inner_empty, &empty_states, &BTreeMap::new())
-            .expect("outer nested empty-state abstraction");
-    let outer_raw = abstract_c_state_for_join_across(&raw_empty, &empty_states, &BTreeMap::new())
-        .expect("outer raw empty-state abstraction");
+    let empty_states = [&inner_empty.state, &raw_empty];
+    let outer_nested = abstract_c_state_for_join_across(
+        &inner_empty.state,
+        &empty_states,
+        &BTreeMap::new(),
+        inner_empty.next_kernel_variable,
+    )
+    .expect("outer nested empty-state abstraction");
+    let outer_raw = abstract_c_state_for_join_across(
+        &raw_empty,
+        &empty_states,
+        &BTreeMap::new(),
+        inner_empty.next_kernel_variable,
+    )
+    .expect("outer raw empty-state abstraction");
     assert_eq!(outer_nested, outer_raw);
-    assert_ne!(outer_nested, inner_empty);
+    assert_ne!(outer_nested.state, inner_empty.state);
 }
 
 #[test]
@@ -1277,7 +1308,7 @@ fn statement_checks_share_one_execution_environment_variable_index() {
     );
     assert_eq!(
         generator.next_in(&mut budget),
-        Variable(1_000_002),
+        Ok(Variable(1_000_002)),
         "fresh variables must avoid both shared environment and local reservations"
     );
 
@@ -2210,6 +2241,107 @@ fn guard_path_disjunction_has_nothing_to_export_without_two_stating_paths() {
     );
 }
 
+/// A branch join invents identities too, and they come from the execution's
+/// one counter. The join used to count from the base of that counter's range
+/// with an allocator of its own, and a caller carried the arms' counter
+/// across the join unchanged, so the next allocation that does not first
+/// consult a reserved set -- a heap identity, a re-bound loop binder's model
+/// fields, an arbitrary algebraic binding, an aggregate field -- was handed
+/// an identity a live abstracted local was still using. With `malloc` after
+/// a `branch`, `have fresh == picked by { simp(); }` closed outright
+/// (mdtest `branch_join_variable_is_not_a_later_allocation`).
+///
+/// The join now counts from the arms' counter and reports where it left it,
+/// so the continuation cannot start below what the join spent.
+#[test]
+fn a_post_join_allocation_never_reuses_a_join_abstracted_variable() {
+    let then_state = CState::new()
+        .with_local("kept", int32(7))
+        .with_local("picked", int32(1));
+    let else_state = then_state.clone().with_local("picked", int32(2));
+    let siblings = [&then_state, &else_state];
+    let stable = BTreeMap::from([("kept".to_string(), int32(7))]);
+
+    // The arms have issued nothing of their own, which is the case the old
+    // code shared a starting point with.
+    let arms_next_kernel_variable = 0;
+    let abstraction = abstract_c_state_for_interface_join_across(
+        &then_state,
+        &siblings,
+        &stable,
+        arms_next_kernel_variable,
+    )
+    .expect("the arms have one deterministic abstraction");
+    let Some(CValue::Int32(Bitvector32Term::Variable(abstracted))) =
+        abstraction.state.locals().get("picked")
+    else {
+        panic!("a local the arms disagree on abstracts to one symbolic int32");
+    };
+
+    // Keeping the arms' counter is exactly the bug: the first identity a
+    // budget built from it hands out is the one the join just issued.
+    let mut stale = ExecutionBudget::default().with_next_kernel_variable(arms_next_kernel_variable);
+    assert_eq!(
+        stale
+            .allocate_kernel_variable()
+            .expect("the counter is nowhere near its ceiling"),
+        *abstracted,
+        "the arms' counter must not still point at an identity the join issued"
+    );
+
+    // The counter the join reports is above everything it issued, and stays
+    // above it however many identities the continuation goes on to spend.
+    let mut budget =
+        ExecutionBudget::default().with_next_kernel_variable(abstraction.next_kernel_variable);
+    for _ in 0..8 {
+        let identity = budget
+            .allocate_kernel_variable()
+            .expect("the counter is nowhere near its ceiling");
+        assert_ne!(
+            identity, *abstracted,
+            "a post-join allocation reused a live join-abstracted identity"
+        );
+    }
+}
+
+/// Every kernel allocation counts up from one base, and the ranges above it
+/// belong to producers that pick identities by a constant base and a hash:
+/// the surface's quantifier variables, the spec fold binders, the algebraic
+/// binders. Those producers cannot avoid an execution that has counted into
+/// their range, so the execution refuses at the lowest of them instead --
+/// promptly, by name, and without a panic.
+#[test]
+fn the_execution_identity_counter_refuses_at_the_first_reserved_range() {
+    let span = ExecutionBudget::KERNEL_VARIABLE_CEILING - ExecutionBudget::KERNEL_VARIABLE_BASE;
+    let mut budget = ExecutionBudget::default().with_next_kernel_variable(span - 1);
+    assert_eq!(
+        budget.allocate_kernel_variable(),
+        Ok(Variable(ExecutionBudget::KERNEL_VARIABLE_CEILING - 1)),
+        "the last identity below the ceiling is still the execution's"
+    );
+    let refusal = Err(ExecutionLimit::KernelVariables {
+        ceiling: ExecutionBudget::KERNEL_VARIABLE_CEILING,
+    });
+    assert_eq!(budget.allocate_kernel_variable(), refusal);
+
+    // A reserved-set stream refuses through the same ceiling rather than
+    // wrapping around onto identities it has already issued.
+    let mut variables = KernelVariableGenerator::fresh_for_execution(BTreeSet::new());
+    assert_eq!(variables.next_in(&mut budget), refusal);
+
+    // The ceiling is below the first range it protects. The spec fold
+    // binders are checked here against the constant they are built from; the
+    // surface's quantifier base (`2_000_000`) and algebraic base
+    // (`4_000_000`) are above it by the same reasoning.
+    for name in ["index", "accumulator", "item"] {
+        assert!(
+            crate::kernel::spec::spec_fold_bound_variable(name, 0).0
+                >= ExecutionBudget::KERNEL_VARIABLE_CEILING,
+            "a spec fold binder must lie above everything an execution can issue"
+        );
+    }
+}
+
 /// A loop head invents two unrelated things: an arbitrary value for every
 /// local the body modifies, drawn from the execution's fresh-name stream, and
 /// an arbitrary model for every resource instance the loop re-binds, drawn
@@ -2232,12 +2364,15 @@ fn a_rebound_binder_field_never_reuses_a_havocked_local_variable() {
 
     let mut issued = BTreeSet::new();
     for _ in 0..4 {
-        let local = variables.next_in(&mut budget);
+        let local = variables
+            .next_in(&mut budget)
+            .expect("the execution's counter is nowhere near its ceiling");
         assert!(
             issued.insert(local),
             "the loop-local havoc stream reissued {local:?}"
         );
-        let fields = arbitrary_resource_instance_fields(&schema, &mut budget);
+        let fields = arbitrary_resource_instance_fields(&schema, &mut budget)
+            .expect("the execution's counter is nowhere near its ceiling");
         let [AlgebraicValue::C(CValue::Int32(Bitvector32Term::Variable(field)))] = fields.as_ref()
         else {
             panic!("an int32 model field is one symbolic int32: {fields:?}");

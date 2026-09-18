@@ -14,6 +14,11 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     available_pure_facts: &mut ProofFacts,
     stable_join_locals: &BTreeMap<String, CValue>,
     sibling_join_states: Option<&[&CState]>,
+    // `join_next_kernel_variable` is the counter every sibling arm abstracts
+    // from: the highest of the arms' own. The arms' abstractions are compared
+    // for equality, so they must count from one shared lower bound rather
+    // than each from its own.
+    join_next_kernel_variable: u64,
     needs_abstraction: bool,
 ) -> Result<(), ClickError> {
     let tactic_index = proof_context.tactic_index;
@@ -106,16 +111,25 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     }
     let entry_state = execution.core.frontier.execution_start_state(state).clone();
     let abstraction = match sibling_join_states {
-        Some(states) => {
-            abstract_c_state_for_interface_join_across(state, states, stable_join_locals)
-        }
-        None => abstract_c_state_for_join(state, stable_join_locals),
+        Some(states) => abstract_c_state_for_interface_join_across(
+            state,
+            states,
+            stable_join_locals,
+            join_next_kernel_variable,
+        ),
+        None => abstract_c_state_for_join(state, stable_join_locals, join_next_kernel_variable),
     };
-    let mut abstract_state = abstraction.map_err(|message| {
+    let abstraction = abstraction.map_err(|message| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: could not abstract `branch` target state: {message}"
         ))
     })?;
+    let mut abstract_state = abstraction.state;
+    // The abstraction issued identities from the execution's one counter, and
+    // the joined execution continues from where it left it. Keeping the old
+    // counter here is what would let the next loop head, opaque call or heap
+    // allocation hand a live abstracted value's identity to something else.
+    execution.core.next_kernel_variable = abstraction.next_kernel_variable;
 
     // Branch abstraction discards incidental source-boundary snapshots, but
     // an explicit proof mark is a deliberate historical dependency. Preserve

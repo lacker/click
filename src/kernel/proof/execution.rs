@@ -1881,16 +1881,24 @@ impl CheckedExecutionBranch {
             return Err("the interface stable-local set is not exact");
         }
         let sibling_states = [arms[0].reached_state(), arms[1].reached_state()];
+        // Both arms abstract from the same counter, the higher of the two, so
+        // the abstraction is the same whichever arm allocated more and neither
+        // arm's own identities can be re-issued by the join.
+        let join_next_kernel_variable = arms[0]
+            .next_kernel_variable
+            .max(arms[1].next_kernel_variable);
         let abstract_then = crate::kernel::abstract_c_state_for_interface_join_across(
             arms[0].reached_state(),
             &sibling_states,
             stable_join_locals,
+            join_next_kernel_variable,
         )
         .map_err(|_| "the then interface state could not be abstracted")?;
         let abstract_else = crate::kernel::abstract_c_state_for_interface_join_across(
             arms[1].reached_state(),
             &sibling_states,
             stable_join_locals,
+            join_next_kernel_variable,
         )
         .map_err(|_| "the else interface state could not be abstracted")?;
         if abstract_then != abstract_else {
@@ -1905,7 +1913,7 @@ impl CheckedExecutionBranch {
         if joined_state
             .clone()
             .with_resource_context(ResourceContext::new())
-            != abstract_then
+            != abstract_then.state
         {
             return Err("the interface successor is not the checked arm abstraction");
         }
@@ -7755,12 +7763,14 @@ mod tests {
                             &then_state,
                             &siblings,
                             &stable_locals,
+                            0,
                         )
                         .expect("the then arm should abstract"),
                         crate::kernel::abstract_c_state_for_interface_join_across(
                             &else_state,
                             &siblings,
                             &stable_locals,
+                            0,
                         )
                         .expect("the else arm should abstract"),
                     )
@@ -7837,8 +7847,10 @@ mod tests {
             &left,
             &[&left, &right],
             &BTreeMap::new(),
+            0,
         )
-        .expect("alternative memories should have one deterministic abstraction");
+        .expect("alternative memories should have one deterministic abstraction")
+        .state;
         let facts = ProofFacts::default();
         let summaries = checked_interface_effect_facts(
             &before,
@@ -8022,8 +8034,10 @@ mod tests {
             &freed,
             &siblings,
             &BTreeMap::new(),
+            0,
         )
-        .expect("the conditional heap states should abstract");
+        .expect("the conditional heap states should abstract")
+        .state;
         let facts = ProofFacts::default();
         let summaries = checked_interface_effect_facts(
             &before,

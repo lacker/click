@@ -1104,13 +1104,24 @@ impl Default for ExecutionBudget {
             loop_unrolls: 256,
             paths: 10_000,
             next_opaque_call: 0,
-            next_kernel_variable: 1_000_000,
+            next_kernel_variable: Self::KERNEL_VARIABLE_BASE,
             dropped_runtime_error: None,
         }
     }
 }
 
 impl ExecutionBudget {
+    /// The first identity a symbolic execution may invent.
+    pub(in crate::kernel) const KERNEL_VARIABLE_BASE: u64 = 1_000_000;
+
+    /// The first identity a symbolic execution may not invent: the surface's
+    /// quantifier variables start here, the spec fold binders at `3_000_000`,
+    /// the algebraic binders at `4_000_000`, and the load variables at
+    /// `1 << 40`. Those producers pick identities by a constant base and a
+    /// hash rather than from this counter, so they cannot avoid an execution
+    /// that has counted into their range; the execution refuses instead.
+    pub(in crate::kernel) const KERNEL_VARIABLE_CEILING: u64 = 2_000_000;
+
     /// The first runtime error an evaluation under this budget dropped
     /// because every path of a sub-evaluation ended in one, for the message
     /// a caller writes when the evaluation produced no value path at all.
@@ -1205,12 +1216,38 @@ impl ExecutionBudget {
     }
 
     pub(crate) fn with_next_kernel_variable(mut self, next_kernel_variable: u64) -> Self {
-        self.next_kernel_variable = 1_000_000 + next_kernel_variable;
+        self.next_kernel_variable = Self::KERNEL_VARIABLE_BASE + next_kernel_variable;
         self
     }
 
     pub(crate) fn next_kernel_variable(&self) -> u64 {
-        self.next_kernel_variable - 1_000_000
+        self.next_kernel_variable - Self::KERNEL_VARIABLE_BASE
+    }
+
+    /// One identity from this execution's single kernel-variable counter.
+    ///
+    /// Every kernel allocation made under this budget comes through here --
+    /// a loop head's havoc of modified locals, a re-bound binder's model
+    /// fields, an opaque call result, a heap allocation, a branch join's
+    /// abstraction -- so two of them cannot hand the same identity to two
+    /// different things.
+    ///
+    /// The counter starts at [`ExecutionBudget::KERNEL_VARIABLE_BASE`] and
+    /// refuses at [`ExecutionBudget::KERNEL_VARIABLE_CEILING`], which is the
+    /// lowest identity some other producer reserves by a constant. Without
+    /// that check a long enough execution would walk into the surface's
+    /// quantifier variables, then the spec fold binders, then the algebraic
+    /// binders, silently: each of those ranges is chosen to be disjoint from
+    /// this one and nothing else enforces it. The check is one comparison.
+    pub(in crate::kernel) fn allocate_kernel_variable(&mut self) -> ExecutionResult<Variable> {
+        if self.next_kernel_variable >= Self::KERNEL_VARIABLE_CEILING {
+            return Err(ExecutionLimit::KernelVariables {
+                ceiling: Self::KERNEL_VARIABLE_CEILING,
+            });
+        }
+        let variable = Variable(self.next_kernel_variable);
+        self.next_kernel_variable += 1;
+        Ok(variable)
     }
 
     pub(in crate::kernel) fn consume_expression_step(&mut self) -> ExecutionResult<()> {

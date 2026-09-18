@@ -1281,6 +1281,7 @@ pub(super) fn describe_execution_limit(limit: ExecutionLimit) -> &'static str {
         ExecutionLimit::UnsupportedIntegerExistentialBody => {
             "an unsupported integer existential body"
         }
+        ExecutionLimit::KernelVariables { .. } => "the execution's fresh-identity range",
     }
 }
 

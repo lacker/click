@@ -2876,6 +2876,15 @@ pub enum ExecutionLimit {
     LoopUnrolls,
     Paths,
     UnsupportedIntegerExistentialBody,
+    /// The execution's fresh-identity counter reached the first identity a
+    /// producer outside the execution reserves by a constant base. Every
+    /// kernel allocation counts up from one base, and the ranges above it
+    /// belong to the surface's quantifier variables, the spec fold binders
+    /// and the algebraic binders; an execution that entered one of them
+    /// would name their variables without knowing it.
+    KernelVariables {
+        ceiling: u64,
+    },
 }
 
 impl CRuntimeError {
@@ -6468,15 +6477,23 @@ impl KernelVariableGenerator {
 
     /// One identity from the execution's single counter. Using the budget is
     /// what makes this stream and every other allocation under the same
-    /// budget one allocator rather than two overlapping ones.
-    pub(super) fn next_in(&mut self, budget: &mut ExecutionBudget) -> Variable {
+    /// budget one allocator rather than two overlapping ones. A stream that
+    /// has walked its whole range refuses through the budget's ceiling
+    /// rather than wrapping back onto identities it already issued.
+    pub(super) fn next_in(&mut self, budget: &mut ExecutionBudget) -> ExecutionResult<Variable> {
         assert!(
             matches!(self.counter, KernelVariableCounter::Execution),
             "a term-local fresh-variable stream must not allocate from an execution budget"
         );
-        let mut counter = budget.next_kernel_variable;
-        let variable = self.allocate_from(&mut counter);
-        budget.next_kernel_variable = counter;
-        variable
+        loop {
+            let variable = budget.allocate_kernel_variable()?;
+            let shared_contains = self
+                .shared_reserved
+                .as_ref()
+                .is_some_and(|reserved| reserved.contains(&variable));
+            if !shared_contains && self.reserved.insert(variable) {
+                return Ok(variable);
+            }
+        }
     }
 }

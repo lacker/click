@@ -757,6 +757,23 @@ pub fn c_loop_invariants_hold_at_entry(
     Ok(())
 }
 
+/// One arm's join abstraction and the execution counter the joined execution
+/// continues from.
+///
+/// A join invents identities, exactly as a loop head or an opaque call does,
+/// and it draws them from the same counter those do. This pair is what makes
+/// the counter impossible to drop: a caller cannot take the abstract state
+/// without taking the counter that goes with it, so a later loop-head havoc,
+/// opaque call result, heap allocation or resource model field cannot be
+/// handed an identity a live join-abstracted value already carries.
+/// `next_kernel_variable` is the execution-relative counter the arms carry,
+/// and every identity this abstraction issued lies below it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CStateJoinAbstraction {
+    pub state: CState,
+    pub next_kernel_variable: u64,
+}
+
 /// Builds a branch-independent symbolic state for a proof join.
 ///
 /// Locals that still equal a stable function-entry value retain that identity.
@@ -766,8 +783,14 @@ pub fn c_loop_invariants_hold_at_entry(
 pub fn abstract_c_state_for_join(
     state: &CState,
     stable_entry_locals: &BTreeMap<String, CValue>,
-) -> Result<CState, String> {
-    abstract_c_state_for_join_across(state, std::slice::from_ref(&state), stable_entry_locals)
+    next_kernel_variable: u64,
+) -> Result<CStateJoinAbstraction, String> {
+    abstract_c_state_for_join_across(
+        state,
+        std::slice::from_ref(&state),
+        stable_entry_locals,
+        next_kernel_variable,
+    )
 }
 
 /// Builds one arm's abstract join state using a variable reservation shared
@@ -775,12 +798,25 @@ pub fn abstract_c_state_for_join(
 /// reserving the union makes the next abstraction fresh and deterministic
 /// across all siblings rather than dependent on which arm was abstracted
 /// earlier.
+///
+/// `next_kernel_variable` must be the same for every sibling -- the maximum
+/// of the arms' counters -- because each arm's abstraction is computed
+/// separately and then compared for equality. Counting from the maximum is
+/// what makes the result independent of which arm allocated more, and what
+/// keeps the join off identities an arm has already spent.
 pub fn abstract_c_state_for_join_across(
     state: &CState,
     sibling_states: &[&CState],
     stable_entry_locals: &BTreeMap<String, CValue>,
-) -> Result<CState, String> {
-    abstract_c_state_for_join_across_with_policy(state, sibling_states, stable_entry_locals, false)
+    next_kernel_variable: u64,
+) -> Result<CStateJoinAbstraction, String> {
+    abstract_c_state_for_join_across_with_policy(
+        state,
+        sibling_states,
+        stable_entry_locals,
+        next_kernel_variable,
+        false,
+    )
 }
 
 /// Builds a branch-interface abstraction while retaining non-scalar memory
@@ -792,16 +828,24 @@ pub fn abstract_c_state_for_interface_join_across(
     state: &CState,
     sibling_states: &[&CState],
     stable_entry_locals: &BTreeMap<String, CValue>,
-) -> Result<CState, String> {
-    abstract_c_state_for_join_across_with_policy(state, sibling_states, stable_entry_locals, true)
+    next_kernel_variable: u64,
+) -> Result<CStateJoinAbstraction, String> {
+    abstract_c_state_for_join_across_with_policy(
+        state,
+        sibling_states,
+        stable_entry_locals,
+        next_kernel_variable,
+        true,
+    )
 }
 
 fn abstract_c_state_for_join_across_with_policy(
     state: &CState,
     sibling_states: &[&CState],
     stable_entry_locals: &BTreeMap<String, CValue>,
+    next_kernel_variable: u64,
     preserve_exact_common_memory: bool,
-) -> Result<CState, String> {
+) -> Result<CStateJoinAbstraction, String> {
     // A join may retain one exact persistent ledger root, but it cannot pick
     // one arm's loan history when siblings have advanced independently. The
     // ledger equality is an opaque state-identity comparison; no loan map or
@@ -849,7 +893,13 @@ fn abstract_c_state_for_join_across_with_policy(
         crate::instrumentation::record_deterministic_work(1);
         collect_c_value_bitvector_variables(value, &mut existing_variables);
     }
-    let mut variables = KernelVariableGenerator::fresh_for(1_000_000, existing_variables);
+    // The abstraction allocates through an execution budget, which is the one
+    // counter every kernel allocation under this execution uses. Starting it
+    // at the arms' counter rather than at the range's base keeps a join off
+    // identities an arm already spent; returning the mark below keeps the
+    // continuation off the identities this join spends.
+    let mut budget = ExecutionBudget::default().with_next_kernel_variable(next_kernel_variable);
+    let mut variables = KernelVariableGenerator::fresh_for_execution(existing_variables);
     let mut abstract_state = state.clone();
     // A nested arm may already carry a memory-havoc marker from an inner
     // join. Retain the union on every sibling so the enclosing abstraction is
@@ -887,45 +937,50 @@ fn abstract_c_state_for_join_across_with_policy(
             match c_type {
                 CType::Void => continue,
                 CType::Bool => CValue::Bool(Bitvector32Term::if_then_else(
-                    ConditionTerm::Variable(variables.next()),
+                    ConditionTerm::Variable(join_variable(&mut variables, &mut budget)?),
                     Bitvector32Term::Constant(1),
                     Bitvector32Term::Constant(0),
                 )),
-                CType::VoidPointer | CType::VoidPointerPointer => {
-                    CValue::typed_pointer(Pointer::symbolic(variables.next()), *c_type)
-                }
-                CType::Int16 => int16(Bitvector32Term::Variable(variables.next())),
-                CType::Int32 => int32(Bitvector32Term::Variable(variables.next())),
-                CType::Int64 => CValue::Int64(Bitvector32Term::Variable(variables.next())),
-                CType::UInt32 => uint32(Bitvector32Term::Variable(variables.next())),
-                CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),
-                CType::UInt16 => uint16(Bitvector32Term::Variable(variables.next())),
-                CType::UInt64 => CValue::UInt64(Bitvector32Term::Variable(variables.next())),
-                CType::Float32 => CValue::Float32(Bitvector32Term::Variable(variables.next())),
-                CType::Float64 => CValue::Float64(Bitvector32Term::Variable(variables.next())),
-                CType::Int16Pointer
-                | CType::UInt16Pointer
-                | CType::Int32Pointer
-                | CType::UInt8Pointer
-                | CType::UInt32Pointer
-                | CType::Int64Pointer
-                | CType::UInt64Pointer
-                | CType::Int16PointerPointer
-                | CType::UInt16PointerPointer
-                | CType::Int32PointerPointer
-                | CType::UInt8PointerPointer
-                | CType::UInt32PointerPointer
-                | CType::Int64PointerPointer
-                | CType::UInt64PointerPointer
-                | CType::Float32Pointer
-                | CType::Float64Pointer
-                | CType::Float32PointerPointer
-                | CType::Float64PointerPointer => {
-                    CValue::typed_pointer(Pointer::symbolic(variables.next()), *c_type)
-                }
-                CType::FunctionPointer(_) => {
-                    CValue::typed_pointer(Pointer::symbolic_function(variables.next()), *c_type)
-                }
+                CType::Int16 => int16(Bitvector32Term::Variable(join_variable(
+                    &mut variables,
+                    &mut budget,
+                )?)),
+                CType::Int32 => int32(Bitvector32Term::Variable(join_variable(
+                    &mut variables,
+                    &mut budget,
+                )?)),
+                CType::Int64 => CValue::Int64(Bitvector32Term::Variable(join_variable(
+                    &mut variables,
+                    &mut budget,
+                )?)),
+                CType::UInt32 => uint32(Bitvector32Term::Variable(join_variable(
+                    &mut variables,
+                    &mut budget,
+                )?)),
+                CType::UInt8 => uint8(Bitvector32Term::Variable(join_variable(
+                    &mut variables,
+                    &mut budget,
+                )?)),
+                CType::UInt16 => uint16(Bitvector32Term::Variable(join_variable(
+                    &mut variables,
+                    &mut budget,
+                )?)),
+                CType::UInt64 => CValue::UInt64(Bitvector32Term::Variable(join_variable(
+                    &mut variables,
+                    &mut budget,
+                )?)),
+                CType::Float32 => CValue::Float32(Bitvector32Term::Variable(join_variable(
+                    &mut variables,
+                    &mut budget,
+                )?)),
+                CType::Float64 => CValue::Float64(Bitvector32Term::Variable(join_variable(
+                    &mut variables,
+                    &mut budget,
+                )?)),
+                CType::FunctionPointer(_) => CValue::typed_pointer(
+                    Pointer::symbolic_function(join_variable(&mut variables, &mut budget)?),
+                    *c_type,
+                ),
                 CType::Int32Array(_)
                 | CType::UInt8Array(_)
                 | CType::Int16Array(_)
@@ -937,6 +992,10 @@ fn abstract_c_state_for_join_across_with_policy(
                 | CType::Float64Array(_) => {
                     unreachable!("array objects use CLocalBinding::ArrayObject")
                 }
+                _ => CValue::typed_pointer(
+                    Pointer::symbolic(join_variable(&mut variables, &mut budget)?),
+                    *c_type,
+                ),
             }
         };
         preserved_blocks.insert(slot.block.clone());
@@ -984,7 +1043,7 @@ fn abstract_c_state_for_join_across_with_policy(
                 .memory
                 .clone()
                 .with_interface_memory_havoc_preserving_loans(
-                    variables.next(),
+                    join_variable(&mut variables, &mut budget)?,
                     &preserved_blocks,
                     &sibling_memories,
                     abstract_state.loan_ledger(),
@@ -995,7 +1054,7 @@ fn abstract_c_state_for_join_across_with_policy(
                 .memory
                 .clone()
                 .with_loop_memory_havoc_preserving_loans(
-                    variables.next(),
+                    join_variable(&mut variables, &mut budget)?,
                     &preserved_blocks,
                     None,
                     abstract_state.loan_ledger(),
@@ -1015,7 +1074,20 @@ fn abstract_c_state_for_join_across_with_policy(
     // context through `with_resource_context`. The ledger and participant are
     // untouched: the arms' authority survives the abstraction, only the
     // per-occurrence bookkeeping of the discarded context goes away.
-    Ok(abstract_state.with_resource_context(ResourceContext::new()))
+    Ok(CStateJoinAbstraction {
+        state: abstract_state.with_resource_context(ResourceContext::new()),
+        next_kernel_variable: budget.next_kernel_variable(),
+    })
+}
+
+/// One identity for a join abstraction, from the execution's single counter.
+fn join_variable(
+    variables: &mut KernelVariableGenerator,
+    budget: &mut ExecutionBudget,
+) -> Result<Variable, String> {
+    variables
+        .next_in(budget)
+        .map_err(|limit| format!("the branch join has no fresh identity left ({limit:?})"))
 }
 
 fn validate_branch_memory_delta_against_loans(

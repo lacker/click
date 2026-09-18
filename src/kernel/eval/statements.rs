@@ -910,14 +910,15 @@ pub(super) fn execute_c_heap_allocate_paths(
             continue;
         }
 
-        while state
-            .memory
-            .heap_identity_in_use(budget.next_kernel_variable)
-        {
-            budget.next_kernel_variable += 1;
-        }
-        let pointer = Pointer::symbolic(Variable(budget.next_kernel_variable));
-        budget.next_kernel_variable += 1;
+        // An identity the heap already uses is skipped through the same
+        // counter, so it is spent here rather than left for a later
+        // allocation to hand to something else.
+        let pointer = loop {
+            let identity = budget.allocate_kernel_variable()?;
+            if !state.memory.heap_identity_in_use(identity.0) {
+                break Pointer::symbolic(identity);
+            }
+        };
         let success_state =
             state
                 .clone()
@@ -1568,14 +1569,12 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 continue;
             }
 
-            while state
-                .memory
-                .heap_identity_in_use(budget.next_kernel_variable)
-            {
-                budget.next_kernel_variable += 1;
-            }
-            let pending_pointer = Pointer::symbolic(Variable(budget.next_kernel_variable));
-            budget.next_kernel_variable += 1;
+            let pending_pointer = loop {
+                let identity = budget.allocate_kernel_variable()?;
+                if !state.memory.heap_identity_in_use(identity.0) {
+                    break Pointer::symbolic(identity);
+                }
+            };
             let pending_memory = state
                 .memory
                 .clone()
@@ -2261,7 +2260,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             construction,
         } => {
             let outcome = match if *construction {
-                begin_aggregate_construction(state, name, layout, budget)
+                begin_aggregate_construction(state, name, layout, budget)?
             } else {
                 declare_aggregate_local(state, name, layout)
             } {
@@ -3411,16 +3410,18 @@ fn begin_aggregate_construction(
     name: &str,
     layout: &CAggregateLayout,
     budget: &mut ExecutionBudget,
-) -> Result<CState, crate::kernel::LoanRefusalDiagnostic> {
-    let mut state = declare_aggregate_local(state, name, layout)?;
+) -> ExecutionResult<Result<CState, crate::kernel::LoanRefusalDiagnostic>> {
+    let mut state = match declare_aggregate_local(state, name, layout) {
+        Ok(state) => state,
+        Err(refusal) => return Ok(Err(refusal)),
+    };
     let pointer = state
         .locals
         .slot(name)
         .expect("aggregate construction has a declared stack slot")
         .clone();
     for field in layout.fields() {
-        let variable = Variable(budget.next_kernel_variable);
-        budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
+        let variable = budget.allocate_kernel_variable()?;
         let value = crate::kernel::functions::symbolic_call_result(field.c_type(), variable);
         state.set_memory(
             state
@@ -3440,7 +3441,7 @@ fn begin_aggregate_construction(
                 1,
             ),
         ));
-    Ok(state)
+    Ok(Ok(state))
 }
 
 pub(in crate::kernel) fn sync_stack_local(state: &mut CState, name: &str, value: &CValue) {

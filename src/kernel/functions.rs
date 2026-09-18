@@ -2173,10 +2173,13 @@ fn execute_verified_function_applications(
         },
     );
     let mut variables = KernelVariableGenerator::fresh_for_execution(existing_variables);
-    let memory_identity = variables.next_in(budget);
-    let result_identity = variables.next_in(budget);
-    let exceptional_payload_identity = (!application.interface.exceptional_signature().is_empty())
-        .then(|| variables.next_in(budget));
+    let memory_identity = variables.next_in(budget)?;
+    let result_identity = variables.next_in(budget)?;
+    let exceptional_payload_identity =
+        match !application.interface.exceptional_signature().is_empty() {
+            true => Some(variables.next_in(budget)?),
+            false => None,
+        };
     let mut paths = Vec::new();
     'arguments: for arguments_path in evaluate_c_arguments_paths(
         caller_state,
@@ -2420,27 +2423,7 @@ fn execute_verified_function_applications(
                     }]);
                 }
             };
-            let fields = schema
-                .fields()
-                .iter()
-                .map(|(_, ty)| {
-                    let variable = variables.next_in(budget);
-                    match ty {
-                        ResourceFieldType::Integer => {
-                            AlgebraicValue::Integer(IntegerTerm::Variable(variable))
-                        }
-                        ResourceFieldType::C(ty) => {
-                            AlgebraicValue::C(symbolic_call_result(*ty, variable))
-                        }
-                        ResourceFieldType::Algebraic(ty) => {
-                            AlgebraicValue::Algebraic(AlgebraicTerm {
-                                algebraic_type: ty.clone(),
-                                node: AlgebraicTermNode::Variable(variable),
-                            })
-                        }
-                    }
-                })
-                .collect();
+            let fields = fresh_resource_instance_fields(schema, &mut variables, budget)?;
             produced_instances.insert(
                 identity,
                 ResourceInstance::new(produced, name, arguments, schema.clone(), fields)
@@ -2531,28 +2514,8 @@ fn execute_verified_function_applications(
                         "returned resource parameter is not owned at call entry",
                     )]);
                 };
-                let fields = before
-                    .schema()
-                    .fields()
-                    .iter()
-                    .map(|(_, ty)| {
-                        let variable = variables.next_in(budget);
-                        match ty {
-                            ResourceFieldType::Integer => {
-                                AlgebraicValue::Integer(IntegerTerm::Variable(variable))
-                            }
-                            ResourceFieldType::C(ty) => {
-                                AlgebraicValue::C(symbolic_call_result(*ty, variable))
-                            }
-                            ResourceFieldType::Algebraic(ty) => {
-                                AlgebraicValue::Algebraic(AlgebraicTerm {
-                                    algebraic_type: ty.clone(),
-                                    node: AlgebraicTermNode::Variable(variable),
-                                })
-                            }
-                        }
-                    })
-                    .collect();
+                let fields =
+                    fresh_resource_instance_fields(before.schema(), &mut variables, budget)?;
                 ResourceInstance::new(
                     before.identity,
                     before.name.clone(),
@@ -4073,12 +4036,10 @@ pub(super) fn contract_refinement_context_for_interface(
 ) -> Option<CFunctionContractRefinementContext> {
     let mut argument_values = Vec::with_capacity(function_interface.parameters().len());
     for parameter in function_interface.parameters() {
-        let variable = Variable(budget.next_kernel_variable);
-        budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
+        let variable = budget.allocate_kernel_variable().ok()?;
         argument_values.push(symbolic_call_result(parameter.c_type(), variable));
     }
-    let result_variable = Variable(budget.next_kernel_variable);
-    budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
+    let result_variable = budget.allocate_kernel_variable().ok()?;
     Some(CFunctionContractRefinementContext {
         contract: contract.clone(),
         function_interface: function_interface.clone(),
@@ -4143,11 +4104,10 @@ pub(super) fn prepare_contract_refinement_obligations(
     )
     .ok()??;
     let memory = entry.memory().clone().with_call_memory_havoc(
-        Variable(budget.next_kernel_variable),
+        budget.allocate_kernel_variable().ok()?,
         &ranges,
         &assumptions,
     );
-    budget.next_kernel_variable += 1;
     let result = symbolic_call_result(source.return_type(), context.result_variable);
     let mut post = entry.clone().with_memory(memory.clone());
     let mut source_post = source_entry.clone().with_memory(memory);
@@ -4419,55 +4379,73 @@ fn forced_refinement_instance_bindings(
         {
             return Ok(None);
         }
-        let identity = Variable(budget.next_kernel_variable);
-        budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
-        let instance = |budget: &mut ExecutionBudget| {
-            let fields = arbitrary_resource_instance_fields(&target.schema, budget);
-            ResourceInstance::new(
+        let identity = budget.allocate_kernel_variable()?;
+        let instance = |budget: &mut ExecutionBudget| -> ExecutionResult<ResourceInstance> {
+            let fields = arbitrary_resource_instance_fields(&target.schema, budget)?;
+            Ok(ResourceInstance::new(
                 identity,
                 target.family.clone(),
                 target.arguments.clone(),
                 target.schema.clone(),
                 fields,
             )
-            .expect("arbitrary fields have their declared types")
+            .expect("arbitrary fields have their declared types"))
         };
         bindings.push(RefinementInstanceBinding {
             target_identity: target.identity,
             implementation_identity: implementation.identity,
-            entry: instance(budget),
-            post: instance(budget),
+            entry: instance(budget)?,
+            post: instance(budget)?,
         });
     }
     Ok(Some(bindings))
 }
 
+/// An arbitrary model field of `field_type` named by `variable`.
+pub(super) fn resource_instance_field_value(
+    field_type: &ResourceFieldType,
+    variable: Variable,
+) -> AlgebraicValue {
+    match field_type {
+        ResourceFieldType::Integer => AlgebraicValue::Integer(IntegerTerm::Variable(variable)),
+        ResourceFieldType::C(c_type) => AlgebraicValue::C(symbolic_call_result(*c_type, variable)),
+        ResourceFieldType::Algebraic(algebraic_type) => AlgebraicValue::Algebraic(AlgebraicTerm {
+            algebraic_type: algebraic_type.clone(),
+            node: AlgebraicTermNode::Variable(variable),
+        }),
+    }
+}
+
+/// An arbitrary model for one instance, drawn through `variables` so the
+/// fields avoid everything that stream reserves as well as everything else
+/// the budget has issued.
+pub(super) fn fresh_resource_instance_fields(
+    schema: &ResourceFieldSchema,
+    variables: &mut KernelVariableGenerator,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<ResourceArguments> {
+    let mut fields = Vec::with_capacity(schema.fields().len());
+    for (_, field_type) in schema.fields() {
+        fields.push(resource_instance_field_value(
+            field_type,
+            variables.next_in(budget)?,
+        ));
+    }
+    Ok(fields.into_iter().collect())
+}
+
 pub(super) fn arbitrary_resource_instance_fields(
     schema: &ResourceFieldSchema,
     budget: &mut ExecutionBudget,
-) -> ResourceArguments {
-    schema
-        .fields()
-        .iter()
-        .map(|(_, field_type)| {
-            let variable = Variable(budget.next_kernel_variable);
-            budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
-            match field_type {
-                ResourceFieldType::Integer => {
-                    AlgebraicValue::Integer(IntegerTerm::Variable(variable))
-                }
-                ResourceFieldType::C(c_type) => {
-                    AlgebraicValue::C(symbolic_call_result(*c_type, variable))
-                }
-                ResourceFieldType::Algebraic(algebraic_type) => {
-                    AlgebraicValue::Algebraic(AlgebraicTerm {
-                        algebraic_type: algebraic_type.clone(),
-                        node: AlgebraicTermNode::Variable(variable),
-                    })
-                }
-            }
-        })
-        .collect()
+) -> ExecutionResult<ResourceArguments> {
+    let mut fields = Vec::with_capacity(schema.fields().len());
+    for (_, field_type) in schema.fields() {
+        fields.push(resource_instance_field_value(
+            field_type,
+            budget.allocate_kernel_variable()?,
+        ));
+    }
+    Ok(fields.into_iter().collect())
 }
 
 /// Installs the shared instances one side reads, under the identities that
@@ -4608,8 +4586,7 @@ fn function_refines_named_contract_in_case(
     let post_memory = if state_independent {
         contract_entry.memory().clone()
     } else {
-        let memory_variable = Variable(budget.next_kernel_variable);
-        budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
+        let memory_variable = budget.allocate_kernel_variable()?;
         let mutable_ranges = if explicit_case {
             let Some(ranges) = evaluate_decided_contract_mutable_ranges_for_interface(
                 function_interface,

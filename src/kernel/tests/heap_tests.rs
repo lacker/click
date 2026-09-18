@@ -861,16 +861,19 @@ fn interface_heap_join_retains_potential_live_allocation() {
         &freed,
         &siblings,
         &BTreeMap::new(),
+        0,
     )
     .expect("the freed arm should abstract");
     let retained_join = crate::kernel::abstract_c_state_for_interface_join_across(
         &retained,
         &siblings,
         &BTreeMap::new(),
+        0,
     )
     .expect("the retained arm should abstract");
 
     assert_eq!(freed_join, retained_join);
+    let freed_join = freed_join.state;
     assert_eq!(
         freed_join.memory().live_heap_block_size(&allocation_base),
         Some(&Bitvector32Term::Constant(16))

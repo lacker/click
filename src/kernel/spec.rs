@@ -2794,8 +2794,7 @@ fn symbolic_algebraic_bindings(
         .fields
         .iter()
         .map(|value_type| {
-            let variable = Variable(budget.next_kernel_variable);
-            budget.next_kernel_variable += 1;
+            let variable = budget.allocate_kernel_variable()?;
             match value_type {
                 AlgebraicValueType::C(c_type) => {
                     Ok(AlgebraicValue::C(symbolic_call_result(*c_type, variable)))

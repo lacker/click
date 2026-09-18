@@ -2151,7 +2151,7 @@ fn joined_resource_values<'a>(
         if held.iter().all(|other| other == value) {
             continue;
         }
-        let fresh = fresh_resource_value_like(value, variables, budget);
+        let fresh = fresh_resource_value_like(value, variables, budget)?;
         for (restatement, held) in restatements.iter_mut().zip(held) {
             restatement.pin_resource_value(&fresh, &held);
         }
@@ -2165,9 +2165,9 @@ fn fresh_resource_value_like(
     value: &AlgebraicValue,
     variables: &mut KernelVariableGenerator,
     budget: &mut ExecutionBudget,
-) -> AlgebraicValue {
-    let variable = variables.next_in(budget);
-    match value {
+) -> Result<AlgebraicValue, String> {
+    let variable = variables.next_in(budget).map_err(exhausted_identities)?;
+    Ok(match value {
         AlgebraicValue::Integer(_) => AlgebraicValue::Integer(IntegerTerm::Variable(variable)),
         AlgebraicValue::C(value) => {
             AlgebraicValue::C(symbolic_call_result(value.c_type(), variable))
@@ -2176,7 +2176,14 @@ fn fresh_resource_value_like(
             algebraic_type: term.algebraic_type.clone(),
             node: AlgebraicTermNode::Variable(variable),
         }),
-    }
+    })
+}
+
+/// The loop-exit abstraction reports its refusals as text the caller shows
+/// beside the states it could not make common. An exhausted identity counter
+/// is one of those refusals, named rather than swallowed.
+fn exhausted_identities(limit: ExecutionLimit) -> String {
+    format!("the execution has no fresh identity left ({limit:?})")
 }
 
 /// One resource argument or field as the term an equation is written over.
@@ -2217,7 +2224,9 @@ fn abstract_loop_exit_locals(
         let Some(c_type) = successor.local_object_type(&name) else {
             return Err(format!("local `{name}` has no scalar type here"));
         };
-        let Some(fresh) = fresh_loop_local_value(c_type, variables, budget) else {
+        let Some(fresh) =
+            fresh_loop_local_value(c_type, variables, budget).map_err(exhausted_identities)?
+        else {
             return Err(format!("local `{name}` has no abstract value of its type"));
         };
         for (restatement, held) in restatements.iter_mut().zip(held) {
@@ -2286,7 +2295,9 @@ fn abstract_loop_exit_memory(
                 pointer.block
             ));
         }
-        let Some(fresh) = fresh_loop_local_value(held[0].c_type(), variables, budget) else {
+        let Some(fresh) = fresh_loop_local_value(held[0].c_type(), variables, budget)
+            .map_err(exhausted_identities)?
+        else {
             return Err(format!(
                 "the cell in `{}` has no abstract value of its type",
                 pointer.block
@@ -2362,46 +2373,13 @@ fn fresh_loop_local_value(
     c_type: CType,
     variables: &mut KernelVariableGenerator,
     budget: &mut ExecutionBudget,
-) -> Option<CValue> {
-    Some(match c_type {
-        CType::Void => return None,
-        CType::Bool => CValue::Bool(Bitvector32Term::Variable(variables.next_in(budget))),
-        CType::Int16 => int16(Bitvector32Term::Variable(variables.next_in(budget))),
-        CType::Int32 => int32(Bitvector32Term::Variable(variables.next_in(budget))),
-        CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next_in(budget))),
-        CType::UInt16 => uint16(Bitvector32Term::Variable(variables.next_in(budget))),
-        CType::UInt32 => uint32(Bitvector32Term::Variable(variables.next_in(budget))),
-        CType::Int64 => CValue::Int64(Bitvector32Term::Variable(variables.next_in(budget))),
-        CType::UInt64 => CValue::UInt64(Bitvector32Term::Variable(variables.next_in(budget))),
-        CType::Float32 => CValue::Float32(Bitvector32Term::Variable(variables.next_in(budget))),
-        CType::Float64 => CValue::Float64(Bitvector32Term::Variable(variables.next_in(budget))),
-        CType::VoidPointer
-        | CType::VoidPointerPointer
-        | CType::Int16Pointer
-        | CType::UInt16Pointer
-        | CType::Int32Pointer
-        | CType::UInt8Pointer
-        | CType::UInt32Pointer
-        | CType::Int64Pointer
-        | CType::UInt64Pointer
-        | CType::Int16PointerPointer
-        | CType::UInt16PointerPointer
-        | CType::Int32PointerPointer
-        | CType::UInt8PointerPointer
-        | CType::UInt32PointerPointer
-        | CType::Int64PointerPointer
-        | CType::UInt64PointerPointer
-        | CType::Float32Pointer
-        | CType::Float64Pointer
-        | CType::Float32PointerPointer
-        | CType::Float64PointerPointer => {
-            CValue::typed_pointer(Pointer::symbolic(variables.next_in(budget)), c_type)
-        }
-        CType::FunctionPointer(_) => CValue::typed_pointer(
-            Pointer::symbolic_function(variables.next_in(budget)),
-            c_type,
-        ),
-        CType::Int32Array(_)
+) -> ExecutionResult<Option<CValue>> {
+    // An array object is never assigned by name (C forbids it) and binds as
+    // an array object rather than a scalar one, and `void` has no value, so
+    // neither type takes an identity from the counter at all.
+    match c_type {
+        CType::Void
+        | CType::Int32Array(_)
         | CType::UInt8Array(_)
         | CType::Int16Array(_)
         | CType::UInt16Array(_)
@@ -2409,8 +2387,29 @@ fn fresh_loop_local_value(
         | CType::Int64Array(_)
         | CType::UInt64Array(_)
         | CType::Float32Array(_)
-        | CType::Float64Array(_) => return None,
-    })
+        | CType::Float64Array(_) => return Ok(None),
+        _ => {}
+    }
+    let variable = variables.next_in(budget)?;
+    Ok(Some(match c_type {
+        CType::Bool => CValue::Bool(Bitvector32Term::Variable(variable)),
+        CType::Int16 => int16(Bitvector32Term::Variable(variable)),
+        CType::Int32 => int32(Bitvector32Term::Variable(variable)),
+        CType::UInt8 => uint8(Bitvector32Term::Variable(variable)),
+        CType::UInt16 => uint16(Bitvector32Term::Variable(variable)),
+        CType::UInt32 => uint32(Bitvector32Term::Variable(variable)),
+        CType::Int64 => CValue::Int64(Bitvector32Term::Variable(variable)),
+        CType::UInt64 => CValue::UInt64(Bitvector32Term::Variable(variable)),
+        CType::Float32 => CValue::Float32(Bitvector32Term::Variable(variable)),
+        CType::Float64 => CValue::Float64(Bitvector32Term::Variable(variable)),
+        CType::FunctionPointer(_) => {
+            CValue::typed_pointer(Pointer::symbolic_function(variable), c_type)
+        }
+        // A pointer local reassigned in the body (`p = p + 1`) must not keep
+        // its entry value across the abstract iteration, exactly as the join
+        // abstraction treats it; an invariant must relate it.
+        _ => CValue::typed_pointer(Pointer::symbolic(variable), c_type),
+    }))
 }
 
 /// What an abstracted successor and one exit still disagree about once the
@@ -3813,7 +3812,7 @@ pub(super) fn prepare_loop_top_state(
         variables,
         budget,
         loop_havoc_ranges.as_deref(),
-    );
+    )?;
     let mut summaries =
         collect_whole_loop_effect_summaries(entry_state, &top_state, &effect_ranges);
 
@@ -3882,6 +3881,7 @@ pub(super) fn prepare_loop_top_state(
                     &head_carrier,
                     resource_specs,
                     assumptions,
+                    variables,
                     budget,
                 )?;
                 let top_state = top_state.with_resource_context(head_state.resources().clone());
@@ -4553,6 +4553,7 @@ fn havoc_loop_binder_instance_fields(
     state: &CState,
     resource_specs: &[CResourceSpec],
     assumptions: &PureFactContext,
+    variables: &mut KernelVariableGenerator,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<CState> {
     let mut state = state.clone();
@@ -4567,8 +4568,11 @@ fn havoc_loop_binder_instance_fields(
             Some((_, arguments)) => arguments,
             None => instance.arguments.clone(),
         };
-        let fields =
-            crate::kernel::functions::arbitrary_resource_instance_fields(&instance.schema, budget);
+        let fields = crate::kernel::functions::fresh_resource_instance_fields(
+            &instance.schema,
+            variables,
+            budget,
+        )?;
         let Some(havoced) = ResourceInstance::new(
             identity,
             instance.name.clone(),
@@ -5424,7 +5428,7 @@ pub(super) fn havoc_loop_modified_locals(
     variables: &mut KernelVariableGenerator,
     budget: &mut ExecutionBudget,
     mutable_ranges: Option<&[CMemoryRange]>,
-) -> CState {
+) -> ExecutionResult<CState> {
     let mut state = state.clone();
     let mut names = BTreeSet::new();
     collect_loop_modified_locals(body, &mut names);
@@ -5452,59 +5456,8 @@ pub(super) fn havoc_loop_modified_locals(
             | CLocalBinding::ArrayObject { .. }
             | CLocalBinding::AggregateObject { .. } => continue,
         };
-        let value = match c_type {
-            CType::Void => continue,
-            CType::Bool => CValue::Bool(Bitvector32Term::Variable(variables.next_in(budget))),
-            CType::VoidPointer | CType::VoidPointerPointer => {
-                CValue::typed_pointer(Pointer::symbolic(variables.next_in(budget)), c_type)
-            }
-            CType::Int16 => int16(Bitvector32Term::Variable(variables.next_in(budget))),
-            CType::Int32 => int32(Bitvector32Term::Variable(variables.next_in(budget))),
-            CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next_in(budget))),
-            CType::UInt16 => uint16(Bitvector32Term::Variable(variables.next_in(budget))),
-            CType::UInt32 => uint32(Bitvector32Term::Variable(variables.next_in(budget))),
-            CType::Int64 => CValue::Int64(Bitvector32Term::Variable(variables.next_in(budget))),
-            CType::UInt64 => CValue::UInt64(Bitvector32Term::Variable(variables.next_in(budget))),
-            CType::Float32 => CValue::Float32(Bitvector32Term::Variable(variables.next_in(budget))),
-            CType::Float64 => CValue::Float64(Bitvector32Term::Variable(variables.next_in(budget))),
-            // A pointer local reassigned in the body (`p = p + 1`) must not
-            // keep its entry value across the abstract iteration, exactly as
-            // the join abstraction treats it; an invariant must relate it.
-            CType::Int16Pointer
-            | CType::UInt16Pointer
-            | CType::Int32Pointer
-            | CType::UInt8Pointer
-            | CType::UInt32Pointer
-            | CType::Int64Pointer
-            | CType::UInt64Pointer
-            | CType::Int16PointerPointer
-            | CType::UInt16PointerPointer
-            | CType::Int32PointerPointer
-            | CType::UInt8PointerPointer
-            | CType::UInt32PointerPointer
-            | CType::Int64PointerPointer
-            | CType::UInt64PointerPointer
-            | CType::Float32Pointer
-            | CType::Float64Pointer
-            | CType::Float32PointerPointer
-            | CType::Float64PointerPointer => {
-                CValue::typed_pointer(Pointer::symbolic(variables.next_in(budget)), c_type)
-            }
-            CType::FunctionPointer(_) => CValue::typed_pointer(
-                Pointer::symbolic_function(variables.next_in(budget)),
-                c_type,
-            ),
-            // Array objects are never assigned by name (C forbids it), and
-            // they bind as array objects rather than scalar objects above.
-            CType::Int32Array(_)
-            | CType::UInt8Array(_)
-            | CType::Int16Array(_)
-            | CType::UInt16Array(_)
-            | CType::UInt32Array(_)
-            | CType::Int64Array(_)
-            | CType::UInt64Array(_)
-            | CType::Float32Array(_)
-            | CType::Float64Array(_) => continue,
+        let Some(value) = fresh_loop_local_value(c_type, variables, budget)? else {
+            continue;
         };
         sync_stack_local(&mut state, &name, &value);
         state.locals.set_typed(name, value, c_type);
@@ -5529,14 +5482,14 @@ pub(super) fn havoc_loop_modified_locals(
             .memory
             .clone()
             .with_loop_memory_havoc_preserving_loans(
-                variables.next_in(budget),
+                variables.next_in(budget)?,
                 &preserved_blocks,
                 mutable_ranges,
                 state.loan_ledger(),
             );
         state.set_memory(havoced_memory);
     }
-    state
+    Ok(state)
 }
 
 /// The memory the enclosing function owns where the loop is entered.

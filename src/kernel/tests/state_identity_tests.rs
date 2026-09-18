@@ -136,13 +136,14 @@ fn abstract_join_rejects_divergent_loan_roots_without_scanning_ledgers() {
         ledger.apply(&second.transition).expect("second successor"),
     ));
 
-    let error = abstract_c_state_for_join(&first_state, &std::collections::BTreeMap::new())
+    let error = abstract_c_state_for_join(&first_state, &std::collections::BTreeMap::new(), 0)
         .expect("single-state join retains its root");
-    assert_eq!(error.loan_ledger(), first_state.loan_ledger());
+    assert_eq!(error.state.loan_ledger(), first_state.loan_ledger());
     let error = abstract_c_state_for_join_across(
         &first_state,
         &[&first_state, &second_state],
         &std::collections::BTreeMap::new(),
+        0,
     )
     .expect_err("divergent loan roots must not be silently selected");
     assert!(error.contains("stable-view loan state"));
@@ -177,6 +178,7 @@ fn abstract_join_rejects_a_loan_ended_on_only_one_arm() {
         &closed,
         &[&closed, &kept],
         &std::collections::BTreeMap::new(),
+        0,
     )
     .expect_err("a loan ended on one arm only must not join into ownership");
     assert!(error.contains("stable-view loan state"), "{error}");
@@ -184,6 +186,7 @@ fn abstract_join_rejects_a_loan_ended_on_only_one_arm() {
         &kept,
         &[&kept, &closed],
         &std::collections::BTreeMap::new(),
+        0,
     )
     .expect_err("arm order does not matter");
     assert!(error.contains("stable-view loan state"), "{error}");
@@ -193,9 +196,10 @@ fn abstract_join_rejects_a_loan_ended_on_only_one_arm() {
         &closed,
         &[&closed, &closed_too],
         &std::collections::BTreeMap::new(),
+        0,
     )
     .expect("both arms recovered the same way");
-    assert_eq!(joined.loan_ledger(), closed.loan_ledger());
+    assert_eq!(joined.state.loan_ledger(), closed.loan_ledger());
 }
 
 /// One arm state holding a checked view of `name`, rooted in a fresh loan
@@ -241,8 +245,10 @@ fn abstract_join_keeps_one_shared_view_root_and_drops_its_occurrence_sidecar() {
         &arm,
         &[&arm, &sibling],
         &std::collections::BTreeMap::new(),
+        0,
     )
     .expect("arms holding the same root have one deterministic abstraction");
+    let abstraction = abstraction.state;
 
     // The root survives the join; the bookkeeping of the discarded resource
     // context does not, so the abstraction agrees with every other path that
@@ -277,6 +283,7 @@ fn abstract_join_rejects_a_changed_view_root_on_one_ledger() {
         &arm,
         &[&arm, &sibling],
         &std::collections::BTreeMap::new(),
+        0,
     )
     .expect_err("a changed view root must not be silently selected");
     assert!(error.contains("stable-view occurrence bindings"));
@@ -300,6 +307,7 @@ fn abstract_join_rejects_an_arm_that_dropped_its_view_root() {
         &arm,
         &[&arm, &dropped],
         &std::collections::BTreeMap::new(),
+        0,
     )
     .expect_err("an arm that dropped its root must not inherit the other arm's");
     assert!(error.contains("stable-view occurrence bindings"));
@@ -319,6 +327,7 @@ fn abstract_join_rejects_divergent_holders_on_one_ledger_root() {
         &owner_state,
         &[&owner_state, &reader_state],
         &std::collections::BTreeMap::new(),
+        0,
     )
     .expect_err("divergent holders must not be silently selected");
     assert!(error.contains("stable-view loan participant"));
