@@ -1444,6 +1444,18 @@ impl<'a> Proof<'a> {
         if let Some(enumerated) = self.try_finite_forall_enumeration(&surface_goal)? {
             return Ok(Some(enumerated));
         }
+        // A pure goal that its own signed bounds already decide gets the one
+        // checked arithmetic certificate, not a case split over those same
+        // bounds. The certificate reads the goal's own bound buckets and
+        // emits a single leaf, while the split searches for a pivot and then
+        // owes a proof on each arm — including a dead arm closed only by a
+        // contradiction between the pivot and a premise. Keep this ahead of
+        // the split so the cheaper, smaller expansion wins whenever it
+        // applies; the split still runs for everything the certificate
+        // declines.
+        if let Some(arithmetic) = self.try_pure_signed_arithmetic() {
+            return Ok(Some(arithmetic));
+        }
         if let Some(split) = self.try_upper_bound_split_closure(introduced_surfaces)? {
             return Ok(Some(split));
         }
@@ -1534,10 +1546,13 @@ impl<'a> Proof<'a> {
                 }
             }
         }
-        // Signed arithmetic is the final fallback. All established
-        // equality, transport, quantifier, structural, and function-unfold
-        // routes must get first choice so their selected proof steps remain
-        // visible in expansion.
+        // Signed arithmetic over the selected premises is the final
+        // fallback. All established equality, transport, quantifier,
+        // structural, and function-unfold routes must get first choice so
+        // their selected proof steps remain visible in expansion. Only the
+        // pure form above, which selects its own bounds from the goal's
+        // buckets, runs earlier, and only ahead of the case split it would
+        // otherwise be hidden behind.
         if let Some(surface_goal) = self.surface_goal()
             && let Some(goal) = self.goal()
             && !anchored_pairs.is_empty()
@@ -1557,9 +1572,11 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(proof));
         }
-        let selected = self.try_pure_signed_arithmetic();
+        // The pure signed certificate already ran above on this same proof
+        // state; repeating it here would redo identical work for an
+        // identical answer.
         check_verification_deadline()?;
-        Ok(selected)
+        Ok(None)
     }
 
     /// Select signed bounds only from the goal variables' persistent buckets.

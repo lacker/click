@@ -952,6 +952,39 @@ fn exact_contradiction_lookup_scales_near_linearly() {
     }
 }
 
+/// `x < 0` and `x >= 0` are a comparison and its arithmetic negation rather
+/// than one condition at both polarities, so `contradicts` recognizes the
+/// pair through the fixed list of equivalent spellings. A merely tighter
+/// bound such as `x >= 1` is not that negation and stays a non-contradiction.
+#[test]
+fn contradicts_recognizes_a_comparison_and_its_arithmetic_negation() {
+    let value = Bitvector32Term::Variable(Variable(310_000));
+    let negative = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(value.clone(), Bitvector32Term::Constant(0)),
+        true,
+    );
+    let nonnegative = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(value.clone(), Bitvector32Term::Constant(0)),
+        true,
+    );
+    let at_least_one = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(value, Bitvector32Term::Constant(1)),
+        true,
+    );
+
+    let opposite = crate::kernel::proof::ProofFacts::from_ordered(&[negative.clone(), nonnegative]);
+    assert!(
+        opposite.contradicts(&negative),
+        "`x < 0` held beside `x >= 0` contradicts"
+    );
+
+    let tighter = crate::kernel::proof::ProofFacts::from_ordered(&[negative.clone(), at_least_one]);
+    assert!(
+        !tighter.contradicts(&negative),
+        "`x >= 1` is not the arithmetic negation of `x < 0`"
+    );
+}
+
 #[test]
 fn equality_graph_queries_share_one_condition_fact_index_build() {
     let root = Bitvector32Term::Variable(Variable(210_000));
