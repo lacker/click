@@ -29,7 +29,7 @@ verifying "rbtree.c";
 // Local contracts and proofs use the imported model.
 ```
 
-- Resolve a path relative to the importing file, within a declared project
+- Resolve a path relative to the importing file, within an explicit project
   root. The root must support sibling example directories, including
   `examples/rbtree-insert` importing `examples/rbtree-model`; do not assume
   every entry file's containing directory is the entire project root.
@@ -216,10 +216,10 @@ selection creates unconditional theorem authority for an unproved assumption.
 ## First implementation delivered, 2026-09-13
 
 The first delivery is implemented on the module graph used by `verify`,
-`profile`, `expand`/reverify, `audit`, and the example harness. The CLI chooses
-the nearest Git worktree root (or the entry directory outside Git), resolves
-and canonicalizes transitive local imports once, and uses stable
-project-relative module identities. It preserves source ownership, rejects
+`profile`, `expand`/reverify, `audit`, and the example harness. Callers pass an
+explicit Click project root (single-sidecar loads default to the entry
+directory); the loader resolves and canonicalizes transitive local imports
+once, and uses stable project-relative module identities. It preserves source ownership, rejects
 cycles, escapes, missing modules, collisions, importer capture, imported C
 selection/specifications, and circular theorem justification before proof
 selection.

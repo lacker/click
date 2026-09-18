@@ -440,18 +440,42 @@ pub fn read_c_inputs(sidecar: &Path, click_source: &str) -> Result<CInput, Strin
     )?))
 }
 
-/// Loads the entry sidecar and its transitive local Click imports once.
+/// Loads the entry sidecar and its transitive local Click imports once, using
+/// the sidecar's directory as the default project root.
 ///
-/// The nearest Git worktree root is the project root; outside Git, the entry
-/// file's directory is the root. This keeps ordinary single-directory uses
-/// configuration-free while allowing sibling example projects to share a
-/// module. Canonical paths enforce the boundary and deduplicate diamonds;
-/// project-relative identities keep diagnostics and artifacts deterministic
-/// across worktree locations.
+/// Callers that intentionally load a multi-directory project should use
+/// [`read_click_project_at_root`] and pass that project's explicit root.
 pub fn read_click_project(sidecar: &Path, click_source: &str) -> Result<ClickProject, String> {
+    let root = sidecar.parent().unwrap_or_else(|| Path::new("."));
+    read_click_project_at_root(sidecar, click_source, root)
+}
+
+/// Loads an entry sidecar and its transitive local Click imports within an
+/// explicit project root.
+///
+/// The root is a Click concern, not a version-control concern. Canonical paths
+/// enforce the boundary and deduplicate diamonds; project-relative identities
+/// keep diagnostics and artifacts deterministic across worktree locations.
+pub fn read_click_project_at_root(
+    sidecar: &Path,
+    click_source: &str,
+    project_root: &Path,
+) -> Result<ClickProject, String> {
     let entry = fs::canonicalize(sidecar)
         .map_err(|error| format!("failed to resolve `{}`: {error}", sidecar.display()))?;
-    let root = click_project_root(&entry)?;
+    let root = fs::canonicalize(project_root).map_err(|error| {
+        format!(
+            "failed to resolve Click project root `{}`: {error}",
+            project_root.display()
+        )
+    })?;
+    if !entry.starts_with(&root) {
+        return Err(format!(
+            "Click entry `{}` is outside project root `{}`",
+            entry.display(),
+            root.display()
+        ));
+    }
     let mut sources = BTreeMap::<PathBuf, String>::new();
     sources.insert(entry.clone(), click_source.to_string());
     let mut resolved_imports = BTreeMap::<PathBuf, Vec<PathBuf>>::new();
@@ -492,26 +516,6 @@ pub fn read_click_project(sidecar: &Path, click_source: &str) -> Result<ClickPro
     }
     modules.sort_by(|left, right| left.identity().cmp(right.identity()));
     Ok(ClickProject::new(identity(&entry)?, modules))
-}
-
-fn click_project_root(entry: &Path) -> Result<PathBuf, String> {
-    let parent = entry.parent().unwrap_or_else(|| Path::new("."));
-    for ancestor in parent.ancestors() {
-        if ancestor.join(".git").exists() {
-            return fs::canonicalize(ancestor).map_err(|error| {
-                format!(
-                    "failed to resolve Click project root `{}`: {error}",
-                    ancestor.display()
-                )
-            });
-        }
-    }
-    fs::canonicalize(parent).map_err(|error| {
-        format!(
-            "failed to resolve Click project root `{}`: {error}",
-            parent.display()
-        )
-    })
 }
 
 fn load_click_module(

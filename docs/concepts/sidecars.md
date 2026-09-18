@@ -59,10 +59,11 @@ import "../models/list.click";
 Imports are relative to the importing file, transitive, and confined to the
 project root. Paths are canonicalized to stable project-relative module
 identities; cycles, missing files, escaping paths, and ambiguous unqualified
-declarations are errors. For CLI inputs, the project root is the nearest Git
-worktree root; outside a Git worktree it is the entry file's directory. This
-requires no new manifest while permitting sibling directories in an existing
-project to share specifications. In the first import delivery, libraries may export
+declarations are errors. A single-sidecar CLI input uses the sidecar's
+directory as its root; directory-target verification passes its selected Click
+project root explicitly. This keeps import boundaries independent of version
+control while permitting an intentional project to share specifications across
+sibling directories. In the first import delivery, libraries may export
 algebraic types, predicates, pure functions, resources, and theorem
 statements. Imported `verifying` declarations, named contracts, and C function
 specifications are rejected.

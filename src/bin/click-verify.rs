@@ -8,9 +8,9 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use click::cli::{
-    CInput, DEFAULT_VERIFY_TIME_LIMIT, files_with_extension, find_projects, format_duration,
-    looks_like_source_location, parse_duration, parse_source_location, read_c_inputs,
-    read_click_project, source_refs,
+    CInput, DEFAULT_VERIFY_TIME_LIMIT, contains_click_file, files_with_extension, find_projects,
+    format_duration, looks_like_source_location, parse_duration, parse_source_location,
+    read_c_inputs, read_click_project_at_root, source_refs,
 };
 use click::languages::c::source as c_source;
 use click::languages::c::target::CTarget;
@@ -115,7 +115,7 @@ fn run(arguments: Arguments) -> Result<(), String> {
     if path.is_dir() {
         verify_directory(path, arguments.time_limit)
     } else {
-        verify_file(path, arguments.time_limit)
+        verify_file(path, arguments.time_limit, path.parent())
     }
 }
 
@@ -167,6 +167,11 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
 /// each one as it passes so a long run shows progress.
 fn verify_directory(path: &Path, time_limit: Duration) -> Result<(), String> {
     let projects = find_projects(path)?;
+    let project_root = if contains_click_file(path)? {
+        path.parent().unwrap_or_else(|| Path::new("."))
+    } else {
+        path
+    };
     let mut sidecars = Vec::new();
     for project in &projects {
         let mut project_sidecars = files_with_extension(project, "click")?;
@@ -180,7 +185,7 @@ fn verify_directory(path: &Path, time_limit: Duration) -> Result<(), String> {
         ));
     }
     for sidecar in &sidecars {
-        verify_file(sidecar, time_limit)?;
+        verify_file(sidecar, time_limit, Some(project_root))?;
         println!("verified {}", display_path(sidecar, path));
     }
     println!(
@@ -199,6 +204,13 @@ fn verify_changed(
     time_limit: Duration,
     explain_only: bool,
 ) -> Result<(), String> {
+    let project_root = if path.is_file() {
+        path.parent().unwrap_or_else(|| Path::new("."))
+    } else if contains_click_file(path)? {
+        path.parent().unwrap_or_else(|| Path::new("."))
+    } else {
+        path
+    };
     let sidecars = if path.is_dir() {
         let projects = find_projects(path)?;
         let mut sidecars = Vec::new();
@@ -221,7 +233,7 @@ fn verify_changed(
     for sidecar in sidecars {
         let sidecar = fs::canonicalize(&sidecar)
             .map_err(|error| format!("failed to resolve `{}`: {error}", sidecar.display()))?;
-        let (click_source, project, inputs) = load_sidecar_inputs(&sidecar)?;
+        let (click_source, project, inputs) = load_sidecar_inputs(&sidecar, Some(project_root))?;
         if inputs.is_prepared() {
             return Err(
                 "`--changed-since` is not supported for compiler-prepared projects".to_string(),
@@ -706,11 +718,15 @@ fn plural(count: usize) -> &'static str {
     if count == 1 { "" } else { "s" }
 }
 
-fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
+fn verify_file(
+    click_path: &Path,
+    time_limit: Duration,
+    project_root: Option<&Path>,
+) -> Result<(), String> {
     // A previous failed sidecar may have left admissions behind; each file
     // reports only its own.
     let _ = click::surface::take_sorry_admissions();
-    let (click_source, project, inputs) = load_sidecar_inputs(click_path)?;
+    let (click_source, project, inputs) = load_sidecar_inputs(click_path, project_root)?;
     let dependencies = match &inputs {
         CInput::Bundle(sources) => {
             c0_project_external_dependencies(&project, &source_refs(sources))
@@ -782,7 +798,7 @@ fn verify_location(
     column: usize,
     time_limit: Duration,
 ) -> Result<(), String> {
-    let (_click_source, project, inputs) = load_sidecar_inputs(click_path)?;
+    let (_click_source, project, inputs) = load_sidecar_inputs(click_path, click_path.parent())?;
     let dependencies = match &inputs {
         CInput::Bundle(sources) => {
             c0_project_external_dependencies(&project, &source_refs(sources))
@@ -839,11 +855,18 @@ fn print_external_dependencies(
     }
 }
 
-fn load_sidecar_inputs(click_path: &Path) -> Result<(String, ClickProject, CInput), String> {
+fn load_sidecar_inputs(
+    click_path: &Path,
+    project_root: Option<&Path>,
+) -> Result<(String, ClickProject, CInput), String> {
     let click_source = fs::read_to_string(click_path)
         .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
     let inputs = read_c_inputs(click_path, &click_source)?;
-    let project = read_click_project(click_path, &click_source)?;
+    let project = read_click_project_at_root(
+        click_path,
+        &click_source,
+        project_root.unwrap_or_else(|| click_path.parent().unwrap_or_else(|| Path::new("."))),
+    )?;
     Ok((click_source, project, inputs))
 }
 

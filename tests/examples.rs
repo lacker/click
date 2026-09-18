@@ -4,8 +4,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use click::cli::{
-    CInput, files_with_extension, read_c_inputs, read_click_project, read_verifying_sources,
-    run_parallel, source_refs,
+    CInput, files_with_extension, read_c_inputs, read_click_project_at_root,
+    read_verifying_sources, run_parallel, source_refs,
 };
 use click::instrumentation::{self, ArtifactReuseRejection};
 use click::languages::refresh_compiler_import;
@@ -146,7 +146,7 @@ fn rbtree_insert_frontier_remains_explicit_and_uses_the_shared_model() {
     assert!(!source.contains("spec enum RbTree"));
     let c_sources =
         read_verifying_sources(&path, &source).expect("the unchanged insert C bundle should load");
-    let project = read_click_project(&path, &source)
+    let project = read_click_project_at_root(&path, &source, &root.join("examples"))
         .expect("the insert frontier should resolve the shared model");
     let error = click::surface::verify_c0_project(&project, &source_refs(&c_sources))
         .expect_err("the insert proof frontier is deliberately unfinished");
@@ -249,7 +249,11 @@ fn run_example_project(project: &Path) -> Result<(), String> {
             })?;
         }
         let inputs = read_c_inputs(&click_path, &click_source)?;
-        let click_project = read_click_project(&click_path, &click_source)?;
+        let click_project = read_click_project_at_root(
+            &click_path,
+            &click_source,
+            project.parent().unwrap_or(project),
+        )?;
         match source_status {
             Some(SourceFixtureStatus::ParserOnly) => {
                 let CInput::Bundle(c_sources) = inputs else {
