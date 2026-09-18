@@ -1,6 +1,6 @@
 //! Contextual Surface Click lowering for checked proof operations.
 
-use super::pure_theorems::lower_pure_theorem_proposition_with_algebraic_and_integer_values;
+use super::pure_theorems::lower_pure_theorem_proposition_recording_introductions;
 use super::*;
 
 pub(super) fn promote_integer_expression(
@@ -243,9 +243,16 @@ impl<'a> Proof<'a> {
                     &context.theorem_context.integer_values,
                     self.local_integer_values(),
                 );
-                lower_pure_theorem_proposition_with_algebraic_and_integer_values(
+                // The premises in scope at this point of the proof: the
+                // theorem's `requires` and every fact already proved, exactly
+                // the set the C-proof arms below pass. Without it a stated
+                // proposition's evaluation conditions would be discharged
+                // against nothing, so `have` could not establish a fact for a
+                // later step to use.
+                lower_pure_theorem_proposition_recording_introductions(
                     context.claim_label,
                     surface,
+                    self.facts().assumptions(),
                     &context.theorem_context.values,
                     &context.theorem_context.array_refs,
                     context
@@ -258,6 +265,7 @@ impl<'a> Proof<'a> {
                     context.predicate_environment,
                     context.click_function_environment,
                 )
+                .map(|(proposition, _)| proposition)
                 .map_err(|message| {
                     self.step_error(format!("could not lower {description}: {message}"))
                 })
@@ -394,9 +402,10 @@ impl<'a> Proof<'a> {
                     &context.theorem_context.integer_values,
                     self.local_integer_values(),
                 );
-                lower_pure_theorem_proposition_with_algebraic_and_integer_values(
+                lower_pure_theorem_proposition_recording_introductions(
                     context.claim_label,
                     surface,
+                    self.facts().assumptions(),
                     &context.theorem_context.values,
                     &context.theorem_context.array_refs,
                     context
@@ -409,6 +418,7 @@ impl<'a> Proof<'a> {
                     context.predicate_environment,
                     context.click_function_environment,
                 )
+                .map(|(proposition, _)| proposition)
             }
             .map_err(|message| {
                 self.step_error(format!("could not lower {description}: {message}"))
@@ -540,10 +550,15 @@ impl<'a> Proof<'a> {
                         )
                     },
                 );
-                super::pure_theorems::lower_pure_theorem_proposition_recording_introductions(
+                // A newly stated pure goal's evaluation conditions are
+                // discharged against the premises in scope where it is
+                // stated, like a fixed-state goal below: the theorem's
+                // `requires` plus the facts proved so far. This is what makes
+                // `have defined(...) by { ... }` before a step reach the step.
+                lower_pure_theorem_proposition_recording_introductions(
                     context.claim_label,
                     &surface,
-                    &PureFactContext::new(),
+                    self.facts().assumptions(),
                     &context.theorem_context.values,
                     &context.theorem_context.array_refs,
                     context

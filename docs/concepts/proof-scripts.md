@@ -64,6 +64,25 @@ proofs. Both can use simplification, theorem application, exact derivation,
 logical tactics, and proof-level `if`; fixed-state proofs can additionally
 transform logical resources.
 
+Whichever kind it is, a proposition a step writes down is lowered against the
+premises in scope where it is written: the claim's own `requires` and every
+fact the proof has established before that point. That is what makes the
+ordinary repair for a term Click cannot see is defined work the same way
+everywhere — prove the missing fact with `have X by { ... }` before the step
+that needs it, and the step then goes through, with no new syntax. A pure
+theorem's `have` sees its theorem's `requires` and its earlier `have`s
+(`mdtests/pure_have_sees_proved_facts.md`) exactly as a C proof's does
+(`mdtests/c_proof_have_before_the_step.md`), and a refusal lists the premises
+it actually consulted
+(`mdtests/pure_have_reports_the_premises_it_consulted.md`).
+
+Scope is the limit. A nested `have` body is its own scope: what it proves
+justifies its own statement, and once the body closes only that statement
+reaches the steps after it
+(`mdtests/pure_have_body_fact_does_not_leak.md`). Inside `induct`, the
+induction hypothesis is in scope as a quantified fact, not as a premise about
+the current parameter values; `apply(ih(...))` is what turns it into one.
+
 An execution proof carries a C frontier. The execution vocabulary is:
 
 - `mark name;` to name the current state for later `at(name, ...)` expressions;
