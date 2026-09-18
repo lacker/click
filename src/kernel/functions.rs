@@ -19237,6 +19237,7 @@ mod verified_call_initialization_tests {
         let environment =
             CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
                 function: function.clone(),
+                loop_semantics: CLoopSemantics::Verify,
             });
         execute_c_function_call_paths(
             state,
@@ -19534,6 +19535,7 @@ mod stable_view_call_tests {
     fn environment(function: &CFunction) -> CExecutionEnvironment {
         CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
             function: function.clone(),
+            loop_semantics: CLoopSemantics::Verify,
         })
     }
 
@@ -20122,6 +20124,7 @@ mod stable_view_call_tests {
         let environment =
             CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
                 function: function.clone(),
+                loop_semantics: CLoopSemantics::Verify,
             });
         let paths = execute_c_function_call_paths(
             &caller(&pointer),
@@ -20882,7 +20885,10 @@ mod stable_view_call_tests {
         .with_resource_summary(vec![CResourceSpec::viewed_memory(segment)], Vec::new());
         let environment = CExecutionEnvironment::new()
             .with_function(inner.clone())
-            .with_verified_function_rule(CVerifiedFunctionRule { function: inner });
+            .with_verified_function_rule(CVerifiedFunctionRule {
+                function: inner,
+                loop_semantics: CLoopSemantics::Verify,
+            });
 
         let paths = execute_c_function_paths(
             &caller(&pointer),
@@ -21933,6 +21939,7 @@ mod stable_view_call_tests {
             let environment =
                 CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
                     function: function.clone(),
+                    loop_semantics: CLoopSemantics::Verify,
                 });
             let paths = execute_c_function_call_paths(
                 &caller,

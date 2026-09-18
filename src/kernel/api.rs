@@ -5198,6 +5198,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
         cases,
         reuse_diagnostic,
         checked_call_events,
+        loop_semantics: execution_semantics.loops,
     }
 }
 

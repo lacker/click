@@ -25,10 +25,6 @@ int32 fill3(int32* p) {
 }
 ```
 
-```termination
-pending: unranked loop
-```
-
 ```expect
 pass
 ```

@@ -2581,6 +2581,20 @@ impl CExecutionSemantics {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CVerifiedFunctionRule {
     pub(super) function: CFunction,
+    /// The loop semantics every claim of this rule was certified under, or
+    /// `Verify` when any was, or when the rule is a recursion hypothesis
+    /// that certified nothing. Written by the kernel from its own
+    /// certification, so the termination check may trust it: under
+    /// `ApplyVerifiedRules` a loop with no verified loop rule ran to its
+    /// exit on every certified path.
+    pub(super) loop_semantics: CLoopSemantics,
+}
+
+impl CVerifiedFunctionRule {
+    /// How the certification behind this rule ran the function's loops.
+    pub fn loop_semantics(&self) -> CLoopSemantics {
+        self.loop_semantics
+    }
 }
 
 /// A nominal, body-independent behavioral interface for an indirect call.
@@ -2712,6 +2726,8 @@ pub struct CVerifiedFunctionContractClaim {
     /// witnesses on the proof object makes contract finalization the owner of
     /// its equality decisions rather than relying on an ambient prover later.
     pub(super) load_equalities: Vec<super::CheckedLoadEquality>,
+    /// The loop semantics of the certification this claim came from.
+    pub(super) loop_semantics: CLoopSemantics,
 }
 
 /// Kernel-checked evidence that a checked proof discharged one proposition at
@@ -6027,6 +6043,12 @@ pub struct CFunctionContractExecution {
     /// not be built. Callers report it; it carries no authority.
     pub(super) reuse_diagnostic: Option<String>,
     pub(super) checked_call_events: super::proof::CheckedCallEvents,
+    /// How this certification ran the function's loops. Under
+    /// `ApplyVerifiedRules` a loop is either run concretely to its exit or
+    /// replaced by a verified loop rule, and one with neither yields no
+    /// paths; under `Verify` an annotated loop may be summarized without
+    /// ever exiting. The termination check reads this to know which.
+    pub(super) loop_semantics: CLoopSemantics,
 }
 
 /// A kernel-created record of one exact whole-function execution judgment.
@@ -6065,6 +6087,7 @@ impl CFunctionContractExecution {
             cases: Vec::new(),
             reuse_diagnostic: Some(diagnostic),
             checked_call_events: Default::default(),
+            loop_semantics: CLoopSemantics::Verify,
         }
     }
 

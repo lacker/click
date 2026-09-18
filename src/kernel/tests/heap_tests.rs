@@ -644,7 +644,10 @@ fn scoped_call_borrows_end_before_free() {
     );
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
-        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
+        .with_verified_function_rule(CVerifiedFunctionRule {
+            function: helper,
+            loop_semantics: CLoopSemantics::Verify,
+        });
     let statement = c_seq(
         c_call_assign("observed", "read_borrow", vec![c_variable("p")]),
         c_heap_free(c_variable("p")),
@@ -1244,6 +1247,7 @@ fn guarded_opaque_call_footprints_skip_only_inactive_segments() {
         .with_function(function.clone())
         .with_verified_function_rule(CVerifiedFunctionRule {
             function: function.clone(),
+            loop_semantics: CLoopSemantics::Verify,
         });
 
     let null = CValue::pointer(Pointer::null());

@@ -2086,6 +2086,7 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
                 function: function.clone(),
                 key: claim.key().clone(),
                 load_equalities,
+                loop_semantics: contract_execution.loop_semantics,
             })
         })
         .collect::<Option<Vec<_>>>();
@@ -2285,7 +2286,20 @@ pub fn c_verified_function_rule(
     {
         return None;
     }
-    Some(CVerifiedFunctionRule { function })
+    // The weakest semantics any claim saw: a loop summarized for one claim
+    // was not shown to exit for that claim.
+    let loop_semantics = if proofs
+        .iter()
+        .all(|proof| proof.loop_semantics == CLoopSemantics::ApplyVerifiedRules)
+    {
+        CLoopSemantics::ApplyVerifiedRules
+    } else {
+        CLoopSemantics::Verify
+    };
+    Some(CVerifiedFunctionRule {
+        function,
+        loop_semantics,
+    })
 }
 
 /// Packages a body-less external contract as an opaque assumption. The
@@ -2328,7 +2342,11 @@ pub(crate) fn c_recursive_function_contract_hypothesis(
         && function.verified_direct_contract_supported()
         && !function.contract_claims().is_empty()
         && function_contract_claims_are_complete(&function))
-    .then_some(CVerifiedFunctionRule { function })
+    .then_some(CVerifiedFunctionRule {
+        function,
+        // A hypothesis certified nothing, so it says nothing about loops.
+        loop_semantics: CLoopSemantics::Verify,
+    })
 }
 
 /// Creates a scoped body-independent assumption for a concrete function whose

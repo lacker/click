@@ -893,7 +893,10 @@ fn check_executed_refinement_shape(return_type: CType, alter_result: bool) {
                 &sources,
                 "Target",
                 conclusion.clone(),
-                &CVerifiedFunctionRule { function },
+                &CVerifiedFunctionRule {
+                    function,
+                    loop_semantics: CLoopSemantics::Verify,
+                },
             )
             .is_some(),
             valid && !alter_result

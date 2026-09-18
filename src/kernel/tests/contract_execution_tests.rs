@@ -1265,7 +1265,10 @@ fn verified_function_rule_applies_contract_without_executing_body() {
     );
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
-        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
+        .with_verified_function_rule(CVerifiedFunctionRule {
+            function: helper,
+            loop_semantics: CLoopSemantics::Verify,
+        });
     let statement = c_seq(
         c_call_assign("result", "opaque_helper", vec![c_int32_literal(5)]),
         c_return(c_variable("result")),
@@ -1361,7 +1364,10 @@ fn verified_function_rule_coerces_null_constants_in_contract_views() {
     );
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
-        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
+        .with_verified_function_rule(CVerifiedFunctionRule {
+            function: helper,
+            loop_semantics: CLoopSemantics::Verify,
+        });
     let execution = prove_symbolic_c_execution_paths_with_environment(
         CState::new(),
         c_call_assign("result", "pointer_is_null", vec![c_int32_literal(0)]),
@@ -1429,7 +1435,10 @@ fn verified_function_rule_does_not_publish_one_spec_alias_path() {
     );
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
-        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
+        .with_verified_function_rule(CVerifiedFunctionRule {
+            function: helper,
+            loop_semantics: CLoopSemantics::Verify,
+        });
     let execution = prove_symbolic_c_execution_paths_with_environment(
         CState::new().with_memory(CMemory::new().with_block("heap", 8).store(stored, int32(0))),
         c_call_assign(
@@ -1481,7 +1490,10 @@ fn opaque_pointer_result_can_alias_its_argument() {
     );
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
-        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
+        .with_verified_function_rule(CVerifiedFunctionRule {
+            function: helper,
+            loop_semantics: CLoopSemantics::Verify,
+        });
     let execution = prove_symbolic_c_execution_paths_with_environment(
         CState::new(),
         c_call_assign(
@@ -1546,7 +1558,10 @@ fn verified_immutable_calls_allocate_distinct_results() {
     );
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
-        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
+        .with_verified_function_rule(CVerifiedFunctionRule {
+            function: helper,
+            loop_semantics: CLoopSemantics::Verify,
+        });
     let statement = c_seq(
         c_call_assign("first", "opaque_identity", vec![c_int32_literal(5)]),
         c_seq(
@@ -1601,7 +1616,10 @@ fn separate_statement_verification_calls_preserve_fresh_identity_progress() {
     );
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
-        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
+        .with_verified_function_rule(CVerifiedFunctionRule {
+            function: helper,
+            loop_semantics: CLoopSemantics::Verify,
+        });
     let mut budget = ExecutionBudget::default();
 
     let (first_execution, _) =
@@ -3175,6 +3193,7 @@ fn body_safety_claim_rejects_an_unproved_execution_condition() {
         }]],
         reuse_diagnostic: None,
         checked_call_events: Default::default(),
+        loop_semantics: CLoopSemantics::Verify,
     };
 
     assert!(
@@ -3265,6 +3284,7 @@ fn contract_claims_are_judged_over_each_path_set_of_a_case() {
                 cases,
                 reuse_diagnostic: None,
                 checked_call_events: Default::default(),
+                loop_semantics: CLoopSemantics::Verify,
             },
         )
         .is_some()
@@ -3341,6 +3361,7 @@ fn body_safety_claim_uses_path_facts_for_verification_conditions() {
         }]],
         reuse_diagnostic: None,
         checked_call_events: Default::default(),
+        loop_semantics: CLoopSemantics::Verify,
     };
 
     assert!(
@@ -4781,7 +4802,10 @@ fn call_requirement_obligations_carry_their_lowering_record() {
     );
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
-        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
+        .with_verified_function_rule(CVerifiedFunctionRule {
+            function: helper,
+            loop_semantics: CLoopSemantics::Verify,
+        });
     let state = CState::new().with_local("n", int32(Bitvector32Term::Variable(Variable(31_000))));
     let execution = prove_symbolic_c_execution_paths_with_environment(
         state,
