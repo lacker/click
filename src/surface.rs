@@ -2693,6 +2693,24 @@ enum ContractSegmentSurface {
 }
 
 impl ContractSegment {
+    /// The written base and bounds of a range segment.
+    ///
+    /// A diagnostic that names the cell a single-cell condition came from
+    /// reads them here: the cell is `<base>[<start>]`, which is the spelling
+    /// the reader has in front of them.
+    pub(crate) fn surface_range(
+        &self,
+    ) -> Option<(
+        &ContractExpression,
+        &ContractExpression,
+        &ContractExpression,
+    )> {
+        match &self.surface {
+            ContractSegmentSurface::Range { base, start, end } => Some((base, start, end)),
+            ContractSegmentSurface::Field { .. } | ContractSegmentSurface::Object(_) => None,
+        }
+    }
+
     pub(crate) fn field_element_width(&self) -> Option<u32> {
         match &self.surface {
             ContractSegmentSurface::Field { element_width, .. } => *element_width,

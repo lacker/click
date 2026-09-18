@@ -1,8 +1,11 @@
 use super::*;
 
+mod conversion_conditions;
 mod fact_transport;
 mod have_proofs;
 mod theorem_application;
+
+use conversion_conditions::{StatedForm, StatedSite, refuse_unproved_conversion_bounds};
 
 pub(super) use fact_transport::{
     certified_fact_transport_reaches_through, check_fixed_state_fact_transport_using_facts,

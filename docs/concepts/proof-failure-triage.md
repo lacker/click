@@ -84,10 +84,13 @@ kernel goal, and a newest-first suffix of recent premises. The original
 reason remains the first line. Context is rendered only when the terminal
 message is requested, with a 64 KiB report cap, bounded proposition printer,
 and at most eight premises. Individual premise renderings are capped at 2 KiB
-and reports say when additional context was omitted. Snapshot identity in a
-report identifies shared roots; identical labels identify the same stored
-snapshot roots, while different labels may still describe equal memory
-contents. Diagnostic labels are context, not proof certificates. Search
+and reports say when additional context was omitted. A memory snapshot is
+labeled `snapshot#1`, `snapshot#2`, and so on, numbered by first appearance
+within one report: equal memory shares one label and memory that differs gets
+another, so "same memory" and "different memory" are visible as such. The
+comparison stops after 32 distinct snapshots in a report, past which a further
+snapshot simply takes the next label. Diagnostic labels are context, not proof
+certificates. Search
 context covers bounded recent representatives from loop, induction,
 refinement, and common postcondition searches; it is not a complete theorem
 reasoning trace. This keeps failures useful for triage without dumping

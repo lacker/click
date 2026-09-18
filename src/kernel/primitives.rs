@@ -3301,6 +3301,14 @@ impl CMemory {
             std::sync::Arc::as_ptr(&self.heap) as usize,
         )
     }
+
+    /// Whether two snapshots are the same stored snapshot, by the storage
+    /// roots alone. This is the O(1) half of a diagnostic label's identity:
+    /// a report that must show "same memory" compares contents when this
+    /// says nothing, and never the other way round.
+    pub(crate) fn same_storage_roots(&self, other: &Self) -> bool {
+        self.diagnostic_identity() == other.diagnostic_identity()
+    }
 }
 
 /// A pinned, shallow identity for the lifetime metadata relevant to a read.

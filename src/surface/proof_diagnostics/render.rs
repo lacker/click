@@ -15,15 +15,61 @@ use std::fmt::Write;
 const MAX_BYTES: usize = 32 * 1024;
 const MAX_NODES: usize = 4096;
 const MAX_DEPTH: usize = 96;
+/// How many distinct snapshots one report labels before it stops comparing.
+/// A message names a handful of states; the cap keeps the comparison below
+/// bounded, and a snapshot past it simply gets its own label.
+const MAX_SNAPSHOT_LABELS: usize = 32;
+
+/// The snapshot labels of one report.
+///
+/// A snapshot used to print the addresses of the five `Arc` roots it is built
+/// from, so two structurally identical memories printed as different tuples
+/// and a reader could not tell "same memory" from "different memory" — the one
+/// thing those labels exist to show. A label is now a small ordinal, assigned
+/// in order of first appearance and shared by equal memories, so `snapshot#1`
+/// twice means one memory and `snapshot#1`/`snapshot#2` means two.
+#[derive(Default)]
+pub(crate) struct SnapshotLabels {
+    memories: Vec<CMemory>,
+}
+
+impl SnapshotLabels {
+    /// The label of this memory: an existing ordinal when an equal memory has
+    /// already been labeled, otherwise the next one.
+    fn label(&mut self, memory: &CMemory) -> usize {
+        if let Some(index) = self
+            .memories
+            .iter()
+            .position(|labeled| labeled.same_storage_roots(memory) || labeled == memory)
+        {
+            return index + 1;
+        }
+        if self.memories.len() >= MAX_SNAPSHOT_LABELS {
+            return self.memories.len() + 1;
+        }
+        self.memories.push(memory.clone());
+        self.memories.len()
+    }
+}
 
 /// Render one proposition without allowing its shape or attached snapshots to
 /// determine the size of the error message.
 pub(crate) fn render_proposition(proposition: &Proposition) -> String {
+    render_proposition_labeled(proposition, &mut SnapshotLabels::default())
+}
+
+/// [`render_proposition`] sharing one report's snapshot labels, so the same
+/// memory reads as the same `snapshot#n` in every line of that report.
+pub(crate) fn render_proposition_labeled(
+    proposition: &Proposition,
+    labels: &mut SnapshotLabels,
+) -> String {
     let mut renderer = Renderer {
         output: String::with_capacity(1024),
         nodes: 0,
         depth: 0,
         truncated: false,
+        labels,
     };
     renderer.proposition(proposition);
     if renderer.truncated {
@@ -45,11 +91,13 @@ pub(crate) fn render_proposition(proposition: &Proposition) -> String {
 /// elimination, so its `Debug` reaches the same datatype schemas a
 /// proposition's does.
 pub(crate) fn render_integer_term(term: &IntegerTerm) -> String {
+    let mut labels = SnapshotLabels::default();
     let mut renderer = Renderer {
         output: String::with_capacity(128),
         nodes: 0,
         depth: 0,
         truncated: false,
+        labels: &mut labels,
     };
     renderer.integer(term);
     if renderer.truncated {
@@ -74,17 +122,18 @@ pub(crate) fn describe_spec_capture_refusal(refusal: &SpecCaptureRefusal) -> Str
     }
 }
 
-struct Renderer {
+struct Renderer<'a> {
     output: String,
     nodes: usize,
     depth: usize,
     truncated: bool,
+    labels: &'a mut SnapshotLabels,
 }
 
-impl Renderer {
+impl Renderer<'_> {
     fn fmt(&mut self, arguments: std::fmt::Arguments<'_>) {
-        struct Sink<'a>(&'a mut Renderer);
-        impl std::fmt::Write for Sink<'_> {
+        struct Sink<'a, 'b>(&'a mut Renderer<'b>);
+        impl std::fmt::Write for Sink<'_, '_> {
             fn write_str(&mut self, value: &str) -> std::fmt::Result {
                 self.0.push(value);
                 if self.0.truncated {
@@ -896,11 +945,8 @@ impl Renderer {
         }
     }
     fn memory(&mut self, memory: &CMemory) {
-        let identity = memory.diagnostic_identity();
-        self.fmt(format_args!(
-            "snapshot={:x}:{:x}:{:x}:{:x}:{:x}",
-            identity.0, identity.1, identity.2, identity.3, identity.4
-        ));
+        let label = self.labels.label(memory);
+        self.fmt(format_args!("snapshot#{label}"));
     }
     fn state(&mut self, state: &CState) {
         self.push("state(");
@@ -1069,37 +1115,56 @@ mod tests {
         assert!(rendered.contains("body=v10"));
     }
 
+    fn loadable_at(memory: CMemory) -> Proposition {
+        Proposition::CMemoryLoadable {
+            memory,
+            base: Pointer {
+                block: crate::kernel::PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            bytes: Bitvector32Term::Constant(1),
+        }
+    }
+
+    /// A label says what a reader needs it to say: equal memory reads as one
+    /// snapshot whether or not it shares storage roots, and memory that differs
+    /// reads as another. The five `Arc` addresses this used to print made two
+    /// separately built empty snapshots look like different memory.
     #[test]
-    fn snapshots_distinguish_storage_roots_without_interning() {
+    fn equal_snapshots_share_one_label_and_different_memory_does_not() {
         let first = CMemory::default();
-        let same = first.clone();
-        let other = CMemory::default();
-        let first_text = render_proposition(&Proposition::CMemoryLoadable {
-            memory: first,
-            base: Pointer {
-                block: crate::kernel::PointerBlock::ExternalArgument,
-                offset: PointerOffsetTerm::Constant(0),
-            },
-            bytes: Bitvector32Term::Constant(1),
-        });
-        let same_text = render_proposition(&Proposition::CMemoryLoadable {
-            memory: same,
-            base: Pointer {
-                block: crate::kernel::PointerBlock::ExternalArgument,
-                offset: PointerOffsetTerm::Constant(0),
-            },
-            bytes: Bitvector32Term::Constant(1),
-        });
-        let other_text = render_proposition(&Proposition::CMemoryLoadable {
-            memory: other,
-            base: Pointer {
-                block: crate::kernel::PointerBlock::ExternalArgument,
-                offset: PointerOffsetTerm::Constant(0),
-            },
-            bytes: Bitvector32Term::Constant(1),
-        });
-        assert_eq!(first_text, same_text);
-        assert_ne!(first_text, other_text);
+        let shared = first.clone();
+        let rebuilt = CMemory::default();
+        let different = CMemory::new().with_block("block", 16);
+        assert_ne!(first.diagnostic_identity(), rebuilt.diagnostic_identity());
+
+        let first_text = render_proposition(&loadable_at(first));
+        assert!(first_text.contains("snapshot#1"), "{first_text}");
+        assert_eq!(first_text, render_proposition(&loadable_at(shared)));
+        assert_eq!(first_text, render_proposition(&loadable_at(rebuilt)));
+
+        // Within one report the labels are the order of first appearance, so
+        // two different memories are visibly two.
+        let mut labels = SnapshotLabels::default();
+        let empty = render_proposition_labeled(&loadable_at(CMemory::default()), &mut labels);
+        let blocked = render_proposition_labeled(&loadable_at(different), &mut labels);
+        assert!(empty.contains("snapshot#1"), "{empty}");
+        assert!(blocked.contains("snapshot#2"), "{blocked}");
+    }
+
+    /// The comparison stops at its cap rather than growing with the report.
+    #[test]
+    fn snapshot_labels_stop_comparing_past_their_cap() {
+        let mut labels = SnapshotLabels::default();
+        for size in 0..MAX_SNAPSHOT_LABELS as u32 {
+            let memory = CMemory::new().with_block(format!("block{size}"), 16);
+            assert_eq!(labels.label(&memory), size as usize + 1);
+        }
+        let overflowing = CMemory::new().with_block("block0", 16);
+        assert_eq!(labels.label(&overflowing), 1, "an earlier label still wins");
+        let beyond = CMemory::new().with_block("beyond", 16);
+        assert_eq!(labels.label(&beyond), MAX_SNAPSHOT_LABELS + 1);
+        assert_eq!(labels.label(&beyond), MAX_SNAPSHOT_LABELS + 1);
     }
 
     #[test]

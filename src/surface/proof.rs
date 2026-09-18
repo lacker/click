@@ -112,6 +112,7 @@ use surface_construction::*;
 use surface_synthesis::{SURFACE_SYNTHESIS_DEPTH_LIMIT, bitvector_term_is_load_free};
 use surface_synthesis::{
     surface_synthesis_exhaustion_description, surface_synthesis_failure,
+    synthesize_surface_machine_expression,
     synthesize_surface_proposition_with_bound_variable_names,
 };
 pub(super) use surface_synthesis::{
