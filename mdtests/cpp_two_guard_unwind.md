@@ -86,5 +86,5 @@ int32 guarded2(int32* first_cell, int32* second_cell, bool should_throw) {
 ```
 
 ```expect
-fail: but they are distinct kernel loads
+fail: read the same address in different memory snapshots
 ```

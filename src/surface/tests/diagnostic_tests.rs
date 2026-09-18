@@ -765,11 +765,12 @@ fn loan_refusal_diagnostic_renders_a_range_subject_without_ledger_state() {
     assert!(rendered.len() < 1024, "{}", rendered.len());
 }
 
-/// Two distinct loads over the same pointer used to render identically
+/// Two distinct loads over the same address used to render identically
 /// (`left side evaluated to load(p[0]), right side evaluated to load(p[0])`),
-/// which reads as an unprovable `x == x`. The message now names the actual
-/// obligation instead: the loads live in different memory snapshots and must
-/// be equated across the write in between.
+/// which reads as an unprovable `x == x`. The message now reports each side's
+/// surface spelling and which snapshot it reads, instead of the internal
+/// kernel load names: the cell must be shown unchanged across the writes in
+/// between.
 #[test]
 fn identical_load_renders_name_distinct_snapshot_loads() {
     let c_source = r#"
@@ -791,7 +792,22 @@ fn identical_load_renders_name_distinct_snapshot_loads() {
     let error = verify_c0_sources(click_source, &[("sym_index_clobber.c", c_source)])
         .expect_err("a symbolically-indexed write must leave the old-value goal open");
     let message = error.message();
-    assert!(message.contains("both sides evaluate to"), "{message}");
-    assert!(message.contains("distinct kernel loads"), "{message}");
+    assert!(
+        message.contains("read the same address in different memory snapshots"),
+        "{message}"
+    );
+    assert!(
+        message.contains("`result` reads the outcome state"),
+        "{message}"
+    );
+    assert!(
+        message.contains("`old(p[0])` reads function entry"),
+        "{message}"
+    );
+    assert!(
+        message.contains("unchanged by the writes in between"),
+        "{message}"
+    );
+    assert!(!message.contains("distinct kernel loads"), "{message}");
     assert!(!message.contains("left side evaluated to"), "{message}");
 }

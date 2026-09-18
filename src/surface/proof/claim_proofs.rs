@@ -1212,18 +1212,40 @@ fn close_claim_directly_from_outcome<'a>(
                 .ok()
             };
             match (evaluate(left), evaluate(right)) {
-                (Some(left), Some(right)) => {
-                    let rendered_left = describe_c_value(&left, parameters, arguments);
-                    let rendered_right = describe_c_value(&right, parameters, arguments);
-                    // Two distinct load variables over the same pointer
+                (Some(kernel_left), Some(kernel_right)) => {
+                    let rendered_left = describe_c_value(&kernel_left, parameters, arguments);
+                    let rendered_right = describe_c_value(&kernel_right, parameters, arguments);
+                    // Two distinct load variables over the same address
                     // render identically, which reads as an unprovable
-                    // `x == x`. Name the actual obligation instead: the two
-                    // loads live in different memory snapshots, so closing
-                    // the goal requires equating them across the writes in
-                    // between.
-                    if rendered_left == rendered_right && left != right {
+                    // `x == x`. The kernel rendering uses internal names, so
+                    // report the surface spellings and which snapshot each
+                    // reads: `old(...)` is function entry, `at(...)` is a
+                    // recorded snapshot, anything else is the outcome state.
+                    // The obligation is showing the cell was unchanged by the
+                    // writes in between.
+                    if rendered_left == rendered_right && kernel_left != kernel_right {
+                        let snapshot_role = |expression: &ContractExpression| {
+                            if contains_old_expression(expression) {
+                                "function entry"
+                            } else if contains_at_expression(expression) {
+                                "a recorded snapshot"
+                            } else {
+                                "the outcome state"
+                            }
+                        };
+                        let surface_left = describe_contract_expression(left);
+                        let surface_right = describe_contract_expression(right);
+                        let left_role = snapshot_role(left);
+                        let right_role = snapshot_role(right);
+                        let snapshot_note = if left_role == right_role {
+                            format!("`{surface_left}` and `{surface_right}` both read {left_role}")
+                        } else {
+                            format!(
+                                "`{surface_left}` reads {left_role}, `{surface_right}` reads {right_role}"
+                            )
+                        };
                         format!(
-                            "; both sides evaluate to `{rendered_left}`, but they are distinct kernel loads (the same cell read in different memory snapshots): closing the goal requires equating the two loads, and no checked proof step did"
+                            "; the two sides read the same address in different memory snapshots ({snapshot_note}); closing the goal needs a checked step showing the cell was unchanged by the writes in between, and no checked proof step did"
                         )
                     } else {
                         format!(
