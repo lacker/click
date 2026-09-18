@@ -96,3 +96,35 @@ collection, weak references, concurrent reference counting, shared mutable
 payload protocols, and arbitrary cyclic-graph proofs remain deferred. The
 small diamond establishes sharing, not cycle reclamation. Follow `AGENTS.md`
 when proof tooling exposes a blocker.
+
+## Next chunk, 2026-09-18: one branch-on-count release
+
+The reduced blocker is the single `child_release` in the frozen
+`design/shared-heap-probes/shared_parent.c` (`if refs == 1 free else
+decrement`). No contract expresses "consume one of an arbitrary population":
+`consumes child_ref(obj)` pins the entry population to 1 (the non-final path
+then leaks), `owns` plus `consumes` pins it to 2 (the final path then fails).
+An explicit `rewrite` of the guard against the body invariant reduces the
+final-branch goal to `1 == 2`, confirming the contradiction is in the fixed
+prior, not the proof steps.
+
+The regression is `mdtests/child_release_branch_on_count.md` (currently
+`expect fail: LiveAllocationLeak` on the non-final path). Two tempting
+shortcuts are unsound and must not be implemented: trusting a stored ghost
+`count(...) > 0` fact (it goes stale across the decrement and would mask a
+final path that forgets `free`), and covering from actual-state counts (a
+proof-retained unit masks an orphaned allocation the contract consumed).
+
+Landed support (all in the normal gate): `click verify --allow-sorry` with
+`sorry();` as a complete contract or `have` body for reductions; the leak
+error names counted families and suggests proving `count(...) != 0`; `let`
+-bound constant quantities lower (previously rejected by a leftover wrapper).
+
+Recommended implementation, in order: (a) contract-level quantity binders
+that reuse the proven `amount`-parameter paths (surface-scoped; e.g. let the
+prior be named), or (b) kernel symbolic prior derived from the body
+`field == count(pop)` invariant. Either must keep the pinned test's
+final-path free requirement and all negative regressions (double free,
+use-after-free, true leak with stale facts) failing. Flip the pinned fixture
+to `expect pass` only when the same proof verifies with no `sorry`, and rerun
+the full gate: symbolic counts touch every counted contract.
