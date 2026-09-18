@@ -917,6 +917,13 @@ impl<'a> Proof<'a> {
                         }),
                     ));
                 }
+                // The plan exists, so the premises were sufficient; what
+                // failed is spelling one of its steps in source form. Say
+                // so, rather than reporting the premises as insufficient.
+                return Err(self.step_error(format!(
+                    "`arithmetic` proved the goal from the listed premises with a {}-node signed_int32 certificate, but one of its steps cannot be printed in source form; this is a Click rendering gap, not a missing premise",
+                    plan.nodes.len()
+                )));
             }
         }
         if let Some(goal) = self.goal() {
