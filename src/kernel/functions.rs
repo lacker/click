@@ -13346,16 +13346,6 @@ pub enum ResourceRewriteRefusal {
         index: usize,
         count: usize,
     },
-    /// Unfold/fold exposed a body clause whose evaluation can be undefined
-    /// behavior (unchecked arithmetic), and nothing establishes that it is
-    /// defined. `kind` names the operation, `index`/`count` locate the body
-    /// clause as in [`ResourceRewriteRefusal::BodyFactNotEstablished`].
-    BodyFactPossiblyUndefinedBehavior {
-        arm: Option<String>,
-        index: usize,
-        count: usize,
-        kind: &'static str,
-    },
 }
 
 impl ResourceRewriteRefusal {
@@ -13369,21 +13359,6 @@ impl ResourceRewriteRefusal {
                 };
                 format!(
                     "fold requires the instance body facts for the proposed fields: fact {} of {count} {place} is not established",
-                    index + 1
-                )
-            }
-            ResourceRewriteRefusal::BodyFactPossiblyUndefinedBehavior {
-                arm,
-                index,
-                count,
-                kind,
-            } => {
-                let place = match arm {
-                    Some(arm) => format!("of arm `{arm}`"),
-                    None => "of the resource body".to_string(),
-                };
-                format!(
-                    "instance body fact might be undefined behavior: {kind} is not ruled out for fact {} of {count} {place}; state `defined(...)` for the arithmetic in an earlier body fact",
                     index + 1
                 )
             }
@@ -13403,9 +13378,6 @@ impl From<ResourceRewriteRefusal> for &'static str {
             ResourceRewriteRefusal::Message(message) => message,
             ResourceRewriteRefusal::BodyFactNotEstablished { .. } => {
                 "fold requires the instance body facts for the proposed fields"
-            }
-            ResourceRewriteRefusal::BodyFactPossiblyUndefinedBehavior { .. } => {
-                "instance body fact might be undefined behavior"
             }
         }
     }
@@ -13429,28 +13401,28 @@ pub(crate) struct ResourceInstanceRewriteResult {
     pub(crate) body_clauses: Vec<ResourceBodyClauseRecord>,
 }
 
-/// Names the undefined-behavior condition a body-clause evaluation depends
-/// on not happening, when the undischarged proposition only says that
-/// condition does not happen (for example, `x + 2` cannot overflow). Returns
-/// `None` for conditions that are not UB-avoidance, which keep the generic
-/// conditional-proof diagnostic.
-fn undefined_behavior_condition_kind(proposition: &Proposition) -> Option<&'static str> {
+/// Whether an undischarged proposition only says that an arithmetic
+/// evaluation does not hit undefined behavior (for example, `x + 2` cannot
+/// overflow). Unfold exposes such conditions alongside the body fact instead
+/// of refusing; anything else keeps the generic conditional-proof
+/// diagnostic.
+fn is_pure_undefined_behavior_condition(proposition: &Proposition) -> bool {
     let Proposition::ConditionIs(condition, false) = proposition else {
-        return None;
+        return false;
     };
-    Some(match condition {
-        ConditionTerm::Bitvector32SignedAddOverflows(..) => "addition overflow",
-        ConditionTerm::Bitvector32SignedSubtractOverflows(..) => "subtraction overflow",
-        ConditionTerm::Bitvector32SignedMultiplyOverflows(..) => "multiplication overflow",
-        ConditionTerm::Bitvector32SignedDivideOverflows(..) => "division overflow",
-        ConditionTerm::Bitvector32SignedShiftLeftOverflows(..) => "left-shift overflow",
-        ConditionTerm::Bitvector64SignedAddOverflows(..) => "int64 addition overflow",
-        ConditionTerm::Bitvector64SignedSubtractOverflows(..) => "int64 subtraction overflow",
-        ConditionTerm::Bitvector64SignedMultiplyOverflows(..) => "int64 multiplication overflow",
-        ConditionTerm::Bitvector64SignedDivideOverflows(..) => "int64 division overflow",
-        ConditionTerm::Bitvector64SignedShiftLeftOverflows(..) => "int64 left-shift overflow",
-        _ => return None,
-    })
+    matches!(
+        condition,
+        ConditionTerm::Bitvector32SignedAddOverflows(..)
+            | ConditionTerm::Bitvector32SignedSubtractOverflows(..)
+            | ConditionTerm::Bitvector32SignedMultiplyOverflows(..)
+            | ConditionTerm::Bitvector32SignedDivideOverflows(..)
+            | ConditionTerm::Bitvector32SignedShiftLeftOverflows(..)
+            | ConditionTerm::Bitvector64SignedAddOverflows(..)
+            | ConditionTerm::Bitvector64SignedSubtractOverflows(..)
+            | ConditionTerm::Bitvector64SignedMultiplyOverflows(..)
+            | ConditionTerm::Bitvector64SignedDivideOverflows(..)
+            | ConditionTerm::Bitvector64SignedShiftLeftOverflows(..)
+    )
 }
 
 /// Lower one selected body in source order. A body clause is available to a
@@ -13468,7 +13440,7 @@ fn lower_selected_resource_body_clauses(
     body_assumptions: &PureFactContext,
     established_assumptions: Option<&PureFactContext>,
     budget: &mut ExecutionBudget,
-) -> Result<Vec<ResourceBodyClauseRecord>, ResourceRewriteRefusal> {
+) -> Result<(Vec<ResourceBodyClauseRecord>, Vec<Proposition>), ResourceRewriteRefusal> {
     let c_replacements = BTreeMap::new();
     let algebraic_replacements = BTreeMap::new();
     let mut rewrite = crate::kernel::proof::term_rewrite::TermRewrite::for_checked_typed_variables(
@@ -13482,6 +13454,7 @@ fn lower_selected_resource_body_clauses(
         .map_err(|_| "resource match Integer binding substitution exceeded its checked scope")?;
     let mut context = body_assumptions.clone();
     let mut records = Vec::with_capacity(source.len());
+    let mut retained_conditions = Vec::new();
     for (ordinal, clause) in source.iter().enumerate() {
         crate::instrumentation::record_deterministic_work(1);
         let clause = rewrite.spec_proposition(clause).map_err(
@@ -13498,36 +13471,39 @@ fn lower_selected_resource_body_clauses(
         .map_err(|_| "could not evaluate instance body fact")?;
         let path = crate::kernel::api::exactly_selected_spec_proposition_path(&paths, &context)
             .ok_or("instance body fact needs an unsupported conditional proof")?;
-        let undischarged_fact = path
-            .facts
-            .iter()
-            .find(|fact| !required_obligation_is_exactly_discharged(&context, fact.proposition()));
-        let undischarged_obligation = if undischarged_fact.is_none() {
-            path.obligations.iter().find(|goal| {
-                !required_obligation_is_exactly_discharged(&context, goal.proposition())
-                    && !quantified_resource_fact_memory_obligation_is_discharged(
-                        &context,
-                        goal.proposition(),
-                    )
-            })
-        } else {
-            None
-        };
-        if undischarged_fact.is_some() || undischarged_obligation.is_some() {
-            let culprit: Option<Proposition> = undischarged_fact
-                .map(|fact| fact.proposition().clone())
-                .or_else(|| undischarged_obligation.map(|goal| goal.proposition().clone()));
-            if let Some(proposition) = culprit
-                && let Some(kind) = undefined_behavior_condition_kind(&proposition)
-            {
-                return Err(ResourceRewriteRefusal::BodyFactPossiblyUndefinedBehavior {
-                    arm: arm.map(str::to_owned),
-                    index: ordinal,
-                    count: source.len(),
-                    kind,
-                });
+        // An undischarged pure undefined-behavior condition (unchecked
+        // arithmetic) is exposed alongside the body fact instead of
+        // refusing the rewrite: the author asserted the C meaning, which
+        // includes definedness, and every later use re-checks it. Anything
+        // else still refuses as before.
+        let retained_start = retained_conditions.len();
+        for fact in &path.facts {
+            if required_obligation_is_exactly_discharged(&context, fact.proposition()) {
+                continue;
+            }
+            if is_pure_undefined_behavior_condition(fact.proposition()) {
+                retained_conditions.push(fact.proposition().clone());
+                continue;
             }
             return Err("instance body fact needs an unsupported conditional proof".into());
+        }
+        for goal in &path.obligations {
+            if required_obligation_is_exactly_discharged(&context, goal.proposition())
+                || quantified_resource_fact_memory_obligation_is_discharged(
+                    &context,
+                    goal.proposition(),
+                )
+            {
+                continue;
+            }
+            if is_pure_undefined_behavior_condition(goal.proposition()) {
+                retained_conditions.push(goal.proposition().clone());
+                continue;
+            }
+            return Err("instance body fact needs an unsupported conditional proof".into());
+        }
+        for condition in &retained_conditions[retained_start..] {
+            context = context.assume_proposition(condition.clone());
         }
         if let Some(established) = established_assumptions
             && !required_obligation_is_exactly_discharged(established, &path.proposition)
@@ -13547,7 +13523,7 @@ fn lower_selected_resource_body_clauses(
         context = context.assume_proposition(path.proposition.clone());
         records.push(record);
     }
-    Ok(records)
+    Ok((records, retained_conditions))
 }
 
 /// Exchange one exclusive instance for its immediate memory body, or back.
@@ -14018,7 +13994,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         body_assumptions = body_assumptions.assume_proposition(fact.clone());
     }
     let facts_to_rewrite = selected.map_or(&definition.facts, |arm| &arm.facts);
-    let body_clauses = if active {
+    let (body_clauses, retained_conditions) = if active {
         lower_selected_resource_body_clauses(
             &evaluation,
             facts_to_rewrite,
@@ -14030,9 +14006,10 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             &mut budget,
         )?
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
     facts.extend(body_clauses.iter().map(|clause| clause.proposition.clone()));
+    facts.extend(retained_conditions);
     if unfold {
         // The arm this unfold opened is the one the premises standing here
         // leave, so the model fact that forced it is published with the
@@ -14252,6 +14229,7 @@ pub(in crate::kernel) fn matched_resource_instance_case_clauses(
         None,
         &mut budget,
     )
+    .map(|(records, _retained)| records)
     .unwrap_or_default()
 }
 
