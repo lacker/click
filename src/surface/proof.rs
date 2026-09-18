@@ -2002,16 +2002,16 @@ pub(super) fn initial_claim_context_with_caller_owner(
         .requires()
         .iter()
         .filter_map(|requirement| match requirement.inner() {
-            Requirement::Resource(resource) => Some(resource),
+            Requirement::Resource(resource) => declared_resource_family(resource),
             _ => None,
         })
-        .filter(|resource| {
+        .filter(|family| {
             !function_block.ensures().iter().any(|ensure| {
                 ensure.borrowed()
-                    && matches!(ensure.ensure(), Ensure::Resource(ensured) if *resource == ensured)
+                    && matches!(ensure.ensure(), Ensure::Resource(resource)
+                        if declared_resource_family(resource) == Some(*family))
             })
         })
-        .filter_map(|resource| declared_resource_family(resource))
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
     let (population_state, population_facts) = materialize_counted_population_bodies(
