@@ -43,6 +43,7 @@ pub(crate) use nat_integer::{check_nat_integer_law, is_conversion_nat_type};
 mod primitives;
 pub(crate) mod proof;
 mod pure_functions;
+pub(crate) mod sorry;
 pub use pure_functions::{
     CPureFunctionDefinition, CPureFunctionParameter, register_pure_function_definition,
 };

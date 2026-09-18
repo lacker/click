@@ -2839,3 +2839,106 @@ fn aggregate_return_claims_retain_checked_completions() {
     assert_ne!(tampered, expanded);
     assert!(verify_c0_sources(&tampered, &sources).is_err());
 }
+
+#[test]
+fn sorry_without_the_flag_is_rejected_at_parse() {
+    let c_source = "int32 f(int32 x) { return x + 1; }";
+    let click_source = r#"
+        verifying "t.c";
+        int32 f(int32 x) {
+            ensures result == x + 1;
+        } by {
+            sorry();
+        }
+    "#;
+    let _ = crate::surface::verification::take_sorry_admissions();
+    let error = verify_c0_sources(click_source, &[("t.c", c_source)])
+        .expect_err("sorry without --allow-sorry must fail");
+    assert!(
+        error.message().contains("--allow-sorry"),
+        "unexpected sorry rejection: {}",
+        error.message()
+    );
+    assert!(crate::surface::verification::take_sorry_admissions().is_empty());
+}
+
+#[test]
+fn sorry_admits_a_grouped_contract_under_the_flag_without_counting_it_verified() {
+    let c_source = "int32 f(int32 x) { return x + 1; }";
+    let click_source = r#"
+        verifying "t.c";
+        int32 f(int32 x) {
+            ensures result == x + 1;
+        } by {
+            sorry();
+        }
+    "#;
+    let _ = crate::surface::verification::take_sorry_admissions();
+    let verified = crate::surface::verification::with_allow_sorry(|| {
+        verify_c0_sources(click_source, &[("t.c", c_source)])
+    })
+    .expect("sorry under --allow-sorry must admit the contract");
+    assert!(
+        verified.is_empty(),
+        "an admitted contract must not produce verified theorems"
+    );
+    let admissions = crate::surface::verification::take_sorry_admissions();
+    assert_eq!(admissions.len(), 1);
+    assert_eq!(admissions[0].label, "f.contract");
+}
+
+#[test]
+fn bare_mid_script_sorry_is_rejected_to_keep_holes_minimal() {
+    let c_source = "int32 f(int32 x) { int32 y = x; return y; }";
+    let click_source = r#"
+        verifying "t.c";
+        int32 f(int32 x) {
+            ensures result == x;
+        } by {
+            step();
+            sorry();
+        }
+    "#;
+    let _ = crate::surface::verification::take_sorry_admissions();
+    let error = crate::surface::verification::with_allow_sorry(|| {
+        verify_c0_sources(click_source, &[("t.c", c_source)])
+    })
+    .expect_err("bare mid-script sorry must fail: it would cover an unbounded suffix");
+    assert!(
+        error.message().contains("sorry"),
+        "unexpected rejection: {}",
+        error.message()
+    );
+    assert!(crate::surface::verification::take_sorry_admissions().is_empty());
+}
+
+#[test]
+fn have_sorry_admits_one_fact_while_the_rest_checks() {
+    let c_source = "int32 f(int32 x) { return x; }";
+    let click_source = r#"
+        verifying "t.c";
+        int32 f(int32 x) {
+            ensures result == x;
+        } by {
+            execute();
+            have result == x by { sorry(); }
+            simp();
+        }
+    "#;
+    let _ = crate::surface::verification::take_sorry_admissions();
+    let verified = crate::surface::verification::with_allow_sorry(|| {
+        verify_c0_sources(click_source, &[("t.c", c_source)])
+    })
+    .expect("have-sorry must admit the fact and check the rest");
+    assert!(
+        !verified.is_empty(),
+        "the contract still yields theorems around the admission"
+    );
+    let admissions = crate::surface::verification::take_sorry_admissions();
+    assert_eq!(admissions.len(), 1);
+    assert!(
+        admissions[0].label.contains("have result == x"),
+        "unexpected admission label: {}",
+        admissions[0].label
+    );
+}

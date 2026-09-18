@@ -4803,6 +4803,15 @@ impl Parser {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::Assumption
             }
+            "sorry" => {
+                self.expect_empty_tactic_args(&name)?;
+                if !crate::surface::verification::sorry_is_allowed() {
+                    return Err(self.error(
+                        "`sorry` is a dev-only proof hole; it parses only under `click verify --allow-sorry` and never verifies in the gate",
+                    ));
+                }
+                ProofTactic::Sorry
+            }
             "extract" => {
                 self.expect(Token::LParen)?;
                 let proposition = self.parse_proposition()?;

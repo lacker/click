@@ -5486,6 +5486,31 @@ impl<'a> Proof<'a> {
                     return Ok(proof.focused_discharged().then_some(proof));
                 }
                 tactic => {
+                    if matches!(tactic, ProofTactic::Sorry) {
+                        // Admitted only as a complete body (a `have` body
+                        // reaching this runner, or a direct engine call with
+                        // a single tactic). A bare `sorry` among other
+                        // tactics would cover an unbounded suffix, so it is
+                        // rejected to keep holes minimal.
+                        if tactics.len() != 1 {
+                            return Err(proof.step_error(
+                                "`sorry` is only allowed as a complete `have` body or a complete contract proof body; it cannot cover a suffix of other tactics",
+                            ));
+                        }
+                        if !crate::surface::verification::sorry_is_allowed() {
+                            return Err(proof.step_error(
+                                "`sorry` requires `click verify --allow-sorry`; it is a dev-only proof hole and never verifies in the gate",
+                            ));
+                        }
+                        let label = proof
+                            .surface_goal()
+                            .map(crate::surface::diagnostics::describe_click_proposition)
+                            .map(|goal| format!("have {goal}"))
+                            .unwrap_or_else(|| "have (goal unavailable)".to_string());
+                        crate::surface::verification::record_sorry_admission(label, String::new());
+                        proof = proof.admit_focused_goal_for_sorry()?;
+                        continue;
+                    }
                     let step = explicit_linear_step(tactic).ok_or_else(|| {
                         proof.step_error(format!(
                             "unsupported proof operation `{}`",

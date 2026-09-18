@@ -41,6 +41,7 @@ sidecar and project count.
 | `--time-limit DURATION` | Set the outer deadline independently for each selected sidecar or proof unit. The default is `30s`. |
 | `--changed-since REVISION` | Select claims affected since a Git revision. Reuse requires a valid full-verification marker for the baseline and verifier binary. |
 | `--explain` | With `--changed-since`, print the incremental selection without verifying it. |
+| `--allow-sorry` | Dev-only debugging switch: admit proof units whose body is exactly `sorry();` without checking them. Admissions are reported loudly, never recorded in incremental baselines, and `click audit`, `click expand`, and `scripts/check.sh` never enable the flag. Cannot be combined with `--changed-since`. |
 | `-h`, `--help` | Print command help and exit successfully. |
 | `--` | Stop option parsing; the remaining argument is the target path. |
 
@@ -127,3 +128,17 @@ click verify --changed-since HEAD~1 --explain examples
 Use [`click profile`](profile.md) on a green target to measure work. After
 [`click expand`](expand.md) rewrites a proof, run `click verify` on the exact
 rewritten artifact.
+
+## Dev-only proof hole
+
+The `sorry` tactic closes a goal without checking it, so
+a failure can be reduced to its minimal shape while the rest of a project is
+still checked. It is admitted in exactly two positions: as a complete
+contract proof body (`by { sorry(); }`, which skips the function like an
+`extern` declaration), and as a complete `have` body
+(`have P by { sorry(); }`, which assumes `P` and checks everything else).
+Anywhere else it is rejected, so a `sorry` can never cover an unbounded
+suffix. It parses only under `--allow-sorry`. Admissions are reported
+loudly, are never recorded in incremental baselines, and are rejected by
+`click audit`, `click expand`, the mdtest harness, and `scripts/check.sh`,
+which never enable the flag. Never commit a `sorry`: it proves nothing.

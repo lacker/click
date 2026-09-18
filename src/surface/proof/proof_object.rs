@@ -1202,6 +1202,24 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Dev-only `sorry`: closes the focused proposition goal as admitted,
+    /// without checking it. The caller records an admission; admitted results
+    /// never verify in the gate. Requires the kernel flag (set solely by
+    /// `click verify --allow-sorry`).
+    pub(in crate::surface::proof) fn admit_focused_goal_for_sorry(
+        &self,
+    ) -> Result<Self, ClickError> {
+        let state = self
+            .state
+            .admit_focused_proposition_for_sorry()
+            .ok_or_else(|| {
+                self.step_error(
+                    "`sorry` needs an open proposition goal to admit; it is only allowed as a complete `have` body",
+                )
+            })?;
+        Ok(self.with_kernel_state(state))
+    }
+
     fn state(&self) -> &ProofState {
         self.state.state()
     }

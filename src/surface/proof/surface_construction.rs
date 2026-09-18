@@ -1817,6 +1817,9 @@ pub(super) fn append_proof_step_for_operation(
                 }
             }
             TacticClass::Smart(_) => {}
+            TacticClass::Sorry => construction
+                .proof_certificate_builder
+                .block("`sorry` cannot be lowered to a certificate step".to_string()),
         },
         (Some(_), Some(_)) | (None, None) => {
             unreachable!("invalid simple-proof construction operation")

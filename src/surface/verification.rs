@@ -51,6 +51,63 @@ fn digest_framed_parts<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> [u8; 32
     digest.finalize().into()
 }
 
+thread_local! {
+    static SORRY_ADMISSIONS: RefCell<Vec<SorryAdmission>> = const { RefCell::new(Vec::new()) };
+}
+
+/// One proof unit closed by `sorry` instead of a checked proof.
+///
+/// This is a development-only hole for reducing a failure to its minimal
+/// shape. It is never sound: anything that consumed an admission as if it
+/// were a checked proof would launder an unproved claim. Containment is by
+/// construction — `sorry` parses only while [`with_allow_sorry`] is active
+/// (set solely by `click verify --allow-sorry`), admissions are recorded
+/// here rather than as kernel theorems, and `click audit`, `click expand`,
+/// the mdtest harness, and `scripts/check.sh` never enable the flag.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SorryAdmission {
+    /// Human-readable proof label, e.g. `child_release.contract`.
+    pub label: String,
+    /// Source file that holds the `sorry`.
+    pub source_path: String,
+}
+
+/// Runs `verify` with the dev-only `sorry` proof hole enabled.
+///
+/// Off by default. The flag scopes the calling thread and restores the
+/// previous setting when `verify` returns or unwinds. Never enable this in
+/// `click audit`, `click expand`, test harnesses, or `scripts/check.sh`.
+pub fn with_allow_sorry<T>(verify: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            crate::kernel::sorry::set_sorry_allowed(self.0);
+        }
+    }
+    let _restore = Restore(crate::kernel::sorry::set_sorry_allowed(true));
+    verify()
+}
+
+pub(crate) fn sorry_is_allowed() -> bool {
+    crate::kernel::sorry::sorry_is_allowed()
+}
+
+/// Records one `sorry` admission for later loud reporting. Callers must have
+/// already checked [`sorry_is_allowed`].
+pub(crate) fn record_sorry_admission(label: String, source_path: String) {
+    SORRY_ADMISSIONS.with(|admissions| {
+        admissions
+            .borrow_mut()
+            .push(SorryAdmission { label, source_path })
+    });
+}
+
+/// Drains recorded `sorry` admissions. `click verify` calls this to report
+/// them loudly after a run.
+pub fn take_sorry_admissions() -> Vec<SorryAdmission> {
+    SORRY_ADMISSIONS.with(|admissions| std::mem::take(&mut *admissions.borrow_mut()))
+}
+
 /// Typed input boundary for C verification. The bundle variant preserves the
 /// plain source map while leaving room for compiler-prepared inputs without
 /// ambient or global state.
@@ -2274,6 +2331,35 @@ fn verify_c0_sources_with_context(
                 })?;
         check_signature(&function_block.signature, parsed_function, source_path)?;
         validate_region_proof_clauses(&function_block, parsed_function)?;
+        // Dev-only `sorry`: a contract proved entirely by `sorry` is
+        // admitted without checking, like an `extern` declaration. Callers
+        // keep using its declared contract. Requires
+        // `click verify --allow-sorry` (enforced at parse); the admission is
+        // recorded for loud reporting, never produces a kernel theorem, and
+        // is rejected by audit/expand and the gate.
+        if let Some(grouped_proof) = function_block.grouped_proof()
+            && let SourceProof::Script(tactics) = grouped_proof
+        {
+            if crate::surface::is_complete_sorry_body(tactics) {
+                if !sorry_is_allowed() {
+                    return Err(ClickError::new(format!(
+                        "`{}` uses `sorry`, which requires `click verify --allow-sorry`; it is a dev-only proof hole and never verifies in the gate",
+                        function_block.signature.name()
+                    )));
+                }
+                record_sorry_admission(
+                    format!("{}.contract", function_block.signature.name()),
+                    source_path.to_string(),
+                );
+                continue;
+            }
+            if crate::surface::sorry_outside_have_bodies(tactics) {
+                return Err(ClickError::new(format!(
+                    "`{}` uses `sorry` outside a `have` body; `sorry` is only allowed as a complete contract proof body or a complete `have` body",
+                    function_block.signature.name()
+                )));
+            }
+        }
         let verified_loop_rules = verify_loop_execution_proofs(
             expansion_capture.as_deref_mut(),
             &function_block,

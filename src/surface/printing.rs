@@ -134,6 +134,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
     let prefix = "    ".repeat(indent);
     match tactic {
         ProofTactic::Mark(name) => line(output, &prefix, &format!("mark {name};")),
+        ProofTactic::Sorry => line(output, &prefix, "sorry();"),
         ProofTactic::Step => line(output, &prefix, "step();"),
         ProofTactic::StepContract(name) => line(output, &prefix, &format!("step({name});")),
         ProofTactic::StepCall(transport) => line(output, &prefix, &format!("{transport};")),

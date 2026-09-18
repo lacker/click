@@ -1647,6 +1647,14 @@ id = "cli.verify.--explain"
 path = "reference/cli/verify.md#options"
 
 [[item]]
+id = "cli.verify.--allow-sorry"
+path = "reference/cli/verify.md#options"
+
+[[item]]
+id = "tactic.sorry"
+path = "reference/cli/verify.md#dev-only-proof-hole"
+
+[[item]]
 id = "cli.verify.--help"
 path = "reference/cli/verify.md#options"
 

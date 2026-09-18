@@ -626,6 +626,21 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             .ok_or(PropositionCloseError::Unavailable)
     }
 
+    /// Dev-only `sorry`: closes the focused proposition goal as admitted,
+    /// without checking it against available facts.
+    ///
+    /// Returns `None` when the flag is off or the focused goal is not a
+    /// proposition. This is the ONLY kernel operation that closes a goal
+    /// without derivation — hence the name. The surface layer records an
+    /// admission for every use; admitted results never verify in the gate.
+    pub(crate) fn admit_focused_proposition_for_sorry(&self) -> Option<Self> {
+        if !crate::kernel::sorry::sorry_is_allowed() {
+            return None;
+        }
+        self.focused_proposition()?;
+        Some(self.closed_focused())
+    }
+
     /// An interface leaf uses indexed premises, direct intrinsic facts, or
     /// an exact kernel-issued load definition; it never selects a derivation.
     pub(super) fn apply_interface_leaf(

@@ -67,6 +67,10 @@ pub(in crate::surface) fn source_site_kind(tactic: &ProofTactic) -> SourceSiteKi
         TacticClass::Simple(_) => SourceSiteKind::SimpleOperation,
         TacticClass::Smart(_) => SourceSiteKind::ExpandableAutomation,
         TacticClass::Control(_) => SourceSiteKind::ControlContainer,
+        // `sorry` parses only under `--allow-sorry`, which audit/expand never
+        // set; map it structurally so timing attribution cannot mistake it
+        // for expandable automation.
+        TacticClass::Sorry => SourceSiteKind::ControlContainer,
     }
 }
 

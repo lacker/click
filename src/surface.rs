@@ -147,18 +147,19 @@ use validation::{
 pub(in crate::surface) use verification::CSourceContext;
 pub(in crate::surface) use verification::*;
 pub use verification::{
-    C0IncrementalSelection, CProofArtifactIdentity, c0_external_dependencies, c0_function_names,
-    c0_incremental_selection, c0_prepared_external_dependencies,
+    C0IncrementalSelection, CProofArtifactIdentity, SorryAdmission, c0_external_dependencies,
+    c0_function_names, c0_incremental_selection, c0_prepared_external_dependencies,
     c0_prepared_project_external_dependencies, c0_prepared_project_selected_proof_count,
     c0_prepared_project_selected_proof_names, c0_project_external_dependencies,
     c0_project_function_names, c0_project_selected_proof_count, c0_project_selected_proof_names,
     cpp_prepared_project_external_dependencies, cpp_prepared_project_selected_proof_count, parse,
-    verify_c0_prepared_project, verify_c0_prepared_project_at,
+    take_sorry_admissions, verify_c0_prepared_project, verify_c0_prepared_project_at,
     verify_c0_prepared_project_functions, verify_c0_prepared_sources,
     verify_c0_prepared_sources_at, verify_c0_prepared_sources_functions, verify_c0_project,
     verify_c0_project_at, verify_c0_project_functions, verify_c0_sources, verify_c0_sources_at,
     verify_c0_sources_functions, verify_click_theorems, verify_cpp_prepared_project,
     verify_cpp_prepared_project_at, verify_cpp_prepared_sources_at, verify_standard_library,
+    with_allow_sorry,
 };
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
@@ -2880,6 +2881,98 @@ pub enum ProofTactic {
     Simp,
     SimpUsing(ProofSimpUsing),
     ArithmeticCertificate(ArithmeticCertificate),
+    /// Dev-only proof hole. Closes the enclosing proof unit without checking
+    /// anything. Parses only while `verification::with_allow_sorry` is active
+    /// (set solely by `click verify --allow-sorry`); every other use is
+    /// rejected, and admissions are reported loudly and rejected by
+    /// `click audit`, `click expand`, and the gate.
+    Sorry,
+}
+
+/// Whether these tactics are exactly one complete `sorry` body: a whole
+/// contract admitted without checking, like an `extern` declaration.
+/// A `sorry` nested inside a script is admitted goal-by-goal by the linear
+/// script runner (with a loud warning).
+pub fn is_complete_sorry_body(tactics: &[ProofTactic]) -> bool {
+    matches!(tactics, [ProofTactic::Sorry])
+}
+
+/// Whether `sorry` appears anywhere except as a complete `have` body.
+/// Such positions cannot be admitted minimally (a bare `sorry` would cover
+/// an unbounded suffix), so they are rejected with a diagnostic. A `sorry`
+/// that is a complete `have` body is admitted by the `have` solver.
+pub fn sorry_outside_have_bodies(tactics: &[ProofTactic]) -> bool {
+    tactics
+        .iter()
+        .any(|tactic| tactic_sorry_outside_have(tactic, false))
+}
+
+fn tactic_sorry_outside_have(tactic: &ProofTactic, in_have: bool) -> bool {
+    match tactic {
+        ProofTactic::Sorry => !in_have,
+        ProofTactic::Have(have) => match &have.proof {
+            SourceProof::Script(body) => body
+                .iter()
+                .any(|tactic| tactic_sorry_outside_have(tactic, true)),
+            SourceProof::Default | SourceProof::Tactic(_) => false,
+        },
+        ProofTactic::Open(open) => open
+            .tactics
+            .iter()
+            .any(|tactic| tactic_sorry_outside_have(tactic, in_have)),
+        ProofTactic::If(proof_if) => {
+            tactic_sorry_outside_have_in(&proof_if.then_tactics, in_have)
+                || tactic_sorry_outside_have_in(&proof_if.else_tactics, in_have)
+        }
+        ProofTactic::Match(proof_match) => proof_match
+            .arms
+            .iter()
+            .any(|arm| tactic_sorry_outside_have_in(&arm.tactics, in_have)),
+        ProofTactic::Cases(cases) => {
+            tactic_sorry_outside_have_in(&cases.left_tactics, in_have)
+                || tactic_sorry_outside_have_in(&cases.right_tactics, in_have)
+        }
+        ProofTactic::Both(both) => {
+            tactic_sorry_outside_have_in(&both.left_tactics, in_have)
+                || tactic_sorry_outside_have_in(&both.right_tactics, in_have)
+        }
+        ProofTactic::Branch(branch) => {
+            tactic_sorry_outside_have_in(&branch.then_tactics, in_have)
+                || tactic_sorry_outside_have_in(&branch.else_tactics, in_have)
+        }
+        ProofTactic::CallOutcomes(outcomes) => {
+            tactic_sorry_outside_have_in(&outcomes.returned_tactics, in_have)
+                || tactic_sorry_outside_have_in(&outcomes.threw_tactics, in_have)
+        }
+        ProofTactic::Loop(clause) => {
+            clause
+                .initialize_proof
+                .as_ref()
+                .is_some_and(|proof| source_proof_sorry_outside_have(proof, in_have))
+                || clause
+                    .preserve_proof
+                    .as_ref()
+                    .is_some_and(|proof| source_proof_sorry_outside_have(proof, in_have))
+        }
+        ProofTactic::StructuralInduct { arms, .. } => arms
+            .iter()
+            .any(|arm| tactic_sorry_outside_have_in(&arm.tactics, in_have)),
+        ProofTactic::CloseInvariantsBy(body) => tactic_sorry_outside_have_in(body, in_have),
+        _ => false,
+    }
+}
+
+fn tactic_sorry_outside_have_in(tactics: &[ProofTactic], in_have: bool) -> bool {
+    tactics
+        .iter()
+        .any(|tactic| tactic_sorry_outside_have(tactic, in_have))
+}
+
+fn source_proof_sorry_outside_have(proof: &SourceProof, in_have: bool) -> bool {
+    match proof {
+        SourceProof::Script(tactics) => tactic_sorry_outside_have_in(tactics, in_have),
+        SourceProof::Default | SourceProof::Tactic(_) => false,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2945,6 +3038,9 @@ pub enum TacticClass {
     Simple(SimpleTactic),
     Smart(SmartTacticKind),
     Control(ControlTactic),
+    /// Dev-only proof hole; never a real proof step. Anything that would
+    /// expand, certify, or audit a tactic must reject this class outright.
+    Sorry,
 }
 
 /// One user-selectable proof-tactic form exposed by the Surface Click parser.
@@ -3981,6 +4077,7 @@ impl CertificateError {
             TacticClass::Smart(kind) => format!("smart tactic `{}`", smart_tactic_spelling(kind)),
             TacticClass::Control(_) => "a control tactic".to_string(),
             TacticClass::Simple(_) => "a step with no certificate form".to_string(),
+            TacticClass::Sorry => "a `sorry` admission".to_string(),
         };
         let mut place = String::new();
         for segment in &self.path {
@@ -4101,7 +4198,7 @@ fn validate_certificate_steps(
         // as a smart request, but generated certificate steps must already
         // carry the checked structural ArithmeticCertificate provenance.
         let result = match certificate_step_class(step) {
-            tactic_class @ TacticClass::Smart(_) => Err(CertificateError {
+            tactic_class @ (TacticClass::Smart(_) | TacticClass::Sorry) => Err(CertificateError {
                 tactic_class,
                 path: path.clone(),
             }),
@@ -4172,10 +4269,12 @@ fn validate_certificate_tactics(
                     path.pop();
                     result
                 }
-                tactic_class @ TacticClass::Smart(_) => Err(CertificateError {
-                    tactic_class,
-                    path: path.clone(),
-                }),
+                tactic_class @ (TacticClass::Smart(_) | TacticClass::Sorry) => {
+                    Err(CertificateError {
+                        tactic_class,
+                        path: path.clone(),
+                    })
+                }
                 TacticClass::Control(ControlTactic::Have) => {
                     let ProofTactic::Have(proof_have) = tactic else {
                         unreachable!("tactic class and variant must agree")
@@ -4399,6 +4498,7 @@ impl ProofTactic {
             Self::Branch(_) => TacticClass::Control(ControlTactic::Branch),
             Self::CallOutcomes(_) => TacticClass::Control(ControlTactic::CallOutcomes),
             Self::Loop(_) => TacticClass::Control(ControlTactic::Loop),
+            Self::Sorry => TacticClass::Sorry,
         }
     }
 }
