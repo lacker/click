@@ -2333,6 +2333,44 @@ fn memory_dag_cell_source(
     ))
 }
 
+/// Whether a pointer-valued load resolves through the recorded memory DAG to
+/// a stored pointer whose offset is `right`. This is the pointer counterpart
+/// of the integer load-equality transport: pointer offsets are represented as
+/// `PointerOffsetTerm`s, so they cannot use the int32 load-equality API even
+/// though the same checked store/call-frame walk supplies their value.
+pub(crate) fn pointer_load_offset_proven_equal(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    assumptions: &PureFactContext,
+) -> bool {
+    let PointerOffsetTerm::Int32Scaled { value, .. } = left else {
+        return false;
+    };
+    let load = match value.as_ref() {
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            Some((memory.clone(), pointer.as_ref().clone()))
+        }
+        Bitvector32Term::Variable(variable) => {
+            crate::kernel::eval::registered_load_origin_for_variable(variable)
+        }
+        _ => None,
+    };
+    let Some((memory, pointer)) = load else {
+        return false;
+    };
+    let Some(cell) = memory_dag_cell_source(&memory, &pointer, assumptions, true) else {
+        return false;
+    };
+    let Some(CValue::Pointer(stored)) = cell.resolved_value(&pointer) else {
+        return false;
+    };
+    crate::kernel::reasoning::pointer_offsets_proven_equal_for_memory_resolution(
+        &stored.pointer().offset,
+        right,
+        assumptions,
+    )
+}
+
 fn memory_dag_cell_source_walk(
     memory: &SharedCMemory,
     pointer: &Pointer,

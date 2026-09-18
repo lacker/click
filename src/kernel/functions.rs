@@ -13654,7 +13654,7 @@ fn lower_selected_resource_body_clauses(
             context = context.assume_proposition(condition.clone());
         }
         if let Some(established) = established_assumptions
-            && !required_obligation_is_exactly_discharged(established, &path.proposition)
+            && !resource_body_fact_is_established(established, &path.proposition)
         {
             return Err(ResourceRewriteRefusal::BodyFactNotEstablished {
                 arm: arm.map(str::to_owned),
@@ -13672,6 +13672,33 @@ fn lower_selected_resource_body_clauses(
         records.push(record);
     }
     Ok((records, retained_conditions))
+}
+
+/// A fold body fact may name a memory load from before a disjoint call while
+/// the selected body is lowered against the post-call frame. Exact discharge
+/// remains the normal route; the checked pointer-load transport is the
+/// narrowly-scoped fallback for this explicit resource clause. This keeps
+/// call/frame transport out of the general fact path while still allowing a
+/// resource fold to reuse a load whose stored pointer value the checked
+/// memory derivation proves unchanged.
+fn resource_body_fact_is_established(
+    established: &PureFactContext,
+    proposition: &Proposition,
+) -> bool {
+    if required_obligation_is_exactly_discharged(established, proposition) {
+        return true;
+    }
+    matches!(
+        proposition,
+        Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(left, right),
+            true,
+        ) if crate::kernel::memory_provenance::pointer_load_offset_proven_equal(
+            left,
+            right,
+            established,
+        )
+    )
 }
 
 /// Exchange one exclusive instance for its immediate memory body, or back.
