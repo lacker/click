@@ -480,7 +480,7 @@ pub(super) fn materialize_counted_population_bodies(
         {
             continue;
         }
-        let count = if observes_population {
+        let count = if observes_population || tracks_population_in_body {
             let count = Bitvector32Term::Variable(Variable(next_variable));
             next_variable = next_variable.saturating_add(1);
             count

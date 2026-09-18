@@ -19,6 +19,17 @@ pub(in crate::surface) struct ClaimProofResult {
     pub(in crate::surface) theorems: Vec<VerifiedCTheorem>,
 }
 
+/// Counted-population nonemptiness is a post-transition fact.  Keep its
+/// obligation alive until result-aware post-execution tactics have had a
+/// chance to prove it; all other path obligations still use the earlier
+/// boundary check.
+fn post_execution_population_obligation(obligation: &ProofObligation) -> bool {
+    matches!(
+        obligation.context(),
+        Some("resource population remains nonempty" | "resource population body is active")
+    )
+}
+
 fn select_checked_post_execution_tactics<'a>(
     proof: &Proof<'_>,
     tactics: impl IntoIterator<Item = &'a DeferredPostExecutionTactic>,
@@ -1645,6 +1656,9 @@ pub(super) fn finish_ordered_proof<'a>(
                             path.obligations()
                                 .iter()
                                 .filter(|obligation| {
+                                    if post_execution_population_obligation(obligation) {
+                                        return false;
+                                    }
                                     !exact_fact_is_available(
                                         obligation.proposition(),
                                         &path_base_facts,
@@ -3833,6 +3847,29 @@ pub(super) fn finish_ordered_proof<'a>(
                         &proof_label,
                         "path closure and theorem assembly",
                     );
+
+                    let deferred_population_obligations = path
+                        .obligations()
+                        .iter()
+                        .filter(|obligation| post_execution_population_obligation(obligation))
+                        .filter(|obligation| {
+                            !exact_fact_is_available(obligation.proposition(), &path_requirements)
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if !deferred_population_obligations.is_empty() {
+                        return Err(ClickError::new(format!(
+                            "execution proof failed for `{proof_label}` path {path_index}: {}",
+                            describe_missing_proof_obligations(
+                                &deferred_population_obligations,
+                                &path_requirements.to_vec(),
+                                pre_state.resources().facts(),
+                                parsed_function.parameters(),
+                                arguments,
+                                path.facts(),
+                            )
+                        )));
+                    }
 
                     if let CFunctionOutcome::Return {
                         value,

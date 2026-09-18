@@ -41,11 +41,32 @@ void child_release(struct child* obj) {
         open(child_ref(obj)) {
             execute();
         }
+        have 1 < old(obj->refs) by {
+            arithmetic() using {
+                1 <= old(obj->refs);
+                old(obj->refs) != 1;
+            }
+        }
+        have old(obj->refs) - 1 >= 1 by {
+            apply(int32_above_one_predecessor_is_at_least_one(old(obj->refs))) using {
+                1 < old(obj->refs);
+            }
+        }
+        have old(obj->refs) == old(count(child_ref(obj))) by { simp(); }
+        have old(count(child_ref(obj))) > 1 by {
+            simp() using {
+                old(obj->refs) > 1;
+                old(obj->refs) == old(count(child_ref(obj)));
+            }
+        }
+        have count(child_ref(obj)) != 0 by {
+            arithmetic() using { old(count(child_ref(obj))) > 1; }
+        }
         simp();
     }
 }
 ```
 
 ```expect
-fail: count(child_ref(...)) != 0
+pass
 ```

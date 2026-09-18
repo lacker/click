@@ -13082,11 +13082,11 @@ fn apply_counted_population_transitions_with_interface(
             {
                 transition.postcondition_obligations.push(
                     ProofObligation::verification_condition(Proposition::ConditionIs(
-                        ConditionTerm::Bitvector32SignedGreaterThan(
+                        ConditionTerm::Bitvector32Equal(
                             Box::new(new_count),
                             Box::new(Bitvector32Term::Constant(0)),
                         ),
-                        true,
+                        false,
                     ))
                     .with_context("resource population remains nonempty"),
                 );
@@ -13185,11 +13185,11 @@ fn apply_counted_population_transitions_with_interface(
         if !population_quantity_is_positive(&population.count, assumptions) {
             transition.postcondition_obligations.push(
                 ProofObligation::verification_condition(Proposition::ConditionIs(
-                    ConditionTerm::Bitvector32SignedGreaterThan(
+                    ConditionTerm::Bitvector32Equal(
                         Box::new(population.count.clone()),
                         Box::new(Bitvector32Term::Constant(0)),
                     ),
-                    true,
+                    false,
                 ))
                 .with_context("resource population body is active"),
             );
@@ -18563,6 +18563,56 @@ fn unreturned_allocation_obligation(
         .cloned())
 }
 
+/// A counted population body can keep an allocation live after the consumed
+/// representative unit is gone.  The body is only a valid return support when
+/// the post-transition population is nonempty; the transition emits that
+/// condition as a proof obligation.  This helper identifies that support so
+/// the allocation check can defer to the obligation instead of reporting a
+/// premature leak before post-execution `have` facts are available.
+fn active_counted_population_supports_allocation(
+    actual_state: &CState,
+    allocation: &CResourceFact,
+    function: &CFunction,
+    assumptions: &PureFactContext,
+) -> bool {
+    actual_state.counted_populations().any(|population| {
+        let Some(definition) =
+            function
+                .composite_resource_definitions()
+                .iter()
+                .find(|definition| {
+                    definition.name() == population.name && definition.is_counted_population()
+                })
+        else {
+            return false;
+        };
+        let resource = CResourceFact::own(CResource::Composite {
+            name: population.name.clone(),
+            arguments: population.arguments.clone(),
+        });
+        let singleton = ResourceContext::new().unchecked_with_fact(resource);
+        let mut budget = ExecutionBudget::beside_live_state();
+        let Ok(Ok(body)) = evaluate_resource_population_body_resources(
+            &singleton,
+            actual_state,
+            std::slice::from_ref(definition),
+            assumptions,
+            &mut budget,
+            false,
+        ) else {
+            return false;
+        };
+        body.facts().iter().any(|fact| {
+            fact == allocation
+                || fact.core_with_assumptions(assumptions).is_some_and(|core| {
+                    allocation
+                        .core_with_assumptions(assumptions)
+                        .is_some_and(|allocation_core| core == allocation_core)
+                })
+        })
+    })
+}
+
 /// Returns the caller-visible memory after a function returns.
 pub(in crate::kernel) fn function_exit_memory(
     caller_state: &CState,
@@ -18880,6 +18930,13 @@ fn function_outcome_from_body_with_resource_transfer(
         "return allocation obligation check",
         || unreturned_allocation_obligation(&state, &return_resources, function, assumptions),
     ) {
+        Ok(Some(allocation))
+            if active_counted_population_supports_allocation(
+                &state,
+                &allocation,
+                function,
+                assumptions,
+            ) => {}
         Ok(Some(allocation)) => {
             let hint = counted_population_leak_hint(function);
             return Ok((

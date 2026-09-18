@@ -928,6 +928,9 @@ fn prepare_function_claim_path(
     let effect_facts = path.effect_facts.clone();
     if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
         if let Some(obligation) = path.obligations().iter().find(|obligation| {
+            if post_execution_population_obligation(obligation) {
+                return false;
+            }
             !certification_proves_proposition(&assumptions, obligation.proposition())
                 && !loadable_covered_by_fact(&assumptions, obligation.proposition())
                 && !forall_loadable_covered_by_fact(&assumptions, obligation.proposition())
@@ -1039,6 +1042,9 @@ fn prepare_function_claim_path(
         }
     }
     if let Some(obligation) = path.obligations().iter().find(|obligation| {
+        if post_execution_population_obligation(obligation) {
+            return false;
+        }
         let proved = certification_proves_proposition(&assumptions, obligation.proposition())
             || loadable_covered_by_fact(&assumptions, obligation.proposition())
             || forall_loadable_covered_by_fact(&assumptions, obligation.proposition())
@@ -1073,6 +1079,13 @@ fn prepare_function_claim_path(
         assumptions,
         effect_facts,
     })
+}
+
+fn post_execution_population_obligation(obligation: &ProofObligation) -> bool {
+    matches!(
+        obligation.context(),
+        Some("resource population remains nonempty" | "resource population body is active")
+    )
 }
 
 fn function_claim_holds_on_prepared_path(

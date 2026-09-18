@@ -1666,7 +1666,9 @@ pub(super) fn c_function_contract_certification_assumptions(
         // loadability its evaluation needed: the caller had to establish
         // the requirement, and the same obligations are proof obligations
         // on the caller's side (see the path-obligation check in
-        // `prepare_function_claim_path`, which does not exempt them).
+        // `prepare_function_claim_path`; only counted-population
+        // post-transition conditions are deferred to result-aware surface
+        // finalization).
         //
         // Only assumable obligations — the definedness kind — ride along.
         // A genuine verification condition still has to be discharged here.
