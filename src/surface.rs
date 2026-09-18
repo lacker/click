@@ -2626,10 +2626,15 @@ impl SpecElaborationContext {
             .map(|(name, value)| (name.clone(), SpecExpression::Value(value.clone())))
             .collect::<BTreeMap<_, _>>();
 
-        // A binding the proof holds as an expression (a function parameter
-        // bound to its argument, a `let` name) reads the same at the entry.
+        // A `let` name the proof holds as an expression reads the same at
+        // the entry. A name the entry records is a local, and a parameter's
+        // binding in a proof is that local, not its argument: letting it win
+        // here read `old(n)` as the current `n` once the body had reassigned
+        // it, while the contract's `old(n)` correctly read the argument.
         for (name, value) in &self.values {
-            values.insert(name.clone(), value.clone());
+            if !values.contains_key(name) {
+                values.insert(name.clone(), value.clone());
+            }
         }
 
         Ok(Self {
