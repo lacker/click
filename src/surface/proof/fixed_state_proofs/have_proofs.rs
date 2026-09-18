@@ -957,7 +957,36 @@ fn refuse_unproved_conversion_bounds(
 ) -> Result<(), String> {
     for obligation in obligations {
         if !obligation.is_assumable() && !assumptions.proves(obligation.proposition()) {
-            return Err("the proposition requires an established Integer conversion bound or argument definedness".into());
+            // Name what is missing, conjunct by conjunct: "a bound or a
+            // definedness fact" sends the reader hunting through the statement
+            // for which one, and the kernel already knows. The bounded printer
+            // keeps a loadability obligation from dumping the memory snapshot
+            // it is indexed by.
+            let mut conjuncts = Vec::new();
+            let mut pending = vec![obligation.proposition()];
+            while let Some(proposition) = pending.pop() {
+                match proposition {
+                    Proposition::And(left, right) => {
+                        pending.push(right);
+                        pending.push(left);
+                    }
+                    leaf => conjuncts.push(leaf),
+                }
+            }
+            let established = conjuncts
+                .iter()
+                .filter(|conjunct| assumptions.proves(conjunct))
+                .count();
+            let missing = conjuncts
+                .iter()
+                .find(|conjunct| !assumptions.proves(conjunct))
+                .copied()
+                .unwrap_or_else(|| obligation.proposition());
+            return Err(format!(
+                "the proposition requires an established Integer conversion bound or argument definedness: `{}` is not established by the premises in scope where it is stated ({established} of its {} conditions are)",
+                crate::surface::diagnostics::describe_pure_fact(missing, &[], &[]),
+                conjuncts.len()
+            ));
         }
     }
     Ok(())
