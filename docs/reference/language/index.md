@@ -1209,7 +1209,7 @@ body and its facts; field names in the body denote that instance's fields.
 For witness-free memory-only bodies, including guarded and matched bodies, unfolding consumes the named
 instance without retaining an open handle. Current field projections require
 owned instances; entry snapshots such as `old(cell.value)` remain available.
-The legacy `fold(cell)` form uses the instance's entry-state fields as its
+The `fold(cell)` form uses the instance's entry-state fields as its
 target, and checks the complete body ownership and facts. It does not require
 an earlier unfold.
 
