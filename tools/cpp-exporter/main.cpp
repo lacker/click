@@ -1099,17 +1099,22 @@ private:
       }
       body.push_back(std::move(*lowered));
     }
-    if (local_count != 1 || active.size() != entry_count + 1) {
+    const std::size_t new_count =
+        active.size() < entry_count ? 0 : active.size() - entry_count;
+    if (local_count != new_count || new_count == 0 || new_count > 2) {
       fail(scope->getLBracLoc(),
-           "the nested-scope slice requires exactly one destructible object and no other locals");
+           "the nested-scope slice requires one or two destructible objects and no other locals");
       return std::nullopt;
     }
     llvm::json::Array cleanups;
-    auto cleanup = lower_cleanup(active.back(), scope->getSourceRange());
-    if (!cleanup) {
-      return std::nullopt;
+    for (std::size_t index = 0; index < new_count; ++index) {
+      auto cleanup = lower_cleanup(active[active.size() - 1 - index],
+                                   scope->getSourceRange());
+      if (!cleanup) {
+        return std::nullopt;
+      }
+      cleanups.push_back(std::move(*cleanup));
     }
-    cleanups.push_back(std::move(*cleanup));
     active.resize(entry_count);
 
     llvm::json::Object result;
