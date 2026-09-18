@@ -679,8 +679,9 @@ than hiding inside a constructor. Restarting the counter by writing nothing
 was how a loop-havocked local and a re-bound model field, and a
 join-abstracted pointer and a later heap block, became one `Variable`.
 
-`ExecutionBudget::restarting_beside_live_state` is the third constructor, and
-**it cannot invent an execution identity at all.** Its users are the
+`ExecutionBudget::beside_live_state` is the third constructor, and **it
+cannot invent an execution identity at all** — it may still mint match
+binders, which come from their own reserved range. Its users are the
 proof-side evaluation families reached from the surface's `have`, `fold`,
 `unfold` and theorem-application drivers — the fixed-state spec lowering and
 capture entry points, the composite-resource proposition evaluators, the

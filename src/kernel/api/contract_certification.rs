@@ -18,7 +18,7 @@ pub(crate) fn contract_resource_condition_cases(
     assumptions: &PureFactContext,
 ) -> Option<Vec<Vec<Proposition>>> {
     let entry_state = c_function_entry_state(caller_state, function, arguments)?;
-    let mut budget = ExecutionBudget::restarting_beside_live_state();
+    let mut budget = ExecutionBudget::beside_live_state();
     let required_resources = evaluate_function_resource_context(
         &entry_state,
         function.resource_requires(),
@@ -1301,7 +1301,7 @@ pub(super) fn c_function_contract_certification_assumptions(
     selection_assumptions: &PureFactContext,
     authorized_theorem_facts: &[Proposition],
 ) -> Result<PureFactContext, String> {
-    let mut budget = ExecutionBudget::restarting_beside_live_state();
+    let mut budget = ExecutionBudget::beside_live_state();
     let Some(mut entry_state) = c_function_entry_state(caller_state, function, arguments) else {
         return Err("could not build the contract entry state from the call arguments".to_string());
     };

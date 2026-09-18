@@ -3061,8 +3061,8 @@ pub enum ExecutionLimit {
     MatchBinderVariables {
         ceiling: u64,
     },
-    /// A budget built by `ExecutionBudget::restarting_beside_live_state` was
-    /// asked for an execution identity. Its counter starts at the base of the
+    /// A budget built by `ExecutionBudget::beside_live_state` was asked for
+    /// an execution identity. Its counter starts at the base of the
     /// range while the state it evaluates against belongs to an execution
     /// that has already issued identities from there, so the request would
     /// have named a havocked local, a join abstraction or a heap block. It is
@@ -3113,8 +3113,8 @@ pub struct ExecutionBudget {
     /// execution counter beside them.
     pub(super) next_match_binder_variable: u64,
     /// Whether this budget refuses to invent an execution identity at all.
-    /// Set by `ExecutionBudget::restarting_beside_live_state`, whose state
-    /// belongs to an execution whose mark the caller does not carry: an
+    /// Set by `ExecutionBudget::beside_live_state`, whose state belongs to an
+    /// execution whose mark the caller does not carry: an
     /// identity from the base of the range would name something that state
     /// already holds.
     pub(super) refuses_execution_identities: bool,

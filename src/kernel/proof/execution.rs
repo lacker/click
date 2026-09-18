@@ -2603,7 +2603,7 @@ fn interface_spec_paths(
         spec,
         Some(reference_state),
         &PureFactContext::new(),
-        &mut ExecutionBudget::restarting_beside_live_state(),
+        &mut ExecutionBudget::beside_live_state(),
     )
     .ok()
 }
@@ -2617,7 +2617,7 @@ fn evaluate_interface_resource_spec(
         state,
         spec,
         facts.assumptions(),
-        &mut ExecutionBudget::restarting_beside_live_state(),
+        &mut ExecutionBudget::beside_live_state(),
     )
     .ok()?)
     .ok()
@@ -6204,7 +6204,7 @@ impl ExecutionProofCore {
                     completed,
                     obligations,
                     &statement_assumptions,
-                    &mut ExecutionBudget::restarting_beside_live_state(),
+                    &mut ExecutionBudget::beside_live_state(),
                     // A path that lent at entry recovers at exit; one that
                     // entered from the contract's declared resources reads
                     // the outcome through them definitionally.

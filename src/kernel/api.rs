@@ -601,7 +601,7 @@ fn loop_head_invariant_failure(
     assumptions: &PureFactContext,
     error: ExecutionLimit,
 ) -> String {
-    let mut budget = ExecutionBudget::restarting_beside_live_state();
+    let mut budget = ExecutionBudget::beside_live_state();
     for check in invariant_checks {
         if assume_invariant_checks(
             top_state,
@@ -636,7 +636,7 @@ pub fn c_loop_invariant_obligations_at_back_edge(
         invariant_checks,
         InvariantPhase::Preservation,
         assumptions,
-        &mut ExecutionBudget::restarting_beside_live_state(),
+        &mut ExecutionBudget::beside_live_state(),
     )
     .map_err(|error| format!("could not lower back-edge invariants: {error:?}"))
 }
@@ -699,7 +699,7 @@ pub fn c_execution_environment_with_recursion_anchor(
         function,
         &entry_state,
         &PureFactContext::new(),
-        &mut ExecutionBudget::restarting_beside_live_state(),
+        &mut ExecutionBudget::beside_live_state(),
     )?;
     Ok(match anchor {
         Some(anchor) => environment.with_recursion_anchor(anchor),
@@ -723,7 +723,7 @@ pub fn c_loop_ranking_obligations_at_back_edge(
         iteration_entry_state,
         ranking_measures,
         assumptions,
-        &mut ExecutionBudget::restarting_beside_live_state(),
+        &mut ExecutionBudget::beside_live_state(),
     )
 }
 
@@ -753,7 +753,7 @@ pub fn c_loop_entry_goals(
         state,
         invariant_checks,
         assumptions,
-        &mut ExecutionBudget::restarting_beside_live_state(),
+        &mut ExecutionBudget::beside_live_state(),
         &mut declarations,
     )
     .map_err(|error| format!("could not lower entry invariants: {error:?}"))?;
@@ -771,7 +771,7 @@ pub fn c_loop_invariant_obligations_at_entry(
         invariant_checks,
         InvariantPhase::Entry,
         assumptions,
-        &mut ExecutionBudget::restarting_beside_live_state(),
+        &mut ExecutionBudget::beside_live_state(),
     )
     .map_err(|error| format!("could not lower entry invariants: {error:?}"))
 }
@@ -795,7 +795,7 @@ pub fn c_loop_effects_hold_at_back_edge(
         &execution_facts,
         &[],
         assumptions,
-        &mut ExecutionBudget::restarting_beside_live_state(),
+        &mut ExecutionBudget::beside_live_state(),
     )
     .map_err(|error| format!("could not lower back-edge effects: {error:?}"))?;
     if let Some(obligation) = obligations.first() {
@@ -822,7 +822,7 @@ pub fn c_loop_invariants_hold_at_entry(
         invariant_checks,
         InvariantPhase::Entry,
         assumptions,
-        &mut ExecutionBudget::restarting_beside_live_state(),
+        &mut ExecutionBudget::beside_live_state(),
     )
     .map_err(|error| format!("could not lower entry invariants: {error:?}"))?;
     if let Some(obligation) = obligations.first() {
@@ -2060,7 +2060,7 @@ pub(crate) fn c_lower_spec_proposition_with_checked_obligations(
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads()
         .defer_non_exact_loadability_obligations();
-    let mut budget = ExecutionBudget::restarting_beside_live_state();
+    let mut budget = ExecutionBudget::beside_live_state();
     let paths = lower_spec_proposition_at_state_with_loop_entry(
         state,
         proposition,
@@ -2134,7 +2134,7 @@ pub(crate) fn c_evaluate_spec_expression_with_checked_obligations(
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads()
         .defer_non_exact_loadability_obligations();
-    let mut budget = ExecutionBudget::restarting_beside_live_state();
+    let mut budget = ExecutionBudget::beside_live_state();
     let paths = evaluate_spec_expression_paths_with_loop_entry(
         state,
         expression,
@@ -2218,7 +2218,7 @@ fn install_borrowed_contract_inputs(
 ) -> Result<CState, LoanRefusalDiagnostic> {
     let entry = c_function_entry_state(&state, function, arguments)
         .ok_or_else(|| LoanRefusal::MissingBacking.diagnostic(LoanRefusalOperation::Entry))?;
-    let mut budget = ExecutionBudget::restarting_beside_live_state();
+    let mut budget = ExecutionBudget::beside_live_state();
     let (_, checked_inputs) = evaluate_function_resource_context_with_metadata(
         &entry,
         function.resource_requires(),
@@ -2462,7 +2462,7 @@ pub fn c_function_contract_entry_state(
         })
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| "contract entry arguments must be concrete symbolic values".to_string())?;
-    let mut budget = ExecutionBudget::restarting_beside_live_state();
+    let mut budget = ExecutionBudget::beside_live_state();
     match prepare_function_contract_entry_state_with_values(
         caller_state,
         function,
@@ -2514,7 +2514,7 @@ pub fn apply_c_function_contract_resource_transition(
         arguments,
         outcome,
         assumptions,
-        &mut ExecutionBudget::restarting_beside_live_state(),
+        &mut ExecutionBudget::beside_live_state(),
     ) {
         Ok(Ok(result)) => Ok(result),
         Ok(Err(error)) => Err(format!(
@@ -2797,8 +2797,7 @@ pub fn prove_symbolic_c_condition_evaluation(
     condition: CExpression,
     assumptions: PureFactContext,
 ) -> SymbolicCConditionEvaluation {
-    let mut budget =
-        ExecutionBudget::restarting_beside_live_state().with_c_expression_cost(&condition);
+    let mut budget = ExecutionBudget::beside_live_state().with_c_expression_cost(&condition);
     let expression_paths =
         match evaluate_c_expression_paths(&state, &condition, &assumptions, &mut budget) {
             Ok(paths) => paths,

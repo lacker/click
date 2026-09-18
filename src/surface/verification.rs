@@ -2618,7 +2618,7 @@ fn verify_c0_sources_with_context(
         )?;
         if contract_function.resource_derived_mutable_frame() {
             let loop_assumptions = assumptions_from_propositions(&certification_facts);
-            let mut loop_budget = crate::kernel::ExecutionBudget::restarting_beside_live_state();
+            let mut loop_budget = crate::kernel::ExecutionBudget::beside_live_state();
             let Some(loop_entry_state) = crate::kernel::c_function_entry_state(
                 &certification_state,
                 &contract_function,
@@ -2698,8 +2698,7 @@ fn verify_c0_sources_with_context(
             let checked_transition = if has_any_storage_effect
                 && contract_function.resource_derived_mutable_frame()
             {
-                let mut transition_budget =
-                    crate::kernel::ExecutionBudget::restarting_beside_live_state();
+                let mut transition_budget = crate::kernel::ExecutionBudget::beside_live_state();
                 match crate::kernel::evaluate_function_resource_context_with_metadata(
                     &storage_entry_state,
                     contract_function.resource_requires(),
@@ -2725,8 +2724,7 @@ fn verify_c0_sources_with_context(
                 None
             };
             let checked_projection = if let Some(checked) = checked_transition.as_deref() {
-                let mut projection_budget =
-                    crate::kernel::ExecutionBudget::restarting_beside_live_state();
+                let mut projection_budget = crate::kernel::ExecutionBudget::beside_live_state();
                 match crate::kernel::project_contract_memory_effects(
                     &storage_entry_state,
                     contract_function.contract_interface(),

@@ -1210,27 +1210,32 @@ impl ExecutionBudget {
         Self::with_kernel_variable_counter(Self::KERNEL_VARIABLE_BASE + mark)
     }
 
-    /// A budget for evaluating against a state that belongs to a live
-    /// execution, from a site the execution's mark has not been threaded to.
+    /// Evaluates against a live execution state; may mint match binders,
+    /// refuses execution identities.
+    ///
+    /// The evaluation belongs to a state some live execution owns, and it is
+    /// reached from a site the execution's mark has not been threaded to.
     /// **It cannot allocate an execution identity at all.**
     ///
     /// It used to restart the counter at [`Self::KERNEL_VARIABLE_BASE`] and
-    /// say so in its name, which made the hazard greppable but left it live:
-    /// the one site that did allocate handed match binders the identities a
-    /// loop havoc had already given to a local, and the binder-elimination
-    /// rewrite substituted the local along with the binder. Match binders
-    /// now come from [`Self::MATCH_BINDER_VARIABLE_BASE`], a range no
-    /// execution can reach, so nothing these sites invent needs the
-    /// execution counter — and asking for one is a defect in the caller
-    /// rather than a silent collision. The request refuses with
-    /// [`ExecutionLimit::ExecutionIdentityBesideLiveState`].
+    /// was named `restarting_beside_live_state` for saying so, which made the
+    /// hazard greppable but left it live: the one site that did allocate
+    /// handed match binders the identities a loop havoc had already given to
+    /// a local, and the binder-elimination rewrite substituted the local
+    /// along with the binder. Match binders now come from
+    /// [`Self::MATCH_BINDER_VARIABLE_BASE`], a range no execution can reach,
+    /// so nothing these sites invent needs the execution counter — and asking
+    /// for one is a defect in the caller rather than a silent collision. The
+    /// request refuses with
+    /// [`ExecutionLimit::ExecutionIdentityBesideLiveState`], so the counter
+    /// this constructor still starts at the base is never read.
     ///
     /// The users are the proof-side evaluation families reached from the
     /// surface's `have`, `fold`, `unfold` and theorem-application drivers,
     /// which do not carry the execution's mark. A site that genuinely has to
     /// invent an execution identity must be given that mark and use
     /// [`Self::continuing_from`]; `docs/internals/kernel.md` records why.
-    pub(crate) fn restarting_beside_live_state() -> Self {
+    pub(crate) fn beside_live_state() -> Self {
         let mut budget = Self::for_new_execution();
         budget.refuses_execution_identities = true;
         budget
@@ -1375,9 +1380,9 @@ impl ExecutionBudget {
     /// binders, silently: each of those ranges is chosen to be disjoint from
     /// this one and nothing else enforces it. The check is one comparison.
     ///
-    /// A budget built by [`Self::restarting_beside_live_state`] cannot issue
-    /// one at all: its counter would restart over identities the live state
-    /// already holds, and nothing it evaluates needs an execution identity.
+    /// A budget built by [`Self::beside_live_state`] cannot issue one at all:
+    /// its counter would start over identities the live state already holds,
+    /// and nothing it evaluates needs an execution identity.
     pub(in crate::kernel) fn allocate_kernel_variable(&mut self) -> ExecutionResult<Variable> {
         if self.refuses_execution_identities {
             return Err(ExecutionLimit::ExecutionIdentityBesideLiveState);

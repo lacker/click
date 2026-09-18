@@ -2641,8 +2641,8 @@ fn a_reached_mark_round_trips_into_the_next_budget() {
 
 /// A budget beside a live state cannot invent an execution identity at all.
 ///
-/// `ExecutionBudget::restarting_beside_live_state` evaluates over a state that
-/// belongs to an execution whose mark the caller does not carry, so an
+/// `ExecutionBudget::beside_live_state` evaluates over a state that belongs
+/// to an execution whose mark the caller does not carry, so an
 /// identity counted from the base would name a havocked local, a join
 /// abstraction or a heap block that state already holds. Nothing those sites
 /// invent needs one: a match binder comes from the reserved binder range, and
@@ -2650,7 +2650,7 @@ fn a_reached_mark_round_trips_into_the_next_budget() {
 /// in the caller and refuses as one.
 #[test]
 fn a_budget_beside_a_live_state_refuses_an_execution_identity() {
-    let mut beside = ExecutionBudget::restarting_beside_live_state();
+    let mut beside = ExecutionBudget::beside_live_state();
     assert_eq!(
         beside.allocate_kernel_variable(),
         Err(ExecutionLimit::ExecutionIdentityBesideLiveState),
