@@ -219,7 +219,53 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
     opaque_click_functions: &std::collections::BTreeSet<String>,
     pointer_element_widths: BTreeMap<String, u32>,
 ) -> Result<Proposition, String> {
-    lower_fixed_state_proposition_through_kernel_recording_introductions(
+    lower_fixed_state_proposition_through_kernel_with_bound_array_memories(
+        proposition,
+        assumptions,
+        values,
+        array_refs,
+        algebraic_values,
+        integer_values,
+        &BTreeMap::new(),
+        pre_state,
+        state,
+        result,
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+        pointer_element_widths,
+    )
+}
+
+/// The same lowering for a clause whose array-valued names are bound to array
+/// references of their own, as a theorem application binds its parameters.
+///
+/// An array reference is a memory together with a pointer, so an argument that
+/// names another state (`old(a)`, `at(mark, a)`) binds the parameter to that
+/// state's memory. `bound_array_memories` carries exactly those bindings; an
+/// argument read at the application's own state is absent from it and keeps
+/// reading through the lowering state, so no snapshot is attached to an
+/// ordinary clause.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_bound_array_memories(
+    proposition: &ClickProposition,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    bound_array_memories: &BTreeMap<String, SpecMemory>,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: &std::collections::BTreeSet<String>,
+    pointer_element_widths: BTreeMap<String, u32>,
+) -> Result<Proposition, String> {
+    lower_fixed_state_proposition_through_kernel_recording_introductions_with_bound_array_memories(
         proposition,
         assumptions,
         assumptions,
@@ -227,6 +273,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
         array_refs,
         algebraic_values,
         integer_values,
+        bound_array_memories,
         pre_state,
         state,
         result,
@@ -261,6 +308,48 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording
     opaque_click_functions: &std::collections::BTreeSet<String>,
     pointer_element_widths: BTreeMap<String, u32>,
 ) -> Result<(Proposition, crate::kernel::LoweringIntroductions), String> {
+    lower_fixed_state_proposition_through_kernel_recording_introductions_with_bound_array_memories(
+        proposition,
+        assumptions,
+        obligation_assumptions,
+        values,
+        array_refs,
+        algebraic_values,
+        integer_values,
+        &BTreeMap::new(),
+        pre_state,
+        state,
+        result,
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+        pointer_element_widths,
+    )
+}
+
+/// [`lower_fixed_state_proposition_through_kernel_recording_introductions`]
+/// for a clause whose array-valued names carry bindings of their own. See
+/// [`lower_fixed_state_proposition_through_kernel_with_bound_array_memories`].
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording_introductions_with_bound_array_memories(
+    proposition: &ClickProposition,
+    assumptions: &PureFactContext,
+    obligation_assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    bound_array_memories: &BTreeMap<String, SpecMemory>,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: &std::collections::BTreeSet<String>,
+    pointer_element_widths: BTreeMap<String, u32>,
+) -> Result<(Proposition, crate::kernel::LoweringIntroductions), String> {
     let mut click_function_calls = BTreeSet::new();
     crate::surface::validation::collect_click_function_calls_in_proposition(
         proposition,
@@ -273,6 +362,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording
     let spec = crate::surface::lowering::elaborate_fixed_state_proposition_with_algebraic_and_integer_values(
         proposition,
         states.element_types,
+        bound_array_memories.clone(),
         &states.entry_state,
         states.entry_values,
         states.current_values,

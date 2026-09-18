@@ -2554,6 +2554,14 @@ struct SpecElaborationContext {
     integer_values: PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     algebraic_values: PersistentMap<String, SpecAlgebraicExpression>,
     array_refs: PersistentMap<String, SpecArrayRef>,
+    /// The memory a bound array name reads in, when its binding names a state
+    /// of its own. A theorem argument that names another state (`old(a)`,
+    /// `at(mark, a)`) binds the parameter to that state's array reference, and
+    /// an array reference is a memory as well as a pointer; without this the
+    /// clause's indexing would read the application's current memory. Only a
+    /// binding that names another state appears here, so an ordinary array
+    /// name keeps reading through `current_memory` and carries no snapshot.
+    array_memories: PersistentMap<String, SpecMemory>,
     current_memory: SpecMemory,
     current_loop_entry: Option<usize>,
     function_contract: bool,
@@ -2573,6 +2581,7 @@ impl Default for SpecElaborationContext {
             integer_values: PersistentMap::default(),
             algebraic_values: PersistentMap::default(),
             array_refs: PersistentMap::default(),
+            array_memories: PersistentMap::default(),
             current_memory: SpecMemory::Current,
             current_loop_entry: None,
             at_function_entry: false,
@@ -2615,6 +2624,7 @@ impl SpecElaborationContext {
                 integer_values: self.integer_values.clone(),
                 algebraic_values: self.algebraic_values.clone(),
                 array_refs: PersistentMap::default(),
+                array_memories: PersistentMap::default(),
                 current_memory: SpecMemory::FunctionEntry,
                 current_loop_entry: None,
                 function_contract: true,
@@ -2643,6 +2653,7 @@ impl SpecElaborationContext {
             integer_values: self.integer_values.clone(),
             algebraic_values: self.algebraic_values.clone(),
             array_refs: PersistentMap::default(),
+            array_memories: PersistentMap::default(),
             current_memory: SpecMemory::Fixed(entry_memory.clone()),
             current_loop_entry: None,
             function_contract: false,

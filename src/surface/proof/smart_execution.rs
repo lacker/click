@@ -702,7 +702,9 @@ impl<'a> Proof<'a> {
             .collect::<BTreeMap<_, _>>();
 
         let mut premises = Vec::new();
-        for (requirement, source_requirement) in requirements.into_iter().zip(theorem.requires()) {
+        for (requirement_index, (requirement, source_requirement)) in
+            requirements.into_iter().zip(theorem.requires()).enumerate()
+        {
             if normalizes_context_free(&requirement) {
                 continue;
             }
@@ -716,9 +718,15 @@ impl<'a> Proof<'a> {
                 .map_err(|message| self.step_error(message))?;
             let lowered = self.lower_surface_proposition(&surface, "selected theorem premise")?;
             if lowered.clone() != requirement.clone() || !self.facts().contains(&lowered) {
-                return Err(self.step_error(format!(
-                    "required exact fact for theorem `{}` is unavailable: {requirement:?}",
-                    application.name
+                // `Debug` on a kernel proposition dumps the memory snapshots
+                // and algebraic schemas it is indexed by; the reader needs the
+                // clause and the fact it instantiates to.
+                return Err(self.step_error(describe_unavailable_theorem_requirement(
+                    &application.name,
+                    requirement_index,
+                    &surface,
+                    &[],
+                    &requirement,
                 )));
             }
             if !premises.contains(&surface) {

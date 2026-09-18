@@ -990,6 +990,7 @@ pub(in crate::surface) fn lower_branch_interface_fact(
 #[allow(clippy::too_many_arguments)]
 fn fixed_state_elaboration<'a>(
     array_element_types: BTreeMap<String, CType>,
+    bound_array_memories: BTreeMap<String, SpecMemory>,
     entry_state: &'a CState,
     entry_values: BTreeMap<String, CValue>,
     current_values: BTreeMap<String, CValue>,
@@ -1031,6 +1032,10 @@ fn fixed_state_elaboration<'a>(
             .into_iter()
             .map(|(name, value)| (name, SpecExpression::Value(value)))
             .collect(),
+        // A bound array name reads in the memory its binding names. Without
+        // this an argument that names another state (`old(a)`, `at(mark, a)`)
+        // would index the application's current memory instead.
+        array_memories: bound_array_memories.into_iter().collect(),
         ..SpecElaborationContext::default()
     };
     if let Some(result) = result {
@@ -1049,6 +1054,7 @@ fn fixed_state_elaboration<'a>(
 pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_and_integer_values(
     proposition: &ClickProposition,
     array_element_types: BTreeMap<String, CType>,
+    bound_array_memories: BTreeMap<String, SpecMemory>,
     entry_state: &CState,
     entry_values: BTreeMap<String, CValue>,
     current_values: BTreeMap<String, CValue>,
@@ -1064,6 +1070,7 @@ pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_and_i
 ) -> Result<SpecProposition, String> {
     let (mut lowerer, context) = fixed_state_elaboration(
         array_element_types,
+        bound_array_memories,
         entry_state,
         entry_values,
         current_values,
@@ -1117,6 +1124,7 @@ pub(in crate::surface) fn elaborate_fixed_state_algebraic_expression(
 ) -> Result<SpecAlgebraicExpression, String> {
     let (mut lowerer, context) = fixed_state_elaboration(
         array_element_types,
+        BTreeMap::new(),
         entry_state,
         entry_values,
         current_values,
@@ -1188,6 +1196,7 @@ pub(in crate::surface) fn elaborate_fixed_state_integer_expression_with_integer_
 ) -> Result<crate::kernel::SpecIntegerExpression, String> {
     let (mut lowerer, context) = fixed_state_elaboration(
         array_element_types,
+        BTreeMap::new(),
         entry_state,
         entry_values,
         current_values,
@@ -1259,6 +1268,7 @@ pub(in crate::surface) fn elaborate_fixed_state_expression(
 ) -> Result<SpecExpression, String> {
     let (mut lowerer, context) = fixed_state_elaboration(
         array_element_types,
+        BTreeMap::new(),
         entry_state,
         entry_values,
         current_values,
@@ -4869,6 +4879,9 @@ impl AnnotationLowerer<'_> {
             integer_values: environment.integer_values.clone(),
             algebraic_values: environment.algebraic_values.clone(),
             array_refs: array_refs.into_iter().collect(),
+            // The snapshot's own memory is the memory here; an outer
+            // binding's state does not reach into it.
+            array_memories: PersistentMap::default(),
             current_memory: SpecMemory::Fixed(state.memory().clone()),
             current_loop_entry: None,
             function_contract: false,
@@ -5222,7 +5235,14 @@ impl AnnotationLowerer<'_> {
                     return Ok(array_ref.clone());
                 }
                 Ok(SpecArrayRef {
-                    memory: environment.current_memory.clone(),
+                    // A binding that names a state of its own reads there.
+                    // The pointer is still the name's own, so a physical
+                    // pointee width the context carries is preserved.
+                    memory: environment
+                        .array_memories
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| environment.current_memory.clone()),
                     pointer: self.lower_c_fragment_to_spec(
                         &CExpression::Variable(name.clone()),
                         environment,
@@ -5819,6 +5839,7 @@ mod integer_source_quantifier_tests {
         let state = CState::new();
         let lowered = elaborate_fixed_state_proposition_with_algebraic_and_integer_values(
             proposition,
+            BTreeMap::new(),
             BTreeMap::new(),
             &state,
             BTreeMap::new(),

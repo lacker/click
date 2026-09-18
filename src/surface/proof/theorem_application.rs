@@ -218,14 +218,17 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
     let post_state = bind(context.post_state);
     let pointer_element_widths =
         theorem_application_pointer_element_widths(&theorem, application, context);
+    let bound_array_memories =
+        theorem_application_bound_array_memories(&theorem, application, &array_refs);
     let lower = |proposition: &ClickProposition| {
-        lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
+        lower_fixed_state_proposition_through_kernel_with_bound_array_memories(
             proposition,
             lowering_assumptions,
             &values,
             &array_refs,
             &algebraic_values,
             &integer_values,
+            &bound_array_memories,
             &pre_state,
             &post_state,
             None,
@@ -237,7 +240,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
         )
     };
 
-    for requirement in theorem.requires() {
+    for (requirement_index, requirement) in theorem.requires().iter().enumerate() {
         let Some(requirement) = requirement.proposition() else {
             return Err(theorem_application_error(
                 claim_label,
@@ -285,10 +288,22 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
                 claim_label,
                 path_index,
                 tactic_index,
-                format!(
-                    "required exact fact for theorem `{}` is unavailable: {}",
+                describe_unavailable_theorem_requirement(
                     theorem.name(),
-                    describe_pure_fact(&lowered, &[], &[])
+                    requirement_index,
+                    requirement,
+                    &theorem
+                        .parameters()
+                        .iter()
+                        .zip(&application.arguments)
+                        .map(|(parameter, argument)| {
+                            (
+                                parameter.name().to_string(),
+                                crate::surface::diagnostics::describe_contract_expression(argument),
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                    &lowered,
                 ),
             ));
         }
@@ -322,6 +337,47 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
         conclusions.push(conclusion.clone());
     }
     Ok(conclusions)
+}
+
+/// The refusal for a theorem requirement the application cannot discharge.
+///
+/// A reader fixes this by supplying the missing premise, so the sentence has
+/// to say which requirement is missing and what the application instantiated
+/// it to. The kind alone (`int32 equality is true`) names neither: with more
+/// than one requirement it does not even identify the clause, and an argument
+/// naming another state (`old(a)`) instantiates the same source clause to a
+/// different fact than the same clause at the current state. Print the source
+/// clause as written, the arguments its own names were bound to, and then its
+/// instantiation through the bounded proposition renderer, which spells both
+/// sides.
+pub(super) fn describe_unavailable_theorem_requirement(
+    theorem_name: &str,
+    requirement_index: usize,
+    requirement: &ClickProposition,
+    bindings: &[(String, String)],
+    lowered: &Proposition,
+) -> String {
+    let mut referenced = BTreeSet::new();
+    crate::surface::lowering::collect_click_proposition_referenced_names(
+        requirement,
+        &mut referenced,
+    );
+    let bound = bindings
+        .iter()
+        .filter(|(parameter, _)| referenced.contains(parameter))
+        .map(|(parameter, argument)| format!("{parameter} = {argument}"))
+        .collect::<Vec<_>>();
+    let bound = if bound.is_empty() {
+        String::new()
+    } else {
+        format!(" with {}", bound.join(", "))
+    };
+    format!(
+        "required exact fact for theorem `{theorem_name}` is unavailable: requirement {} `{}`{bound} instantiates to {}",
+        requirement_index + 1,
+        crate::surface::diagnostics::describe_click_proposition(requirement),
+        crate::surface::proof_diagnostics::render::render_proposition(lowered)
+    )
 }
 
 fn is_integer_range_fold_theorem_name(name: &str) -> bool {
@@ -817,6 +873,42 @@ pub(super) fn theorem_application_pointer_element_widths(
         .filter_map(|(parameter, argument)| {
             pointer_element_width_for_argument(argument, &context.pointer_element_widths)
                 .map(|width| (parameter.name().to_string(), width))
+        })
+        .collect()
+}
+
+/// The memory each array parameter reads in, for the parameters whose
+/// argument names a state of its own.
+///
+/// [`evaluate_fixed_state_array_ref_through_kernel`] gives an `old(...)` or
+/// `at(...)` argument the memory of the state it names, and the theorem's own
+/// indexing of that parameter has to read there: otherwise the premises are
+/// checked, and the conclusion stated, at the application's current memory,
+/// which is a different array than the one the argument named. An argument
+/// read at the application's own state is left out, so an ordinary
+/// application attaches no memory to its clauses and keeps lowering exactly
+/// as before.
+pub(in crate::surface::proof) fn theorem_application_bound_array_memories(
+    theorem: &TheoremDefinition,
+    application: &TheoremApplication,
+    array_refs: &ClickArrayRefs,
+) -> BTreeMap<String, SpecMemory> {
+    theorem
+        .parameters()
+        .iter()
+        .zip(&application.arguments)
+        .filter(|(_, argument)| {
+            matches!(
+                argument,
+                ContractExpression::Old(_) | ContractExpression::At { .. }
+            )
+        })
+        .filter_map(|(parameter, _)| {
+            let array_ref = array_refs.get(parameter.name())?;
+            Some((
+                parameter.name().to_string(),
+                SpecMemory::Fixed(array_ref.memory.clone()),
+            ))
         })
         .collect()
 }

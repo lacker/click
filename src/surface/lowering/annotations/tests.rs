@@ -19,6 +19,7 @@ fn struct_pointer_arithmetic_through_uint64_cast_uses_layout_width() {
     let functions = ClickFunctionEnvironment::new(&[]);
     let (lowerer, context) = fixed_state_elaboration(
         BTreeMap::new(),
+        BTreeMap::new(),
         &state,
         BTreeMap::new(),
         BTreeMap::new(),
@@ -185,6 +186,7 @@ fn nested_snapshot_propositions_lower_with_small_frames_and_linear_visits() {
                     };
                 }
                 let (mut lowerer, context) = fixed_state_elaboration(
+                    BTreeMap::new(),
                     BTreeMap::new(),
                     &state,
                     BTreeMap::from([("x".into(), int32(7))]),

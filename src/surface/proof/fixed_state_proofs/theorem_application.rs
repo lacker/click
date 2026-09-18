@@ -261,6 +261,12 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
     };
     let pre_state = bind(context.pre_state);
     let post_state = bind(context.post_state);
+    let bound_array_memories =
+        super::super::theorem_application::theorem_application_bound_array_memories(
+            &theorem,
+            application,
+            &array_refs,
+        );
     theorem
         .requires()
         .iter()
@@ -271,13 +277,14 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
                     theorem.name()
                 )
             })?;
-            let lowered = lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
+            let lowered = lower_fixed_state_proposition_through_kernel_with_bound_array_memories(
                 requirement,
                 assumptions,
                 &values,
                 &array_refs,
                 &algebraic_values,
                 &integer_values,
+                &bound_array_memories,
                 &pre_state,
                 &post_state,
                 None,
@@ -285,7 +292,11 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
                 predicate_environment,
                 click_function_environment,
                 &BTreeSet::new(),
-                super::super::theorem_application::theorem_application_pointer_element_widths(&theorem, application, context),
+                super::super::theorem_application::theorem_application_pointer_element_widths(
+                    &theorem,
+                    application,
+                    context,
+                ),
             )?;
             unfold_predicates_in_proposition(
                 predicate_environment,
