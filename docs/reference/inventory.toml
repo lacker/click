@@ -1501,6 +1501,9 @@ path = "reference/tactics/index.md#resources-and-snapshots"
 id = "tactic-form.unfold-function"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
+id = "tactic-form.unfold-function-using"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
 id = "tactic-form.unfold-resource"
 path = "reference/tactics/index.md#resources-and-snapshots"
 [[item]]

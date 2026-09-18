@@ -622,7 +622,11 @@ impl<'a> Proof<'a> {
                 premises,
             } => self.apply_transport_using(source, target, premises),
             ProofStep::UnfoldPredicate(name) => self.apply_predicate_unfold(name),
-            ProofStep::UnfoldFunction(application) => self.apply_function_unfold(application),
+            ProofStep::UnfoldFunction(application) => self.apply_function_unfold(application, None),
+            ProofStep::UnfoldFunctionUsing {
+                application,
+                premises,
+            } => self.apply_function_unfold(application, Some(premises)),
             ProofStep::UnfoldResource(resource) => {
                 if self.focused_outcome_data().is_some() {
                     self.apply_outcome_resource_unfold(resource)

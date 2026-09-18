@@ -1386,6 +1386,157 @@ mod tests {
     }
 
     #[test]
+    fn range_fold_over_equal_terms_carries_the_defining_equations_as_premises() {
+        let accumulator = Variable(31_100);
+        let item = Variable(31_101);
+        let start = Variable(31_102);
+        let end = Variable(31_103);
+        let index = IntegerRangeFoldIndex::Int32 {
+            start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Variable(start)),
+            end: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Variable(end)),
+        };
+        let initial = IntegerTerm::constant_i64(0);
+        let body = IntegerTerm::var(accumulator);
+        let whole = IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+            "counted".to_string(),
+            vec![
+                crate::kernel::PureFunctionArgument::Value(CValue::Int32(
+                    Bitvector32Term::Variable(start),
+                )),
+                crate::kernel::PureFunctionArgument::Value(CValue::Int32(
+                    Bitvector32Term::Variable(end),
+                )),
+            ],
+        ));
+
+        // The empty form carries `whole == fold` beside the ordering guard,
+        // and concludes over `whole`, not over the fold.
+        let empty = crate::kernel::prove_integer_range_fold_over_equal_terms(
+            index.clone(),
+            initial.clone(),
+            accumulator,
+            item,
+            body.clone(),
+            whole.clone(),
+            None,
+        )
+        .expect("the empty form is always statable");
+        let Proposition::Implies(guard, conclusion) = empty.proposition() else {
+            unreachable!()
+        };
+        let Proposition::And(defining, ordering) = guard.as_ref() else {
+            unreachable!("the empty form carries the defining equation beside its guard")
+        };
+        assert!(matches!(
+            defining.as_ref(),
+            Proposition::ConditionIs(ConditionTerm::IntegerEqual(_, _), true)
+        ));
+        assert!(matches!(
+            ordering.as_ref(),
+            Proposition::ConditionIs(ConditionTerm::Bitvector32SignedLessEqual(_, _), true)
+        ));
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, right), true) =
+            conclusion.as_ref()
+        else {
+            unreachable!()
+        };
+        assert_eq!(left.as_ref(), &whole);
+        assert!(right.as_const().is_some_and(|value| value == &0.into()));
+
+        // The append form is stated at the predecessor endpoint and restates
+        // the shorter fold as the same application one endpoint lower.
+        let prior = crate::kernel::integer_range_fold_predecessor_application(&whole, 1)
+            .expect("the end argument is an int32 value");
+        let append = crate::kernel::prove_integer_range_fold_over_equal_terms(
+            index,
+            initial,
+            accumulator,
+            item,
+            body,
+            whole.clone(),
+            Some(prior.clone()),
+        )
+        .expect("the append form is statable at a symbolic endpoint");
+        let Proposition::Implies(guard, conclusion) = append.proposition() else {
+            unreachable!()
+        };
+        let mut premises = Vec::new();
+        fn flatten<'a>(proposition: &'a Proposition, into: &mut Vec<&'a Proposition>) {
+            match proposition {
+                Proposition::And(left, right) => {
+                    flatten(left, into);
+                    flatten(right, into);
+                }
+                proposition => into.push(proposition),
+            }
+        }
+        flatten(guard, &mut premises);
+        let defining = premises
+            .iter()
+            .filter(|premise| {
+                matches!(
+                    premise,
+                    Proposition::ConditionIs(ConditionTerm::IntegerEqual(_, _), true)
+                )
+            })
+            .count();
+        assert_eq!(defining, 2, "both defining equations must be premises");
+        assert!(premises.iter().any(|premise| matches!(
+            premise,
+            Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, _), true)
+                if left.as_ref() == &prior
+        )));
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, right), true) =
+            conclusion.as_ref()
+        else {
+            unreachable!()
+        };
+        assert_eq!(left.as_ref(), &whole);
+        // The right-hand side is the body stepped over the predecessor
+        // application, so it mentions `prior` and never the shorter fold.
+        assert_eq!(right.as_ref(), &prior);
+    }
+
+    #[test]
+    fn integer_term_substitution_reaches_the_arithmetic_spine_only() {
+        let application = SharedIntegerTerm::from(IntegerTerm::PureFunctionApplication(
+            SharedIntegerApplication::intern("counted".to_string(), Vec::new()),
+        ));
+        let replacement = SharedIntegerTerm::from(IntegerTerm::constant_i64(7));
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::IntegerLessEqual(
+                SharedIntegerTerm::from(IntegerTerm::constant_i64(0)),
+                SharedIntegerTerm::from(IntegerTerm::Add(
+                    application.clone(),
+                    SharedIntegerTerm::from(IntegerTerm::constant_i64(1)),
+                )),
+            ),
+            true,
+        );
+        let rewritten = crate::kernel::substitute_integer_term_in_proposition(
+            &goal,
+            &application,
+            &replacement,
+        )
+        .expect("the application occurs on the arithmetic spine");
+        let Proposition::ConditionIs(ConditionTerm::IntegerLessEqual(_, right), true) = &rewritten
+        else {
+            unreachable!()
+        };
+        let IntegerTerm::Add(left, _) = right.as_ref() else {
+            unreachable!()
+        };
+        assert_eq!(left, &replacement);
+        // A term the walk never reaches leaves the proposition unchanged, and
+        // an absent term reports no rewrite rather than a silent copy.
+        let absent = SharedIntegerTerm::from(IntegerTerm::constant_i64(42));
+        assert!(
+            crate::kernel::substitute_integer_term_in_proposition(&goal, &absent, &replacement)
+                .is_none()
+        );
+    }
+
+    #[test]
     fn range_fold_append_theorem_evaluates_both_sides_for_both_carriers() {
         fn eval_bits(term: &Bitvector32Term, bits: &BTreeMap<Variable, i64>) -> i64 {
             match term {

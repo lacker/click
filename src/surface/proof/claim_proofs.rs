@@ -2069,6 +2069,40 @@ pub(super) fn finish_ordered_proof<'a>(
                                     );
                                 }
                             }
+                            PostExecutionTactic::UnfoldFunction {
+                                application,
+                                premises,
+                            } => {
+                                let evolving = outcome_proof.take().ok_or_else(|| ClickError::new(
+                                    format!("`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for this path is unavailable")
+                                ))?;
+                                let before = evolving.checkpoint();
+                                let step = match premises {
+                                    None => ProofStep::UnfoldFunction(application.clone()),
+                                    Some(premises) => ProofStep::UnfoldFunctionUsing {
+                                        application: application.clone(),
+                                        premises: premises.clone(),
+                                    },
+                                };
+                                let unfolded = evolving.apply_step(step)?;
+                                let certificate = unfolded.certificate_since(&before)?;
+                                outcome_proof = Some(unfolded);
+                                for tactic in certificate.to_proof_tactics() {
+                                    record_post_execution_surface_tactic(
+                                        deferred.surface_recorded,
+                                        &mut path_surface_post_tactics,
+                                        &mut path_deferred_capture_tactics,
+                                        proof_execution
+                                            .presentation
+                                            .expansion
+                                            .deferred_tactic_capture
+                                            .as_ref(),
+                                        post_execution_index,
+                                        *tactic_index,
+                                        tactic.clone(),
+                                    );
+                                }
+                            }
                             PostExecutionTactic::Apply(application) => {
                                 let CFunctionOutcome::Return { .. } = &outcome else {
                                     return Err(ClickError::new(format!(

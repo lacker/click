@@ -123,6 +123,28 @@ a symbolic range or invent an arithmetic assumption. The unchanged C
 summation regression proves exact functional correctness with an `Integer`
 prefix sum while separately proving that each machine addition is defined.
 
+Both laws take the raw fold term, which forces a proof to retype the fold at
+the proof site. `prove_integer_range_fold_over_equal_terms` restates either law
+over a term the caller proves equal to the fold — in practice the opaque
+application of the pure function whose declared body *is* that fold. Those
+equalities are premises of the produced theorem, beside the law's own guards,
+so the entry point assumes nothing the two laws do not already prove. The
+append form instantiates the append law at the predecessor index `start..end -
+1` and checks, against an empty fact context, that the law's
+`fold(start..(end - 1) + 1)` and the caller's `fold(start..end)` are the same
+fold by endpoint affine normalization; substituting the caller's term for the
+equal shorter fold inside the next-element step is congruence under the second
+premise. `integer_range_fold_predecessor_application` builds the predecessor
+application so its int32 argument and that index agree by construction.
+
+`substitute_integer_term_in_proposition` is the matching goal refresh. It is
+Leibniz for a step that already holds the two terms' proved equality, so it is
+deliberately shallow: it descends only the arithmetic spine — negation,
+addition, subtraction, multiplication — and compares interned identity
+everywhere else, never entering a range fold's binders. Rewriting only some
+occurrences of an equal term is sound, and the walk stays linear in the
+proposition it rebuilds.
+
 ## Sharing, scope, and identity
 
 Integer expressions use immutable shared nodes. A chain of aliases such as

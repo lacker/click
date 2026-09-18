@@ -52,6 +52,13 @@ fn linear_execution_proof_step(tactic: &ProofTactic) -> Option<ProofStep> {
         ProofTactic::UnfoldFunction(application) => {
             Some(ProofStep::UnfoldFunction(application.clone()))
         }
+        ProofTactic::UnfoldFunctionUsing {
+            application,
+            premises,
+        } => Some(ProofStep::UnfoldFunctionUsing {
+            application: application.clone(),
+            premises: premises.clone(),
+        }),
         ProofTactic::UnfoldResource(resource) => Some(ProofStep::UnfoldResource(resource.clone())),
         ProofTactic::FoldResource(resource) => Some(ProofStep::FoldResource(resource.clone())),
         ProofTactic::ObserveResource(resource) => {
@@ -479,6 +486,17 @@ fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTacti
         ProofTactic::UnfoldPredicate(name) => {
             Some(PostExecutionTactic::UnfoldPredicate(name.clone()))
         }
+        ProofTactic::UnfoldFunction(application) => Some(PostExecutionTactic::UnfoldFunction {
+            application: application.clone(),
+            premises: None,
+        }),
+        ProofTactic::UnfoldFunctionUsing {
+            application,
+            premises,
+        } => Some(PostExecutionTactic::UnfoldFunction {
+            application: application.clone(),
+            premises: Some(premises.clone()),
+        }),
         ProofTactic::ApplyTheorem(application) => {
             Some(PostExecutionTactic::Apply(application.clone()))
         }

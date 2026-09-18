@@ -4735,6 +4735,20 @@ impl Parser {
                     ProofTactic::UnfoldPredicate(predicate)
                 };
                 self.expect(Token::RParen)?;
+                if self.peek_ident() == Some("using") {
+                    let ProofTactic::UnfoldFunction(application) = tactic else {
+                        return Err(self
+                            .error("`using` requires a pure-function unfold, `unfold(f(args))`"));
+                    };
+                    let premises = self.parse_exact_premises()?;
+                    if self.peek() == Some(&Token::Semicolon) {
+                        self.position += 1;
+                    }
+                    return Ok(ProofTactic::UnfoldFunctionUsing {
+                        application,
+                        premises,
+                    });
+                }
                 if self.peek_ident() == Some("as") {
                     self.position += 1;
                     let ProofTactic::UnfoldResource(ResourceClause::Named { binding, resource }) =

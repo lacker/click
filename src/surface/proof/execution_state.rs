@@ -1272,6 +1272,13 @@ pub(super) enum PostExecutionTactic {
         preserve_exposed_body: bool,
     },
     UnfoldPredicate(String),
+    /// `unfold(f(args))`, with the `using` guard list when the source wrote
+    /// one. A pure-function unfold is proposition-only work, so it defers
+    /// past function exit exactly as a predicate unfold does.
+    UnfoldFunction {
+        application: ClickFunctionApplication,
+        premises: Option<Vec<ClickProposition>>,
+    },
     Apply(TheoremApplication),
     ApplyUsing {
         application: TheoremApplication,
@@ -1596,6 +1603,7 @@ pub(super) fn post_execution_tactic_timing(
         PostExecutionTactic::Construct(_) => ("construct", "simple"),
         PostExecutionTactic::CloseOpen { .. } => ("open", "control"),
         PostExecutionTactic::UnfoldPredicate(_) => ("unfold", "simple"),
+        PostExecutionTactic::UnfoldFunction { .. } => ("unfold", "simple"),
         PostExecutionTactic::ApplyUsing { .. } => ("apply", "simple"),
         PostExecutionTactic::Choose(_) => ("choose", "simple"),
         PostExecutionTactic::Witness(_) => ("witness", "simple"),

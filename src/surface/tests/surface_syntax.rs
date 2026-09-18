@@ -861,6 +861,63 @@ fn parses_and_prints_pure_function_unfold() {
 }
 
 #[test]
+fn parses_and_prints_pure_function_unfold_with_guards() {
+    let source = r#"
+        function icount(lo: int32, hi: int32) -> Integer {
+            (lo..hi).fold(0, |acc, k| { acc + to_integer(k) })
+        }
+
+        theorem icount_empty(lo: int32, hi: int32) {
+            requires hi <= lo;
+            ensures icount(lo, hi) == 0 by {
+                unfold(icount(lo, hi)) using {
+                    hi <= lo;
+                }
+                normalize();
+            }
+        }
+    "#;
+    let file = parse(source).expect("a guarded pure-function unfold should parse");
+    let SourceProof::Script(tactics) = file.theorem_definitions()[0].ensures()[0].proof() else {
+        panic!("expected an explicit theorem proof");
+    };
+    assert!(matches!(
+        &tactics[0],
+        ProofTactic::UnfoldFunctionUsing { application, premises }
+            if application.name == "icount" && premises.len() == 1
+    ));
+    let printed = super::printing::format_partial_tactic_sequence(tactics);
+    assert!(
+        printed.contains("unfold(icount(lo, hi)) using {"),
+        "{printed}"
+    );
+
+    // `using` selects a range-fold law from the function's declaration, so it
+    // is meaningful only on the pure-function form.
+    let predicate_form = r#"
+        predicate nonnegative(x: int32) { x >= 0 }
+
+        theorem guarded_predicate_unfold(x: int32) {
+            requires nonnegative(x);
+            ensures x >= 0 by {
+                unfold(nonnegative) using {
+                    nonnegative(x);
+                }
+                simp();
+            }
+        }
+    "#;
+    let error = parse(predicate_form).expect_err("`using` needs a pure-function unfold");
+    assert!(
+        error
+            .message()
+            .contains("`using` requires a pure-function unfold"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn parses_and_prints_arithmetic_certificates() {
     let source = r#"
         theorem arithmetic_forms(n: int32) {
