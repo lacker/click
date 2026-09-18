@@ -1,4 +1,4 @@
-# The frozen byte-representation probe stops after the typed reload
+# The frozen byte-representation round trip verifies
 
 This is the import/load checkpoint for the P1
 [byte-representation demo](../../issues/byte-representation-demo.md). The C
@@ -6,29 +6,21 @@ below is `design/byte-representation/rep_copy.c`, byte for byte: a live `int`
 pointee, a source record, a 16-byte buffer, and a distinct destination
 record, with `memcpy` roundtripping all `sizeof(struct record)` bytes through
 `(unsigned char *)(void *)` casts. The sidecar states the intended
-`result == 18 or result == -1` contract. It is not evidence that the
-roundtrip verifies; it pins the current bounded proof frontier.
+`result == 18 or result == -1` contract, and it verifies: the scalar field
+reads back `11`, the pointer field preserves its identity so `*dst->target`
+reads `7`, and all four allocations free cleanly.
 
-The direct-copy representation rule now carries the typed reload through both
-`memcpy` calls: `dst->tag` and `dst->target` read the copied values, so the
-frozen probe advances to its `free` sequence. It then stops on a pre-existing
-allocation-resource gap unrelated to the byte model: an `extern` contract's
-`owns destination[0..bytes]` over an allocation-backed buffer duplicates the
-allocation authority, so a later `free` reports a missing `owns
-allocation(...)` fact. The minimal reduction is two byte buffers with no typed
-values at all:
+Two kernel rules compose to make this work. The representation-copy effect on
+the standard-library `memcpy` declaration transfers each source cell whose
+complete representation lies in the copied range, so the typed reloads see
+the copied values through the untyped buffer. And resource normalization
+never merges `allocation` tokens for structurally distinct blocks, so the
+three live heap authorities stay unique through both copies and all four
+frees. `mdtests/ext_memcpy_allocation_authority.md` pins the latter
+independently with no typed values at all.
 
-```text
-unsigned char *a = malloc(4);
-unsigned char *b = malloc(16);
-unsigned char *c = malloc(16);
-memcpy(b, a, 4);
-memcpy(c, b, 16);
-free(a); free(b); free(c);
-```
-
-That allocation gap is the next blocker for this probe; the pointer half and
-the buffer hop's representation carrier remain in the issue.
+The negative, companion, scaling, and design-record halves of the issue
+remain open; this fixture is the positive round trip only.
 
 ```c filename=rep_copy.c
 void *malloc(unsigned long size);
@@ -89,5 +81,5 @@ int f() {
 ```
 
 ```expect
-fail: missing resource fact
+pass
 ```

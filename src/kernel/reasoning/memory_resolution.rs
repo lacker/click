@@ -480,6 +480,15 @@ fn pointers_proven_equal_for_memory_resolution_unmemoized(
     if left == right {
         return true;
     }
+    // Blocks the system proves distinct (distinct heap identities, distinct
+    // concrete names, string literals with different bytes, locals versus
+    // arguments) can never denote one address. No assumption may override
+    // that structural fact: consulting assumptions here would let a
+    // contradictory `Constant(false)` fact, or any bogus equality, merge
+    // distinct allocations during resource normalization.
+    if left.blocks_proven_distinct(right) {
+        return false;
+    }
     if resolution_interrupted() {
         return false;
     }

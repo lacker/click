@@ -6425,3 +6425,41 @@ fn frame_check_opens_owned_composites_one_level_and_charges_per_head() {
         "frame query work grew with nesting depth: {samples:?}"
     );
 }
+
+#[test]
+fn distinct_heap_allocations_never_merge_under_contradictory_assumptions() {
+    let block = |id: u64| Pointer {
+        block: PointerBlock::Heap(id),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let (b, c) = (block(1000001), block(1000002));
+    let alloc_b = CResourceFact::own_allocation(b.clone(), 16u32);
+    let alloc_c = CResourceFact::own_allocation(c.clone(), 16u32);
+    // A contradictory `false`-is-true fact must not let normalization merge
+    // distinct heap authorities. Heap identities are unique by construction.
+    let poisoned = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+        ConditionTerm::Constant(false),
+        true,
+    ));
+    let normalized = ResourceContext::new()
+        .unchecked_with_fact(alloc_b.clone())
+        .unchecked_with_fact(alloc_c.clone())
+        .normalized(&poisoned);
+    let mut quantities = std::collections::BTreeMap::new();
+    for fact in normalized.facts() {
+        if let Some((base, _)) = fact.allocation() {
+            *quantities.entry(format!("{base:?}")).or_insert(0u32) +=
+                fact.owned_quantity().unwrap_or(0);
+        }
+    }
+    assert_eq!(
+        quantities.values().copied().max(),
+        Some(1),
+        "distinct allocations must stay unique: {quantities:?}"
+    );
+    assert!(
+        normalized.satisfies_fact(&alloc_b, &poisoned)
+            && normalized.satisfies_fact(&alloc_c, &poisoned),
+        "both authorities must remain usable"
+    );
+}

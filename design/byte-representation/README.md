@@ -53,19 +53,26 @@ an initialized `unsigned int`; `byte_representation_partial_copy_frontier.md`
 and `byte_representation_untyped_source_frontier.md` pin that a split cell and
 an untyped source still do not establish the value.
 
-## Current frontier (2026-09-17)
+## The round trip verifies, including frees
 
-`mdtests/byte_representation_frozen_frontier.md` embeds the frozen source byte
-for byte with the intended `result == 18 or result == -1` contract. The
-representation rule now carries the typed reload through both `memcpy` calls,
-so `dst->tag` and `dst->target` read the copied values. `execute()` then
-advances to the `free` sequence and stops on a pre-existing allocation-resource
-gap unrelated to the byte model: an `extern` contract's `owns
-destination[0..bytes]` over an allocation-backed buffer duplicates the
-allocation authority, so a later `free` reports a missing `owns allocation(...)`
-fact. The reduction is two byte buffers and no typed values. That gap is the
-next blocker for this probe. The representation carrier through the untyped
-buffer and the pointer-provenance negatives remain in the issue.
+`mdtests/byte_representation_roundtrip.md` embeds the frozen source byte for
+byte with the intended `result == 18 or result == -1` contract, and it passes:
+`dst->tag` reads `11`, `dst->target` preserves identity so `*dst->target`
+reads `7`, and all four allocations free. The representation rule carries the
+reloads through the untyped buffer; a second kernel rule keeps the heap
+authorities unique (below).
+
+That second rule was a soundness fix, not precision. Resource normalization
+merged two `allocation` tokens for structurally distinct heap blocks because a
+`Constant(false)` contradiction fact in the assumptions made distinct pointers
+compare equal via `exact_condition_value`. The kernel now refuses to equate
+blocks it proves distinct (`Heap` identities, distinct concrete names, and the
+other `blocks_proven_distinct` cases), so no assumption can merge distinct
+allocations. `mdtests/ext_memcpy_allocation_authority.md` pins three live
+buffers with one `memcpy` and three frees, independent of any typed values.
+
+The negative, companion, scaling, and design-record halves of the issue remain
+open; the round trip is the positive case only.
 
 ## Deferred scope
 
