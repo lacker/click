@@ -389,7 +389,11 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording
             .map(|obligation| obligation.proposition().clone())
             .collect::<Vec<_>>(),
     )?;
-    refuse_unproved_conversion_bounds(&obligations, obligation_assumptions)?;
+    refuse_unproved_conversion_bounds(
+        &obligations,
+        obligation_assumptions,
+        &StatedSite::new(StatedForm::Proposition(proposition), state, values),
+    )?;
     Ok((lowered, introductions))
 }
 
@@ -538,7 +542,11 @@ pub(in crate::surface) fn evaluate_fixed_state_expression_through_kernel(
         Some(&states.entry_state),
         assumptions,
     )?;
-    refuse_unproved_conversion_bounds(&obligations, assumptions)?;
+    refuse_unproved_conversion_bounds(
+        &obligations,
+        assumptions,
+        &StatedSite::new(StatedForm::Expression(expression), state, values),
+    )?;
     let obligations = obligations
         .iter()
         .map(|obligation| obligation.proposition().clone())
@@ -844,7 +852,11 @@ fn evaluate_c_fragment_with_binding_policy(
         Some(&states.entry_state),
         assumptions,
     )?;
-    refuse_unproved_conversion_bounds(&obligations, assumptions)?;
+    refuse_unproved_conversion_bounds(
+        &obligations,
+        assumptions,
+        &StatedSite::new(StatedForm::CFragment(expression), state, values),
+    )?;
     let obligations = obligations
         .iter()
         .map(|obligation| obligation.proposition().clone())
@@ -947,18 +959,6 @@ fn refuse_impossible_loads(obligations: &[Proposition]) -> Result<(), String> {
             "the proposition reads memory that is not loadable here: {}",
             crate::surface::diagnostics::describe_pure_fact(obligation, &[], &[])
         ));
-    }
-    Ok(())
-}
-
-fn refuse_unproved_conversion_bounds(
-    obligations: &[crate::kernel::ProofObligation],
-    assumptions: &PureFactContext,
-) -> Result<(), String> {
-    for obligation in obligations {
-        if !obligation.is_assumable() && !assumptions.proves(obligation.proposition()) {
-            return Err("the proposition requires an established Integer conversion bound or argument definedness".into());
-        }
     }
     Ok(())
 }

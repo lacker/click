@@ -600,6 +600,23 @@ pub(in crate::surface) fn synthesize_surface_proposition(
     )
 }
 
+/// The source spelling of one machine term, for a diagnostic that has to name
+/// the written subterm a generated condition came from.
+///
+/// This is the same bounded reconstruction [`synthesize_surface_proposition`]
+/// performs on a proposition's operands, exposed so a message can print
+/// `hi - 1` instead of `v2 - 1`. It is read-only: nothing here is offered to a
+/// proof step, so no candidate needs validating against a kernel form.
+pub(in crate::surface) fn synthesize_surface_machine_expression(
+    term: &Bitvector32Term,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Option<ContractExpression> {
+    let _scope = SurfaceSynthesisScope::enter();
+    synthesize_surface_bitvector(term, parameters, arguments, state, &BTreeMap::new())
+}
+
 pub(in crate::surface) fn synthesize_surface_proposition_with_bound_variable_names(
     proposition: &Proposition,
     parameters: &[syntax::C0Parameter],

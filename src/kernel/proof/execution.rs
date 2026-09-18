@@ -428,14 +428,80 @@ fn memory_only_adds_named_cells(
             None => {
                 let load = crate::kernel::canonical_form_of_load(base.clone(), pointer.clone());
                 if !cell_value_is_exactly_load(value, &load, pointer) {
-                    return Err(format!(
-                        "added a cell at {pointer:?} that is not the canonical load of its own pointer at the pre-rewrite snapshot"
-                    ));
+                    return Err(describe_unnamed_cell_addition(&base, pointer, value, &load));
                 }
             }
         }
     }
     Ok(())
+}
+
+/// Explains a rejected unnamed-cell addition with bounded, actionable detail.
+///
+/// Keeps the historical prefix so existing triage notes still match, then adds
+/// what the old message omitted: the held value vs the recomputed canonical
+/// load, the pre-rewrite snapshot and epoch identities (compact arena ids, not
+/// memory dumps), and whether the pointer itself embeds an inner load whose own
+/// epoch drift would cascade into this outer name. The epoch lookup is the same
+/// assumption-free memoized walk the naming itself uses, so this adds no proof
+/// search or ambient-fact scan.
+fn describe_unnamed_cell_addition(
+    base: &crate::kernel::SharedCMemory,
+    pointer: &crate::kernel::Pointer,
+    value: &CValue,
+    load: &Bitvector32Term,
+) -> String {
+    let held = truncate_debug(value, 240);
+    let expected = truncate_debug(load, 240);
+    let (base_arena, base_id) = base.arena_id();
+    let epoch_note =
+        match crate::kernel::memory_provenance::cell_epoch_for_load_variable(base, pointer) {
+            Some(epoch) => {
+                let (epoch_arena, epoch_id) = epoch.arena_id();
+                format!("epoch snapshot ({epoch_arena},{epoch_id})")
+            }
+            None => "epoch snapshot none (unwritten at a derivation root)".to_string(),
+        };
+    let mut detail = format!(
+        "added a cell at {pointer:?} that is not the canonical load of its own pointer at the pre-rewrite snapshot; \
+held {held} but canonical is {expected}; \
+pre-rewrite snapshot ({base_arena},{base_id}), {epoch_note}"
+    );
+    let embedded: Vec<String> = pointer
+        .offset
+        .scaled_values()
+        .iter()
+        .take(2)
+        .map(|term| truncate_debug(term, 120))
+        .collect();
+    if !embedded.is_empty() {
+        detail.push_str(&format!(
+            "; pointer embeds {} scaled value(s) such as {} — if that inner load's epoch drifted, this outer name drifts too",
+            pointer.offset.scaled_values().len(),
+            embedded.join(", "),
+        ));
+    }
+    detail.push_str(
+        "; the surface named this cell while unfolding and the kernel recomputed a different load variable \
+(see issues/load-variable-naming-epoch.md): the unfold is not at fault, this is a verifier naming divergence",
+    );
+    detail
+}
+
+/// Renders a value for diagnostics without risking a huge repeated
+/// internal-state dump: load terms can embed whole memory snapshots, so cap
+/// the text at `width` chars.
+fn truncate_debug<T: std::fmt::Debug>(value: &T, width: usize) -> String {
+    let shown = format!("{value:?}");
+    if shown.len() <= width {
+        shown
+    } else {
+        format!(
+            "{}…[{} chars total]",
+            &shown[..width.min(shown.len())],
+            shown.len()
+        )
+    }
 }
 
 /// Names the part of a state that differs when two states agree on memory and
