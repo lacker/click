@@ -5950,6 +5950,18 @@ impl ExecutionProofCore {
                  recursion anchor for it",
             );
         }
+        // The same requirement for the loops this execution summarized. A
+        // verified loop rule answers for its body, so a rule whose loop calls
+        // the anchored function and whose own body was stepped without the
+        // anchor is a summary that swallowed the descent. Applying such a
+        // rule is already refused; naming it here says why, instead of
+        // leaving a step that found no applicable rule.
+        if !environment.verified_loop_rules_answer_for_recursion() {
+            return Err(
+                "a verified loop rule of a function with a `decreases` measure calls that \
+                 function but was certified without its recursion anchor",
+            );
+        }
         let (paths, has_checked_entry) =
             self.checked_execution_paths(candidates, checked_function, &assumptions, None)?;
         Ok(crate::kernel::CCheckedFunctionExecution {

@@ -2141,6 +2141,14 @@ impl CExecutionEnvironment {
         self.recursion_anchor.as_deref()
     }
 
+    /// The shared anchor handle, for a certified artifact that has to record
+    /// which anchor it was produced under.
+    pub(in crate::kernel) fn recursion_anchor_handle(
+        &self,
+    ) -> Option<std::sync::Arc<CRecursionAnchor>> {
+        self.recursion_anchor.clone()
+    }
+
     #[cfg(test)]
     pub(crate) fn shares_project_storage_with(&self, other: &Self) -> bool {
         std::sync::Arc::ptr_eq(&self.functions, &other.functions)
@@ -2168,6 +2176,40 @@ impl CExecutionEnvironment {
                 .shares_storage_with(&other.variable_index)
     }
 
+    /// Whether `rule` may stand in for a loop stepped under this environment.
+    ///
+    /// A summary answers for everything its body owed. When this environment
+    /// carries a recursion anchor, a self-call inside the loop owes the
+    /// descent, and only a rule whose own body was stepped under the same
+    /// anchor has already paid it. A rule certified without it, or under a
+    /// different one, would let the summary swallow the call silently, so it
+    /// does not apply here. A loop that does not call the anchored function
+    /// owes nothing either way and is unaffected.
+    fn loop_rule_answers_for_recursion(&self, rule: &CVerifiedLoopRule) -> bool {
+        let Some(anchor) = self.recursion_anchor() else {
+            return true;
+        };
+        !crate::kernel::termination::statement_calls_function(
+            &rule.loop_statement,
+            anchor.function(),
+        ) || rule.recursion_anchor.as_deref() == Some(anchor)
+    }
+
+    /// Whether every verified loop rule here answers for the recursion this
+    /// environment anchors, so a refusal can say that rather than leaving an
+    /// unexplained inapplicable rule at the step over the loop.
+    ///
+    /// Work is this environment's own loop rules and their loop statements,
+    /// which are the certified function's own loops, and only when it declares
+    /// a measure at all; nothing project-wide is scanned.
+    pub(in crate::kernel) fn verified_loop_rules_answer_for_recursion(&self) -> bool {
+        self.recursion_anchor.is_none()
+            || self
+                .verified_loop_rules
+                .iter()
+                .all(|rule| self.loop_rule_answers_for_recursion(rule))
+    }
+
     pub(in crate::kernel) fn applicable_verified_loop_rule(
         &self,
         state: &CState,
@@ -2175,7 +2217,8 @@ impl CExecutionEnvironment {
         assumptions: &PureFactContext,
     ) -> Option<&CVerifiedLoopRule> {
         self.verified_loop_rules.iter().find(|rule| {
-            let statement_matches = rule.loop_statement == *statement;
+            let statement_matches =
+                rule.loop_statement == *statement && self.loop_rule_answers_for_recursion(rule);
             let assumptions_match = rule
                 .required_assumptions
                 .pure_facts()

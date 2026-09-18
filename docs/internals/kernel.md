@@ -275,10 +275,35 @@ refuses such an execution outright as well. What is left for the termination
 judgment is that the obligations were reachable and complete: the certified
 `CFunction` must carry the measure (the plan names only a spelling, and
 `c_verified_function_rule` binds every claim to the same `CFunction`), the
-component's only recursive edge must be the self-call, the function must not
-have an inline body, and no self-call may sit inside a loop, whose summary
-would swallow it. The last three are refusals by name; `decreases <int32
+component's only recursive edge must be the self-call, and the function must
+not have an inline body. Both are refusals by name; `decreases <int32
 parameter>` still ranks those shapes.
+
+A loop is verified as its own judgment and then applied as a summary, so a
+self-call inside one is a call no step of the function's own proof takes. The
+loop's body is certified under the same anchor instead:
+`verify_loop_execution_proofs` asks the kernel for it from the function in
+hand, before any loop is planned, so every loop of that function — nested,
+inside an `if`, or inside a `switch` — is stepped with it and a self-call in
+the body raises the same two members against the same function-entry M0. M0
+survives the loop's havoc because it is a closed term over entry symbols and
+`collect_execution_environment_variables_uncached` reserves every variable it
+names, so no fresh iteration value is handed out on top of one; a measure that
+reads memory names the entry memory snapshot, and only an invariant the user
+writes relates the iteration's reading to it.
+
+`CVerifiedLoopRule` records the anchor its own body was stepped under. The
+kernel writes that field from the environment the paths were produced in and
+there is no other way to set it, so it is a record rather than a claim. Two
+places read it: `applicable_verified_loop_rule` will not let a rule whose loop
+calls the anchored function stand in unless it carries the same anchor —
+`checked_function_execution` names that case rather than leaving an
+unexplained inapplicable rule — and the termination judgment accepts a
+self-call under a loop only when the certified rule for that loop, bound to it
+by index and executable shape, carries an anchor for this function and this
+declared component. Every loop the call sits inside must carry it, enclosing
+as well as innermost, since an enclosing summary swallows the inner one.
+Anything else is refused by name.
 
 For a structural `decreases`, the plan contains only an index into the exact entry
 resource requirements. The kernel resolves that requirement and the exact

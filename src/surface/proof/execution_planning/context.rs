@@ -60,6 +60,26 @@ pub(in crate::surface) fn verify_loop_execution_proofs(
         &assumptions_from_propositions(&requirement_facts),
     )
     .map_err(|message| ClickError::new(format!("`{label}` {message}")))?;
+    // A loop of a function that declares an expression `decreases` measure is
+    // certified under that function's recursion anchor, so a self-call in the
+    // loop body raises the same descent obligations a self-call outside one
+    // does, against the same function-entry measure. The kernel derives the
+    // anchor from the function's own contract interface -- this asks for one
+    // and cannot say what it ranks -- and the rules the loops produce record
+    // which anchor they were stepped under, so omitting this call does not
+    // quietly drop the obligation: the rule then answers for no recursion,
+    // the whole-function proof cannot apply it, and the termination judgment
+    // refuses the self-call by name.
+    let anchored_function_environment =
+        crate::kernel::c_execution_environment_with_recursion_anchor(
+            function_environment.clone(),
+            &function,
+            &initial_state,
+            &arguments,
+        )
+        .map_err(|message| ClickError::new(format!("`{label}`: {message}")))?;
+    let function_environment = &anchored_function_environment;
+
     let source_layout = SourceExecutionLayout::for_function(parsed_function)?;
     let environment = ExecutionProofEnvironment {
         initial_state: &initial_state,

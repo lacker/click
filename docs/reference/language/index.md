@@ -215,16 +215,31 @@ The same rule about fixed states applies: a function-level component may not
 mention `old(...)` or `at(...)`, because Click reads the one declared
 component at two states itself.
 
+A self-call inside a summarized loop owes the same two obligations. A loop is
+verified as its own judgment, so the descent there is owed by the loop's proof
+rather than by a step of the function's, and Click certifies every loop of a
+function that declares a measure under that function's anchor: the call in the
+body raises the same members, against the same function-entry M0. Loop phases
+read `old(...)` at the function entry too, so `old(...)` spells M0 inside a
+`preserve by { ... }` exactly as it does in the contract proof, and what
+relates the iteration's state to the entry is an invariant the user writes,
+such as `invariant n <= old(n)`. See
+`mdtests/c_decreases_pure_expression_recursion_in_loop.md`,
+`mdtests/c_decreases_pure_expression_recursion_in_havocked_loop.md`, and the
+negative `mdtests/c_decreases_pure_expression_recursion_in_loop_must_descend.md`.
+A loop whose verified rule was certified without the anchor is refused by
+name rather than summarized past: the summary would answer for a call that
+owed nothing.
+
 An expression measure currently ranks **direct self-recursion only**. The
 descent is owed at a call to the function that declared the measure, so a
 recursive component with more than one function would leave its other edges
 ranked by nothing; Click refuses such a declaration by name
 (`mdtests/c_decreases_pure_expression_rejects_mutual_recursion.md`). For the
 same reason it refuses a self-recursive `static inline` helper, whose body
-executes at each call site instead of applying a contract, and a self-call
-inside a loop, which the loop's summary swallows before any step of the
-function's proof takes it. `decreases <int32 parameter>`, whose analysis reads
-the body rather than the call steps, still ranks all three shapes.
+executes at each call site instead of applying a contract.
+`decreases <int32 parameter>`, whose analysis reads the body rather than the
+call steps, still ranks both shapes.
 
 A binder the contract already declares names the same measure without
 repeating its arguments:

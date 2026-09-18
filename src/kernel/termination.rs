@@ -3049,15 +3049,24 @@ fn termination_call_graph<'a>(
 /// * the function does not have an inline body. An inline body executes at
 ///   the call site instead of applying a contract, so no call step reads the
 ///   anchor and no obligation is emitted at all.
+/// * every loop the self-call sits inside was certified under this function's
+///   anchor. A loop is verified once as its own judgment and then applied as
+///   a summary, so a call the summary swallowed owes nothing at the step that
+///   applies it; what makes it owe the descent is that the loop's own body
+///   was stepped under the anchor. The certified [`CVerifiedLoopRule`] records
+///   which anchor that was — the kernel writes it from the environment the
+///   paths were produced in, and the surface has no way to set it — so this
+///   reads the rule, never the plan, which names only a spelling.
 ///
-/// Work is the component's own members, which is the caller's recursive-edge
-/// set; nothing ambient is scanned.
+/// Work is the component's own members and this function's own statement
+/// tree; nothing ambient is scanned.
 fn check_expression_measure_recursion(
     name: &str,
     source: &str,
     function: &CFunction,
     recursive_callees: &BTreeSet<String>,
     plans: &BTreeMap<String, &CFunctionTerminationPlan>,
+    loop_rules: &[CVerifiedLoopRule],
 ) -> Result<(), CTerminationError> {
     if function.contract_interface().recursion_measure().is_none() {
         return Err(error(format!(
@@ -3100,49 +3109,180 @@ fn check_expression_measure_recursion(
         ));
     }
     // A loop is verified once, as its own judgment, and then applied as a
-    // summary. The anchor belongs to the whole-function proof, so a self-call
-    // the loop summary swallowed is a call no step of this function's proof
-    // ever took, and the descent would be owed by nobody. Refuse it by name
-    // instead of certifying a recursion with a gap in it; `decreases
-    // <int32 parameter>`, whose analysis reads the body rather than the call
-    // steps, still ranks this shape.
-    if statement_calls_under_loop(&function.source_body, name, false) {
-        return Err(error(format!(
-            "`{name}` declares the expression `decreases` measure `{source}` and calls itself \
-             inside a loop. A loop is verified as its own judgment and then applied as a summary, \
-             so the descent at that call would be owed by no step of `{name}`'s proof. Rank this \
-             function with `decreases <int32 parameter>`, or lift the recursive call out of the \
-             loop"
-        )));
+    // summary, so a self-call the summary swallowed owes nothing at the step
+    // that applies it. What makes it owe the descent is the loop's own body
+    // having been stepped under this function's anchor, and a rule records
+    // the anchor it was produced under. Every loop the call sits inside is
+    // required to carry it, innermost and enclosing alike: an enclosing loop
+    // certified without the anchor is a summary that swallowed the inner
+    // one's, so the requirement is the same at every level and nesting needs
+    // no separate case.
+    let declared = function.contract_interface().recursion_measure();
+    let mut next_index = 0;
+    let mut enclosing = Vec::new();
+    let mut self_call_loops = BTreeSet::new();
+    self_call_loop_indices(
+        &function.source_body,
+        name,
+        &mut next_index,
+        &mut enclosing,
+        &mut self_call_loops,
+    );
+    for index in self_call_loops {
+        charge_termination_work(1);
+        // The rule is bound to this source loop the way
+        // `verified_loop_ranking_measures` binds one: by index and executable
+        // shape. Reading the shape here too keeps this check standing on its
+        // own rather than on that later pass's ordering. The source loop is
+        // looked up once per index, not once per rule.
+        let source_loop = loop_at_index(&function.source_body, index, &mut 0);
+        let anchored = loop_rules.iter().any(|rule| {
+            rule.loop_index == Some(index)
+                && rule
+                    .recursion_anchor
+                    .as_ref()
+                    .is_some_and(|anchor| anchor.ranks(name, declared))
+                && source_loop.is_some_and(|source_loop| {
+                    same_statement_shape(source_loop, &rule.loop_statement)
+                })
+        });
+        if !anchored {
+            return Err(error(format!(
+                "`{name}` declares the expression `decreases` measure `{source}` and calls itself \
+                 inside loop {index}, whose verified rule was certified without `{name}`'s \
+                 recursion anchor. A loop is verified as its own judgment and then applied as a \
+                 summary, so the descent at that call would be owed by no step of `{name}`'s \
+                 proof. Give loop {index} a `decreases` clause and a proof of its own, rank \
+                 `{name}` with `decreases <int32 parameter>`, or lift the recursive call out of \
+                 the loop"
+            )));
+        }
     }
     Ok(())
 }
 
-/// Whether `body` calls `callee` from inside a loop.
+/// Whether `statement` contains a call to `callee`, at any depth.
 ///
-/// Work is the statement tree, which is this function's own body; nothing
-/// outside it is read.
-fn statement_calls_under_loop(body: &CStatement, callee: &str, inside_loop: bool) -> bool {
+/// Work is the statement tree handed in; nothing outside it is read.
+pub(super) fn statement_calls_function(statement: &CStatement, callee: &str) -> bool {
     charge_termination_work(1);
     let both = |left: &CStatement, right: &CStatement| {
-        statement_calls_under_loop(left, callee, inside_loop)
-            || statement_calls_under_loop(right, callee, inside_loop)
+        statement_calls_function(left, callee) || statement_calls_function(right, callee)
     };
-    match body {
+    match statement {
         CStatement::Call { function_name, .. } | CStatement::CallAssign { function_name, .. } => {
-            inside_loop && function_name == callee
+            function_name == callee
         }
-        CStatement::While { body, .. } => statement_calls_under_loop(body, callee, true),
+        CStatement::While { body, .. } => statement_calls_function(body, callee),
         CStatement::Seq(left, right) => both(left, right),
         CStatement::If {
             then_branch,
             else_branch,
             ..
         } => both(then_branch, else_branch),
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => both(try_body, handler),
         CStatement::Switch { cases, .. } => cases
             .iter()
-            .any(|case| statement_calls_under_loop(&case.body, callee, inside_loop)),
-        _ => false,
+            .any(|case| statement_calls_function(&case.body, callee)),
+        CStatement::ContinueWithStep { step } => statement_calls_function(step, callee),
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Goto { .. }
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
+        | CStatement::Assign { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Throw(_)
+        | CStatement::Return(_)
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. }
+        | CStatement::Update { .. } => false,
+    }
+}
+
+/// The source loop indices of every loop in `body` that contains a call to
+/// `callee`, an enclosing loop as well as the innermost one.
+///
+/// The numbering is the one [`loop_at_index`] and [`check_loops`] use, so an
+/// index here names the same loop a certified rule's `loop_index` does. A
+/// loop inside an `if`, a `switch`, or another loop is numbered like any
+/// other, which is what keeps those shapes checked rather than skipped.
+///
+/// Work is the statement tree, which is this function's own body; nothing
+/// outside it is read.
+fn self_call_loop_indices(
+    statement: &CStatement,
+    callee: &str,
+    next_index: &mut usize,
+    enclosing: &mut Vec<usize>,
+    found: &mut BTreeSet<usize>,
+) {
+    charge_termination_work(1);
+    let mut descend = |statement: &CStatement, next_index: &mut usize| {
+        self_call_loop_indices(statement, callee, next_index, enclosing, found);
+    };
+    match statement {
+        CStatement::Call { function_name, .. } | CStatement::CallAssign { function_name, .. } => {
+            if function_name == callee {
+                found.extend(enclosing.iter().copied());
+            }
+        }
+        CStatement::While { body, .. } => {
+            let index = *next_index;
+            *next_index += 1;
+            enclosing.push(index);
+            self_call_loop_indices(body, callee, next_index, enclosing, found);
+            enclosing.pop();
+        }
+        CStatement::Seq(first, second) => {
+            descend(first, next_index);
+            descend(second, next_index);
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            descend(then_branch, next_index);
+            descend(else_branch, next_index);
+        }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => {
+            descend(try_body, next_index);
+            descend(handler, next_index);
+        }
+        CStatement::Switch { cases, .. } => {
+            for case in cases {
+                descend(&case.body, next_index);
+            }
+        }
+        CStatement::ContinueWithStep { step } => descend(step, next_index),
+        // Spelled out, as in `loop_at_index` and `check_loops`: these walks
+        // number the same loops only while they descend into the same
+        // statements, so a new statement kind must be placed in all of them.
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Goto { .. }
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
+        | CStatement::Assign { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Throw(_)
+        | CStatement::Return(_)
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. }
+        | CStatement::CopyAggregate { .. }
+        | CStatement::Update { .. } => {}
     }
 }
 
@@ -3524,6 +3664,7 @@ pub fn c_verified_function_termination_rules(
                         function,
                         &recursive_callees,
                         &plans,
+                        verified_loop_rules.get(name).map_or(&[], Vec::as_slice),
                     )?;
                 } else {
                     for member in std::iter::once(name).chain(recursive_callees.iter()) {
@@ -5034,15 +5175,171 @@ mod local_descent_tests {
         assert!(error.message.contains("inline body"), "{error:?}");
     }
 
-    /// A loop is verified once and then applied as a summary, so a self-call
-    /// inside one is a call no step of this function's proof takes.
+    /// The `decreases` component `recursive_rule` declares, which is also the
+    /// one its ranked loop is ranked by.
+    fn declared_component() -> CRankingComponent {
+        CRankingComponent::Pure {
+            source: "level(n)".to_string(),
+            expression: SpecExpression::CExpression(CExpression::Variable("n".to_string())),
+        }
+    }
+
+    /// A rule for `drain`, whose self-call sits inside one summarized loop
+    /// ranked by the same component. `loop_measures` is the plan side of that
+    /// ranking, so the two agree and the loop is not refused as unranked.
+    fn self_call_in_loop_rule(name: &str) -> CVerifiedFunctionRule {
+        let body = CStatement::Seq(
+            Arc::new(CStatement::Skip),
+            Arc::new(CStatement::While {
+                condition: crate::kernel::c_int32_literal(1),
+                invariant: vec![Proposition::ConditionIs(
+                    ConditionTerm::Constant(true),
+                    true,
+                )],
+                invariant_checks: Vec::new(),
+                effect_checks: Vec::new(),
+                resource_specs: Vec::new(),
+                ranking_measures: vec![declared_component()],
+                structural_measure: None,
+                do_while: false,
+                body: Box::new(crate::kernel::c_call(name, Vec::new())),
+            }),
+        );
+        CVerifiedFunctionRule {
+            function: CFunction::new(CType::Void, name, Vec::new(), body)
+                .with_recursion_measure(declared_component()),
+            loop_semantics: CLoopSemantics::ApplyVerifiedRules,
+        }
+    }
+
+    /// The plan for [`self_call_in_loop_rule`]: the expression measure for the
+    /// recursion, and the same component as loop 0's own ranking.
+    fn self_call_in_loop_plan(name: &str) -> CFunctionTerminationPlan {
+        CFunctionTerminationPlan {
+            loop_measures: BTreeMap::from([(
+                0,
+                CLoopTerminationMeasure::Ranking(vec![declared_component().key()]),
+            )]),
+            ..expression_plan(name)
+        }
+    }
+
+    /// The certified rule for that loop, carrying `anchor`.
+    ///
+    /// Only the kernel writes `recursion_anchor`, from the environment the
+    /// paths were produced in; the struct is assembled directly here because
+    /// this test is inside the kernel.
+    fn loop_rule_for(function: &CFunction, anchor: Option<CRecursionAnchor>) -> CVerifiedLoopRule {
+        let CStatement::Seq(_, loop_statement) = &function.source_body else {
+            unreachable!("`self_call_in_loop_rule` builds a sequence");
+        };
+        CVerifiedLoopRule {
+            symbolic_entry_state: CState::default(),
+            loop_statement: loop_statement.as_ref().clone(),
+            loop_index: Some(0),
+            required_assumptions: PureFactContext::new(),
+            paths: Vec::new(),
+            composite_resource_definitions: Vec::new(),
+            recursion_anchor: anchor.map(Arc::new),
+        }
+    }
+
+    fn anchor_for(name: &str) -> CRecursionAnchor {
+        CRecursionAnchor {
+            function: name.to_string(),
+            component: declared_component(),
+            measure: Bitvector32Term::Constant(7),
+            entry_obligations: Vec::new(),
+        }
+    }
+
+    fn check_with_loop_rules(
+        rules: &[CVerifiedFunctionRule],
+        plans: &[CFunctionTerminationPlan],
+        loop_rules: &BTreeMap<String, Vec<CVerifiedLoopRule>>,
+    ) -> Result<CTerminationVerdicts, CTerminationError> {
+        c_verified_function_termination_rules(
+            rules,
+            plans,
+            loop_rules,
+            &[],
+            &c_termination_height_plan(rules, &[]),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        )
+    }
+
+    /// A loop is verified once and then applied as a summary, so the descent
+    /// at a self-call inside it is owed by the loop's own judgment. A rule
+    /// certified under this function's anchor is one whose body raised those
+    /// obligations, and the summary exists only because they were discharged.
     #[test]
-    fn an_expression_measure_refuses_a_self_call_inside_a_loop() {
+    fn an_expression_measure_ranks_a_self_call_under_an_anchored_loop() {
+        let rules = [self_call_in_loop_rule("drain")];
+        let loop_rules = BTreeMap::from([(
+            "drain".to_string(),
+            vec![loop_rule_for(&rules[0].function, Some(anchor_for("drain")))],
+        )]);
+        let verdicts =
+            check_with_loop_rules(&rules, &[self_call_in_loop_plan("drain")], &loop_rules)
+                .expect("the plan checks");
+        assert_eq!(terminating(&verdicts), BTreeSet::from(["drain"]));
+    }
+
+    /// Without the anchor the loop's body raised no descent obligation, so
+    /// the summary answers for a call that was never ranked. The judgment
+    /// reads the certified rule, not the plan, and refuses it by name.
+    #[test]
+    fn an_expression_measure_refuses_a_self_call_under_an_unanchored_loop() {
+        let rules = [self_call_in_loop_rule("drain")];
+        let loop_rules = BTreeMap::from([(
+            "drain".to_string(),
+            vec![loop_rule_for(&rules[0].function, None)],
+        )]);
+        let error = check_with_loop_rules(&rules, &[self_call_in_loop_plan("drain")], &loop_rules)
+            .expect_err("an unanchored loop rule must not check");
+        assert!(
+            error
+                .message
+                .contains("certified without `drain`'s recursion anchor"),
+            "{error:?}"
+        );
+    }
+
+    /// An anchor for another function, or for another measure, ranks nothing
+    /// here: the judgment binds the anchor to this certified function and the
+    /// measure its own interface declares.
+    #[test]
+    fn a_loop_anchored_for_another_function_does_not_rank_this_recursion() {
+        let rules = [self_call_in_loop_rule("drain")];
+        let loop_rules = BTreeMap::from([(
+            "drain".to_string(),
+            vec![loop_rule_for(&rules[0].function, Some(anchor_for("other")))],
+        )]);
+        let error = check_with_loop_rules(&rules, &[self_call_in_loop_plan("drain")], &loop_rules)
+            .expect_err("an anchor for another function must not check");
+        assert!(
+            error
+                .message
+                .contains("certified without `drain`'s recursion anchor"),
+            "{error:?}"
+        );
+    }
+
+    /// With no verified rule at all there is no loop judgment that could have
+    /// owed the descent, and the self-call is refused for the same reason.
+    #[test]
+    fn an_expression_measure_refuses_a_self_call_under_an_uncertified_loop() {
         let rules = [recursive_rule("drain", &[], true, false, true)];
-        let plan = c_termination_height_plan(&rules, &[]);
-        let error = check(&rules, &[expression_plan("drain")], &plan, &[])
-            .expect_err("a self-call under a loop must not check");
-        assert!(error.message.contains("inside a loop"), "{error:?}");
+        let error = check_with_loop_rules(&rules, &[expression_plan("drain")], &BTreeMap::new())
+            .expect_err("a self-call under a loop with no rule must not check");
+        assert!(
+            error
+                .message
+                .contains("certified without `drain`'s recursion anchor"),
+            "{error:?}"
+        );
     }
 
     /// `decreases <parameter>` is untouched: it still resolves the index

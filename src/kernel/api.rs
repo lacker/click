@@ -3155,7 +3155,13 @@ pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and
             path
         })
         .collect();
-    symbolic_c_statement_execution_with_loop_rule(state, statement, assumptions, paths)
+    symbolic_c_statement_execution_with_loop_rule(
+        state,
+        statement,
+        assumptions,
+        paths,
+        &environment,
+    )
 }
 
 fn statement_outcome_memory(outcome: &CStatementOutcome) -> Option<&CMemory> {
@@ -3264,7 +3270,13 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
             );
         }
     };
-    symbolic_c_statement_execution_with_loop_rule(state, statement, assumptions, paths)
+    symbolic_c_statement_execution_with_loop_rule(
+        state,
+        statement,
+        assumptions,
+        paths,
+        &environment,
+    )
 }
 
 fn symbolic_c_statement_execution_with_loop_rule(
@@ -3272,6 +3284,7 @@ fn symbolic_c_statement_execution_with_loop_rule(
     statement: CStatement,
     assumptions: PureFactContext,
     paths: Vec<CStatementExecutionPath>,
+    environment: &CExecutionEnvironment,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let loop_rule = (matches!(statement, CStatement::While { .. })
         && paths.iter().all(|path| {
@@ -3287,6 +3300,12 @@ fn symbolic_c_statement_execution_with_loop_rule(
         required_assumptions: assumptions.clone(),
         paths: paths.clone(),
         composite_resource_definitions: Vec::new(),
+        // The rule records the anchor its own body was stepped under. A
+        // self-call in that body raised the descent obligations exactly when
+        // this is set, and the rule was only formed because every obligation
+        // on its paths was discharged or assumable, so this is the kernel's
+        // own note of what the summary already paid for.
+        recursion_anchor: environment.recursion_anchor_handle(),
     });
     let paths = paths
         .into_iter()

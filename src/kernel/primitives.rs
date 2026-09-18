@@ -2886,6 +2886,15 @@ impl CRecursionAnchor {
     pub(super) fn entry_obligations(&self) -> &[ProofObligation] {
         &self.entry_obligations
     }
+
+    /// Whether this anchor ranks `function` by `measure`.
+    ///
+    /// The certified [`CFunction`] is what a judgment has in hand, and its
+    /// interface is where the anchor's component was read from, so comparing
+    /// both is what binds an anchor to one declared measure of one function.
+    pub(super) fn ranks(&self, function: &str, measure: Option<&CRankingComponent>) -> bool {
+        self.function == function && measure == Some(&self.component)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2940,6 +2949,19 @@ pub struct CVerifiedLoopRule {
     pub(super) required_assumptions: PureFactContext,
     pub(super) paths: Vec<CStatementExecutionPath>,
     pub(super) composite_resource_definitions: Vec<CCompositeResourceDefinition>,
+    /// The recursion anchor the loop's body was stepped under, when the
+    /// function this loop belongs to declares an expression `decreases`
+    /// measure.
+    ///
+    /// The kernel writes this from the environment the paths above were
+    /// produced in; there is no other way to set it, so it is a record of what
+    /// the body actually owed rather than a claim about it. A self-call inside
+    /// the body raised its descent obligations exactly when this is `Some`,
+    /// and the rule exists at all only because every obligation on its paths
+    /// was discharged or assumable. Applying the rule and the termination
+    /// judgment both read it; see
+    /// [`CExecutionEnvironment::applicable_verified_loop_rule`].
+    pub(super) recursion_anchor: Option<std::sync::Arc<CRecursionAnchor>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
