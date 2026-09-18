@@ -421,17 +421,44 @@ fn integer_surface_add(
 /// `0 == 0`, changing the signed relation carried by an Add node.  Reusing an
 /// already lowered child expression gives `e <= e`, whose affine difference
 /// is still exactly zero while preserving the non-strict relation.
+///
+/// The reused expression must not itself be a constant.  An addend such as
+/// `parity >= 0` orders as `0 <= parity`, so taking its first operand printed
+/// the very literal proposition this shape exists to avoid, and the Add node
+/// the planner had already accepted failed to re-verify.  The two addends
+/// cancel, so any one of their four operands names a value whose difference
+/// with itself is zero; take the first that direct lowering will not fold.
 fn integer_surface_zero_claim(
     left: &ClickProposition,
     right: &ClickProposition,
 ) -> Option<ClickProposition> {
-    let (left_left, _, _) = integer_surface_ordered_parts(left)?;
-    let _ = integer_surface_ordered_parts(right)?;
+    let (left_left, _, left_right) = integer_surface_ordered_parts(left)?;
+    let (right_left, _, right_right) = integer_surface_ordered_parts(right)?;
+    let witness = [left_left, left_right, right_left, right_right]
+        .into_iter()
+        .find(|expression| !surface_expression_is_constant(expression))?;
     Some(ClickProposition::Comparison {
-        left: left_left.clone(),
+        left: witness.clone(),
         operator: ComparisonOperator::LessEqual,
-        right: left_left,
+        right: witness,
     })
+}
+
+/// Whether direct lowering reads this expression as a literal constant.
+///
+/// A snapshot does not change a literal's value, so `at(<point>, 0)` folds
+/// exactly as a bare `0` does; look through one.  This is a syntactic test on
+/// one already built expression, not a lowering.
+fn surface_expression_is_constant(expression: &ContractExpression) -> bool {
+    match expression {
+        ContractExpression::IntegerLiteral(_) => true,
+        ContractExpression::CFragment(crate::kernel::CExpression::Value(_)) => true,
+        ContractExpression::Negate(inner) => surface_expression_is_constant(inner),
+        ContractExpression::At { expression, .. } | ContractExpression::Old(expression) => {
+            surface_expression_is_constant(expression)
+        }
+        _ => false,
+    }
 }
 
 fn integer_surface_equality_to_less_equal(
