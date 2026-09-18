@@ -1812,7 +1812,7 @@ fn validate_nested_scope(
         .values()
         .map(|(name, _)| name.clone())
         .collect::<std::collections::BTreeSet<_>>();
-    let mut local = None;
+    let mut locals = Vec::new();
     for statement in body {
         if let CppStatement::Declare {
             local: candidate,
@@ -1820,9 +1820,9 @@ fn validate_nested_scope(
             span,
         } = statement
         {
-            if local.is_some() {
+            if locals.len() >= 2 {
                 return Err(format!(
-                    "nested scope in `{function_name}` declares more than one automatic local"
+                    "nested scope in `{function_name}` declares more than two automatic locals"
                 ));
             }
             span.validate(logical_source)?;
@@ -1872,25 +1872,25 @@ fn validate_nested_scope(
                     candidate.name
                 ));
             }
-            local = Some(candidate.clone());
+            locals.push(candidate.clone());
         } else {
             statement.validate(&places, records, logical_source)?;
         }
     }
-    let Some(local) = local else {
+    if locals.is_empty() {
         return Err(format!(
-            "nested scope in `{function_name}` must declare exactly one destructible object"
+            "nested scope in `{function_name}` must declare at least one destructible object"
         ));
-    };
+    }
     let mut return_cleanup_locals = outer_cleanup_locals.to_vec();
-    return_cleanup_locals.push(local.clone());
+    return_cleanup_locals.extend(locals.iter().cloned());
     validate_return_cleanups(body, function_name, &return_cleanup_locals)?;
     for cleanup in cleanups {
         cleanup.validate(&places, records, logical_source)?;
     }
-    if !return_cleanups_match(cleanups, std::slice::from_ref(&local)) {
+    if !return_cleanups_match(cleanups, &locals) {
         return Err(format!(
-            "nested scope in `{function_name}` must destroy its local exactly once on fallthrough"
+            "nested scope in `{function_name}` must destroy every local exactly once in reverse construction order on fallthrough"
         ));
     }
     Ok(())

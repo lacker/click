@@ -1232,11 +1232,6 @@ fn scalar_int32_profile_rejects_broader_guarded_try_shapes() {
     assert!(cpp.source.contains(declaration));
     let cases = [
         (
-            "two_guards",
-            "        Restore guard(&value);\n        Restore second(&value);\n        helper(should_throw);",
-            "requires exactly one destructible object",
-        ),
-        (
             "late_guard",
             "        helper(should_throw);\n        Restore guard(&value);",
             "guard construction first",

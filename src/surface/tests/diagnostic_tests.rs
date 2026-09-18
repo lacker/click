@@ -764,3 +764,34 @@ fn loan_refusal_diagnostic_renders_a_range_subject_without_ledger_state() {
     assert!(!rendered.contains("CMemoryRange {"), "{rendered}");
     assert!(rendered.len() < 1024, "{}", rendered.len());
 }
+
+/// Two distinct loads over the same pointer used to render identically
+/// (`left side evaluated to load(p[0]), right side evaluated to load(p[0])`),
+/// which reads as an unprovable `x == x`. The message now names the actual
+/// obligation instead: the loads live in different memory snapshots and must
+/// be equated across the write in between.
+#[test]
+fn identical_load_renders_name_distinct_snapshot_loads() {
+    let c_source = r#"
+            int32 sym_index_clobber(int32* p, int32 i) {
+                p[i] = 7;
+                return p[0];
+            }
+        "#;
+    let click_source = r#"
+            verifying "sym_index_clobber.c";
+
+            int32 sym_index_clobber(int32* p, int32 i) {
+                owns p[0..2];
+                requires 0 <= i and i < 2;
+                ensures result == old(p[0]) by auto;
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("sym_index_clobber.c", c_source)])
+        .expect_err("a symbolically-indexed write must leave the old-value goal open");
+    let message = error.message();
+    assert!(message.contains("both sides evaluate to"), "{message}");
+    assert!(message.contains("distinct kernel loads"), "{message}");
+    assert!(!message.contains("left side evaluated to"), "{message}");
+}
