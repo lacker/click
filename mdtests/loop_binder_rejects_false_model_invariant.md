@@ -1,8 +1,8 @@
 # A loop binder's model invariant is checked at the back edge
 
 The body increments the counted cell and folds the counter with the model that
-write produced. The invariant claims the model never changes, so the back edge
-refuses the iteration.
+write produced, `old(c.count) + 1`. The invariant claims the model never
+changes, so the back edge refuses the iteration.
 
 ```c filename=loop_binder_rejects_false_model_invariant.c
 struct cell { int32 value; };
@@ -46,7 +46,7 @@ void bump_n(struct cell* p, int32 n) {
             unfold(c);
             step();
             step();
-            let c = fold(counter(p), { count: old(c.count) + i });
+            let c = fold(counter(p), { count: old(c.count) + 1 });
             close_invariants();
         }
     }

@@ -8,6 +8,10 @@ cell it owns, and folds it again with the new model, so the back edge finds a
 the loop, `c` is the final instance and the negated guard turns the invariant
 into the postcondition.
 
+The head's model `c.count` is an arbitrary value of its own, so before touching
+the cell the body states what the invariants make it: `c.count == i`. Nothing
+else bounds the cell that the increment writes.
+
 ```c filename=loop_binder_counter_model.c
 struct cell { int32 value; };
 
@@ -48,6 +52,7 @@ void bump_n(struct cell* p, int32 n) {
 
         initialize by simp;
         preserve by {
+            have c.count == i by { simp() using { c.count == old(c.count) + i; old(c.count) == 0; } }
             unfold(c);
             step();
             step();

@@ -401,8 +401,7 @@ fn c_loop_preservation_contexts_with_mode(
     }
     collect_c_statement_bitvector_variables(body, &mut existing_variables);
     collect_assumption_variables(assumptions, &mut existing_variables);
-    let mut variables =
-        KernelVariableGenerator::fresh_for(budget.next_kernel_variable, existing_variables);
+    let mut variables = KernelVariableGenerator::fresh_for_execution(existing_variables);
     let head = prepare_loop_top_state(
         loop_entry_state,
         effect_checks,
@@ -2940,7 +2939,6 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_r
 }
 
 fn statement_kernel_variables(
-    lower_bound: u64,
     state: &CState,
     statement: &CStatement,
     assumptions: &PureFactContext,
@@ -2950,8 +2948,7 @@ fn statement_kernel_variables(
     collect_c_state_bitvector_variables(state, &mut existing);
     collect_c_statement_bitvector_variables(statement, &mut existing);
     collect_assumption_variables(assumptions, &mut existing);
-    KernelVariableGenerator::fresh_for_with_shared_reservations(
-        lower_bound,
+    KernelVariableGenerator::fresh_for_execution_with_shared_reservations(
         existing,
         execution_environment_variable_index(environment),
     )
@@ -2965,13 +2962,7 @@ pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
-    let mut variables = statement_kernel_variables(
-        budget.next_kernel_variable,
-        &state,
-        &statement,
-        &assumptions,
-        &environment,
-    );
+    let mut variables = statement_kernel_variables(&state, &statement, &assumptions, &environment);
     let execution = execute_c_statement_verification_paths(
         &state,
         &statement,
@@ -2981,7 +2972,6 @@ pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and
         budget,
         &mut variables,
     );
-    budget.next_kernel_variable = budget.next_kernel_variable.max(variables.next);
     let paths = match execution {
         Ok(paths) => paths,
         Err(limit) => {
@@ -3082,13 +3072,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
             None,
         );
     };
-    let mut variables = statement_kernel_variables(
-        budget.next_kernel_variable,
-        &state,
-        &statement,
-        &assumptions,
-        &environment,
-    );
+    let mut variables = statement_kernel_variables(&state, &statement, &assumptions, &environment);
     let execution = execute_c_while_exit_paths_with_proven_phases(
         &state,
         condition,
@@ -3110,7 +3094,6 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         &mut variables,
         *do_while,
     );
-    budget.next_kernel_variable = budget.next_kernel_variable.max(variables.next);
     let paths = match execution {
         Ok(paths) => paths,
         Err(limit) => {

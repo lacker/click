@@ -4,6 +4,10 @@ The body unfolds the counter, writes the cell, and never folds it again. The
 loop declared `owns c: counter(p);`, so the back edge looks for that instance
 and refuses the iteration by name.
 
+The head's model `c.count` is an arbitrary value of its own, so before touching
+the cell the body states what the invariants make it: `c.count == i`. Nothing
+else bounds the cell that the increment writes.
+
 ```c filename=loop_binder_rejects_missing_instance.c
 struct cell { int32 value; };
 
@@ -43,6 +47,7 @@ void bump_n(struct cell* p, int32 n) {
 
         initialize by simp;
         preserve by {
+            have c.count == i by { simp() using { c.count == old(c.count) + i; old(c.count) == 0; } }
             unfold(c);
             step();
             step();

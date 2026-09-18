@@ -2172,13 +2172,11 @@ fn execute_verified_function_applications(
             existing_variables
         },
     );
-    let mut variables =
-        KernelVariableGenerator::fresh_for(budget.next_kernel_variable, existing_variables);
-    let memory_identity = variables.next();
-    let result_identity = variables.next();
-    let exceptional_payload_identity =
-        (!application.interface.exceptional_signature().is_empty()).then(|| variables.next());
-    budget.next_kernel_variable = variables.next;
+    let mut variables = KernelVariableGenerator::fresh_for_execution(existing_variables);
+    let memory_identity = variables.next_in(budget);
+    let result_identity = variables.next_in(budget);
+    let exceptional_payload_identity = (!application.interface.exceptional_signature().is_empty())
+        .then(|| variables.next_in(budget));
     let mut paths = Vec::new();
     'arguments: for arguments_path in evaluate_c_arguments_paths(
         caller_state,
@@ -2426,9 +2424,7 @@ fn execute_verified_function_applications(
                 .fields()
                 .iter()
                 .map(|(_, ty)| {
-                    variables.next = budget.next_kernel_variable;
-                    let variable = variables.next();
-                    budget.next_kernel_variable = variables.next;
+                    let variable = variables.next_in(budget);
                     match ty {
                         ResourceFieldType::Integer => {
                             AlgebraicValue::Integer(IntegerTerm::Variable(variable))
@@ -2540,9 +2536,7 @@ fn execute_verified_function_applications(
                     .fields()
                     .iter()
                     .map(|(_, ty)| {
-                        variables.next = budget.next_kernel_variable;
-                        let variable = variables.next();
-                        budget.next_kernel_variable = variables.next;
+                        let variable = variables.next_in(budget);
                         match ty {
                             ResourceFieldType::Integer => {
                                 AlgebraicValue::Integer(IntegerTerm::Variable(variable))

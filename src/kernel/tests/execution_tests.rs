@@ -1270,13 +1270,13 @@ fn statement_checks_share_one_execution_environment_variable_index() {
     let indexed = execution_environment_variable_index(&environment);
     assert!(indexed.contains(&reserved));
     assert_eq!(environment.variable_index.build_count(), 1);
-    let mut generator = KernelVariableGenerator::fresh_for_with_shared_reservations(
-        1_000_000,
+    let mut budget = ExecutionBudget::new();
+    let mut generator = KernelVariableGenerator::fresh_for_execution_with_shared_reservations(
         BTreeSet::from([Variable(1_000_001)]),
         indexed,
     );
     assert_eq!(
-        generator.next(),
+        generator.next_in(&mut budget),
         Variable(1_000_002),
         "fresh variables must avoid both shared environment and local reservations"
     );
@@ -2208,4 +2208,47 @@ fn guard_path_disjunction_has_nothing_to_export_without_two_stating_paths() {
         crate::kernel::loops::guard_path_disjunction(std::slice::from_ref(&vec![a_nonzero])),
         None
     );
+}
+
+/// A loop head invents two unrelated things: an arbitrary value for every
+/// local the body modifies, drawn from the execution's fresh-name stream, and
+/// an arbitrary model for every resource instance the loop re-binds, drawn
+/// from the execution budget. Those are one allocator. When they were two
+/// streams over the same range they both started at `v1000000`, so the
+/// havocked `i` and the re-bound binder's `c.rank` were literally the same
+/// kernel variable and `have c.rank == i by { simp(); }` closed with nothing
+/// relating them (mdtest `loop_resource_binder_field_is_not_a_local`).
+#[test]
+fn a_rebound_binder_field_never_reuses_a_havocked_local_variable() {
+    use crate::kernel::functions::arbitrary_resource_instance_fields;
+
+    let mut budget = ExecutionBudget::new();
+    let mut variables = KernelVariableGenerator::fresh_for_execution(BTreeSet::new());
+    let schema = ResourceFieldSchema::new(vec![(
+        "rank".to_string(),
+        ResourceFieldType::C(CType::Int32),
+    )])
+    .expect("one int32 model field");
+
+    let mut issued = BTreeSet::new();
+    for _ in 0..4 {
+        let local = variables.next_in(&mut budget);
+        assert!(
+            issued.insert(local),
+            "the loop-local havoc stream reissued {local:?}"
+        );
+        let fields = arbitrary_resource_instance_fields(&schema, &mut budget);
+        let [AlgebraicValue::C(CValue::Int32(Bitvector32Term::Variable(field)))] = fields.as_ref()
+        else {
+            panic!("an int32 model field is one symbolic int32: {fields:?}");
+        };
+        assert_ne!(
+            local, *field,
+            "a re-bound binder's model field took the same kernel variable as a havocked local"
+        );
+        assert!(
+            issued.insert(*field),
+            "a re-bound binder's model field reused {field:?}"
+        );
+    }
 }

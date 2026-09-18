@@ -5,6 +5,10 @@ loop binder the same way the head did — the one owned `counter(p)` — so `c`
 names the instance the body called `d`, and the invariants are checked against
 that instance's fresh model. No binder map is written anywhere.
 
+The head's model `c.count` is an arbitrary value of its own, so before touching
+the cell the body states what the invariants make it: `c.count == i`. Nothing
+else bounds the cell that the increment writes.
+
 ```c filename=loop_binder_rebinds_by_arguments.c
 struct cell { int32 value; };
 
@@ -45,6 +49,7 @@ void bump_n(struct cell* p, int32 n) {
 
         initialize by simp;
         preserve by {
+            have c.count == i by { simp() using { c.count == old(c.count) + i; old(c.count) == 0; } }
             unfold(c);
             step();
             step();

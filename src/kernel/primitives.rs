@@ -6369,44 +6369,79 @@ pub(super) struct CArgumentsPath {
     pub(super) obligations: Vec<ProofObligation>,
 }
 
+/// Where a fresh-identity stream takes the counter it hands out from.
+///
+/// A proof state has exactly one such counter. `Local` is a stream over
+/// terms the caller already holds — a substitution, an instantiation, a case
+/// partition — where the reserved set is everything those terms mention and
+/// no other allocator runs against the same state while it lives.
+///
+/// `Execution` is the stream of one symbolic C execution, and its counter is
+/// that execution's [`ExecutionBudget`]. The loop rule's havoc of modified
+/// locals, resource-model field havoc, heap allocation, opaque call results
+/// and load minting all allocate from it, so no two of them can hand the
+/// same identity to two different things: a re-bound loop binder's model
+/// field cannot collide with the local the loop havocs. It also keeps the
+/// proof core's freshness probe honest, which assumes everything the kernel
+/// has issued lies below `next_kernel_variable` rather than rescanning.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum KernelVariableCounter {
+    Local(u64),
+    Execution,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct KernelVariableGenerator {
-    pub(super) next: u64,
+    counter: KernelVariableCounter,
     reserved: BTreeSet<Variable>,
     shared_reserved: Option<Arc<BTreeSet<Variable>>>,
 }
 
 impl KernelVariableGenerator {
-    /// Build the deterministic fresh-name stream used by both planning and
-    /// certificate validation. Given the same lower bound and reserved set, the
-    /// first available identifier and every successor are identical; callers
-    /// carry `next` across proof steps so a check never relies on accidental
-    /// equality with an independently chosen symbolic name.
+    /// Build the deterministic term-local fresh-name stream used by both
+    /// planning and certificate validation. Given the same lower bound and
+    /// reserved set, the first available identifier and every successor are
+    /// identical, so a check never relies on accidental equality with an
+    /// independently chosen symbolic name.
     pub(super) fn fresh_for(lower_bound: u64, existing: BTreeSet<Variable>) -> Self {
         Self {
-            next: lower_bound,
+            counter: KernelVariableCounter::Local(lower_bound),
             reserved: existing,
             shared_reserved: None,
         }
     }
 
-    pub(super) fn fresh_for_with_shared_reservations(
-        lower_bound: u64,
+    /// The fresh-name stream of one symbolic C execution. It reserves
+    /// `existing` on top of the execution's own counter, and every identity
+    /// it issues advances that counter, so it is the same allocator as every
+    /// other kernel allocation made under the same budget.
+    pub(super) fn fresh_for_execution(existing: BTreeSet<Variable>) -> Self {
+        Self {
+            counter: KernelVariableCounter::Execution,
+            reserved: existing,
+            shared_reserved: None,
+        }
+    }
+
+    pub(super) fn fresh_for_execution_with_shared_reservations(
         existing: BTreeSet<Variable>,
         shared_reserved: Arc<BTreeSet<Variable>>,
     ) -> Self {
         Self {
-            next: lower_bound,
+            counter: KernelVariableCounter::Execution,
             reserved: existing,
             shared_reserved: Some(shared_reserved),
         }
     }
 
-    pub(super) fn next(&mut self) -> Variable {
-        let start = self.next;
+    /// One identity from `counter` that neither this stream nor its shared
+    /// reservations have handed out, advancing `counter` past it. Cost is one
+    /// reserved-set probe per candidate; the counter itself is O(1).
+    fn allocate_from(&mut self, counter: &mut u64) -> Variable {
+        let start = *counter;
         loop {
-            let variable = Variable(self.next);
-            self.next = self.next.wrapping_add(1);
+            let variable = Variable(*counter);
+            *counter = counter.wrapping_add(1);
             let shared_contains = self
                 .shared_reserved
                 .as_ref()
@@ -6415,9 +6450,33 @@ impl KernelVariableGenerator {
                 return variable;
             }
             assert!(
-                self.next != start,
+                *counter != start,
                 "all symbolic variable identifiers are already reserved"
             );
         }
+    }
+
+    pub(super) fn next(&mut self) -> Variable {
+        let KernelVariableCounter::Local(start) = self.counter else {
+            panic!("an execution's fresh-variable stream must allocate through its budget");
+        };
+        let mut counter = start;
+        let variable = self.allocate_from(&mut counter);
+        self.counter = KernelVariableCounter::Local(counter);
+        variable
+    }
+
+    /// One identity from the execution's single counter. Using the budget is
+    /// what makes this stream and every other allocation under the same
+    /// budget one allocator rather than two overlapping ones.
+    pub(super) fn next_in(&mut self, budget: &mut ExecutionBudget) -> Variable {
+        assert!(
+            matches!(self.counter, KernelVariableCounter::Execution),
+            "a term-local fresh-variable stream must not allocate from an execution budget"
+        );
+        let mut counter = budget.next_kernel_variable;
+        let variable = self.allocate_from(&mut counter);
+        budget.next_kernel_variable = counter;
+        variable
     }
 }

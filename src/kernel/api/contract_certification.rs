@@ -1825,7 +1825,7 @@ pub(super) fn prove_symbolic_c_function_verification_paths(
             existing
         },
     );
-    let mut variables = KernelVariableGenerator::fresh_for(budget.next_kernel_variable, existing);
+    let mut variables = KernelVariableGenerator::fresh_for_execution(existing);
     let paths = match crate::instrumentation::measure_operation(
         function.name(),
         "independent kernel execution",
