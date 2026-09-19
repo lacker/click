@@ -1768,36 +1768,88 @@ fn canonical_multiply(left: Bitvector32Term, right: Bitvector32Term) -> Bitvecto
     }
 }
 
+/// The largest element count a range of `element_width`-byte elements may have
+/// and still name a valid 32-bit byte extent. This is the bound the `fits`
+/// guard below states, and the one definition of it: a rule that needs the
+/// same bound reads it here rather than recomputing the division.
+pub(crate) fn memory_range_element_count_limit(element_width: u32) -> u32 {
+    assert!(element_width > 0, "memory element width must be positive");
+    u32::MAX / element_width
+}
+
+/// Whether a logical element range is usable as a 32-bit physical byte
+/// extent, and what it takes.
+///
+/// Constant endpoints are decided here. Symbolic ones carry the two side
+/// conditions a caller must establish. One definition, so a constant range and
+/// a symbolic one cannot disagree about what fits.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum MemoryRangeExtent {
+    /// Constant endpoints forming a forward range that fits: nothing to prove.
+    ConstantValid,
+    /// Constant endpoints that do not. `element_count` is the true difference
+    /// `end - start` in `i64`, which is negative for a reversed range, and
+    /// `byte_limit` is the largest byte extent a `u32` count can name.
+    ConstantInvalid { element_count: i64, byte_limit: u32 },
+    /// Symbolic endpoints: these propositions are the side conditions.
+    Guards(Vec<Proposition>),
+}
+
 /// The side conditions needed before a logical element range can be used as
 /// a 32-bit physical byte extent. Ranges must be forward and fit in `u32`
 /// bytes after scaling by their element width.
-pub(crate) fn memory_range_byte_count_guards(
+pub(crate) fn memory_range_byte_count_extent(
     start: Bitvector32Term,
     end: Bitvector32Term,
     element_width: u32,
-) -> Vec<Proposition> {
+) -> MemoryRangeExtent {
     assert!(element_width > 0, "memory element width must be positive");
     if let (Some(start), Some(end)) = (start.as_const(), end.as_const()) {
-        let valid = (end as i32) >= (start as i32)
-            && u64::from(end - start) <= u64::from(u32::MAX / element_width);
-        if valid {
-            return Vec::new();
+        // The endpoints are `int32` values held as `u32` bits. Take their true
+        // difference in `i64`: subtracting the bit patterns underflows for a
+        // negative start, which panicked here in debug and wrapped silently in
+        // release, admitting a range that does not fit as a valid extent. The
+        // bound below is the same one the symbolic `fits` guard states, since
+        // `count <= u32::MAX / w` and `count * w <= u32::MAX` agree on
+        // nonnegative integers.
+        let element_count = i64::from(end as i32) - i64::from(start as i32);
+        let byte_count = element_count.saturating_mul(i64::from(element_width));
+        if element_count >= 0 && byte_count <= i64::from(u32::MAX) {
+            return MemoryRangeExtent::ConstantValid;
         }
-        return vec![Proposition::ConditionIs(
-            ConditionTerm::Constant(false),
-            true,
-        )];
+        return MemoryRangeExtent::ConstantInvalid {
+            element_count,
+            byte_limit: u32::MAX,
+        };
     }
     let forward = ConditionTerm::signed_less_equal(start.clone(), end.clone());
     let element_count = canonical_subtract(end, start);
     let fits = ConditionTerm::unsigned_less_equal(
         element_count,
-        Bitvector32Term::Constant(u32::MAX / element_width),
+        Bitvector32Term::Constant(memory_range_element_count_limit(element_width)),
     );
-    vec![
+    MemoryRangeExtent::Guards(vec![
         Proposition::ConditionIs(forward, true),
         Proposition::ConditionIs(fits, true),
-    ]
+    ])
+}
+
+/// [`memory_range_byte_count_extent`] as a flat guard list: an invalid
+/// constant range becomes the impossible guard, which refuses wherever the
+/// caller discharges guards.
+pub(crate) fn memory_range_byte_count_guards(
+    start: Bitvector32Term,
+    end: Bitvector32Term,
+    element_width: u32,
+) -> Vec<Proposition> {
+    match memory_range_byte_count_extent(start, end, element_width) {
+        MemoryRangeExtent::ConstantValid => Vec::new(),
+        MemoryRangeExtent::ConstantInvalid { .. } => vec![Proposition::ConditionIs(
+            ConditionTerm::Constant(false),
+            true,
+        )],
+        MemoryRangeExtent::Guards(guards) => guards,
+    }
 }
 
 impl CFunctionSpecification {

@@ -1861,6 +1861,12 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Witness(_)
             | ProofTactic::Choose(_)
             | ProofTactic::Simp
+            // `transport(P, Q) using { ... }` names its source, its target,
+            // and every premise, so it needs no state: the explicit facts
+            // decide it. The smart `transport(P, Q)` form still does not
+            // belong here, because it selects its premises from a fixed
+            // state's ambient facts.
+            | ProofTactic::TransportUsing { .. }
             | ProofTactic::SimpUsing(_) => {}
             ProofTactic::Match(proof_match) => {
                 for arm in &proof_match.arms {
@@ -1907,7 +1913,6 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::ExecuteUntil(_)
             | ProofTactic::ObserveResource(_)
             | ProofTactic::Transport { .. }
-            | ProofTactic::TransportUsing { .. }
             | ProofTactic::UnfoldResource(_)
             | ProofTactic::FoldResource(_)
             | ProofTactic::ConstructResource(_)

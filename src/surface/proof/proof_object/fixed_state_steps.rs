@@ -2058,10 +2058,181 @@ impl<'a> Proof<'a> {
             ProofContext::Execution(context) => {
                 self.apply_execution_transport_using(source, target, premises, context)
             }
-            ProofContext::Pure(_) => {
-                Err(self.step_error("`transport using` requires a fixed-state or execution proof"))
+            ProofContext::Pure(_) => self.apply_pure_transport_using(source, target, premises),
+        }
+    }
+
+    /// The first fact range narrowing needs that is not available, in the
+    /// spelling the two segments were written with.
+    ///
+    /// Narrowing `loadable(p[a..b])` to `loadable(p[c..d])` needs `a <= c`,
+    /// `c <= d` and `d <= b`. When the checked step declines, the reader wants
+    /// the one of those that is missing, named the way they wrote it, not two
+    /// lowered byte extents. The extent bounds the rule also needs are reported
+    /// beside this, in [`Self::apply_pure_transport_using`], because naming
+    /// their limit takes the element width and a segment does not carry it.
+    /// This explains a refusal already decided; it does not decide anything,
+    /// and it names only facts the rule actually asks for.
+    fn missing_loadable_narrowing_order_fact(
+        &self,
+        source: &ClickProposition,
+        target: &ClickProposition,
+    ) -> Option<ClickProposition> {
+        let segment_range = |proposition: &ClickProposition| match proposition {
+            ClickProposition::Loadable { segment } => segment
+                .surface_range()
+                .map(|(base, start, end)| (base.clone(), start.clone(), end.clone())),
+            _ => None,
+        };
+        let (source_base, source_start, source_end) = segment_range(source)?;
+        let (target_base, target_start, target_end) = segment_range(target)?;
+        if source_base != target_base {
+            return None;
+        }
+        let less_equal =
+            |left: &ContractExpression, right: &ContractExpression| ClickProposition::Comparison {
+                left: left.clone(),
+                operator: ComparisonOperator::LessEqual,
+                right: right.clone(),
+            };
+        [
+            (source_start.clone(), target_start.clone()),
+            (target_start, target_end.clone()),
+            (target_end, source_end),
+        ]
+        .into_iter()
+        .filter(|(lower, upper)| lower != upper)
+        .find(|(lower, upper)| {
+            // The rule takes a strict order path as an answer to the
+            // non-strict question, so a written `a < b` establishes `a <= b`.
+            // Ask the same way, or this names a fact that is already there.
+            ![
+                less_equal(lower, upper),
+                ClickProposition::Comparison {
+                    left: lower.clone(),
+                    operator: ComparisonOperator::LessThan,
+                    right: upper.clone(),
+                },
+            ]
+            .iter()
+            .any(|order| {
+                self.lower_cited_surface_proposition(order, "narrowing order fact")
+                    .is_ok_and(|lowered| self.facts().exact_available_across_effects(&lowered, &[]))
+            })
+        })
+        .map(|(lower, upper)| less_equal(&lower, &upper))
+    }
+
+    /// `transport(source, target) using { ... }` inside a pure theorem.
+    ///
+    /// A pure theorem has no C state, so everything the fixed-state checker
+    /// reads from one — `old(...)`, `at(...)`, recorded lowerings, certified
+    /// call and store effects, resource observations — has nothing to consult
+    /// here. What is left is the part of the rule that never mentioned a
+    /// state: every listed premise must be an exact available fact, the source
+    /// must follow from exactly those premises, and the target must follow
+    /// from the source under them. That last question is
+    /// [`certified_fact_transport_reaches`] with no landing memory, the same
+    /// function the fixed-state checker asks, so a pure theorem and a C proof
+    /// accept the same conclusions from the same facts — including the
+    /// memory-loadability decision, which both reach through the kernel's
+    /// atomic derivation.
+    pub(super) fn apply_pure_transport_using(
+        &self,
+        source: &ClickProposition,
+        target: &ClickProposition,
+        premises: &[ClickProposition],
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let mut explicit_premises = Vec::new();
+        for surface_premise in premises {
+            let premise =
+                self.lower_cited_surface_proposition(surface_premise, "`transport using` premise")?;
+            if !self.facts().exact_available_across_effects(&premise, &[]) {
+                return Err(self.step_error(format!(
+                    "`transport using` requires an exact premise: {}",
+                    describe_click_proposition(surface_premise)
+                )));
+            }
+            if !explicit_premises.contains(&premise) {
+                explicit_premises.push(premise);
             }
         }
+        let surface_source = source;
+        let source = self.lower_cited_surface_proposition(source, "`transport` source")?;
+        let selected_assumptions =
+            crate::surface::verification::assumptions_from_propositions(&explicit_premises);
+        if !exact_fact_is_available(&source, &explicit_premises)
+            && !separation_bridged_fact_is_available(
+                &source,
+                &explicit_premises,
+                &selected_assumptions,
+                &[],
+            )
+            && selected_assumptions
+                .derive_atomic_proposition(&source)
+                .is_none()
+        {
+            return Err(self.step_error(format!(
+                "`transport using` requires a source derivable from its explicit facts: {}",
+                crate::surface::proof_diagnostics::render::render_proposition(&source)
+            )));
+        }
+        let surface_target = target;
+        let target = self.lower_cited_surface_proposition(target, "`transport` target")?;
+        let transport_assumptions = selected_assumptions.assume_proposition(source.clone());
+        if !self.facts().available_across_effects(&target, &[])
+            && !certified_fact_transport_reaches(&source, &target, None, &transport_assumptions)
+        {
+            if let Some(missing) =
+                self.missing_loadable_narrowing_order_fact(surface_source, surface_target)
+            {
+                return Err(self.step_error(format!(
+                    "`transport using` cannot narrow `{}` to `{}`: narrowing a loadable range needs `{}`, which is not an available fact",
+                    describe_click_proposition(surface_source),
+                    describe_click_proposition(surface_target),
+                    describe_click_proposition(&missing)
+                )));
+            }
+            // Every order fact the rule walks is present, so what is left is
+            // the source range's own extent: its element count has to be
+            // established nonnegative and within the largest count a 32-bit
+            // byte extent can hold, or its extent term is a wrapped value.
+            if let Some((start, end)) = loadable_surface_range_endpoints(surface_source)
+                && loadable_surface_range_endpoints(surface_target).is_some()
+            {
+                return Err(self.step_error(format!(
+                    "`transport using` cannot narrow `{}` to `{}`: narrowing a loadable range needs `{}` established as a valid 32-bit byte extent, which takes `0 <= {} - {}` and an upper bound on `{} - {}` within the element count a 32-bit extent holds",
+                    describe_click_proposition(surface_source),
+                    describe_click_proposition(surface_target),
+                    describe_click_proposition(surface_source),
+                    describe_contract_expression(&end),
+                    describe_contract_expression(&start),
+                    describe_contract_expression(&end),
+                    describe_contract_expression(&start)
+                )));
+            }
+            return Err(self.step_error(format!(
+                "`transport using` target does not follow from the source fact and the listed premises\n  source: {}\n  target: {}",
+                crate::surface::proof_diagnostics::render::render_proposition(&source),
+                crate::surface::proof_diagnostics::render::render_proposition(&target)
+            )));
+        }
+        let mut facts = self.facts().clone();
+        let added_facts = if facts.contains(&target) {
+            Vec::new()
+        } else {
+            vec![target.clone()]
+        };
+        let checked_facts = vec![source, target.clone()];
+        facts = facts.with_kernel_checked_fact(target);
+        let complete = self.goal().is_some_and(|goal| facts.contains(goal));
+        Ok(self.checked_fact_transition(
+            self.state().locals().clone(),
+            facts,
+            complete,
+            added_facts,
+            checked_facts,
+        ))
     }
 
     pub(super) fn apply_fixed_state_transport_using(
@@ -2278,4 +2449,16 @@ mod outcome_case_tests {
             assert!(facts.is_empty(), "each arm restores the shared fact cursor");
         }
     }
+}
+
+/// The written endpoints of a `loadable(base[start..end])` surface segment.
+fn loadable_surface_range_endpoints(
+    proposition: &ClickProposition,
+) -> Option<(ContractExpression, ContractExpression)> {
+    let ClickProposition::Loadable { segment } = proposition else {
+        return None;
+    };
+    segment
+        .surface_range()
+        .map(|(_, start, end)| (start.clone(), end.clone()))
 }

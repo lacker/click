@@ -3834,3 +3834,64 @@ fn symbolic_blocks_are_never_proven_distinct_by_structure() {
     };
     assert!(heap.blocks_proven_distinct(&other_heap));
 }
+
+/// Constant range endpoints are `int32` values, and their guard arithmetic
+/// must be the true difference. Subtracting the bit patterns underflows for a
+/// negative start: in debug that panicked inside the guard, and in release it
+/// wrapped to a small unsigned value and declared an impossible extent valid.
+mod constant_range_byte_count_guards {
+    use super::*;
+
+    fn guards(start: i32, end: i32, element_width: u32) -> Vec<Proposition> {
+        crate::kernel::memory_range_byte_count_guards(
+            Bitvector32Term::Constant(start as u32),
+            Bitvector32Term::Constant(end as u32),
+            element_width,
+        )
+    }
+
+    fn refuses(guards: &[Proposition]) -> bool {
+        guards
+            == [Proposition::ConditionIs(
+                ConditionTerm::Constant(false),
+                true,
+            )]
+    }
+
+    #[test]
+    fn a_negative_start_that_fits_needs_no_guard() {
+        assert!(guards(-4, 4, 4).is_empty());
+        assert!(guards(-1, 0, 4).is_empty());
+        assert!(guards(i32::MIN, i32::MIN + 8, 4).is_empty());
+    }
+
+    #[test]
+    fn a_negative_start_whose_extent_does_not_fit_is_refused() {
+        // The true element count is 4_000_000_000, so four bytes each is far
+        // past a `u32` extent. Subtracting the bit patterns would have
+        // underflowed here instead of reaching this comparison.
+        assert!(refuses(&guards(-2_000_000_000, 2_000_000_000, 4)));
+        assert!(refuses(&guards(i32::MIN, 0, 4)));
+        assert!(refuses(&guards(-1, i32::MAX, 2)));
+    }
+
+    #[test]
+    fn a_reversed_constant_range_is_refused() {
+        assert!(refuses(&guards(4, -4, 4)));
+        assert!(refuses(&guards(1, 0, 1)));
+        assert!(refuses(&guards(i32::MAX, i32::MIN, 1)));
+    }
+
+    /// The bound is the scaled byte count, so the widest fitting element count
+    /// depends on the width. One-byte elements reach `u32::MAX` bytes exactly
+    /// at the widest `int32` range there is, which is why no one-byte range can
+    /// fail the fits guard — only the forward guard.
+    #[test]
+    fn the_widest_fitting_extent_is_at_the_boundary() {
+        assert!(guards(i32::MIN, i32::MAX, 1).is_empty());
+        assert!(guards(0, 1_073_741_823, 4).is_empty());
+        assert!(refuses(&guards(0, 1_073_741_824, 4)));
+        assert!(guards(-1_073_741_823, 0, 4).is_empty());
+        assert!(refuses(&guards(-1_073_741_824, 0, 4)));
+    }
+}

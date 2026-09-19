@@ -4427,12 +4427,31 @@ fn lower_spec_memory_loadable_at_state(
             };
             let mut obligations = path.obligations;
             if enforce_range_guards {
-                for guard in crate::kernel::memory_range_byte_count_guards(
+                match crate::kernel::memory_range_byte_count_extent(
                     range_start.clone(),
                     range_end.clone(),
                     element_width,
                 ) {
-                    add_proof_obligation(&mut obligations, assumptions, guard)?;
+                    crate::kernel::MemoryRangeExtent::ConstantValid => {}
+                    // A constant range that is reversed or wider than a `u32`
+                    // byte extent prunes this path. Record why: the surviving
+                    // path count alone said only "no path".
+                    crate::kernel::MemoryRangeExtent::ConstantInvalid {
+                        element_count,
+                        byte_limit,
+                    } => {
+                        budget.record_dropped_range_extent(
+                            element_count,
+                            element_width,
+                            byte_limit,
+                        );
+                        return None;
+                    }
+                    crate::kernel::MemoryRangeExtent::Guards(guards) => {
+                        for guard in guards {
+                            add_proof_obligation(&mut obligations, assumptions, guard)?;
+                        }
+                    }
                 }
             }
             Some(SpecPropositionPath {

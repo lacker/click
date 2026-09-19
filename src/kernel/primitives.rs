@@ -16,7 +16,10 @@ use std::sync::{Arc, OnceLock};
 pub(crate) const SAME_OBJECT_PREDICATE_NAME: &str = "__click_same_object";
 
 mod contracts;
-pub(crate) use contracts::{memory_range_byte_count, memory_range_byte_count_guards};
+pub(crate) use contracts::{
+    MemoryRangeExtent, memory_range_byte_count, memory_range_byte_count_extent,
+    memory_range_byte_count_guards, memory_range_element_count_limit,
+};
 mod integer;
 pub use integer::{
     AlgebraicIntegerMatchArm, IntegerComparisonOperator, IntegerRangeFoldIndex, IntegerTerm,
@@ -3165,6 +3168,21 @@ pub struct ExecutionBudget {
     /// why, and this is the why (a load of the wrong width, a read no
     /// resource permits). Diagnostic only: no evaluation reads it back.
     pub(super) dropped_runtime_error: Option<CRuntimeError>,
+    /// The first constant element range a specification lowering dropped
+    /// because it is not a valid 32-bit byte extent: reversed, or wider than
+    /// `u32::MAX` bytes once scaled. Such a range prunes its own evaluation
+    /// path, and the surviving path count says nothing about why. Diagnostic
+    /// only: no evaluation reads it back.
+    pub(super) dropped_range_extent: Option<DroppedRangeExtent>,
+}
+
+/// A constant element range a lowering refused as a byte extent, for the
+/// message a caller writes when the lowering produced no path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DroppedRangeExtent {
+    pub element_count: i64,
+    pub element_width: u32,
+    pub byte_limit: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

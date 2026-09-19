@@ -8,10 +8,10 @@ mod theorem_application;
 use conversion_conditions::{StatedForm, StatedSite, refuse_unproved_conversion_bounds};
 
 pub(super) use fact_transport::{
-    certified_fact_transport_reaches_through, check_fixed_state_fact_transport_using_facts,
-    fact_transport_candidates_at_outcome, fact_transport_planning_failure,
-    memory_erased_comparison, path_condition_equivalent, plan_explicit_fact_transport,
-    proposition_outer_load_memory,
+    certified_fact_transport_reaches, certified_fact_transport_reaches_through,
+    check_fixed_state_fact_transport_using_facts, fact_transport_candidates_at_outcome,
+    fact_transport_planning_failure, memory_erased_comparison, path_condition_equivalent,
+    plan_explicit_fact_transport, proposition_outer_load_memory,
 };
 pub(super) use have_proofs::{
     FixedStateLowering, capture_fixed_state_algebraic_expression,

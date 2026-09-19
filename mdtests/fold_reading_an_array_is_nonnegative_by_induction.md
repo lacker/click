@@ -7,13 +7,18 @@ place that cell inside a loadable range: the `have lo <= hi - 1` and
 `have hi - 1 < n` here are what make `v[hi - 1]` a value the state holds, and
 they are ordinary facts proved before the step that needs them.
 
-The loadable range ends at the separate parameter `n`, not at `hi`. That is
-load-bearing and it is the current limit of this shape. `induct(hi)` gives an
-induction hypothesis guarded by the theorem's own `requires` at the smaller
-endpoint, so writing the range as `loadable(v[lo..hi])` would make
-`apply(ih(hi - 1))` demand `loadable(v[lo..hi - 1])` as an exact fact, and
-nothing in Click narrows a loadable range at its upper end. With `n` fixed, the
-hypothesis's loadability premise is the theorem's own, unchanged.
+The loadable range ends at the separate parameter `n`, not at `hi`, so the
+hypothesis's loadability premise is the theorem's own, unchanged: `induct(hi)`
+gives an induction hypothesis guarded by the theorem's own `requires` at the
+smaller endpoint, and a range the induction does not move needs nothing proved
+about it.
+
+That is no longer the only way to write this theorem. A range ending at `hi`
+makes `apply(ih(hi - 1))` demand `loadable(v[lo..hi - 1])` as an exact fact, and
+that fact is now provable —
+`mdtests/fold_reading_an_array_is_nonnegative_over_its_own_range.md` is the same
+theorem over its own range. This version stays as the shape whose loadability
+premise needs no proof at all.
 
 ```click
 function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
