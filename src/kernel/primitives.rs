@@ -487,6 +487,82 @@ impl PointerBlock {
             | Self::Heap(_) => None,
         }
     }
+
+    /// Whether no execution can make these two block identities name one
+    /// object. This is the kernel's only structural separation rule for
+    /// blocks, and `Pointer::blocks_proven_distinct` is its pointer-level
+    /// form.
+    ///
+    /// Two identities that are merely spelled differently are not distinct.
+    /// A parameter's `ExternalArgument` memory and a file-scope
+    /// `global:` block are the standard example: the caller decides whether
+    /// they are the same object, and nothing in the callee does.
+    pub(in crate::kernel) fn proven_distinct(&self, other: &Self) -> bool {
+        // A symbolic block is a logic variable that later facts may constrain
+        // to any address, including a heap block named below (a contract
+        // postcondition such as `result == destination` does exactly that).
+        // It is therefore never proven distinct by structure alone; only an
+        // explicit disequality in the assumptions can separate it.
+        if matches!(self, Self::Symbolic(_)) || matches!(other, Self::Symbolic(_)) {
+            return false;
+        }
+        // A function's own scalar locals (`local:` blocks) are storage the
+        // function declared; memory reached through a parameter
+        // (`ExternalArgument`) existed before the call and cannot be one of
+        // them.
+        let local_versus_argument = |left: &Self, right: &Self| {
+            left.starts_with("local:")
+                && matches!(right, Self::ExternalArgument | Self::ExternalObject(_))
+        };
+        self != other
+            && (matches!(self, Self::Heap(_))
+                || matches!(other, Self::Heap(_))
+                || match (self, other) {
+                    (
+                        Self::StringLiteral { bytes: left, .. },
+                        Self::StringLiteral { bytes: right, .. },
+                    ) => left != right,
+                    _ => false,
+                }
+                || matches!(
+                    (self, other),
+                    (Self::Concrete(left), Self::Concrete(right)) if left != right
+                )
+                || local_versus_argument(self, other)
+                || local_versus_argument(other, self))
+    }
+
+    /// Whether a cell in this block may be the cell a load in `other`'s block
+    /// reads, so a memory comparison made on behalf of that load must still
+    /// account for it.
+    ///
+    /// This is the predicate every "restrict attention to one block" filter
+    /// owes: keeping only the load's own block silently assumes that every
+    /// differently spelled block is a different object.
+    pub(in crate::kernel) fn may_alias(&self, other: &Self) -> bool {
+        !self.proven_distinct(other)
+    }
+
+    /// Whether a cell in this block has to be accounted for by a memory
+    /// comparison made on behalf of a load in the `load` block. This is the
+    /// one filter the load-framing routes share, so that a write to a block
+    /// that merely has another spelling cannot be dropped from the question.
+    ///
+    /// It is [`Self::may_alias`] with one exception, which is a known
+    /// remaining gap and not a claim about aliasing: a load whose own block is
+    /// `Symbolic` is still filtered by name. A symbolic block is a pointer
+    /// value the function received rather than an object it can name, and
+    /// `proven_distinct` separates it from nothing at all, so widening here
+    /// would keep every cell of every block for such a load and withdraw the
+    /// structural route from every pointer a call returned. Closing that case
+    /// means giving those loads their effect-summary and resource evidence
+    /// instead, which is its own change.
+    pub(in crate::kernel) fn observable_by_load(&self, load: &Self) -> bool {
+        if matches!(load, Self::Symbolic(_)) {
+            return self == load;
+        }
+        self.may_alias(load)
+    }
 }
 
 impl From<String> for PointerBlock {

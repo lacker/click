@@ -3199,7 +3199,7 @@ fn memories_directly_match_for_pointer_load(
     {
         return false;
     }
-    differing_cell_pointers_in_block(left, right, &pointer.block)
+    differing_cell_pointers_possibly_aliasing(left, right, &pointer.block)
         .into_iter()
         .all(|cell| {
             cell.blocks_proven_distinct(pointer)
@@ -3219,7 +3219,11 @@ fn memories_directly_match_for_pointer_load(
         })
 }
 
-fn differing_cell_pointers_in_block(
+/// The cells the two snapshots disagree about that a load in `block` could be
+/// reading: its own block, and every other block not proven distinct from it.
+/// A differently spelled block is not a different object, so the caller must
+/// still discharge each of these cells by offset or by separation evidence.
+fn differing_cell_pointers_possibly_aliasing(
     left: &CMemory,
     right: &CMemory,
     block: &PointerBlock,
@@ -3227,7 +3231,7 @@ fn differing_cell_pointers_in_block(
     left.cells
         .keys()
         .chain(right.cells.keys())
-        .filter(|pointer| &pointer.block == block)
+        .filter(|pointer| pointer.block.observable_by_load(block))
         .filter(|pointer| left.cells.get(*pointer) != right.cells.get(*pointer))
         .cloned()
         .collect()

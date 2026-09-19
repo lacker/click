@@ -1289,8 +1289,25 @@ fn close_claim_directly_from_outcome<'a>(
                             "; the two sides read the same address in different memory snapshots ({snapshot_note})"
                         )
                     } else {
+                        // A side still standing as a load did not survive the
+                        // body. If the only reason a recorded write was not
+                        // framed out is that the two blocks are spelled
+                        // differently, name that write: the repair is a
+                        // resource or a `separate`, not another tactic.
+                        let facts = root.facts().propositions().cloned().collect::<Vec<_>>();
+                        let unseparated =
+                            describe_unseparated_write(&kernel_left, &facts, parameters, arguments)
+                                .or_else(|| {
+                                    describe_unseparated_write(
+                                        &kernel_right,
+                                        &facts,
+                                        parameters,
+                                        arguments,
+                                    )
+                                })
+                                .unwrap_or_default();
                         format!(
-                            "; left side evaluated to {rendered_left}, right side evaluated to {rendered_right}"
+                            "; left side evaluated to {rendered_left}, right side evaluated to {rendered_right}{unseparated}"
                         )
                     }
                 }
