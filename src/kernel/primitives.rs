@@ -38,7 +38,7 @@ pub(crate) use memory_state::{
 mod resource_algebra;
 mod term_operations;
 pub(super) use derivations::*;
-pub(crate) use memory_state::resource_context_has_symbolic_int32_range_read;
+pub(crate) use memory_state::resource_context_has_symbolic_range_read;
 pub use memory_state::value_independent_click_memory;
 pub(super) use resource_algebra::*;
 
@@ -6540,6 +6540,13 @@ pub struct CFunctionContractExecution {
     /// artifact could be reused, or the contract entry context itself could
     /// not be built. Callers report it; it carries no authority.
     pub(super) reuse_diagnostic: Option<String>,
+    /// The entry premise the contract context could not authorize, when that
+    /// is why reuse was refused. The kernel names its *kind* in
+    /// `reuse_diagnostic`; a reader needs the premise itself to know which
+    /// fact is missing, and only the caller can spell it in the user's names.
+    /// It carries no authority either — it is the refused premise, not a
+    /// granted one.
+    pub(super) reuse_unauthorized_premise: Option<Proposition>,
     pub(super) checked_call_events: super::proof::CheckedCallEvents,
     /// How this certification ran the function's loops. Under
     /// `ApplyVerifiedRules` a loop is either run concretely to its exit or
@@ -6589,6 +6596,7 @@ impl CFunctionContractExecution {
         Self {
             cases: Vec::new(),
             reuse_diagnostic: Some(diagnostic),
+            reuse_unauthorized_premise: None,
             checked_call_events: Default::default(),
             loop_semantics: CLoopSemantics::Verify,
         }
@@ -6618,6 +6626,12 @@ impl CFunctionContractExecution {
     /// reuse.
     pub fn reuse_diagnostic(&self) -> Option<&str> {
         self.reuse_diagnostic.as_deref()
+    }
+
+    /// The entry premise behind [`Self::reuse_diagnostic`], for a caller that
+    /// can print it in the names the user wrote.
+    pub fn reuse_unauthorized_premise(&self) -> Option<&Proposition> {
+        self.reuse_unauthorized_premise.as_ref()
     }
 }
 

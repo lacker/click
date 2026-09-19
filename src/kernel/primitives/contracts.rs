@@ -2458,7 +2458,7 @@ impl CExecutionEnvironment {
                                         bytes,
                                         assumptions,
                                     )
-                                }) || resource_context_has_symbolic_int32_range_read(
+                                }) || resource_context_has_symbolic_range_read(
                                     state.resources(),
                                     base,
                                     bytes,

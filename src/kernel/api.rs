@@ -4891,6 +4891,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
     };
     let mut cases = Vec::new();
     let mut reuse_diagnostic = None;
+    let mut reuse_unauthorized_premise = None;
     for case_facts in resource_condition_cases {
         let case_seed = assumptions_with_propositions(&PureFactContext::new(), &case_facts);
         let mut assumptions = match crate::instrumentation::measure_operation(
@@ -5439,6 +5440,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                         function.name()
                     ),
                 };
+                reuse_unauthorized_premise = unauthorized;
                 break;
             }
             crate::instrumentation::record_artifact_reuse_rejection(cause);
@@ -5500,6 +5502,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
     CFunctionContractExecution {
         cases,
         reuse_diagnostic,
+        reuse_unauthorized_premise,
         checked_call_events,
         loop_semantics: execution_semantics.loops,
     }

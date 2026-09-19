@@ -242,7 +242,7 @@ pub fn c_state_justifies_loadability_obligation(
                                 .resources()
                                 .permits_memory_read(base, width, assumptions)
                     }
-                    None => crate::kernel::resource_context_has_symbolic_int32_range_read(
+                    None => crate::kernel::resource_context_has_symbolic_range_read(
                         state.resources(),
                         base,
                         bytes,
@@ -3413,7 +3413,7 @@ pub(super) fn resources_certify_loadability(
         && (bytes
             .as_const()
             .is_some_and(|bytes| resource_context_has_read(resources, base, bytes, assumptions))
-            || crate::kernel::resource_context_has_symbolic_int32_range_read(
+            || crate::kernel::resource_context_has_symbolic_range_read(
                 resources,
                 base,
                 bytes,

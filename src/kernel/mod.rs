@@ -113,7 +113,7 @@ pub(crate) use loops::{
     loop_structural_descent_failure,
 };
 pub use memory_provenance::*;
-pub(crate) use primitives::resource_context_has_symbolic_int32_range_read;
+pub(crate) use primitives::resource_context_has_symbolic_range_read;
 pub use primitives::*;
 pub(crate) use reasoning::memory_effect_write_pointers;
 pub(crate) use reasoning::resolve_load_variables_from_registry;

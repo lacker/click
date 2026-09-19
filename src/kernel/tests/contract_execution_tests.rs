@@ -3194,6 +3194,7 @@ fn body_safety_claim_rejects_an_unproved_execution_condition() {
             completion_origin_state: None,
         }]],
         reuse_diagnostic: None,
+        reuse_unauthorized_premise: None,
         checked_call_events: Default::default(),
         loop_semantics: CLoopSemantics::Verify,
     };
@@ -3287,6 +3288,7 @@ fn contract_claims_are_judged_over_each_path_set_of_a_case() {
             &CFunctionContractExecution {
                 cases,
                 reuse_diagnostic: None,
+                reuse_unauthorized_premise: None,
                 checked_call_events: Default::default(),
                 loop_semantics: CLoopSemantics::Verify,
             },
@@ -3366,6 +3368,7 @@ fn body_safety_claim_uses_path_facts_for_verification_conditions() {
             completion_origin_state: None,
         }]],
         reuse_diagnostic: None,
+        reuse_unauthorized_premise: None,
         checked_call_events: Default::default(),
         loop_semantics: CLoopSemantics::Verify,
     };

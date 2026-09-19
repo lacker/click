@@ -793,33 +793,57 @@ fn memory_havoc_write_set_fingerprint(mutable_ranges: &[CMemoryRange]) -> u32 {
     (hasher.finish() as u32) | 1
 }
 
-pub(crate) fn resource_context_has_symbolic_int32_range_read(
+/// Whether a held resource grants read authority over a symbolic byte extent
+/// at `base`.
+///
+/// A resource range counts its own elements while a loadability fact counts
+/// bytes, so the two meet at the held range's element width: reading the fact's
+/// extent back through [`element_count_from_bytes`] at that width inverts the
+/// scaling [`memory_range_byte_count`] applied when the clause was lowered, and
+/// the required range is then in the same coordinate system as the held one.
+///
+/// The width has to come from the *range*, not from the shape of the extent
+/// term. `memory_range_byte_count` folds a factor of one away, so a `uint8[]`
+/// clause `s[0..n]` arrives here as the bare count `n` rather than `n * 1`;
+/// asking the term which width it was scaled by cannot tell that apart from a
+/// byte count that is no element range at all, and a byte buffer would never be
+/// recognised. Two-byte and wider ranges keep their explicit product and are
+/// read back exactly as before.
+///
+/// Width one weakens nothing. [`element_count_from_bytes`] at width one is the
+/// identity, so the required range names exactly the bytes the fact names: no
+/// product is formed, so none can wrap, and a byte count simply *is* its own
+/// element count. The nonnegativity half of the valid-extent condition still
+/// matters and is still asked — it is the held clause's own obligation,
+/// discharged where the clause was stated — and `memory_range_covers` still has
+/// to place the required range inside the held one.
+pub(crate) fn resource_context_has_symbolic_range_read(
     resources: &ResourceContext,
     base: &Pointer,
     bytes: &Bitvector32Term,
     assumptions: &PureFactContext,
 ) -> bool {
-    let elements = match bytes {
-        Bitvector32Term::Constant(bytes) if bytes % 4 == 0 => Bitvector32Term::Constant(bytes / 4),
-        Bitvector32Term::Multiply(left, right) if **right == Bitvector32Term::Constant(4) => {
-            left.as_ref().clone()
-        }
-        Bitvector32Term::Multiply(left, right) if **left == Bitvector32Term::Constant(4) => {
-            right.as_ref().clone()
-        }
-        _ => return false,
-    };
-    let required = CMemoryRange::new(base.clone(), Bitvector32Term::Constant(0), elements);
     resources.facts().iter().any(|fact| {
         let Some(range) = fact.memory_range() else {
             return false;
         };
-        range.element_width() == 4
-            && crate::kernel::primitives::resource_algebra::memory_range_covers(
-                range,
-                &required,
-                assumptions,
-            )
+        let element_width = range.element_width();
+        let Some(elements) =
+            crate::kernel::reasoning::element_count_from_bytes(bytes, element_width)
+        else {
+            return false;
+        };
+        let required = CMemoryRange::new_with_element_width(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            elements,
+            element_width,
+        );
+        crate::kernel::primitives::resource_algebra::memory_range_covers(
+            range,
+            &required,
+            assumptions,
+        )
     })
 }
 

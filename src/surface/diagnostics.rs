@@ -1115,8 +1115,8 @@ pub(super) fn describe_memory_range(
     format!(
         "{}[{}..{}]",
         describe_pointer(range.base(), parameters, arguments),
-        describe_bitvector(range.start()),
-        describe_bitvector(range.end())
+        describe_bitvector_with_context(range.start(), parameters, arguments),
+        describe_bitvector_with_context(range.end(), parameters, arguments)
     )
 }
 
@@ -1141,8 +1141,8 @@ pub(super) fn describe_parameter_relative_range(
         return Some(format!(
             "{}[{}..{}]",
             parameter.name(),
-            describe_bitvector(&start),
-            describe_bitvector(&end)
+            describe_bitvector_with_context(&start, parameters, arguments),
+            describe_bitvector_with_context(&end, parameters, arguments)
         ));
     }
     None

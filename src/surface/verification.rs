@@ -2876,10 +2876,13 @@ fn verify_c0_sources_with_context(
                             .iter()
                             .map(|verified| verified.checked_execution.clone())
                             .collect::<Vec<_>>();
+                        // The entry state and arguments outlive the call: a
+                        // refusal below names the unauthorized entry premise
+                        // through them, in the names the user wrote.
                         prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems(
-                            certification_state,
+                            certification_state.clone(),
                             contract_function.clone(),
-                            certification_arguments,
+                            certification_arguments.clone(),
                             certification_facts,
                             certification_function_environment,
                             if has_frontier_loop_rules {
@@ -2909,10 +2912,16 @@ fn verify_c0_sources_with_context(
             }
             let claims_started = std::time::Instant::now();
             if contract_execution.path_count() == 0 {
+                let unauthorized_premise = describe_unauthorized_entry_premise(
+                    contract_execution.reuse_unauthorized_premise(),
+                    parsed_function.parameters(),
+                    &certification_arguments,
+                    &certification_state,
+                );
                 return Err(ClickError::new(
                     match contract_execution.reuse_diagnostic() {
                         Some(detail) => format!(
-                            "could not certify contract for `{}`: {detail}",
+                            "could not certify contract for `{}`: {detail}{unauthorized_premise}",
                             function_block.signature.name(),
                         ),
                         None => format!(
@@ -3907,6 +3916,37 @@ pub(in crate::surface) fn c0_statement_calls(
     let mut calls = Vec::new();
     visit(function.body(), &mut calls, &function_pointer_names);
     calls
+}
+
+/// Names the entry premise a contract context could not authorize, as a
+/// trailing clause on the kernel's refusal.
+///
+/// The kernel can only say what *kind* of premise it was — it has the lowered
+/// proposition and none of the names the sidecar wrote. A reader needs the
+/// premise itself: "assumed a pure fact at entry" is the same sentence whether
+/// the missing fact is `loadable(s[0..n])` or a separation, and the repair is
+/// completely different. The reconstruction is the same bounded one proof
+/// steps use, so what is printed is a proposition the user could write; when
+/// it cannot be reconstructed, the bounded kernel-vocabulary printer prints
+/// the same proposition rather than nothing.
+fn describe_unauthorized_entry_premise(
+    premise: Option<&Proposition>,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> String {
+    use crate::surface::diagnostics::{describe_click_proposition, describe_pure_fact_spelled};
+    let Some(premise) = premise else {
+        return String::new();
+    };
+    let described = crate::surface::proof::synthesize_surface_proposition(
+        premise, parameters, arguments, state,
+    )
+    .map_or_else(
+        || describe_pure_fact_spelled(premise, parameters, arguments),
+        |surface| describe_click_proposition(&surface),
+    );
+    format!(": `{described}`")
 }
 
 /// Words one termination refusal for the function `name`. A refused callee
