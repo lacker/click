@@ -2429,6 +2429,11 @@ thread_local! {
     > = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
+#[cfg(test)]
+pub(crate) fn block_epoch_memo_len() -> usize {
+    BLOCK_EPOCH_MEMO.with(|memo| memo.borrow().len())
+}
+
 /// The DAG epoch used to construct one cell's load variable: the snapshot at
 /// which the loaded cell was last written or entered the world, walked
 /// assumption-free over recorded edges. Snapshots that differ only by
@@ -3754,6 +3759,7 @@ pub(crate) fn clear_canonical_form_caches() {
     DEEP_MEMORY_CACHE.with(|cache| cache.borrow_mut().clear());
     ATOMIC_LOADS_CACHE.with(|cache| cache.borrow_mut().clear());
     CELL_EPOCH_MEMO.with(|memo| memo.borrow_mut().clear());
+    BLOCK_EPOCH_MEMO.with(|memo| memo.borrow_mut().clear());
 }
 
 /// Recursive `Hash` and `Eq` implementations make a whole-term cache key

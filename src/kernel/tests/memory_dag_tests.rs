@@ -1917,3 +1917,37 @@ fn an_array_refs_epoch_stops_at_a_store_that_may_alias_it() {
         after_local_store
     );
 }
+
+/// The block-epoch memo is keyed by interned snapshot, and interning dedups
+/// by content, so an entry left behind by one verification would answer a
+/// content-equal query in the next one — from a DAG history that
+/// verification never built. `VerificationSession` clears it with the other
+/// canonical-form caches, which is what keeps a result from depending on
+/// what was verified earlier in the process.
+#[test]
+fn a_session_reset_empties_the_block_epoch_memo() {
+    let memory = CMemory::new()
+        .with_block(PointerBlock::Concrete("local:f:i".to_string()), 4)
+        .store(
+            Pointer {
+                block: PointerBlock::Concrete("local:f:i".to_string()),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            CValue::Int32(Bitvector32Term::Constant(1)),
+        );
+    crate::kernel::memory_provenance::block_epoch_for_array_ref(
+        &crate::kernel::intern_c_memory(memory),
+        &PointerBlock::ExternalArgument,
+    );
+    assert!(
+        crate::kernel::memory_provenance::block_epoch_memo_len() > 0,
+        "the walk should have recorded its epoch"
+    );
+
+    crate::kernel::memory_provenance::clear_canonical_form_caches();
+    assert_eq!(
+        crate::kernel::memory_provenance::block_epoch_memo_len(),
+        0,
+        "a session reset must not leave one verification's epochs for the next"
+    );
+}
