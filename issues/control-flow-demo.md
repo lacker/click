@@ -13,6 +13,15 @@ Skipped statements cannot contribute effects; a resource acquired on only one
 path cannot be freed on another; unwinding cannot recover loans or resources
 merely because a lexical scope ended. Rbtree remains the main launch demo.
 
+## Current status, 2026-09-19
+
+The two-guard C++ cross-call proof described below is now green. The
+destructor-as-step and proof-object `outcomes` work landed in the cleanup-step
+regression and is merged into `master`; both the normal-return and caught-
+exception arms of `cpp_two_guard_unwind` now verify. This issue remains open
+because the companion conditional-lifetime proof, hostile cleanup negatives,
+and the full acceptance criteria have not landed.
+
 ## Dependencies and ownership of work
 
 1. The P1 forward-cleanup slice of [goto.md](goto.md) supplies checked C labels,
@@ -22,11 +31,11 @@ merely because a lexical scope ended. Rbtree remains the main launch demo.
    the typed frontend, object lifetimes, and normal scope cleanup. Its baseline
    profile remains a non-throwing slice.
 3. This issue finishes the narrow cross-call exception demo. Checked scalar
-   exceptional outcomes, modular `throws int32` contracts, typed `catch`, and
-   one try-local guard unwound across a helper call have landed. The remaining
-   two-guard and conditional-lifetime proofs below are still required. The
-   same edge/state infrastructure should serve C jumps and C++ cleanup, with
-   language-specific legality rules.
+   exceptional outcomes, modular `throws int32` contracts, typed `catch`, one
+   try-local guard unwound across a helper call, and the two-guard proof below
+   have landed. The conditional-lifetime companion and hostile cleanup cases
+   are still required. The same edge/state infrastructure should serve C
+   jumps and C++ cleanup, with language-specific legality rules.
 
 The C++ exception probe does not semantically depend on C goto syntax; both
 feed the shared edge design. Do not introduce a dependency cycle by requiring
@@ -46,12 +55,13 @@ multiple or late guards, return from that guarded region, and a potentially
 throwing `noexcept` destructor. Removing the constructor's separation
 postcondition fails the destructor proof.
 
-This checkpoint does **not** establish two nested/overlapping guards, reverse
-destructor order during unwinding, or the companion throw-before-second-guard
-path. Those and the remaining hostile outcome/cleanup and scaling cases stay
-in this P1 issue; do not close it based on the one-guard mdtest.
+This earlier checkpoint did **not** establish two nested/overlapping guards,
+reverse destructor order during unwinding, or the companion
+throw-before-second-guard path. The two-guard case has since landed below;
+the companion and the remaining hostile outcome/cleanup and scaling cases stay
+in this P1 issue.
 
-## Two-guard scope checkpoint, 2026-09-18 (import slice landed, proof open)
+## Two-guard scope checkpoint, 2026-09-18 (import and proof landed)
 
 The importer now accepts up to two destructible objects in one cleanup scope
 and emits their cleanups in reverse construction order
@@ -68,13 +78,19 @@ The probe is [`mdtests/cpp_two_guard_unwind.md`](../mdtests/cpp_two_guard_unwind
 two `Restore` guards over two distinct cells (guard shape copied unchanged
 from the one-guard mdtest, so guard count is the only new variable), a
 `throws int32` helper, and a catch outside the scope. It exports, validates,
-lowers, and verifies up to the final ensures, and is parked as `expect fail`.
-The current refusal is a proof-reasoning gap, not plumbing:
-`ensures second_cell[0] == old(second_cell[0])` is unclosed because the
-second cell is modeled as an offset of the first
+lowers, and verifies through the final ensures on both returned and thrown
+paths, and is now `expect pass`.
+
+The original refusal was a proof-reasoning gap, not an import or lowering
+failure. `second_cell[0] == old(second_cell[0])` was unclosed because the
+second cell was modeled as an offset of the first
 (`load(first_cell[(v100001 - v100000)])`), and framing it across the first
-guard's destructor store needs that offset disequality from the `separate`
-fact in usable form. The first cell's restoration and the result value pass.
+guard's destructor store needed the offset disequality from the `separate`
+fact in usable form. The fix makes each implicit cleanup/destructor entry an
+ordinary proof step and lets the checked call split be handled by
+`outcomes { returned { ... } threw { ... } }` at that frontier. The regression
+now proves the first restoration, the second-cell restoration, and the result
+on both paths.
 
 The same probe exposed a diagnostics defect, now fixed: two distinct load
 variables over one pointer rendered identically, reading as an unprovable
@@ -85,13 +101,12 @@ the missing equating step (`src/surface/proof/claim_proofs.rs`,
 `src/surface/tests/diagnostic_tests.rs`, and the differing-sides format is
 byte-identical (pinned by `write_second_old_rejects_overwritten_cell.md`).
 
-Resume here: determine whether failing path 0 is the normal or the
-exceptional exit, then reduce the framing gap (explicit `transport` of the
-separation at the destructor call, or a destructor contract separating the
-object from both cells). Do not reshape the C++ to satisfy the verifier.
-After the probe passes, add the throw-before-second-guard companion (only
-the first guard destroyed on that path), then the hostile
-wrong-order/omitted-cleanup negatives.
+The next proof is the throw-before-second-guard companion: only the first
+guard is constructed and destroyed on that path. Then add the hostile
+wrong-order/omitted-cleanup negatives. Further work on resource snapshot and
+framing diagnostics should wait for the Resource Tracker work, which is
+intended to centralize the `same(resource, P1, P2)` reasoning used by this
+failure. Do not reshape the C++ to satisfy the verifier.
 
 Machine notes: this Linux box had no pinned toolchain; a user-space
 Clang/LLVM 19.1.7 lives in `~/.local/llvm-19.1.7` (extracted from
