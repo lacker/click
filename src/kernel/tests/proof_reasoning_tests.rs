@@ -3254,6 +3254,30 @@ mod loadable_range_narrowing {
         )
     }
 
+    /// The assumed range must also be a valid 32-bit byte extent: its element
+    /// count pinned to `0..=u32::MAX / 4` for four-byte elements. These are the
+    /// two facts a proof states for that; without them the extent term is
+    /// modular and nothing follows from comparing endpoints.
+    fn extent_is_valid(a: &Bitvector32Term, b: &Bitvector32Term) -> Vec<(ConditionTerm, bool)> {
+        let count = Bitvector32Term::subtract(b.clone(), a.clone());
+        let limit = Bitvector32Term::Constant(crate::kernel::memory_range_element_count_limit(4));
+        vec![
+            order(&Bitvector32Term::Constant(0), &count),
+            order(&count, &limit),
+        ]
+    }
+
+    fn inside(
+        a: &Bitvector32Term,
+        b: &Bitvector32Term,
+        c: &Bitvector32Term,
+        d: &Bitvector32Term,
+    ) -> Vec<(ConditionTerm, bool)> {
+        let mut orders = vec![order(a, c), order(c, d), order(d, b)];
+        orders.extend(extent_is_valid(a, b));
+        orders
+    }
+
     /// `a`, `b`, `c`, `d`: the assumed range is `p[a..b]` and the goal is
     /// `p[c..d]`.
     fn endpoints() -> [Bitvector32Term; 4] {
@@ -3278,10 +3302,7 @@ mod loadable_range_narrowing {
     fn a_sub_range_the_order_facts_place_inside_is_loadable() {
         let memory = CMemory::new().with_block("data", 4096);
         let [a, b, c, d] = endpoints();
-        let assumptions = assume_orders(
-            segment(&memory, &a, &b),
-            &[order(&a, &c), order(&c, &d), order(&d, &b)],
-        );
+        let assumptions = assume_orders(segment(&memory, &a, &b), &inside(&a, &b, &c, &d));
 
         assert!(assumptions.proves(&segment(&memory, &c, &d)));
     }
@@ -3302,10 +3323,9 @@ mod loadable_range_narrowing {
     fn a_reversed_goal_range_is_refused() {
         let memory = CMemory::new().with_block("data", 4096);
         let [a, b, c, d] = endpoints();
-        let assumptions = assume_orders(
-            segment(&memory, &a, &b),
-            &[order(&a, &c), order(&d, &c), order(&c, &b)],
-        );
+        let mut orders = vec![order(&a, &c), order(&d, &c), order(&c, &b)];
+        orders.extend(extent_is_valid(&a, &b));
+        let assumptions = assume_orders(segment(&memory, &a, &b), &orders);
 
         assert!(!assumptions.proves(&segment(&memory, &c, &d)));
     }
@@ -3318,12 +3338,76 @@ mod loadable_range_narrowing {
         let assumed = CMemory::new().with_block("data", 4096);
         let elsewhere = CMemory::new().with_block("other", 4096);
         let [a, b, c, d] = endpoints();
-        let assumptions = assume_orders(
-            segment(&assumed, &a, &b),
-            &[order(&a, &c), order(&c, &d), order(&d, &b)],
-        );
+        let assumptions = assume_orders(segment(&assumed, &a, &b), &inside(&a, &b, &c, &d));
 
         assert!(!assumptions.proves(&segment(&elsewhere, &c, &d)));
+    }
+
+    /// The wrapped corner, and the reason the rule asks for the assumed range's
+    /// byte-count guards at all.
+    ///
+    /// An extent is a `Bitvector32Term`, so `(b - a) * 4` is modular. At
+    /// `b - a == 1 << 30` it is `1 << 32`, which is `0`: the assumed fact then
+    /// claims an empty extent and is vacuously true, while a sub-range of it is
+    /// a real claim. Order facts alone cannot tell those apart, so the rule
+    /// refuses unless the count is pinned to `0..=u32::MAX / 4`.
+    #[test]
+    fn a_wrapped_assumed_extent_is_refused() {
+        let memory = CMemory::new().with_block("data", 4096);
+        let [a, b, c, d] = endpoints();
+        // Everything the narrowing rule reads except the extent bound: the goal
+        // sits inside the assumed range, and the count is known nonnegative.
+        let count = Bitvector32Term::subtract(b.clone(), a.clone());
+        let orders = vec![
+            order(&a, &c),
+            order(&c, &d),
+            order(&d, &b),
+            order(&Bitvector32Term::Constant(0), &count),
+        ];
+        let assumptions = assume_orders(segment(&memory, &a, &b), &orders);
+
+        assert!(!assumptions.proves(&segment(&memory, &c, &d)));
+    }
+
+    /// A bound on the count is not enough on its own either. With `a` the least
+    /// `int32` and `b` the greatest, `a <= b` holds and `b - a <= limit` holds,
+    /// because `b - a` is really `-1`; only the nonnegativity fact excludes it.
+    #[test]
+    fn a_bounded_but_negative_count_is_refused() {
+        let memory = CMemory::new().with_block("data", 4096);
+        let [a, b, c, d] = endpoints();
+        let count = Bitvector32Term::subtract(b.clone(), a.clone());
+        let limit = Bitvector32Term::Constant(crate::kernel::memory_range_element_count_limit(4));
+        let orders = vec![
+            order(&a, &c),
+            order(&c, &d),
+            order(&d, &b),
+            order(&count, &limit),
+        ];
+        let assumptions = assume_orders(segment(&memory, &a, &b), &orders);
+
+        assert!(!assumptions.proves(&segment(&memory, &c, &d)));
+    }
+
+    /// A count bounded past the limit is refused even though it is nonnegative:
+    /// scaling it by the element width is what leaves the 32-bit extent.
+    #[test]
+    fn a_count_past_the_extent_limit_is_refused() {
+        let memory = CMemory::new().with_block("data", 4096);
+        let [a, b, c, d] = endpoints();
+        let count = Bitvector32Term::subtract(b.clone(), a.clone());
+        let past =
+            Bitvector32Term::Constant(crate::kernel::memory_range_element_count_limit(4) + 1);
+        let orders = vec![
+            order(&a, &c),
+            order(&c, &d),
+            order(&d, &b),
+            order(&Bitvector32Term::Constant(0), &count),
+            order(&count, &past),
+        ];
+        let assumptions = assume_orders(segment(&memory, &a, &b), &orders);
+
+        assert!(!assumptions.proves(&segment(&memory, &c, &d)));
     }
 
     /// The two extents must be scaled by one element width. A goal counting
@@ -3346,10 +3430,7 @@ mod loadable_range_narrowing {
                 Bitvector32Term::Constant(1),
             ),
         };
-        let assumptions = assume_orders(
-            segment(&memory, &a, &b),
-            &[order(&a, &c), order(&c, &d), order(&d, &b)],
-        );
+        let assumptions = assume_orders(segment(&memory, &a, &b), &inside(&a, &b, &c, &d));
 
         assert!(!assumptions.proves(&byte_goal));
     }

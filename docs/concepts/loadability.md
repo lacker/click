@@ -101,11 +101,32 @@ past `b` is refused with the order fact it was missing:
 narrowing a loadable range needs `k <= hi`, which is not an available fact
 ```
 
-This is one decision, not two. It is the same rule the verifier applies while
-lowering `p[hi - 1]` on its own, so anything found implicitly can also be
-written down and proved — in a pure theorem as well as in a C proof. That
-matters for induction over an array range, where the hypothesis needs the
-narrowed range as an exactly available fact before it can be applied; see
+Narrowing also needs the range it starts from to be a valid byte extent, and
+this is a real precondition rather than bookkeeping. A range's extent is
+`(b - a) * width` in 32-bit arithmetic, so its element count has to sit in
+`0..=u32::MAX / width` — `0..=1073741823` for `int32` elements. State that
+bound, and state that the count is nonnegative:
+
+<!-- verified-example: mdtests/have_loadable_prefix_of_a_range.md -->
+```click
+requires hi - lo <= 1073741823;
+```
+
+<!-- verified-example: mdtests/have_loadable_prefix_of_a_range.md -->
+```click
+have 0 <= hi - lo by { arithmetic() using { 0 <= lo; lo < hi; } }
+```
+
+Without them a count of `1 << 30` scales to `1 << 32`, which is `0`: the range
+would be an empty extent, vacuously loadable, and narrowing it would turn
+nothing into a real cell.
+
+Narrowing itself is one decision, not two. It is part of the same loadability
+rule set the verifier applies while lowering `p[hi - 1]` on its own, so a fact
+of this kind can be written down and proved as well as found — in a pure theorem
+as well as in a C proof. That matters for induction over an array range, where
+the hypothesis needs the narrowed range as an exactly available fact before it
+can be applied; see
 [`fold_reading_an_array_is_nonnegative_over_its_own_range.md`](https://github.com/lacker/click/blob/master/mdtests/fold_reading_an_array_is_nonnegative_over_its_own_range.md).
 
 ## Old memory

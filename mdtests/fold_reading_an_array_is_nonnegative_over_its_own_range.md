@@ -14,6 +14,14 @@ own range to that endpoint, against the order facts proved just above it, and
 `split()` assembles the hypothesis premise the guard is written as. Every other
 step is unchanged from the version with `n`.
 
+The theorem also carries `hi <= 1073741823`, which with `0 <= lo` bounds the
+range's element count by the largest count a four-byte range can have and still
+be a valid 32-bit byte extent. The induction hypothesis needs that bound at the
+smaller endpoint like every other precondition, and the narrowing step needs the
+count itself pinned to `0..=1073741823`, which the two `have`s state. This is a
+real precondition of the shape, not bookkeeping: a range of `1 << 30` `int32`
+elements has a byte extent of `1 << 32`, which wraps to `0`.
+
 ```click
 function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
     (lo..hi).fold(0, |acc, k| { acc + to_integer(if v[k] == 0 { 1 } else { 0 }) })
@@ -22,6 +30,7 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
 theorem unmarked_nonnegative(v: int32[], lo: int32, hi: int32) {
     requires 0 <= lo;
     requires 0 <= hi;
+    requires hi <= 1073741823;
     requires hi >= 0 and loadable(v[lo..hi]);
     ensures 0 <= unmarked(v, lo, hi) by {
         induct(hi) as ih;
@@ -36,12 +45,20 @@ theorem unmarked_nonnegative(v: int32[], lo: int32, hi: int32) {
             have hi - 1 < hi by { arithmetic() using { 0 <= lo; lo < hi; } }
             have lo <= hi - 1 by { arithmetic() using { 0 <= lo; lo < hi; } }
             have hi - 1 >= 0 by { arithmetic() using { 0 <= lo; lo < hi; } }
+            have 0 <= hi - lo by { arithmetic() using { 0 <= lo; lo < hi; } }
+            have hi - 1 <= 1073741823 by {
+                arithmetic() using { 0 <= hi; hi <= 1073741823; }
+            }
+            have hi - lo <= 1073741823 by {
+                arithmetic() using { 0 <= lo; lo < hi; hi <= 1073741823; }
+            }
             have loadable(v[lo..hi - 1]) by { simp(); }
             have hi - 1 >= 0 and loadable(v[lo..hi - 1]) by { split(); }
             apply(ih(hi - 1)) using {
                 0 <= hi - 1;
                 hi - 1 < hi;
                 0 <= lo;
+                hi - 1 <= 1073741823;
                 hi - 1 >= 0 and loadable(v[lo..hi - 1]);
             }
             have hi - 1 < 2147483647 by { arithmetic() using { 0 <= lo; lo < hi; } }

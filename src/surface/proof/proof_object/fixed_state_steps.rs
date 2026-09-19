@@ -2062,15 +2062,17 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// The first order fact range narrowing needs that is not available, in
-    /// the spelling the two segments were written with.
+    /// The first fact range narrowing needs that is not available, in the
+    /// spelling the two segments were written with.
     ///
     /// Narrowing `loadable(p[a..b])` to `loadable(p[c..d])` needs `a <= c`,
     /// `c <= d` and `d <= b`. When the checked step declines, the reader wants
     /// the one of those that is missing, named the way they wrote it, not two
-    /// lowered byte extents. This explains a refusal already decided; it does
-    /// not decide anything, and it names only facts the rule actually asks
-    /// for.
+    /// lowered byte extents. The extent bounds the rule also needs are reported
+    /// beside this, in [`Self::apply_pure_transport_using`], because naming
+    /// their limit takes the element width and a segment does not carry it.
+    /// This explains a refusal already decided; it does not decide anything,
+    /// and it names only facts the rule actually asks for.
     fn missing_loadable_narrowing_order_fact(
         &self,
         source: &ClickProposition,
@@ -2100,11 +2102,25 @@ impl<'a> Proof<'a> {
         ]
         .into_iter()
         .filter(|(lower, upper)| lower != upper)
-        .map(|(lower, upper)| less_equal(&lower, &upper))
-        .find(|order| {
-            self.lower_cited_surface_proposition(order, "narrowing order fact")
-                .is_ok_and(|lowered| !self.facts().exact_available_across_effects(&lowered, &[]))
+        .find(|(lower, upper)| {
+            // The rule takes a strict order path as an answer to the
+            // non-strict question, so a written `a < b` establishes `a <= b`.
+            // Ask the same way, or this names a fact that is already there.
+            ![
+                less_equal(lower, upper),
+                ClickProposition::Comparison {
+                    left: lower.clone(),
+                    operator: ComparisonOperator::LessThan,
+                    right: upper.clone(),
+                },
+            ]
+            .iter()
+            .any(|order| {
+                self.lower_cited_surface_proposition(order, "narrowing order fact")
+                    .is_ok_and(|lowered| self.facts().exact_available_across_effects(&lowered, &[]))
+            })
         })
+        .map(|(lower, upper)| less_equal(&lower, &upper))
     }
 
     /// `transport(source, target) using { ... }` inside a pure theorem.
@@ -2175,6 +2191,24 @@ impl<'a> Proof<'a> {
                     describe_click_proposition(surface_source),
                     describe_click_proposition(surface_target),
                     describe_click_proposition(&missing)
+                )));
+            }
+            // Every order fact the rule walks is present, so what is left is
+            // the source range's own extent: its element count has to be
+            // established nonnegative and within the largest count a 32-bit
+            // byte extent can hold, or its extent term is a wrapped value.
+            if let Some((start, end)) = loadable_surface_range_endpoints(surface_source)
+                && loadable_surface_range_endpoints(surface_target).is_some()
+            {
+                return Err(self.step_error(format!(
+                    "`transport using` cannot narrow `{}` to `{}`: narrowing a loadable range needs `{}` established as a valid 32-bit byte extent, which takes `0 <= {} - {}` and an upper bound on `{} - {}` within the element count a 32-bit extent holds",
+                    describe_click_proposition(surface_source),
+                    describe_click_proposition(surface_target),
+                    describe_click_proposition(surface_source),
+                    describe_contract_expression(&end),
+                    describe_contract_expression(&start),
+                    describe_contract_expression(&end),
+                    describe_contract_expression(&start)
                 )));
             }
             return Err(self.step_error(format!(
@@ -2415,4 +2449,16 @@ mod outcome_case_tests {
             assert!(facts.is_empty(), "each arm restores the shared fact cursor");
         }
     }
+}
+
+/// The written endpoints of a `loadable(base[start..end])` surface segment.
+fn loadable_surface_range_endpoints(
+    proposition: &ClickProposition,
+) -> Option<(ContractExpression, ContractExpression)> {
+    let ClickProposition::Loadable { segment } = proposition else {
+        return None;
+    };
+    segment
+        .surface_range()
+        .map(|(_, start, end)| (start.clone(), end.clone()))
 }

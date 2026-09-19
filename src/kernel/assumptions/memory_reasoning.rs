@@ -517,21 +517,42 @@ impl PureFactContext {
     /// concludes `loadable(p[c..d])` from `loadable(p[a..b])` and the order
     /// facts `a <= c`, `c <= d`, `d <= b`.
     ///
-    /// Soundness. Those three order facts make the elements `c..d` a
-    /// contiguous subsequence of the elements `a..b`, so every byte the goal
-    /// names is a byte the assumed fact already covers, at the same element
-    /// width and in the same block. `c <= d` is required rather than assumed,
-    /// so a reversed goal range is refused instead of being read as a
-    /// negative extent; an empty goal range (`c == d`) is accepted and
-    /// claims nothing, matching the empty-range case in
-    /// `proves_memory_loadable_inner`. No product is rescaled and no new byte
-    /// count is formed: `(d - c) * w` is the goal's own lowered extent, and it
-    /// is bounded against the fact's only through element endpoints, so the
-    /// rule cannot form a wider product than the assumed fact already carries.
-    /// Reading an extent as its element count is what the cell rules beside
-    /// this one already do, and this rule reads it the same way. The snapshot
-    /// side condition stays with the caller, which has already established
-    /// that the assumed range is still available in the goal's memory.
+    /// Soundness, in the arithmetic the terms are actually written in. An
+    /// extent is a `Bitvector32Term`: `(b - a) * w` is modular, so reading the
+    /// fact as "the elements `a..b`" is only legitimate while that product is
+    /// the true count of bytes. The rule therefore requires the assumed fact's
+    /// own byte-count guards —
+    /// [`crate::kernel::memory_range_byte_count_guards`], the one definition
+    /// of "this element range is a valid 32-bit byte extent": `a <= b` signed,
+    /// and `(b - a) <= u32::MAX / w` unsigned. With those established,
+    /// `0 <= b - a` and `(b - a) * w` does not wrap, so the fact's extent is
+    /// exactly `(b - a) * w` bytes from `p + a * w`.
+    ///
+    /// The goal's guards then follow rather than being asked for again.
+    /// `a <= c`, `c <= d`, `d <= b` give `0 <= d - c <= b - a` with no
+    /// intermediate wrap, because each difference is bounded by `b - a`, which
+    /// is itself nonnegative and small enough that `(b - a) * w` fits; so
+    /// `(d - c) * w <= (b - a) * w` as true integers, `(d - c) * w` does not
+    /// wrap either, and `(c - a) * w + (d - c) * w = (d - a) * w <= (b - a) * w`.
+    /// The goal's byte interval is therefore a sub-interval of the fact's, at
+    /// the same width and in the same block, and every byte it names the fact
+    /// already covers.
+    ///
+    /// `c <= d` is required rather than assumed, so a reversed goal range is
+    /// refused instead of being read as a negative extent. An empty goal range
+    /// (`c == d`) is accepted and claims nothing, matching the empty-range case
+    /// in `proves_memory_loadable_inner`. No product is rescaled and no new
+    /// byte count is formed: `(d - c) * w` is the goal's own lowered extent.
+    /// The snapshot side condition stays with the caller, which has already
+    /// established that the assumed range is still available in the goal's
+    /// memory.
+    ///
+    /// The fits guard is what makes this rule self-contained. Without it a
+    /// wrapped assumed extent — `loadable(v[0..n])` at `n == 1 << 30`, whose
+    /// `n * 4` is `0` — would be a vacuously true premise that narrowing could
+    /// turn into a real one. The sibling cell rules above still read a wrapped
+    /// extent as its element count, and a witness for that is
+    /// `mdtests/wrapped_loadable_extent_is_not_a_cell.md`, quarantined.
     fn proves_loadable_subrange_by_element_endpoints(
         &self,
         range_base: &Pointer,
@@ -583,6 +604,49 @@ impl PureFactContext {
             && self.proves_element_endpoint_order(range_start, goal_start)
             && self.proves_element_endpoint_order(goal_start, goal_end)
             && self.proves_element_endpoint_order(goal_end, range_end)
+            && self.assumed_range_is_a_valid_byte_extent(range_start, range_end, element_width)
+    }
+
+    /// Whether the assumed range is established here to be a valid 32-bit byte
+    /// extent — the side condition
+    /// [`crate::kernel::memory_range_byte_count_guards`] states wherever a
+    /// contract supplies a range.
+    ///
+    /// Constant endpoints are decided by that shared definition, so a constant
+    /// range cannot be read one way here and another way in a contract.
+    ///
+    /// Symbolic endpoints need the element count `b - a` pinned to
+    /// `0..=limit`, where `limit` is
+    /// [`crate::kernel::memory_range_element_count_limit`] — the same bound the
+    /// shared `fits` guard uses, read from the same place. The guard itself is
+    /// an unsigned comparison, and Click's surface has no unsigned comparison
+    /// to write it with; these two signed facts imply it and a proof can state
+    /// both. `0 <= b - a` is the load-bearing one: without it `a = INT_MIN`,
+    /// `b = INT_MAX` satisfies `a <= b` and `b - a <= limit` while `b - a` is
+    /// really `-1` and the extent has wrapped.
+    fn assumed_range_is_a_valid_byte_extent(
+        &self,
+        start: &Bitvector32Term,
+        end: &Bitvector32Term,
+        element_width: u32,
+    ) -> bool {
+        crate::instrumentation::record_deterministic_work(1);
+        match crate::kernel::memory_range_byte_count_extent(
+            start.clone(),
+            end.clone(),
+            element_width,
+        ) {
+            crate::kernel::MemoryRangeExtent::ConstantValid => true,
+            crate::kernel::MemoryRangeExtent::ConstantInvalid { .. } => false,
+            crate::kernel::MemoryRangeExtent::Guards(_) => {
+                let element_count = Bitvector32Term::subtract(end.clone(), start.clone());
+                let limit = Bitvector32Term::Constant(
+                    crate::kernel::memory_range_element_count_limit(element_width),
+                );
+                self.proves_element_endpoint_order(&Bitvector32Term::Constant(0), &element_count)
+                    && self.proves_element_endpoint_order(&element_count, &limit)
+            }
+        }
     }
 
     /// `lower <= upper` for two element endpoints, by the exact routes the
