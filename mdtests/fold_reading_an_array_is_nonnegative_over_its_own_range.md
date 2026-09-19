@@ -1,35 +1,28 @@
-# a range fold whose body reads an array is proved by ordinary induction
+# a range fold over its own loadable range is proved by ordinary induction
 
-The array-reading companion of
-`mdtests/fold_function_is_nonnegative_by_induction.md`. The fold's body now
-reads `v[k]`, so every step that writes a term naming the last cell also has to
-place that cell inside a loadable range: the `have lo <= hi - 1` and
-`have hi - 1 < n` here are what make `v[hi - 1]` a value the state holds, and
-they are ordinary facts proved before the step that needs them.
+`mdtests/fold_reading_an_array_is_nonnegative_by_induction.md` proves the same
+theorem with the loadable range pinned to a separate parameter `n` that the
+induction never moves. That was a workaround, and this is the shape it was
+working around: the range ends at `hi`, the endpoint `induct(hi)` descends on,
+so `apply(ih(hi - 1))` demands `loadable(v[lo..hi - 1])` as an exactly available
+fact.
 
-The loadable range ends at the separate parameter `n`, not at `hi`, so the
-hypothesis's loadability premise is the theorem's own, unchanged: `induct(hi)`
-gives an induction hypothesis guarded by the theorem's own `requires` at the
-smaller endpoint, and a range the induction does not move needs nothing proved
-about it.
-
-That is no longer the only way to write this theorem. A range ending at `hi`
-makes `apply(ih(hi - 1))` demand `loadable(v[lo..hi - 1])` as an exact fact, and
-that fact is now provable —
-`mdtests/fold_reading_an_array_is_nonnegative_over_its_own_range.md` is the same
-theorem over its own range. This version stays as the shape whose loadability
-premise needs no proof at all.
+That fact is now provable, so the workaround is not needed. `induct(hi)` gives
+an induction hypothesis guarded by the theorem's own `requires` at the smaller
+endpoint; `have loadable(v[lo..hi - 1]) by { simp(); }` narrows the theorem's
+own range to that endpoint, against the order facts proved just above it, and
+`split()` assembles the hypothesis premise the guard is written as. Every other
+step is unchanged from the version with `n`.
 
 ```click
 function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
     (lo..hi).fold(0, |acc, k| { acc + to_integer(if v[k] == 0 { 1 } else { 0 }) })
 }
 
-theorem unmarked_nonnegative(v: int32[], lo: int32, n: int32, hi: int32) {
+theorem unmarked_nonnegative(v: int32[], lo: int32, hi: int32) {
     requires 0 <= lo;
     requires 0 <= hi;
-    requires hi <= n;
-    requires n >= 0 and loadable(v[lo..n]);
+    requires hi >= 0 and loadable(v[lo..hi]);
     ensures 0 <= unmarked(v, lo, hi) by {
         induct(hi) as ih;
         if hi <= lo {
@@ -41,16 +34,16 @@ theorem unmarked_nonnegative(v: int32[], lo: int32, n: int32, hi: int32) {
             have lo < hi by { simp(); }
             have 0 <= hi - 1 by { arithmetic() using { 0 <= lo; lo < hi; } }
             have hi - 1 < hi by { arithmetic() using { 0 <= lo; lo < hi; } }
-            have hi - 1 <= n by { arithmetic() using { 0 <= lo; lo < hi; hi <= n; } }
+            have lo <= hi - 1 by { arithmetic() using { 0 <= lo; lo < hi; } }
+            have hi - 1 >= 0 by { arithmetic() using { 0 <= lo; lo < hi; } }
+            have loadable(v[lo..hi - 1]) by { simp(); }
+            have hi - 1 >= 0 and loadable(v[lo..hi - 1]) by { split(); }
             apply(ih(hi - 1)) using {
                 0 <= hi - 1;
                 hi - 1 < hi;
                 0 <= lo;
-                hi - 1 <= n;
-                n >= 0 and loadable(v[lo..n]);
+                hi - 1 >= 0 and loadable(v[lo..hi - 1]);
             }
-            have lo <= hi - 1 by { arithmetic() using { 0 <= lo; lo < hi; } }
-            have hi - 1 < n by { arithmetic() using { 0 <= lo; lo < hi; hi <= n; } }
             have hi - 1 < 2147483647 by { arithmetic() using { 0 <= lo; lo < hi; } }
             unfold(unmarked(v, lo, hi)) using {
                 lo <= hi - 1;

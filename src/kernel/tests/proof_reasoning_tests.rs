@@ -3218,6 +3218,143 @@ fn builtin_obligation_solver_proves_trivial_props() {
     }));
 }
 
+/// Range narrowing at element granularity: the one loadability route whose
+/// goal extent may stay symbolic.
+///
+/// A segment `p[x..y]` of four-byte elements lowers to the base `p + x * 4`
+/// and the extent `(y - x) * 4`, so these helpers build exactly the shape the
+/// surface produces. Each test then asks `proves`, which is the same decision
+/// the implicit check and the explicit `transport ... using` step both reach.
+mod loadable_range_narrowing {
+    use super::*;
+
+    fn variable(id: u64) -> Bitvector32Term {
+        Bitvector32Term::Variable(Variable(id))
+    }
+
+    fn segment(memory: &CMemory, start: &Bitvector32Term, end: &Bitvector32Term) -> Proposition {
+        let origin = Pointer {
+            block: "data".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        Proposition::CMemoryLoadable {
+            memory: memory.clone(),
+            base: origin.offset_by_int32_elements(start.clone()),
+            bytes: Bitvector32Term::multiply(
+                Bitvector32Term::subtract(end.clone(), start.clone()),
+                Bitvector32Term::Constant(4),
+            ),
+        }
+    }
+
+    fn order(lower: &Bitvector32Term, upper: &Bitvector32Term) -> (ConditionTerm, bool) {
+        (
+            ConditionTerm::signed_less_equal(lower.clone(), upper.clone()),
+            true,
+        )
+    }
+
+    /// `a`, `b`, `c`, `d`: the assumed range is `p[a..b]` and the goal is
+    /// `p[c..d]`.
+    fn endpoints() -> [Bitvector32Term; 4] {
+        [
+            variable(95_101),
+            variable(95_102),
+            variable(95_103),
+            variable(95_104),
+        ]
+    }
+
+    fn assume_orders(fact: Proposition, orders: &[(ConditionTerm, bool)]) -> PureFactContext {
+        orders.iter().fold(
+            PureFactContext::new().assume_proposition(fact),
+            |assumptions, (condition, value)| {
+                assumptions.assume_condition(condition.clone(), *value)
+            },
+        )
+    }
+
+    #[test]
+    fn a_sub_range_the_order_facts_place_inside_is_loadable() {
+        let memory = CMemory::new().with_block("data", 4096);
+        let [a, b, c, d] = endpoints();
+        let assumptions = assume_orders(
+            segment(&memory, &a, &b),
+            &[order(&a, &c), order(&c, &d), order(&d, &b)],
+        );
+
+        assert!(assumptions.proves(&segment(&memory, &c, &d)));
+    }
+
+    #[test]
+    fn a_sub_range_past_the_assumed_end_is_refused() {
+        let memory = CMemory::new().with_block("data", 4096);
+        let [a, b, c, d] = endpoints();
+        // `d <= b` is exactly the fact that is missing.
+        let assumptions = assume_orders(segment(&memory, &a, &b), &[order(&a, &c), order(&c, &d)]);
+
+        assert!(!assumptions.proves(&segment(&memory, &c, &d)));
+    }
+
+    /// A reversed goal range lowers to a negative extent. Both ends sit inside
+    /// the assumed range, so only the required `c <= d` refuses it.
+    #[test]
+    fn a_reversed_goal_range_is_refused() {
+        let memory = CMemory::new().with_block("data", 4096);
+        let [a, b, c, d] = endpoints();
+        let assumptions = assume_orders(
+            segment(&memory, &a, &b),
+            &[order(&a, &c), order(&d, &c), order(&c, &b)],
+        );
+
+        assert!(!assumptions.proves(&segment(&memory, &c, &d)));
+    }
+
+    /// Loadability is a claim about one memory snapshot. A snapshot in which
+    /// the block is no longer there does not inherit the assumed range, so the
+    /// order facts alone never carry the conclusion across.
+    #[test]
+    fn a_different_memory_snapshot_is_refused() {
+        let assumed = CMemory::new().with_block("data", 4096);
+        let elsewhere = CMemory::new().with_block("other", 4096);
+        let [a, b, c, d] = endpoints();
+        let assumptions = assume_orders(
+            segment(&assumed, &a, &b),
+            &[order(&a, &c), order(&c, &d), order(&d, &b)],
+        );
+
+        assert!(!assumptions.proves(&segment(&elsewhere, &c, &d)));
+    }
+
+    /// The two extents must be scaled by one element width. A goal counting
+    /// one-byte elements is not a sub-range of a four-byte-element fact just
+    /// because its endpoints compare, so the rule declines rather than
+    /// rescaling a product it would then have to bound against overflow.
+    #[test]
+    fn a_different_element_width_is_refused() {
+        let memory = CMemory::new().with_block("data", 4096);
+        let [a, b, c, d] = endpoints();
+        let origin = Pointer {
+            block: "data".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let byte_goal = Proposition::CMemoryLoadable {
+            memory: memory.clone(),
+            base: origin.offset_by_elements(c.clone(), 1),
+            bytes: Bitvector32Term::multiply(
+                Bitvector32Term::subtract(d.clone(), c.clone()),
+                Bitvector32Term::Constant(1),
+            ),
+        };
+        let assumptions = assume_orders(
+            segment(&memory, &a, &b),
+            &[order(&a, &c), order(&c, &d), order(&d, &b)],
+        );
+
+        assert!(!assumptions.proves(&byte_goal));
+    }
+}
+
 #[test]
 fn empty_memory_range_is_vacuously_loadable() {
     let proposition = Proposition::CMemoryLoadable {

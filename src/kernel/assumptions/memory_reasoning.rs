@@ -66,6 +66,25 @@ fn frame_composite_definitions() -> Option<std::sync::Arc<Vec<CCompositeResource
     FRAME_COMPOSITE_DEFINITIONS.with(|definitions| definitions.borrow().last().cloned())
 }
 
+/// The element width a byte extent was scaled by, when it is a product with a
+/// positive constant factor. A segment `p[x..y]` of `w`-byte elements lowers
+/// its extent to `(y - x) * w`, so recovering `w` is what lets two extents be
+/// compared at element granularity. This inspects the term only; it neither
+/// simplifies nor consults facts.
+fn scaled_extent_element_width(bytes: &Bitvector32Term) -> Option<u32> {
+    let Bitvector32Term::Multiply(left, right) = bytes else {
+        return None;
+    };
+    match (left.as_ref(), right.as_ref()) {
+        (Bitvector32Term::Constant(width), _) | (_, Bitvector32Term::Constant(width))
+            if *width > 0 =>
+        {
+            Some(*width)
+        }
+        _ => None,
+    }
+}
+
 impl PureFactContext {
     #[cfg(test)]
     pub(crate) fn reset_proof_aware_pointer_index_queries() {
@@ -464,6 +483,10 @@ impl PureFactContext {
                 return true;
             }
         }
+        if self.proves_loadable_subrange_by_element_endpoints(range_base, range_bytes, base, bytes)
+        {
+            return true;
+        }
         let Some(byte_offset) = pointer_byte_offset_from_base(base, range_base) else {
             return false;
         };
@@ -475,6 +498,115 @@ impl PureFactContext {
             return false;
         };
         0 <= byte_offset && byte_offset + bytes <= range_bytes
+    }
+
+    /// Range narrowing: a goal range the stated order facts place inside an
+    /// assumed loadable range is loadable.
+    ///
+    /// This is the one rule here whose goal extent may stay symbolic. Every
+    /// other route needs a constant byte width, which is why a single cell
+    /// inside `loadable(p[a..b])` is found while the range `p[c..d]` inside
+    /// the same fact is not: a segment `p[x..y]` lowers to the base
+    /// `p + x * w` and the byte count `(y - x) * w`, so a symbolic upper
+    /// endpoint leaves a symbolic product behind.
+    ///
+    /// Read both extents at element granularity — the granularity the cell
+    /// rules above already use — and the endpoints come back exactly: the
+    /// fact covers elements `a..b`, the goal names elements `c..d`, and the
+    /// pointer offset says where `c` sits relative to `a`. The rule then
+    /// concludes `loadable(p[c..d])` from `loadable(p[a..b])` and the order
+    /// facts `a <= c`, `c <= d`, `d <= b`.
+    ///
+    /// Soundness. Those three order facts make the elements `c..d` a
+    /// contiguous subsequence of the elements `a..b`, so every byte the goal
+    /// names is a byte the assumed fact already covers, at the same element
+    /// width and in the same block. `c <= d` is required rather than assumed,
+    /// so a reversed goal range is refused instead of being read as a
+    /// negative extent; an empty goal range (`c == d`) is accepted and
+    /// claims nothing, matching the empty-range case in
+    /// `proves_memory_loadable_inner`. No product is rescaled and no new byte
+    /// count is formed: `(d - c) * w` is the goal's own lowered extent, and it
+    /// is bounded against the fact's only through element endpoints, so the
+    /// rule cannot form a wider product than the assumed fact already carries.
+    /// Reading an extent as its element count is what the cell rules beside
+    /// this one already do, and this rule reads it the same way. The snapshot
+    /// side condition stays with the caller, which has already established
+    /// that the assumed range is still available in the goal's memory.
+    fn proves_loadable_subrange_by_element_endpoints(
+        &self,
+        range_base: &Pointer,
+        range_bytes: &Bitvector32Term,
+        base: &Pointer,
+        bytes: &Bitvector32Term,
+    ) -> bool {
+        if crate::kernel::assumptions::reasoning_interrupted() {
+            return false;
+        }
+        if range_base.block != base.block {
+            return false;
+        }
+        let Some(element_width) = scaled_extent_element_width(bytes) else {
+            return false;
+        };
+        if scaled_extent_element_width(range_bytes) != Some(element_width) {
+            return false;
+        }
+        let (Some(goal_count), Some(range_count)) = (
+            element_count_from_bytes(bytes, element_width),
+            element_count_from_bytes(range_bytes, element_width),
+        ) else {
+            return false;
+        };
+        let Some(index) = base.element_index_from_base_with_width(range_base, element_width) else {
+            return false;
+        };
+        let (
+            Bitvector32Term::Subtract(goal_end, goal_start),
+            Bitvector32Term::Subtract(range_end, range_start),
+        ) = (&goal_count, &range_count)
+        else {
+            return false;
+        };
+        crate::instrumentation::record_deterministic_work(1);
+        // The goal's own byte count names its endpoints; the pointer offset
+        // must agree that its start element is the fact's start advanced by
+        // that offset. Otherwise the two counts describe unrelated endpoints
+        // and nothing follows from comparing them.
+        let offset_agrees = match &index {
+            Bitvector32Term::Constant(0) => goal_start == range_start,
+            Bitvector32Term::Subtract(start, origin) => {
+                start == goal_start && origin == range_start
+            }
+            _ => false,
+        };
+        offset_agrees
+            && self.proves_element_endpoint_order(range_start, goal_start)
+            && self.proves_element_endpoint_order(goal_start, goal_end)
+            && self.proves_element_endpoint_order(goal_end, range_end)
+    }
+
+    /// `lower <= upper` for two element endpoints, by the exact routes the
+    /// loadability rules already use: identical terms, two constants, an
+    /// exact assumed comparison, or the bounded order-fact walk. A strict
+    /// path also answers the non-strict question.
+    fn proves_element_endpoint_order(
+        &self,
+        lower: &Bitvector32Term,
+        upper: &Bitvector32Term,
+    ) -> bool {
+        crate::instrumentation::record_deterministic_work(1);
+        if lower == upper {
+            return true;
+        }
+        if let (Some(lower), Some(upper)) = (
+            signed_bitvector_constant(lower),
+            signed_bitvector_constant(upper),
+        ) {
+            return lower <= upper;
+        }
+        let condition = ConditionTerm::signed_less_equal(lower.clone(), upper.clone());
+        self.exact_condition_value(&condition) == Some(true)
+            || self.has_exact_order_path(lower, upper, false)
     }
 
     pub(in crate::kernel) fn proves_loadable_region_from_range(

@@ -102,7 +102,12 @@ pub(in crate::surface::proof) fn plan_explicit_fact_transport(
         ) {
             return true;
         }
-        certified_fact_transport_reaches(source, target, state.memory(), &transport_assumptions)
+        certified_fact_transport_reaches(
+            source,
+            target,
+            Some(state.memory()),
+            &transport_assumptions,
+        )
     };
 
     if !checks(&selected) {
@@ -753,7 +758,7 @@ pub(in crate::surface::proof) fn certified_fact_transport_reaches_through(
     assumptions: &PureFactContext,
     transitions: &[ExecutionPureFact],
 ) -> bool {
-    if certified_fact_transport_reaches(source, target, after, assumptions) {
+    if certified_fact_transport_reaches(source, target, Some(after), assumptions) {
         return true;
     }
     let rewritten = crate::kernel::rewrite_condition_through_certified_stores(source, transitions);
@@ -767,13 +772,22 @@ pub(in crate::surface::proof) fn certified_fact_transport_reaches_through(
             target,
             assumptions,
         )
-        || certified_fact_transport_reaches(&rewritten, target, after, assumptions)
+        || certified_fact_transport_reaches(&rewritten, target, Some(after), assumptions)
 }
 
+/// Whether the checked `transport` conclusion `target` follows from the exact
+/// source fact under `assumptions`.
+///
+/// `after` is the state the transport lands in, and is `None` in a pure
+/// theorem, which has no C state. Only the final store-rewrite route needs it;
+/// every other route — the structural recursion, the resource rules, the
+/// memory-loadability decision, and the condition-fact matching — reads facts
+/// and terms alone. A pure theorem and a fixed-state proof therefore accept
+/// the same conclusions from the same facts, through this one function.
 pub(in crate::surface::proof) fn certified_fact_transport_reaches(
     source: &Proposition,
     target: &Proposition,
-    after: &CMemory,
+    after: Option<&CMemory>,
     assumptions: &PureFactContext,
 ) -> bool {
     let equivalent = |left: &Proposition, right: &Proposition| {
@@ -906,6 +920,9 @@ pub(in crate::surface::proof) fn certified_fact_transport_reaches(
     if crate::kernel::api::c_condition_fact_target_reaches_in_context(source, target, assumptions) {
         return true;
     }
+    let Some(after) = after else {
+        return false;
+    };
     let Some(theorem) = prove_c_condition_fact_transport(source, after, assumptions) else {
         return false;
     };

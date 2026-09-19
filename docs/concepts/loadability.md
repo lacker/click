@@ -73,6 +73,41 @@ ensures result == p[k] by auto;
 
 Loops usually need invariants to preserve these bounds at every iteration.
 
+## Narrowing a range
+
+A loadability fact is also provable, not only findable. When the verifier cannot
+see a range on its own, state it first and the step that needs it goes through:
+
+<!-- verified-example: mdtests/have_loadable_prefix_of_a_range.md -->
+```click
+have lo <= hi - 1 by { arithmetic() using { lo < hi; 0 < hi; } }
+have hi - 1 < hi by { arithmetic() using { 0 < hi; } }
+```
+
+<!-- verified-example: mdtests/have_loadable_single_cell.md -->
+```click
+have loadable(p[hi - 1..hi - 1 + 1]) by { simp(); }
+```
+
+Narrowing reads both ranges at element granularity. From `loadable(p[a..b])` it
+concludes `loadable(p[c..d])` when order facts establish `a <= c`, `c <= d` and
+`d <= b`: the elements `c..d` are then a contiguous part of the elements `a..b`.
+All three are required. `c <= d` in particular is not assumed, so a reversed
+range is refused rather than read as a negative extent, and a range reaching
+past `b` is refused with the order fact it was missing:
+
+```text
+`transport using` cannot narrow `loadable(v[lo..hi])` to `loadable(v[lo..k])`:
+narrowing a loadable range needs `k <= hi`, which is not an available fact
+```
+
+This is one decision, not two. It is the same rule the verifier applies while
+lowering `p[hi - 1]` on its own, so anything found implicitly can also be
+written down and proved — in a pure theorem as well as in a C proof. That
+matters for induction over an array range, where the hypothesis needs the
+narrowed range as an exactly available fact before it can be applied; see
+[`fold_reading_an_array_is_nonnegative_over_its_own_range.md`](https://github.com/lacker/click/blob/master/mdtests/fold_reading_an_array_is_nonnegative_over_its_own_range.md).
+
 ## Old memory
 
 `old(...)` reads from the function-entry state:
