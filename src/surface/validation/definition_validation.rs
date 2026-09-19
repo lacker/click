@@ -695,6 +695,29 @@ fn validate_contract_applications_in_proposition(
     }
 }
 
+/// The refusal for a resource `requires` clause in a pure theorem.
+///
+/// A theorem has no resource context, so `owns` and `consumes` have nothing to
+/// take and nothing to give back. Readability is the one thing a range still
+/// means without an owner, and `views` is how a theorem says it, so the
+/// sentence names the clause the reader most likely wanted.
+pub(in crate::surface) fn theorem_resource_clause_refusal(theorem_name: &str) -> String {
+    format!(
+        "pure theorem `{theorem_name}` cannot require a resource: applying a theorem lends, \
+         consumes and separates nothing. A theorem states that a range is readable with `views \
+         v[lo..hi];`, which its proof assumes and anyone who applies it owes"
+    )
+}
+
+/// The refusal for a resource `ensures` clause in a pure theorem.
+pub(in crate::surface) fn theorem_resource_conclusion_refusal(theorem_name: &str) -> String {
+    format!(
+        "pure theorem `{theorem_name}` cannot conclude a resource: applying a theorem creates and \
+         returns nothing. A theorem states that a range is readable with `views v[lo..hi];` among \
+         its requirements, and concludes propositions only"
+    )
+}
+
 fn validate_theorem_definition(
     theorem: &TheoremDefinition,
     predicates: &BTreeMap<String, usize>,
@@ -720,12 +743,12 @@ fn validate_theorem_definition(
                 theorem.name()
             )));
         }
-        let Some(proposition) = requirement.proposition() else {
-            return Err(ClickError::new(format!(
-                "pure theorem `{}` currently supports proposition `requires` clauses only",
-                theorem.name()
+        let Some(proposition) = requirement.theorem_proposition() else {
+            return Err(ClickError::new(theorem_resource_clause_refusal(
+                theorem.name(),
             )));
         };
+        let proposition = &proposition;
         validate_predicate_calls_in_proposition(
             proposition,
             predicates,
@@ -755,9 +778,8 @@ fn validate_theorem_definition(
 
     for ensure in theorem.ensures() {
         let Ensure::Proposition(proposition) = ensure.ensure() else {
-            return Err(ClickError::new(format!(
-                "pure theorem `{}` currently supports proposition `ensures` clauses only",
-                theorem.name()
+            return Err(ClickError::new(theorem_resource_conclusion_refusal(
+                theorem.name(),
             )));
         };
         validate_predicate_calls_in_proposition(

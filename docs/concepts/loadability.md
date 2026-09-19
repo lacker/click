@@ -92,6 +92,49 @@ such promise, and reading it as an element count is refused:
 Since Click's surface has no unsigned comparison, the condition is stated in the
 signed spelling above, as `0 <= b - a` together with `b - a <= 1073741823`.
 
+## In a pure theorem
+
+A theorem has no resource context: nothing is lent to it, nothing is consumed,
+and applying it separates nothing. Readability is the one thing a range still
+means without an owner, so a theorem states a range with `views`, and there it
+is a hypothesis and nothing else:
+
+<!-- verified-example: mdtests/theorem_views_states_a_readable_range.md -->
+```click
+theorem cell_of_a_viewed_range(v: int32[], lo: int32, hi: int32, k: int32) {
+    views v[lo..hi];
+    requires lo <= k;
+    requires k < hi;
+    ensures to_integer(v[k]) == to_integer(v[k]) by { simp(); }
+}
+```
+
+The clause lowers to the proposition `loadable(v[lo..hi])` states, appended to
+the theorem's requirements in the position it was written, and it carries the
+extent half like any other stated range: the theorem's own proof assumes both
+halves, and an application owes both. `requires loadable(v[lo..hi]);` in a
+theorem means exactly the same thing.
+
+`owns`, `consumes` and `produces` remain refused in a theorem, because a
+theorem has nothing to take and nothing to hand back.
+
+A `using` list holds propositions, so a `views` premise is named there by its
+fact form:
+
+<!-- verified-example: mdtests/c_proof_applies_a_views_theorem.md -->
+```click
+apply(element_of_a_viewed_range(a, 0, 3, 1)) using {
+    loadable(a[0..3]);
+}
+```
+
+That is also the form the refusal prints when an application cannot establish
+the premise, so what the reader is told to supply is what they write down. A C
+proof supplies it from the readability its own `views` or `owns` clause gives
+over that range, and a theorem applying another theorem — or its own induction
+hypothesis — supplies it from its own `views` hypothesis, narrowed by the rule
+in [Narrowing a range](#narrowing-a-range).
+
 You can also write shifted ranges:
 
 <!-- verified-example: mdtests/pointer_range.md -->
@@ -164,7 +207,7 @@ have loadable(a[0..k]) by { simp(); }
 That matters for induction over an array range, where
 the hypothesis needs the narrowed range as an exactly available fact before it
 can be applied; see
-[`fold_reading_an_array_is_nonnegative_over_its_own_range.md`](https://github.com/lacker/click/blob/master/mdtests/fold_reading_an_array_is_nonnegative_over_its_own_range.md).
+[`fold_reading_a_viewed_array_is_nonnegative_over_its_own_range.md`](https://github.com/lacker/click/blob/master/mdtests/fold_reading_a_viewed_array_is_nonnegative_over_its_own_range.md).
 
 ## Old memory
 

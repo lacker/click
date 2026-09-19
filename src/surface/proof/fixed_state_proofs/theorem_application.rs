@@ -286,16 +286,10 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
             application,
             &array_refs,
         );
-    theorem
-        .requires()
+    crate::surface::proof::pure_theorems::theorem_requirement_propositions(&theorem)
+        .map_err(|error| error.message)?
         .iter()
         .map(|requirement| {
-            let requirement = requirement.proposition().ok_or_else(|| {
-                format!(
-                    "theorem `{}` has a non-proposition requirement",
-                    theorem.name()
-                )
-            })?;
             let lowered = lower_fixed_state_proposition_through_kernel_with_bound_array_memories(
                 requirement,
                 assumptions,

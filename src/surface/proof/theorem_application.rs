@@ -240,18 +240,11 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
         )
     };
 
-    for (requirement_index, requirement) in theorem.requires().iter().enumerate() {
-        let Some(requirement) = requirement.proposition() else {
-            return Err(theorem_application_error(
-                claim_label,
-                path_index,
-                tactic_index,
-                format!(
-                    "theorem `{}` has a non-proposition requirement that cannot be applied here",
-                    theorem.name()
-                ),
-            ));
-        };
+    let requirements =
+        crate::surface::proof::pure_theorems::theorem_requirement_propositions(&theorem).map_err(
+            |error| theorem_application_error(claim_label, path_index, tactic_index, error.message),
+        )?;
+    for (requirement_index, requirement) in requirements.iter().enumerate() {
         let mut lowered = lower(requirement).map_err(|error| {
             theorem_application_error(
                 claim_label,

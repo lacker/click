@@ -15,6 +15,30 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// A theorem's `requires` clauses as the propositions they state, in source
+/// order.
+///
+/// Every consumer of a theorem's premises reads them through here — its own
+/// proof setup, its induction hypothesis, and each of the three places an
+/// application is checked — so a `views` range is one premise in one position
+/// wherever it is read, and `requirement N` means the same clause to all of
+/// them.
+pub(in crate::surface) fn theorem_requirement_propositions(
+    theorem: &TheoremDefinition,
+) -> Result<Vec<ClickProposition>, ClickError> {
+    theorem
+        .requires()
+        .iter()
+        .map(|requirement| {
+            requirement.theorem_proposition().ok_or_else(|| {
+                ClickError::new(crate::surface::validation::theorem_resource_clause_refusal(
+                    theorem.name(),
+                ))
+            })
+        })
+        .collect()
+}
+
 /// Proves `theorem_definitions` in order. Each proof may apply `dependencies`
 /// and the definitions before it. Dependencies are declarations proved
 /// elsewhere, such as the standard library, and are not re-proved here.
@@ -405,15 +429,7 @@ fn prepare_pure_induction_tactics(
             "`induct({parameter})` requires an int32 theorem parameter with that name"
         )));
     }
-    let surface_requires = theorem
-        .requires()
-        .iter()
-        .map(|requirement| {
-            requirement.proposition().cloned().ok_or_else(|| {
-                ClickError::new("pure induction supports proposition requirements only")
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let surface_requires = theorem_requirement_propositions(theorem)?;
 
     fn transform(
         tactics: &[ProofTactic],
@@ -740,6 +756,9 @@ fn check_pure_structural_induction(
         .iter()
         .map(|parameter| parameter.name())
         .collect::<BTreeSet<_>>();
+    // One normalization for every arm and every child hypothesis below, so a
+    // `views` premise is the same premise in the same position in all of them.
+    let theorem_requires = theorem_requirement_propositions(theorem)?;
     let mut seen_variants = BTreeSet::new();
     let mut completions = Vec::new();
     let mut checked_arms = Vec::new();
@@ -888,11 +907,7 @@ fn check_pure_structural_induction(
         .map_err(ClickError::new)?;
         let mut branch_surface_requires = Vec::new();
         let mut branch_requires = Vec::new();
-        for requirement in theorem
-            .requires()
-            .iter()
-            .filter_map(Requirement::proposition)
-        {
+        for requirement in &theorem_requires {
             let surface = substitute_click_proposition(requirement, &case_substitution)
                 .map_err(ClickError::new)?;
             let kernel = lower_pure_theorem_proposition_with_algebraic_values(
@@ -943,11 +958,7 @@ fn check_pure_structural_induction(
             }
             let mut surface_premises = Vec::new();
             let mut kernel_premises = Vec::new();
-            for requirement in theorem
-                .requires()
-                .iter()
-                .filter_map(Requirement::proposition)
-            {
+            for requirement in &theorem_requires {
                 let surface = substitute_click_proposition(requirement, &child_substitution)
                     .map_err(ClickError::new)?;
                 let kernel = lower_pure_theorem_proposition_with_algebraic_values(
@@ -1109,16 +1120,15 @@ pub(super) fn pure_theorem_context(
     let values = pure_theorem_parameter_values(theorem.parameters());
     let integer_values = pure_theorem_parameter_integer_values(theorem.parameters());
     let array_refs = pure_theorem_array_refs(theorem.parameters(), &values, &memory);
-    let requires = theorem
-        .requires()
+    // A theorem's premises are its `requires` clauses in source order, each
+    // normalized to the proposition it states: a `views` range states its
+    // readability, the same proposition `loadable` states. Keeping the list
+    // positional is what keeps `requirement N` diagnostics and `apply … using`
+    // lists naming the clause the reader wrote.
+    let surface_requires = theorem_requirement_propositions(theorem)?;
+    let requires = surface_requires
         .iter()
-        .map(|requirement| {
-            let Some(proposition) = requirement.proposition() else {
-                return Err(ClickError::new(format!(
-                    "pure theorem `{}` currently supports proposition `requires` clauses only",
-                    theorem.name()
-                )));
-            };
+        .map(|proposition| {
             lower_pure_theorem_proposition_with_integer_values(
                 theorem.name(),
                 proposition,
@@ -1138,12 +1148,7 @@ pub(super) fn pure_theorem_context(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut surface_requirements = SurfacePropositionMap::default();
-    for (kernel, surface) in requires.iter().zip(
-        theorem
-            .requires()
-            .iter()
-            .filter_map(Requirement::proposition),
-    ) {
+    for (kernel, surface) in requires.iter().zip(&surface_requires) {
         surface_requirements.record_lowering(surface, kernel)?;
     }
     // A stated range premise carries its byte-count guards. Appending them
@@ -1506,10 +1511,9 @@ fn verify_theorem_ensure(
     function_environment: Option<&CExecutionEnvironment>,
 ) -> Result<VerifiedPureTheorem, ClickError> {
     let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
-        return Err(ClickError::new(format!(
-            "pure theorem `{}` currently supports proposition `ensures` clauses only",
-            theorem.name()
-        )));
+        return Err(ClickError::new(
+            crate::surface::validation::theorem_resource_conclusion_refusal(theorem.name()),
+        ));
     };
     if let Some(verified) = verify_contract_refinement_theorem(
         theorem,

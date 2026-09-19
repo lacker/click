@@ -6033,6 +6033,53 @@ impl Requirement {
             _ => None,
         }
     }
+
+    /// The proposition a pure theorem's `requires` clause states.
+    ///
+    /// A theorem has no resource context: nothing is lent to it, nothing is
+    /// consumed, and applying it separates nothing. What a range clause can
+    /// still say there is the one thing a range says without an owner —
+    /// that reads of it are defined — so `views v[lo..hi];` in a theorem is a
+    /// hypothesis, and it is the same hypothesis `loadable(v[lo..hi])` states.
+    /// Both spellings lower through this one normalization, so a theorem
+    /// cannot mean two things by the same range, and the bare `loadable`
+    /// requirement form works in a theorem for the same reason.
+    ///
+    /// `owns`, `consumes` and `produces` have no reading here at all, and
+    /// stay refused where this returns `None`.
+    pub(crate) fn theorem_proposition(&self) -> Option<ClickProposition> {
+        match self.inner() {
+            Self::Proposition(proposition) => Some(proposition.clone()),
+            Self::LoadableSegment { segment } => Some(ClickProposition::Loadable {
+                segment: segment.clone(),
+            }),
+            Self::Resource(resource) => theorem_resource_proposition(resource),
+            Self::Labeled { .. } => unreachable!("requirement.inner() removes labels"),
+        }
+    }
+}
+
+/// The readability hypothesis a theorem's resource clause states, if it states
+/// one. Only a viewed memory range does: a view grants no write authority and
+/// no separation, so the whole of what it claims in a pure scope is that its
+/// bytes are loadable. An aggregate `views` clause names several ranges at
+/// once and claims that of each of them.
+fn theorem_resource_proposition(resource: &ResourceClause) -> Option<ClickProposition> {
+    match resource {
+        ResourceClause::ViewMemory(segment) => Some(ClickProposition::Loadable {
+            segment: segment.clone(),
+        }),
+        ResourceClause::MemoryAggregate {
+            access: ResourceAccessMode::View,
+            segments,
+        } => segments
+            .iter()
+            .map(|segment| ClickProposition::Loadable {
+                segment: segment.clone(),
+            })
+            .reduce(|left, right| ClickProposition::And(Box::new(left), Box::new(right))),
+        _ => None,
+    }
 }
 
 fn requirement_contains_resource(requirement: &Requirement) -> bool {

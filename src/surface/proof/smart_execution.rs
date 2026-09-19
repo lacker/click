@@ -701,19 +701,18 @@ impl<'a> Proof<'a> {
             .zip(application.arguments.iter().cloned())
             .collect::<BTreeMap<_, _>>();
 
+        let source_requirements =
+            crate::surface::proof::pure_theorems::theorem_requirement_propositions(&theorem)
+                .map_err(|error| self.step_error(error.message))?;
         let mut premises = Vec::new();
-        for (requirement_index, (requirement, source_requirement)) in
-            requirements.into_iter().zip(theorem.requires()).enumerate()
+        for (requirement_index, (requirement, source_surface)) in requirements
+            .into_iter()
+            .zip(&source_requirements)
+            .enumerate()
         {
             if normalizes_context_free(&requirement) {
                 continue;
             }
-            let source_surface = source_requirement.proposition().ok_or_else(|| {
-                self.step_error(format!(
-                    "theorem application `{}` has a non-proposition requirement",
-                    application.name
-                ))
-            })?;
             let surface = substitute_click_proposition(source_surface, &substitutions)
                 .map_err(|message| self.step_error(message))?;
             let lowered = self.lower_surface_proposition(&surface, "selected theorem premise")?;

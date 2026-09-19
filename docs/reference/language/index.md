@@ -722,9 +722,32 @@ proposition `requires` clauses, and proposition `ensures` clauses with proof
 clauses. A theorem-only `.click` file does not need a `verifying "file.c";`
 declaration.
 
-Theorems are intentionally pure. They do not support resource `requires`,
-resource `ensures`, region proof blocks, `old(...)`, `at(...)`, or
-`result`. Pure theorem scripts can simplify, unfold predicates and pure functions, apply
+Theorems are intentionally pure. They do not support `owns`, `consumes`,
+`produces`, region proof blocks, `old(...)`, `at(...)`, or
+`result`: applying a theorem lends, consumes, creates and separates nothing.
+
+One resource clause does have a reading without a resource context. `views
+v[lo..hi];` states that reads of the range are defined, which is an ordinary
+hypothesis, so a theorem accepts it and lowers it to the proposition
+`loadable(v[lo..hi])` states, in the position it was written:
+
+<!-- verified-example: mdtests/theorem_views_states_a_readable_range.md -->
+```click
+theorem cell_of_a_viewed_range(v: int32[], lo: int32, hi: int32, k: int32) {
+    views v[lo..hi];
+    requires lo <= k;
+    requires k < hi;
+    ensures to_integer(v[k]) == to_integer(v[k]) by { simp(); }
+}
+```
+
+Nothing is lent by writing it and nothing is returned. Like every stated range
+it carries its valid-extent facts, which the theorem's proof assumes and an
+application owes; see [Memory loadability](../../concepts/loadability.md). An
+`apply ... using` list holds propositions, so the premise is named there as
+`loadable(v[lo..hi])`.
+
+Pure theorem scripts can simplify, unfold predicates and pure functions, apply
 theorems, introduce logical structure, rewrite, use exact assumptions, and
 derive atomic propositions. They cannot execute C or transform resources.
 Applying a theorem never consumes, creates, returns, opens, or closes
