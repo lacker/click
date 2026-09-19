@@ -5,7 +5,9 @@ mod fact_transport;
 mod have_proofs;
 mod theorem_application;
 
-use conversion_conditions::{StatedForm, StatedSite, refuse_unproved_conversion_bounds};
+use conversion_conditions::{
+    StatedForm, StatedSite, describe_dropped_fold_body, refuse_unproved_conversion_bounds,
+};
 
 pub(super) use fact_transport::{
     certified_fact_transport_reaches, certified_fact_transport_reaches_through,

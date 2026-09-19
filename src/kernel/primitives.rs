@@ -3177,6 +3177,12 @@ pub struct ExecutionBudget {
     /// path, and the surviving path count says nothing about why. Diagnostic
     /// only: no evaluation reads it back.
     pub(super) dropped_range_extent: Option<DroppedRangeExtent>,
+    /// The first range fold a specification lowering dropped because its body
+    /// did not evaluate to one symbolic iteration under the fold's binders.
+    /// Such a fold prunes its own evaluation path, and the surviving path
+    /// count says nothing about why. Diagnostic only: no evaluation reads it
+    /// back.
+    pub(super) dropped_fold_body: Option<DroppedFoldBody>,
 }
 
 /// A constant element range a lowering refused as a byte extent, for the
@@ -3186,6 +3192,29 @@ pub struct DroppedRangeExtent {
     pub element_count: i64,
     pub element_width: u32,
     pub byte_limit: u32,
+}
+
+/// A range fold whose body did not lower to one symbolic iteration, for the
+/// message a caller writes when the lowering produced no path.
+///
+/// A fold body runs under the fold's accumulator and item binders, so a fact
+/// it raises is a statement about one unknown item rather than about this
+/// state. The lowering may export only facts the ambient premises already
+/// state exactly, and it may keep only a single non-branching body path. Both
+/// refusals prune the fold's path silently; this records which one fired and
+/// what it was about.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DroppedFoldBody {
+    /// How many evaluation paths the body produced under its binders. Any
+    /// count other than one is a case split on the item.
+    pub body_paths: usize,
+    /// The first body path fact the ambient premises do not already state
+    /// exactly, when the body produced exactly one path. This is the
+    /// case-split condition the body carried out with it.
+    pub unavailable_body_fact: Option<Proposition>,
+    /// The item binder the body was evaluated under, so a message can say
+    /// which index the condition is about.
+    pub item: Variable,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

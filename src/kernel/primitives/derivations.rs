@@ -1186,6 +1186,28 @@ impl ExecutionBudget {
             });
     }
 
+    /// The first range fold this budget's lowering dropped because its body
+    /// did not lower to one symbolic iteration, for the message a caller
+    /// writes when the lowering produced no path at all.
+    pub fn dropped_fold_body(&self) -> Option<&super::DroppedFoldBody> {
+        self.dropped_fold_body.as_ref()
+    }
+
+    /// Records such a refusal. Diagnostic only; it decides nothing.
+    pub(in crate::kernel) fn record_dropped_fold_body(
+        &mut self,
+        body_paths: usize,
+        unavailable_body_fact: Option<Proposition>,
+        item: Variable,
+    ) {
+        self.dropped_fold_body
+            .get_or_insert(super::DroppedFoldBody {
+                body_paths,
+                unavailable_body_fact,
+                item,
+            });
+    }
+
     /// The fixed work allowances every budget starts from, beside the one
     /// field a caller must choose. Private, so "the other fields' defaults"
     /// stays a convenience and never becomes a way to leave the
@@ -1203,6 +1225,7 @@ impl ExecutionBudget {
             refuses_execution_identities: false,
             dropped_runtime_error: None,
             dropped_range_extent: None,
+            dropped_fold_body: None,
         }
     }
 

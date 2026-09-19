@@ -1978,7 +1978,8 @@ pub fn c_lower_spec_proposition_at_state_with_provenance(
             proposition,
             entry_state,
             assumptions,
-        )?;
+        )
+        .map_err(|refusal| refusal.message)?;
     Ok((
         goal,
         facts,
@@ -1988,6 +1989,28 @@ pub fn c_lower_spec_proposition_at_state_with_provenance(
             .collect(),
         introductions,
     ))
+}
+
+/// Why one proof-side lowering refused, as its message plus whatever the
+/// lowering recorded about the path it pruned.
+///
+/// The message is the whole answer for a caller that only reports it. A
+/// caller that can spell the user's names -- the surface -- reads the
+/// structured record instead and writes the refusal in those names, which is
+/// the difference between "produced 0 paths" and naming the cell whose read
+/// split.
+#[derive(Clone, Debug)]
+pub struct LoweringRefusal {
+    pub message: String,
+    /// Present when the lowering pruned a range fold because its body did not
+    /// lower to one symbolic iteration under the fold's binders.
+    pub dropped_fold_body: Option<DroppedFoldBody>,
+}
+
+impl From<LoweringRefusal> for String {
+    fn from(refusal: LoweringRefusal) -> Self {
+        refusal.message
+    }
 }
 
 /// Why a specification evaluation did not produce exactly one path. No path
@@ -2018,6 +2041,23 @@ fn no_single_path_message<T>(what: &str, paths: &[T], budget: &ExecutionBudget) 
             "the kernel {what} produced no path: every evaluation path ended in a runtime error: {}",
             error.kernel_summary()
         ),
+        (0, None) if budget.dropped_fold_body().is_some() => {
+            let dropped = budget
+                .dropped_fold_body()
+                .expect("the guard above checked this");
+            match dropped.body_paths {
+                1 => format!(
+                    "the kernel {what} produced no path: a range fold's body raised a condition \
+                     that is about one item of the fold's range rather than about this state, so \
+                     the fold could not be lowered as one symbolic iteration"
+                ),
+                count => format!(
+                    "the kernel {what} produced no path: a range fold's body evaluated to {count} \
+                     paths, not one, so it does not denote one value for every item of the fold's \
+                     range"
+                ),
+            }
+        }
         (count, _) => format!("the kernel {what} produced {count} paths, not one"),
     }
 }
@@ -2071,7 +2111,7 @@ pub(crate) fn c_lower_spec_proposition_with_checked_obligations(
         Vec<ProofObligation>,
         LoweringIntroductions,
     ),
-    String,
+    LoweringRefusal,
 > {
     let lowering_assumptions = assumptions
         .clone()
@@ -2100,9 +2140,22 @@ pub(crate) fn c_lower_spec_proposition_with_checked_obligations(
             "internal: execution identity requested beside a live state".to_string()
         }
         limit => format!("the kernel lowering hit {limit:?}"),
+    })
+    .map_err(|message| LoweringRefusal {
+        message,
+        dropped_fold_body: None,
     })?;
     let Some(path) = exactly_selected_spec_proposition_path(&paths, assumptions) else {
-        return Err(no_single_path_message("lowering", &paths, &budget));
+        return Err(LoweringRefusal {
+            message: no_single_path_message("lowering", &paths, &budget),
+            // Only a lowering that produced nothing at all is explained by a
+            // pruned fold: with a path in hand the count, not the prune, is
+            // what the caller must read. A dropped runtime error is more
+            // concrete still, and its own message keeps precedence.
+            dropped_fold_body: (paths.is_empty() && budget.dropped_runtime_error().is_none())
+                .then(|| budget.dropped_fold_body().cloned())
+                .flatten(),
+        });
     };
     Ok((
         path.proposition.clone(),

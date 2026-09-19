@@ -94,9 +94,15 @@ pub(crate) fn render_terminal_message(
     rendered.push_str(&diagnostic.origin.stage);
     rendered.push_str("\n  location: ");
     rendered.push_str(&diagnostic.origin.location);
+    // One label map for the whole report. Rendering the goal and each premise
+    // with a map of its own made `snapshot#1` mean a different memory on every
+    // line, so a premise that reads exactly like the goal could be about
+    // another state entirely — which is the one thing a reader compares these
+    // lines to decide.
+    let mut labels = render::SnapshotLabels::default();
     if let Some(goal) = diagnostic.kernel_goal() {
         rendered.push_str("\n  kernel goal: ");
-        rendered.push_str(&render::render_proposition(goal));
+        rendered.push_str(&render::render_proposition_labeled(goal, &mut labels));
     }
     {
         let premises = diagnostic.premises(8);
@@ -108,7 +114,7 @@ pub(crate) fn render_terminal_message(
             ));
             for premise in &premises {
                 rendered.push_str("\n    ");
-                let text = render::render_proposition(premise);
+                let text = render::render_proposition_labeled(premise, &mut labels);
                 let mut end = text.len().min(2048);
                 while end > 0 && !text.is_char_boundary(end) {
                     end -= 1;

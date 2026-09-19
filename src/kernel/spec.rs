@@ -1291,6 +1291,7 @@ fn evaluate_spec_integer_expression_paths(
                     // unresolved alternatives are rejected rather than
                     // exporting one branch's assumptions to the fold.
                     let [body_path] = body_paths.as_slice() else {
+                        budget.record_dropped_fold_body(body_paths.len(), None, *item);
                         continue;
                     };
                     {
@@ -1300,10 +1301,15 @@ fn evaluate_spec_integer_expression_paths(
                         // result.  Load-defining facts are represented by the
                         // registered snapshot load itself and may be dropped;
                         // all other body facts must already be ambient.
-                        if body_path.facts.iter().any(|fact| {
+                        if let Some(unavailable) = body_path.facts.iter().find(|fact| {
                             !assumptions.proves_exact(fact.proposition())
                                 && !is_verified_load_variable_defining_fact(fact.proposition())
                         }) {
+                            budget.record_dropped_fold_body(
+                                1,
+                                Some(unavailable.proposition().clone()),
+                                *item,
+                            );
                             continue;
                         }
                         let body_obligations = body_path
