@@ -22,7 +22,8 @@ use crate::kernel::{
     LoadSourceOwnerId, c_add, c_and, c_assign, c_begin_aggregate_construction, c_call,
     c_call_assign, c_cast, c_declare, c_declare_aggregate, c_function, c_greater_equal, c_if,
     c_int32_literal, c_int64_literal, c_less_equal, c_parameter, c_pointer_offset_bytes, c_return,
-    c_seq, c_skip, c_try_catch_int32, c_typed_load_with_source, c_typed_store, c_variable,
+    c_seq, c_skip, c_try_catch_int32, c_try_catch_int32_with_cleanup, c_typed_load_with_source,
+    c_typed_store, c_variable,
 };
 
 /// One kernel function together with the immutable semantic artifact that
@@ -370,7 +371,8 @@ impl LoweringContext<'_> {
                         handler = c_seq(handler, self.lower_cleanup(cleanup)?);
                     }
                     handler = c_seq(handler, CStatement::Throw(c_variable(binding.clone())));
-                    let mut live_body = c_try_catch_int32(live_body, binding, handler);
+                    let mut live_body =
+                        c_try_catch_int32_with_cleanup(live_body, binding, handler, true);
                     for cleanup in cleanups {
                         live_body = c_seq(live_body, self.lower_cleanup(cleanup)?);
                     }

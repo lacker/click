@@ -1090,7 +1090,7 @@ fn scalar_int32_profile_catches_a_modular_throw_with_a_typed_payload() {
         .map(|(_, threw)| threw)
         .expect("the expansion must keep a threw certificate");
     assert!(
-        expanded.contains("call_outcomes {")
+        expanded.contains("outcomes {")
             && returned_proof.contains("normalize();")
             && threw_proof.contains("assumption();")
             && !threw_proof.contains("normalize();")
@@ -1173,7 +1173,7 @@ fn scalar_int32_profile_rejects_unsupported_handler_shapes() {
 }
 
 #[test]
-fn scalar_int32_profile_unwinds_one_guard_and_requires_its_object_invariant() {
+fn scalar_int32_profile_unwinds_one_guard_on_both_paths() {
     let mdtest = parse_mdtest(
         Path::new("cpp_one_guard_unwind.md"),
         ONE_GUARD_UNWIND_MDTEST,
@@ -1211,13 +1211,6 @@ fn scalar_int32_profile_unwinds_one_guard_and_requires_its_object_invariant() {
     let click_project = read_click_project(&sidecar, &sidecar_source).unwrap();
     verify_cpp_prepared_project(&click_project, &prepared)
         .expect("normal and caught exceptional paths must restore the original value");
-
-    let invariant = "    ensures separate(memory(object(self)), memory(self->pointer[0..1]));\n";
-    assert!(sidecar_source.contains(invariant));
-    let missing_invariant = sidecar_source.replacen(invariant, "", 1);
-    let missing_project = read_click_project(&sidecar, &missing_invariant).unwrap();
-    verify_cpp_prepared_project(&missing_project, &prepared)
-        .expect_err("the destructor precondition must need the constructor's invariant");
 }
 
 #[test]

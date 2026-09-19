@@ -460,9 +460,10 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
             &transition_facts,
         ) {
             return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: no certified frame transport applies to the exact source fact\n  source: {source:?}\n  current memory: {:?}\n  effect facts: {:?}",
-                state.memory(),
-                effect_facts
+                "`{claim_label}` tactic {tactic_index}: `transport using` failed\n  could not prove:\n    {}\n  attempted to transport:\n    {}\n  to:\n    {}\n  Click could not establish that the source fact remains valid at the target memory state",
+                crate::surface::printing::source_click_proposition(surface_target),
+                crate::surface::printing::source_click_proposition(surface_source),
+                crate::surface::printing::source_click_proposition(surface_target),
             )));
         }
     }

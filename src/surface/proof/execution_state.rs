@@ -1463,6 +1463,7 @@ mod proof_fact_store_tests {
                 remaining: Some(remaining.clone()),
                 next_statement_index: 1,
                 loop_exit_statement_index: 2,
+                exceptional: None,
             });
             let ancestor = frontier.clone();
 
@@ -1489,6 +1490,7 @@ mod proof_fact_store_tests {
                 remaining: Some(remaining.clone()),
                 next_statement_index: 2,
                 loop_exit_statement_index: 3,
+                exceptional: None,
             });
             assert!(
                 frontier
@@ -1615,7 +1617,7 @@ pub(super) fn post_execution_tactic_timing(
         PostExecutionTactic::ArithmeticCertificate(_) => ("arithmetic_certificate", "simple"),
         PostExecutionTactic::Rewrite(_) => ("rewrite", "simple"),
         PostExecutionTactic::If { .. } => ("if", "control"),
-        PostExecutionTactic::CallOutcomes { .. } => ("call_outcomes", "control"),
+        PostExecutionTactic::CallOutcomes { .. } => ("outcomes", "control"),
     }
 }
 

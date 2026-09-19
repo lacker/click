@@ -160,9 +160,9 @@ destructible automatic guard first, then call a potentially throwing helper.
 Its public, non-virtual constructor and destructor must be explicitly
 `noexcept`; the destructor runs on both normal and exceptional exits before
 the handler observes state. The constructor's Click contract must establish
-any object invariant required by the destructor, including separation from
-referenced caller memory. The `cpp_one_guard_unwind` mdtest verifies both
-outcomes and rejects a missing separation postcondition.
+any object invariant required by the destructor that is not already available
+from the checked execution state. The `cpp_one_guard_unwind` mdtest verifies
+both outcomes.
 The importer still rejects nested handlers, catch-all or non-`int` handlers,
 other local declarations inside either block, multiple or late guards, returns
 from a guarded `try`, `noexcept` free functions (whose termination behavior is

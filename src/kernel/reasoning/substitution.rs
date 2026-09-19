@@ -2890,6 +2890,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
             try_body,
             binding,
             handler,
+            cleanup_unwind,
         } => CStatement::TryCatchInt32 {
             try_body: Box::new(substitute_bitvector_variable_in_c_statement(
                 try_body, from, to,
@@ -2898,6 +2899,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
             handler: Box::new(substitute_bitvector_variable_in_c_statement(
                 handler, from, to,
             )),
+            cleanup_unwind: *cleanup_unwind,
         },
         CStatement::Store { pointer, value } => CStatement::Store {
             pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
@@ -6071,6 +6073,7 @@ fn substitute_pointer_variable_in_c_statement(
             try_body,
             binding,
             handler,
+            cleanup_unwind,
         } => CStatement::TryCatchInt32 {
             try_body: Box::new(substitute_pointer_variable_in_c_statement(
                 try_body, from, to,
@@ -6079,6 +6082,7 @@ fn substitute_pointer_variable_in_c_statement(
             handler: Box::new(substitute_pointer_variable_in_c_statement(
                 handler, from, to,
             )),
+            cleanup_unwind: *cleanup_unwind,
         },
         CStatement::Store { pointer, value } => CStatement::Store {
             pointer: substitute_pointer_variable_in_c_expression(pointer, from, to),

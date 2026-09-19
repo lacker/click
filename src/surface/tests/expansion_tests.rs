@@ -3323,9 +3323,14 @@ fn marked_constant_store_transport_retains_load_identity() {
     )
     .expect_err("transport across mutation of the marked field must fail");
     assert!(
-        error
-            .message()
-            .contains("no certified frame transport applies to the exact source fact"),
+        error.message().contains("`transport using` failed")
+            && error.message().contains("could not prove:")
+            && error.message().contains("attempted to transport:")
+            && error.message().contains("to:")
+            && error.message().contains("owner->value == 11")
+            && error
+                .message()
+                .contains("at(after_write, owner->value == 11)"),
         "{}",
         error.message()
     );

@@ -178,9 +178,9 @@ path = "mdtests/simple_tactics.md"
 needle = "assumption();"
 
 [[form]]
-id = "call-outcomes"
+id = "outcomes"
 path = "tests/cpp_import.rs"
-needle = "call_outcomes {"
+needle = "outcomes {"
 
 [[form]]
 id = "extract"

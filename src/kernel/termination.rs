@@ -494,6 +494,7 @@ fn structural_recursion_paths(
             try_body,
             binding,
             handler,
+            ..
         } => {
             let mut handler_paths = paths.clone();
             for path in &mut handler_paths {
@@ -1444,6 +1445,7 @@ fn statement_declared_variables(statement: &CStatement, names: &mut BTreeSet<Str
             try_body,
             binding,
             handler,
+            ..
         } => {
             statement_declared_variables(try_body, names);
             names.insert(binding.clone());
@@ -4850,6 +4852,7 @@ mod local_descent_tests {
                 try_body: Box::new(spin(1)),
                 binding: "code".to_string(),
                 handler: Box::new(spin(2)),
+                cleanup_unwind: false,
             }),
             Arc::new(spin(3)),
         );

@@ -28,8 +28,8 @@ pub(crate) use branches::{BranchId, ProofBranch, ProofBranchState, ProofBranches
 pub(crate) use execution::{
     CallOutcomeArmEvidence, CheckedBranchSplit, CheckedBranchSplitError, CheckedCallEvent,
     CheckedCallEvents, CheckedCallOutcomeSplit, CheckedCallOutcomeSplitError,
-    CheckedExecutionEvent, CheckedProofCasePartition, EvidenceRefusal, ExecutionFrontier,
-    ExecutionProofCore, ExecutionRegionKind, FrontierPosition, LoopControlExit,
+    CheckedExecutionEvent, CheckedProofCasePartition, EvidenceRefusal, ExceptionalContinuation,
+    ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition, LoopControlExit,
     OutcomeEvidenceFork, ProofExecutionContinuation, ProofExecutionState,
     checked_branch_fact_is_available, old_reference_state,
 };

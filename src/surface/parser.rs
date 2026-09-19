@@ -4532,7 +4532,7 @@ impl Parser {
                 else_tactics,
             }));
         }
-        if name == "call_outcomes" {
+        if name == "outcomes" {
             self.expect(Token::LBrace)?;
             self.expect_ident_spelling("returned")?;
             let returned_tactics = self.parse_possibly_empty_tactic_block()?;

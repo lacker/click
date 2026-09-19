@@ -1734,10 +1734,20 @@ pub fn c_try_catch_int32(
     binding: impl Into<String>,
     handler: CStatement,
 ) -> CStatement {
+    c_try_catch_int32_with_cleanup(try_body, binding, handler, false)
+}
+
+pub fn c_try_catch_int32_with_cleanup(
+    try_body: CStatement,
+    binding: impl Into<String>,
+    handler: CStatement,
+    cleanup_unwind: bool,
+) -> CStatement {
     CStatement::TryCatchInt32 {
         try_body: Box::new(try_body),
         binding: binding.into(),
         handler: Box::new(handler),
+        cleanup_unwind,
     }
 }
 

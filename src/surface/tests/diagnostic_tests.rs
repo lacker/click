@@ -668,6 +668,23 @@ int32 pick(struct node* node) {
     assert!(message.len() < 2000, "{message}");
 }
 
+#[test]
+fn maybe_throwing_step_diagnostic_teaches_outcomes_syntax() {
+    let call = crate::kernel::c_call("helper", Vec::new());
+    let message = super::diagnostics::describe_multiple_statement_successors_guidance(&call, 2);
+
+    assert!(
+        message.contains("Use `outcomes` at this point"),
+        "{message}"
+    );
+    assert!(message.contains("returned { step(); }"), "{message}");
+    assert!(message.contains("threw { step(); }"), "{message}");
+    assert!(
+        message.contains("all\ncontract claims are closed"),
+        "{message}"
+    );
+}
+
 /// The one-successor refusal used to print the `While` node with `Debug`,
 /// which attaches the body, every lowered invariant and effect check, and
 /// every resource spec to the message. A statement head is the statement's own

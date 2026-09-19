@@ -1739,7 +1739,7 @@ impl<'a> Proof<'a> {
         self.focused_outcome_data()
             .and_then(|data| data.call_returned)
             .ok_or_else(|| {
-                self.step_error("`call_outcomes` requires a checked returned/threw call edge")
+                self.step_error("`outcomes` requires a checked returned/threw call edge")
             })
     }
 

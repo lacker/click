@@ -1062,7 +1062,14 @@ impl<'a> Proof<'a> {
             record.continuation_index,
             &record.continuation_remaining,
             record.execution_start_state.clone(),
-            record.checked_condition_split.clone(),
+            match &record.checked_split {
+                CheckedExecutionSplit::Branch(split) => split.clone(),
+                CheckedExecutionSplit::CallOutcomes(_) => {
+                    return Err(
+                        self.step_error("`branch ensuring` cannot apply to a call-outcome split")
+                    );
+                }
+            },
             assertions,
             arms,
         )?;
@@ -1179,6 +1186,7 @@ impl<'a> Proof<'a> {
         statement_index: usize,
         execution_start_state: CState,
         proof_case_condition: Option<ClickProposition>,
+        call_outcomes: bool,
         arms: [CheckedExecutionJoinArm<'_>; 2],
     ) -> Result<CheckedExecutionJoinParts, ClickError> {
         // Both arms completed at function exit. Their outcomes remain
@@ -1189,7 +1197,20 @@ impl<'a> Proof<'a> {
             unreachable!("terminal execution join retained a non-execution context")
         };
         let proof_case_split = proof_case_condition.is_some();
-        let (surface_condition, empty_source_arms) = if let Some(condition) = proof_case_condition {
+        let (surface_condition, empty_source_arms) = if call_outcomes {
+            (
+                ClickProposition::Comparison {
+                    left: ContractExpression::CFragment(CExpression::Value(
+                        crate::kernel::api::int32(0),
+                    )),
+                    operator: ComparisonOperator::Equal,
+                    right: ContractExpression::CFragment(CExpression::Value(
+                        crate::kernel::api::int32(0),
+                    )),
+                },
+                [false, false],
+            )
+        } else if let Some(condition) = proof_case_condition {
             (condition, [false, false])
         } else {
             let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
@@ -1231,13 +1252,15 @@ impl<'a> Proof<'a> {
                     "{name} branch arm has not completed at function exit"
                 )));
             }
-            self.validate_execution_join_arm_deltas(
-                "terminal join",
-                name,
-                expected,
-                arm,
-                parent_execution,
-            )?;
+            if !call_outcomes {
+                self.validate_execution_join_arm_deltas(
+                    "terminal join",
+                    name,
+                    expected,
+                    arm,
+                    parent_execution,
+                )?;
+            }
         }
 
         let terminal_certificate = |body: &ProofCertificate, empty_source_arm: bool| {
@@ -1384,6 +1407,9 @@ impl<'a> Proof<'a> {
         execution.presentation.branch_decisions =
             parent_execution.presentation.branch_decisions.clone();
         execution.presentation.outcome_provenance = Arc::new(outcome_provenance);
+        if call_outcomes {
+            execution.presentation.call_outcome_edges = Some(vec![true, false]);
+        }
         execution.core.has_structured_branch_history = true;
         execution.core.next_opaque_call = arms[0]
             .execution
@@ -1437,20 +1463,34 @@ impl<'a> Proof<'a> {
                 }
                 (Some(capture), None) if parent_capture.is_none() => {
                     let mut capture = capture.clone();
-                    capture.branch_skeleton = vec![ProofTactic::If(ProofIf {
-                        condition: surface_condition.clone(),
-                        then_tactics: capture.branch_skeleton,
-                        else_tactics: Vec::new(),
-                    })];
+                    capture.branch_skeleton = if call_outcomes {
+                        vec![ProofTactic::CallOutcomes(ProofCallOutcomes {
+                            returned_tactics: capture.branch_skeleton,
+                            threw_tactics: Vec::new(),
+                        })]
+                    } else {
+                        vec![ProofTactic::If(ProofIf {
+                            condition: surface_condition.clone(),
+                            then_tactics: capture.branch_skeleton,
+                            else_tactics: Vec::new(),
+                        })]
+                    };
                     Some(capture)
                 }
                 (None, Some(capture)) if parent_capture.is_none() => {
                     let mut capture = capture.clone();
-                    capture.branch_skeleton = vec![ProofTactic::If(ProofIf {
-                        condition: surface_condition.clone(),
-                        then_tactics: Vec::new(),
-                        else_tactics: capture.branch_skeleton,
-                    })];
+                    capture.branch_skeleton = if call_outcomes {
+                        vec![ProofTactic::CallOutcomes(ProofCallOutcomes {
+                            returned_tactics: Vec::new(),
+                            threw_tactics: capture.branch_skeleton,
+                        })]
+                    } else {
+                        vec![ProofTactic::If(ProofIf {
+                            condition: surface_condition.clone(),
+                            then_tactics: Vec::new(),
+                            else_tactics: capture.branch_skeleton,
+                        })]
+                    };
                     Some(capture)
                 }
                 (None, None) => None,
@@ -1496,10 +1536,17 @@ impl<'a> Proof<'a> {
             execution.presentation.defer_post_execution(
                 attribution.tactic_index,
                 attribution.source_index,
-                PostExecutionTactic::If {
-                    condition: surface_condition.clone(),
-                    then_tactics: then_post_execution,
-                    else_tactics: else_post_execution,
+                if call_outcomes {
+                    PostExecutionTactic::CallOutcomes {
+                        returned_tactics: then_post_execution,
+                        threw_tactics: else_post_execution,
+                    }
+                } else {
+                    PostExecutionTactic::If {
+                        condition: surface_condition.clone(),
+                        then_tactics: then_post_execution,
+                        else_tactics: else_post_execution,
+                    }
                 },
             );
         }
@@ -1544,10 +1591,17 @@ impl<'a> Proof<'a> {
             }
             unfolded_predicates.insert(name.clone());
         }
-        let step = ProofStep::If {
-            condition: surface_condition,
-            then_proof: Box::new(then_proof),
-            else_proof: Box::new(else_proof),
+        let step = if call_outcomes {
+            ProofStep::CallOutcomes {
+                returned_proof: Box::new(then_proof),
+                threw_proof: Box::new(else_proof),
+            }
+        } else {
+            ProofStep::If {
+                condition: surface_condition,
+                then_proof: Box::new(then_proof),
+                else_proof: Box::new(else_proof),
+            }
         };
         Ok(CheckedExecutionJoinParts {
             execution,
@@ -1791,7 +1845,12 @@ impl<'a> Proof<'a> {
             record.continuation_index,
             record.continuation_remaining.clone(),
             record.execution_start_state.clone(),
-            record.checked_condition_split.clone(),
+            match &record.checked_split {
+                CheckedExecutionSplit::Branch(split) => split.clone(),
+                CheckedExecutionSplit::CallOutcomes(_) => {
+                    return Err(self.step_error("checked C branch join lost its branch witness"));
+                }
+            },
             require_empty,
             arms,
         )?;
@@ -1815,9 +1874,60 @@ impl<'a> Proof<'a> {
             record.statement_index,
             record.execution_start_state.clone(),
             None,
+            false,
             arms,
         )?;
         self.resume_parent_after_sibling_join(record, ids, parts)
+    }
+
+    /// Joins the returned and caught-throw descendants of one live call.
+    /// The call has already been executed in each sibling, so the resulting
+    /// certificate retains one leading `step()` per arm.
+    pub(in crate::surface::proof) fn join_focused_call_outcomes_terminal(
+        &self,
+        record: &ExecutionSplit<'a>,
+    ) -> Result<Self, ClickError> {
+        let [Some(returned_id), Some(threw_id)] = record.arm_branches else {
+            return Err(self.step_error("call outcomes require returned and thrown arms"));
+        };
+        let [returned_steps, threw_steps] =
+            self.partition_steps_since(&record.marker, record.split, [returned_id, threw_id])?;
+        self.validate_checked_execution_split(record)?;
+        let returned_view = self.sibling_execution_arm_view_from_bases(
+            "returned",
+            record.split,
+            returned_id,
+            returned_steps,
+            record.base_facts[0].as_ref().expect("returned base facts"),
+            &record.parent_facts,
+            record.base_executions[0]
+                .as_ref()
+                .expect("returned base execution"),
+            record.condition_theorems[0].as_ref(),
+        )?;
+        let threw_view = self.sibling_execution_arm_view_from_bases(
+            "threw",
+            record.split,
+            threw_id,
+            threw_steps,
+            record.base_facts[1].as_ref().expect("threw base facts"),
+            &record.parent_facts,
+            record.base_executions[1]
+                .as_ref()
+                .expect("threw base execution"),
+            record.condition_theorems[1].as_ref(),
+        )?;
+        let parts = self.merge_terminal_execution_join(
+            &record.parent_facts,
+            &record.parent_unfolds,
+            &record.parent_execution,
+            record.statement_index,
+            record.execution_start_state.clone(),
+            None,
+            true,
+            [returned_view, threw_view],
+        )?;
+        self.resume_parent_after_sibling_join(record, [returned_id, threw_id], parts)
     }
 
     /// Joins the two terminal arms of a proof-level execution `if`. Both arms
@@ -1856,6 +1966,7 @@ impl<'a> Proof<'a> {
             record.parent_execution.core.frontier.next_statement_index,
             record.execution_start_state.clone(),
             Some(record.surface_condition.clone()),
+            false,
             [then_view, else_view],
         )?;
         self.resume_parent_after_sibling_join_from_marker(
@@ -1930,33 +2041,55 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("checked C branch split lost its execution context"));
         };
-        let (_, current_state, statement, _) = next_top_level_statement_from_frontier_position(
-            record.parent_execution.view(context),
-            &record.parent_execution.core.state,
-            context.function,
-            context.arguments,
-            context.claim_label,
-            context.tactic_index,
-            "branch join",
-        )?;
-        let CStatement::If { condition, .. } = statement else {
-            return Err(self.step_error("checked C branch split no longer names a C `if`"));
-        };
         let arm_theorems = [
             record.condition_theorems[0].as_ref(),
             record.condition_theorems[1].as_ref(),
         ];
         let arm_facts = [record.base_facts[0].as_ref(), record.base_facts[1].as_ref()];
-        if !record.checked_condition_split.validates_exhaustive_join(
-            &current_state,
-            &condition,
-            &record.parent_facts,
-            arm_theorems,
-            arm_facts,
-        ) {
-            return Err(self.step_error(
-                "checked C branch split does not exhaust its recorded condition paths",
-            ));
+        match &record.checked_split {
+            CheckedExecutionSplit::Branch(split) => {
+                let (_, current_state, statement, _) =
+                    next_top_level_statement_from_frontier_position(
+                        record.parent_execution.view(context),
+                        &record.parent_execution.core.state,
+                        context.function,
+                        context.arguments,
+                        context.claim_label,
+                        context.tactic_index,
+                        "branch join",
+                    )?;
+                let CStatement::If { condition, .. } = statement else {
+                    return Err(self.step_error("checked C branch split no longer names a C `if`"));
+                };
+                if !split.validates_exhaustive_join(
+                    &current_state,
+                    &condition,
+                    &record.parent_facts,
+                    arm_theorems,
+                    arm_facts,
+                ) {
+                    return Err(self.step_error(
+                        "checked C branch split does not exhaust its recorded condition paths",
+                    ));
+                }
+            }
+            CheckedExecutionSplit::CallOutcomes(split) => {
+                if !split.validates(
+                    &record.split_state,
+                    &record.split_statement,
+                    &record.parent_facts,
+                    arm_theorems[0].ok_or_else(|| {
+                        self.step_error("call-outcome split lost its returned theorem")
+                    })?,
+                    arm_theorems[1].ok_or_else(|| {
+                        self.step_error("call-outcome split lost its thrown theorem")
+                    })?,
+                ) {
+                    return Err(self.step_error(
+                        "checked call-outcome split no longer matches its call frontier",
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -1986,12 +2119,6 @@ impl<'a> Proof<'a> {
         let execution = branch.state.execution.as_deref().ok_or_else(|| {
             self.step_error(format!("{name} branch arm lost its execution state"))
         })?;
-        let not_descended = || {
-            self.step_error(format!(
-                "cannot join `branch`: the {name} arm does not descend from split {:?}",
-                split
-            ))
-        };
         // Fact introductions are measured against the PARENT facts, not the
         // arm's split-time base: the container seeded each arm's record with
         // the prepared introduction set, so an arm's path facts count as
@@ -2005,41 +2132,59 @@ impl<'a> Proof<'a> {
             .introduced_since(ancestry_facts)
             .is_none()
         {
-            return Err(not_descended());
+            return Err(self.step_error(format!(
+                "cannot join `branch`: the {name} arm facts do not descend from split {:?}",
+                split
+            )));
         }
         let introduced_facts = branch
             .state
             .facts
             .introduced_since(delta_facts)
-            .ok_or_else(not_descended)?;
+            .ok_or_else(|| self.step_error(format!(
+                "cannot join `branch`: the {name} arm fact delta does not descend from split {:?}", split
+            )))?;
         let introduced_effect_facts = execution
             .core
             .effect_facts
             .suffix_since(&delta_execution.core.effect_facts)
-            .ok_or_else(not_descended)?
+            .ok_or_else(|| self.step_error(format!(
+                "cannot join `branch`: the {name} arm effect facts do not descend from split {:?}", split
+            )))?
             .to_vec();
         let introduced_derivations = execution
             .core
             .function_entry_derivations
             .introduced_since(&delta_execution.core.function_entry_derivations)
-            .ok_or_else(not_descended)?;
+            .ok_or_else(|| self.step_error(format!(
+                "cannot join `branch`: the {name} arm derivations do not descend from split {:?}", split
+            )))?;
         let introduced_unfolds = execution
             .core
             .unfolded_predicates
             .suffix_since(&delta_execution.core.unfolded_predicates)
-            .ok_or_else(not_descended)?
+            .ok_or_else(|| {
+                self.step_error(format!(
+                    "cannot join `branch`: the {name} arm unfolds do not descend from split {:?}",
+                    split
+                ))
+            })?
             .to_vec();
         let introduced_loop_clauses = execution
             .presentation
             .frontier_loop_clauses
             .suffix_since(&delta_execution.presentation.frontier_loop_clauses)
-            .ok_or_else(not_descended)?
+            .ok_or_else(|| self.step_error(format!(
+                "cannot join `branch`: the {name} arm loop clauses do not descend from split {:?}", split
+            )))?
             .to_vec();
         let introduced_loop_rules = execution
             .core
             .frontier_loop_rules
             .suffix_since(&delta_execution.core.frontier_loop_rules)
-            .ok_or_else(not_descended)?
+            .ok_or_else(|| self.step_error(format!(
+                "cannot join `branch`: the {name} arm loop rules do not descend from split {:?}", split
+            )))?
             .to_vec();
         Ok(CheckedExecutionJoinArm {
             certificate: ProofCertificate::from_steps(steps)?,
@@ -2261,10 +2406,18 @@ impl<'a> Proof<'a> {
                 retried_requirements.clear();
                 continue;
             }
-            if !proof.is_at_execution_branch()? {
+            let Some((split, record, call_outcomes)) = (if proof.is_at_call_outcomes_frontier()? {
+                proof
+                    .split_focused_call_outcomes()?
+                    .map(|(split, record)| (split, record, true))
+            } else if proof.is_at_execution_branch()? {
+                let (split, record) = proof.split_focused_execution_branch()?;
+                Some((split, record, false))
+            } else {
+                None
+            }) else {
                 return Ok(None);
-            }
-            let (split, record) = proof.split_focused_execution_branch()?;
+            };
             let mut advanced = split;
             for take_then in [true, false] {
                 if record.arm_id(take_then).is_none() {
@@ -2280,7 +2433,9 @@ impl<'a> Proof<'a> {
                 };
                 advanced = next;
             }
-            proof = if record.sole_feasible_arm().is_some() {
+            proof = if call_outcomes {
+                advanced.join_focused_call_outcomes_terminal(&record)?
+            } else if record.sole_feasible_arm().is_some() {
                 advanced.finish_focused_execution_decided(&record)?
             } else {
                 advanced.join_focused_execution_terminal(&record)?
@@ -2865,19 +3020,155 @@ impl<'a> Proof<'a> {
             split,
             arm_branches: arm_ids,
             condition_theorems,
-            checked_condition_split: prepared.checked_condition_split,
+            checked_split: CheckedExecutionSplit::Branch(prepared.checked_condition_split),
             base_facts,
             base_executions,
             path_facts,
             parent_facts,
             parent_unfolds: unfolds,
-            parent_execution,
+            parent_execution: parent_execution.clone(),
             statement_index: prepared.statement_index,
             continuation_index: prepared.continuation_index,
             continuation_remaining: prepared.continuation_remaining,
             execution_start_state: prepared.execution_start_state,
+            split_state: (*parent_execution.core.state).clone(),
+            split_statement: CStatement::Skip,
         };
         Ok((successor, record))
+    }
+
+    /// Opens a live caught-throw call into returned and handler-entry proof
+    /// siblings. The call is evaluated once. Each descendant records one of
+    /// those already-certified transitions; no descendant re-evaluates the
+    /// call.
+    pub(in crate::surface::proof) fn split_focused_call_outcomes(
+        &self,
+    ) -> Result<Option<(Self, ExecutionSplit<'a>)>, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(None);
+        };
+        let Some(parent_execution) = self.execution().cloned() else {
+            return Ok(None);
+        };
+        let available_facts = self.facts().to_vec();
+        let Some(prepared) = crate::surface::proof::cursor_execution::prepare_call_outcome_split(
+            &parent_execution,
+            context,
+            &available_facts,
+            "outcomes",
+        )?
+        else {
+            return Ok(None);
+        };
+        let root_facts = self.facts().clone();
+        let normal_index = prepared
+            .transitions
+            .iter()
+            .position(|transition| matches!(transition.outcome, CStatementOutcome::Normal(_)))
+            .expect("prepared call split has a normal transition");
+        let throw_index = prepared
+            .transitions
+            .iter()
+            .position(|transition| matches!(transition.outcome, CStatementOutcome::Throw { .. }))
+            .expect("prepared call split has a throw transition");
+        let normal = &prepared.transitions[normal_index];
+        let thrown = &prepared.transitions[throw_index];
+        let mut returned_execution = prepared.execution.clone();
+        let mut returned_available_facts = available_facts.clone();
+        let mut returned_introduced_facts = Vec::new();
+        crate::surface::proof::cursor_execution::apply_prepared_call_outcome_transition(
+            &mut returned_execution,
+            context,
+            &mut returned_available_facts,
+            &mut returned_introduced_facts,
+            &prepared,
+            normal,
+        )?;
+        let mut threw_execution = prepared.execution.clone();
+        let mut threw_available_facts = available_facts.clone();
+        let mut threw_introduced_facts = Vec::new();
+        crate::surface::proof::cursor_execution::apply_prepared_call_outcome_transition(
+            &mut threw_execution,
+            context,
+            &mut threw_available_facts,
+            &mut threw_introduced_facts,
+            &prepared,
+            thrown,
+        )?;
+        let facts_descending_from_root = |facts: &[Proposition]| {
+            facts.iter().fold(root_facts.clone(), |current, fact| {
+                if current.contains(fact) {
+                    current
+                } else {
+                    current.with_kernel_checked_fact(fact.clone())
+                }
+            })
+        };
+        let returned_facts = facts_descending_from_root(&returned_available_facts);
+        let threw_facts = facts_descending_from_root(&threw_available_facts);
+        let returned_execution = Arc::new(returned_execution);
+        let threw_execution = Arc::new(threw_execution);
+        let arms = [
+            Some((returned_facts.clone(), returned_execution.clone())),
+            Some((threw_facts.clone(), threw_execution.clone())),
+        ];
+        let path_facts = [
+            Some(normal.path_facts.clone()),
+            Some(thrown.path_facts.clone()),
+        ];
+        let (state, split, arm_ids) = self
+            .state
+            .publish_checked_partial_frontier_split(arms, path_facts.clone())
+            .map_err(|error| self.execution_update_error("`outcomes`", error))?;
+        let successor = Self {
+            site: self.site.clone(),
+            context: self.context.clone(),
+            state,
+            node: Arc::new(ProofNode {
+                parent: Some(self.node.clone()),
+                step: None,
+                focused_branch: self.focused_branch_id(),
+                depth: self.node.depth,
+                split_branches: arm_ids.iter().flatten().copied().collect(),
+            }),
+        };
+        let checked_split = CheckedCallOutcomeSplit::from_certified_transitions(
+            prepared.current_state.clone(),
+            prepared.statement.clone(),
+            &root_facts,
+            &normal.theorem,
+            &normal.outcome,
+            &normal.path_facts,
+            &normal.obligations,
+            &thrown.theorem,
+            &thrown.outcome,
+            &thrown.path_facts,
+            &thrown.execution_facts,
+            &thrown.obligations,
+        )
+        .map_err(|_| {
+            self.step_error("`outcomes` could not certify the returned/threw call split")
+        })?;
+        let record = ExecutionSplit {
+            marker: successor.checkpoint(),
+            split,
+            arm_branches: arm_ids,
+            condition_theorems: [Some(normal.theorem.clone()), Some(thrown.theorem.clone())],
+            checked_split: CheckedExecutionSplit::CallOutcomes(checked_split),
+            base_facts: [Some(returned_facts), Some(threw_facts)],
+            base_executions: [Some(returned_execution), Some(threw_execution)],
+            path_facts,
+            parent_facts: root_facts,
+            parent_unfolds: self.focused_branch_unfolds().clone(),
+            parent_execution: Arc::new(parent_execution),
+            statement_index: prepared.statement_index,
+            continuation_index: prepared.statement_index,
+            continuation_remaining: None,
+            execution_start_state: prepared.execution_start_state,
+            split_state: prepared.current_state,
+            split_statement: prepared.statement,
+        };
+        Ok(Some((successor, record)))
     }
 }
 

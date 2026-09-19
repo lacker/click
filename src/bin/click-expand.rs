@@ -584,7 +584,7 @@ mod tests {
         )
         .unwrap();
         let expanded = run(&arguments).expect("expand and reverify C++ mdtest");
-        assert!(expanded.contains("call_outcomes {"));
+        assert!(expanded.contains("outcomes {"));
         let parsed = click::cli::parse_mdtest(&path, &expanded).unwrap();
         assert_eq!(parsed.cpp_source.unwrap().filename, "caller.cpp");
     }
