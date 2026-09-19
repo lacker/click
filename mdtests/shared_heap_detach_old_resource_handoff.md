@@ -63,6 +63,7 @@ void parent_detach(struct parent* p) {
     requires link.link != ParentLink::Empty;
     owns child_ref(p->kid);
     consumes child_ref(p->kid);
+    produces child_ref(old(p->kid));
     produces out: parent(old(p));
 } by {
     match link.link {
@@ -80,5 +81,5 @@ void parent_detach(struct parent* p) {
 ```
 
 ```expect
-fail: could not prove `produces out: parent(old(p))`: live allocation obligation was neither returned nor freed: `owns allocation(p->kid, 8)`; held by owns child_ref(p->kid)
+fail: could not prove `produces child_ref(old(p->kid))`: live allocation obligation was neither returned nor freed: `owns allocation(p->kid, 8)`; held by owns child_ref(p->kid)
 ```
