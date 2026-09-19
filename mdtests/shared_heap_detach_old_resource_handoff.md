@@ -81,5 +81,5 @@ void parent_detach(struct parent* p) {
 ```
 
 ```expect
-fail: could not prove `produces child_ref(old(p->kid))`: live allocation obligation was neither returned nor freed: `owns allocation(p->kid, 8)`; held by owns child_ref(p->kid)
+pass
 ```

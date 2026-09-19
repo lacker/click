@@ -26,6 +26,8 @@ pub(super) struct CheckedResourceClaim<'e> {
     execution: &'e CCheckedFunctionExecution,
     path_index: usize,
     key: CFunctionContractClaimKey,
+    returned_resources: crate::kernel::ResourceContext,
+    borrowed: bool,
 }
 
 impl CheckedResourceClaim<'_> {
@@ -43,6 +45,12 @@ impl CheckedResourceClaim<'_> {
     pub(super) fn path_index(&self) -> usize {
         self.path_index
     }
+    pub(super) fn returned_resources(&self) -> &crate::kernel::ResourceContext {
+        &self.returned_resources
+    }
+    pub(super) fn contributes_returned_resources(&self) -> bool {
+        !self.borrowed
+    }
 }
 
 /// Checks the allocation-lifetime obligation owned by one exact outcome.
@@ -54,6 +62,7 @@ pub(super) fn check_allocation_lifetime(
     obligation: &crate::kernel::proof::AllocationLifetimeObligation,
     path_index: usize,
     assumptions: &crate::kernel::PureFactContext,
+    returned_resources: Option<&crate::kernel::ResourceContext>,
     outcome: &CFunctionOutcome,
 ) -> Result<
     Result<Option<crate::kernel::proof::LiveAllocationObligation>, crate::kernel::CRuntimeError>,
@@ -68,19 +77,32 @@ pub(super) fn check_allocation_lifetime(
         return Ok(Ok(None));
     };
     let mut lifetime_budget = ExecutionBudget::beside_live_state();
-    let result = crate::kernel::unreturned_allocation_at_function_exit(
-        state,
-        value,
-        checked_execution.function(),
-        checked_execution.arguments(),
-        assumptions,
-        &mut lifetime_budget,
-    )
-    .map_err(|limit| {
-        ClickError::new(format!(
-            "allocation-lifetime obligation exceeded its execution budget: {limit:?}"
-        ))
-    })?;
+    let result = match returned_resources {
+        Some(returned_resources) => {
+            crate::kernel::unreturned_allocation_with_checked_returned_resources(
+                state,
+                value,
+                checked_execution.function(),
+                checked_execution.function_arguments(),
+                returned_resources,
+                assumptions,
+                &mut lifetime_budget,
+            )
+        }
+        None => crate::kernel::unreturned_allocation_at_function_exit(
+            state,
+            value,
+            checked_execution.function(),
+            checked_execution.function_arguments(),
+            assumptions,
+            &mut lifetime_budget,
+        )
+        .map_err(|limit| {
+            ClickError::new(format!(
+                "allocation-lifetime obligation exceeded its execution budget: {limit:?}"
+            ))
+        })?,
+    };
     Ok(result)
 }
 
@@ -89,7 +111,7 @@ pub(super) fn prove_ensure_resource<'e>(
     claim_key: CFunctionContractClaimKey,
     claim_label: &str,
     path_index: usize,
-    allocation_lifetime: &crate::kernel::proof::AllocationLifetimeObligation,
+    _allocation_lifetime: &crate::kernel::proof::AllocationLifetimeObligation,
     execution_pure_facts: &[crate::kernel::ExecutionPureFact],
     available_pure_facts: &(impl PropositionSource + ?Sized),
     resource: &ResourceClause,
@@ -150,47 +172,13 @@ pub(super) fn prove_ensure_resource<'e>(
             .resources()
             .satisfies_fact(expected, &assumptions)
     }) {
-        if !borrowed {
-            let lifetime = check_allocation_lifetime(
-                checked_execution,
-                allocation_lifetime,
-                path_index,
-                &assumptions,
-                outcome,
-            )
-            .map_err(|error| {
-                ClickError::new(format!(
-                    "`{claim_label}` failed on path {path_index}: {}",
-                    error.message()
-                ))
-            })?;
-            match lifetime {
-                Ok(Some(obligation)) => {
-                    let leak = crate::kernel::CRuntimeError::LiveAllocationLeak {
-                        allocation: obligation.allocation().clone(),
-                        resource: obligation.holder().cloned(),
-                        hint: None,
-                    };
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` failed on path {path_index}: could not prove `produces {}`: {}",
-                        crate::surface::validation::describe_resource_clause(resource),
-                        describe_runtime_error(&leak, parameters, arguments)
-                    )));
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` failed on path {path_index}: could not check `produces {}`: {}",
-                        crate::surface::validation::describe_resource_clause(resource),
-                        describe_runtime_error(&error, parameters, arguments)
-                    )));
-                }
-            }
-        }
         return Ok(CheckedResourceClaim {
             execution: checked_execution,
             path_index,
             key: claim_key,
+            returned_resources: crate::kernel::ResourceContext::new()
+                .unchecked_with_facts(expected.iter().cloned()),
+            borrowed,
         });
     }
     let expected = expected

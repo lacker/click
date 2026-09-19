@@ -3739,6 +3739,7 @@ pub fn prove_checked_c_function_execution_with_environment(
             )
         }
     };
+    let path_count = execution.paths().len();
     CCheckedFunctionExecution {
         state,
         function,
@@ -3748,6 +3749,8 @@ pub fn prove_checked_c_function_execution_with_environment(
         execution_semantics,
         mode,
         execution,
+        checked_resource_claims: vec![Vec::new(); path_count],
+        checked_resource_transitions: vec![false; path_count],
         entry_representation_origin: None,
         checked_call_events: Default::default(),
     }
@@ -5267,6 +5270,8 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                     .filter(|checked| checked.state == state && authorized(checked))
                     .map(|checked| CContractPathSet {
                         paths: checked.execution.paths.clone(),
+                        checked_resource_claims: checked.checked_resource_claims.clone(),
+                        checked_resource_transitions: checked.checked_resource_transitions.clone(),
                         completion_origin_state: Some(checked.state.clone()),
                     })
                     .collect()
@@ -5296,6 +5301,10 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                         )
                         .map(|execution| CContractPathSet {
                             paths: execution.paths,
+                            checked_resource_claims: checked.checked_resource_claims.clone(),
+                            checked_resource_transitions: checked
+                                .checked_resource_transitions
+                                .clone(),
                             completion_origin_state: Some(checked.state.clone()),
                         })
                     })
@@ -5336,6 +5345,10 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                         continue;
                     };
                     let origin = (left.state == right.state).then(|| left.state.clone());
+                    let left_claims = left.checked_resource_claims.clone();
+                    let right_claims = right.checked_resource_claims.clone();
+                    let left_transitions = left.checked_resource_transitions.clone();
+                    let right_transitions = right.checked_resource_transitions.clone();
                     let left = checked_execution_at_definitionally_equal_entry_state(
                         left,
                         &state,
@@ -5350,8 +5363,14 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                     )?;
                     let mut paths = left.paths;
                     paths.extend(right.paths);
+                    let mut checked_resource_claims = left_claims;
+                    checked_resource_claims.extend(right_claims);
+                    let mut checked_resource_transitions = left_transitions;
+                    checked_resource_transitions.extend(right_transitions);
                     return Some(CContractPathSet {
                         paths,
+                        checked_resource_claims,
+                        checked_resource_transitions,
                         completion_origin_state: origin,
                     });
                 }

@@ -645,6 +645,8 @@ struct CertifiedFunctionClaimPath {
     post_resources: Option<ResourceContext>,
     assumptions: PureFactContext,
     effect_facts: Vec<ExecutionPureFact>,
+    checked_resource_claims: Vec<CFunctionContractClaimKey>,
+    checked_resource_transition: bool,
 }
 
 /// Quantifier binders of a lowered proposition, in traversal order.
@@ -853,6 +855,8 @@ fn lower_ensure_under_completion_binders(
 fn prepare_function_claim_path(
     function: &CFunction,
     path: &SymbolicCExecutionPath,
+    checked_resource_claims: Vec<CFunctionContractClaimKey>,
+    checked_resource_transition: bool,
 ) -> Result<CertifiedFunctionClaimPath, String> {
     let Some((caller_state, arguments, outcome, assumptions)) =
         certified_function_path_parts(function, path)
@@ -954,6 +958,8 @@ fn prepare_function_claim_path(
             post_resources: None,
             assumptions,
             effect_facts,
+            checked_resource_claims,
+            checked_resource_transition,
         });
     }
     let (value, raw_exit_state, exceptional) = match outcome {
@@ -1078,6 +1084,8 @@ fn prepare_function_claim_path(
         post_resources: Some(post_resources),
         assumptions,
         effect_facts,
+        checked_resource_claims,
+        checked_resource_transition,
     })
 }
 
@@ -1108,6 +1116,8 @@ fn function_claim_holds_on_prepared_path(
         post_resources,
         assumptions,
         effect_facts,
+        checked_resource_claims,
+        checked_resource_transition,
     } = path;
     let mut budget = ExecutionBudget::beside_live_state();
     match claim.target() {
@@ -1363,6 +1373,17 @@ fn function_claim_holds_on_prepared_path(
         }
         CFunctionContractClaimTarget::EnsureResource(index) => {
             if !matches!(outcome, CFunctionOutcome::Return { .. }) {
+                return true;
+            }
+            // The proof already checked this exact resource claim, including
+            // its returned context and allocation-lifetime obligation. Reuse
+            // that kernel-owned evidence rather than rebuilding the resource
+            // transition and its population invariant.
+            if *checked_resource_transition
+                && checked_resource_claims
+                    .iter()
+                    .any(|key| key == &CFunctionContractClaimKey::Ensure(*index))
+            {
                 return true;
             }
             let (Some(exit_state), Some(post_state)) = (exit_state, post_state) else {
@@ -2150,7 +2171,25 @@ impl ContractPathSetView<'_> {
                         .iter()
                         .enumerate()
                         .map(|(index, path)| {
-                            prepare_function_claim_path(function, path).map_err(|reason| {
+                            let checked_resource_claims = self
+                                .set
+                                .checked_resource_claims
+                                .get(index)
+                                .cloned()
+                                .unwrap_or_default();
+                            let checked_resource_transition = self
+                                .set
+                                .checked_resource_transitions
+                                .get(index)
+                                .copied()
+                                .unwrap_or(false);
+                            prepare_function_claim_path(
+                                function,
+                                path,
+                                checked_resource_claims,
+                                checked_resource_transition,
+                            )
+                            .map_err(|reason| {
                                 format!("execution path {index} is invalid: {reason}")
                             })
                         })
@@ -2190,6 +2229,27 @@ fn claim_holds_on_some_path_set_of_every_case(
 ) -> bool {
     cases.iter().all(|alternatives| {
         alternatives.iter().any(|view| {
+            if let CFunctionContractClaimTarget::EnsureResource(index) = claim.target()
+                && view.set.checked_resource_claims.len() == view.set.paths.len()
+                && view.set.checked_resource_transitions.len() == view.set.paths.len()
+                && view
+                    .set
+                    .checked_resource_transitions
+                    .iter()
+                    .all(|checked| *checked)
+                && view
+                    .set
+                    .checked_resource_claims
+                    .iter()
+                    .all(|claims| claims.contains(&CFunctionContractClaimKey::Ensure(*index)))
+            {
+                // This claim was checked against the completed proof outcome
+                // on every path, including allocation lifetime. It is already
+                // the exact contract claim; preparing the raw path would
+                // repeat the contract exit transition and can lose the proof's
+                // checked post-return resource exchange.
+                return true;
+            }
             view.prepared(function).as_ref().is_ok_and(|paths| {
                 paths.iter().all(|path| {
                     function_claim_holds_on_prepared_path(

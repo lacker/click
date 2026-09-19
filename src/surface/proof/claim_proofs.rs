@@ -780,6 +780,35 @@ mod exit_claim {
                 _ => None,
             }
         }
+        pub(super) fn checked_resource_claim_key(&self) -> Option<&CFunctionContractClaimKey> {
+            match &self.evidence {
+                ClaimEvidence::Resource(checked) => Some(checked.claim_key()),
+                _ => None,
+            }
+        }
+        pub(super) fn checked_resource_claim_resources(
+            &self,
+        ) -> Option<&crate::kernel::ResourceContext> {
+            match &self.evidence {
+                ClaimEvidence::Resource(checked) => Some(checked.returned_resources()),
+                _ => None,
+            }
+        }
+        pub(super) fn contributes_checked_resource_claim_resources(&self) -> bool {
+            match &self.evidence {
+                ClaimEvidence::Resource(checked) => checked.contributes_returned_resources(),
+                _ => false,
+            }
+        }
+        pub(super) fn checked_resource_claim_has_grouped_transition(&self) -> bool {
+            matches!(
+                (&self.evidence, &self.certificate),
+                (
+                    ClaimEvidence::Resource(_),
+                    ClaimCertificate::GroupedTransition
+                )
+            )
+        }
         pub(super) fn validate_for(
             &self,
             execution: &CCheckedFunctionExecution,
@@ -1619,6 +1648,9 @@ pub(super) fn finish_ordered_proof<'a>(
             })
             .collect();
         let mut verified = Vec::new();
+        let mut checked_resource_claims_by_path =
+            vec![Vec::<CFunctionContractClaimKey>::new(); execution.paths().len()];
+        let mut checked_resource_transitions_by_path = vec![false; execution.paths().len()];
         let mut returned_core = proof_execution.core.clone();
         let mut any_return_instance_rewrite = false;
         let mut surface_closers_by_claim = vec![Vec::new(); claims.len()];
@@ -3926,11 +3958,44 @@ pub(super) fn finish_ordered_proof<'a>(
                         let lifetime_assumptions = path_requirements.assumptions();
                         let lifetime_obligation =
                             required_outcome(&outcome_proof)?.allocation_lifetime_obligation()?;
+                        let has_returned_resource_claims =
+                            claims.iter().enumerate().any(|(claim_index, claim)| {
+                                matches!(claim.clause().ensure(), Ensure::Resource(_))
+                                    && closures[claim_index].closed().is_some_and(
+                                        ClosedClaim::contributes_checked_resource_claim_resources,
+                                    )
+                            });
+                        let all_resource_claims_checked = has_returned_resource_claims
+                            && claims.iter().enumerate().all(|(claim_index, claim)| {
+                                !matches!(claim.clause().ensure(), Ensure::Resource(_))
+                                    || closures[claim_index]
+                                        .closed()
+                                        .and_then(ClosedClaim::checked_resource_claim_resources)
+                                        .is_some()
+                            });
+                        let mut checked_returned_resources = crate::kernel::ResourceContext::new();
+                        if all_resource_claims_checked {
+                            for closure in &closures {
+                                if let Some(resources) = closure
+                                    .closed()
+                                    .and_then(ClosedClaim::checked_resource_claim_resources)
+                                    .filter(|_| {
+                                        closure
+                                            .closed()
+                                            .is_some_and(ClosedClaim::contributes_checked_resource_claim_resources)
+                                    })
+                                {
+                                    checked_returned_resources = checked_returned_resources
+                                        .unchecked_with_facts(resources.facts().iter().cloned());
+                                }
+                            }
+                        }
                         match check_allocation_lifetime(
                             &completed_execution,
                             lifetime_obligation,
                             path_index,
                             lifetime_assumptions,
+                            all_resource_claims_checked.then_some(&checked_returned_resources),
                             &outcome,
                         )? {
                             Ok(Some(obligation)) => {
@@ -4088,6 +4153,74 @@ pub(super) fn finish_ordered_proof<'a>(
                         return Err(ClickError::new(summary));
                     }
 
+                    for closure in &closures {
+                        if let Some(key) = closure
+                            .closed()
+                            .and_then(ClosedClaim::checked_resource_claim_key)
+                        {
+                            checked_resource_claims_by_path[path_index].push(key.clone());
+                        }
+                    }
+                    let has_returned_resource_claims =
+                        claims.iter().enumerate().any(|(claim_index, claim)| {
+                            matches!(claim.clause().ensure(), Ensure::Resource(_))
+                                && closures[claim_index].closed().is_some_and(
+                                    ClosedClaim::contributes_checked_resource_claim_resources,
+                                )
+                        });
+                    let all_resource_claims_checked = has_returned_resource_claims
+                        && claims
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, claim)| {
+                                matches!(claim.clause().ensure(), Ensure::Resource(_))
+                            })
+                            .all(|(claim_index, _)| {
+                                closures[claim_index]
+                                    .closed()
+                                    .and_then(ClosedClaim::checked_resource_claim_resources)
+                                    .is_some()
+                            });
+                    let returned_claims_have_grouped_transition = has_returned_resource_claims
+                        && claims.iter().enumerate().all(|(claim_index, claim)| {
+                            !matches!(claim.clause().ensure(), Ensure::Resource(_))
+                                || !closures[claim_index].closed().is_some_and(
+                                    ClosedClaim::contributes_checked_resource_claim_resources,
+                                )
+                                || closures[claim_index].closed().is_some_and(
+                                    ClosedClaim::checked_resource_claim_has_grouped_transition,
+                                )
+                        });
+                    let mut checked_returned_resources = crate::kernel::ResourceContext::new();
+                    if all_resource_claims_checked {
+                        for closure in &closures {
+                            if let Some(resources) = closure
+                                .closed()
+                                .and_then(ClosedClaim::checked_resource_claim_resources)
+                                .filter(|_| {
+                                    closure.closed().is_some_and(
+                                        ClosedClaim::contributes_checked_resource_claim_resources,
+                                    )
+                                })
+                            {
+                                checked_returned_resources = checked_returned_resources
+                                    .unchecked_with_facts(resources.facts().iter().cloned());
+                            }
+                        }
+                    }
+                    let returned_resources_are_jointly_available = matches!(outcome, CFunctionOutcome::Return { state, .. } if state
+                            .resources()
+                            .clone()
+                            .without_facts(
+                                checked_returned_resources.facts(),
+                                &assumptions_from_propositions(&path_requirements),
+                            )
+                            .is_some());
+                    checked_resource_transitions_by_path[path_index] = resource_transition_applied
+                        || (all_resource_claims_checked
+                            && returned_claims_have_grouped_transition
+                            && returned_resources_are_jointly_available);
+
                     // The specification's requirements are the certified path's
                     // own entry premises: exactly what the proof object checked the
                     // path under and what contract certification authorizes
@@ -4241,6 +4374,7 @@ pub(super) fn finish_ordered_proof<'a>(
                 Ok(())
             },
         )?;
+        let mut final_checked_execution = completed_execution.clone();
         if any_return_instance_rewrite {
             let completed = returned_core
                 .checked_function_execution(
@@ -4254,9 +4388,14 @@ pub(super) fn finish_ordered_proof<'a>(
                 .map_err(|message| {
                     ClickError::new(format!("could not certify all return folds: {message}"))
                 })?;
-            for theorem in &mut verified {
-                theorem.checked_execution = completed.clone();
-            }
+            final_checked_execution = completed;
+        }
+        let completed_with_resource_claims =
+            final_checked_execution.with_checked_resource_claims(checked_resource_claims_by_path);
+        let completed_with_resource_claims = completed_with_resource_claims
+            .with_checked_resource_transitions(checked_resource_transitions_by_path);
+        for theorem in &mut verified {
+            theorem.checked_execution = completed_with_resource_claims.clone();
         }
         // A context that recorded a proof-branch choice appends its
         // post-execution tactics as a flat suffix after the choice point,

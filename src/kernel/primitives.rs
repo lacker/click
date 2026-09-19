@@ -6502,6 +6502,11 @@ pub struct SymbolicCExecution {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CContractPathSet {
     pub(super) paths: Vec<SymbolicCExecutionPath>,
+    /// Exact resource claims checked for each path.  The vector is parallel
+    /// to `paths`; an entry names only claims whose surface proof crossed the
+    /// kernel resource/lifetime checker for that path.
+    pub(super) checked_resource_claims: Vec<Vec<CFunctionContractClaimKey>>,
+    pub(super) checked_resource_transitions: Vec<bool>,
     /// The caller state the reused artifact's proof ran at, when its paths
     /// were rebased onto this contract's caller state. A claim the proof
     /// completed at that state certifies the rebased path: the rebase
@@ -6555,6 +6560,11 @@ pub struct CCheckedFunctionExecution {
     pub(super) execution_semantics: CExecutionSemantics,
     pub(super) mode: CFunctionContractExecutionMode,
     pub(super) execution: SymbolicCExecution,
+    /// Exact resource claims checked for each execution path.  This is proof
+    /// evidence, not a request to re-evaluate a resource transition during
+    /// later contract certification.
+    pub(super) checked_resource_claims: Vec<Vec<CFunctionContractClaimKey>>,
+    pub(super) checked_resource_transitions: Vec<bool>,
     /// Original contract caller state when a kernel-checked proof entered C
     /// execution through a definitionally equal resource representation.
     pub(super) entry_representation_origin: Option<CState>,
@@ -6608,6 +6618,24 @@ impl CFunctionContractExecution {
 }
 
 impl CCheckedFunctionExecution {
+    pub(crate) fn with_checked_resource_claims(
+        &self,
+        checked_resource_claims: Vec<Vec<CFunctionContractClaimKey>>,
+    ) -> Self {
+        let mut checked = self.clone();
+        checked.checked_resource_claims = checked_resource_claims;
+        checked
+    }
+
+    pub(crate) fn with_checked_resource_transitions(
+        &self,
+        checked_resource_transitions: Vec<bool>,
+    ) -> Self {
+        let mut checked = self.clone();
+        checked.checked_resource_transitions = checked_resource_transitions;
+        checked
+    }
+
     pub fn paths(&self) -> &[SymbolicCExecutionPath] {
         self.execution.paths()
     }
@@ -6616,7 +6644,7 @@ impl CCheckedFunctionExecution {
         &self.function
     }
 
-    pub(crate) fn arguments(&self) -> &[CExpression] {
+    pub(crate) fn function_arguments(&self) -> &[CExpression] {
         &self.arguments
     }
 
