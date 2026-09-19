@@ -153,7 +153,15 @@ refused.
 Narrowing itself is one decision, not two. It is part of the same loadability
 rule set the verifier applies while lowering `p[hi - 1]` on its own, so a fact
 of this kind can be written down and proved as well as found — in a pure theorem
-as well as in a C proof. That matters for induction over an array range, where
+as well as in a C proof. A C proof writes it the same way, over the range its
+contract stated:
+
+<!-- verified-example: mdtests/have_loadable_prefix_of_a_range_in_a_c_proof.md -->
+```click
+have loadable(a[0..k]) by { simp(); }
+```
+
+That matters for induction over an array range, where
 the hypothesis needs the narrowed range as an exactly available fact before it
 can be applied; see
 [`fold_reading_an_array_is_nonnegative_over_its_own_range.md`](https://github.com/lacker/click/blob/master/mdtests/fold_reading_an_array_is_nonnegative_over_its_own_range.md).

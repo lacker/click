@@ -1787,7 +1787,7 @@ pub(crate) fn memory_range_element_count(range: &CMemoryRange) -> Bitvector32Ter
 /// For one- and two-byte elements it does not: `i32::MAX` elements of two
 /// bytes still fit a `u32` byte extent, so nonnegativity is the whole
 /// condition and a second guard would be a fact every count already has.
-fn element_count_limit_constrains_int32(element_width: u32) -> bool {
+pub(crate) fn element_count_limit_constrains_int32(element_width: u32) -> bool {
     memory_range_element_count_limit(element_width) < i32::MAX as u32
 }
 
