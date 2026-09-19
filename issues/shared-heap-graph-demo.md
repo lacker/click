@@ -157,3 +157,136 @@ The remaining next chunk is the parent-detach handoff: preserve the surviving
 `child_ref` and its allocation under the pre-store child pointer while the
 parent link transitions after `p->kid = 0`. Then wire both destruction orders,
 allocation-failure paths, and the negative regressions from the frozen probe.
+
+## Minimal detach reduction, 2026-09-18
+
+The detach blocker is now reduced independently of the branch-on-count
+release. The following split-release source is only a reducer; it is not a
+replacement for the frozen `child_release` body.
+
+```c
+struct child {
+    int32 refs;
+    int32 payload;
+};
+
+struct parent {
+    struct child* kid;
+};
+
+void child_release_nonfinal(struct child* obj) {
+    obj->refs = obj->refs - 1;
+}
+
+void parent_detach(struct parent* p) {
+    struct child* kid = p->kid;
+    child_release_nonfinal(kid);
+    p->kid = 0;
+}
+```
+
+The complete Click reduction is:
+
+```click
+spec enum ParentLink {
+    Empty,
+    Linked(struct child*),
+}
+
+resource child_ref(obj: struct child*) {
+    contains allocation(obj, sizeof(struct child));
+    owns object(obj);
+    fact obj->refs == count(child_ref(obj));
+}
+
+resource parent(p: struct parent*) {
+    field link: ParentLink;
+    match link {
+        ParentLink::Empty => {},
+        ParentLink::Linked(kid) => {
+            owns p->kid;
+            fact p->kid == kid;
+            fact kid != 0;
+        },
+    }
+}
+
+verifying "shared_heap_detach_repro.c";
+
+void child_release_nonfinal(struct child* obj) {
+    requires 1 < obj->refs;
+    owns child_ref(obj);
+    consumes child_ref(obj);
+} by {
+    open(child_ref(obj)) {
+        execute();
+    }
+    simp();
+}
+
+void parent_detach(struct parent* p) {
+    consumes link: parent(p);
+    requires link.link != ParentLink::Empty;
+    owns child_ref(p->kid);
+    consumes child_ref(p->kid);
+    produces child_ref(p->kid);
+    produces out: parent(p);
+} by {
+    match link.link {
+        ParentLink::Empty => {
+            contradiction(link.link == ParentLink::Empty);
+        },
+        ParentLink::Linked(kid) => {
+            unfold(link);
+            execute();
+            let out = fold(parent(p), { link: ParentLink::Empty });
+            simp();
+        },
+    }
+}
+```
+
+The first failing proof step is the post-state/resource check for
+`parent_detach`, not the `child_release_nonfinal` call. With only
+`consumes child_ref(p->kid)`, the call fails immediately because the
+non-final release contract needs two units: one `owns` unit for the surviving
+population and one unit to consume. Adding the `owns` clause lets the call
+execute, but function exit reports:
+
+```text
+live allocation obligation was neither returned nor freed:
+owns allocation(p[(load(arg-memory@v100000 * 4) - v100000)], 8)
+```
+
+The `produces child_ref(p->kid)` clause above is the attempted handoff. It
+fails more specifically because `p->kid` is already null at the post-state:
+
+```text
+missing resource fact owns child_ref(null@0)
+```
+
+while the available resource remains `child_ref` of the entry-state child
+pointer. This is the logical failure: consume one counted unit, retain the
+remaining unit under the old `kid`, and change the parent link to `Empty`.
+The current resource-argument syntax cannot name that entry-state pointer:
+`child_ref(old(p->kid))` is rejected because declared resource arguments only
+accept current-state C expressions, and binding `old_kid` through a contract
+`let` cannot currently be substituted into a declared resource argument.
+
+The diagnostic does identify the exact live allocation, but its printed
+pointer is an internal load expression and it does not identify the owning
+`child_ref` population or the field update that lost the old pointer. C
+expressions have surface spellings, but this lowered pointer is a symbolic
+value reconstructed from a memory snapshot, so the current renderer falls
+back to `arg-memory@...`, `load(...)`, and version identifiers. User-facing
+diagnostics should instead render this as the entry-state value of `p->kid`
+(or explicitly say “the pointer loaded from `p->kid` at function entry”) and
+name the related resource family when that provenance is available. This is
+a diagnostic-quality defect separate from the ownership gap; the reduction
+above supplies the missing causal explanation.
+
+Therefore this is a genuine Click contract/resource-state gap, now with a
+minimal first failing obligation. The branch-on-count release and the parent
+link fold are independently green; the missing capability is an explicit,
+checked old-pointer resource handoff across a field update. Any fix must keep
+the handoff generic and must not alter the frozen C.
