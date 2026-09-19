@@ -255,6 +255,29 @@ fn concrete_named_contract_fact(fact: &Proposition) -> Option<(&str, &str)> {
     Some((contract, target))
 }
 
+/// A lowering's value environment as the parameter/argument tables surface
+/// reconstruction reads.
+///
+/// This is the only way a kernel variable becomes `hi` in a message, so every
+/// diagnostic that holds a value environment and prints a lowered term goes
+/// through it rather than showing `v2`. One definition, so a pure theorem and a
+/// C proof name the same term the same way.
+pub(in crate::surface) fn value_naming_tables(
+    values: &std::collections::BTreeMap<String, CValue>,
+) -> (Vec<syntax::C0Parameter>, Vec<CExpression>) {
+    let mut parameters = Vec::with_capacity(values.len());
+    let mut arguments = Vec::with_capacity(values.len());
+    for (name, value) in values {
+        parameters.push(syntax::C0Parameter::new(
+            crate::surface::generics::c0_type_from_kernel(value.c_type()),
+            name.clone(),
+            None,
+        ));
+        arguments.push(CExpression::Value(value.clone()));
+    }
+    (parameters, arguments)
+}
+
 pub(super) fn describe_pure_fact(
     fact: &Proposition,
     parameters: &[syntax::C0Parameter],

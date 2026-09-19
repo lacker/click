@@ -336,6 +336,21 @@ pub(super) fn pure_induction_hypothesis(
     let mut body = substitute(&opaque_goal);
     for requirement in opaque_requirements.iter().rev() {
         let requirement = substitute(requirement);
+        // The hypothesis is the theorem's own statement at the smaller
+        // argument, and the theorem's statement includes the byte-count
+        // guards of every range it names: its proof assumed them, and anyone
+        // who applies it owes them. Substituting the argument moves the range,
+        // so the guards are recomputed for the moved range and become
+        // premises of the hypothesis. Without them the hypothesis would be
+        // strictly stronger than the theorem it is proving — it would grant
+        // the conclusion at an argument where the range's extent wraps, which
+        // is an argument the theorem itself never covered.
+        for guard in crate::kernel::stated_loadable_extent_guards(&requirement)
+            .into_iter()
+            .rev()
+        {
+            body = Proposition::Implies(Box::new(guard), Box::new(body));
+        }
         body = Proposition::Implies(Box::new(requirement), Box::new(body));
     }
     let smaller = Proposition::ConditionIs(
@@ -963,12 +978,24 @@ fn check_pure_structural_induction(
                 click_function_environment,
             )
             .map_err(ClickError::new)?;
-            let implication = kernel_premises
-                .iter()
-                .rev()
-                .fold(conclusion.clone(), |body, premise| {
-                    Proposition::Implies(Box::new(premise.clone()), Box::new(body))
-                });
+            // As in `pure_induction_hypothesis`: the hypothesis is the
+            // theorem's statement at the child, so a range premise carries the
+            // byte-count guards of the range the child substitution moved it
+            // to. `kernel_premises` keeps its positional pairing with
+            // `surface_premises`, so the guards enter the implication only.
+            let implication =
+                kernel_premises
+                    .iter()
+                    .rev()
+                    .fold(conclusion.clone(), |body, premise| {
+                        let body = crate::kernel::stated_loadable_extent_guards(premise)
+                            .into_iter()
+                            .rev()
+                            .fold(body, |body, guard| {
+                                Proposition::Implies(Box::new(guard), Box::new(body))
+                            });
+                        Proposition::Implies(Box::new(premise.clone()), Box::new(body))
+                    });
             // Two spellings of the same instance, such as `ih(tail)` and the
             // complete list that repeats the other parameters, state one
             // premise.
@@ -983,13 +1010,26 @@ fn check_pure_structural_induction(
                 conclusion,
             });
         }
-        branch_context.requires = branch_requires.clone();
         branch_context.surface_requirements = SurfacePropositionMap::default();
         for (surface, kernel) in branch_surface_requires.iter().zip(&branch_requires) {
             branch_context
                 .surface_requirements
                 .record_lowering(surface, kernel)?;
         }
+        // The branch assumes this case's own requirements, so a range among
+        // them carries its guards here too — the same list the branch's
+        // hypothesis applications owe. Appended after the pairing above, which
+        // a guard has no source clause for.
+        for guard in branch_requires
+            .iter()
+            .flat_map(crate::kernel::stated_loadable_extent_guards)
+            .collect::<Vec<_>>()
+        {
+            if !branch_requires.contains(&guard) {
+                branch_requires.push(guard);
+            }
+        }
+        branch_context.requires = branch_requires.clone();
         let branch_setup = PureStructuralInductionBranchSetup {
             hypothesis: hypothesis.clone(),
             parameter_index,

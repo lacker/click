@@ -1324,7 +1324,7 @@ impl<'a> Proof<'a> {
                 }
                 PropositionCloseError::InstantiateInvalid(message) => self.step_error(format!(
                     "`instantiate` failed: {}",
-                    format_forall_int32_instantiation_error(message)
+                    format_forall_int32_instantiation_error(message, &[], &[])
                 )),
                 _ => unreachable!("kernel returned an unrelated instantiate error"),
             })

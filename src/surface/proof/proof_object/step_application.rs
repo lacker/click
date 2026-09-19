@@ -2156,9 +2156,23 @@ impl<'a> Proof<'a> {
                 PropositionCloseError::InstantiateQuantifiedUnavailable => {
                     self.step_error("induction hypothesis is not exactly available")
                 }
-                PropositionCloseError::InstantiateInvalid(message) => {
-                    let _ = message;
-                    self.step_error("kernel rejected induction application")
+                PropositionCloseError::InstantiateInvalid(error) => {
+                    // The kernel says which premise of the hypothesis it could
+                    // not discharge. Dropping that left "kernel rejected
+                    // induction application", which names nothing a reader can
+                    // act on — and a hypothesis premise is exactly what they
+                    // have to supply.
+                    let (parameters, arguments) = crate::surface::diagnostics::value_naming_tables(
+                        &context.theorem_context.values,
+                    );
+                    self.step_error(format!(
+                        "`apply` of the induction hypothesis failed: {}",
+                        crate::surface::proof::format_forall_int32_instantiation_error(
+                            error,
+                            &parameters,
+                            &arguments,
+                        )
+                    ))
                 }
                 _ => unreachable!("kernel returned an unrelated induction error"),
             })

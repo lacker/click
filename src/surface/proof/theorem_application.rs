@@ -323,15 +323,28 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
                 claim_label,
                 path_index,
                 tactic_index,
-                format!(
-                    "theorem `{}` requirement {requirement_index} states a memory range, so \
-                     applying it needs that range to be a valid 32-bit byte extent here: `{}` is \
-                     not an available fact. A range's extent is `(end - start) * width` in 32-bit \
-                     arithmetic, and without that bound it can wrap to fewer bytes than its \
-                     element count names",
-                    theorem.name(),
-                    crate::surface::proof::describe_pure_fact(&guard, &[], &[]),
-                ),
+                {
+                    // The guard is spelled through the caller's own value
+                    // names, so the reader sees the fact they have to supply
+                    // (`n <= 1073741823`) rather than `int32 <=(v1, …)`.
+                    let (parameters, arguments) =
+                        crate::surface::diagnostics::value_naming_tables(context.values);
+                    format!(
+                        "theorem `{}` requirement {} `{}` states a memory range, so applying it \
+                         needs that range to be a valid 32-bit byte extent here: `{}` is not an \
+                         available fact. A range's extent is `(end - start) * width` in 32-bit \
+                         arithmetic, and without that bound it can wrap to fewer bytes than its \
+                         element count names",
+                        theorem.name(),
+                        requirement_index + 1,
+                        crate::surface::diagnostics::describe_click_proposition(requirement),
+                        crate::surface::diagnostics::describe_pure_fact_spelled(
+                            &guard,
+                            &parameters,
+                            &arguments,
+                        ),
+                    )
+                },
             ));
         }
     }

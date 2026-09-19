@@ -78,16 +78,7 @@ impl<'a> StatedSite<'a> {
         state: &'a CState,
         values: &BTreeMap<String, CValue>,
     ) -> Self {
-        let mut parameters = Vec::with_capacity(values.len());
-        let mut arguments = Vec::with_capacity(values.len());
-        for (name, value) in values {
-            parameters.push(syntax::C0Parameter::new(
-                crate::surface::generics::c0_type_from_kernel(value.c_type()),
-                name.clone(),
-                None,
-            ));
-            arguments.push(CExpression::Value(value.clone()));
-        }
+        let (parameters, arguments) = crate::surface::diagnostics::value_naming_tables(values);
         Self {
             form,
             state,

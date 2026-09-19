@@ -67,6 +67,14 @@ has to be *established* — a C call site, applying a theorem whose premise is a
 range, a loop invariant's entry and back edge — the extent half is owed along
 with the loadability half.
 
+Stating a range whose extent is decidably invalid is refused where the clause is
+prepared, so the two directions cannot be played against each other. At the
+program's outer boundary, where no caller is verified, a contract's range is an
+assumption about the environment in the same way the pointer being live is one:
+writing `views p[0..n]` asserts that `n` really is a count of elements `p`
+holds. Inside the program every use of that range is checked against the clause
+that stated it.
+
 The second half alone would be a weaker fact than it looks. An extent is
 `(b - a) * width` in 32-bit arithmetic, so a count of `1 << 30` four-byte
 elements scales to `0`: the range would be empty, vacuously loadable for any

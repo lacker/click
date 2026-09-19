@@ -47,5 +47,5 @@ theorem a_wrapped_range_cannot_supply_it(v: int32[], n: int32) {
 ```
 
 ```expect
-fail: a_wrapped_range_cannot_supply_it
+fail: valid 32-bit byte extent here: `n <= 1073741823 is true` is not an available fact
 ```

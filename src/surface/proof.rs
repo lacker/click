@@ -360,11 +360,13 @@ pub(super) fn discharge_instantiated_guards(
     premises: &[Proposition],
 ) -> Result<(Vec<Proposition>, Proposition), String> {
     crate::kernel::proof::fact_reasoning::discharge_instantiated_guards(instantiated, premises)
-        .map_err(format_forall_int32_instantiation_error)
+        .map_err(|error| format_forall_int32_instantiation_error(error, &[], &[]))
 }
 
 pub(super) fn format_forall_int32_instantiation_error(
     error: crate::kernel::proof::fact_reasoning::ForallInt32InstantiationError,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
 ) -> String {
     use crate::kernel::proof::fact_reasoning::ForallInt32InstantiationError as Error;
     match error {
@@ -372,9 +374,14 @@ pub(super) fn format_forall_int32_instantiation_error(
             "`instantiate` requires a universally quantified fact".to_string()
         }
         Error::UnsupportedSort => "`instantiate` supports only int32 universals".to_string(),
+        // Spelled, not named by kind: "signed less-or-equal is true" does not
+        // tell a reader which premise to supply, and a premise the hypothesis
+        // owes is exactly what they have to write down.
         Error::MissingGuard(missing) => format!(
             "instantiated premise `{}` does not follow from the listed evidence",
-            describe_pure_fact(&missing, &[], &[]),
+            crate::surface::diagnostics::describe_pure_fact_spelled(
+                &missing, parameters, arguments
+            ),
         ),
         Error::KernelRejected => "kernel rejected the `instantiate` application".to_string(),
         Error::InvalidTheorem => "invalid universal instantiation theorem".to_string(),

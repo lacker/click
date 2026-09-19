@@ -54,12 +54,20 @@ theorem unmarked_nonnegative(v: int32[], lo: int32, hi: int32) {
             }
             have loadable(v[lo..hi - 1]) by { simp(); }
             have hi - 1 >= 0 and loadable(v[lo..hi - 1]) by { split(); }
+            have 0 <= hi - 1 - lo by {
+                arithmetic() using { 0 <= lo; lo < hi; hi <= 1073741823; }
+            }
+            have hi - 1 - lo <= 1073741823 by {
+                arithmetic() using { 0 <= lo; lo < hi; hi <= 1073741823; }
+            }
             apply(ih(hi - 1)) using {
                 0 <= hi - 1;
                 hi - 1 < hi;
                 0 <= lo;
                 hi - 1 <= 1073741823;
                 hi - 1 >= 0 and loadable(v[lo..hi - 1]);
+                0 <= hi - 1 - lo;
+                hi - 1 - lo <= 1073741823;
             }
             have hi - 1 < 2147483647 by { arithmetic() using { 0 <= lo; lo < hi; } }
             unfold(unmarked(v, lo, hi)) using {

@@ -4072,3 +4072,144 @@ mod wrapped_assumed_extent_is_refused {
         );
     }
 }
+
+/// What a stated range-loadable proposition carries, and what it does not.
+///
+/// Every site that makes these guards available does so by deriving them from
+/// a proposition it already holds, so the derivation is the whole boundary
+/// between "the range said this" and "the proof got it for free". Two
+/// properties keep that boundary where it belongs: the derivation reads the
+/// proposition and consults nothing, and it declines every shape whose range
+/// is not a fact about the surrounding scope.
+mod stated_range_guard_derivation {
+    use super::*;
+
+    fn int32_range_loadable(count: Bitvector32Term) -> Proposition {
+        Proposition::CMemoryLoadable {
+            memory: CMemory::new(),
+            base: Pointer {
+                block: "arg-memory".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            bytes: Bitvector32Term::multiply(count, Bitvector32Term::Constant(4)),
+        }
+    }
+
+    /// A range states its count is nonnegative and fits, over the count term
+    /// itself — the spelling a proof can write, since the endpoint form's
+    /// `fits` half is an unsigned comparison the surface cannot express.
+    #[test]
+    fn a_range_carries_its_count_bounds() {
+        let count = Bitvector32Term::Variable(Variable(9_200_000));
+        assert_eq!(
+            crate::kernel::stated_loadable_extent_guards(&int32_range_loadable(count.clone())),
+            vec![
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), count.clone()),
+                    true,
+                ),
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(
+                        count,
+                        Bitvector32Term::Constant(crate::kernel::memory_range_element_count_limit(
+                            4
+                        )),
+                    ),
+                    true,
+                ),
+            ]
+        );
+    }
+
+    /// A conjunction is walked, because a `requires` clause is written as one.
+    #[test]
+    fn a_conjunction_of_ranges_carries_both() {
+        let left = Bitvector32Term::Variable(Variable(9_200_001));
+        let right = Bitvector32Term::Variable(Variable(9_200_002));
+        let guards = crate::kernel::stated_loadable_extent_guards(&Proposition::And(
+            Box::new(int32_range_loadable(left)),
+            Box::new(int32_range_loadable(right)),
+        ));
+        assert_eq!(guards.len(), 4, "two ranges, two guards each: {guards:?}");
+    }
+
+    /// A quantified or implication-wrapped range carries nothing. Its bounds
+    /// would be over a bound variable, which is not a fact about anything the
+    /// surrounding scope can state, and instantiating such a fact therefore
+    /// hands its instance no guard: the instance is read by the ordinary
+    /// guarded readers instead.
+    #[test]
+    fn a_quantified_or_guarded_range_carries_nothing() {
+        let bound = Variable(9_200_003);
+        let body = int32_range_loadable(Bitvector32Term::Variable(bound));
+        let quantified = Proposition::ForAll {
+            var: bound,
+            sort: Sort::CInt32,
+            body: Box::new(body.clone()),
+        };
+        assert!(
+            crate::kernel::stated_loadable_extent_guards(&quantified).is_empty(),
+            "a quantified range states no scope-level bound"
+        );
+        let implication = Proposition::Implies(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::Constant(true),
+                true,
+            )),
+            Box::new(body),
+        );
+        assert!(
+            crate::kernel::stated_loadable_extent_guards(&implication).is_empty(),
+            "a conditional range states no unconditional bound"
+        );
+    }
+
+    /// The guards move with the range. An induction hypothesis is the
+    /// theorem's statement at a smaller argument, so substituting that
+    /// argument into a range premise has to recompute the guards over the
+    /// moved range rather than reuse the theorem's own: `v[lo..hi]` at
+    /// `hi - 1` owes `0 <= (hi - 1) - lo`, not `0 <= hi - lo`.
+    #[test]
+    fn guards_follow_a_substituted_range() {
+        let lo = Variable(9_200_010);
+        let hi = Variable(9_200_011);
+        let range = int32_range_loadable(Bitvector32Term::subtract(
+            Bitvector32Term::Variable(hi),
+            Bitvector32Term::Variable(lo),
+        ));
+        let moved = crate::kernel::substitute_int32_variable_in_proposition(
+            &range,
+            hi,
+            Bitvector32Term::subtract(Bitvector32Term::Variable(hi), Bitvector32Term::Constant(1)),
+        );
+        let moved_count = Bitvector32Term::subtract(
+            Bitvector32Term::subtract(Bitvector32Term::Variable(hi), Bitvector32Term::Constant(1)),
+            Bitvector32Term::Variable(lo),
+        );
+        assert_eq!(
+            crate::kernel::stated_loadable_extent_guards(&moved),
+            crate::kernel::memory_range_element_count_guards(moved_count, 4),
+            "the moved range's guards are over the moved count"
+        );
+        assert_ne!(
+            crate::kernel::stated_loadable_extent_guards(&moved),
+            crate::kernel::stated_loadable_extent_guards(&range),
+            "and are not the guards of the range before substitution"
+        );
+    }
+
+    /// An extent that is not a scaled element range carries nothing: a cell
+    /// width and a block size are already true counts of bytes.
+    #[test]
+    fn an_unscaled_extent_carries_nothing() {
+        let cell = Proposition::CMemoryLoadable {
+            memory: CMemory::new(),
+            base: Pointer {
+                block: "arg-memory".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            bytes: Bitvector32Term::Constant(4),
+        };
+        assert!(crate::kernel::stated_loadable_extent_guards(&cell).is_empty());
+    }
+}

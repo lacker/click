@@ -48,6 +48,8 @@ theorem unmarked_nonnegative(v: int32[], lo: int32, n: int32, hi: int32) {
                 0 <= lo;
                 hi - 1 <= n;
                 n >= 0 and loadable(v[lo..n]);
+                0 <= n - lo;
+                n - lo <= 1073741823;
             }
             have lo <= hi - 1 by { arithmetic() using { 0 <= lo; lo < hi; } }
             have hi - 1 < n by { arithmetic() using { 0 <= lo; lo < hi; hi <= n; } }
