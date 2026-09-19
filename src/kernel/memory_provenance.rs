@@ -2271,6 +2271,164 @@ fn typed_ranges_disjoint_from_pointer_evidence(
         .collect()
 }
 
+/// The snapshot a pure function's array argument names: the latest one that
+/// still agrees with `memory` about everything such a function can observe
+/// through a pointer into `block`.
+///
+/// An `Integer` function over an array carries its snapshot in the argument
+/// itself, and that argument is compared structurally, so a fact about
+/// `icount(array-ref(S, p), ..)` matches a goal about
+/// `icount(array-ref(S', p), ..)` only when `S` and `S'` are the same
+/// snapshot. Every step of the program makes a new snapshot, so without a
+/// canonical form such a fact dies at the next statement even when that
+/// statement cannot touch the array. This is the array-argument counterpart
+/// of [`cell_epoch_for_load_variable`], which is why a plain `a[k] == 5`
+/// survives the same step today.
+///
+/// **What the epoch must guarantee.** The function is opaque, so it may read
+/// any cell reachable through `p`, and an `unfold` states its defining
+/// equation with the fold lowered at the *live* state while the application
+/// keeps this argument. The epoch is therefore only sound when `memory` and
+/// the returned snapshot agree on everything the body can see through `p`:
+/// the contents of every cell of `block`, the union overlays in `block`, the
+/// block's own extent and liveness, and the heap status that decides whether
+/// a read of `block` is defined at all.
+///
+/// **How that is obtained.** By crossing one edge kind and stopping at every
+/// other. A `Store` into a block *proven distinct* from `block` writes exactly
+/// one cell, in another object, and drops union overlays only at that same
+/// pointer; it therefore changes nothing about `block`, its overlays, the
+/// `blocks` map, the ended-local set, or the heap. Crossing only that edge
+/// makes the agreement above hold by construction, with no snapshot
+/// comparison and no fact context — which is also what lets the answer be
+/// memoized per interned snapshot and block.
+///
+/// **Why the separation has to be proven, not spelled.** This walk is
+/// assumption-free: it has no `PureFactContext` to read a `separate(..)`
+/// clause or a pointer disequality out of, so the only separation available to
+/// it is the kernel's structural one, [`PointerBlock::proven_distinct`].
+/// Anything weaker is unsound here. "Both identities are known and they are
+/// written differently" is weaker: a parameter's `ExternalArgument` memory and
+/// a file-scope `global:g` are two known, differing spellings that the caller
+/// is free to make one object, and
+/// `mdtests/global_may_alias_an_array_argument.md` is the caller that does.
+/// Carrying an array fact across the store to `g[0]` there would hold
+/// `g[0] == 5` and `g[0] == 1` at one point.
+///
+/// The arms of `proven_distinct` that an array argument actually reaches are
+/// each a claim about objects rather than names. A `local:` block is storage
+/// this function declared, so memory reached through a parameter cannot be it
+/// — this is the arm `array_fact_survives_a_store_to_a_local` rides. A `Heap`
+/// block was allocated in this function's own view, so it is a fresh object
+/// distinct from everything already named. Two different `Concrete` blocks are
+/// two distinct declared objects, so a store to one global does not disturb a
+/// fact about another. A `Symbolic` block is a logic variable later facts may
+/// constrain to any address, so it separates from nothing and stops the walk
+/// on either side, which also makes an entry gate on the subject unnecessary:
+/// a subject this walk cannot separate from anything simply never crosses.
+///
+/// Every `CMemoryDerivation` variant and its decision:
+///
+/// * `Store` — cross **only** when the written pointer's block is proven
+///   distinct from `block`. Merely differing spellings, and a symbolic block on
+///   either side, stop the walk.
+/// * `BlockDeclared` — stops. It changes the `blocks` map, which decides the
+///   extent a read of `block` is checked against.
+/// * `HeapAllocated`, `HeapAllocationPending`, `HeapFreed` — stop. They
+///   change heap status, which decides whether a read is defined, is zeroed,
+///   or has a pending reallocation.
+/// * `ContractAllocationClaimsChanged` — stops. It writes no bytes, but the
+///   claims it moves are what authorize a read.
+/// * `CellsForgotten` — stops. The state is the same but the cell map is not,
+///   so a read that resolves concretely at one end resolves symbolically at
+///   the other, and the two argument snapshots would name forms this rule
+///   has no business equating.
+/// * `LocalLifetimeEnded` — stops. It retires an object every alias to which
+///   must stop reading, and this walk decides no aliases.
+/// * `LoopHavoc`, `CallHavoc` — stop. Both are exactly the barriers whose
+///   write sets must be justified in a querying context, which this walk
+///   does not have.
+///
+/// The walk is assumption-free and terminates: snapshot ids strictly decrease
+/// along `base`. It always reports an epoch, because a subject it can separate
+/// from nothing crosses nothing and so answers `memory` itself.
+pub(crate) fn block_epoch_for_array_ref(
+    memory: &SharedCMemory,
+    block: &PointerBlock,
+) -> SharedCMemory {
+    let recorded = |key: &(crate::kernel::SharedCMemory, PointerBlock)| {
+        BLOCK_EPOCH_MEMO.with(|memo| memo.borrow().get(key).cloned())
+    };
+    let key = (memory.clone(), block.clone());
+    if let Some(hit) = recorded(&key) {
+        return hit;
+    }
+    // Every snapshot on the way to the epoch has the same epoch, so each one
+    // is recorded when the walk ends. Without that, a proof that uses one
+    // array fact after each of N steps walks the whole chain N times and
+    // costs N^2 hops; with it, a walk from a new snapshot meets a recorded
+    // answer after one hop, so the whole proof costs one hop per snapshot.
+    // `an_array_fact_carried_across_local_stores_scales_linearly` is the
+    // regression that tells those apart.
+    let mut path = Vec::new();
+    let epoch = crate::instrumentation::measure_operation(
+        "kernel",
+        "canonical form",
+        "array-ref block epoch walk",
+        || {
+            let mut current = memory.clone();
+            loop {
+                crate::instrumentation::record_deterministic_work(1);
+                if let Some(hit) = recorded(&(current.clone(), block.clone())) {
+                    return hit;
+                }
+                let Some(derivation) = current.derivation() else {
+                    return current;
+                };
+                let crossable = match derivation.as_ref() {
+                    CMemoryDerivation::Store { pointer, .. } => {
+                        pointer.block.proven_distinct(block)
+                    }
+                    CMemoryDerivation::BlockDeclared { .. }
+                    | CMemoryDerivation::HeapAllocated { .. }
+                    | CMemoryDerivation::HeapAllocationPending { .. }
+                    | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
+                    | CMemoryDerivation::HeapFreed { .. }
+                    | CMemoryDerivation::CellsForgotten { .. }
+                    | CMemoryDerivation::LocalLifetimeEnded { .. }
+                    | CMemoryDerivation::LoopHavoc { .. }
+                    | CMemoryDerivation::CallHavoc { .. } => false,
+                };
+                if !crossable {
+                    return current;
+                }
+                path.push(current.clone());
+                current = derivation.base().clone();
+            }
+        },
+    );
+    BLOCK_EPOCH_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.len().saturating_add(path.len()) >= 100_000 {
+            memo.clear();
+        }
+        for node in path {
+            memo.insert((node, block.clone()), epoch.clone());
+        }
+        memo.insert(key, epoch.clone());
+    });
+    epoch
+}
+
+thread_local! {
+    static BLOCK_EPOCH_MEMO: std::cell::RefCell<
+        std::collections::HashMap<
+            (crate::kernel::SharedCMemory, PointerBlock),
+            crate::kernel::SharedCMemory,
+        >,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 /// The DAG epoch used to construct one cell's load variable: the snapshot at
 /// which the loaded cell was last written or entered the world, walked
 /// assumption-free over recorded edges. Snapshots that differ only by

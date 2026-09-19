@@ -5,6 +5,13 @@ This checks the direct loop-invariant form of the standard-library
 `.fold`; loop invariant spec lowering keeps that as pure Click core over
 explicit current and entry memory snapshots.
 
+The body writes only `i`, so the array argument `count` folds over names the
+same snapshot at the back edge as at the iteration's start, and the
+permutation invariant is preserved without a step of its own. The bundle the
+closer sees is therefore the two `decreases` obligations; the invariant used
+to need an `intro(); simp();` leaf beside them, when every statement renamed
+that argument.
+
 ```c filename=loop_stdlib_permutation_invariant.c
 int32 loop_stdlib_permutation_invariant(int32 p[3]) {
     int32 i;
@@ -39,11 +46,8 @@ int32 loop_stdlib_permutation_invariant(int32 p[3]) {
             step();
             have i >= 0 and i <= 3 by simp;
             close_invariants by {
-                both { intro(); simp(); }
-                and {
-                    both { arithmetic() using { at(iteration, i) < 3; at(iteration, i) >= 0; } }
-                    and { arithmetic() using { at(iteration, i) < 3; at(iteration, i) >= 0; } }
-                }
+                both { arithmetic() using { at(iteration, i) < 3; at(iteration, i) >= 0; } }
+                and { arithmetic() using { at(iteration, i) < 3; at(iteration, i) >= 0; } }
             }
         }
     }

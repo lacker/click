@@ -1836,3 +1836,84 @@ fn a_retained_cell_keeps_its_load_variable_across_a_call_havoc() {
         "a forgotten cell must not keep the name of the value it held"
     );
 }
+
+/// The epoch an array argument names is bounded by the kernel's separation
+/// rule, not by whether two blocks are spelled differently. `arg-memory` and
+/// `global:g` are both fully known identities that differ, and a caller may
+/// still pass `g` as the argument, so the store to `g` has to stop the walk.
+/// A store to one of the function's own locals, or to another global when the
+/// subject is a global, is proven distinct and still crosses.
+#[test]
+fn an_array_refs_epoch_stops_at_a_store_that_may_alias_it() {
+    let at = |block: PointerBlock, offset: i64| Pointer {
+        block,
+        offset: PointerOffsetTerm::Constant(offset),
+    };
+    let global = || PointerBlock::Concrete("global:g".to_string());
+    let other_global = || PointerBlock::Concrete("global:h".to_string());
+    let local = || PointerBlock::Concrete("local:f:i".to_string());
+    let one = || CValue::Int32(Bitvector32Term::Constant(1));
+    let epoch = |memory: &CMemory, block: PointerBlock| {
+        crate::kernel::memory_provenance::block_epoch_for_array_ref(
+            &crate::kernel::intern_c_memory(memory.clone()),
+            &block,
+        )
+        .memory()
+        .clone()
+    };
+
+    let entry = CMemory::new()
+        .with_block(global(), 16)
+        .with_block(other_global(), 16)
+        .with_block(local(), 4);
+
+    // The hole this closes: `g` may be the array the caller passed as `a`.
+    let after_global_store = entry.clone().store(at(global(), 0), one());
+    assert_eq!(
+        epoch(&after_global_store, PointerBlock::ExternalArgument),
+        after_global_store,
+        "a store to a global may write the array argument, so the epoch is the live snapshot"
+    );
+    // The same for the opaque object identity a parameter can carry.
+    assert_eq!(
+        epoch(
+            &after_global_store,
+            PointerBlock::ExternalObject(Variable(5))
+        ),
+        after_global_store
+    );
+
+    // A function's own local is storage it declared, so memory reached
+    // through a parameter is not it and the fact survives the step.
+    let after_local_store = entry.clone().store(at(local(), 0), one());
+    assert_eq!(
+        epoch(&after_local_store, PointerBlock::ExternalArgument),
+        entry,
+        "a store to a local cannot touch an array argument"
+    );
+
+    // Two file-scope declarations are two objects.
+    assert_eq!(
+        epoch(&entry.clone().store(at(other_global(), 0), one()), global()),
+        entry,
+        "a store to another global cannot touch this one"
+    );
+    // A store into the subject's own block always stops the walk.
+    assert_eq!(
+        epoch(&after_global_store, global()),
+        after_global_store,
+        "a store into the subject's own block is exactly what the epoch must see"
+    );
+
+    // A symbolic write target may be any object, and a symbolic subject is
+    // separated from nothing, so neither crosses.
+    let after_symbolic_store = entry.store(at(PointerBlock::Symbolic(Variable(77)), 0), one());
+    assert_eq!(
+        epoch(&after_symbolic_store, PointerBlock::ExternalArgument),
+        after_symbolic_store
+    );
+    assert_eq!(
+        epoch(&after_local_store, PointerBlock::Symbolic(Variable(77))),
+        after_local_store
+    );
+}

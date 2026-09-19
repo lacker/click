@@ -5803,7 +5803,15 @@ fn evaluate_spec_pure_function_argument_paths(
             .into_iter()
             .map(|path| SpecPureFunctionArgumentPath {
                 value: PureFunctionArgument::ArrayRef {
-                    memory: memory.clone(),
+                    // The argument names the snapshot it reads, and that
+                    // snapshot is compared structurally, so the live one
+                    // would make this argument -- and every fact about a
+                    // function of it -- different after any step at all.
+                    // `block_epoch_for_array_ref` gives the latest snapshot
+                    // that still agrees with this one about everything the
+                    // function can observe through this pointer, so a fact
+                    // survives exactly the steps that cannot touch the array.
+                    memory: array_ref_argument_memory(memory, &path.value),
                     pointer: path.value,
                     element_type: *element_type,
                 },
@@ -5813,6 +5821,24 @@ fn evaluate_spec_pure_function_argument_paths(
             .collect())
         }
     }
+}
+
+/// The snapshot an array argument at `pointer` names, given the state it was
+/// evaluated at.
+///
+/// See [`crate::kernel::memory_provenance::block_epoch_for_array_ref`] for
+/// what the epoch guarantees and which derivation edges it crosses. An
+/// argument that is not a pointer at all keeps the live snapshot, which is
+/// always sound and merely as fragile as before; so does a block the walk
+/// cannot separate from anything, because it then crosses no edge.
+fn array_ref_argument_memory(memory: &CMemory, pointer: &CValue) -> CMemory {
+    let CValue::Pointer(pointer) = pointer else {
+        return memory.clone();
+    };
+    let interned = crate::kernel::intern_c_memory(memory.clone());
+    crate::kernel::memory_provenance::block_epoch_for_array_ref(&interned, &pointer.pointer().block)
+        .memory()
+        .clone()
 }
 
 pub(in crate::kernel) fn c_value_bitvector_term(value: &CValue) -> Option<Bitvector32Term> {
