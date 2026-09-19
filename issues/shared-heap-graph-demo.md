@@ -97,7 +97,7 @@ payload protocols, and arbitrary cyclic-graph proofs remain deferred. The
 small diamond establishes sharing, not cycle reclamation. Follow `AGENTS.md`
 when proof tooling exposes a blocker.
 
-## Current status, 2026-09-18
+## Current status, 2026-09-19
 
 The first verifier chunk is green, but the complete frozen two-parent lifecycle
 is not finished. The companion encoding is the supported shape for the next
@@ -121,9 +121,11 @@ Landed and covered by the normal gate:
 The full frozen `shared_parent.c` diamond is still open. In particular, the
 parent-detach path decrements a counted child reference and then clears
 `p->kid`; the surviving counted unit must still be returned under the old
-child pointer. The current companion representation cannot express that
-post-state handoff, and attempts to close it fail with a live-allocation or
-resource-population obligation. No parent resource nesting workaround was
+child pointer. Declared resource arguments now accept `old(...)`, and the
+minimal handoff reduction resolves `old(p->kid)` from checked entry-memory
+evidence. The next failure is the allocation-lifetime check for that produced
+counted resource, which still reports the allocation as held by the old
+`child_ref` rather than returned. No parent resource nesting workaround was
 accepted.
 
 ## Completed chunk, 2026-09-18: one branch-on-count release
@@ -258,20 +260,21 @@ live allocation obligation was neither returned nor freed: `owns allocation(p->k
 held by owns child_ref(p->kid)
 ```
 
-The `produces child_ref(p->kid)` clause above is the attempted handoff. It
-fails more specifically because `p->kid` is already null at the post-state:
+The corrected attempted handoff is `produces child_ref(old(p->kid))`. The
+surface resource check can now resolve that entry-state pointer from checked
+loadability evidence, so the old `missing resource fact owns
+child_ref(null@0)` is no longer the first failure. The current first failure
+is instead:
 
 ```text
-missing resource fact owns child_ref(null@0)
+could not prove `produces child_ref(old(p->kid))`: live allocation obligation
+was neither returned nor freed: `owns allocation(p->kid, 8)`; held by owns
+child_ref(p->kid)
 ```
 
-while the available resource remains `child_ref` of the entry-state child
-pointer. This is the logical failure: consume one counted unit, retain the
-remaining unit under the old `kid`, and change the parent link to `Empty`.
-The current resource-argument syntax cannot name that entry-state pointer:
-`child_ref(old(p->kid))` is rejected because declared resource arguments only
-accept current-state C expressions, and binding `old_kid` through a contract
-`let` cannot currently be substituted into a declared resource argument.
+This isolates the remaining gap: the allocation-lifetime closer and the
+explicit old-pointer resource handoff do not yet share the same returned
+resource evidence.
 
 The diagnostic now identifies the exact live allocation and the owning
 `child_ref` population, and renders the recovered pointer in this leak path as
@@ -282,6 +285,6 @@ after the field is cleared.
 
 Therefore this is a genuine Click contract/resource-state gap, now with a
 minimal first failing obligation. The branch-on-count release and the parent
-link fold are independently green; the missing capability is an explicit,
-checked old-pointer resource handoff across a field update. Any fix must keep
-the handoff generic and must not alter the frozen C.
+link fold are independently green; the missing capability is to connect a
+checked old-pointer resource handoff to the allocation-lifetime closer. Any
+fix must keep the handoff generic and must not alter the frozen C.
