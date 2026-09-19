@@ -20,7 +20,6 @@ verifying "fill_n_segment_invariant.c";
 
 int32 fill_n_segment_invariant(int32 p[], int32 n) {
     requires n >= 0 and n <= 2147483647;
-    requires loadable(p[0..n]);
     consumes p[0..n];
     ensures returns_n: result == n;
     ensures filled_segment: forall (k: int32) {

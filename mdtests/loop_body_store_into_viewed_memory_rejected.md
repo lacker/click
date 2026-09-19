@@ -22,7 +22,6 @@ verifying "loop_body_store_into_viewed_memory_rejected.c";
 void loop_body_store_into_viewed_memory_rejected(int32 r[], int32 n) {
     requires n >= 0;
     requires n <= 2147483647;
-    requires loadable(r[0..n]);
     views r[0..n];
 } by {
     step();

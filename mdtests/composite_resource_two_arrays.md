@@ -19,7 +19,6 @@ resource first_cell_copy_access(dst: int32*, src: int32*) {
 verifying "copy_first.c";
 
 int32 copy_first(int32 dst[], int32 src[]) {
-    requires loadable(src[0..1]);
     consumes first_cell_copy_access(dst, src);
 
     produces first_cell_copy_access(dst, src) by {

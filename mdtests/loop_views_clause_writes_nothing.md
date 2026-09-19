@@ -24,7 +24,6 @@ verifying "loop_views_clause_writes_nothing.c";
 
 void loop_views_clause_writes_nothing(int32 p[], int32 n) {
     requires n >= 0;
-    requires loadable(p[0..1]);
     views p[0..1];
     ensures p_preserved: p[0] == old(p[0]);
 } by {

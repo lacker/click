@@ -22,7 +22,6 @@ int32 loop_entry_guard_intro_required(int32 p[3]) {
 verifying "loop_entry_guard_intro_required.c";
 
 int32 loop_entry_guard_intro_required(int32 p[3]) {
-    requires loadable(p[0..3]);
     consumes p[0..3];
     ensures returns_third: result == 2;
 } by {

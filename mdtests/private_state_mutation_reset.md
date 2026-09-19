@@ -29,7 +29,6 @@ verifying "right.c" as right_file;
 verifying "main.c";
 
 unsigned long bump(struct counter *p) {
-    requires loadable(p->value);
     owns p->value;
     ensures p->value == old(p->value) + 1u64;
     ensures result == p->value;
@@ -37,7 +36,6 @@ unsigned long bump(struct counter *p) {
 } by { execute(); simp(); }
 
 void reset(struct counter *p) {
-    requires loadable(p->value);
     owns p->value;
     ensures p->value == 0u64;
 } by { execute(); simp(); }

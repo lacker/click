@@ -20,7 +20,6 @@ int32 struct_array_parameter_fields(struct item items[2]) {
 verifying "struct_array_parameter_fields.c";
 
 int32 struct_array_parameter_fields(struct item items[2]) {
-    requires loadable(items[0..2]);
     consumes items[0..2];
     ensures result == old(items[0].tag) + 7;
 } by {

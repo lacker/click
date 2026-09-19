@@ -13,7 +13,6 @@ int32 read_with_write(int32 p[]) {
 verifying "read_with_write.c";
 
 int32 read_with_write(int32 p[]) {
-    requires loadable(p[0..1]);
     owns p[0..1];
 }
 ```

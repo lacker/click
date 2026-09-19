@@ -22,8 +22,6 @@ int32 replace_left(struct node* root, struct node* replacement) {
 verifying "struct_pointer_indirection.c";
 
 int32 replace_left(struct node* root, struct node* replacement) {
-    requires loadable(root->left);
-    requires loadable(replacement->key);
     consumes root->left;
     consumes replacement->key;
 

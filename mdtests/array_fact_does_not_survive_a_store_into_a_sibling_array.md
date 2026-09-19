@@ -18,8 +18,6 @@ void mark_other(int32 a[], int32 b[], int32 n, int32 j) {
     requires j < n;
     requires 0 <= n;
     requires n <= 1073741823;
-    requires loadable(a[0..n]);
-    requires loadable(b[0..n]);
     consumes b[0..n];
     produces b[0..n];
     views a[0..n];

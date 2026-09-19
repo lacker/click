@@ -41,7 +41,6 @@ theorem increment_is_stable() {
     ensures Stable(&increment) by {
         unfold(Stable);
         intro();
-        extract(at(function.entry, loadable(cell[0..1])));
         extract(old(*cell) < 100);
         both {
             both {
@@ -53,7 +52,6 @@ theorem increment_is_stable() {
             }
         } and {
             intro();
-            extract(loadable(cell[0..1]));
             extract(*cell == (old(*cell) + 1));
             both {
                 assumption();

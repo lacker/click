@@ -61,8 +61,6 @@ int32 copy() {
 
 int32 run_suite(const struct callbacks *callbacks) {
     views object(callbacks);
-    requires loadable(callbacks->propagate);
-    requires loadable(callbacks->copy);
     requires Propagate(callbacks->propagate);
     requires Copy(callbacks->copy);
     ensures result == 35 by auto;

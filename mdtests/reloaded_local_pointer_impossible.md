@@ -21,14 +21,12 @@ int32 reloaded_store_hits_local(int32** pp) {
 verifying "reloaded_local_pointer_impossible.c";
 
 void keep(int32** pp) {
-    requires loadable(pp[0..1]);
     consumes pp[0..1];
     ensures pp[0] == old(pp[0]);
     produces pp[0..1];
 }
 
 int32 reloaded_store_hits_local(int32** pp) {
-    requires loadable(pp[0..1]);
     consumes pp[0..1];
     ensures result == 7 by {
         execute();

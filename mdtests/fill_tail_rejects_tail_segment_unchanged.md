@@ -20,7 +20,6 @@ verifying "fill_tail_rejects_tail_segment_unchanged.c";
 
 int32 fill_tail_rejects_tail_segment_unchanged(int32 p[], int32 n) {
     requires n >= 2 and n <= 2147483647;
-    requires loadable(p[0..n]);
     consumes p[0..n];
     ensures tail_unchanged: forall (k: int32) {
         1 <= k and k < n implies p[k] == old(p[k])

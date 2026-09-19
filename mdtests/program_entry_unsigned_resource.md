@@ -10,7 +10,6 @@ int main(void) { return read_pair(state); }
 resource pair(p: uint32*) { owns p[0..2]; }
 verifying "main.c";
 unsigned int read_pair(unsigned int *p) {
-    requires loadable(p[0..2]);
     consumes pair(p);
     produces pair(p);
     ensures result == old(p[0]) + old(p[1]);

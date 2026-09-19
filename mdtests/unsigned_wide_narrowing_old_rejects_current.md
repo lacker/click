@@ -12,7 +12,6 @@ unsigned int take(struct state *p) {
 ```click
 verifying "old.c";
 unsigned int take(struct state *p) {
-    requires loadable(p->value);
     consumes p->value;
     produces p->value;
     ensures result == (uint32)p->value;

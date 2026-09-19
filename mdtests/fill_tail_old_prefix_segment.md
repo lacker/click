@@ -21,7 +21,6 @@ verifying "fill_tail_old_prefix_segment.c";
 
 int32 fill_tail_old_prefix_segment(int32 p[], int32 n) {
     requires n >= 1 and n <= 2147483647;
-    requires loadable(p[0..n]);
     consumes p[0..n];
     ensures prefix_unchanged: forall (k: int32) {
         0 <= k and k < 1 implies p[k] == old(p[k])

@@ -14,7 +14,6 @@ int32 write_with_read_only(int32 p[]) {
 verifying "write_with_read_only.c";
 
 int32 write_with_read_only(int32 p[]) {
-    requires loadable(p[0..1]);
     views p[0..1];
 
 }

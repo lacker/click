@@ -23,7 +23,6 @@ verifying "loop_owns_preserves_symbolic_index.c";
 int32 loop_owns_preserves_symbolic_index(int32 p[], int32 n) {
     requires n >= 0;
     requires n <= 100;
-    requires loadable(p[0..n + 1]);
     consumes p[0..n + 1];
     ensures preserved: p[n] == old(p[n]);
 } by {

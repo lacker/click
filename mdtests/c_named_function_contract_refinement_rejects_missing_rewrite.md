@@ -43,15 +43,12 @@ theorem decrement_is_decrease() {
     ensures Decrease(&decrement) by {
         unfold(Decrease);
         intro();
-        extract(at(function.entry, loadable(cell[0..1])));
         extract(0 < old(*cell));
-        extract(at(function.entry, loadable(cell[0..1])));
         extract(old(*cell) < 100);
         both {
             split();
         } and {
             intro();
-            extract(loadable(cell[0..1]));
             extract(*cell == (old(*cell) - 1));
             both {
                 assumption();

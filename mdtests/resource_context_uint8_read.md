@@ -13,7 +13,6 @@ uint8 read_second_byte(uint8 p[]) {
 verifying "read_second_byte.c";
 
 uint8 read_second_byte(uint8 p[]) {
-    requires loadable(p[0..2]);
     views p[1..2];
 
 }

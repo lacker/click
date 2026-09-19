@@ -23,7 +23,6 @@ function icount(p: int32[], lo: int32, hi: int32) -> Integer {
 
 void bump(int32 a[], int32 n) {
     requires 0 < n;
-    requires loadable(a[0..n]);
     requires a[0] == 5;
     views a[0..n];
 } by {

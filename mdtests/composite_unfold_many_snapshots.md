@@ -49,7 +49,6 @@ resource buffer_storage(owner: struct buffer*) {
     owns owner->data[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;
-    fact loadable(owner->data[0..owner->len]);
     fact separate(
         memory(object(owner)),
         memory(owner->data[0..owner->cap])
@@ -66,7 +65,6 @@ resource allocated_buffer(owner: struct buffer*) {
     fact owner->len <= owner->cap;
     fact 1 <= owner->cap;
     fact owner->cap <= 536870911;
-    fact loadable(owner->data[0..owner->len]);
     fact separate(
         memory(object(owner)),
         memory(owner->data[0..owner->cap])

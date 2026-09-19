@@ -20,7 +20,6 @@ void mark_prefix(int32 a[], int32 n, int32 m) {
     requires 0 <= m;
     requires m < n;
     requires n <= 1073741823;
-    requires loadable(a[0..n]);
     requires a[m] == 7;
     consumes a[0..n];
     produces a[0..n];

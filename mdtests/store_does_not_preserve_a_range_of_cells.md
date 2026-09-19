@@ -17,7 +17,6 @@ void mark_one(int32 a[], int32 n, int32 i) {
     requires 0 <= i;
     requires i < n;
     requires n <= 1073741823;
-    requires loadable(a[0..n]);
     consumes a[0..n];
     produces a[0..n];
 } by {

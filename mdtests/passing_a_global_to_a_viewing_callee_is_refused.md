@@ -26,7 +26,6 @@ verifying "passing_a_global_to_a_viewing_callee.c";
 
 void f(int32 a[], int32 n) {
     requires 0 < n;
-    requires loadable(a[0..n]);
     views a[0..n];
     owns g[0..1];
     ensures g[0] == 1;

@@ -34,7 +34,6 @@ int32 read_terminator(uint8 bytes[]) {
                         both {
                             simp();
                         } and {
-                            extract(at(function.entry, loadable(bytes[0..found_len + 1])));
                         }
                     } and {
                         simp();

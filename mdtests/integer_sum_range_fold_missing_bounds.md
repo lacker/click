@@ -23,7 +23,6 @@ verifying "integer_sum_range_fold_missing_bounds.c";
 
 int32 sum(int32 a[], int32 n) {
     requires 0 <= n and n <= 1000;
-    requires loadable(a[0..n]);
     views a[0..n];
     requires n == 2;
     requires a[0] == 2147483647;

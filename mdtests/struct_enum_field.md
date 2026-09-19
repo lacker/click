@@ -27,7 +27,6 @@ int32 mark_ready(struct packet* packet) {
 verifying "struct_enum_field.c";
 
 int32 mark_ready(struct packet* packet) {
-    requires loadable(packet->state);
     consumes packet->state;
 
     ensures result == 1;

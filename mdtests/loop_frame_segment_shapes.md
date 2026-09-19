@@ -49,7 +49,6 @@ verifying "fill_two.c";
 int32 fill_prefix(int32 p[], int32 n) {
     requires n >= 0;
     requires n <= 2147483647;
-    requires loadable(p[0..n]);
     consumes p[0..n];
     ensures returns_n: result == n;
 } by {
@@ -67,7 +66,6 @@ int32 fill_prefix(int32 p[], int32 n) {
 int32 fill_tail(int32 p[], int32 n) {
     requires n >= 1;
     requires n <= 2147483647;
-    requires loadable(p[0..n]);
     consumes p[0..n];
     ensures returns_n: result == n;
 } by {
@@ -86,8 +84,6 @@ int32 fill_tail(int32 p[], int32 n) {
 int32 fill_two(int32 p[], int32 q[], int32 n) {
     requires n >= 0;
     requires n <= 2147483647;
-    requires loadable(p[0..n]);
-    requires loadable(q[0..n]);
     consumes p[0..n];
     consumes q[0..n];
     ensures returns_n: result == n;

@@ -22,8 +22,6 @@ verifying "loop_owns_clause_frames_other_owned_memory.c";
 void loop_owns_clause_frames_other_owned_memory(int32 p[], int32 q[], int32 n) {
     requires n >= 0;
     requires n <= 2147483647;
-    requires loadable(p[0..n]);
-    requires loadable(q[0..1]);
     owns p[0..n];
     owns q[0..1];
     requires separate(memory(p[0..n]), memory(q[0..1]));

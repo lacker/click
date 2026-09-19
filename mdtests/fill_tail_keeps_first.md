@@ -21,7 +21,6 @@ verifying "fill_tail_keeps_first.c";
 
 int32 fill_tail_keeps_first(int32 p[], int32 n) {
     requires n >= 1 and n <= 2147483647;
-    requires loadable(p[0..n]);
     consumes p[0..n];
     ensures frame_and_result: p[0] == old(p[0]) and result == n;
 } by {

@@ -47,8 +47,6 @@ contract int32 Difference(int32 left, int32 right) {
 
 int32 use_callbacks(struct callback_table* table, int32 left, int32 right) {
     views object(table);
-    requires loadable(table->add);
-    requires loadable(table->subtract);
     requires Addition(table->add);
     requires Difference(table->subtract);
     requires 0 <= left;

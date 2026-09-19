@@ -19,7 +19,6 @@ int32 fill3_array_loop(int32 p[3]) {
 verifying "fill3_array_loop.c";
 
 int32 fill3_array_loop(int32 p[3]) {
-    requires loadable(p[0..3]);
     consumes p[0..3];
     ensures writes_first: p[0] == 0;
     ensures writes_second: p[1] == 1;

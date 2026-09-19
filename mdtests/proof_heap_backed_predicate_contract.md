@@ -19,7 +19,6 @@ predicate ordered_pair(p: int32[2]) {
 }
 
 int32 proof_heap_backed_predicate_contract(int32 p[2]) {
-    requires loadable(p[0..2]);
     views p[0..2];
     requires ordered_pair(p);
     ensures result == p[0];

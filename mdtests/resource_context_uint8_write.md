@@ -14,7 +14,6 @@ uint8 write_second_byte(uint8 p[]) {
 verifying "write_second_byte.c";
 
 uint8 write_second_byte(uint8 p[]) {
-    requires loadable(p[0..2]);
     consumes p[1..2];
 
     produces p[1..2] by auto;

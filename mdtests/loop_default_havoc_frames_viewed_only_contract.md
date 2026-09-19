@@ -26,7 +26,6 @@ verifying "loop_default_havoc_frames_viewed_only_contract.c";
 
 void loop_default_havoc_frames_viewed_only_contract(int32 r[], int32 n) {
     requires n >= 0;
-    requires loadable(r[0..1]);
     views r[0..1];
     ensures r_preserved: r[0] == old(r[0]);
 } by {

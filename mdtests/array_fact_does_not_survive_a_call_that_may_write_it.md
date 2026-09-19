@@ -19,7 +19,6 @@ function icount(p: int32[], lo: int32, hi: int32) -> Integer {
 
 void scribble(int32 a[], int32 n) {
     requires 0 < n;
-    requires loadable(a[0..n]);
     consumes a[0..n];
     produces a[0..n];
 } by {
@@ -29,7 +28,6 @@ void scribble(int32 a[], int32 n) {
 
 void caller(int32 a[], int32 n) {
     requires 0 < n;
-    requires loadable(a[0..n]);
     consumes a[0..n];
     produces a[0..n];
 } by {

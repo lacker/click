@@ -27,7 +27,6 @@ int32 read_number_through_address(struct packet* packet) {
 verifying "struct_union_member_address.c";
 
 int32 read_number_through_address(struct packet* packet) {
-    requires loadable(packet->payload.number);
     consumes packet->payload.number;
 
     ensures result == packet->payload.number;

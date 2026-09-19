@@ -23,7 +23,6 @@ verifying "loop_rejects_stale_pre_loop_store.c";
 
 int32 loop_rejects_stale_pre_loop_store(int32 p[], int32 n) {
     requires n >= 1 and n <= 2147483647;
-    requires loadable(p[0..1]);
     consumes p[0..1];
     ensures stale: result == 7;
 } by {

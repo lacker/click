@@ -35,9 +35,7 @@ int32 read_number(struct packet* packet) {
 verifying "struct_tagged_union.c";
 
 int32 read_number(struct packet* packet) {
-    requires loadable(packet->tag);
     requires packet->tag == 1;
-    requires loadable(packet->payload.number);
     consumes packet->tag;
     consumes packet->payload.number;
 

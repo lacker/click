@@ -29,7 +29,6 @@ int32 bubble_sort3_loop_permutation(int32 p[3]) {
 verifying "bubble_sort3_loop_permutation.c";
 
 int32 bubble_sort3_loop_permutation(int32 p[3]) {
-    requires loadable(p[0..3]);
     consumes p[0..3];
     ensures permutation: permutation(p, old(p), 0, 3) by {
         step();

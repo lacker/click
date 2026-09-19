@@ -34,7 +34,6 @@ int32 read_first(int32 p[]) {
     let len: int32 = 1;
     let first = len - 1;
 
-    requires loadable(p[0..len]);
     views p[0..len];
     ensures result_value: result == p[first] by auto;
 }

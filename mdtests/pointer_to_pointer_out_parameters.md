@@ -21,8 +21,6 @@ int32 publish_uint8(uint8** out, uint8* source[]) {
 verifying "publish_int32.c";
 
 int32 publish_int32(int32** out, int32* source[]) {
-    requires loadable(out[0..1]);
-    requires loadable(source[0..1]);
     consumes out[0..1];
     consumes source[0..1];
 
@@ -35,8 +33,6 @@ int32 publish_int32(int32** out, int32* source[]) {
 verifying "publish_uint8.c";
 
 int32 publish_uint8(uint8** out, uint8* source[]) {
-    requires loadable(out[0..1]);
-    requires loadable(source[0..1]);
     consumes out[0..1];
     consumes source[0..1];
 

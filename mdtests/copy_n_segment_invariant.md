@@ -30,8 +30,6 @@ theorem int32_le_antisymmetric(left: int32, right: int32) {
 int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
     requires n >= 0;
     requires n <= 2147483647;
-    requires loadable(dst[0..n]);
-    requires loadable(src[0..n]);
     consumes dst[0..n];
     views src[0..n];
     requires separate(memory(dst[0..n]), memory(src[0..n]));
@@ -93,7 +91,6 @@ int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
                     old(src[k]) == at(statement(0).entry, src[k])
             };
             separate(memory(dst[0..n]), memory(src[0..n]));
-            at(statement(0).entry, loadable(src[0..n]));
         }
         simp();
     }

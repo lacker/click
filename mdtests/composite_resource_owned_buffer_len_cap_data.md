@@ -62,10 +62,6 @@ int32 push_one(struct owner* owner, int32 value) {
                 at(statement(6).entry, separate(memory(owner->cap), memory(owner->data)));
                 at(statement(6).entry, separate(memory(owner->cap), memory(owner->data[0..owner->cap])));
                 at(statement(6).entry, separate(memory(owner->data), memory(owner->data[0..owner->cap])));
-                at(statement(6).entry, loadable(old(owner->len)));
-                at(statement(6).entry, loadable(old(owner->cap)));
-                at(statement(6).entry, loadable(old(owner->data)));
-                at(statement(6).entry, loadable(old(owner->data[0..owner->cap])));
                 at(statement(6).entry, 0) <= at(statement(6).entry, index);
                 at(statement(6).entry, index) < at(statement(6).entry, owner->cap);
                 at(statement(6).entry, separate(memory(owner[0..3]), memory(owner->data[0..owner->cap])));
@@ -91,10 +87,6 @@ int32 push_one(struct owner* owner, int32 value) {
                 at(statement(6).entry, separate(memory(owner->cap), memory(owner->data)));
                 at(statement(6).entry, separate(memory(owner->cap), memory(owner->data[0..owner->cap])));
                 at(statement(6).entry, separate(memory(owner->data), memory(owner->data[0..owner->cap])));
-                at(statement(6).entry, loadable(old(owner->len)));
-                at(statement(6).entry, loadable(old(owner->cap)));
-                at(statement(6).entry, loadable(old(owner->data)));
-                at(statement(6).entry, loadable(old(owner->data[0..owner->cap])));
                 at(statement(6).entry, 0) <= at(statement(6).entry, index);
                 at(statement(6).entry, index) < at(statement(6).entry, owner->cap);
                 at(statement(6).entry, separate(memory(owner[0..3]), memory(owner->data[0..owner->cap])));

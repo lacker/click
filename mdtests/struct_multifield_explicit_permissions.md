@@ -21,7 +21,6 @@ int32 write_second(struct pair* p) {
 verifying "write_second.c";
 
 int32 write_second(struct pair* p) {
-    requires loadable(p[0..2]);
     consumes p[0..2];
 
     ensures result == 2 by auto;

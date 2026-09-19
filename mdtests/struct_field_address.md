@@ -35,7 +35,6 @@ int32 update_direct(struct outer* packet) {
 verifying "struct_field_address.c";
 
 int32 update_nested(struct outer* packet) {
-    requires loadable(packet->inner.value);
     consumes packet->inner.value;
 
     ensures result == 7;
@@ -49,7 +48,6 @@ int32 update_nested(struct outer* packet) {
 }
 
 int32 update_direct(struct outer* packet) {
-    requires loadable(packet->tail);
     consumes packet->tail;
 
     ensures result == 9;

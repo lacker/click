@@ -24,7 +24,6 @@ verifying "loop_stable_invariant_export.c";
 int32 fill_tail(int32 p[], int32 n, int32 untouched[]) {
     requires n >= 1;
     requires n <= 10;
-    requires loadable(untouched[0..1]);
     consumes p[0..n];
     consumes untouched[0..1];
     ensures result == n;

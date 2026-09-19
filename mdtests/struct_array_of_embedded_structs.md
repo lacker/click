@@ -26,7 +26,6 @@ int32 write_point(struct packet* packet) {
 verifying "struct_array_of_embedded_structs.c";
 
 int32 write_point(struct packet* packet) {
-    requires loadable(packet->points[1].value);
     consumes packet->points[1].value;
     ensures result == 7;
     produces packet->points[1].value;

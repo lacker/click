@@ -134,7 +134,6 @@ theorem unmarked_frame(
 void sweep(int32 visited[], int32 n) {
     requires 0 <= n;
     requires n <= 1073741823;
-    requires loadable(visited[0..n]);
     consumes visited[0..n];
     produces visited[0..n];
 } by {
@@ -175,7 +174,6 @@ void sweep(int32 visited[], int32 n) {
             }
             have n >= 0 by { arithmetic() using { 0 <= n; } }
             have loadable(visited[0..n]) by { simp(); }
-            have n >= 0 and loadable(visited[0..n]) by { split(); }
             step();
             have loadable(visited[0..n]) by { simp(); }
             have n >= 0 and loadable(visited[0..n]) by { split(); }

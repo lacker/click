@@ -9,7 +9,6 @@ int main(void) { bump(&counter); return bump(&counter); }
 ```click
 verifying "main.c";
 unsigned int bump(unsigned int *p) {
-    requires loadable(p[0..1]);
     consumes p[0..1];
     produces p[0..1];
     ensures p[0] == old(p[0]) + 1u32;

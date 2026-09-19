@@ -36,13 +36,11 @@ predicate same_first(a: int32[], b: int32[]) {
 }
 
 int32 old_count_after_write(int32 p[1], int32 x) {
-    requires loadable(p[0..1]);
     consumes p[0..1];
     ensures result_was_old_value: count(old(p), 0, 1, result) == 1 by auto;
 }
 
 int32 keep_first_change_second(int32 p[2], int32 x) {
-    requires loadable(p[0..2]);
     consumes p[1..2];
     ensures first_cell_preserved: same_first(p, old(p)) by {
         execute();

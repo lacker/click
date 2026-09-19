@@ -21,7 +21,6 @@ int f(unsigned char *src) {
 verifying "readonly_memcpy.c";
 
 int f(uint8 src[]) {
-    requires loadable(src[0..16]);
     views buf[0..16];
     ensures result == 0;
 } by {

@@ -23,7 +23,6 @@ verifying "shifted_loop_effect_subset.c";
 int32 shifted_loop_effect_subset(int32 p[], int32 n) {
     requires n >= 1;
     requires n <= 2147483647;
-    requires loadable(p[0..n]);
     consumes p[0..n];
     ensures returns_n: result == n;
 } by {

@@ -30,7 +30,6 @@ int32 loop_entry_guard_before_written_implication(int32 p[3]) {
 verifying "loop_entry_guard_before_written_implication.c";
 
 int32 loop_entry_guard_before_written_implication(int32 p[3]) {
-    requires loadable(p[0..3]);
     consumes p[0..3];
     ensures returns_three: result == 3;
 } by {

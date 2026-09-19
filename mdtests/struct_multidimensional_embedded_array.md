@@ -26,7 +26,6 @@ int32 read_point(struct packet* packet) {
 verifying "struct_multidimensional_embedded_array.c";
 
 int32 read_point(struct packet* packet) {
-    requires loadable(packet->points[1][1].value);
     consumes packet->points[1][1].value;
     ensures result == 7;
     produces packet->points[1][1].value;

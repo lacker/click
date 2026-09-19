@@ -69,7 +69,6 @@ verifying "struct_multidimensional_scalar_array_finish.c";
 verifying "struct_multidimensional_scalar_array_run.c";
 
 int32 update_values(struct value_packet* packet) {
-    requires loadable(packet->values[1][2]);
     consumes packet->values[1][2];
     ensures result == 7;
     produces packet->values[1][2];
@@ -80,7 +79,6 @@ int32 update_values(struct value_packet* packet) {
 }
 
 uint8 update_bytes(struct byte_packet* packet) {
-    requires loadable(packet->bytes[2][1]);
     consumes packet->bytes[2][1];
     ensures result == 9;
     produces packet->bytes[2][1];

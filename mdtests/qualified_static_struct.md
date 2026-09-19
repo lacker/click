@@ -22,7 +22,6 @@ resource counter_state() {
 }
 
 unsigned long read_value(struct counter *p) {
-    requires loadable(p->value);
     owns p->value;
     ensures result == old(p->value);
     ensures p->value == old(p->value);

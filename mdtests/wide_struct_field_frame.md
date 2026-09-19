@@ -8,8 +8,6 @@ unsigned long update(struct pair *p) { p->a += 1; return p->b; }
 ```click
 verifying "frame.c";
 unsigned long update(struct pair *p) {
-    requires loadable(p->a);
-    requires loadable(p->b);
     consumes p->a;
     consumes p->b;
     produces p->a;

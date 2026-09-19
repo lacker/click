@@ -9,7 +9,6 @@ int main(void) { overwrite((int *)&state); return state; }
 ```click
 verifying "main.c";
 void overwrite(int *p) {
-    requires loadable(p[0..1]);
     consumes p[0..1];
     produces p[0..1];
     ensures p[0] == 9;

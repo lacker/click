@@ -32,7 +32,6 @@ verifying "struct_inline_byte_array.c";
 verifying "struct_inline_byte_array_parameter.c";
 
 uint8 write_packet(struct packet* packet) {
-    requires loadable(packet->buf);
     consumes packet->buf;
 
     ensures result == 7;
@@ -44,7 +43,6 @@ uint8 write_packet(struct packet* packet) {
 }
 
 uint8 write_array_item(struct item items[2]) {
-    requires loadable(items[0..2]);
     consumes items[0..2];
 
     ensures result == 7;

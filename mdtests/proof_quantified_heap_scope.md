@@ -14,7 +14,6 @@ int32 proof_quantified_heap_scope(int32 p[2]) {
 verifying "proof_quantified_heap_scope.c";
 
 int32 proof_quantified_heap_scope(int32 p[2]) {
-    requires loadable(p[0..2]);
     views p[0..2];
     ensures result == p[0];
     ensures stable: forall (k: int32) {

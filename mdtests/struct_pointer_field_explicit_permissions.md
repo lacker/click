@@ -25,8 +25,6 @@ int32 set_owned_first(struct owner* owner, int32 data[]) {
 verifying "set_owned_first.c";
 
 int32 set_owned_first(struct owner* owner, int32 data[]) {
-    requires loadable(owner[0..3]);
-    requires loadable(data[0..1]);
     consumes owner[0..3];
     consumes data[0..1];
 

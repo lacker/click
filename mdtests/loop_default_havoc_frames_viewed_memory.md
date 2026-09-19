@@ -22,8 +22,6 @@ verifying "loop_default_havoc_frames_viewed_memory.c";
 void loop_default_havoc_frames_viewed_memory(int32 p[], int32 r[], int32 n) {
     requires n >= 0;
     requires n <= 2147483647;
-    requires loadable(p[0..n]);
-    requires loadable(r[0..1]);
     owns p[0..n];
     views r[0..1];
     requires separate(memory(p[0..n]), memory(r[0..1]));

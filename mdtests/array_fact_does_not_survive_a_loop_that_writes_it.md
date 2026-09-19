@@ -18,7 +18,6 @@ function icount(p: int32[], lo: int32, hi: int32) -> Integer {
 void wipe(int32 a[], int32 n) {
     requires 0 <= n;
     requires n <= 1073741823;
-    requires loadable(a[0..n]);
     consumes a[0..n];
     produces a[0..n];
 } by {

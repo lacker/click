@@ -16,8 +16,6 @@ int32 clobber_dst(int32* dst, int32* src) {
 verifying "pointer_params_may_alias_without_separate.c";
 
 int32 clobber_dst(int32* dst, int32* src) {
-    requires loadable(dst[0..1]);
-    requires loadable(src[0..1]);
     consumes dst[0..1];
     views src[0..1];
 

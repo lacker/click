@@ -101,9 +101,6 @@ void dummy_rotate(struct node* old, struct node* new) {
 void erase_augmented(struct node* node, struct node* parent,
                      const struct rb_augment_callbacks* augment) {
     views object(augment);
-    requires loadable(augment->propagate);
-    requires loadable(augment->copy);
-    requires loadable(augment->rotate);
     requires Propagate(augment->propagate);
     requires Copy(augment->copy);
     requires Rotate(augment->rotate);

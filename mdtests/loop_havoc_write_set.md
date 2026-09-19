@@ -23,7 +23,6 @@ verifying "loop_havoc_write_set.c";
 int32 loop_havoc_write_set(int32 p[], int32 n) {
     requires n >= 1;
     requires n <= 100;
-    requires loadable(p[0..n]);
     consumes p[0..n];
     ensures result == old(p[0]);
 } by {

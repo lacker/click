@@ -50,7 +50,6 @@ resource buffer_storage(owner: struct buffer*) {
     owns owner->data[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;
-    fact loadable(owner->data[0..owner->len]);
     fact separate(
         memory(object(owner)),
         memory(owner->data[0..owner->cap])

@@ -30,7 +30,6 @@ verifying "loop_owns_composite_rejects_outside_write.c";
 void loop_owns_composite_rejects_outside_write(struct cell* node, int32 q[], int32 n) {
     requires n >= 0;
     requires n <= 2147483647;
-    requires loadable(q[0..1]);
     owns cell(node);
     owns q[0..1];
     requires separate(memory(node[0..1]), memory(q[0..1]));

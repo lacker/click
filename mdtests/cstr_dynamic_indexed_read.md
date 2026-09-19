@@ -30,7 +30,6 @@ int32 read_terminator(uint8 bytes[], int32 known_len) {
     requires cstr_readable_len(bytes, known_len);
     requires 0 <= known_len;
     requires known_len < 2147483647;
-    requires loadable(bytes[0..known_len + 1]);
     requires forall (k: int32) {
         0 <= k and k < known_len implies bytes[k] != '\0'
     };

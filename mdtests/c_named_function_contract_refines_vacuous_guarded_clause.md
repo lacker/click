@@ -45,7 +45,6 @@ theorem increment_is_guarded_progress() {
     ensures GuardedProgress(&increment) by {
         unfold(GuardedProgress);
         intro();
-        extract(at(function.entry, loadable(cell[0..1])));
         extract(0 <= old(cell[0]));
         extract(old(cell[0]) < 100);
         both {
@@ -58,7 +57,6 @@ theorem increment_is_guarded_progress() {
             }
         } and {
             intro();
-            extract(loadable(cell[0..1]));
             extract(cell[0] == old(cell[0]) + 1);
             both {
                 both {

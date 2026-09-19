@@ -25,7 +25,6 @@ void write_pieces(int32 p[], int32 n, int32 i, int32 j) {
     requires i < n;
     requires j >= 0;
     requires j < n;
-    requires loadable(p[0..n]);
     owns p[i..i + 1];
     owns p[j..j + 1];
     ensures p[i] == 1;
@@ -37,7 +36,6 @@ void call_pieces(int32 p[], int32 n, int32 i, int32 j) {
     requires i < n;
     requires j >= 0;
     requires j < n;
-    requires loadable(p[0..n]);
     requires i < j;
     owns p[0..n];
     ensures p[i] == 1;
