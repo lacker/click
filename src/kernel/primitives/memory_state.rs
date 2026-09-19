@@ -2229,6 +2229,21 @@ impl CMemory {
                 .any(|(cell_pointer, _)| cell_pointer == pointer)
     }
 
+    /// Whether any typed union overlay is recorded at exactly this pointer.
+    ///
+    /// A union overlay is the authoritative view for an exact typed load, so a
+    /// reader that wants to treat the raw cell as the pointer's content has to
+    /// know that no overlay outranks it. [`Self::store_with_context`] and
+    /// [`Self::store_union`] keep the two disjoint at every pointer, so this
+    /// answers `false` wherever [`Self::known_value`] answers `Some`; it is
+    /// asked anyway where the consequence of the two ever coexisting would be
+    /// a wrong value rather than a lost one.
+    pub(in crate::kernel) fn has_union_overlay_at(&self, pointer: &Pointer) -> bool {
+        self.union_cells
+            .keys()
+            .any(|(cell_pointer, _)| cell_pointer == pointer)
+    }
+
     pub(in crate::kernel) fn known_union_value(
         &self,
         pointer: &Pointer,

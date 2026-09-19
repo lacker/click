@@ -1291,6 +1291,7 @@ fn evaluate_spec_integer_expression_paths(
                     // unresolved alternatives are rejected rather than
                     // exporting one branch's assumptions to the fold.
                     let [body_path] = body_paths.as_slice() else {
+                        budget.record_dropped_fold_body(body_paths.len(), None, *item);
                         continue;
                     };
                     {
@@ -1300,10 +1301,15 @@ fn evaluate_spec_integer_expression_paths(
                         // result.  Load-defining facts are represented by the
                         // registered snapshot load itself and may be dropped;
                         // all other body facts must already be ambient.
-                        if body_path.facts.iter().any(|fact| {
+                        if let Some(unavailable) = body_path.facts.iter().find(|fact| {
                             !assumptions.proves_exact(fact.proposition())
                                 && !is_verified_load_variable_defining_fact(fact.proposition())
                         }) {
+                            budget.record_dropped_fold_body(
+                                1,
+                                Some(unavailable.proposition().clone()),
+                                *item,
+                            );
                             continue;
                         }
                         let body_obligations = body_path
@@ -5797,7 +5803,15 @@ fn evaluate_spec_pure_function_argument_paths(
             .into_iter()
             .map(|path| SpecPureFunctionArgumentPath {
                 value: PureFunctionArgument::ArrayRef {
-                    memory: memory.clone(),
+                    // The argument names the snapshot it reads, and that
+                    // snapshot is compared structurally, so the live one
+                    // would make this argument -- and every fact about a
+                    // function of it -- different after any step at all.
+                    // `block_epoch_for_array_ref` gives the latest snapshot
+                    // that still agrees with this one about everything the
+                    // function can observe through this pointer, so a fact
+                    // survives exactly the steps that cannot touch the array.
+                    memory: array_ref_argument_memory(memory, &path.value),
                     pointer: path.value,
                     element_type: *element_type,
                 },
@@ -5807,6 +5821,24 @@ fn evaluate_spec_pure_function_argument_paths(
             .collect())
         }
     }
+}
+
+/// The snapshot an array argument at `pointer` names, given the state it was
+/// evaluated at.
+///
+/// See [`crate::kernel::memory_provenance::block_epoch_for_array_ref`] for
+/// what the epoch guarantees and which derivation edges it crosses. An
+/// argument that is not a pointer at all keeps the live snapshot, which is
+/// always sound and merely as fragile as before; so does a block the walk
+/// cannot separate from anything, because it then crosses no edge.
+fn array_ref_argument_memory(memory: &CMemory, pointer: &CValue) -> CMemory {
+    let CValue::Pointer(pointer) = pointer else {
+        return memory.clone();
+    };
+    let interned = crate::kernel::intern_c_memory(memory.clone());
+    crate::kernel::memory_provenance::block_epoch_for_array_ref(&interned, &pointer.pointer().block)
+        .memory()
+        .clone()
 }
 
 pub(in crate::kernel) fn c_value_bitvector_term(value: &CValue) -> Option<Bitvector32Term> {
@@ -7086,14 +7118,15 @@ mod integer_budget_tests {
             variable,
             &Bitvector32Term::Constant(7),
         );
-        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, _), true) = substituted
-        else {
-            panic!("machine-backed Integer proposition changed shape");
-        };
-        let IntegerTerm::Machine(machine) = left.as_ref() else {
-            panic!("machine-backed Integer term was not preserved");
-        };
-        assert_eq!(machine.value(), &Bitvector32Term::Constant(7));
+        // Substitution reached inside the machine-backed Integer term. The
+        // observation it left behind is decided -- `to_integer(7)` is the
+        // mathematical 7, the same Integer the evaluation below produces for
+        // the same machine constant -- so the equation against 7 is decided
+        // too, by the Integer equality's own smart constructor.
+        assert_eq!(
+            substituted,
+            Proposition::ConditionIs(ConditionTerm::Constant(true), true)
+        );
 
         let expression = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::Value(
             CValue::Int32(Bitvector32Term::Constant(7)),

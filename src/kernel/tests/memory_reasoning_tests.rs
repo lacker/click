@@ -2675,6 +2675,40 @@ fn integer_range_fold_endpoint_congruence_requires_one_memory_snapshot() {
     )));
 }
 
+/// A raw cell and a typed union overlay never both describe one pointer.
+///
+/// The overlay outranks the raw cell for an exact typed load, so a reader that
+/// treats the raw cell as the pointer's content -- as
+/// `materialized_registered_load_value` does when it unfolds a registered load
+/// variable -- would otherwise be able to read the outranked value. Both
+/// writers keep the two disjoint; this pins that they do, in both orders.
+#[test]
+fn store_and_union_cells_never_coexist_at_one_pointer() {
+    let cell = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let base = CMemory::new().with_block("array", 8);
+
+    let overlay_over_store = base.clone().store(cell.clone(), int32(42)).store_union(
+        cell.clone(),
+        CType::UInt8,
+        CValue::UInt8(Bitvector32Term::Constant(7)),
+    );
+    assert_eq!(overlay_over_store.known_value(&cell), None);
+    assert!(overlay_over_store.has_union_overlay_at(&cell));
+
+    let store_over_overlay = base
+        .store_union(
+            cell.clone(),
+            CType::UInt8,
+            CValue::UInt8(Bitvector32Term::Constant(7)),
+        )
+        .store(cell.clone(), int32(42));
+    assert_eq!(store_over_overlay.known_value(&cell), Some(int32(42)));
+    assert!(!store_over_overlay.has_union_overlay_at(&cell));
+}
+
 #[test]
 fn symbolic_store_invalidates_only_possible_aliasing_cells() {
     let i = Variable(81);
@@ -3833,6 +3867,75 @@ fn symbolic_blocks_are_never_proven_distinct_by_structure() {
         offset: PointerOffsetTerm::Constant(0),
     };
     assert!(heap.blocks_proven_distinct(&other_heap));
+}
+
+/// The one filter every load-framing route shares. A block that is merely
+/// spelled differently from the load's is still observable by it; only a
+/// block the kernel proves distinct drops out.
+#[test]
+fn a_load_observes_every_block_not_proven_distinct_from_its_own() {
+    let argument = PointerBlock::ExternalArgument;
+    let object = PointerBlock::ExternalObject(Variable(5));
+    let global = PointerBlock::Concrete("global:g".to_string());
+    let other_global = PointerBlock::Concrete("global:h".to_string());
+    let local = PointerBlock::Concrete("local:caller:x".to_string());
+    let fresh = PointerBlock::Heap(1000001);
+    let symbolic = PointerBlock::Symbolic(Variable(77));
+
+    // The hole this predicate closes: a caller may pass the global as the
+    // argument, so a store to `g` is still in a question about `a`.
+    assert!(!global.proven_distinct(&argument));
+    assert!(global.may_alias(&argument));
+    assert!(global.observable_by_load(&argument));
+    assert!(argument.observable_by_load(&global));
+    // The same for the opaque object identity a parameter carries.
+    assert!(global.observable_by_load(&object));
+
+    // Two file-scope declarations are two objects, and a function's own
+    // locals are not memory that existed before the call.
+    assert!(global.proven_distinct(&other_global));
+    assert!(!global.observable_by_load(&other_global));
+    assert!(local.proven_distinct(&argument));
+    assert!(!local.observable_by_load(&argument));
+    // A block allocated here is fresh, so nothing the caller passed is it.
+    assert!(fresh.proven_distinct(&argument));
+    assert!(!fresh.observable_by_load(&argument));
+    assert!(!fresh.observable_by_load(&global));
+
+    // A block is always observable by a load in it.
+    assert!(!global.proven_distinct(&global));
+    assert!(global.observable_by_load(&global));
+    assert!(argument.observable_by_load(&argument));
+
+    // A symbolic block is proven distinct from nothing, so it may alias
+    // everything. `observable_by_load` keeps the narrower name filter at a
+    // symbolic *load* block, which is the remaining gap documented on it.
+    assert!(symbolic.may_alias(&global));
+    assert!(global.may_alias(&symbolic));
+    assert!(symbolic.observable_by_load(&global));
+    assert!(!global.observable_by_load(&symbolic));
+    assert!(symbolic.observable_by_load(&symbolic));
+}
+
+/// Two string literal occurrences with different bytes cannot be one object;
+/// equal bytes may have been merged by the implementation, so they stay
+/// observable by each other.
+#[test]
+fn string_literal_blocks_separate_only_by_their_bytes() {
+    let literal = |identity: &str, bytes: &[u8]| PointerBlock::StringLiteral {
+        identity: identity.to_string(),
+        bytes: bytes.to_vec(),
+    };
+    let ok = literal("first", b"ok");
+    let no = literal("second", b"no");
+    let merged = literal("third", b"ok");
+    assert!(ok.proven_distinct(&no));
+    assert!(!ok.observable_by_load(&no));
+    assert!(!ok.proven_distinct(&merged));
+    assert!(ok.observable_by_load(&merged));
+    // A literal is not proven distinct from a global either.
+    let global = PointerBlock::Concrete("global:g".to_string());
+    assert!(ok.observable_by_load(&global));
 }
 
 /// Constant range endpoints are `int32` values, and their guard arithmetic

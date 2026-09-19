@@ -364,6 +364,55 @@ fn signed_term_constant_value(term: &crate::kernel::Bitvector32Term) -> Option<i
     values.pop().flatten()
 }
 
+/// How `arithmetic` read each listed premise while planning over the Integer
+/// linear fragment, written in the reader's own spelling.
+///
+/// A premise outside the fragment is skipped rather than refused, so a reader
+/// whose evidence never entered the planner has to be told which premises did.
+/// The two lists are the whole story: no ambient fact participates.
+fn describe_integer_premise_reading(
+    premises: &[crate::kernel::Proposition],
+    surface_premises: &[ClickProposition],
+) -> String {
+    use crate::kernel::proof::integer_arithmetic::integer_affine_claim;
+    let spelled = |index: usize| match surface_premises.get(index) {
+        Some(premise) => format!(
+            "{index}: `{}`",
+            crate::surface::printing::source_click_proposition(premise)
+        ),
+        None => format!("{index}"),
+    };
+    let (read, skipped): (Vec<_>, Vec<_>) =
+        (0..premises.len()).partition(|index| integer_affine_claim(&premises[*index]).is_some());
+    let mut description = String::new();
+    if read.is_empty() {
+        description.push_str(
+            "\n  no listed premise was read as an Integer linear claim, so nothing was combined",
+        );
+    } else {
+        description.push_str(&format!(
+            "\n  read as Integer linear claims: {}",
+            read.iter()
+                .copied()
+                .map(spelled)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !skipped.is_empty() {
+        description.push_str(&format!(
+            "\n  skipped, not an Integer linear claim: {}",
+            skipped
+                .iter()
+                .copied()
+                .map(spelled)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    description
+}
+
 /// Classify the failure of the bounded arithmetic planner without reviving a
 /// whole-goal checker.  The planner intentionally returns only `None`; this
 /// small, iterative shape scan keeps the established diagnostics useful for
@@ -929,6 +978,27 @@ impl<'a> Proof<'a> {
                     plan.nodes.len()
                 )));
             }
+        }
+        // A goal in the mathematical `Integer` linear fragment never reaches
+        // the signed int32 planner, so reporting that planner's precondition
+        // for it names a fragment the goal is not in and sends the reader
+        // hunting for an int32 mistake. Say which fragment was recognized and
+        // how each listed premise was read inside it.
+        if let Some(goal) = self.goal()
+            && crate::kernel::proof::integer_arithmetic::integer_affine_claim(goal).is_some()
+        {
+            if let Some(plan) =
+                crate::surface::checking::plan_integer_affine_certificate(goal, &premises)
+            {
+                return Err(self.step_error(format!(
+                    "`arithmetic` proved the goal from the listed premises with a {}-node Integer certificate, but one of its steps cannot be printed in source form; this is a Click rendering gap, not a missing premise",
+                    plan.nodes.len()
+                )));
+            }
+            return Err(self.step_error(format!(
+                "`arithmetic` read the current goal as an Integer linear claim; no combination of the listed premises proves it{}",
+                describe_integer_premise_reading(&premises, &anchored_surface_premises)
+            )));
         }
         if let Some(goal) = self.goal() {
             if crate::kernel::proof::signed_arithmetic::signed_arithmetic_claim(goal).is_none() {

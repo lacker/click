@@ -33,6 +33,39 @@ That fact can come from:
 - the loop's owned resources,
 - or an explicit invariant.
 
+## A global is not separated from an argument by its name
+
+The same rule covers a file-scope object and a pointer parameter. A caller may
+pass a global as an array argument, so a function that writes the global has
+not preserved the argument's cells:
+
+<!-- verified-example: mdtests/global_may_alias_an_array_argument.md -->
+```c
+int32 g[4];
+
+void f(int32 a[], int32 n) {
+    g[0] = 1;
+}
+```
+
+A contract that reads `a[0]` while declaring no resource for `a` cannot carry
+that read across the store to `g[0]`, however different the two names look.
+`requires loadable(a[0..n])` says the range can be read; it says nothing about
+where it is. State the separation:
+
+<!-- verified-example: mdtests/a_separated_array_argument_survives_a_global_store.md -->
+```click
+requires separate(memory(a[0..n]), memory(g[0..1]));
+```
+
+Two file-scope objects are two declarations and stay separate with nothing
+said, and so does a function-scope `static` array; the argument is the case
+where the caller decides.
+
+Declaring `views a[0..n]` instead settles the call site rather than the body:
+a caller cannot hand the same bytes over as the owned global and lend them as
+a view at the same time, so `f(g, 4)` is refused during planning.
+
 ## Ownership is the frame
 
 A contract's owned memory is what it may write; everything else it can reach is

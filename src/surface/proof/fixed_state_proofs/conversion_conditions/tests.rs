@@ -255,6 +255,127 @@ fn an_assumable_obligation_is_not_refused() {
     assert!(refuse_unproved_conversion_bounds(&assumable, &PureFactContext::new(), &site).is_ok());
 }
 
+/// `icount(p, 0, index) == (0..index).fold(0, |acc, k| acc + to_integer(p[k]))`,
+/// the defining equation a function `unfold` lowers.
+fn fold_defining_equation() -> ClickProposition {
+    let read = ContractExpression::ArrayIndex {
+        base: Box::new(ContractExpression::CFragment(CExpression::Variable(
+            "p".to_string(),
+        ))),
+        indexes: vec![CExpression::Variable("k".to_string())],
+        lowered: CExpression::TypedLoad {
+            pointer: Box::new(CExpression::Add(
+                Box::new(CExpression::Variable("p".to_string())),
+                Box::new(CExpression::Variable("k".to_string())),
+            )),
+            value_type: CType::Int32,
+            volatile: false,
+            source: Default::default(),
+        },
+    };
+    ClickProposition::Comparison {
+        left: ContractExpression::Call {
+            name: "icount".to_string(),
+            arguments: vec![
+                ContractExpression::CFragment(CExpression::Variable("p".to_string())),
+                ContractExpression::IntegerLiteral("0".to_string()),
+                ContractExpression::CFragment(CExpression::Variable("index".to_string())),
+            ],
+        },
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::RangeFold {
+            start: Box::new(ContractExpression::IntegerLiteral("0".to_string())),
+            end: Box::new(ContractExpression::CFragment(CExpression::Variable(
+                "index".to_string(),
+            ))),
+            initial: Box::new(ContractExpression::IntegerLiteral("0".to_string())),
+            accumulator: "acc".to_string(),
+            item: "k".to_string(),
+            body: Box::new(ContractExpression::Add(
+                Box::new(ContractExpression::Binding("acc".to_string())),
+                Box::new(ContractExpression::Call {
+                    name: "to_integer".to_string(),
+                    arguments: vec![read],
+                }),
+            )),
+        },
+    }
+}
+
+/// A fold body that evaluated to more than one value: the refusal must name the
+/// fold's own binder, the body it could not evaluate once, and the read that
+/// body performs, all in the spelling the source uses.
+#[test]
+fn a_split_fold_body_names_its_binder_its_body_and_its_read() {
+    let (values, state) = indexed_pointer_site();
+    let proposition = fold_defining_equation();
+    let site = StatedSite::new(StatedForm::Proposition(&proposition), &state, &values);
+    let message = describe_dropped_fold_body(
+        &crate::kernel::DroppedFoldBody {
+            body_paths: 2,
+            unavailable_body_fact: None,
+            item: Variable(1 << 41),
+        },
+        &PureFactContext::new(),
+        &site,
+    );
+    assert!(message.starts_with("the proposition `"), "{message}");
+    assert!(
+        message.contains("its subterm `acc + to_integer(p[k])`, the body of the fold over `k`"),
+        "{message}"
+    );
+    assert!(
+        message.contains("must denote one value for every `k` in that range"),
+        "{message}"
+    );
+    assert!(
+        message.contains("not established: the body evaluated to 2 values, not one"),
+        "{message}"
+    );
+    assert!(
+        message.contains("the body reads, once per item: `p[k]`"),
+        "{message}"
+    );
+    assert!(message.contains("premises consulted: none"), "{message}");
+    assert!(message.contains("to repair: "), "{message}");
+}
+
+/// A fold body that evaluated to one value under a condition on its own item:
+/// the refusal must quote that condition and say why a condition raised under
+/// the binder is not a fact about this state.
+#[test]
+fn a_conditional_fold_body_quotes_the_condition_it_carried_out() {
+    let (values, state) = indexed_pointer_site();
+    let proposition = fold_defining_equation();
+    let site = StatedSite::new(StatedForm::Proposition(&proposition), &state, &values);
+    let message = describe_dropped_fold_body(
+        &crate::kernel::DroppedFoldBody {
+            body_paths: 1,
+            unavailable_body_fact: Some(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(Variable(1 << 41))),
+                    Box::new(Bitvector32Term::Variable(Variable(1))),
+                ),
+                true,
+            )),
+            item: Variable(1 << 41),
+        },
+        &PureFactContext::new(),
+        &site,
+    );
+    assert!(
+        message.contains(
+            "not established: the body evaluated to one value, but carried the \
+                          condition `"
+        ),
+        "{message}"
+    );
+    assert!(
+        message.contains("A condition raised under the fold's binders is about which `k` this is"),
+        "{message}"
+    );
+}
+
 #[test]
 fn one_outer_parenthesis_pair_is_dropped_and_a_composed_one_is_kept() {
     let sum = ContractExpression::CFragment(CExpression::Add(

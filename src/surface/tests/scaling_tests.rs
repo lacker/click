@@ -1794,3 +1794,74 @@ fn outcome_haves_and_resource_folds_do_not_reimport_ambient_facts() {
         );
     }
 }
+
+/// One project with `statement_count` local stores between two uses of the
+/// same fact about an array the stores cannot touch.
+fn array_fact_across_local_stores(statement_count: usize) -> (String, String) {
+    let mut c_source = String::from("void bump(int32 a[], int32 n) {\n    int32 i;\n    i = 0;\n");
+    for _ in 0..statement_count {
+        c_source.push_str("    i = i + 1;\n");
+    }
+    c_source.push_str("}\n");
+
+    let mut click_source = String::from(
+        "verifying \"bump.c\";\n\nfunction icount(p: int32[], lo: int32, hi: int32) -> Integer {\n    (lo..hi).fold(0, |acc, k| { acc + to_integer(p[k]) })\n}\n\nvoid bump(int32 a[], int32 n) {\n    requires 0 < n;\n    requires loadable(a[0..n]);\n    views a[0..n];\n} by {\n    step();\n    step();\n    have 0 <= 0 by { simp(); }\n    have icount(a, 0, 0) == 0 by {\n        unfold(icount(a, 0, 0)) using { 0 <= 0; }\n        normalize();\n    }\n",
+    );
+    // One use of the fact after every step: the walk is asked from a fresh
+    // snapshot each time, which is the shape that goes quadratic when an
+    // epoch walk cannot reuse the answer it computed one snapshot ago.
+    for _ in 0..statement_count {
+        click_source.push_str("    step();\n");
+        click_source.push_str("    have icount(a, 0, 0) == 0 by { simp(); }\n");
+    }
+    click_source.push_str("    execute();\n    simp();\n}\n");
+    (c_source, click_source)
+}
+
+/// Carrying one array fact across N steps that cannot touch the array costs
+/// work linear in N, not quadratic.
+///
+/// The array argument names a block epoch, and the epoch is a walk back along
+/// the derivation edges to the last one that could have changed the block. Run
+/// per step with no memo, that walk is N hops at the Nth step and the proof
+/// costs N^2; memoized per interned snapshot and block it is one hop per new
+/// snapshot. This is the regression that tells those two apart.
+#[test]
+fn an_array_fact_carried_across_local_stores_scales_linearly() {
+    let samples = [4, 8, 16, 32]
+        .into_iter()
+        .map(|size| {
+            let (c_source, click_source) = array_fact_across_local_stores(size);
+            let (verified, sample) = scaling_sample(size, || {
+                verify_c0_sources(&click_source, &[("bump.c", c_source.as_str())])
+            });
+            verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} array-fact scaling fixture failed: {}",
+                    error.message()
+                )
+            });
+            sample
+        })
+        .collect::<Vec<_>>();
+
+    assert_near_linear_scaling("array fact across unrelated local stores", &samples);
+
+    // The walk itself is the part at risk, and it is a small share of a
+    // proof's work, so assert on its own measured work rather than on the
+    // total it hides inside. A missing entry means the fixture stopped
+    // exercising the walk at all, which would make the rest vacuous.
+    const WALK: &str = "operation `array-ref block epoch walk`";
+    let walk = samples
+        .iter()
+        .map(|sample| ScalingSample {
+            size: sample.size,
+            work: *sample
+                .named_work
+                .get(WALK)
+                .unwrap_or_else(|| panic!("fixture did not reach the epoch walk: {sample:?}")),
+            named_work: BTreeMap::new(),
+        })
+        .collect::<Vec<_>>();
+    assert_near_linear_scaling("array-ref block epoch walk", &walk);
+}

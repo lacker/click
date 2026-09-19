@@ -1478,15 +1478,36 @@ impl<'a> Proof<'a> {
         // goal has a load), which only the two lowered forms show.
         let mut rewritten = rewrite_proposition_by_exact_equality(&goal, &equality, available)
             .map_err(|message| {
-                self.step_error(format!(
-                    "{message}\n  equality: {}\n  goal: {}",
-                    crate::surface::diagnostics::describe_pure_fact_spelled(
-                        &equality, names.0, names.1
-                    ),
-                    crate::surface::diagnostics::describe_pure_fact_spelled(
-                        &goal, names.0, names.1
-                    ),
-                ))
+                let spelled_equality = crate::surface::diagnostics::describe_pure_fact_spelled(
+                    &equality, names.0, names.1,
+                );
+                let spelled_goal = crate::surface::diagnostics::describe_pure_fact_spelled(
+                    &goal, names.0, names.1,
+                );
+                let mut message =
+                    format!("{message}\n  equality: {spelled_equality}\n  goal: {spelled_goal}");
+                // The source spelling of a read is its address, and two reads
+                // of one address at two states spell the same. When that
+                // happens the two lines above are the same text and say
+                // nothing, so add the rendering that labels the memory each
+                // side reads and say why it is there.
+                if spelled_equality == spelled_goal && equality.as_ref() != goal.as_ref() {
+                    let mut labels =
+                        crate::surface::proof_diagnostics::render::SnapshotLabels::default();
+                    message.push_str(&format!(
+                        "\n  the two spell alike but are different propositions; with each \
+                         memory labelled they read\n  equality: {}\n  goal: {}",
+                        crate::surface::proof_diagnostics::render::render_proposition_labeled(
+                            &equality,
+                            &mut labels
+                        ),
+                        crate::surface::proof_diagnostics::render::render_proposition_labeled(
+                            &goal,
+                            &mut labels
+                        ),
+                    ));
+                }
+                self.step_error(message)
             })?;
         let mut facts = self.facts().clone();
         let surface_goal = self.surface_goal().and_then(|surface_goal| {
@@ -2121,6 +2142,158 @@ impl<'a> Proof<'a> {
             })
         })
         .map(|(lower, upper)| less_equal(&lower, &upper))
+    }
+
+    /// The surface spellings recorded for this context's kernel facts.
+    ///
+    /// One place, so a diagnostic that wants to name a fact the way the proof
+    /// wrote it reads the record premise selection already reads.
+    fn context_surface_propositions(&self) -> Option<&SurfacePropositionMap> {
+        match self.context.as_ref() {
+            ProofContext::Pure(context) => Some(&context.theorem_context.surface_requirements),
+            ProofContext::FixedState(context) => Some(context.surface_propositions),
+            ProofContext::Execution(_) => match self.focused_outcome_data() {
+                Some(data) => Some(&data.surface_propositions),
+                None => Some(&self.execution()?.presentation.surface_propositions),
+            },
+        }
+    }
+
+    /// Every available stated loadable range over the goal range's own base,
+    /// in the spelling it was stated with, with its element width.
+    ///
+    /// A range that is not available here explains nothing, so availability is
+    /// asked of the facts and the spelling of the lowering record, which is
+    /// where a contract's `loadable(a[0..n])` is kept beside the kernel
+    /// proposition it became. The width comes from that same proposition,
+    /// because a surface segment does not carry one and naming an extent's
+    /// limit takes it.
+    fn available_stated_loadable_ranges(
+        &self,
+        goal: &ClickProposition,
+    ) -> Vec<(ClickProposition, u32)> {
+        let Some(propositions) = self.context_surface_propositions() else {
+            return Vec::new();
+        };
+        let ClickProposition::Loadable { segment } = goal else {
+            return Vec::new();
+        };
+        let Some((goal_base, _, _)) = segment.surface_range() else {
+            return Vec::new();
+        };
+        let mut ranges: Vec<(ClickProposition, u32)> = Vec::new();
+        for kernel in propositions.kernel_facts() {
+            let Proposition::CMemoryLoadable { bytes, .. } = kernel else {
+                continue;
+            };
+            let Some(element_width) = crate::kernel::scaled_extent_element_width(bytes) else {
+                continue;
+            };
+            if !self.facts().exact_available_across_effects(kernel, &[]) {
+                continue;
+            }
+            for surface in propositions.surfaces(kernel) {
+                let ClickProposition::Loadable { segment } = surface else {
+                    continue;
+                };
+                let Some((base, _, _)) = segment.surface_range() else {
+                    continue;
+                };
+                let candidate = (surface.clone(), element_width);
+                if base == goal_base && surface != goal && !ranges.contains(&candidate) {
+                    ranges.push(candidate);
+                }
+            }
+        }
+        ranges
+    }
+
+    /// The valid-byte-extent facts a stated range owes, over the count the
+    /// user wrote, in the one spelling Click's surface can state them.
+    ///
+    /// [`crate::kernel::memory_range_element_count_guards`] is the definition
+    /// and says this is the only form a user can write; these are the same two
+    /// conditions as propositions, so a diagnostic can both ask whether one is
+    /// available and print what to go and prove. The count of `a[s..e]` is
+    /// `e - s`, and for a range starting at `0` it is `e` itself, which is how
+    /// the kernel's own count form reads it.
+    fn stated_range_extent_facts(
+        start: &ContractExpression,
+        end: &ContractExpression,
+        element_width: u32,
+    ) -> Vec<ClickProposition> {
+        let count = match start {
+            ContractExpression::IntegerLiteral(literal) if literal == "0" => end.clone(),
+            _ => ContractExpression::Subtract(Box::new(end.clone()), Box::new(start.clone())),
+        };
+        let numeral = |value: u32| ContractExpression::IntegerLiteral(std::format!("{value}"));
+        let less_equal =
+            |left: ContractExpression, right: ContractExpression| ClickProposition::Comparison {
+                left,
+                operator: ComparisonOperator::LessEqual,
+                right,
+            };
+        let mut facts = vec![less_equal(numeral(0), count.clone())];
+        if crate::kernel::element_count_limit_constrains_int32(element_width) {
+            facts.push(less_equal(
+                count,
+                numeral(crate::kernel::memory_range_element_count_limit(
+                    element_width,
+                )),
+            ));
+        }
+        facts
+    }
+
+    /// Why an unproved `loadable` range goal was not proved, in the spelling
+    /// the proof wrote it with.
+    ///
+    /// A refused range-loadability goal otherwise renders as its lowered
+    /// extent — `loadable(base=the pointer value at this program point,
+    /// bytes=(v2 * 4))` — which names neither the range the reader wrote nor
+    /// anything they can go and prove. What they want is their own
+    /// `loadable(a[0..k])` and the fact narrowing a stated range to it is
+    /// waiting for.
+    ///
+    /// Narrowing needs the three order facts
+    /// [`Self::missing_loadable_narrowing_order_fact`] walks, and the stated
+    /// range established as a valid 32-bit byte extent. A missing order fact is
+    /// named first, since that is one this can see is absent; with all three
+    /// present what is left is the range's own extent, reported the way
+    /// [`Self::apply_pure_transport_using`] reports it for the explicit
+    /// narrowing step, so the same refusal reads the same way whichever tactic
+    /// asked. This explains a refusal already decided and decides nothing: it
+    /// names only facts the kernel rule asks for, in the spelling the surface
+    /// can write them.
+    pub(in crate::surface::proof) fn unproved_loadable_range_goal_reason(&self) -> Option<String> {
+        let goal = self.surface_goal()?;
+        loadable_surface_range_endpoints(goal)?;
+        let target = describe_click_proposition(goal);
+        let candidates = self.available_stated_loadable_ranges(goal);
+        for (stated, _) in &candidates {
+            if let Some(missing) = self.missing_loadable_narrowing_order_fact(stated, goal) {
+                return Some(format!(
+                    "`{target}` does not follow from `{}`: narrowing that range needs `{}`, which is not an available fact",
+                    describe_click_proposition(stated),
+                    describe_click_proposition(&missing)
+                ));
+            }
+        }
+        if let Some((stated, element_width)) = candidates.first() {
+            let (start, end) = loadable_surface_range_endpoints(stated)?;
+            let extent = Self::stated_range_extent_facts(&start, &end, *element_width)
+                .iter()
+                .map(describe_click_proposition)
+                .collect::<Vec<_>>()
+                .join("` and `");
+            return Some(format!(
+                "`{target}` does not follow from `{}`: every order fact narrowing that range needs is available here, so what is left is its own byte extent, which narrowing needs established as `{extent}`",
+                describe_click_proposition(stated)
+            ));
+        }
+        Some(format!(
+            "`{target}` was not proved and no stated loadable range over the same base is available here to narrow"
+        ))
     }
 
     /// `transport(source, target) using { ... }` inside a pure theorem.

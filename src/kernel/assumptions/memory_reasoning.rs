@@ -87,6 +87,32 @@ fn endpoint_base_and_shift(term: &Bitvector32Term) -> (&Bitvector32Term, i64) {
     }
 }
 
+/// The two element endpoints an element-count term names.
+///
+/// `p[a..b]` lowers its extent to `(b - a) * w`, so dividing that extent by
+/// the width gives back `b - a` and the endpoints read straight off the
+/// subtraction. A range that starts at `0` is the same term with the start
+/// already folded away — the subtraction constructor returns `b` for `b - 0` —
+/// so a count that is not a subtraction is a count from `0`, and `0` is the
+/// start it names.
+///
+/// This is a reading of the term, not an assumption about it: `count - 0` and
+/// `count` are the same term, so the fact's byte count is `(end - start) * w`
+/// in either spelling and every reader below is asking about the same bytes.
+/// [`Assumptions::assumed_extent_covers_its_element_count`] already restores
+/// the same start for the same reason; sharing one reading keeps a range
+/// written from `0` — which is how a C contract usually writes one — from
+/// being a different kind of range to the rules than `p[a..b]` is.
+fn element_count_endpoints(
+    element_count: &Bitvector32Term,
+) -> (&Bitvector32Term, &Bitvector32Term) {
+    const ZERO: &Bitvector32Term = &Bitvector32Term::Constant(0);
+    match element_count {
+        Bitvector32Term::Subtract(end, start) => (start.as_ref(), end.as_ref()),
+        _ => (ZERO, element_count),
+    }
+}
+
 /// The value of an element-count term that is a constant, including the
 /// structural case where the two endpoints are the same term shifted by
 /// constants: `hi - (hi - 1)` counts one element whatever `hi` is.
@@ -554,6 +580,16 @@ impl PureFactContext {
     /// concludes `loadable(p[c..d])` from `loadable(p[a..b])` and the order
     /// facts `a <= c`, `c <= d`, `d <= b`.
     ///
+    /// The endpoints come back through [`element_count_endpoints`], so a range
+    /// written from `0` reads the same way as any other. Its count term has the
+    /// start folded out of it — `n - 0` is `n` — and taking that folded term
+    /// for the count itself, with no start, would leave the rule unable to
+    /// narrow `loadable(p[0..n])`, which is how a C contract usually states a
+    /// range. The pointer offset is compared the same way: it has to be the
+    /// difference of the two start endpoints, asked for through the folding
+    /// constructor, so the comparison is between one canonical spelling and
+    /// another rather than between two term shapes.
+    ///
     /// Soundness, in the arithmetic the terms are actually written in. An
     /// extent is a `Bitvector32Term`: `(b - a) * w` is modular, so reading the
     /// fact as "the elements `a..b`" is only legitimate while that product is
@@ -618,25 +654,18 @@ impl PureFactContext {
         let Some(index) = base.element_index_from_base_with_width(range_base, element_width) else {
             return false;
         };
-        let (
-            Bitvector32Term::Subtract(goal_end, goal_start),
-            Bitvector32Term::Subtract(range_end, range_start),
-        ) = (&goal_count, &range_count)
-        else {
-            return false;
-        };
+        let (goal_start, goal_end) = element_count_endpoints(&goal_count);
+        let (range_start, range_end) = element_count_endpoints(&range_count);
         crate::instrumentation::record_deterministic_work(1);
         // The goal's own byte count names its endpoints; the pointer offset
         // must agree that its start element is the fact's start advanced by
         // that offset. Otherwise the two counts describe unrelated endpoints
-        // and nothing follows from comparing them.
-        let offset_agrees = match &index {
-            Bitvector32Term::Constant(0) => goal_start == range_start,
-            Bitvector32Term::Subtract(start, origin) => {
-                start == goal_start && origin == range_start
-            }
-            _ => false,
-        };
+        // and nothing follows from comparing them. The offset is built by the
+        // same folding constructor the endpoints are read back through, so
+        // asking for the difference itself asks the one question in the one
+        // spelling both sides already have.
+        let offset_agrees =
+            index == Bitvector32Term::subtract(goal_start.clone(), range_start.clone());
         offset_agrees
             && self.proves_element_endpoint_order(range_start, goal_start)
             && self.proves_element_endpoint_order(goal_start, goal_end)

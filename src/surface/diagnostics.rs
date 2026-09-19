@@ -1148,6 +1148,96 @@ pub(super) fn describe_parameter_relative_range(
     None
 }
 
+/// The pointer a still-unresolved comparison side loads from, if that side is
+/// exactly one load. A resolved side is a value and names no address.
+fn unresolved_load_pointer(value: &CValue) -> Option<Pointer> {
+    let term = match value {
+        CValue::Bool(term)
+        | CValue::Int16(term)
+        | CValue::Int32(term)
+        | CValue::UInt8(term)
+        | CValue::UInt16(term)
+        | CValue::UInt32(term)
+        | CValue::Int64(term)
+        | CValue::UInt64(term) => term,
+        _ => return None,
+    };
+    match term {
+        Bitvector32Term::MemoryLoad(_, pointer) => Some(pointer.as_ref().clone()),
+        Bitvector32Term::Variable(variable) => {
+            crate::kernel::registered_load_origin_for_variable(variable).map(|(_, pointer)| pointer)
+        }
+        _ => None,
+    }
+}
+
+/// The addresses a recorded effect fact says the body may have written.
+fn recorded_written_pointers(fact: &Proposition) -> Vec<Pointer> {
+    match fact {
+        Proposition::CMemoryMutatesOnly { pointers, .. } => pointers.clone(),
+        Proposition::CMemoryEffectSummary { mutable_ranges, .. } => mutable_ranges
+            .iter()
+            .map(|range| range.base().clone())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Names the write that stopped a comparison side from being carried across
+/// the body, when the only thing standing between the two addresses is that
+/// they are spelled differently.
+///
+/// A parameter's memory and a file-scope array are separated by a resource
+/// the contract holds or by a stated `separate`, never by their names, so a
+/// contract that reads a range it declares no resource for is told which
+/// write it has to rule out and how.
+pub(super) fn describe_unseparated_write(
+    value: &CValue,
+    facts: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    let load = unresolved_load_pointer(value)?;
+    let write = facts
+        .iter()
+        .flat_map(recorded_written_pointers)
+        .find(|write| {
+            write.block != load.block && crate::kernel::pointer_blocks_may_alias(write, &load)
+        })?;
+    Some(format!(
+        "; `{load}` may be `{write}`: different names are not different objects, and this \
+         contract states nothing that separates them — require \
+         `separate(memory(...), memory(...))` between the range it reads through `{load}` and \
+         the one it writes through `{write}`",
+        load = describe_pointer(&load, parameters, arguments),
+        write = describe_written_pointer(&write, parameters, arguments),
+    ))
+}
+
+/// A written address in the spelling the source uses. A file-scope or static
+/// object is named by its declaration, not by the block the lowering gave it.
+fn describe_written_pointer(
+    pointer: &Pointer,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let declared = match &pointer.block {
+        PointerBlock::Concrete(name) => name.strip_prefix("global:").or_else(|| {
+            name.rsplit(':')
+                .next()
+                .filter(|_| name.starts_with("static:"))
+        }),
+        _ => None,
+    };
+    let Some(declared) = declared else {
+        return describe_pointer(pointer, parameters, arguments);
+    };
+    match &pointer.offset {
+        PointerOffsetTerm::Constant(0) => declared.to_string(),
+        offset => format!("{declared}+{}", describe_pointer_offset(offset)),
+    }
+}
+
 pub(super) fn describe_pointer(
     pointer: &Pointer,
     parameters: &[syntax::C0Parameter],

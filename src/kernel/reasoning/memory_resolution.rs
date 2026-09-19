@@ -1082,24 +1082,28 @@ pub(in crate::kernel) fn memories_match_for_pointer_load(
         return false;
     }
 
+    // Cells outside the loaded pointer's own block are compared too whenever
+    // their block is not proven distinct from it: an `ExternalArgument`
+    // pointer and a `global:` block are spelled differently and may still be
+    // one object, so dropping the global's cells here would frame the
+    // argument's load across a write the caller can aim at it.
     memory_havoc_markers(left).eq(memory_havoc_markers(right))
         && left.blocks.get(&pointer.block) == right.blocks.get(&pointer.block)
         && left
             .cells
             .iter()
-            .filter(|(cell_pointer, _)| cell_pointer.block == pointer.block)
+            .filter(|(cell_pointer, _)| cell_pointer.block.observable_by_load(&pointer.block))
             .eq(right
                 .cells
                 .iter()
-                .filter(|(cell_pointer, _)| cell_pointer.block == pointer.block))
+                .filter(|(cell_pointer, _)| cell_pointer.block.observable_by_load(&pointer.block)))
         && left
             .union_cells
             .iter()
-            .filter(|((cell_pointer, _), _)| cell_pointer.block == pointer.block)
-            .eq(right
-                .union_cells
-                .iter()
-                .filter(|((cell_pointer, _), _)| cell_pointer.block == pointer.block))
+            .filter(|((cell_pointer, _), _)| cell_pointer.block.observable_by_load(&pointer.block))
+            .eq(right.union_cells.iter().filter(|((cell_pointer, _), _)| {
+                cell_pointer.block.observable_by_load(&pointer.block)
+            }))
 }
 
 fn memory_havoc_markers(memory: &CMemory) -> impl Iterator<Item = (&PointerBlock, &CBlock)> {
@@ -1110,7 +1114,9 @@ fn memory_havoc_markers(memory: &CMemory) -> impl Iterator<Item = (&PointerBlock
 }
 
 /// Returns a canonical representation of the portion of memory observable by
-/// one atomic load. Unrelated blocks cannot affect the load. A block made only
+/// one atomic load. Only a block proven distinct from the load's block cannot
+/// affect it; a block that is merely named differently, such as a `global:`
+/// block beside an `ExternalArgument` pointer, stays. A block made only
 /// of cached loads from one common source is observationally that source, so
 /// collapse it before discarding unrelated blocks. Loop and call havoc markers
 /// are global snapshot identities, so they remain observable at every
@@ -1147,7 +1153,7 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
     let relevant_cells = memory
         .cells
         .iter()
-        .filter(|(cell_pointer, _)| cell_pointer.block == pointer.block)
+        .filter(|(cell_pointer, _)| cell_pointer.block.observable_by_load(&pointer.block))
         .collect::<Vec<_>>();
     let materialization_sources = relevant_cells
         .iter()
@@ -1184,15 +1190,18 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
             blocks.entry(block).or_insert(size);
         }
     }
+    // Only the cells below decide what a load reads. Declaring a block writes
+    // nothing, so the block list stays the load's own block plus the havoc
+    // markers even where a cell of another block is kept.
     std::sync::Arc::make_mut(&mut canonical.blocks).retain(|block, _| {
         block == &pointer.block || block.starts_with("havoc:") || block.starts_with("call-havoc:")
     });
     std::sync::Arc::make_mut(&mut canonical.cells).retain(|cell_pointer, value| {
-        cell_pointer.block == pointer.block
+        cell_pointer.block.observable_by_load(&pointer.block)
             && !cell_disjoint_from_load_by_constant_offset(cell_pointer, value, pointer)
     });
     std::sync::Arc::make_mut(&mut canonical.union_cells).retain(|(cell_pointer, _), value| {
-        cell_pointer.block == pointer.block
+        cell_pointer.block.observable_by_load(&pointer.block)
             && !cell_disjoint_from_load_by_constant_offset(cell_pointer, value, pointer)
     });
     canonical
@@ -1250,6 +1259,12 @@ fn cell_disjoint_from_load_by_constant_offset(
     value: &CValue,
     load_pointer: &Pointer,
 ) -> bool {
+    // Offsets are only comparable inside one block. Two blocks that may be
+    // the same object still carry unrelated bases — a parameter may point at
+    // `g[1]` — so a constant byte shift proves nothing between them.
+    if cell_pointer.block != load_pointer.block {
+        return false;
+    }
     let (cell_atoms, cell_shift) = offset_atoms_and_constant(&cell_pointer.offset);
     let (load_atoms, load_shift) = offset_atoms_and_constant(&load_pointer.offset);
     if cell_atoms != load_atoms {

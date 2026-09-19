@@ -3323,10 +3323,9 @@ fn marked_constant_store_transport_retains_load_identity() {
     )
     .expect_err("transport across mutation of the marked field must fail");
     assert!(
-        error.message().contains("`transport using` failed")
-            && error.message().contains("could not prove:")
-            && error.message().contains("attempted to transport:")
-            && error.message().contains("to:")
+        error
+            .message()
+            .contains("found no frame evidence carrying its source fact to the target's state")
             && error.message().contains("owner->value == 11")
             && error
                 .message()

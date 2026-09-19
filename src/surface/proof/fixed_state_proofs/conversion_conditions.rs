@@ -553,3 +553,291 @@ fn describe_refusal(
     );
     message
 }
+
+/// Refuse a lowering the kernel pruned because a written range fold's body
+/// does not denote one value per item of the fold's range at this state.
+///
+/// A fold body is evaluated once, under the fold's own accumulator and item
+/// binders, and whatever it evaluates to has to be the body's value for every
+/// item of the range at once. A body whose evaluation splits into cases, or
+/// whose single value is conditional on which item it is, is not such a
+/// value, so the kernel drops the fold's only lowering path. Without this
+/// message the caller sees the surviving path count and nothing else.
+///
+/// Everything printed comes from the lowering's own inputs: the written
+/// clause, the record the kernel kept of the path it pruned, the state, and
+/// the premise set it consulted. Nothing is searched for, and no proving
+/// decision is made or changed.
+pub(in crate::surface::proof) fn describe_dropped_fold_body(
+    dropped: &crate::kernel::DroppedFoldBody,
+    assumptions: &PureFactContext,
+    site: &StatedSite<'_>,
+) -> String {
+    let mut labels = render::SnapshotLabels::default();
+    let written = written_range_fold(&site.form);
+    let item = written.as_ref().map_or_else(
+        || "the fold's item".to_string(),
+        |fold| format!("`{}`", fold.item),
+    );
+    let mut message = format!("{} `{}`: ", site.form.noun(), site.form.describe());
+    match &written {
+        Some(fold) => message.push_str(&format!(
+            "its subterm `{}`, the body of the fold over {item} in `{}`, must denote one value \
+             for every {item} in that range, and where this statement is written it does not",
+            fold.body, fold.whole
+        )),
+        None => message.push_str(&format!(
+            "a range fold's body must denote one value for every {item} in the fold's range, and \
+             where this statement is written it does not"
+        )),
+    }
+    match (dropped.body_paths, &dropped.unavailable_body_fact) {
+        (1, Some(fact)) => {
+            let spelled = site.spell_proposition(fact).map_or_else(
+                || render::render_proposition_labeled(fact, &mut labels),
+                |surface| crate::surface::diagnostics::describe_click_proposition(&surface),
+            );
+            message.push_str(&format!(
+                ".\n  not established: the body evaluated to one value, but carried the condition \
+                 `{spelled}` out with it. A condition raised under the fold's binders is about \
+                 which {item} this is, not about this state, so the value under it is not the \
+                 body's value for every {item} of the range"
+            ));
+        }
+        (count, _) => message.push_str(&format!(
+            ".\n  not established: the body evaluated to {count} values, not one. Its evaluation \
+             split on something this state decides by cases, so no single value is the body's \
+             value for every {item} of the range"
+        )),
+    }
+    if let Some(fold) = &written
+        && !fold.reads.is_empty()
+    {
+        message.push_str(&format!(
+            "\n  the body reads, once per item: {}",
+            fold.reads
+                .iter()
+                .map(|read| format!("`{read}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    let (premises, premise_total) = consulted_premises(assumptions, site, &mut labels);
+    if premise_total == 0 {
+        message.push_str(
+            "\n  premises consulted: none — the premise set this lowering was given is empty, so \
+             a premise stated or proved elsewhere in this proof did not reach here",
+        );
+    } else {
+        message.push_str(&format!(
+            "\n  premises consulted ({premise_total}, a premise that is a conjunction counted as \
+             its conjuncts): {}",
+            premises.join(", ")
+        ));
+        if premise_total > premises.len() {
+            message.push_str(&format!(
+                ", … {} more omitted",
+                premise_total - premises.len()
+            ));
+        }
+        message.push_str(&format!(
+            ". None of them settles the body for an arbitrary item: a premise in scope names a \
+             particular index, while the body is evaluated under the fold's own binder {item}"
+        ));
+    }
+    message.push_str(&format!(
+        "\n  to repair: state the body's value, or the fact that decides it, for every {item} of \
+         the range rather than for one index — a premise about a single index cannot remove a \
+         case analysis the body performs under its binder"
+    ));
+    message.push_str(
+        "\n  no line or column is available: a `.click` clause carries no source span in the \
+         surface syntax tree, so this refusal is located by the claim named at the start of this \
+         message and by the subterm above",
+    );
+    message
+}
+
+/// One written range fold, in the spelling of its source.
+struct WrittenRangeFold {
+    /// The fold's item binder name.
+    item: String,
+    /// The fold's body, as written.
+    body: String,
+    /// The whole fold, as written.
+    whole: String,
+    /// The memory reads the body performs, as written, in written order.
+    reads: Vec<String>,
+}
+
+/// The first range fold written in the stated form, if it contains one.
+fn written_range_fold(form: &StatedForm<'_>) -> Option<WrittenRangeFold> {
+    let mut fold = None;
+    let mut take_first_fold = |expression: &ContractExpression| {
+        if fold.is_none() && matches!(expression, ContractExpression::RangeFold { .. }) {
+            fold = Some(expression.clone());
+        }
+    };
+    match form {
+        StatedForm::Proposition(proposition) => {
+            walk_written_expressions_in_proposition(proposition, &mut take_first_fold);
+        }
+        StatedForm::Expression(expression) => {
+            walk_written_expressions(expression, &mut take_first_fold);
+        }
+        StatedForm::CFragment(_) => {}
+    }
+    let expression = fold?;
+    let ContractExpression::RangeFold { item, body, .. } = &expression else {
+        return None;
+    };
+    let mut reads = Vec::new();
+    walk_written_expressions(body, &mut |inner| {
+        if matches!(
+            inner,
+            ContractExpression::ArrayIndex { .. } | ContractExpression::Index(_, _)
+        ) {
+            reads.push(spelled_alone(inner));
+        }
+    });
+    reads.dedup();
+    Some(WrittenRangeFold {
+        item: item.clone(),
+        body: spelled_alone(body),
+        whole: spelled_alone(&expression),
+        reads,
+    })
+}
+
+/// Visit one written expression and every written subexpression inside it,
+/// including those inside the propositions a conditional expression carries.
+///
+/// Every variant is listed, so a new one is a compile error here rather than
+/// a subterm a diagnostic silently walks past.
+fn walk_written_expressions(
+    expression: &ContractExpression,
+    visit: &mut impl FnMut(&ContractExpression),
+) {
+    visit(expression);
+    let mut children: Vec<&ContractExpression> = Vec::new();
+    match expression {
+        ContractExpression::IntegerLiteral(_)
+        | ContractExpression::ResourceField(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_)
+        | ContractExpression::QualifiedC { .. }
+        | ContractExpression::CFragment(_)
+        | ContractExpression::CBinding(_)
+        | ContractExpression::ResourceWildcard
+        | ContractExpression::ResourceCount(_) => {}
+        ContractExpression::Negate(inner)
+        | ContractExpression::BitwiseNot(inner)
+        | ContractExpression::Old(inner)
+        | ContractExpression::At {
+            expression: inner, ..
+        }
+        | ContractExpression::Field { base: inner, .. }
+        | ContractExpression::ArrayIndex { base: inner, .. } => children.push(inner),
+        ContractExpression::AlgebraicConstructor { arguments, .. }
+        | ContractExpression::SequenceLiteral(arguments)
+        | ContractExpression::Call { arguments, .. } => children.extend(arguments),
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            children.push(scrutinee);
+            children.extend(arms.iter().map(|arm| &arm.body));
+        }
+        ContractExpression::SequenceConcat(left, right)
+        | ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
+        | ContractExpression::Divide(left, right)
+        | ContractExpression::Remainder(left, right)
+        | ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right)
+        | ContractExpression::Index(left, right) => {
+            children.push(left);
+            children.push(right);
+        }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            walk_written_expressions_in_proposition(condition, visit);
+            children.push(then_branch);
+            children.push(else_branch);
+        }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            children.push(start);
+            children.push(end);
+            children.push(initial);
+            children.push(body);
+        }
+        ContractExpression::Let { value, body, .. } => {
+            children.push(value);
+            children.push(body);
+        }
+    }
+    for child in children {
+        walk_written_expressions(child, visit);
+    }
+}
+
+/// The same walk over the written expressions one proposition carries.
+///
+/// A resource subject and a memory segment are written in C fragments, which
+/// carry no fold and no `Integer` read, so they are leaves here.
+fn walk_written_expressions_in_proposition(
+    proposition: &ClickProposition,
+    visit: &mut impl FnMut(&ContractExpression),
+) {
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            walk_written_expressions(left, visit);
+            walk_written_expressions(right, visit);
+        }
+        ClickProposition::FloatClassification { expression, .. }
+        | ClickProposition::Defined { expression } => walk_written_expressions(expression, visit),
+        ClickProposition::At { proposition, .. }
+        | ClickProposition::Not(proposition)
+        | ClickProposition::ForAll {
+            body: proposition, ..
+        }
+        | ClickProposition::Exists {
+            body: proposition, ..
+        } => walk_written_expressions_in_proposition(proposition, visit),
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            walk_written_expressions_in_proposition(left, visit);
+            walk_written_expressions_in_proposition(right, visit);
+        }
+        ClickProposition::RangeAll {
+            start, end, body, ..
+        }
+        | ClickProposition::RangeAny {
+            start, end, body, ..
+        } => {
+            walk_written_expressions(start, visit);
+            walk_written_expressions(end, visit);
+            walk_written_expressions_in_proposition(body, visit);
+        }
+        ClickProposition::PredicateCall { arguments, .. } => {
+            for argument in arguments {
+                walk_written_expressions(argument, visit);
+            }
+        }
+        ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Loadable { .. } => {}
+    }
+}

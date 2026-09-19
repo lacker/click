@@ -5214,6 +5214,15 @@ impl<'a> Proof<'a> {
     }
 
     pub(super) fn simp_failure(&self) -> ClickError {
+        // A range-loadability goal has a reason a reader can act on, in the
+        // spelling they wrote it with. The lowered rendering below would show
+        // them a byte extent over an internal pointer name instead.
+        if let Some(reason) = self.unproved_loadable_range_goal_reason() {
+            return self.step_error(format!(
+                "`simp` failed for `{}`: {reason}",
+                self.claim_label()
+            ));
+        }
         self.step_error(format!(
             "`simp` failed for `{}`: simplified proposition was not true: {}",
             self.claim_label(),

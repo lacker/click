@@ -382,7 +382,18 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording
             &spec,
             Some(&states.entry_state),
             assumptions,
-        )?;
+        )
+        .map_err(|refusal| match &refusal.dropped_fold_body {
+            // The kernel pruned the only lowering of a range fold. It knows
+            // which check fired and what it was about; only the surface can
+            // say so in the names the reader wrote.
+            Some(dropped) => describe_dropped_fold_body(
+                dropped,
+                obligation_assumptions,
+                &StatedSite::new(StatedForm::Proposition(proposition), state, values),
+            ),
+            None => refusal.message,
+        })?;
     refuse_impossible_loads(
         &obligations
             .iter()

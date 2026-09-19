@@ -507,9 +507,18 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
                         &context,
                     )?;
                     if function.signature().return_type() == C0Type::Void {
-                        validate_proposition_expression_types(
+                        // The Integer-aware entry point, not the C-only one.
+                        // A `void` function's `ensures` may name an Integer
+                        // Click function exactly as every other clause may,
+                        // and the C-only validator would type such a
+                        // comparison against C scalars alone and refuse it.
+                        // This validator dispatches the Integer cases and
+                        // hands every remaining shape to that same C
+                        // validator, so the two return types agree.
+                        validate_theorem_proposition_expression_types(
                             proposition,
                             &ensures_type_environment,
+                            &BTreeSet::new(),
                             &click_function_types,
                             &format!("ensures clause in `{}`", function.signature().name()),
                         )?;
