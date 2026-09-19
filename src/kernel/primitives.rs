@@ -6486,6 +6486,14 @@ impl CCheckedFunctionExecution {
         self.execution.paths()
     }
 
+    pub(crate) fn function(&self) -> &CFunction {
+        &self.function
+    }
+
+    pub(crate) fn arguments(&self) -> &[CExpression] {
+        &self.arguments
+    }
+
     /// The exact caller state used to enter this checked execution, when the
     /// proof recorded a checked function-entry boundary.  Surface
     /// certification reuses this identity instead of reconstructing a second

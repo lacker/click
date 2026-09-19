@@ -110,6 +110,44 @@ pub(super) fn prove_ensure_resource<'e>(
             .resources()
             .satisfies_fact(expected, &assumptions)
     }) {
+        if !borrowed {
+            let mut lifetime_budget = ExecutionBudget::beside_live_state();
+            let lifetime = crate::kernel::unreturned_allocation_at_function_exit(
+                post_state,
+                result,
+                checked_execution.function(),
+                checked_execution.arguments(),
+                &assumptions,
+                &mut lifetime_budget,
+            )
+            .map_err(|limit| {
+                ClickError::new(format!(
+                    "`{claim_label}` failed on path {path_index}: allocation-lifetime obligation exceeded its execution budget: {limit:?}"
+                ))
+            })?;
+            match lifetime {
+                Ok(Some((allocation, holder))) => {
+                    let leak = crate::kernel::CRuntimeError::LiveAllocationLeak {
+                        allocation,
+                        resource: holder,
+                        hint: None,
+                    };
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` failed on path {path_index}: could not prove `produces {}`: {}",
+                        crate::surface::validation::describe_resource_clause(resource),
+                        describe_runtime_error(&leak, parameters, arguments)
+                    )));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` failed on path {path_index}: could not check `produces {}`: {}",
+                        crate::surface::validation::describe_resource_clause(resource),
+                        describe_runtime_error(&error, parameters, arguments)
+                    )));
+                }
+            }
+        }
         return Ok(CheckedResourceClaim {
             execution: checked_execution,
             path_index,
