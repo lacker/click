@@ -18539,7 +18539,7 @@ fn unreturned_allocation_obligation(
     returned_resources: &ResourceContext,
     function: &CFunction,
     assumptions: &PureFactContext,
-) -> Result<Option<CResourceFact>, CRuntimeError> {
+) -> Result<Option<(CResourceFact, Option<CResourceFact>)>, CRuntimeError> {
     let Some(actual) = expand_all_composite_resource_facts(
         actual_state.resources(),
         function.composite_resource_definitions(),
@@ -18570,7 +18570,7 @@ fn unreturned_allocation_obligation(
     let returned_resources = returned_resources
         .clone()
         .unchecked_with_facts(population_bodies.facts().iter().cloned());
-    Ok(actual
+    let allocation = actual
         .facts()
         .iter()
         .filter(|fact| fact.allocation().is_some())
@@ -18587,7 +18587,60 @@ fn unreturned_allocation_obligation(
                 )
                 .is_none()
         })
-        .cloned())
+        .cloned();
+    Ok(allocation.map(|allocation| {
+        let resource =
+            resource_fact_containing_allocation(actual_state, &allocation, function, assumptions);
+        (allocation, resource)
+    }))
+}
+
+/// Finds the folded declared resource whose body accounts for a leaked
+/// allocation. This is diagnostic provenance only: the allocation check
+/// remains the authority, and failure to identify a containing resource must
+/// not change verification.
+fn resource_fact_containing_allocation(
+    state: &CState,
+    allocation: &CResourceFact,
+    function: &CFunction,
+    assumptions: &PureFactContext,
+) -> Option<CResourceFact> {
+    state
+        .resources()
+        .facts()
+        .iter()
+        .filter(|fact| {
+            fact.is_own()
+                && matches!(
+                    fact.resource(),
+                    CResource::Composite { .. } | CResource::Token { .. }
+                )
+        })
+        .find_map(|candidate| {
+            let singleton = ResourceContext::new().unchecked_with_fact(candidate.clone());
+            let mut budget = ExecutionBudget::beside_live_state();
+            let Ok(Ok(body)) = evaluate_resource_population_body_resources(
+                &singleton,
+                state,
+                function.composite_resource_definitions(),
+                assumptions,
+                &mut budget,
+                true,
+            ) else {
+                return None;
+            };
+            body.facts()
+                .iter()
+                .any(|fact| {
+                    fact == allocation
+                        || fact.core_with_assumptions(assumptions).is_some_and(|core| {
+                            allocation
+                                .core_with_assumptions(assumptions)
+                                .is_some_and(|allocation_core| core == allocation_core)
+                        })
+                })
+                .then(|| candidate.clone())
+        })
 }
 
 /// A counted population body can keep an allocation live after the consumed
@@ -18670,7 +18723,7 @@ pub(crate) fn unreturned_allocation_at_function_exit(
     arguments: &[CExpression],
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Result<Option<CResourceFact>, CRuntimeError>> {
+) -> ExecutionResult<Result<Option<(CResourceFact, Option<CResourceFact>)>, CRuntimeError>> {
     let function_can_package_allocation =
         function
             .composite_resource_definitions()
@@ -18957,18 +19010,19 @@ fn function_outcome_from_body_with_resource_transfer(
         "return allocation obligation check",
         || unreturned_allocation_obligation(&state, &return_resources, function, assumptions),
     ) {
-        Ok(Some(allocation))
+        Ok(Some((allocation, _)))
             if active_counted_population_supports_allocation(
                 &state,
                 &allocation,
                 function,
                 assumptions,
             ) => {}
-        Ok(Some(allocation)) => {
+        Ok(Some((allocation, resource))) => {
             let hint = counted_population_leak_hint(function);
             return Ok((
                 CFunctionOutcome::RuntimeError(CRuntimeError::LiveAllocationLeak {
                     allocation,
+                    resource,
                     hint,
                 }),
                 obligations,

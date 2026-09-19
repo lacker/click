@@ -725,11 +725,19 @@ pub(super) fn describe_runtime_error(
         crate::kernel::CRuntimeError::UnresolvedAllocationOutcome => {
             "malloc result was neither refined by a null check nor returned".to_string()
         }
-        crate::kernel::CRuntimeError::LiveAllocationLeak { allocation, hint } => {
+        crate::kernel::CRuntimeError::LiveAllocationLeak {
+            allocation,
+            resource,
+            hint,
+        } => {
             let mut message = format!(
                 "live allocation obligation was neither returned nor freed: `{}`",
                 describe_resource_fact(allocation, parameters, arguments)
             );
+            if let Some(resource) = resource {
+                message.push_str("; held by ");
+                message.push_str(&describe_resource_fact(resource, parameters, arguments));
+            }
             if let Some(hint) = hint {
                 message.push(' ');
                 message.push_str(hint);
@@ -1101,6 +1109,11 @@ pub(super) fn describe_pointer(
         let CExpression::Value(CValue::Pointer(base)) = argument else {
             continue;
         };
+        if let Some(field) =
+            describe_parameter_struct_field_pointer(pointer, parameter, base.pointer())
+        {
+            return field;
+        }
         if let Some(index) = diagnostic_pointer_element_index_from_base(
             pointer,
             base,
@@ -1112,11 +1125,67 @@ pub(super) fn describe_pointer(
             return format!("{}[{}]", parameter.name(), describe_bitvector(&index));
         }
     }
-    format!(
-        "{}@{}",
-        pointer.block,
-        describe_pointer_offset(&pointer.offset)
-    )
+    match &pointer.block {
+        // External argument blocks are verifier-owned lowering artifacts. Do
+        // not expose their block names or offsets in user-facing diagnostics.
+        PointerBlock::ExternalArgument => "the pointer value at this program point".to_string(),
+        _ => format!(
+            "{}@{}",
+            pointer.block,
+            describe_pointer_offset(&pointer.offset)
+        ),
+    }
+}
+
+/// Reconstructs the source spelling of a pointer loaded from a pointer-to-
+/// struct parameter.  Field accesses are lowered to a memory load followed by
+/// a pointer offset, so the kernel no longer carries the original `p->field`
+/// AST node in the resource fact.  The parameter's parsed layout is the
+/// source-level metadata needed to recover that spelling without printing the
+/// lowered block, load, or version terms.
+fn describe_parameter_struct_field_pointer(
+    pointer: &Pointer,
+    parameter: &syntax::C0Parameter,
+    base: &Pointer,
+) -> Option<String> {
+    let layout = parameter
+        .pointee_struct_layout()
+        .or_else(|| parameter.struct_layout())?;
+    let PointerOffsetTerm::Int32Scaled { value, byte_width } = &pointer.offset else {
+        return None;
+    };
+    let loaded_at = match value.as_ref() {
+        Bitvector32Term::MemoryLoad(_, loaded_at) => loaded_at.as_ref().clone(),
+        Bitvector32Term::Variable(variable) => {
+            crate::kernel::registered_load_for_variable(variable)?.1
+        }
+        _ => return None,
+    };
+    if pointer.block != base.block {
+        return None;
+    }
+    layout.fields().iter().find_map(|(name, field)| {
+        let field_type = field.c_type();
+        let pointee_type = field_type.pointee_type()?;
+        let pointee_width = diagnostic_c0_type_byte_width(pointee_type, field.byte_width());
+        if pointee_width != *byte_width {
+            return None;
+        }
+        let field_offset = diagnostic_pointer_element_index_from_base(&loaded_at, base, 1)?;
+        (field_offset == Bitvector32Term::Constant(field.offset_bytes()))
+            .then(|| format!("{}->{name}", parameter.name()))
+    })
+}
+
+fn diagnostic_c0_type_byte_width(c_type: C0Type, pointer_width: u32) -> i64 {
+    match c_type {
+        C0Type::Bool | C0Type::Char | C0Type::UInt8 => 1,
+        C0Type::Int16 | C0Type::UInt16 => 2,
+        C0Type::Int32 | C0Type::UInt32 => 4,
+        C0Type::Int64 | C0Type::UInt64 => 8,
+        _ if c_type.is_pointer() => i64::from(pointer_width),
+        _ => i64::from(pointer_width),
+    }
 }
 
 pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter) -> i64 {

@@ -3925,12 +3925,13 @@ pub(super) fn finish_ordered_proof<'a>(
                         "`{proof_label}` path {path_index}: allocation-lifetime check exceeded its execution budget: {limit:?}"
                     ))
                 })? {
-                    Ok(Some(allocation)) => {
+                    Ok(Some((allocation, resource))) => {
                         return Err(ClickError::new(format!(
                             "`{proof_label}` path {path_index}: runtime error: {}",
                             describe_runtime_error(
                                 &crate::kernel::CRuntimeError::LiveAllocationLeak {
                                     allocation,
+                                    resource,
                                     hint: None,
                                 },
                                 parsed_function.parameters(),

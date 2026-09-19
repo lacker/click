@@ -3046,6 +3046,12 @@ pub enum CRuntimeError {
     UnresolvedAllocationOutcome,
     LiveAllocationLeak {
         allocation: CResourceFact,
+        /// The declared resource obligation whose body keeps `allocation`
+        /// live, when the kernel can identify one.  Keeping this alongside
+        /// the allocation lets surface diagnostics name the obligation that
+        /// was lost instead of reverse-engineering resource definitions from
+        /// a lowered allocation fact.
+        resource: Option<CResourceFact>,
         /// Advisory fix hint (e.g. proving a counted population non-empty).
         /// Never affects checking; `None` preserves the historical message.
         hint: Option<String>,

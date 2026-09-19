@@ -254,8 +254,8 @@ population and one unit to consume. Adding the `owns` clause lets the call
 execute, but function exit reports:
 
 ```text
-live allocation obligation was neither returned nor freed:
-owns allocation(p[(load(arg-memory@v100000 * 4) - v100000)], 8)
+live allocation obligation was neither returned nor freed: `owns allocation(p->kid, 8)`;
+held by owns child_ref(p->kid)
 ```
 
 The `produces child_ref(p->kid)` clause above is the attempted handoff. It
@@ -273,17 +273,12 @@ The current resource-argument syntax cannot name that entry-state pointer:
 accept current-state C expressions, and binding `old_kid` through a contract
 `let` cannot currently be substituted into a declared resource argument.
 
-The diagnostic does identify the exact live allocation, but its printed
-pointer is an internal load expression and it does not identify the owning
-`child_ref` population or the field update that lost the old pointer. C
-expressions have surface spellings, but this lowered pointer is a symbolic
-value reconstructed from a memory snapshot, so the current renderer falls
-back to `arg-memory@...`, `load(...)`, and version identifiers. User-facing
-diagnostics should instead render this as the entry-state value of `p->kid`
-(or explicitly say “the pointer loaded from `p->kid` at function entry”) and
-name the related resource family when that provenance is available. This is
-a diagnostic-quality defect separate from the ownership gap; the reduction
-above supplies the missing causal explanation.
+The diagnostic now identifies the exact live allocation and the owning
+`child_ref` population, and renders the recovered pointer in this leak path as
+the surface field expression `p->kid` instead of the lowered load expression.
+The remaining proof failure is therefore the ownership gap itself: the
+reduction still needs a checked handoff for the entry-state `p->kid` value
+after the field is cleared.
 
 Therefore this is a genuine Click contract/resource-state gap, now with a
 minimal first failing obligation. The branch-on-count release and the parent

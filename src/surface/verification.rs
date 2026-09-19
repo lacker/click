@@ -7268,7 +7268,7 @@ int32 read_retargeted(struct buffer* owner, int32* other) {
         // The view the state still holds is anchored at the pointer field's
         // entry load, not at whatever `owner->data` points at now.
         assert!(
-            error.message().contains("views owner[(load(arg-memory@"),
+            error.message().contains("views owner[") && !error.message().contains("arg-memory"),
             "{}",
             error.message()
         );
