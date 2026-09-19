@@ -3905,52 +3905,43 @@ pub(super) fn finish_ordered_proof<'a>(
                         )));
                     }
 
-                    if let CFunctionOutcome::Return {
-                        value,
-                        state: post_state,
-                    } = &outcome
-                    {
+                    if matches!(outcome, CFunctionOutcome::Return { .. }) {
                         let lifetime_assumptions = path_requirements.assumptions();
-                        let mut lifetime_budget = ExecutionBudget::beside_live_state();
-                        match crate::kernel::unreturned_allocation_at_function_exit(
-                    post_state,
-                    value,
-                    function,
-                    arguments,
-                    lifetime_assumptions,
-                    &mut lifetime_budget,
-                )
-                .map_err(|limit| {
-                    ClickError::new(format!(
-                        "`{proof_label}` path {path_index}: allocation-lifetime check exceeded its execution budget: {limit:?}"
-                    ))
-                })? {
-                    Ok(Some((allocation, resource))) => {
-                        return Err(ClickError::new(format!(
-                            "`{proof_label}` path {path_index}: runtime error: {}",
-                            describe_runtime_error(
-                                &crate::kernel::CRuntimeError::LiveAllocationLeak {
-                                    allocation,
-                                    resource,
-                                    hint: None,
-                                },
-                                parsed_function.parameters(),
-                                arguments,
-                            )
-                        )));
-                    }
-                    Err(error) => {
-                        return Err(ClickError::new(format!(
-                            "`{proof_label}` path {path_index}: runtime error: {}",
-                            describe_runtime_error(
-                                &error,
-                                parsed_function.parameters(),
-                                arguments,
-                            )
-                        )));
-                    }
-                    Ok(None) => {}
-                }
+                        let lifetime_obligation =
+                            required_outcome(&outcome_proof)?.allocation_lifetime_obligation()?;
+                        match check_allocation_lifetime(
+                            &completed_execution,
+                            lifetime_obligation,
+                            path_index,
+                            lifetime_assumptions,
+                            &outcome,
+                        )? {
+                            Ok(Some(obligation)) => {
+                                return Err(ClickError::new(format!(
+                                    "`{proof_label}` path {path_index}: runtime error: {}",
+                                    describe_runtime_error(
+                                        &crate::kernel::CRuntimeError::LiveAllocationLeak {
+                                            allocation: obligation.allocation().clone(),
+                                            resource: obligation.holder().cloned(),
+                                            hint: None,
+                                        },
+                                        parsed_function.parameters(),
+                                        arguments,
+                                    )
+                                )));
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                return Err(ClickError::new(format!(
+                                    "`{proof_label}` path {path_index}: runtime error: {}",
+                                    describe_runtime_error(
+                                        &error,
+                                        parsed_function.parameters(),
+                                        arguments,
+                                    )
+                                )));
+                            }
+                        }
                     }
 
                     if !require_explicit_closers
@@ -4639,11 +4630,13 @@ mod evidence_tests {
         };
         let key = CFunctionContractClaimKey::Ensure(*index);
         let facts = ProofFacts::from_ordered(&path.assumptions().pure_facts());
+        let lifetime = crate::kernel::proof::AllocationLifetimeObligation::new(0);
         let checked = prove_ensure_resource(
             execution,
             key.clone(),
             "resource evidence",
             0,
+            &lifetime,
             &[],
             &facts,
             resource,

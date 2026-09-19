@@ -58,6 +58,15 @@ impl<'a> Proof<'a> {
         })
     }
 
+    pub(in crate::surface::proof) fn allocation_lifetime_obligation(
+        &self,
+    ) -> Result<&crate::kernel::proof::AllocationLifetimeObligation, ClickError> {
+        let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
+            return Err(self.step_error("an allocation-lifetime check requires an outcome goal"));
+        };
+        Ok(&goal.allocation_lifetime)
+    }
+
     /// Read return-count representation from the certified path, retaining
     /// the body ownership until its open scopes have been checked closed.
     pub(in crate::surface::proof) fn with_contract_return_counts(
@@ -154,6 +163,7 @@ impl<'a> Proof<'a> {
             claim.key(),
             context.claim_label,
             goal.path_index,
+            &goal.allocation_lifetime,
             &goal.data.core.effect_facts,
             self.facts(),
             resource,

@@ -18761,7 +18761,8 @@ pub(crate) fn unreturned_allocation_at_function_exit(
     arguments: &[CExpression],
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Result<Option<(CResourceFact, Option<CResourceFact>)>, CRuntimeError>> {
+) -> ExecutionResult<Result<Option<crate::kernel::proof::LiveAllocationObligation>, CRuntimeError>>
+{
     let function_can_package_allocation =
         function
             .composite_resource_definitions()
@@ -18824,12 +18825,17 @@ pub(crate) fn unreturned_allocation_at_function_exit(
         Ok(resources) => resources,
         Err(error) => return Ok(Err(error)),
     };
-    Ok(unreturned_allocation_obligation(
+    match unreturned_allocation_obligation(
         &output_state,
         &returned_resources,
         function,
         assumptions,
-    ))
+    ) {
+        Ok(obligation) => Ok(Ok(obligation.map(|(allocation, holder)| {
+            crate::kernel::proof::LiveAllocationObligation::new(allocation, holder)
+        }))),
+        Err(error) => Ok(Err(error)),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -45,11 +45,51 @@ impl CheckedResourceClaim<'_> {
     }
 }
 
+/// Checks the allocation-lifetime obligation owned by one exact outcome.
+/// The caller decides how to render a leaked allocation; this shared checker
+/// keeps explicit resource claims and the implicit function-exit closer on
+/// the same semantic obligation.
+pub(super) fn check_allocation_lifetime(
+    checked_execution: &CCheckedFunctionExecution,
+    obligation: &crate::kernel::proof::AllocationLifetimeObligation,
+    path_index: usize,
+    assumptions: &crate::kernel::PureFactContext,
+    outcome: &CFunctionOutcome,
+) -> Result<
+    Result<Option<crate::kernel::proof::LiveAllocationObligation>, crate::kernel::CRuntimeError>,
+    ClickError,
+> {
+    if obligation.path_index() != path_index {
+        return Err(ClickError::new(
+            "allocation-lifetime obligation belongs to a different execution path",
+        ));
+    }
+    let CFunctionOutcome::Return { value, state } = outcome else {
+        return Ok(Ok(None));
+    };
+    let mut lifetime_budget = ExecutionBudget::beside_live_state();
+    let result = crate::kernel::unreturned_allocation_at_function_exit(
+        state,
+        value,
+        checked_execution.function(),
+        checked_execution.arguments(),
+        assumptions,
+        &mut lifetime_budget,
+    )
+    .map_err(|limit| {
+        ClickError::new(format!(
+            "allocation-lifetime obligation exceeded its execution budget: {limit:?}"
+        ))
+    })?;
+    Ok(result)
+}
+
 pub(super) fn prove_ensure_resource<'e>(
     checked_execution: &'e CCheckedFunctionExecution,
     claim_key: CFunctionContractClaimKey,
     claim_label: &str,
     path_index: usize,
+    allocation_lifetime: &crate::kernel::proof::AllocationLifetimeObligation,
     execution_pure_facts: &[crate::kernel::ExecutionPureFact],
     available_pure_facts: &(impl PropositionSource + ?Sized),
     resource: &ResourceClause,
@@ -95,6 +135,7 @@ pub(super) fn prove_ensure_resource<'e>(
     } else {
         post_state
     };
+    let assumptions = assumptions_from_propositions(available_pure_facts);
     let expected = lower_resource_clause_facts_at_state_with_result_and_entry(
         resource,
         parameters,
@@ -102,34 +143,32 @@ pub(super) fn prove_ensure_resource<'e>(
         entry_state,
         clause_state,
         result,
-        &assumptions_from_propositions(available_pure_facts),
+        &assumptions,
     )?;
-    let assumptions = assumptions_from_propositions(available_pure_facts);
     if expected.iter().all(|expected| {
         post_state
             .resources()
             .satisfies_fact(expected, &assumptions)
     }) {
         if !borrowed {
-            let mut lifetime_budget = ExecutionBudget::beside_live_state();
-            let lifetime = crate::kernel::unreturned_allocation_at_function_exit(
-                post_state,
-                result,
-                checked_execution.function(),
-                checked_execution.arguments(),
+            let lifetime = check_allocation_lifetime(
+                checked_execution,
+                allocation_lifetime,
+                path_index,
                 &assumptions,
-                &mut lifetime_budget,
+                outcome,
             )
-            .map_err(|limit| {
+            .map_err(|error| {
                 ClickError::new(format!(
-                    "`{claim_label}` failed on path {path_index}: allocation-lifetime obligation exceeded its execution budget: {limit:?}"
+                    "`{claim_label}` failed on path {path_index}: {}",
+                    error.message()
                 ))
             })?;
             match lifetime {
-                Ok(Some((allocation, holder))) => {
+                Ok(Some(obligation)) => {
                     let leak = crate::kernel::CRuntimeError::LiveAllocationLeak {
-                        allocation,
-                        resource: holder,
+                        allocation: obligation.allocation().clone(),
+                        resource: obligation.holder().cloned(),
                         hint: None,
                     };
                     return Err(ClickError::new(format!(

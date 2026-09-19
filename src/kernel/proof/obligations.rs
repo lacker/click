@@ -8,7 +8,50 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use super::storage::SharedValue;
-use crate::kernel::{CState, CValue, ExecutionPureFact, Proposition};
+use crate::kernel::{CResourceFact, CState, CValue, ExecutionPureFact, Proposition};
+
+/// Diagnostic evidence returned when an allocation-lifetime obligation could
+/// not be discharged. The allocation is semantic evidence; the optional
+/// holder is diagnostic provenance identifying the declared resource that
+/// still accounts for it. This is deliberately distinct from the open proof
+/// obligation below: a successful check has no leaked-allocation payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LiveAllocationObligation {
+    allocation: CResourceFact,
+    holder: Option<CResourceFact>,
+}
+
+impl LiveAllocationObligation {
+    pub(crate) fn new(allocation: CResourceFact, holder: Option<CResourceFact>) -> Self {
+        Self { allocation, holder }
+    }
+
+    pub(crate) fn allocation(&self) -> &CResourceFact {
+        &self.allocation
+    }
+
+    pub(crate) fn holder(&self) -> Option<&CResourceFact> {
+        self.holder.as_ref()
+    }
+}
+
+/// The outcome-owned obligation to account for every live heap allocation at
+/// function exit. Its path identity prevents a result-aware claim from
+/// accidentally discharging the lifetime check for a sibling outcome.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AllocationLifetimeObligation {
+    path_index: usize,
+}
+
+impl AllocationLifetimeObligation {
+    pub(crate) fn new(path_index: usize) -> Self {
+        Self { path_index }
+    }
+
+    pub(crate) fn path_index(&self) -> usize {
+        self.path_index
+    }
+}
 
 /// One open C frontier judgment's remaining semantic obligation.
 ///
@@ -194,11 +237,16 @@ impl<S> DerefMut for OutcomeProofState<S> {
 pub(crate) struct FunctionOutcomeObligation<S> {
     pub(crate) path_index: usize,
     pub(crate) data: S,
+    pub(crate) allocation_lifetime: AllocationLifetimeObligation,
 }
 
 impl<S> FunctionOutcomeObligation<S> {
     pub(crate) fn new(path_index: usize, data: S) -> Self {
-        Self { path_index, data }
+        Self {
+            path_index,
+            data,
+            allocation_lifetime: AllocationLifetimeObligation::new(path_index),
+        }
     }
 }
 
