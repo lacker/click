@@ -439,7 +439,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             line(output, &prefix, "}");
         }
         ProofTactic::CallOutcomes(outcomes) => {
-            line(output, &prefix, "call_outcomes {");
+            line(output, &prefix, "outcomes {");
             line(output, &"    ".repeat(indent + 1), "returned {");
             write_tactics(output, &outcomes.returned_tactics, indent + 2);
             line(output, &"    ".repeat(indent + 1), "}");

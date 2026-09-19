@@ -1187,7 +1187,46 @@ fn try_check_structural_function_proof_inner<'a>(
                 continuation,
             } => {
                 if !proof.is_at_function_exit() {
-                    return decline();
+                    let owner = proof.clone();
+                    let proof_at_call = proof.with_execution_tactic_index(*index)?;
+                    let Some((split, record)) = proof_at_call.split_focused_call_outcomes()? else {
+                        return decline();
+                    };
+                    let mut advanced = split;
+                    for (take_returned, region) in [
+                        (true, returned_branch.as_ref()),
+                        (false, threw_branch.as_ref()),
+                    ] {
+                        let Some(leading) = execution_region_leading_tactic(region) else {
+                            return decline();
+                        };
+                        if !matches!(leading.tactic, ProofTactic::Step) {
+                            return decline();
+                        }
+                        let focused = advanced.focus_split_arm(&record, take_returned)?;
+                        let Some(next) = advance_focused_execution_region_after_leading_tactic(
+                            focused,
+                            Some(&record),
+                            region,
+                            staged_expansion_capture.as_mut(),
+                            proof_site.as_ref(),
+                            owning_source_index,
+                            1,
+                        )?
+                        else {
+                            return decline();
+                        };
+                        advanced = next;
+                    }
+                    if !advanced.is_at_function_exit() {
+                        return decline();
+                    }
+                    proof = advanced
+                        .join_focused_call_outcomes_terminal(&record)?
+                        .restore_execution_tactic_attribution(&owner)?;
+                    saw_structure = true;
+                    current = continuation;
+                    continue;
                 }
                 let Some(returned_tactics) = deferred_post_execution_region(returned_branch) else {
                     return decline();
@@ -1820,7 +1859,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
             )
         }
         InternalProofNode::CallOutcomes { .. } => Err(ClickError::new(
-            "`call_outcomes` is available only after function execution, not in a loop preservation proof",
+            "`outcomes` is available only after function execution, not in a loop preservation proof",
         )),
         InternalProofNode::Open {
             index,
@@ -2563,7 +2602,51 @@ fn advance_focused_execution_region<'a>(
             continuation,
         } => {
             if !proof.is_at_function_exit() {
-                return decline();
+                let owner = proof.clone();
+                let proof = proof.with_execution_tactic_index(*index)?;
+                let Some((split, record)) = proof.split_focused_call_outcomes()? else {
+                    return decline();
+                };
+                let mut advanced = split;
+                for (take_returned, region) in [
+                    (true, returned_branch.as_ref()),
+                    (false, threw_branch.as_ref()),
+                ] {
+                    let Some(leading) = execution_region_leading_tactic(region) else {
+                        return decline();
+                    };
+                    if !matches!(leading.tactic, ProofTactic::Step) {
+                        return decline();
+                    }
+                    let focused = advanced.focus_split_arm(&record, take_returned)?;
+                    let Some(next) = advance_focused_execution_region_after_leading_tactic(
+                        focused,
+                        Some(&record),
+                        region,
+                        expansion_capture.as_deref_mut(),
+                        proof_site,
+                        owning_source_index,
+                        depth + 1,
+                    )?
+                    else {
+                        return decline();
+                    };
+                    advanced = next;
+                }
+                if !advanced.is_at_function_exit() {
+                    return decline();
+                }
+                let joined = advanced.join_focused_call_outcomes_terminal(&record)?;
+                let joined = joined.restore_execution_tactic_attribution(&owner)?;
+                return advance_focused_execution_region(
+                    joined,
+                    enclosing_record,
+                    continuation,
+                    expansion_capture,
+                    proof_site,
+                    owning_source_index,
+                    depth + 1,
+                );
             }
             let Some(returned_tactics) = deferred_post_execution_region(returned_branch) else {
                 return decline();

@@ -649,6 +649,66 @@ impl<'a> Proof<'a> {
         Ok(matches!(source_region.kind, SourceStatementKind::If { .. }))
     }
 
+    /// Whether this frontier has the source shape handled by the explicit
+    /// proof-object returned/threw split. This is intentionally syntax-only:
+    /// the split operation performs the one checked evaluation, so merely
+    /// asking whether the frontier is eligible must not evaluate the call.
+    pub(in crate::surface::proof) fn is_at_call_outcomes_frontier(
+        &self,
+    ) -> Result<bool, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(false);
+        };
+        let Some(execution) = self.execution() else {
+            return Ok(false);
+        };
+        let (_, _, mut statement, _) =
+            crate::surface::proof::cursor_execution::next_top_level_statement_from_frontier_position(
+                execution.view(context),
+                &execution.core.state,
+                context.function,
+                context.arguments,
+                context.claim_label,
+                context.tactic_index,
+                "outcomes",
+            )?;
+        let mut statement_index = execution.core.frontier.next_statement_index;
+        let mut descended_through_try = false;
+        loop {
+            if matches!(
+                statement,
+                CStatement::Call { .. } | CStatement::CallAssign { .. }
+            ) {
+                return Ok(descended_through_try);
+            }
+            let CStatement::TryCatchInt32 { try_body, .. } = statement else {
+                return Ok(false);
+            };
+            let SourceStatementKind::Try {
+                try_statement_index,
+                ..
+            } = context
+                .constants
+                .source_layout
+                .statement(statement_index)
+                .ok_or_else(|| {
+                    self.step_error(format!(
+                        "could not resolve source statement({statement_index})"
+                    ))
+                })?
+                .kind
+            else {
+                return Ok(false);
+            };
+            let (next, _) =
+                crate::surface::proof::cursor_execution::split_next_source_operation(&try_body)
+                    .map_err(|message| self.step_error(format!("`outcomes` failed: {message}")))?;
+            statement = next;
+            statement_index = try_statement_index;
+            descended_through_try = true;
+        }
+    }
+
     /// Resolves a Surface Click statement region against this proof's source
     /// layout without exposing the mutable frontier or check metadata.
     pub(in crate::surface::proof) fn resolve_statement_target(

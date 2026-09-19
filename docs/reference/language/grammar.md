@@ -57,7 +57,7 @@ documentation inventory keep the following accepted words synchronized.
 | `by`, `auto`, `using` | Proof introduction, default smart proof, and exact-premise syntax. |
 | `mark`, `step`, `execute`, `execute_until` | Execution tactics. |
 | `unfold`, `fold`, `observe`, `construct`, `open` | Predicate and resource tactics. |
-| `apply`, `have`, `if`, `cases`, `both`, `branch`, `call_outcomes`, `loop` | Theorem application and structural proof tactics. |
+| `apply`, `have`, `if`, `cases`, `both`, `branch`, `outcomes`, `loop` | Theorem application and structural proof tactics. |
 | `witness`, `choose`, `from`, `requirement` | Existential evidence and fact selection. |
 | `assumption`, `extract`, `normalize`, `intro`, `split`, `left`, `right`, `enumerate`, `contradiction` | Explicit proposition tactics. |
 | `arithmetic_certificate` | Starts the typed arithmetic-certificate envelope. The canonical mathematical family is `arithmetic_certificate { ... }`; checked machine families are `arithmetic_certificate signed_int32 { ... }` and `arithmetic_certificate special { ... }`. `integer_certificate { ... }` remains a parser-only legacy alias for the mathematical family. |

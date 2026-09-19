@@ -24,5 +24,5 @@ int32 bump(int32 n) {
 ```
 
 ```expect
-fail: declined tactic 0 (``arithmetic()``)
+fail: bump.ensures_0: result <= 101
 ```

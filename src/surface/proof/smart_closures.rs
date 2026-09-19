@@ -5890,6 +5890,12 @@ impl<'a> Proof<'a> {
                 }
             };
         }
+        // A caught throwing call is a proof-object split frontier, not a
+        // linear step failure. Let the focused execution driver publish the
+        // returned/threw siblings so the eventual certificate is explicit.
+        if self.is_at_call_outcomes_frontier()? {
+            return Ok(None);
+        }
         // The statement runs in the whole proof context; nothing can supply
         // more than the step already sees, so its failure is the answer,
         // with the step's diagnostic.

@@ -132,6 +132,7 @@ fn proof_shape_hint(tactics: &[ProofTactic]) -> Option<(usize, &'static str)> {
             ProofTactic::If(_) => "proof-level `if`",
             ProofTactic::Cases(_) => "proof-level `cases`",
             ProofTactic::Branch(_) => "proof-level `branch`",
+            ProofTactic::CallOutcomes(_) => "`outcomes`",
             ProofTactic::Loop(_) => "loop proof",
             ProofTactic::ConstructResource(_) => "resource construction",
             ProofTactic::Witness(_) => "`witness`",
@@ -183,9 +184,31 @@ fn proof_region_nesting_depth(tactics: &[ProofTactic]) -> usize {
         .unwrap_or(0)
 }
 
+fn diagnostic_claim_label(function_name: &str, claim: &FunctionClaimRef<'_>) -> String {
+    let label = function_claim_label(function_name, claim);
+    match claim.clause().ensure() {
+        Ensure::Resource(resource) => {
+            let verb = if claim.clause().borrowed() {
+                "owns"
+            } else {
+                "produces"
+            };
+            format!(
+                "{function_name}.{verb}: {}",
+                crate::surface::validation::describe_resource_clause(resource)
+            )
+        }
+        Ensure::Proposition(proposition) => format!(
+            "{label}: {}",
+            crate::surface::diagnostics::describe_click_proposition(proposition)
+        ),
+    }
+}
+
 fn unsupported_proof_shape(
     proof_label: &str,
     grouped: bool,
+    claim_labels: &[String],
     tactics: &[ProofTactic],
 ) -> ClickError {
     let nesting = proof_region_nesting_depth(tactics);
@@ -194,27 +217,31 @@ fn unsupported_proof_shape(
             "`{proof_label}`: this proof nests {nesting} execution regions; the checked proof drivers support at most {MAX_CHECKED_PROOF_REGION_NESTING}. Move an inner `match`, `branch`, or proof `if` into a contracted helper, or prove part of it in a `have`."
         ));
     }
-    let route = if grouped {
-        "grouped contract"
+    let claim_description = if claim_labels.len() == 1 {
+        format!("the contract claim `{}`", claim_labels[0])
     } else {
-        "single-claim"
+        let labels = claim_labels
+            .iter()
+            .map(|label| format!("`{label}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("these {} contract claims: {labels}", claim_labels.len())
     };
-    let shape = proof_shape_hint(tactics)
-        .map(|(index, shape)| format!("tactic {index} (`{shape}`)"))
-        .unwrap_or_else(|| "the supplied tactic sequence".to_string());
+    let shape = proof_shape_hint(tactics).map_or_else(
+        || "the supplied tactic sequence".to_string(),
+        |(index, shape)| format!("tactic {index} ({shape})"),
+    );
     let rewrite = if grouped {
-        "For proposition-only work, move the operation into `have proposition by { ... }`; grouped execution must still form one transition covering all claims."
+        "Every terminal path must establish every listed claim. If `step()` reaches a maybe-throwing call, use `outcomes { returned { ... } threw { ... } }` to handle its two successors. For proposition-only work, move the operation into `have proposition by { ... }`."
     } else {
-        "Keep execution scopes at supported structural boundaries, and move proposition-only work into `have proposition by { ... }`."
+        "If `step()` reaches a maybe-throwing call, use `outcomes { returned { ... } threw { ... } }` to handle its two successors. For proposition-only work, move the operation into `have proposition by { ... }`."
     };
-    let decline_count = take_driver_declines().len();
-    let attempts = if decline_count == 0 {
-        "No checked route accepted it."
-    } else {
-        "All checked routes declined it."
-    };
+    // The decline records are internal bookkeeping. Consume them here so a
+    // later diagnostic does not inherit stale state, but do not expose the
+    // driver topology to users.
+    let _ = take_driver_declines();
     ClickError::new(format!(
-        "`{proof_label}`: the {route} proof driver declined {shape}. {attempts} This is a proof-shape limitation, not a failed proposition check. {rewrite}"
+        "`{proof_label}`: the proof script is valid, but the verifier cannot yet certify it for {claim_description}. It reached {shape}, which is not implemented in this execution context. No listed claim was shown false. {rewrite}"
     ))
 }
 
@@ -440,7 +467,16 @@ pub(in crate::surface) fn prove_claim_by_tactics(
             Err(error) => return Err(error),
         }
     }
-    Err(unsupported_proof_shape(claim_label, false, tactics))
+    let claim_labels = [diagnostic_claim_label(
+        function_block.signature().name(),
+        claim,
+    )];
+    Err(unsupported_proof_shape(
+        claim_label,
+        false,
+        &claim_labels,
+        tactics,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -663,7 +699,16 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
             Err(error) => return Err(error),
         }
     }
-    Err(unsupported_proof_shape(&proof_label, true, tactics))
+    let claim_labels = claims
+        .iter()
+        .map(|claim| diagnostic_claim_label(function_block.signature().name(), claim))
+        .collect::<Vec<_>>();
+    Err(unsupported_proof_shape(
+        &proof_label,
+        true,
+        &claim_labels,
+        tactics,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4670,15 +4715,17 @@ mod tests {
         let error = unsupported_proof_shape(
             "f.ensures_0",
             false,
+            &["f.ensures_0".to_string()],
             &[ProofTactic::Induct {
                 parameter: "n".to_string(),
                 hypothesis: "ih".to_string(),
             }],
         );
 
-        assert!(error.message().contains("single-claim proof driver"));
-        assert!(error.message().contains("tactic 0 (`induction`)"));
-        assert!(error.message().contains("proof-shape limitation"));
+        assert!(error.message().contains("cannot yet certify it"));
+        assert!(error.message().contains("tactic 0 (induction)"));
+        assert!(error.message().contains("proof script is valid"));
+        assert!(error.message().contains("No listed claim was shown false"));
         assert!(!error.message().contains("proof shape is not accepted"));
     }
 

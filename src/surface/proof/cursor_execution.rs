@@ -856,6 +856,7 @@ fn execute_concrete_loop_head_step(
                 remaining: Some(loop_head.into()),
                 next_statement_index: statement_index,
                 loop_exit_statement_index: continuation_node,
+                exceptional: None,
             });
         execution.core.frontier.next_statement_index = proof_context.constants.source_layout
             .loop_body_entry(loop_index)
@@ -955,6 +956,7 @@ fn execute_concrete_loop_head_step(
                 remaining: Some(loop_head.into()),
                 next_statement_index: statement_index,
                 loop_exit_statement_index: continuation_node,
+                exceptional: None,
             });
         execution.core.frontier.next_statement_index = proof_context.constants.source_layout
             .loop_body_entry(loop_index)
@@ -1476,6 +1478,180 @@ pub(super) fn surface_snapshot_selector(surface: &ClickProposition) -> Option<Sn
     }
 }
 
+/// Resume an entered `try`'s handler after a `Throw` outcome instead of
+/// terminating the path. Pops continuations through the handler
+/// continuation (abandoning the unwound region, as C++ unwinding does),
+/// binds the payload, and positions the frontier at the handler entry.
+/// Returns `Ok(true)` with the handler entered, or `Ok(false)` when no
+/// handler continuation is present (existing termination behavior then
+/// applies). Only entered `try` bodies push handler continuations, so C
+/// execution always takes the `Ok(false)` path. The bundled binding
+/// transitions are ordinary checked transitions recorded like any other;
+/// they are not user-visible steps.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn route_throw_to_handler(
+    execution: &mut ExecutionProofState,
+    proof_context: &ExecutionProofContext<'_>,
+    available_pure_facts: &mut Vec<Proposition>,
+    introduced_facts: &mut Vec<Proposition>,
+    function: &CFunction,
+    arguments: &[CExpression],
+    parameters: &[syntax::C0Parameter],
+    function_block: &FunctionBlock,
+    function_environment: &CExecutionEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+    tactic_name: &str,
+    prerequisite_policy: StatementPrerequisitePolicy,
+    fact_transport_policy: StatementFactTransportPolicy,
+    context: Option<&PureFactContext>,
+    mut construction: Option<Construction<'_>>,
+    throw_value: &CValue,
+    thrown_state: &CState,
+    throw_facts: &[Proposition],
+) -> Result<bool, ClickError> {
+    let handler = loop {
+        match execution.core.frontier.continuations.pop() {
+            Some(continuation) => {
+                if let Some(exceptional) = continuation.exceptional {
+                    break Some(exceptional);
+                }
+                // Non-handler continuations in the abandoned region are
+                // discarded with it.
+            }
+            None => break None,
+        }
+    };
+    let Some(handler) = handler else {
+        return Ok(false);
+    };
+    let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
+    // Bind the payload exactly as the kernel's own `try` execution does:
+    // declare the handler binding, then assign the thrown value. The
+    // handler binding is always `int32` by `TryCatchInt32` semantics.
+    let mut state = thrown_state.clone();
+    let mut facts = throw_facts.to_vec();
+    for statement in [
+        c_declare(handler.binding.clone(), crate::kernel::CType::Int32),
+        c_assign(
+            handler.binding.clone(),
+            CExpression::Value(throw_value.clone()),
+        ),
+    ] {
+        let mut kernel_variable = execution.core.kernel_variable_mark();
+        let (transitions, _) = certified_statement_transitions(
+            &state,
+            &facts,
+            &statement,
+            function_environment,
+            Some(proof_context.predicate_environment),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &transition_label,
+            &mut execution.core.next_opaque_call,
+            &mut kernel_variable,
+            prerequisite_policy,
+            fact_transport_policy,
+            context,
+        )?;
+        execution
+            .core
+            .advance_kernel_variable_mark(kernel_variable)
+            .map_err(|message| ClickError::new(format!("{transition_label}: {message}")))?;
+        let [transition] = transitions.try_into().map_err(|_| {
+            ClickError::new(format!(
+                "{transition_label}: handler binding transition did not complete"
+            ))
+        })?;
+        let CStatementOutcome::Normal(next_state) = &transition.outcome else {
+            return Err(ClickError::new(format!(
+                "{transition_label}: handler binding transition did not complete normally"
+            )));
+        };
+        let next_state = next_state.clone();
+        execution.core.record_statement_transition(
+            function,
+            arguments,
+            transition.theorem.clone(),
+            transition.context.clone(),
+            &transition.execution_facts,
+            &transition.obligations,
+        ).map_err(|refusal| {
+            ClickError::new(format!(
+                "{transition_label}: recorded handler binding evidence the proof object rejected: {}",
+                describe_evidence_refusal(&refusal, parameters, arguments)
+            ))
+        })?;
+        execution
+            .presentation
+            .record_generated_load_bindings(&transition.generated_load_bindings);
+        append_execution_effect_facts(
+            &mut execution.core.effect_facts,
+            &transition.execution_facts,
+        );
+        if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+            // The bundled binding transitions correspond to no user
+            // statement, so there are no snapshot points to preserve.
+            let overrides = construction_snapshot_overrides(
+                &execution.presentation.recorded_snapshots,
+                function_block,
+                &[],
+                ProgramPointKind::Entry,
+            );
+            let restore = apply_construction_snapshot_view(
+                &mut execution.presentation.recorded_snapshots,
+                &overrides,
+            );
+            append_statement_transition_certificate(
+                execution,
+                proof_context,
+                &transition,
+                LoopStepPolicy::EnterBody,
+                &state,
+                function_block,
+                parameters,
+                arguments,
+                construction.as_mut().map(Construction::reborrow),
+            );
+            restore_construction_snapshot_view(
+                &mut execution.presentation.recorded_snapshots,
+                restore,
+            );
+        }
+        facts = transition.pure_facts.clone();
+        introduced_facts.extend(transition.introduced_facts.iter().cloned());
+        state = next_state;
+    }
+    *available_pure_facts = facts;
+    execution.core.state = state.clone().into();
+    let mut handler_source = handler.handler.clone();
+    loop {
+        let (head, tail) = split_next_source_operation(&handler_source).map_err(|message| {
+            ClickError::new(format!(
+                "{claim_label} tactic {tactic_index}: `{tactic_name}` failed to enter its exception handler: {message}"
+            ))
+        })?;
+        if !matches!(head, CStatement::Skip) {
+            break;
+        }
+        let Some(tail) = tail else {
+            break;
+        };
+        handler_source = Arc::new(tail);
+    }
+    execution.core.frontier.position = FrontierPosition::StatementEntry {
+        remaining: handler_source,
+    };
+    execution.core.frontier.next_statement_index = handler.handler_first_index;
+    record_statement_program_snapshot_state(
+        &mut execution.presentation.recorded_snapshots,
+        function_block,
+        handler.handler_first_index,
+        ProgramPointKind::Entry,
+        state,
+    );
+    Ok(true)
+}
+
 #[cfg(test)]
 thread_local! {
     static PLANNING_STATEMENT_TRANSITIONS: std::cell::RefCell<Vec<(String, usize, String)>> = const {
@@ -1533,6 +1709,338 @@ pub(super) struct ExecutionPointStepSuccessor {
     pub(super) execution: ExecutionProofState,
     pub(super) pure_facts: Vec<Proposition>,
     pub(super) introduced_facts: Vec<Proposition>,
+}
+
+/// The checked frontier and the two direct outcomes of a call whose throw
+/// edge is caught by an active transparent `try` continuation.  This is a
+/// preparation result only: the proof-object layer owns publishing the two
+/// descendants and joining their certificates.
+pub(super) struct PreparedCallOutcomeSplit {
+    pub(super) execution: ExecutionProofState,
+    pub(super) execution_start_state: CState,
+    pub(super) current_state: CState,
+    pub(super) statement_index: usize,
+    pub(super) statement: CStatement,
+    pub(super) source_frontier_position: FrontierPosition,
+    pub(super) source_frontier_index: usize,
+    pub(super) continuation_index: usize,
+    pub(super) continuation_remaining: Option<CStatement>,
+    pub(super) next_opaque_call: u64,
+    pub(super) next_kernel_variable: u64,
+    pub(super) transitions: Vec<crate::surface::CertifiedStatementTransition>,
+}
+
+/// Descend through transparent try/catch syntax when necessary, then certify
+/// the direct call at its frontier without mutating the caller's proof state.
+/// It also accepts a frontier that `step()` has already entered, provided the
+/// active exceptional continuation is still present. Ordinary `step()` still
+/// uses the one-successor path below; this helper exists only for the explicit
+/// proof-object outcome split.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prepare_call_outcome_split(
+    execution: &ExecutionProofState,
+    proof_context: &ExecutionProofContext<'_>,
+    available_pure_facts: &[Proposition],
+    tactic_name: &str,
+) -> Result<Option<PreparedCallOutcomeSplit>, ClickError> {
+    let mut prepared = execution.clone();
+    let function = proof_context.function;
+    let arguments = proof_context.arguments;
+    let claim_label = proof_context.claim_label;
+    let tactic_index = proof_context.tactic_index;
+    let mut statement_index = prepared.core.frontier.next_statement_index;
+    let source_frontier_position = prepared.core.frontier.position.clone();
+    let source_frontier_index = statement_index;
+    let mut source_region = proof_context
+        .constants
+        .source_layout
+        .statement(statement_index)
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
+            ))
+        })?;
+    let (execution_start_state, current_state, mut statement, mut remaining) =
+        next_top_level_statement_from_frontier_position(
+            prepared.view(proof_context),
+            &prepared.core.state,
+            function,
+            arguments,
+            claim_label,
+            tactic_index,
+            tactic_name,
+        )?;
+
+    while let CStatement::TryCatchInt32 {
+        try_body,
+        binding,
+        handler,
+        cleanup_unwind,
+    } = &statement
+    {
+        let SourceStatementKind::Try {
+            try_statement_index,
+            handler_statement_index,
+            after_try_statement_index,
+        } = source_region.kind
+        else {
+            break;
+        };
+        prepared
+            .core
+            .frontier
+            .continuations
+            .push(ProofExecutionContinuation {
+                remaining: remaining.map(Arc::new),
+                next_statement_index: after_try_statement_index,
+                loop_exit_statement_index: after_try_statement_index,
+                exceptional: Some(ExceptionalContinuation {
+                    binding: binding.clone(),
+                    handler: Arc::new((**handler).clone()),
+                    handler_first_index: handler_statement_index,
+                    cleanup_unwind: *cleanup_unwind,
+                }),
+            });
+        remaining = Some((**try_body).clone());
+        statement_index = try_statement_index;
+        source_region = proof_context
+            .constants
+            .source_layout
+            .statement(statement_index)
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
+                ))
+            })?;
+        (statement, remaining) = split_next_source_operation(
+            remaining
+                .as_ref()
+                .expect("try descent installed a try-body source"),
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` failed: {message}"
+            ))
+        })?;
+    }
+    if !matches!(
+        statement,
+        CStatement::Call { .. } | CStatement::CallAssign { .. }
+    ) {
+        return Ok(None);
+    }
+    if !prepared
+        .core
+        .frontier
+        .continuations
+        .iter()
+        .any(|continuation| continuation.exceptional.is_some())
+    {
+        return Ok(None);
+    }
+    // The preparation may have started at `FunctionEntry`. Re-present the
+    // exact call source as a normal statement frontier for the arm's cursor;
+    // the original container is retained separately for evidence matching.
+    prepared.core.frontier.next_statement_index = statement_index;
+    prepared.core.frontier.execution_start_state = Some(execution_start_state.clone());
+    prepared.core.frontier.position = FrontierPosition::StatementEntry {
+        remaining: match remaining.clone() {
+            Some(tail) => Arc::new(CStatement::Seq(Arc::new(statement.clone()), Arc::new(tail))),
+            None => Arc::new(statement.clone()),
+        },
+    };
+    prepared.core.state = current_state.clone().into();
+    let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
+    let mut next_opaque_call = prepared.core.next_opaque_call;
+    let mut next_kernel_variable = prepared.core.kernel_variable_mark();
+    let (transitions, _) = certified_statement_transitions(
+        &current_state,
+        available_pure_facts,
+        &statement,
+        proof_context.function_environment,
+        Some(proof_context.predicate_environment),
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &transition_label,
+        &mut next_opaque_call,
+        &mut next_kernel_variable,
+        StatementPrerequisitePolicy::Retained,
+        StatementFactTransportPolicy::None,
+        None,
+    )?;
+    let normal = transitions
+        .iter()
+        .filter(|transition| matches!(transition.outcome, CStatementOutcome::Normal(_)))
+        .count();
+    let thrown = transitions
+        .iter()
+        .filter(|transition| matches!(transition.outcome, CStatementOutcome::Throw { .. }))
+        .count();
+    if normal != 1 || thrown != 1 || transitions.len() != 2 {
+        return Ok(None);
+    }
+    Ok(Some(PreparedCallOutcomeSplit {
+        execution: prepared,
+        execution_start_state,
+        current_state,
+        statement_index,
+        statement,
+        source_frontier_position,
+        source_frontier_index,
+        continuation_index: source_region.continuation_node,
+        continuation_remaining: remaining,
+        next_opaque_call,
+        next_kernel_variable,
+        transitions,
+    }))
+}
+
+/// Record one of the two transitions retained by
+/// [`prepare_call_outcome_split`].  This is intentionally a recorder, not an
+/// evaluator: the theorem, outcome, facts, and loan evidence all come from
+/// the one checked transition list produced during preparation.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn apply_prepared_call_outcome_transition(
+    execution: &mut ExecutionProofState,
+    proof_context: &ExecutionProofContext<'_>,
+    available_pure_facts: &mut Vec<Proposition>,
+    introduced_facts: &mut Vec<Proposition>,
+    prepared: &PreparedCallOutcomeSplit,
+    transition: &crate::surface::CertifiedStatementTransition,
+) -> Result<(), ClickError> {
+    let function_block = proof_context.function_block;
+    let function = proof_context.function;
+    let parameters = proof_context.parsed_function.parameters();
+    let arguments = proof_context.arguments;
+    let function_environment = proof_context.function_environment;
+    let claim_label = proof_context.claim_label;
+    let tactic_index = proof_context.tactic_index;
+    let transition_label = format!("`{claim_label}` tactic {tactic_index}: `outcomes`");
+
+    // Record the selected theorem against the original try wrapper. Matching
+    // it against the synthetic call-only cursor would bypass the kernel's
+    // validated try descent and leave the next source undefined.
+    execution.core.frontier.position = prepared.source_frontier_position.clone();
+    execution.core.frontier.next_statement_index = prepared.source_frontier_index;
+    execution.core.next_opaque_call = prepared.next_opaque_call;
+    execution
+        .core
+        .advance_kernel_variable_mark(prepared.next_kernel_variable)
+        .map_err(|message| ClickError::new(format!("{transition_label}: {message}")))?;
+    record_statement_program_snapshot_state(
+        &mut execution.presentation.recorded_snapshots,
+        function_block,
+        prepared.statement_index,
+        ProgramPointKind::Entry,
+        prepared.current_state.clone(),
+    );
+    execution
+        .presentation
+        .record_generated_load_bindings(&transition.generated_load_bindings);
+    execution
+        .presentation
+        .record_generated_load_source_events(&transition.generated_load_source_events);
+    execution
+        .core
+        .record_statement_transition_with_loan_evidence(
+            function,
+            arguments,
+            transition.theorem.clone(),
+            transition.context.clone(),
+            &transition.execution_facts,
+            &transition.obligations,
+            &transition.loan_evidence,
+        )
+        .map_err(|refusal| {
+            ClickError::new(format!(
+                "{transition_label}: recorded call outcome evidence the proof object rejected: {}",
+                describe_evidence_refusal(&refusal, parameters, arguments)
+            ))
+        })?;
+    append_execution_effect_facts(
+        &mut execution.core.effect_facts,
+        &transition.execution_facts,
+    );
+    introduced_facts.extend(transition.introduced_facts.iter().cloned());
+
+    let (next_state, is_throw) = match &transition.outcome {
+        CStatementOutcome::Normal(state) => (state.clone(), false),
+        CStatementOutcome::Throw { state, .. } => (state.clone(), true),
+        _ => {
+            return Err(ClickError::new(
+                "`outcomes` received a non-returned/non-thrown call transition",
+            ));
+        }
+    };
+    record_statement_program_snapshot_state(
+        &mut execution.presentation.recorded_snapshots,
+        function_block,
+        prepared.statement_index,
+        ProgramPointKind::Exit,
+        next_state.clone(),
+    );
+
+    if is_throw {
+        let CStatementOutcome::Throw { value, state } = &transition.outcome else {
+            unreachable!("the outcome was checked as a throw");
+        };
+        if !route_throw_to_handler(
+            execution,
+            proof_context,
+            available_pure_facts,
+            introduced_facts,
+            function,
+            arguments,
+            parameters,
+            function_block,
+            function_environment,
+            claim_label,
+            tactic_index,
+            "outcomes",
+            StatementPrerequisitePolicy::Retained,
+            StatementFactTransportPolicy::None,
+            None,
+            None,
+            value,
+            state,
+            &transition.pure_facts,
+        )? {
+            return Err(ClickError::new(
+                "`outcomes` call throw did not reach its active handler",
+            ));
+        }
+        return Ok(());
+    }
+
+    *available_pure_facts = transition.pure_facts.clone();
+    execution.core.frontier.execution_start_state = Some(prepared.execution_start_state.clone());
+    execution.core.state = next_state.clone().into();
+    let remaining = if let Some(remaining) = prepared.continuation_remaining.clone() {
+        execution.core.frontier.next_statement_index = prepared.continuation_index;
+        Some(remaining)
+    } else {
+        resume_after_completed_region(&mut execution.core.frontier)
+    };
+    match remaining {
+        Some(remaining) => {
+            execution.core.frontier.position = FrontierPosition::StatementEntry {
+                remaining: remaining.into(),
+            };
+            record_statement_program_snapshot_state(
+                &mut execution.presentation.recorded_snapshots,
+                function_block,
+                execution.core.frontier.next_statement_index,
+                ProgramPointKind::Entry,
+                next_state,
+            );
+        }
+        None if finish_exhausted_region(&mut execution.core.frontier) => {}
+        None => {
+            return Err(ClickError::new(
+                "`outcomes` returned from a call without a following source statement",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Executes one source statement into one checked proof successor.
@@ -1611,8 +2119,8 @@ fn execute_step_from_frontier_position_selecting_path(
             ));
         });
     }
-    let statement_index = execution.core.frontier.next_statement_index;
-    let source_region = proof_context.constants.source_layout.statement(statement_index).ok_or_else(|| {
+    let mut statement_index = execution.core.frontier.next_statement_index;
+    let mut source_region = proof_context.constants.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
         ))
@@ -1650,7 +2158,9 @@ fn execute_step_from_frontier_position_selecting_path(
     }
     let loop_index = match source_region.kind {
         SourceStatementKind::Loop { loop_index } => Some(loop_index),
-        SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
+        SourceStatementKind::Plain
+        | SourceStatementKind::If { .. }
+        | SourceStatementKind::Try { .. } => None,
     };
     let (execution_start_state, current_state, mut source_statement, mut remaining) =
         next_top_level_statement_from_frontier_position(
@@ -1676,6 +2186,69 @@ fn execute_step_from_frontier_position_selecting_path(
     {
         source_statement = function.body().clone();
         remaining = None;
+    }
+    // Descend into `try` bodies transparently so an implicit cleanup call
+    // inside one is its own steppable statement. Only the typed C++ frontend
+    // produces `TryCatchInt32` (and only it gets the `Try` layout kind), so
+    // C stepping never takes this branch. The handler continuation lets a
+    // later `Throw` resume at the handler entry instead of terminating the
+    // path; normal completion pops it with the tail like any other
+    // continuation.
+    while let CStatement::TryCatchInt32 {
+        try_body,
+        binding,
+        handler,
+        cleanup_unwind,
+    } = &source_statement
+    {
+        let (try_first, handler_first, after_try) = match source_region.kind {
+            SourceStatementKind::Try {
+                try_statement_index,
+                handler_statement_index,
+                after_try_statement_index,
+            } => (
+                try_statement_index,
+                handler_statement_index,
+                after_try_statement_index,
+            ),
+            _ => break,
+        };
+        execution
+            .core
+            .frontier
+            .continuations
+            .push(ProofExecutionContinuation {
+                remaining: remaining.map(Arc::new),
+                next_statement_index: after_try,
+                loop_exit_statement_index: after_try,
+                exceptional: Some(ExceptionalContinuation {
+                    binding: binding.clone(),
+                    handler: Arc::new((**handler).clone()),
+                    handler_first_index: handler_first,
+                    cleanup_unwind: *cleanup_unwind,
+                }),
+            });
+        remaining = Some((**try_body).clone());
+        statement_index = try_first;
+        source_region = proof_context
+            .constants
+            .source_layout
+            .statement(statement_index)
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
+                ))
+            })?;
+        (source_statement, remaining) = split_next_source_operation(
+            remaining
+                .as_ref()
+                .expect("try-body descent just set a remaining statement"),
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` failed: {message}"
+            ))
+        })?;
     }
     if matches!(source_statement, CStatement::While { .. }) && loop_index.is_none() {
         return Err(ClickError::new(format!(
@@ -2169,10 +2742,11 @@ fn execute_step_from_frontier_position_selecting_path(
             )));
         }
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires exactly one statement successor for `{}`, got {}\n{}{}",
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires exactly one statement successor for `{}`, got {}\n{}{}{}",
             describe_c_statement_head(&step_statement),
             transitions.len(),
             describe_undecided_statement_successors(&transitions, parameters, arguments),
+            describe_multiple_statement_successors_guidance(&step_statement, transitions.len()),
             describe_proof_context(
                 available_pure_facts,
                 &current_resources,
@@ -2190,7 +2764,7 @@ fn execute_step_from_frontier_position_selecting_path(
         .presentation
         .record_generated_load_bindings(&transition.generated_load_bindings);
     let generated_load_source_events = transition.generated_load_source_events.clone();
-    let introduced_facts = transition.introduced_facts.clone();
+    let mut introduced_facts = transition.introduced_facts.clone();
     if matches!(loop_step_policy, LoopStepPolicy::ApplyVerifiedRule)
         && let Some(loop_index) = loop_index
         && matches!(transition.outcome, CStatementOutcome::Normal(_))
@@ -2537,45 +3111,79 @@ fn execute_step_from_frontier_position_selecting_path(
             }
         }
         CStatementOutcome::Return { .. } | CStatementOutcome::Throw { .. } => {
-            record_completed_continuation_exits(&mut execution.core.frontier);
-            let return_assumptions = assumptions_from_propositions(&successor_pure_facts);
-            let (outcome, obligations) = c_function_outcome_from_statement_outcome(
-                &execution_start_state,
-                function,
-                outcome,
-                transition_obligations,
-                &return_assumptions,
-            );
-            let mut completed_execution_facts = execution_pure_facts;
-            append_execution_effect_facts(
-                &mut completed_execution_facts,
-                &execution.core.effect_facts,
-            );
-            let mut completed_outcomes = vec![(outcome, completed_execution_facts, obligations)];
-            for pending in execution.core.complete_pending_exceptional_calls() {
-                completed_outcomes.push((
-                    pending.outcome,
-                    pending.execution_facts,
-                    pending.obligations,
-                ));
+            // A `Throw` inside an entered `try` body resumes at the handler
+            // entry instead of terminating the path. Only entered `try`
+            // bodies push handler continuations, so C execution (and throws
+            // outside any `try`) always takes the termination path below.
+            // Routed paths fall through to the shared epilogue like normally
+            // completed steps.
+            let routed = if let CStatementOutcome::Throw { value, state } = &outcome {
+                route_throw_to_handler(
+                    execution,
+                    proof_context,
+                    available_pure_facts,
+                    &mut introduced_facts,
+                    function,
+                    arguments,
+                    parameters,
+                    function_block,
+                    function_environment,
+                    claim_label,
+                    tactic_index,
+                    tactic_name,
+                    prerequisite_policy,
+                    fact_transport_policy,
+                    context,
+                    construction.as_mut().map(Construction::reborrow),
+                    value,
+                    state,
+                    &successor_pure_facts,
+                )?
+            } else {
+                false
+            };
+            if !routed {
+                record_completed_continuation_exits(&mut execution.core.frontier);
+                let return_assumptions = assumptions_from_propositions(&successor_pure_facts);
+                let (outcome, obligations) = c_function_outcome_from_statement_outcome(
+                    &execution_start_state,
+                    function,
+                    outcome,
+                    transition_obligations,
+                    &return_assumptions,
+                );
+                let mut completed_execution_facts = execution_pure_facts;
+                append_execution_effect_facts(
+                    &mut completed_execution_facts,
+                    &execution.core.effect_facts,
+                );
+                let mut completed_outcomes =
+                    vec![(outcome, completed_execution_facts, obligations)];
+                for pending in execution.core.complete_pending_exceptional_calls() {
+                    completed_outcomes.push((
+                        pending.outcome,
+                        pending.execution_facts,
+                        pending.obligations,
+                    ));
+                }
+                let completed = c_function_execution_candidates_from_outcomes(
+                    execution_start_state.clone(),
+                    function.clone(),
+                    arguments.to_vec(),
+                    completed_outcomes,
+                );
+                let execution_state = execution_start_state.clone();
+                set_function_exit_execution(
+                    &mut execution.core.frontier,
+                    claim_label,
+                    tactic_index,
+                    tactic_name,
+                    execution_start_state,
+                    completed,
+                )?;
+                execution.core.frontier.next_statement_index = source_region.continuation_node;
+                execution.core.state = execution_state.into();
             }
-            let completed = c_function_execution_candidates_from_outcomes(
-                execution_start_state.clone(),
-                function.clone(),
-                arguments.to_vec(),
-                completed_outcomes,
-            );
-            let execution_state = execution_start_state.clone();
-            set_function_exit_execution(
-                &mut execution.core.frontier,
-                claim_label,
-                tactic_index,
-                tactic_name,
-                execution_start_state,
-                completed,
-            )?;
-            execution.core.frontier.next_statement_index = source_region.continuation_node;
-            execution.core.state = execution_state.into();
         }
         CStatementOutcome::Break(next_state) | CStatementOutcome::Continue(next_state) => {
             // The control statement's own successor facts are this path's:
@@ -2797,6 +3405,291 @@ pub(super) struct BoundedProofFrontier {
     pub(super) sink: Option<ProofCertificateBuilder>,
 }
 
+/// Fork a throwing call inside an entered `try` into its normal and
+/// exceptional paths. The normal outcome commits to the current frontier
+/// exactly as a single-transition step would; the throw resumes at the
+/// handler entry via [`route_throw_to_handler`], and both paths rejoin the
+/// worklist. Only entered `try` bodies push handler continuations, so C
+/// execution never forks here. Returns `Ok(true)` when forked (the caller
+/// must skip its normal step call), or `Ok(false)` when this shape does
+/// not apply (single-transition calls, missing handlers, or unexpected
+/// outcomes fall through to the ordinary step path and its errors).
+#[allow(clippy::too_many_arguments)]
+fn fork_throwing_call_in_try(
+    frontier: &mut BoundedProofFrontier,
+    proof_context: &ExecutionProofContext<'_>,
+    prerequisite_policy: StatementPrerequisitePolicy,
+    claim_label: &str,
+    tactic_index: usize,
+    function: &CFunction,
+    construction: Option<&Construction<'_>>,
+    pending: &mut Vec<BoundedProofFrontier>,
+) -> Result<bool, ClickError> {
+    let statement = match frontier_statement(&frontier.execution, function) {
+        Ok(CStatement::Call { .. } | CStatement::CallAssign { .. }) => {
+            match frontier_statement(&frontier.execution, function) {
+                Ok(statement) => statement,
+                Err(_) => return Ok(false),
+            }
+        }
+        _ => return Ok(false),
+    };
+    if !frontier
+        .execution
+        .core
+        .frontier
+        .continuations
+        .iter()
+        .any(|continuation| continuation.exceptional.is_some())
+    {
+        return Ok(false);
+    }
+    let mut next_opaque_call = frontier.execution.core.next_opaque_call;
+    let mut next_kernel_variable = frontier.execution.core.kernel_variable_mark();
+    let (transitions, _) = certified_statement_transitions(
+        &frontier.execution.core.state,
+        &frontier.pure_facts,
+        &statement,
+        proof_context.function_environment,
+        Some(proof_context.predicate_environment),
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        "`execute` throwing-call fork planning",
+        &mut next_opaque_call,
+        &mut next_kernel_variable,
+        prerequisite_policy,
+        StatementFactTransportPolicy::Automatic,
+        None,
+    )?;
+    if transitions
+        .iter()
+        .any(|transition| matches!(transition.outcome, CStatementOutcome::UndefinedBehavior(_)))
+    {
+        return Ok(false);
+    }
+    if transitions
+        .iter()
+        .any(|transition| matches!(transition.outcome, CStatementOutcome::RuntimeError(_)))
+    {
+        return Ok(false);
+    }
+    let mut transitions = transitions.into_iter();
+    let (normal, threw) = match (transitions.next(), transitions.next(), transitions.next()) {
+        (Some(first), Some(second), None)
+            if matches!(first.outcome, CStatementOutcome::Normal(_))
+                && matches!(second.outcome, CStatementOutcome::Throw { .. }) =>
+        {
+            (first, second)
+        }
+        (Some(first), Some(second), None)
+            if matches!(first.outcome, CStatementOutcome::Throw { .. })
+                && matches!(second.outcome, CStatementOutcome::Normal(_)) =>
+        {
+            (second, first)
+        }
+        _ => return Ok(false),
+    };
+    // Install the allocated identities on both paths below so later
+    // allocations stay fresh; mirrors the shared step's counter advance.
+    // Done only once the fork shape is confirmed, so fall-through paths
+    // leave the frontier pristine.
+    frontier.execution.core.next_opaque_call = next_opaque_call;
+    frontier
+        .execution
+        .core
+        .advance_kernel_variable_mark(next_kernel_variable)
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `execute` throwing-call fork: {message}"
+            ))
+        })?;
+    // Commit the normal outcome to the current frontier, mirroring the
+    // single-transition Normal commit: record evidence, advance facts,
+    // state, position, and snapshots. The construction certificate path
+    // below mirrors the shared step's Planning handling.
+    let CStatementOutcome::Normal(normal_state) = &normal.outcome else {
+        return Ok(false);
+    };
+    let normal_state = normal_state.clone();
+    frontier.execution.core.record_statement_transition(
+        function,
+        proof_context.arguments,
+        normal.theorem.clone(),
+        normal.context.clone(),
+        &normal.execution_facts,
+        &normal.obligations,
+    ).map_err(|refusal| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: `execute` recorded forked call evidence the proof object rejected: {}",
+            describe_evidence_refusal(&refusal, proof_context.parsed_function.parameters(), proof_context.arguments)
+        ))
+    })?;
+    frontier
+        .execution
+        .presentation
+        .record_generated_load_bindings(&normal.generated_load_bindings);
+    append_execution_effect_facts(
+        &mut frontier.execution.core.effect_facts,
+        &normal.execution_facts,
+    );
+    frontier.pure_facts = normal.pure_facts.clone();
+    // Advance past the call, mirroring the single-transition Normal
+    // commit: pop an exhausted region or resume the tail, then record the
+    // entry snapshot for the resumed statement.
+    let call_tail = match &frontier.execution.core.frontier.position {
+        FrontierPosition::StatementEntry { remaining } => {
+            let (_, tail) = split_next_source_operation(remaining).map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `execute` throwing-call fork: {message}"
+                ))
+            })?;
+            tail
+        }
+        _ => None,
+    };
+    // The call's own layout index advances like any completed statement;
+    // resolve it before resuming so snapshots key correctly.
+    let call_statement_index = frontier.execution.core.frontier.next_statement_index;
+    let call_source_region = proof_context
+        .constants
+        .source_layout
+        .statement(call_statement_index);
+    // Clone for the threw arm BEFORE committing Normal below: routing pops
+    // the handler continuation, which Normal completion would discard
+    // first. The clone keeps pristine pre-step continuations; routing
+    // overwrites its state, facts, position, and index explicitly.
+    let mut threw_frontier = frontier.clone();
+    if construction.is_some() {
+        // Planning certificates for the forked normal arm mirror the
+        // shared step's Planning handling.
+        let pre_state = (*frontier.execution.core.state).clone();
+        let overrides = construction_snapshot_overrides(
+            &frontier.execution.presentation.recorded_snapshots,
+            proof_context.function_block,
+            &[CodeRegion::Statement(call_statement_index)],
+            ProgramPointKind::Entry,
+        );
+        let restore = apply_construction_snapshot_view(
+            &mut frontier.execution.presentation.recorded_snapshots,
+            &overrides,
+        );
+        append_statement_transition_certificate(
+            &mut frontier.execution,
+            proof_context,
+            &normal,
+            LoopStepPolicy::EnterBody,
+            &pre_state,
+            proof_context.function_block,
+            proof_context.parsed_function.parameters(),
+            proof_context.arguments,
+            construction.as_ref().map(|construction| Construction {
+                environments: construction.environments,
+                sink: frontier
+                    .sink
+                    .as_mut()
+                    .expect("construction implies a frontier sink"),
+            }),
+        );
+        restore_construction_snapshot_view(
+            &mut frontier.execution.presentation.recorded_snapshots,
+            restore,
+        );
+    }
+    frontier.execution.core.frontier.execution_start_state =
+        Some((*frontier.execution.core.state).clone());
+    frontier.execution.core.state = normal_state.clone().into();
+    let resumed = if let Some(tail) = call_tail {
+        if let Some(region) = call_source_region {
+            frontier.execution.core.frontier.next_statement_index = region.continuation_node;
+        }
+        Some(tail)
+    } else {
+        resume_after_completed_region(&mut frontier.execution.core.frontier)
+    };
+    match resumed {
+        Some(resumed) => {
+            frontier.execution.core.frontier.position = FrontierPosition::StatementEntry {
+                remaining: resumed.into(),
+            };
+            record_statement_program_snapshot_state(
+                &mut frontier.execution.presentation.recorded_snapshots,
+                proof_context.function_block,
+                frontier.execution.core.frontier.next_statement_index,
+                ProgramPointKind::Entry,
+                normal_state,
+            );
+        }
+        None => {
+            // Mirror the Normal arm: a region boundary records and
+            // continues; anything else is a genuine end-of-function error.
+            // Either way the threw arm below is still routed.
+            if finish_exhausted_region(&mut frontier.execution.core.frontier) {
+                record_statement_program_snapshot_state(
+                    &mut frontier.execution.presentation.recorded_snapshots,
+                    proof_context.function_block,
+                    frontier.execution.core.frontier.next_statement_index,
+                    ProgramPointKind::Entry,
+                    normal_state,
+                );
+            } else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `execute` throwing-call fork reached the end of the function without a return"
+                )));
+            }
+        }
+    }
+    // Route the threw arm to the handler entry on the pristine clone, then
+    // push both paths for the worklist. The threw arm's binding evidence is
+    // recorded by the routing helper itself.
+    let mut threw_facts = threw.pure_facts.clone();
+    let mut threw_introduced = Vec::new();
+    let CStatementOutcome::Throw {
+        value: threw_value,
+        state: threw_state,
+    } = &threw.outcome
+    else {
+        return Ok(false);
+    };
+    if construction.is_some() && threw_frontier.sink.is_none() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: `execute` throwing-call fork construction implies a frontier sink"
+        )));
+    }
+    let threw_construction = construction.as_ref().map(|construction| Construction {
+        environments: construction.environments,
+        sink: threw_frontier
+            .sink
+            .as_mut()
+            .expect("construction implies a frontier sink"),
+    });
+    if !route_throw_to_handler(
+        &mut threw_frontier.execution,
+        proof_context,
+        &mut threw_facts,
+        &mut threw_introduced,
+        function,
+        proof_context.arguments,
+        proof_context.parsed_function.parameters(),
+        proof_context.function_block,
+        proof_context.function_environment,
+        claim_label,
+        tactic_index,
+        "execute",
+        prerequisite_policy,
+        StatementFactTransportPolicy::Automatic,
+        None,
+        threw_construction,
+        threw_value,
+        threw_state,
+        &threw.pure_facts,
+    )? {
+        return Ok(false);
+    }
+    threw_frontier.pure_facts = threw_facts;
+    pending.push(threw_frontier);
+    pending.push(frontier.clone());
+    Ok(true)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn bounded_execute_from_frontier_position(
     execution: &mut ExecutionProofState,
@@ -3001,6 +3894,34 @@ pub(super) fn bounded_execute_from_frontier_position(
                 }
                 continue;
             }
+        }
+
+        // Fork a throwing call inside an entered `try`: the normal outcome
+        // continues here while the throw resumes at the handler entry.
+        // Switches fork above for path conditions; plain steps error on
+        // multiple successors. Only entered `try` bodies push handler
+        // continuations, so C execution never forks here.
+        if let Ok(CStatement::Call { .. } | CStatement::CallAssign { .. }) =
+            frontier_statement(&frontier.execution, function)
+            && frontier
+                .execution
+                .core
+                .frontier
+                .continuations
+                .iter()
+                .any(|continuation| continuation.exceptional.is_some())
+            && fork_throwing_call_in_try(
+                &mut frontier,
+                proof_context,
+                prerequisite_policy,
+                claim_label,
+                tactic_index,
+                function,
+                construction.as_ref(),
+                &mut pending,
+            )?
+        {
+            continue;
         }
 
         let assumptions = assumptions_from_propositions(&frontier.pure_facts);

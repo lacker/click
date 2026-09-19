@@ -574,6 +574,31 @@ pub(super) fn describe_undecided_statement_successors(
     format!("undecided condition:\n{}\n", lines.join("\n"))
 }
 
+pub(super) fn describe_multiple_statement_successors_guidance(
+    statement: &CStatement,
+    successor_count: usize,
+) -> String {
+    if successor_count != 2
+        || !matches!(
+            statement,
+            CStatement::Call { .. } | CStatement::CallAssign { .. }
+        )
+    {
+        return String::new();
+    }
+    r#"
+`step()` cannot choose between the two successors of this call. Use `outcomes` at this point:
+outcomes {
+    returned { step(); }
+    threw { step(); }
+}
+The `step()` in each arm advances the selected path; add the remaining
+`step()`, `execute()`, and `simp()` tactics inside that arm until all
+contract claims are closed.
+"#
+    .to_string()
+}
+
 pub(super) fn describe_proof_context(
     pure_facts: &[Proposition],
     resource_facts: &[CResourceFact],

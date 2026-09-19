@@ -56,6 +56,17 @@ pub(in crate::surface) enum SourceStatementKind {
     Loop {
         loop_index: usize,
     },
+    /// A `try` whose body and handler the stepper descends into, so an
+    /// implicit cleanup call inside either one is its own steppable
+    /// statement. Only the typed C++ frontend produces `TryCatchInt32`,
+    /// so C layouts never contain this kind. `after_try` is the index of
+    /// the first statement after the `try`, used to resume normal control
+    /// flow when the body (or handler) completes.
+    Try {
+        try_statement_index: usize,
+        handler_statement_index: usize,
+        after_try_statement_index: usize,
+    },
 }
 
 impl SourceExecutionLayout {
@@ -150,6 +161,39 @@ impl SourceExecutionLayout {
                 CStatement::While { .. } | CStatement::Switch { .. } => Err(ClickError::new(
                     "typed-frontend source layout does not yet support loop or switch statements",
                 )),
+                CStatement::TryCatchInt32 {
+                    try_body, handler, ..
+                } => {
+                    let statement_index = *next_statement_index;
+                    *next_statement_index += 1;
+                    let try_statement_index = *next_statement_index;
+                    let try_last = visit(try_body, next_statement_index, layout)?;
+                    let handler_statement_index = *next_statement_index;
+                    let handler_last = visit(handler, next_statement_index, layout)?;
+                    let continuation_node = *next_statement_index;
+                    layout.statements.insert(
+                        statement_index,
+                        SourceStatementRegion {
+                            continuation_node,
+                            kind: SourceStatementKind::Try {
+                                try_statement_index,
+                                handler_statement_index,
+                                after_try_statement_index: continuation_node,
+                            },
+                        },
+                    );
+                    // Normal completion of the try body continues after the
+                    // try. The handler's terminal outcomes (rethrow or return)
+                    // make its continuation unreachable; keep it linked for
+                    // uniformity.
+                    if let Some(region) = layout.statements.get_mut(&try_last) {
+                        region.continuation_node = continuation_node;
+                    }
+                    if let Some(region) = layout.statements.get_mut(&handler_last) {
+                        region.continuation_node = continuation_node;
+                    }
+                    Ok(try_last)
+                }
                 _ => {
                     let statement_index = *next_statement_index;
                     *next_statement_index += 1;

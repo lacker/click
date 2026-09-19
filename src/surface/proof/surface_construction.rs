@@ -1083,7 +1083,9 @@ pub(super) fn append_proof_step_for_operation(
                 .statement(construction.execution.core.frontier.next_statement_index)
                 .and_then(|region| match region.kind {
                     SourceStatementKind::Loop { loop_index } => Some(loop_index),
-                    SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
+                    SourceStatementKind::Plain
+                    | SourceStatementKind::If { .. }
+                    | SourceStatementKind::Try { .. } => None,
                 });
             let Some(loop_index) = loop_index else {
                 construction

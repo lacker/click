@@ -1918,6 +1918,10 @@ pub enum CStatement {
         try_body: Box<CStatement>,
         binding: String,
         handler: Box<CStatement>,
+        /// This is an implementation cleanup edge inserted by a frontend,
+        /// rather than a source-level handler. Its handler runs cleanup and
+        /// rethrows the original payload.
+        cleanup_unwind: bool,
     },
     Store {
         pointer: CExpression,

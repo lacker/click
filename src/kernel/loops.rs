@@ -5695,6 +5695,7 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
             try_body,
             binding,
             handler,
+            ..
         } => {
             collect_loop_modified_locals(try_body, names);
             names.insert(binding.clone());

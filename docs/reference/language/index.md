@@ -92,9 +92,10 @@ This first exceptional-contract slice is deliberately pure and direct. The
 exceptional family cannot carry resources or mutable effects, and named
 contracts, external contracts, callbacks, indirect calls, handlers, and
 unwinding do not yet support it. A separate, object-free C++ scalar-exception
-import profile accepts typed `throw int32` and one object-free typed
-`try`/`catch (int name)` with a fresh payload binding. It still rejects
-automatic-object unwinding, nested handlers, and other catch forms. A direct modular call whose normal
+import profile accepts typed `throw int32`, one typed `try`/`catch (int name)`
+with a fresh payload binding, and the narrow single-guard cleanup shape
+documented by the import reference. It still rejects nested handlers and other
+catch forms. A direct modular call whose normal
 continuation is a single return can certify both caller outcome families:
 
 <!-- verified-example: mdtests/exceptional_terminal_call.md -->
@@ -119,7 +120,7 @@ int32 caller(int32 x) throws int32 {
 
 The scalar C++ profile can turn a caught `int32` exception into a normal
 return without a `throws` declaration on the catching function. This does not
-model object unwinding or exceptional resource transfer.
+model general object unwinding or exceptional resource transfer.
 
 C functions may call themselves or participate in mutual recursion without a
 special Click keyword. Their ordinary contracts are the modular interfaces for

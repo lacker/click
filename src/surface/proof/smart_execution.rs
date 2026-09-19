@@ -83,7 +83,7 @@ impl<'a> Proof<'a> {
             {
                 next
             } else {
-                if !proof.is_at_execution_branch()? {
+                if !proof.is_at_execution_branch()? && !proof.is_at_call_outcomes_frontier()? {
                     return Ok(None);
                 }
                 let Some(next) =

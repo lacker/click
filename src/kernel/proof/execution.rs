@@ -2996,6 +2996,89 @@ pub(crate) enum CheckedCallOutcomeSplitError {
 }
 
 impl CheckedCallOutcomeSplit {
+    /// Builds the exhaustive call-outcome witness from the two transitions
+    /// already certified by the statement evaluator.  This is deliberately
+    /// not another evaluator entry point: the caller has retained the
+    /// evaluator's complete two-transition result and supplies both checked
+    /// theorem conclusions here.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_certified_transitions(
+        state: CState,
+        statement: CStatement,
+        root_facts: &ProofFacts,
+        normal_theorem: &Theorem,
+        normal: &CStatementOutcome,
+        normal_path_facts: &[Proposition],
+        normal_obligations: &[crate::kernel::ProofObligation],
+        exceptional_theorem: &Theorem,
+        exceptional: &CStatementOutcome,
+        exceptional_path_facts: &[Proposition],
+        exceptional_execution_facts: &[ExecutionPureFact],
+        exceptional_obligations: &[crate::kernel::ProofObligation],
+    ) -> Result<Self, CheckedCallOutcomeSplitError> {
+        if !matches!(
+            statement,
+            CStatement::Call { .. } | CStatement::CallAssign { .. }
+        ) || !matches!(normal, CStatementOutcome::Normal(_))
+            || !matches!(exceptional, CStatementOutcome::Throw { .. })
+        {
+            return Err(CheckedCallOutcomeSplitError::InvalidEvidence);
+        }
+        let validates_arm =
+            |theorem: &Theorem,
+             expected: &CStatementOutcome,
+             path_facts: &[Proposition],
+             obligations: &[crate::kernel::ProofObligation]| {
+                let Proposition::CStatementVerifies {
+                    state: proved_state,
+                    statement: proved_statement,
+                    outcome,
+                } = crate::kernel::api::proof_evidence_conclusion(theorem)
+                else {
+                    return false;
+                };
+                if proved_state != &state
+                    || proved_statement != &statement
+                    || outcome != expected
+                    || path_facts
+                        .iter()
+                        .any(|fact| root_facts.directly_conflicts_with(fact))
+                {
+                    return false;
+                }
+                let mut facts = root_facts.clone();
+                for fact in path_facts {
+                    facts = facts.with_kernel_checked_fact(fact.clone());
+                }
+                obligations.iter().all(|obligation| {
+                    checked_branch_fact_is_available(&facts, obligation.proposition())
+                })
+            };
+        if !validates_arm(
+            normal_theorem,
+            normal,
+            normal_path_facts,
+            normal_obligations,
+        ) || !validates_arm(
+            exceptional_theorem,
+            exceptional,
+            exceptional_path_facts,
+            exceptional_obligations,
+        ) {
+            return Err(CheckedCallOutcomeSplitError::InvalidEvidence);
+        }
+        Ok(Self {
+            state,
+            statement,
+            root_facts: root_facts.clone(),
+            normal: normal.clone(),
+            exceptional: exceptional.clone(),
+            exceptional_facts: exceptional_path_facts.to_vec(),
+            exceptional_execution_facts: exceptional_execution_facts.to_vec(),
+            exceptional_obligations: exceptional_obligations.to_vec(),
+        })
+    }
+
     pub(crate) fn check(
         state: CState,
         statement: CStatement,
@@ -3318,6 +3401,17 @@ pub(crate) struct ExecutionFrontier {
     pub(crate) loop_control: LoopControlExit,
 }
 
+/// One entered `try` body tracked for evidence order validation: the
+/// handler to resume at if unwinding reaches it, and the source tail after
+/// the `try` for normal completion.
+#[derive(Clone, Debug)]
+pub(crate) struct EvidenceTryFrame {
+    pub(crate) binding: String,
+    pub(crate) handler: Arc<CStatement>,
+    pub(crate) tail_after_try: Option<Arc<CStatement>>,
+    pub(crate) cleanup_unwind: bool,
+}
+
 #[derive(Clone)]
 pub(crate) struct ProofExecutionContinuation {
     pub(crate) remaining: Option<Arc<CStatement>>,
@@ -3326,6 +3420,23 @@ pub(crate) struct ProofExecutionContinuation {
     /// consumes the loop continuation and resumes here; `continue` resumes
     /// at `next_statement_index`, the loop head itself.
     pub(crate) loop_exit_statement_index: usize,
+    /// The exceptional successor of an entered `try` body. On a `Throw`
+    /// outcome while this continuation is on top, the path abandons its
+    /// remaining statements and resumes at the handler entry with the
+    /// payload bound. Normal completion pops this continuation like any
+    /// other, discarding the handler without running it.
+    pub(crate) exceptional: Option<ExceptionalContinuation>,
+}
+
+/// The handler a `Throw` inside an entered `try` body resumes at. Only the
+/// typed C++ frontend produces `TryCatchInt32`, so C execution never
+/// carries one of these.
+#[derive(Clone)]
+pub(crate) struct ExceptionalContinuation {
+    pub(crate) binding: String,
+    pub(crate) handler: Arc<CStatement>,
+    pub(crate) handler_first_index: usize,
+    pub(crate) cleanup_unwind: bool,
 }
 
 #[derive(Clone)]
@@ -3369,6 +3480,14 @@ pub(crate) struct ExecutionProofCore {
     /// the source is exhausted. Checks read this and never the driver's
     /// frontier once it is set.
     pub(crate) evidence_source: Option<Arc<CStatement>>,
+    /// Entered `try` bodies the evidence chain is descending into, innermost
+    /// last. Pushed when an interior theorem is accepted against a `Try`
+    /// head, popped when the body completes normally (offered matches the
+    /// tail) or when handler entry is accepted. Only the typed C++ frontend
+    /// produces `TryCatchInt32`, so C evidence never carries one of these.
+    /// Each entry is derived solely from validated theorems and expected
+    /// source, never from driver-provided pushes.
+    pub(crate) evidence_try_stack: Vec<EvidenceTryFrame>,
     pub(crate) frontier: ExecutionFrontier,
     pub(crate) effect_facts: SharedVec<ExecutionPureFact>,
     /// One append-only evidence trace per operational outcome represented by
@@ -4160,6 +4279,16 @@ fn trace_completion(
                     | CStatementOutcome::Jump { .. } => {
                         fallthrough = None;
                     }
+                    CStatementOutcome::Throw { .. }
+                        if events[index + 2..]
+                            .iter()
+                            .any(|event| matches!(event, CheckedExecutionEvent::Statement(_))) =>
+                    {
+                        // A caught throw is followed by the synthetic
+                        // handler-binding/cleanup trace. It is an internal
+                        // control transfer, not this execution path's final
+                        // function outcome.
+                    }
                     CStatementOutcome::Return { .. }
                     | CStatementOutcome::Throw { .. }
                     | CStatementOutcome::VerificationDiverges => {
@@ -4569,6 +4698,7 @@ impl ExecutionProofCore {
             evidence_state: None,
             evidence_completed: false,
             evidence_source: None,
+            evidence_try_stack: Vec::new(),
             frontier,
             effect_facts: Default::default(),
             execution_evidence: vec![PersistentSequence::default()].into(),
@@ -4695,8 +4825,47 @@ impl ExecutionProofCore {
         } else {
             None
         };
+        if let CStatementOutcome::Throw { .. } = &outcome
+            && let Some(exceptional) = self
+                .frontier
+                .continuations
+                .iter()
+                .filter_map(|continuation| continuation.exceptional.as_ref())
+                .next_back()
+            && self
+                .evidence_try_stack
+                .last()
+                .is_none_or(|frame| frame.binding != exceptional.binding)
+        {
+            self.evidence_try_stack.push(EvidenceTryFrame {
+                binding: exceptional.binding.clone(),
+                handler: exceptional.handler.clone(),
+                tail_after_try: self
+                    .frontier
+                    .continuations
+                    .iter()
+                    .filter(|continuation| continuation.exceptional.is_some())
+                    .rfind(|continuation| continuation.exceptional.is_some())
+                    .and_then(|continuation| continuation.remaining.clone()),
+                cleanup_unwind: exceptional.cleanup_unwind,
+            });
+        }
         match outcome {
             CStatementOutcome::Normal(next_state) => self.evidence_state = Some(next_state),
+            CStatementOutcome::Throw { state, .. }
+                if self
+                    .frontier
+                    .continuations
+                    .iter()
+                    .any(|continuation| continuation.exceptional.is_some()) =>
+            {
+                // A throw inside a checked try body is an internal control
+                // transfer. Keep the trace open while the surface executor
+                // records the handler binding and moves the frontier there;
+                // only an uncaught throw completes this execution evidence.
+                self.evidence_state = Some(state);
+                self.evidence_completed = false;
+            }
             CStatementOutcome::Return { state, .. } | CStatementOutcome::Throw { state, .. } => {
                 self.evidence_state = Some(state);
                 self.evidence_completed = true;
@@ -4952,6 +5121,158 @@ impl ExecutionProofCore {
             .ok_or_else(|| EvidenceRefusal::from("the function's arguments do not bind at entry"))
     }
 
+    /// Advances evidence tracking across an entered `try` where linear
+    /// matching fails. Each rule fires only where the linear rules below
+    /// would refuse, so existing green behavior is unchanged:
+    /// - descent: the expected head is a `Try` node and the offered theorem
+    ///   proves its body head. Pushes the handler frame and continues into
+    ///   the body. Whole-`try` theorems still match linearly above and never
+    ///   reach this rule.
+    /// - handler binding: the offered theorem declares or assigns the top
+    ///   frame's handler binding. These micro-steps are not in any source
+    ///   tree, so the source is left unchanged for the handler body.
+    /// - handler entry: the offered theorem proves the top frame's handler
+    ///   head. Pops the frame and continues into the handler.
+    /// - normal exit: no source remains, a frame is open, and the offered
+    ///   theorem proves the frame's tail head. Pops the frame and continues
+    ///   past the `try`.
+    ///
+    /// Returns the new source after the offered theorem, or `None` when no try
+    /// rule applies (the caller then runs the linear rules unchanged). Only
+    /// the typed C++ frontend produces `TryCatchInt32`, so C evidence never
+    /// takes these branches.
+    fn try_evidence_source_after(
+        &mut self,
+        function: &CFunction,
+        proved_statement: &CStatement,
+    ) -> Option<Option<Arc<CStatement>>> {
+        let next_tail = self.next_source_statement_and_tail(function);
+        // Binding micro-steps and handler heads are meaningful only while
+        // a `try` frame is open; without one there is nothing to route to.
+        let frame_binding_matches = |frame: &EvidenceTryFrame| match proved_statement {
+            CStatement::Declare { name, .. } | CStatement::Assign { name, .. } => {
+                *name == frame.binding
+            }
+            _ => false,
+        };
+        if let Some(frame) = self.evidence_try_stack.last()
+            && frame_binding_matches(frame)
+        {
+            return Some(self.evidence_source.clone());
+        }
+        // A routed C++ cleanup handler can begin with synthetic `skip`
+        // nodes. Its user-visible destructor is still an internal handler
+        // statement, so consume that handler source one statement at a time
+        // while the surface frontier remains outside the original source.
+        if next_tail.is_none() {
+            if self.evidence_try_stack.last().is_some_and(|frame| {
+                frame.cleanup_unwind
+                    && matches!(
+                        split_shared_source(&frame.handler).0.as_ref(),
+                        CStatement::Throw(_)
+                    )
+                    && !matches!(proved_statement, CStatement::Throw(_))
+            }) {
+                self.evidence_try_stack.pop();
+                return self.try_evidence_source_after(function, proved_statement);
+            }
+            let mut handler_source = self.evidence_try_stack.last()?.handler.clone();
+            loop {
+                let (head, tail) = split_shared_source(&handler_source);
+                if matches!(head.as_ref(), CStatement::Skip) {
+                    let Some(next) = tail else { break };
+                    handler_source = next;
+                    continue;
+                }
+                if statements_have_same_source(&head, proved_statement) {
+                    if let Some(frame) = self.evidence_try_stack.last_mut() {
+                        if let Some(tail) = tail {
+                            frame.handler = tail;
+                        } else {
+                            self.evidence_try_stack.pop();
+                        }
+                    }
+                    return Some(self.evidence_source.clone());
+                }
+                break;
+            }
+        }
+        if let Some((next, tail)) = &next_tail {
+            let next: &CStatement = next;
+            // Never shadow linear matching: an offered theorem the linear
+            // rules accept must keep going through them (including whole-
+            // `try` theorems and ordinary declares inside `try` bodies).
+            if statements_have_same_source(next, proved_statement) {
+                // A body theorem can be the first statement after a nested
+                // try. Linear matching is still authoritative for the
+                // source advance, but consuming that tail also closes the
+                // nested evidence frame; otherwise the following outer
+                // handler/return sees a stale frame and reports no source.
+                if let Some(frame) = self.evidence_try_stack.last()
+                    && let Some(tail_after) = &frame.tail_after_try
+                {
+                    let (tail_head, _) = split_shared_source(tail_after);
+                    if statements_have_same_source(&tail_head, proved_statement) {
+                        self.evidence_try_stack.pop();
+                    }
+                }
+                return None;
+            }
+            if let CStatement::TryCatchInt32 {
+                try_body,
+                binding,
+                handler,
+                cleanup_unwind,
+            } = next
+            {
+                let (body_head, body_tail) = split_shared_source(try_body);
+                if statements_have_same_source(&body_head, proved_statement) {
+                    self.evidence_try_stack.push(EvidenceTryFrame {
+                        binding: binding.clone(),
+                        handler: Arc::new((**handler).clone()),
+                        tail_after_try: tail.clone(),
+                        cleanup_unwind: *cleanup_unwind,
+                    });
+                    return Some(body_tail);
+                }
+            }
+            if let Some(frame) = self.evidence_try_stack.last() {
+                let (handler_head, handler_tail) = split_shared_source(&frame.handler);
+                if statements_have_same_source(&handler_head, proved_statement) {
+                    let frame = self
+                        .evidence_try_stack
+                        .last()
+                        .expect("handler frame just matched");
+                    let cleanup_rethrows = frame.cleanup_unwind
+                        && handler_tail.as_ref().is_some_and(|tail| {
+                            let (tail_head, tail_tail) = split_shared_source(tail);
+                            matches!(tail_head.as_ref(), CStatement::Throw(_))
+                                && tail_tail.is_none()
+                        });
+                    self.evidence_try_stack.pop();
+                    if cleanup_rethrows {
+                        return Some(self.evidence_source.clone());
+                    }
+                    return Some(handler_tail);
+                }
+            }
+            return None;
+        }
+        // No source remains: a normal `try` exit pops the open frame when
+        // the offered theorem proves its tail head. Anything else keeps the
+        // existing no-source error below.
+        if let Some(frame) = self.evidence_try_stack.last()
+            && let Some(tail_after) = &frame.tail_after_try
+        {
+            let (tail_head, tail_tail) = split_shared_source(tail_after);
+            if statements_have_same_source(&tail_head, proved_statement) {
+                self.evidence_try_stack.pop();
+                return Some(tail_tail);
+            }
+        }
+        None
+    }
+
     /// Checks that a statement theorem advances this frontier: it proves
     /// the frontier's next source statement (a `Skip` theorem consumes
     /// nothing) from the running state, modulo definitionally equal
@@ -4965,7 +5286,7 @@ impl ExecutionProofCore {
     /// end-of-proof walk runs them. This is that walk's judgment, made at
     /// the step.
     fn check_statement_evidence(
-        &self,
+        &mut self,
         function: &CFunction,
         arguments: &[CExpression],
         theorem: &Theorem,
@@ -4973,7 +5294,9 @@ impl ExecutionProofCore {
         execution_facts: &[ExecutionPureFact],
         obligations: &[crate::kernel::ProofObligation],
     ) -> Result<(CStatementOutcome, Option<Arc<CStatement>>), EvidenceRefusal> {
-        let running_state = self.running_state(function, arguments)?;
+        // Owned (not borrowed) so try-evidence advancement below can take
+        // `&mut self`; `CState` clones are persistent-structure shares.
+        let running_state = self.running_state(function, arguments)?.into_owned();
         let (proved_state, proved_statement, outcome) =
             match crate::kernel::api::proof_evidence_conclusion(theorem) {
                 Proposition::CStatementVerifies {
@@ -5024,65 +5347,76 @@ impl ExecutionProofCore {
             // In particular an executes proof checks call + return together.
             None
         } else {
-            let Some((next, tail)) = self.next_source_statement_and_tail(function) else {
-                return Err(
-                    "statement evidence was recorded with no source statement remaining".into(),
-                );
-            };
-            let do_while_initial_body = match &*next {
-                CStatement::While {
-                    condition,
-                    invariant,
-                    invariant_checks,
-                    effect_checks,
-                    resource_specs,
-                    ranking_measures,
-                    structural_measure,
-                    do_while: true,
-                    body,
-                } if !matches!(proved_statement, CStatement::While { .. }) => {
-                    let (body_head, body_tail) = split_shared_source(body);
-                    if !statements_have_same_source(&body_head, proved_statement) {
-                        return Err(EvidenceRefusal {
-                            reason: "statement evidence does not prove the frontier's next source statement",
-                            expected: Some(next.into_owned()),
-                            proved: Some(proved_statement.clone()),
-                            premise: None,
-                        });
-                    }
-                    let loop_head = CStatement::While {
-                        condition: condition.clone(),
-                        invariant: invariant.clone(),
-                        invariant_checks: invariant_checks.clone(),
-                        effect_checks: effect_checks.clone(),
-                        resource_specs: resource_specs.clone(),
-                        ranking_measures: ranking_measures.clone(),
-                        structural_measure: structural_measure.clone(),
-                        do_while: false,
-                        body: body.clone(),
-                    };
-                    let loop_continuation =
-                        prepend_shared_source(Arc::new(loop_head), tail.clone());
-                    Some(match body_tail {
-                        Some(body_tail) => {
-                            prepend_shared_source(body_tail, Some(loop_continuation))
+            // Try-evidence rules (descent into `try` bodies, handler-entry
+            // binding and handler heads, normal `try` exits) fire only
+            // where the linear rules below would refuse — the helper
+            // returns `None` whenever normal matching, the `do`-`while`
+            // rule, or the existing errors apply — so existing green
+            // behavior is unchanged. Only the typed C++ frontend produces
+            // `TryCatchInt32`, so C evidence never resolves here.
+            if let Some(source_after) = self.try_evidence_source_after(function, proved_statement) {
+                source_after
+            } else {
+                let Some((next, tail)) = self.next_source_statement_and_tail(function) else {
+                    return Err(
+                        "statement evidence was recorded with no source statement remaining".into(),
+                    );
+                };
+                let do_while_initial_body = match &*next {
+                    CStatement::While {
+                        condition,
+                        invariant,
+                        invariant_checks,
+                        effect_checks,
+                        resource_specs,
+                        ranking_measures,
+                        structural_measure,
+                        do_while: true,
+                        body,
+                    } if !matches!(proved_statement, CStatement::While { .. }) => {
+                        let (body_head, body_tail) = split_shared_source(body);
+                        if !statements_have_same_source(&body_head, proved_statement) {
+                            return Err(EvidenceRefusal {
+                                reason: "statement evidence does not prove the frontier's next source statement",
+                                expected: Some(next.into_owned()),
+                                proved: Some(proved_statement.clone()),
+                                premise: None,
+                            });
                         }
-                        None => loop_continuation,
-                    })
+                        let loop_head = CStatement::While {
+                            condition: condition.clone(),
+                            invariant: invariant.clone(),
+                            invariant_checks: invariant_checks.clone(),
+                            effect_checks: effect_checks.clone(),
+                            resource_specs: resource_specs.clone(),
+                            ranking_measures: ranking_measures.clone(),
+                            structural_measure: structural_measure.clone(),
+                            do_while: false,
+                            body: body.clone(),
+                        };
+                        let loop_continuation =
+                            prepend_shared_source(Arc::new(loop_head), tail.clone());
+                        Some(match body_tail {
+                            Some(body_tail) => {
+                                prepend_shared_source(body_tail, Some(loop_continuation))
+                            }
+                            None => loop_continuation,
+                        })
+                    }
+                    _ => None,
+                };
+                if !statements_have_same_source(&next, proved_statement)
+                    && do_while_initial_body.is_none()
+                {
+                    return Err(EvidenceRefusal {
+                        reason: "statement evidence does not prove the frontier's next source statement",
+                        expected: Some(next.into_owned()),
+                        proved: Some(proved_statement.clone()),
+                        premise: None,
+                    });
                 }
-                _ => None,
-            };
-            if !statements_have_same_source(&next, proved_statement)
-                && do_while_initial_body.is_none()
-            {
-                return Err(EvidenceRefusal {
-                    reason: "statement evidence does not prove the frontier's next source statement",
-                    expected: Some(next.into_owned()),
-                    proved: Some(proved_statement.clone()),
-                    premise: None,
-                });
+                do_while_initial_body.or(tail)
             }
-            do_while_initial_body.or(tail)
         };
         self.check_evidence_state_and_premises(
             function,

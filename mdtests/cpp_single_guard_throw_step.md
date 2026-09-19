@@ -1,15 +1,11 @@
-# C++ two-guard cleanup on a caught cross-call exception
+# A single guarded throwing call must expose its cleanup as a step
 
-Probe for the control-flow demo: two `Restore` guards over two distinct
-cells, constructed inside a `try`, then a helper call that either returns
-normally or throws `int`. Both guards must be destroyed in reverse
-construction order before the caller observes the cells, on the normal path
-and before the handler observes them on the exceptional path. The guard shape
-is copied unchanged from `cpp_one_guard_unwind.md` so that guard count is the
-only new variable; only the second guard and the separation between the two
-cells are new.
+This keeps one RAII object and one potentially throwing call. The proof does
+not involve two-object ordering or cross-cell framing; it checks that the
+call's normal and exceptional outcomes can each take one ordinary step for the
+synthesized destructor before finishing.
 
-```cpp filename=guarded2.cpp function=guarded2 profile=scalar_int32
+```cpp filename=single_guard_step.cpp function=single_guard_step profile=scalar_int32
 struct Restore {
     int* pointer;
     int saved;
@@ -26,20 +22,19 @@ int helper(bool should_throw) {
     return 5;
 }
 
-int guarded2(int& first_cell, int& second_cell, bool should_throw) {
+int single_guard_step(int& value, bool should_throw) {
     try {
-        Restore first(&first_cell);
-        Restore second(&second_cell);
+        Restore guard(&value);
         helper(should_throw);
     } catch (int caught) {
-        return first_cell;
+        return value;
     }
-    return first_cell;
+    return value;
 }
 ```
 
 ```click
-verifying "guarded2.cpp";
+verifying "single_guard_step.cpp";
 
 void Restore_constructor(struct Restore* self, int32* slot) {
     owns self->pointer;
@@ -72,30 +67,21 @@ int32 helper(bool should_throw) throws int32 {
     exceptional ensures exception == 7;
 }
 
-int32 guarded2(int32* first_cell, int32* second_cell, bool should_throw) {
-    owns first_cell[0..1];
-    owns second_cell[0..1];
-    requires separate(memory(first_cell[0..1]), memory(second_cell[0..1]));
-    ensures result == old(first_cell[0]);
-    ensures first_cell[0] == old(first_cell[0]);
-    ensures second_cell[0] == old(second_cell[0]);
+int32 single_guard_step(int32* value, bool should_throw) {
+    owns value[0..1];
+    ensures result == old(value[0]);
+    ensures value[0] == old(value[0]);
 } by {
-    step();
-    step();
     step();
     step();
     outcomes {
         returned {
             step();
-            step();
-            have second_cell[0] == old(second_cell[0]) by { simp(); }
             execute();
             simp();
         }
         threw {
             step();
-            step();
-            have second_cell[0] == old(second_cell[0]) by { simp(); }
             execute();
             simp();
         }

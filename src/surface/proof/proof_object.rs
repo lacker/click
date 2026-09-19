@@ -3,13 +3,14 @@ use super::pure_theorems::{
 };
 use super::*;
 use crate::kernel::proof::{
-    BranchId, CheckedBranchSplit, ExecutionUpdateError, FrontierObligation, FrontierSplitError,
-    FunctionOutcomeObligation, OutcomeProofCore, OutcomeProofState as KernelOutcomeProofState,
-    ProofBranch, ProofBranchState, ProofExecutionState as KernelProofExecutionState, ProofFacts,
-    ProofFocusError, ProofJoinError, ProofObject as KernelProofObject,
-    ProofObligation as KernelBranchObligation, ProofState as KernelProofState,
-    PropositionAssumptionContext, PropositionCloseError, PropositionIntroduction,
-    PropositionObligation as KernelPropositionObligation, PropositionSplitError, SplitId,
+    BranchId, CheckedBranchSplit, CheckedCallOutcomeSplit, ExecutionUpdateError,
+    FrontierObligation, FrontierSplitError, FunctionOutcomeObligation, OutcomeProofCore,
+    OutcomeProofState as KernelOutcomeProofState, ProofBranch, ProofBranchState,
+    ProofExecutionState as KernelProofExecutionState, ProofFacts, ProofFocusError, ProofJoinError,
+    ProofObject as KernelProofObject, ProofObligation as KernelBranchObligation,
+    ProofState as KernelProofState, PropositionAssumptionContext, PropositionCloseError,
+    PropositionIntroduction, PropositionObligation as KernelPropositionObligation,
+    PropositionSplitError, SplitId,
 };
 use crate::persistent::PersistentMap;
 
@@ -151,7 +152,7 @@ pub(super) struct ExecutionSplit<'a> {
     split: SplitId,
     arm_branches: [Option<BranchId>; 2],
     condition_theorems: [Option<Theorem>; 2],
-    checked_condition_split: CheckedBranchSplit,
+    checked_split: CheckedExecutionSplit,
     base_facts: [Option<ProofFacts>; 2],
     base_executions: [Option<Arc<ExecutionProofState>>; 2],
     path_facts: [Option<Vec<Proposition>>; 2],
@@ -162,6 +163,17 @@ pub(super) struct ExecutionSplit<'a> {
     continuation_index: usize,
     continuation_remaining: Option<Arc<CStatement>>,
     execution_start_state: CState,
+    /// The exact statement/state used when this split was certified.  C
+    /// branch splits can recover these from the parent frontier; a throwing
+    /// call may first descend through a transparent try body, so it cannot.
+    split_state: CState,
+    split_statement: CStatement,
+}
+
+#[derive(Clone)]
+pub(super) enum CheckedExecutionSplit {
+    Branch(CheckedBranchSplit),
+    CallOutcomes(CheckedCallOutcomeSplit),
 }
 
 /// Bookkeeping for an exhaustive proof-level case split over one execution

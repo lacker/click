@@ -2417,6 +2417,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             try_body,
             binding,
             handler,
+            ..
         } => {
             let mut paths = Vec::new();
             for try_path in execute_c_statement_paths(
