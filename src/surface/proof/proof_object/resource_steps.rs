@@ -540,12 +540,53 @@ impl<'a> Proof<'a> {
                         replacement,
                     )
                     .unwrap_or_else(|| goal.kernel().clone());
+                    // Refreshing only the kernel goal would leave every later
+                    // tactic that dispatches on the written claim -- `arithmetic`
+                    // over the `Integer` fragment among them -- reading a goal
+                    // this step has already replaced. Rebuild the Surface
+                    // spelling of the same refreshed claim, and install it only
+                    // when it lowers back to exactly this kernel proposition.
+                    let surface = goal.surface.as_deref().and_then(|surface_goal| {
+                        let lower = |candidate: &ClickProposition| {
+                            let candidate =
+                                self.substitute_fixed_state_locals_in_proposition(candidate).ok()?;
+                            let mut opaque_calls = BTreeSet::new();
+                            crate::surface::validation::collect_click_function_calls_in_proposition(
+                                &candidate,
+                                &mut opaque_calls,
+                            );
+                            lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
+                                &candidate,
+                                facts.assumptions(),
+                                &values,
+                                &array_refs,
+                                &algebraic_values,
+                                integer_values,
+                                pre_state,
+                                state,
+                                result,
+                                recorded_snapshots,
+                                predicate_environment,
+                                click_function_environment,
+                                &opaque_calls,
+                                parameter_pointer_element_widths.clone(),
+                            )
+                            .ok()
+                        };
+                        self.refreshed_fold_law_surface_goal(
+                            application,
+                            &definition,
+                            surface_goal,
+                            &kernel,
+                            &lower,
+                        )
+                    });
                     let complete = facts.contains(&kernel);
                     (!complete).then(|| {
                         self.refined_proposition(
                             self.refined_branch_state(facts.clone()),
                             kernel,
-                            None,
+                            surface,
                             false,
                         )
                     })
@@ -913,15 +954,10 @@ impl<'a> Proof<'a> {
                 "`unfold({name}(...)) using` requires the body of `{name}` to be exactly a range fold"
             )));
         };
-        let end_parameter = match end.as_ref() {
-            ContractExpression::Binding(binding)
-            | ContractExpression::CBinding(binding)
-            | ContractExpression::CFragment(CExpression::Variable(binding)) => binding.clone(),
-            _ => {
-                return Err(self.step_error(format!(
-                    "`unfold({name}(...)) using`: the append-last-cell equation restates the shorter fold as `{name}` at the predecessor endpoint, so the fold's end must be a parameter of `{name}`"
-                )));
-            }
+        let Some(end_parameter) = fold_end_parameter_name(end).cloned() else {
+            return Err(self.step_error(format!(
+                "`unfold({name}(...)) using`: the append-last-cell equation restates the shorter fold as `{name}` at the predecessor endpoint, so the fold's end must be a parameter of `{name}`"
+            )));
         };
         for (part, what) in [
             (start.as_ref(), "start"),
@@ -949,6 +985,102 @@ impl<'a> Proof<'a> {
                     "`unfold({name}(...)) using` requires the call to remain the opaque application `{name}(...)` with an `int32` argument for `{end_parameter}`"
                 ))
             })
+    }
+
+    /// The Surface spelling of the goal `unfold(f(args)) using { ... }` just
+    /// refreshed, or `None` when this step cannot write one down.
+    ///
+    /// The kernel goal was refreshed by substituting the restated fold law's
+    /// conclusion, so its written form has to be rebuilt from the declaration.
+    /// The law replaces `f(args)` by one of exactly two expressions: the fold's
+    /// initial value over an empty range, or the fold's body at the predecessor
+    /// endpoint accumulated onto `f(args)` at that endpoint. Both are candidate
+    /// spellings only; the one installed is the one that lowers back to exactly
+    /// the refreshed kernel proposition, so a later tactic that dispatches on
+    /// the written goal reads this step's checked claim rather than a guess.
+    fn refreshed_fold_law_surface_goal(
+        &self,
+        application: &ClickFunctionApplication,
+        definition: &ClickFunctionDefinition,
+        surface_goal: &ClickProposition,
+        refreshed_kernel: &Proposition,
+        lower: &dyn Fn(&ClickProposition) -> Option<Proposition>,
+    ) -> Option<ClickProposition> {
+        let ContractExpression::RangeFold {
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+            ..
+        } = definition.body()
+        else {
+            return None;
+        };
+        let substitutions = definition
+            .parameters()
+            .iter()
+            .zip(&application.arguments)
+            .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let substitute = |expression: &ContractExpression| {
+            substitute_contract_expression(expression, &substitutions).ok()
+        };
+        let whole = ContractExpression::Call {
+            name: application.name.clone(),
+            arguments: application.arguments.clone(),
+        };
+        let mut candidates = Vec::new();
+        if let Some(initial) = substitute(initial) {
+            candidates.push(initial);
+        }
+        if let Some(position) = fold_end_parameter_name(end)
+            .and_then(|end| {
+                definition
+                    .parameters()
+                    .iter()
+                    .position(|parameter| parameter.name() == end)
+            })
+            .filter(|position| *position < application.arguments.len())
+            && let Some(body) = substitute(body)
+        {
+            let predecessor_end = ContractExpression::Subtract(
+                Box::new(application.arguments[position].clone()),
+                Box::new(ContractExpression::IntegerLiteral("1".to_string())),
+            );
+            let mut arguments = application.arguments.clone();
+            arguments[position] = predecessor_end.clone();
+            let cell = BTreeMap::from([
+                (
+                    accumulator.clone(),
+                    ContractExpression::Call {
+                        name: application.name.clone(),
+                        arguments,
+                    },
+                ),
+                (item.clone(), predecessor_end),
+            ]);
+            if let Ok(appended) = substitute_contract_expression(&body, &cell) {
+                candidates.push(appended);
+            }
+        }
+        for candidate in candidates {
+            crate::instrumentation::record_deterministic_work(1);
+            let equality = ClickProposition::Comparison {
+                left: whole.clone(),
+                operator: ComparisonOperator::Equal,
+                right: candidate,
+            };
+            let Some(rewritten) =
+                rewrite_click_proposition_by_surface_equality(surface_goal, &equality)
+            else {
+                continue;
+            };
+            if lower(&rewritten).as_ref() == Some(refreshed_kernel) {
+                return Some(rewritten);
+            }
+        }
+        None
     }
 
     pub(super) fn apply_predicate_unfold(
@@ -1649,6 +1781,19 @@ fn contract_expression_reads_binding(expression: &ContractExpression, binding: &
     substitute_contract_expression(expression, &substitutions)
         .map(|substituted| &substituted != expression)
         .unwrap_or(true)
+}
+
+/// The parameter name a range fold's end endpoint is written as, when it is
+/// written as a bare name at all. The append form of the fold law restates the
+/// shorter fold as the same application at the predecessor endpoint, so both
+/// the law's own check and the refreshed goal's Surface spelling need it.
+fn fold_end_parameter_name(end: &ContractExpression) -> Option<&String> {
+    match end {
+        ContractExpression::Binding(binding)
+        | ContractExpression::CBinding(binding)
+        | ContractExpression::CFragment(CExpression::Variable(binding)) => Some(binding),
+        _ => None,
+    }
 }
 
 fn collect_conjunctive_premises<'a>(
