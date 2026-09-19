@@ -10274,7 +10274,6 @@ fn contextual_store_step_scales_with_unrelated_named_facts() {
                 requires n <= 2147483647;
                 requires i >= 0;
                 requires i < n;
-                requires loadable(p[0..n]);
                 consumes p[0..n];
             }
         "#,

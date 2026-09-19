@@ -2753,7 +2753,6 @@ mod checked_proposition_index_tests {
         let click_source = r#"verifying "integer_range_fold_array_body.c";
 
 int32 array_fold_append_at_zero(int32 a[]) {
-    requires loadable(a[0..1]);
     views a[0..1];
     ensures (0..1).fold(0, |acc, k| { acc + to_integer(a[k]) }) ==
         (0..0).fold(0, |acc, k| { acc + to_integer(a[k]) }) + to_integer(a[0]) by {

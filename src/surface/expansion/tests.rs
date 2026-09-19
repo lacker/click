@@ -1459,7 +1459,6 @@ predicate sorted_pair(p: int32[2]) {
     p[0] <= p[1]
 }
 int32 compare_swap2(int32 p[2]) {
-    requires loadable(p[0..2]);
     consumes p[0..2];
     ensures sorted_pair(p) by {
         execute();

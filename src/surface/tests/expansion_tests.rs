@@ -552,7 +552,6 @@ fn integer_range_fold_array_contract_verifies_expands_and_rechecks() {
     let click_source = r#"verifying "integer_range_fold_array_body.c";
 
 int32 array_fold_append_at_zero(int32 a[]) {
-    requires loadable(a[0..1]);
     views a[0..1];
     ensures (0..1).fold(0, |acc, k| { acc + to_integer(a[k]) }) ==
         (0..0).fold(0, |acc, k| { acc + to_integer(a[k]) }) + to_integer(a[0]) by {
@@ -3737,7 +3736,6 @@ fn selected_pure_case_split_simp_expands_by_removal() {
             }
 
             int32 sort3(int32 p[3]) {
-                requires loadable(p[0..3]);
                 consumes p[0..3];
                 ensures sorted: sorted_range(p, 0, 3) by {
                     execute();
@@ -5018,7 +5016,6 @@ fn post_execution_simp_unfolds_predicate_goal_explicitly() {
         }
 
         int32 compare_swap2(int32* p) {
-            requires loadable(p[0..2]);
             consumes p[0..2];
             ensures sorted_pair(p);
         } by {
@@ -6644,7 +6641,6 @@ fn restricted_simp_expands_loadable_subrange_to_explicit_transport() {
         int32 read_at(int32 data[], int32 index, int32 length) {
             requires 0 <= index;
             requires index < length;
-            requires loadable(data[0..length]);
             views data[0..length];
             ensures result == old(data[index]);
         } by {
@@ -7526,7 +7522,6 @@ fn grouped_post_execution_rewrite_and_apply_before_frame_stay_on_proof() {
         verifying "rewrite_write.c";
 
         int32 apply_write(int32 p[], int32 x) {
-            requires loadable(p[0..1]);
             consumes p[0..1];
             ensures result <= 0 or result > 0;
         } by {
@@ -7536,7 +7531,6 @@ fn grouped_post_execution_rewrite_and_apply_before_frame_stay_on_proof() {
         }
 
         int32 rewrite_write(int32 p[]) {
-            requires loadable(p[0..1]);
             consumes p[0..1];
             ensures result == 9;
         } by {
@@ -7647,7 +7641,6 @@ fn grouped_post_execution_predicate_unfold_before_frame_stays_on_proof() {
         verifying "write_first.c";
 
         int32 write_first(int32 p[]) {
-            requires loadable(p[0..1]);
             consumes p[0..1];
             ensures is_nine(result);
         } by {
@@ -10884,7 +10877,6 @@ fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
         verifying "sort_three_cells.c";
 
         int32 sort_three_cells(int32 p[3]) {
-            requires loadable(p[0..3]);
             consumes p[0..3];
             ensures permutation(p, old(p), 0, 3) by {
                 execute();
@@ -11059,7 +11051,6 @@ fn bound_universal_outcome_retains_instantiation_and_transport() {
         }
 
         int32 bubble_pass3(int32 p[3]) {
-            requires loadable(p[0..3]);
             consumes p[0..3];
             ensures all_le_range(p, 0, 2, p[2]);
         } by {
@@ -11920,7 +11911,6 @@ fn outcome_simp_retains_checked_unchanged_old_equality_on_the_proof() {
         int32 shifted_loop_effect_preserves_prefix(int32 p[], int32 n) {
             requires n >= 1;
             requires n <= 2147483647;
-            requires loadable(p[0..n]);
             consumes p[0..n];
             ensures keeps_first: p[0] == old(p[0]);
             ensures returns_n: result == n;
@@ -12126,8 +12116,6 @@ fn quantified_old_transport_substitutes_its_introduced_binder_on_the_checked_pro
         int32 shifted_copy(int32 dst[], int32 src[], int32 n) {
             requires n >= 1;
             requires n <= 2147483647;
-            requires loadable(dst[0..n]);
-            requires loadable(src[0..n]);
             consumes dst[0..n];
             views src[0..n];
             requires separate(memory(dst[0..n]), memory(src[0..n]));
@@ -12987,7 +12975,6 @@ verifying "left.c" as left;
 verifying "right.c" as right;
 verifying "main.c";
 void write_zero(int *p) {
-    requires loadable(p[0..1]);
     owns p[0..1];
     ensures p[0] == 0;
 } by { execute(); simp(); }
@@ -13040,7 +13027,6 @@ fn qualified_static_helper_requires_transferred_ownership() {
     )];
     let source = r#"verifying "counter.c" as counter;
 void write_zero(int *p) {
-    requires loadable(p[0..1]);
     owns p[0..1];
     ensures p[0] == 0;
 } by { execute(); simp(); }
@@ -13816,7 +13802,6 @@ fn loop_entry_lowering_guard_expands_to_an_explicit_introduction() {
     let click_source = r#"
         verifying "fill3_entry_guard.c";
         int32 fill3_entry_guard(int32 p[3]) {
-            requires loadable(p[0..3]);
             consumes p[0..3];
             ensures returns_third: result == 2;
         } by {

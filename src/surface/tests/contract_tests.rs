@@ -1080,7 +1080,6 @@ fn callee_subrange_requirement_completes_without_a_body_rerun() {
         int32 write_at(int32 p[], int32 i) {
             requires i >= 0;
             requires i < 2147483647;
-            requires loadable(p[i..i + 1]);
             consumes p[i..i + 1];
 
             produces p[i..i + 1] by auto;
@@ -1090,7 +1089,6 @@ fn callee_subrange_requirement_completes_without_a_body_rerun() {
             requires i >= 0;
             requires i < n;
             requires n <= 2147483647;
-            requires loadable(p[0..n]);
             consumes p[0..n];
 
             produces p[0..n] by auto;
@@ -1955,7 +1953,6 @@ fn heap_backed_predicate_contract_stays_on_checked_proof() {
             }
 
             int32 read_first(int32 p[2]) {
-                requires loadable(p[0..2]);
                 views p[0..2];
                 requires ordered_pair(p);
                 ensures result == p[0];
@@ -1992,7 +1989,6 @@ fn quantified_heap_scope_stays_on_checked_proof() {
             verifying "read_first.c";
 
             int32 read_first(int32 p[2]) {
-                requires loadable(p[0..2]);
                 views p[0..2];
                 ensures result == p[0];
                 ensures stable: forall (k: int32) {
@@ -2566,7 +2562,6 @@ fn separate_requirement_proves_symbolic_unwritten_read() {
                 requires i < n;
                 requires j >= 0;
                 requires j < n;
-                requires loadable(p[0..n]);
                 consumes p[i..i + 1];
                 views p[j..j + 1];
                 requires separate(memory(p[i..i + 1]), memory(p[j..j + 1]));
@@ -2608,7 +2603,6 @@ fn quantified_old_memory_rejects_overwritten_cell() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable(p[0..2]);
                 consumes p[1..2];
                 ensures keeps_second_cell: forall (k: int32) {
                     1 <= k and k < 2 implies p[k] == old(p[k])
@@ -2645,7 +2639,6 @@ fn owned_segment_rejects_write_outside_owned_memory() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable(p[0..2]);
                 consumes p[0..1];
                 ensures returns_written: result == 9 by auto;
             }
@@ -2680,7 +2673,6 @@ fn old_memory_postcondition_fails_for_overwritten_cell() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable(p[0..2]);
                 consumes p[1..2];
                 ensures keeps_second: p[1] == old(p[1]) by auto;
             }

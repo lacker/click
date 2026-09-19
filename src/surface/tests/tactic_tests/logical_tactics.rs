@@ -307,7 +307,6 @@ fn failed_fixed_state_normalize_does_not_dump_internal_memory() {
         verifying "read.c";
 
         int32 read(int32* data) {
-            requires loadable(data[0..1]);
             views data[0..1];
             ensures result == 1;
         } by {
@@ -1140,7 +1139,6 @@ fn unfolds_predicate_goal_to_prove_compare_swap_sorted() {
             }
 
             int32 compare_swap2(int32* p) {
-                requires loadable(p[0..2]);
                 consumes p[0..2];
                 ensures sorted: sorted_pair(p) by {
                     execute();
@@ -1329,7 +1327,6 @@ fn every_claim_proof_form_retains_expandable_provenance() {
             verifying "clamp.c";
 
             int32 clamp(int32 p[1], int32 x) {
-                requires loadable(p[0..1]);
                 consumes p[0..1];
                 ensures result >= 0 by {
                     execute();

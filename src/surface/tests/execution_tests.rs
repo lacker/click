@@ -14,7 +14,6 @@ fn verifies_loadable_segment_proposition_for_indexed_read() {
             int32 read_index(int32 p[], int32 index, int32 n) {
                 requires 0 <= index;
                 requires index < n;
-                requires loadable(p[0..n]);
                 views p[0..n];
 
                 ensures returns_loaded_value: result == p[index] by auto;
