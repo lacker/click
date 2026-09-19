@@ -1995,6 +1995,24 @@ pub fn c_lower_spec_proposition_at_state_with_provenance(
 /// first such error is the message; the count alone hid a 4-byte load of an
 /// 8-byte cell behind "0 paths" for three proof attempts.
 fn no_single_path_message<T>(what: &str, paths: &[T], budget: &ExecutionBudget) -> String {
+    if paths.is_empty()
+        && let Some(extent) = budget.dropped_range_extent()
+    {
+        let width = extent.element_width;
+        let limit = extent.byte_limit;
+        return if extent.element_count < 0 {
+            format!(
+                "the kernel {what} produced no path: a memory range runs backwards, so it is not a byte extent: its end is {} elements before its start",
+                -extent.element_count
+            )
+        } else {
+            format!(
+                "the kernel {what} produced no path: a memory range is too wide to be a 32-bit byte extent: {} elements of {width} bytes is {} bytes, past the {limit}-byte limit",
+                extent.element_count,
+                extent.element_count.saturating_mul(i64::from(width))
+            )
+        };
+    }
     match (paths.len(), budget.dropped_runtime_error()) {
         (0, Some(error)) => format!(
             "the kernel {what} produced no path: every evaluation path ended in a runtime error: {}",

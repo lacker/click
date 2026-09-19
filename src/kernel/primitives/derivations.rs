@@ -1164,6 +1164,28 @@ impl ExecutionBudget {
         self.dropped_runtime_error.as_ref()
     }
 
+    /// The first constant element range this budget's lowering refused as a
+    /// 32-bit byte extent, for the message a caller writes when the lowering
+    /// produced no path at all.
+    pub fn dropped_range_extent(&self) -> Option<&super::DroppedRangeExtent> {
+        self.dropped_range_extent.as_ref()
+    }
+
+    /// Records such a refusal. Diagnostic only; it decides nothing.
+    pub(in crate::kernel) fn record_dropped_range_extent(
+        &mut self,
+        element_count: i64,
+        element_width: u32,
+        byte_limit: u32,
+    ) {
+        self.dropped_range_extent
+            .get_or_insert(super::DroppedRangeExtent {
+                element_count,
+                element_width,
+                byte_limit,
+            });
+    }
+
     /// The fixed work allowances every budget starts from, beside the one
     /// field a caller must choose. Private, so "the other fields' defaults"
     /// stays a convenience and never becomes a way to leave the
@@ -1180,6 +1202,7 @@ impl ExecutionBudget {
             next_match_binder_variable: Self::MATCH_BINDER_VARIABLE_BASE,
             refuses_execution_identities: false,
             dropped_runtime_error: None,
+            dropped_range_extent: None,
         }
     }
 
