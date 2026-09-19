@@ -7092,14 +7092,15 @@ mod integer_budget_tests {
             variable,
             &Bitvector32Term::Constant(7),
         );
-        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, _), true) = substituted
-        else {
-            panic!("machine-backed Integer proposition changed shape");
-        };
-        let IntegerTerm::Machine(machine) = left.as_ref() else {
-            panic!("machine-backed Integer term was not preserved");
-        };
-        assert_eq!(machine.value(), &Bitvector32Term::Constant(7));
+        // Substitution reached inside the machine-backed Integer term. The
+        // observation it left behind is decided -- `to_integer(7)` is the
+        // mathematical 7, the same Integer the evaluation below produces for
+        // the same machine constant -- so the equation against 7 is decided
+        // too, by the Integer equality's own smart constructor.
+        assert_eq!(
+            substituted,
+            Proposition::ConditionIs(ConditionTerm::Constant(true), true)
+        );
 
         let expression = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::Value(
             CValue::Int32(Bitvector32Term::Constant(7)),

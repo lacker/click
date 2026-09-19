@@ -753,6 +753,63 @@ fn collect_bitvector_carriers(term: &Bitvector32Term, variables: &mut CarrierVar
     }
 }
 
+/// Whether a mathematical Integer term is the literal zero.
+fn integer_is_zero(term: &IntegerTerm) -> bool {
+    matches!(term, IntegerTerm::Constant(value) if num_traits::Zero::is_zero(value))
+}
+
+/// One rebuilt 32-bit machine comparison, put back through the smart
+/// constructor that decides it when both sides are literals.
+///
+/// This adds no arithmetic of its own: each arm is the constructor every other
+/// producer of that condition already calls, so a condition a rewrite rebuilt
+/// is spelled exactly as a condition a lowering built. Anything that is not a
+/// 32-bit comparison passes through untouched.
+fn folded_machine_condition(condition: ConditionTerm) -> ConditionTerm {
+    match condition {
+        ConditionTerm::Bitvector32Equal(left, right) => ConditionTerm::equal(*left, *right),
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            ConditionTerm::signed_less_than(*left, *right)
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            ConditionTerm::signed_less_equal(*left, *right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            ConditionTerm::signed_greater_than(*left, *right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            ConditionTerm::signed_greater_equal(*left, *right)
+        }
+        condition => condition,
+    }
+}
+
+/// The content a registered load variable's own snapshot already holds at its
+/// own cell, when that snapshot holds one exactly.
+///
+/// A registered load variable is *defined* as `load(memory, pointer)` for the
+/// pair the registry holds for it -- that is what makes its defining equation
+/// a kernel-certified truth rather than a premise a proof must discharge. A
+/// snapshot's cell map is the authoritative content of that snapshot at an
+/// exact pointer: every load evaluation consults it before anything else and
+/// returns it unconditionally when it hits. So when the map holds an entry for
+/// exactly this pointer, that entry *is* `load(memory, pointer)`, and
+/// returning it here unfolds the variable's own definition rather than
+/// asserting anything new about memory. No alias is decided, no pointer is
+/// compared, and no fact set is consulted.
+///
+/// Only a plain `int32` cell is resolved. A load term carries no width, so a
+/// cell of some other width at the same address would be a reinterpretation of
+/// those bytes rather than the same load; this returns nothing there instead of
+/// guessing a width.
+fn materialized_registered_load_value(variable: Variable) -> Option<Bitvector32Term> {
+    let (memory, pointer) = crate::kernel::eval::registered_load_for_variable(&variable)?;
+    match memory.memory().known_value(&pointer)? {
+        CValue::Int32(bits) => Some(bits),
+        _ => None,
+    }
+}
+
 /// Extend the carrier summary through one registered load's selected
 /// pointer.  A per-walker load set prevents shared or cyclic registry edges
 /// from reopening the same pointer DAG; snapshots remain completely opaque.
@@ -2132,22 +2189,52 @@ impl<'a> TermRewrite<'a> {
                 ))
             }
             IntegerTerm::Machine(value) => {
-                IntegerTerm::Machine(crate::kernel::SharedMachineIntegerTerm::intern(
-                    value.ty(),
-                    self.bits(value.value()),
-                ))
+                let bits = self.bits(value.value());
+                // The mathematical observation of a machine *constant* is that
+                // constant: `from_machine` folds it and keeps the carrier
+                // whenever the bits are still symbolic. Without this, a rewrite
+                // that resolves the observed machine term to a literal leaves
+                // `to_integer(1)` beside the `1` a reader wrote, and the two
+                // are the same Integer. This folds one already-decided
+                // observation, never a symbolic expression.
+                IntegerTerm::from_machine(value.ty(), bits.clone()).unwrap_or_else(|| {
+                    IntegerTerm::Machine(crate::kernel::SharedMachineIntegerTerm::intern(
+                        value.ty(),
+                        bits,
+                    ))
+                })
             }
             // Rewriting preserves the symbolic DAG. In particular, it must
             // not fold a repeated symbolic expression into a giant literal.
             IntegerTerm::Negate(value) => IntegerTerm::Negate(self.integer_shared(value).into()),
-            IntegerTerm::Add(left, right) => IntegerTerm::Add(
-                self.integer_shared(left).into(),
-                self.integer_shared(right).into(),
-            ),
-            IntegerTerm::Subtract(left, right) => IntegerTerm::Subtract(
-                self.integer_shared(left).into(),
-                self.integer_shared(right).into(),
-            ),
+            // Adding or subtracting a rewritten zero is the identity, and
+            // dropping it is the one fold that cannot grow a term: it deletes
+            // a node. `IntegerTerm::add` and `IntegerTerm::subtract` are where
+            // every other producer drops it, so keeping it here would leave a
+            // substituted `x + 0` beside the `x` those producers build, and a
+            // proof would have to see past the difference. Two literals are
+            // deliberately still left alone, which is what the note above is
+            // about.
+            IntegerTerm::Add(left, right) => {
+                let left = self.integer_shared(left);
+                let right = self.integer_shared(right);
+                if integer_is_zero(&right) {
+                    left
+                } else if integer_is_zero(&left) {
+                    right
+                } else {
+                    IntegerTerm::Add(left.into(), right.into())
+                }
+            }
+            IntegerTerm::Subtract(left, right) => {
+                let left = self.integer_shared(left);
+                let right = self.integer_shared(right);
+                if integer_is_zero(&right) {
+                    left
+                } else {
+                    IntegerTerm::Subtract(left.into(), right.into())
+                }
+            }
             IntegerTerm::Multiply(left, right) => IntegerTerm::Multiply(
                 self.integer_shared(left).into(),
                 self.integer_shared(right).into(),
@@ -3371,6 +3458,17 @@ impl<'a> TermRewrite<'a> {
             // scanning or rewriting the memory snapshot would change an
             // unrelated proof-state value.
             if let Some(rewritten) = self.rewrite_registered_load(*variable) {
+                // Substituting the binder can turn a binder-dependent address
+                // into one this very snapshot already materializes. The load
+                // is then that cell's content, and leaving a fresh load
+                // identity in its place would hide from the proof the value
+                // the store it names just wrote.
+                if rewritten != *variable
+                    && let Some(value) = materialized_registered_load_value(rewritten)
+                {
+                    self.changed = true;
+                    return value;
+                }
                 return Bitvector32Term::Variable(rewritten);
             }
             if self.checked_work_exhausted() {
@@ -3528,10 +3626,14 @@ impl<'a> TermRewrite<'a> {
                 if let Some(conditions) = &mut self.collected_conditions {
                     conditions.push(condition.as_ref().clone());
                 }
-                let condition = self.condition(condition);
-                if self.conditions.is_some()
-                    && let ConditionTerm::Constant(value) = condition
-                {
+                // Re-run the condition through its own smart constructor. A
+                // rewrite that replaced the compared terms by literals has
+                // decided this conditional, and a decided conditional is one
+                // of its arms: `Bitvector32Term::if_then_else` would never
+                // have built it, so leaving it standing is a term that no
+                // lowering of the same source produces.
+                let condition = folded_machine_condition(self.condition(condition));
+                if let ConditionTerm::Constant(value) = condition {
                     return self.bits(if value { then_term } else { else_term });
                 }
                 Bitvector32Term::If {
@@ -5495,8 +5597,10 @@ mod tests {
         let Term::Integer(IntegerTerm::RangeFold { body, .. }) = output else {
             unreachable!()
         };
-        assert!(matches!(body.as_ref(), IntegerTerm::Machine(machine)
-            if machine.value() == &Bitvector32Term::Constant(7)));
+        // The body observed a free machine variable, so the rewrite reached it.
+        // Once the observed term is a literal the observation is decided, and
+        // the body is the mathematical constant that `to_integer(7)` denotes.
+        assert_eq!(body.as_ref(), &IntegerTerm::constant_i64(7));
     }
 
     #[test]

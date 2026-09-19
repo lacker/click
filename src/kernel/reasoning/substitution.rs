@@ -8826,8 +8826,11 @@ mod integer_range_fold_substitution_tests {
         };
         assert_eq!(start.value(), &Bitvector32Term::Constant(9));
         assert_eq!(end.value(), &Bitvector32Term::Constant(9));
-        assert!(matches!(initial.as_ref(), IntegerTerm::Machine(machine)
-            if machine.value() == &Bitvector32Term::Constant(9)));
+        // The initial value was `to_integer(source)`, so substituting a literal
+        // decides that observation: it is the mathematical 9, the same Integer
+        // an evaluation of `to_integer(9)` produces. The body's observation is
+        // of the bound item and stays an observation.
+        assert_eq!(initial.as_ref(), &IntegerTerm::constant_i64(9));
         assert!(matches!(body.as_ref(), IntegerTerm::Machine(machine)
             if machine.value() == &Bitvector32Term::Variable(source)));
     }

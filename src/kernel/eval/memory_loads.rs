@@ -78,11 +78,21 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
         assumptions,
         has_external_read_resource,
         false,
+        true,
         &mut alias_cache,
         source,
     )
 }
 
+/// The paths of one *specification* load: a read written in a contract, an
+/// invariant, or a proof step, rather than a read the C program performs.
+///
+/// A specification load denotes the value one named snapshot holds at one
+/// pointer. It is not a step of the program, so it has no branch to take: an
+/// alias it cannot resolve leaves the load term unresolved rather than
+/// splitting into the cases a C execution would have to choose between. The
+/// one-term spec load rule already governs the non-symbolic spec path in
+/// `crate::kernel::spec`; this is the same rule on the symbolic one.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::kernel) fn evaluate_spec_memory_load_paths(
     memory: &CMemory,
@@ -110,6 +120,7 @@ pub(in crate::kernel) fn evaluate_spec_memory_load_paths(
         assumptions,
         false,
         true,
+        false,
         &mut alias_cache,
         None,
     )
@@ -123,6 +134,22 @@ fn has_pending_reallocation_for_pointer(memory: &CMemory, pointer: &Pointer) -> 
         .any(|pending| pending.old_pointer.block == pointer.block)
 }
 
+/// The shared load evaluator behind both entry points above.
+///
+/// `branches_on_unresolved_aliases` decides what an alias this load cannot
+/// decide does: split the load into the two cases a C execution would have to
+/// choose between, or leave the load term unresolved.
+///
+/// A C read is a step of the program. It observes one of those cases, and the
+/// execution carries that case's condition with it, so it must branch. A
+/// specification read is not a step: it denotes the value the named snapshot
+/// holds, and the load term over that snapshot already *is* that value.
+/// Leaving the term unresolved is therefore sound wherever splitting was —
+/// each case's value equals the load term under that case's condition, so the
+/// term is what the cases agree on, and it asserts strictly less than either of
+/// them. It is also the only correct answer under a binder: a fold body is
+/// evaluated once for every item of its range at once, and "this item aliases
+/// the cell the program just wrote" is not a fact about any particular item.
 #[allow(clippy::too_many_arguments)]
 fn evaluate_c_memory_load_paths_with_alias_cache(
     memory: &CMemory,
@@ -133,6 +160,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     assumptions: &PureFactContext,
     has_external_read_resource: bool,
     preserve_provisional_loadability: bool,
+    branches_on_unresolved_aliases: bool,
     alias_cache: &mut MemoryLoadAliasCache,
     source: Option<&LoadSourceId>,
 ) -> Vec<CExpressionPath> {
@@ -459,25 +487,39 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         }];
     }
 
-    let unresolved = crate::instrumentation::measure_operation(
-        "kernel",
-        "memory load",
-        "memory load: unresolved-cell scan",
-        || {
-            crate::instrumentation::record_deterministic_work(memory.cells.len());
-            memory
-                .cells
-                .iter()
-                .find_map(|(stored_pointer, stored_value)| {
-                    (stored_pointer != &pointer
-                        && !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
-                        && !alias_cache.resolution_equal(&pointer, stored_pointer, assumptions)
-                        && (assumptions.should_defer_non_exact_condition_reasoning()
-                            || !alias_cache.equal(&pointer, stored_pointer, assumptions)))
-                    .then(|| (stored_pointer.clone(), stored_value.clone()))
-                })
-        },
-    );
+    // A load that does not split has nothing to learn from an undecided
+    // alias, so it does not pay for the scan that looks for one either.
+    let unresolved = branches_on_unresolved_aliases
+        .then(|| {
+            crate::instrumentation::measure_operation(
+                "kernel",
+                "memory load",
+                "memory load: unresolved-cell scan",
+                || {
+                    crate::instrumentation::record_deterministic_work(memory.cells.len());
+                    memory
+                        .cells
+                        .iter()
+                        .find_map(|(stored_pointer, stored_value)| {
+                            (stored_pointer != &pointer
+                                && !alias_cache.resolution_distinct(
+                                    &pointer,
+                                    stored_pointer,
+                                    assumptions,
+                                )
+                                && !alias_cache.resolution_equal(
+                                    &pointer,
+                                    stored_pointer,
+                                    assumptions,
+                                )
+                                && (assumptions.should_defer_non_exact_condition_reasoning()
+                                    || !alias_cache.equal(&pointer, stored_pointer, assumptions)))
+                            .then(|| (stored_pointer.clone(), stored_value.clone()))
+                        })
+                },
+            )
+        })
+        .flatten();
     if let Some((stored_pointer, stored_value)) = unresolved {
         let mut paths = Vec::new();
 
@@ -535,6 +577,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 assumptions,
                 has_external_read_resource,
                 preserve_provisional_loadability,
+                branches_on_unresolved_aliases,
                 alias_cache,
                 source,
             ));
