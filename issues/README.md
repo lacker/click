@@ -62,7 +62,6 @@ concurrency, and graph coverage remain P2.
 Soundness and kernel shape:
 
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
-- [Make load-variable naming stable across the surface and kernel](load-variable-naming-epoch.md)
 - [Verify byte representation copying and pointer preservation](byte-representation-demo.md)
 - [Verify independently owned parents sharing a heap child](shared-heap-graph-demo.md)
 

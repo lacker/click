@@ -438,9 +438,8 @@ fn memory_only_adds_named_cells(
 
 /// Explains a rejected unnamed-cell addition with bounded, actionable detail.
 ///
-/// Keeps the historical prefix so existing triage notes still match, then adds
-/// what the old message omitted: the held value vs the recomputed canonical
-/// load, the pre-rewrite snapshot and epoch identities (compact arena ids, not
+/// Names the held value and the recomputed canonical load, the pre-rewrite
+/// snapshot and epoch identities (compact arena ids, not
 /// memory dumps), and whether the pointer itself embeds an inner load whose own
 /// epoch drift would cascade into this outer name. The epoch lookup is the same
 /// assumption-free memoized walk the naming itself uses, so this adds no proof
@@ -482,8 +481,8 @@ pre-rewrite snapshot ({base_arena},{base_id}), {epoch_note}"
         ));
     }
     detail.push_str(
-        "; the surface named this cell while unfolding and the kernel recomputed a different load variable \
-(see issues/load-variable-naming-epoch.md): the unfold is not at fault, this is a verifier naming divergence",
+        "; the proposed rewrite stored a different load variable than the consistency check \
+recomputed from the rewrite's input state; this is an internal naming divergence",
     );
     detail
 }
@@ -640,7 +639,10 @@ impl CheckedResourceRewrite {
                     memory_only_adds_named_cells(&before_state.memory, &after_state.memory)
                 {
                     return Err(if unfold {
-                        format!("an unfold may only name cells it exposes, but it {detail}")
+                        format!(
+                            "internal error while applying an unfold: Click named an exposed cell \
+inconsistently; it {detail}; this is a Click implementation error, not an invalid unfold"
+                        )
                     } else {
                         format!("a fold may not change the memory snapshot, but it {detail}")
                     });

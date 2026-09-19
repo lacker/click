@@ -2,9 +2,9 @@
 
 A resource body that names its base through one load and its range endpoint
 through another must unfold: the cells the unfold exposes are named by the same
-load variables the kernel recomputes. See
-[`issues/load-variable-naming-epoch.md`](../issues/load-variable-naming-epoch.md)
-for the current divergence.
+load variables the rewrite consistency check recomputes from the memory before
+the unfold. Materializing an earlier clause must not move the naming snapshot
+for a later clause.
 
 ```c filename=load_variable_naming_epoch.c
 struct arena {

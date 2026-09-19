@@ -2612,6 +2612,14 @@ pub(in crate::surface) fn instantiate_composite_resource_body_resources(
     mut memory: CMemory,
 ) -> Result<(CMemory, ResourceContext), String> {
     let mut resources = ResourceContext::new();
+    // Every cell exposed by this one body expansion names the value it had
+    // in the snapshot before the expansion began.  Lower clauses against the
+    // progressively materialized memory so a later clause can still address
+    // through a cell an earlier clause exposed, but do not let those cached
+    // cells become a new load-naming epoch.  The checked resource rewrite
+    // independently validates every added cell against this same entry
+    // snapshot.
+    let naming_memory = memory.clone();
     for contained in composite_body.contains() {
         let contained =
             instantiate_resource_clause(contained, substitutions).map_err(|message| {
@@ -2626,7 +2634,13 @@ pub(in crate::surface) fn instantiate_composite_resource_body_resources(
                     describe_available_facts(&[], resources.facts(), parameters, arguments, &[])
                 )
             })?;
-        memory = materialize_composite_resource_cells(memory, &contained, &lowered, parameters);
+        memory = materialize_composite_resource_cells_from_snapshot(
+            memory,
+            &naming_memory,
+            &contained,
+            &lowered,
+            parameters,
+        );
         // This composite-body instantiation path has no fact assumptions yet.
         // Projection/packing paths check composition once assumptions are
         // available.
@@ -4525,7 +4539,24 @@ fn instantiate_contract_segment(
 }
 
 fn materialize_composite_resource_cells(
+    memory: CMemory,
+    resource_clause: &ResourceClause,
+    lowered: &CResourceFact,
+    parameters: &[syntax::C0Parameter],
+) -> CMemory {
+    let naming_memory = memory.clone();
+    materialize_composite_resource_cells_from_snapshot(
+        memory,
+        &naming_memory,
+        resource_clause,
+        lowered,
+        parameters,
+    )
+}
+
+fn materialize_composite_resource_cells_from_snapshot(
     mut memory: CMemory,
+    naming_memory: &CMemory,
     resource_clause: &ResourceClause,
     lowered: &CResourceFact,
     parameters: &[syntax::C0Parameter],
@@ -4552,7 +4583,6 @@ fn materialize_composite_resource_cells(
         return memory;
     }
 
-    let base_memory = memory.clone();
     // `object(p)` is one complete struct: its cells take the layout's field
     // types, so a wide integer field reads back as itself. Pointer fields
     // keep the int32 words this projection uses everywhere: a pointer cell
@@ -4580,7 +4610,7 @@ fn materialize_composite_resource_cells(
                             continue;
                         }
                         let load = crate::kernel::canonical_form_of_load(
-                            crate::kernel::intern_c_memory(base_memory.clone()),
+                            crate::kernel::intern_c_memory(naming_memory.clone()),
                             pointer.clone(),
                         );
                         let value = if element_type.is_pointer() {
@@ -4611,7 +4641,7 @@ fn materialize_composite_resource_cells(
             continue;
         }
         let load = crate::kernel::canonical_form_of_load(
-            crate::kernel::intern_c_memory(base_memory.clone()),
+            crate::kernel::intern_c_memory(naming_memory.clone()),
             pointer.clone(),
         );
         // Preserve scalar pointee types, including substituted pointer values.
