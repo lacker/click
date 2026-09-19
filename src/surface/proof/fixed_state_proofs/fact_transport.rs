@@ -1,5 +1,6 @@
 use super::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
+use crate::surface::proof_diagnostics::render;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn plan_explicit_fact_transport(
@@ -459,14 +460,75 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
             &transport_assumptions,
             &transition_facts,
         ) {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: no certified frame transport applies to the exact source fact\n  source: {source:?}\n  current memory: {:?}\n  effect facts: {:?}",
-                state.memory(),
-                effect_facts
+            return Err(ClickError::new(describe_unreachable_fact_transport(
+                claim_label,
+                tactic_index,
+                &source,
+                &target,
+                &transition_facts,
             )));
         }
     }
     Ok(CheckedFixedStateFactTransport { source, target })
+}
+
+/// Say what a refused `transport ... using` was comparing and what it still
+/// needs, in the same rendering the rest of a proof report uses.
+///
+/// This refusal used to print the Rust `Debug` of the whole current `CMemory`
+/// and of every frontier effect fact. A repeated raw memory snapshot is a
+/// diagnostic defect: it is unbounded, it is not the reader's vocabulary, and
+/// it never says which of the two sides is which. The transport rule compares
+/// exactly two propositions and looks for one frontier fact relating their
+/// memories, so that is what the message prints — including the case where
+/// the two sides already name the same memory, where nothing needs
+/// transporting and the target has to be proved directly.
+fn describe_unreachable_fact_transport(
+    claim_label: &str,
+    tactic_index: usize,
+    source: &Proposition,
+    target: &Proposition,
+    transition_facts: &[ExecutionPureFact],
+) -> String {
+    let mut labels = render::SnapshotLabels::default();
+    let mut rendered = format!(
+        "`{claim_label}` tactic {tactic_index}: `transport using` found no frame evidence \
+         carrying its source fact to the target's state\
+         \n  source (holds): {}\
+         \n  target (wanted): {}",
+        render::render_proposition_labeled(source, &mut labels),
+        render::render_proposition_labeled(target, &mut labels),
+    );
+    if transition_facts.is_empty() {
+        rendered.push_str(
+            "\n  no effect fact at this frontier relates the two states, so `transport` has no \
+             frame step to take: if the two sides read the same memory, the target is not a \
+             transport but an ordinary goal — prove it with the rule that decides it, such as \
+             `simp()` or a theorem application",
+        );
+        return rendered;
+    }
+    const LISTED: usize = 8;
+    let total = transition_facts.len();
+    rendered.push_str(&format!(
+        "\n  effect facts relating states at this frontier (showing {} of {total}):",
+        total.min(LISTED)
+    ));
+    for fact in transition_facts.iter().take(LISTED) {
+        rendered.push_str("\n    ");
+        rendered.push_str(&render::render_proposition_labeled(
+            fact.proposition(),
+            &mut labels,
+        ));
+    }
+    if total > LISTED {
+        rendered.push_str("\n    … <additional effect facts omitted>");
+    }
+    rendered.push_str(
+        "\n  none of them justifies the target: a store's effect summary carries a fact about a \
+         cell the store did not write, and a call's havoc needs a separation for the cell",
+    );
+    rendered
 }
 
 fn surface_predicate_call_name(proposition: &ClickProposition) -> Option<&str> {

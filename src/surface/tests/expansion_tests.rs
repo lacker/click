@@ -3325,7 +3325,7 @@ fn marked_constant_store_transport_retains_load_identity() {
     assert!(
         error
             .message()
-            .contains("no certified frame transport applies to the exact source fact"),
+            .contains("found no frame evidence carrying its source fact to the target's state"),
         "{}",
         error.message()
     );
