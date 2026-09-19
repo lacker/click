@@ -169,6 +169,25 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
                 )
             )));
         }
+        // Citing a stated range cites what the range says. `loadable(p[a..b])`
+        // means `a..b` is a valid 32-bit byte extent and those bytes are
+        // loadable, and `instantiate_theorem_application_with_assumptions`
+        // asks the application for both halves. A `using` list that names the
+        // range has already named both, so requiring the extent half to be
+        // restated as well asks for a fact the cited premise carries — and one
+        // half of it, the endpoint `fits` bound, is an unsigned comparison the
+        // surface cannot write at all. This is the rule `transport using`
+        // already applies (`fact_transport.rs`), for the same reason. It
+        // relaxes the restriction only: a guard joins the evidence set solely
+        // where it is already available here, so nothing is derived and no
+        // ambient fact becomes evidence for anything else.
+        for guard in crate::kernel::stated_loadable_extent_guard_spellings(&premise) {
+            if !explicit_premises.contains(&guard)
+                && available.available_across_effects(&guard, &[])
+            {
+                explicit_premises.push(guard);
+            }
+        }
         if !explicit_premises.contains(&premise) {
             explicit_premises.push(premise);
         }
