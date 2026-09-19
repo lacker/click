@@ -798,16 +798,73 @@ fn folded_machine_condition(condition: ConditionTerm) -> ConditionTerm {
 /// asserting anything new about memory. No alias is decided, no pointer is
 /// compared, and no fact set is consulted.
 ///
-/// Only a plain `int32` cell is resolved. A load term carries no width, so a
-/// cell of some other width at the same address would be a reinterpretation of
-/// those bytes rather than the same load; this returns nothing there instead of
-/// guessing a width.
+/// Three conditions bound it, and each closes a way the cell could be
+/// something other than this load's value.
+///
+/// *Width.* `Bitvector32Term::MemoryLoad` records no width: `symbolic_int32_load`
+/// and `symbolic_uint8_load` build the same term, so the variable alone cannot
+/// say how many bytes its load reads. Both halves of the width are therefore
+/// checked against the only two places that do record one. The cell must be a
+/// `CValue::Int32`, which is a four-byte value; and every scaled term in the
+/// pointer's own offset must scale by four, which makes the address an element
+/// address of a four-byte array rather than a narrower field inside a wider
+/// element. A one-byte array indexes by `*1` and a narrow struct field adds a
+/// constant to a stride that is the struct's size, so neither reaches here.
+///
+/// *Union overlays.* A typed union overlay outranks the raw cell for an exact
+/// typed load, so a raw cell read while an overlay is present would be the
+/// wrong value rather than a missing one. `CMemory::store_with_context` drops
+/// every overlay at the pointer it writes and `CMemory::store_union` drops the
+/// raw cell at the pointer it overlays, so the two never coexist at one
+/// pointer — an invariant this helper depends on and does not enforce
+/// elsewhere. It is asserted in debug builds and refused in release ones, and
+/// `store_and_union_cells_never_coexist_at_one_pointer` pins the invariant
+/// itself.
+///
+/// *Exactness.* Only the exact pointer is looked up. No alias is decided, no
+/// pointer is compared, and no fact set is consulted.
 fn materialized_registered_load_value(variable: Variable) -> Option<Bitvector32Term> {
     let (memory, pointer) = crate::kernel::eval::registered_load_for_variable(&variable)?;
-    match memory.memory().known_value(&pointer)? {
+    if !pointer_addresses_four_byte_elements(&pointer) {
+        return None;
+    }
+    let memory = memory.memory();
+    debug_assert!(
+        !(memory.has_union_overlay_at(&pointer) && memory.known_value(&pointer).is_some()),
+        "a raw cell and a union overlay coexist at one pointer"
+    );
+    if memory.has_union_overlay_at(&pointer) {
+        return None;
+    }
+    match memory.known_value(&pointer)? {
         CValue::Int32(bits) => Some(bits),
         _ => None,
     }
+}
+
+/// Whether every scaled term in a pointer's offset steps by four bytes.
+///
+/// This is the pointer's own record of its element width. A pointer built by
+/// indexing a four-byte array scales by four at every step, including the
+/// argument's own base offset; a narrower array scales by its own width, and a
+/// field inside a wider element adds a constant to a stride that is the
+/// element's size rather than the field's. A pointer shape this does not
+/// recognize answers `false`, so an unfamiliar address is refused rather than
+/// assumed.
+fn pointer_addresses_four_byte_elements(pointer: &Pointer) -> bool {
+    fn offset_scales_by_four(offset: &PointerOffsetTerm) -> bool {
+        match offset {
+            PointerOffsetTerm::Int32Scaled { byte_width, .. } => *byte_width == 4,
+            PointerOffsetTerm::Int64Scaled { byte_width, .. } => *byte_width == 4,
+            PointerOffsetTerm::Add(left, right) => {
+                offset_scales_by_four(left) && offset_scales_by_four(right)
+            }
+            // A bare constant or variable offset carries no element width of
+            // its own, so it cannot witness one.
+            PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => false,
+        }
+    }
+    offset_scales_by_four(&pointer.offset)
 }
 
 /// Extend the carrier summary through one registered load's selected

@@ -2675,6 +2675,40 @@ fn integer_range_fold_endpoint_congruence_requires_one_memory_snapshot() {
     )));
 }
 
+/// A raw cell and a typed union overlay never both describe one pointer.
+///
+/// The overlay outranks the raw cell for an exact typed load, so a reader that
+/// treats the raw cell as the pointer's content -- as
+/// `materialized_registered_load_value` does when it unfolds a registered load
+/// variable -- would otherwise be able to read the outranked value. Both
+/// writers keep the two disjoint; this pins that they do, in both orders.
+#[test]
+fn store_and_union_cells_never_coexist_at_one_pointer() {
+    let cell = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let base = CMemory::new().with_block("array", 8);
+
+    let overlay_over_store = base.clone().store(cell.clone(), int32(42)).store_union(
+        cell.clone(),
+        CType::UInt8,
+        CValue::UInt8(Bitvector32Term::Constant(7)),
+    );
+    assert_eq!(overlay_over_store.known_value(&cell), None);
+    assert!(overlay_over_store.has_union_overlay_at(&cell));
+
+    let store_over_overlay = base
+        .store_union(
+            cell.clone(),
+            CType::UInt8,
+            CValue::UInt8(Bitvector32Term::Constant(7)),
+        )
+        .store(cell.clone(), int32(42));
+    assert_eq!(store_over_overlay.known_value(&cell), Some(int32(42)));
+    assert!(!store_over_overlay.has_union_overlay_at(&cell));
+}
+
 #[test]
 fn symbolic_store_invalidates_only_possible_aliasing_cells() {
     let i = Variable(81);
