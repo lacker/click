@@ -37,7 +37,6 @@ resource vector_storage(owner: struct vector*) {
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;
     fact owner->cap <= 1073741823;
-    fact loadable(owner->data[0..owner->len]);
     fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
 }
 
@@ -51,7 +50,6 @@ resource allocated_vector(owner: struct vector*) {
     fact owner->len <= owner->cap;
     fact 1 <= owner->cap;
     fact owner->cap <= 536870911;
-    fact loadable(owner->data[0..owner->len]);
     fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
 }
 
@@ -167,8 +165,6 @@ int32 vector_copy(
             length <= src_capacity;
             1 <= dst_capacity;
             1 <= src_capacity;
-            at(statement(0).entry, loadable(dst[0..dst_capacity]));
-            at(statement(0).entry, loadable(src[0..src_capacity]));
             separate(memory(dst[0..dst_capacity]), memory(src[0..src_capacity]));
         }
         assumption();
@@ -307,19 +303,7 @@ int32 vector_grow(struct vector* owner) {
             owner->len <= 536870910;
         }
     }
-    have loadable(old_data[0..old_capacity]) by {
-        transport(loadable(old(owner->data[0..owner->cap])), loadable(old_data[0..old_capacity])) using {
-            loadable(old(owner->data[0..owner->cap]));
-        }
-        assumption();
-    }
     if new_data == 0 {
-        have loadable(owner->data[0..owner->cap]) by {
-            transport(loadable(old(owner->data[0..owner->cap])), loadable(owner->data[0..owner->cap])) using {
-                loadable(old(owner->data[0..owner->cap]));
-            }
-            assumption();
-        }
         step();
         step();
         have forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) } by {
@@ -394,12 +378,6 @@ int32 vector_grow(struct vector* owner) {
             assumption();
         }
         have forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) } by simp;
-        have loadable(owner->data[0..owner->len]) by {
-            transport(forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) }, loadable(owner->data[0..owner->len])) using {
-                forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) };
-            }
-            assumption();
-        }
         fold(allocated_vector(owner));
         have result == 1 by {
             normalize();
@@ -998,30 +976,6 @@ int32 vector_fill(struct vector* owner, int32 value) {
     unfold(nonempty_vector(owner));
     step();
     step();
-    have loadable(owner->len) by {
-        transport(loadable(old(owner->len)), loadable(owner->len)) using {
-            loadable(old(owner->len));
-        }
-        assumption();
-    }
-    have loadable(owner->cap) by {
-        transport(loadable(old(owner->cap)), loadable(owner->cap)) using {
-            loadable(old(owner->cap));
-        }
-        assumption();
-    }
-    have loadable(owner->data) by {
-        transport(loadable(old(owner->data)), loadable(owner->data)) using {
-            loadable(old(owner->data));
-        }
-        assumption();
-    }
-    have loadable(owner->data[0..owner->cap]) by {
-        transport(loadable(old(owner->data[0..owner->cap])), loadable(owner->data[0..owner->cap])) using {
-            loadable(old(owner->data[0..owner->cap]));
-        }
-        assumption();
-    }
     have i >= 0 by {
         normalize();
     }
@@ -1237,10 +1191,6 @@ int32 vector_pipeline(
             1 <= owner->cap;
         }
         assumption();
-    }
-    have loadable(owner->data[0..owner->len]) by {
-        rewrite(owner->len == 0);
-        normalize();
     }
     fold(vector_storage(owner));
     have owner->len < owner->cap by {

@@ -363,10 +363,6 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
             at(statement(4).entry, separate(memory(owner->len), memory(owner->data)));
             at(statement(4).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
             at(statement(4).entry, separate(memory(owner->cap), memory(owner->data)));
-            at(statement(4).entry, loadable(old(owner->len)));
-            at(statement(4).entry, loadable(old(owner->cap)));
-            at(statement(4).entry, loadable(old(owner->data)));
-            at(statement(4).entry, loadable(old(owner->data[0..owner->cap])));
             at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
             at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
             at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
@@ -398,7 +394,6 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
                 memory(owner->cap),
                 memory(owner->data[0..owner->cap])
             ));
-            at(statement(4).entry, loadable(old(owner->cap)));
         }
         assumption();
     }
@@ -540,15 +535,6 @@ int32 owned_string_pop(struct owned_string* owner) {
         assumption();
     }
     fold(owned_string(owner));
-    have loadable(old((owner->data + (owner->len - 1))[0..1])) by {
-        transport(at(statement(6).entry, loadable(old(owner->data[0..owner->cap]))), loadable(old((owner->data + (owner->len - 1))[0..1]))) using {
-            at(statement(6).exit, index) < old(owner->len);
-            old(owner->len) < owner->cap;
-            1 <= old(owner->len);
-            at(statement(6).entry, loadable(old(owner->data[0..owner->cap])));
-        }
-        assumption();
-    }
     have result == old(owner->data[(owner->len - 1)]) by {
         normalize();
     }

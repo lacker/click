@@ -244,7 +244,6 @@ int32 input_cursor_shared_pipeline(
         }
     }
     apply(int32_equality_transitive(right_value, right->data[right->pos], data[0])) using {
-        loadable(old(object(right)));
         right_value == right->data[right->pos];
         right->data[right->pos] == data[0];
     }
