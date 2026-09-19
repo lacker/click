@@ -27,5 +27,5 @@ int32 last_of_view(int32 *p, int32 lo, int32 hi) {
 ```
 
 ```expect
-fail: not established: the 4 bytes at `p[hi - 1]` must be loadable
+fail: not established: the 4 bytes at `p[hi - 1]` must be viewable
 ```

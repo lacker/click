@@ -2102,7 +2102,7 @@ pub(in crate::surface) fn concrete_loadable_block(
             let element_width = contract_segment_element_width(parameters, &segment.source);
             let bytes = end
                 .checked_mul(element_width)
-                .ok_or_else(|| ClickError::new("`loadable` segment overflows byte count"))?;
+                .ok_or_else(|| ClickError::new("`viewable` segment overflows byte count"))?;
             Ok(Some((
                 format!("{:?}", segment.source),
                 ConcreteMemoryRangeSeed {
@@ -2201,14 +2201,14 @@ pub(in crate::surface) fn loadable_base_and_bytes(
             let state = CState::new();
             let segment = evaluate_requirement_segment(parameters, arguments, &state, segment)
                 .map_err(|message| {
-                    ClickError::new(format!("could not lower `loadable` segment: {message}"))
+                    ClickError::new(format!("could not lower `viewable` segment: {message}"))
                 })?;
             if let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
                 (&segment.start, &segment.end)
                 && end < start
             {
                 return Err(ClickError::new(format!(
-                    "`loadable` segment has an end before its start: {start}..{end}"
+                    "`viewable` segment has an end before its start: {start}..{end}"
                 )));
             }
             let element_width = contract_segment_element_width(parameters, &segment.source);
@@ -2228,7 +2228,7 @@ pub(in crate::surface) fn loadable_base_and_bytes(
             ))
         }
         Requirement::Labeled { .. } | Requirement::Proposition(_) | Requirement::Resource(_) => {
-            Err(ClickError::new("expected loadable requirement"))
+            Err(ClickError::new("expected viewable requirement"))
         }
     }
 }

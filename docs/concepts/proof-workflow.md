@@ -187,7 +187,7 @@ control flow.
 - `transport(source, target);`: require an exact source fact and apply one
   certified atomic transport rule to establish the stated target fact at the
   current statement frontier. Conditions use framing; structural memory facts
-  such as `loadable(...)` use the certified execution effects. Like `apply`,
+  such as `viewable(...)` use the certified execution effects. Like `apply`,
   this bare spelling is smart.
 - `transport(source, target) using { P; ... }`: the simple, exact-premise
   spelling of the same rule.
@@ -268,7 +268,7 @@ execution, snapshots, and expansion all use this same layout. Every
 continuing arm must establish every `ensuring` assertion. Exact common facts
 and resources remain available automatically; facts about changed state that
 the continuation needs must be listed explicitly. Deterministic consequences
-of listed resources, such as memory loadability and the read authority an owner
+of listed resources, such as memory viewability and the read authority an owner
 supports, remain available.
 
 Arm-only snapshots are not exported. The function-entry state used by
@@ -442,7 +442,7 @@ at(loop_name.entry, x)
 at(statement(0).entry, x)
 at(statement(0).exit, x)
 at(statement(0).entry, p[0] == 7)
-at(statement(0).entry, loadable(p[0..n]))
+at(statement(0).entry, viewable(p[0..n]))
 ```
 
 When a proof needs to remember the state it has already reached, prefer a
@@ -468,7 +468,7 @@ record each deterministic boundary they cross. An `at(...)` expression reads
 memory, reassigned parameters, and declared scalar, pointer, or array locals
 from the selected state. `at(selector, proposition)` instead snapshots the
 complete proposition; use this form for state-relative facts such as
-`loadable(...)`, where snapshotting only the segment expression would leave the
+`viewable(...)`, where snapshotting only the segment expression would leave the
 memory component at the current state. Branch entries can have a unique
 snapshot. An explicit loop `preserve` proof binds
 `at(loop_name.entry, ...)` to its fresh arbitrary iteration state. Executing a
@@ -568,7 +568,7 @@ Practical approach:
 1. Find the failing mdtest and the exact guarantee label.
 2. Read pure facts to learn which branch/path failed.
 3. If a predicate is still opaque, add `unfold(predicate_name);`.
-4. If memory preservation is missing, check `loadable`, `separate(memory(...))`,
+4. If memory preservation is missing, check `viewable`, `separate(memory(...))`,
    the contract's `owns`/`views` clauses, and the loop's owned resources.
 5. If arithmetic overflow appears, add numeric requirements or invariants.
 6. If the proof needs a general new pattern, add a focused mdtest and then a

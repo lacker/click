@@ -9,7 +9,7 @@ Stating the law over the application is what makes it usable here. The fold's
 body reads `p[k]` at the fold's own bound index, and a pure theorem cannot
 lower that read at the proof site, so retyping the fold to hand it to
 `integer_range_fold_empty` is not an option. The read stays inside the
-function's declaration, where the theorem's own `loadable` premise covers it.
+function's declaration, where the theorem's own `viewable` premise covers it.
 
 ```click
 function icount(p: int32[], lo: int32, hi: int32, x: int32) -> Integer {
@@ -20,7 +20,7 @@ function icount(p: int32[], lo: int32, hi: int32, x: int32) -> Integer {
 
 theorem icount_of_an_empty_range(p: int32[], lo: int32, hi: int32, x: int32) {
     requires hi <= lo;
-    requires hi >= 0 and loadable(p[lo..hi]);
+    requires hi >= 0 and viewable(p[lo..hi]);
     ensures icount(p, lo, hi, x) == 0 by {
         unfold(icount(p, lo, hi, x)) using {
             hi <= lo;

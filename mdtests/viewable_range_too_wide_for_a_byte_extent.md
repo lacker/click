@@ -1,6 +1,6 @@
-# a loadable range too wide to be a byte extent is refused, not crashed
+# a viewable range too wide to be a byte extent is refused, not crashed
 
-A `loadable` range becomes a physical byte extent: the base advances by
+A `viewable` range becomes a physical byte extent: the base advances by
 `start * width` and the extent is `(end - start) * width`, in the kernel's
 32-bit memory model. Two side conditions have to hold before an element range
 can be read that way — it must run forwards, and its scaled byte count must fit
@@ -23,7 +23,7 @@ verifying "loadable_range_too_wide_for_a_byte_extent.c";
 
 int32 identity(int32 *p, int32 n) {
     ensures result == n by {
-        have loadable(p[-2000000000..2000000000]) by { simp(); }
+        have viewable(p[-2000000000..2000000000]) by { simp(); }
         step();
         simp();
     }

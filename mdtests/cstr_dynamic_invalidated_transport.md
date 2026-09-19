@@ -1,4 +1,4 @@
-# An intervening write invalidates a dynamic loadability transport
+# An intervening write invalidates a dynamic viewability transport
 
 ```c filename=cstr_dynamic_invalidated_transport.c
 int32 read_terminator(uint8 bytes[], int32 known_len) {
@@ -17,7 +17,7 @@ int32 read_terminator(uint8 bytes[], int32 known_len) {
     requires input_len: cstr_readable_len(bytes, known_len);
     requires 0 <= known_len;
     requires known_len < 2147483647;
-    requires loadable(bytes[0..known_len + 1]);
+    requires viewable(bytes[0..known_len + 1]);
     owns bytes[0..known_len + 1];
     ensures result >= 0 by {
         unfold(cstr_readable);
@@ -25,7 +25,7 @@ int32 read_terminator(uint8 bytes[], int32 known_len) {
         step();
         have exists (len: int32) {
             0 <= len and
-                loadable(bytes[0..len + 1]) and
+                viewable(bytes[0..len + 1]) and
                 forall (k: int32) {
                     0 <= k and k < len implies bytes[k] != '\0'
                 } and
@@ -39,10 +39,10 @@ int32 read_terminator(uint8 bytes[], int32 known_len) {
                     both {
                         both {
                             transport(
-                                at(function.entry, loadable(bytes[0..known_len + 1])),
-                                loadable(bytes[0..known_len + 1])
+                                at(function.entry, viewable(bytes[0..known_len + 1])),
+                                viewable(bytes[0..known_len + 1])
                             ) using {
-                                at(function.entry, loadable(bytes[0..known_len + 1]));
+                                at(function.entry, viewable(bytes[0..known_len + 1]));
                             }
                         } and {
                             simp();

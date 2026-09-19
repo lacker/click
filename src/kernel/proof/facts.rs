@@ -2248,16 +2248,16 @@ mod integer_equality_fact_index_tests {
 
     #[test]
     fn quantified_loadable_alpha_index_renames_binder_but_keeps_exact_payload() {
-        let memory = CMemory::new().with_block("quantified-loadable", 32).store(
+        let memory = CMemory::new().with_block("quantified-viewable", 32).store(
             Pointer {
-                block: "quantified-loadable".into(),
+                block: "quantified-viewable".into(),
                 offset: PointerOffsetTerm::Constant(0),
             },
             CValue::Int32(Bitvector32Term::Variable(Variable(207_000))),
         );
         let changed_memory = memory.clone().store(
             Pointer {
-                block: "quantified-loadable".into(),
+                block: "quantified-viewable".into(),
                 offset: PointerOffsetTerm::Constant(0),
             },
             CValue::Int32(Bitvector32Term::Constant(7)),
@@ -2265,42 +2265,42 @@ mod integer_equality_fact_index_tests {
         let source = loadable_forall(
             &memory,
             Variable(207_000),
-            "quantified-loadable",
+            "quantified-viewable",
             Some(Variable(207_001)),
             4,
         );
         let renamed = loadable_forall(
             &memory,
             Variable(207_100),
-            "quantified-loadable",
+            "quantified-viewable",
             Some(Variable(207_001)),
             4,
         );
         let changed_snapshot = loadable_forall(
             &changed_memory,
             Variable(207_100),
-            "quantified-loadable",
+            "quantified-viewable",
             Some(Variable(207_001)),
             4,
         );
         let changed_pointer = loadable_forall(
             &memory,
             Variable(207_100),
-            "different-loadable",
+            "different-viewable",
             Some(Variable(207_001)),
             4,
         );
         let changed_width = loadable_forall(
             &memory,
             Variable(207_100),
-            "quantified-loadable",
+            "quantified-viewable",
             Some(Variable(207_001)),
             8,
         );
         let free_mismatch = loadable_forall(
             &memory,
             Variable(207_100),
-            "quantified-loadable",
+            "quantified-viewable",
             Some(Variable(207_002)),
             4,
         );
@@ -2318,19 +2318,19 @@ mod integer_equality_fact_index_tests {
         ] {
             assert!(
                 facts.matching_fact_across_effects(&mismatch, &[]).is_none(),
-                "loadability alpha matching must retain snapshot, pointer, width, and free IDs"
+                "viewability alpha matching must retain snapshot, pointer, width, and free IDs"
             );
         }
     }
 
     #[test]
     fn quantified_loadable_root_existential_ignores_display_name() {
-        let memory = CMemory::new().with_block("root-existential-loadable", 32);
+        let memory = CMemory::new().with_block("root-existential-viewable", 32);
         let source = loadable_exists(
             &memory,
             "source_witness",
             Variable(207_500),
-            "root-existential-loadable",
+            "root-existential-viewable",
             Some(Variable(207_501)),
             4,
         );
@@ -2338,7 +2338,7 @@ mod integer_equality_fact_index_tests {
             &memory,
             "required_witness",
             Variable(207_600),
-            "root-existential-loadable",
+            "root-existential-viewable",
             Some(Variable(207_501)),
             4,
         );
@@ -2360,18 +2360,18 @@ mod integer_equality_fact_index_tests {
 
     #[test]
     fn quantified_loadable_alpha_index_query_does_not_scan_unrelated_facts() {
-        let memory = CMemory::new().with_block("quantified-loadable-scale", 32);
+        let memory = CMemory::new().with_block("quantified-viewable-scale", 32);
         let source = loadable_forall(
             &memory,
             Variable(208_000),
-            "quantified-loadable-scale",
+            "quantified-viewable-scale",
             Some(Variable(208_001)),
             4,
         );
         let required = loadable_forall(
             &memory,
             Variable(208_100),
-            "quantified-loadable-scale",
+            "quantified-viewable-scale",
             Some(Variable(208_001)),
             4,
         );
@@ -2382,7 +2382,7 @@ mod integer_equality_fact_index_tests {
                 loadable_forall(
                     &memory,
                     Variable(208_200 + index as u64),
-                    "unrelated-loadable",
+                    "unrelated-viewable",
                     Some(Variable(208_201 + index as u64)),
                     4,
                 )
@@ -2405,11 +2405,11 @@ mod integer_equality_fact_index_tests {
             let mut source_memory = CMemory::new();
             for index in 0..size {
                 source_memory =
-                    source_memory.with_block(format!("quantified-loadable-work-{index}"), 8);
+                    source_memory.with_block(format!("quantified-viewable-work-{index}"), 8);
             }
             source_memory = source_memory.store(
                 Pointer {
-                    block: "quantified-loadable-work-0".into(),
+                    block: "quantified-viewable-work-0".into(),
                     offset: PointerOffsetTerm::Constant(0),
                 },
                 CValue::Int32(Bitvector32Term::Variable(Variable(209_000))),
@@ -2417,14 +2417,14 @@ mod integer_equality_fact_index_tests {
             let source = loadable_forall(
                 &source_memory,
                 Variable(209_000),
-                "quantified-loadable-work-0",
+                "quantified-viewable-work-0",
                 Some(Variable(209_001)),
                 4,
             );
             let required = loadable_forall(
                 &source_memory,
                 Variable(209_100),
-                "quantified-loadable-work-0",
+                "quantified-viewable-work-0",
                 Some(Variable(209_001)),
                 4,
             );
@@ -2442,18 +2442,18 @@ mod integer_equality_fact_index_tests {
 
     #[test]
     fn quantified_loadable_alpha_budget_fails_closed_before_memory_substitution() {
-        let memory = CMemory::new().with_block("quantified-loadable-budget", 8);
+        let memory = CMemory::new().with_block("quantified-viewable-budget", 8);
         let source = loadable_forall(
             &memory,
             Variable(210_000),
-            "quantified-loadable-budget",
+            "quantified-viewable-budget",
             None,
             4,
         );
         let renamed = loadable_forall(
             &memory,
             Variable(210_100),
-            "quantified-loadable-budget",
+            "quantified-viewable-budget",
             None,
             4,
         );

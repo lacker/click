@@ -17,7 +17,7 @@ verifying "a_separated_array_argument_survives_a_global_store.c";
 
 void f(int32 a[], int32 n) {
     requires 0 < n;
-    requires loadable(a[0..n]);
+    requires viewable(a[0..n]);
     requires a[0] == 5;
     requires separate(memory(a[0..n]), memory(g[0..1]));
     owns g[0..1];

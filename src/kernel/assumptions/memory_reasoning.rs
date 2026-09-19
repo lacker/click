@@ -625,7 +625,7 @@ impl PureFactContext {
     /// `n * 4` is `0` — would be a vacuously true premise that narrowing could
     /// turn into a real one. The sibling cell rules above still read a wrapped
     /// extent as its element count, and a witness for that is
-    /// `mdtests/wrapped_loadable_extent_is_not_a_cell.md`, quarantined.
+    /// `mdtests/wrapped_viewable_extent_is_not_a_cell.md`, quarantined.
     fn proves_loadable_subrange_by_element_endpoints(
         &self,
         range_base: &Pointer,

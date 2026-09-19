@@ -20,6 +20,12 @@ pub(super) struct QualifiedCObject {
 pub(super) const PARENTHESIS_NESTING_LIMIT: usize = 16;
 pub(super) const MATCH_NESTING_LIMIT: usize = 16;
 
+/// The memory-range fact was spelled `loadable(...)` before it was named after
+/// the `views` clause it shadows. There is no compatibility alias, so a source
+/// still using the old spelling is refused by name rather than reported as an
+/// unknown call.
+const RETIRED_LOADABLE_SPELLING: &str = "`loadable(...)` was renamed `viewable(...)`";
+
 /// The index shape and scalar element type of a C global or static array
 /// visible to one function's contract. Resource lowering only knows parameter
 /// types, so the element type travels with the name to give a byte or
@@ -3047,7 +3053,10 @@ impl Parser {
             None
         };
         let requirement = match (self.peek_ident(), self.peek_next()) {
-            (Some("loadable"), Some(Token::LParen)) => self.parse_loadable_requirement()?,
+            (Some("viewable"), Some(Token::LParen)) => self.parse_loadable_requirement()?,
+            (Some("loadable"), Some(Token::LParen)) => {
+                return Err(self.error(RETIRED_LOADABLE_SPELLING));
+            }
             _ => {
                 let proposition = self.parse_proposition()?;
                 self.expect(Token::Semicolon)?;
@@ -3069,10 +3078,10 @@ impl Parser {
 
     fn parse_loadable_requirement(&mut self) -> Result<Requirement, ClickError> {
         match self.peek_ident() {
-            Some("loadable") => {
+            Some("viewable") => {
                 self.position += 1;
             }
-            _ => return Err(self.error("expected `loadable` requirement")),
+            _ => return Err(self.error("expected `viewable` requirement")),
         }
         self.expect(Token::LParen)?;
         let segment = self.parse_current_contract_segment()?;
@@ -3892,9 +3901,13 @@ impl Parser {
             return Ok(ClickProposition::Contains { parent, child });
         }
 
-        if self.peek_ident() == Some("loadable") && self.peek_next() == Some(&Token::LParen) {
+        if self.peek_ident() == Some("viewable") && self.peek_next() == Some(&Token::LParen) {
             let segment = self.parse_loadable_segment()?;
             return Ok(ClickProposition::Loadable { segment });
+        }
+
+        if self.peek_ident() == Some("loadable") && self.peek_next() == Some(&Token::LParen) {
+            return Err(self.error(RETIRED_LOADABLE_SPELLING));
         }
 
         if self.peek_ident() == Some("aligned") && self.peek_next() == Some(&Token::LParen) {
@@ -5883,7 +5896,7 @@ impl Parser {
     }
 
     fn parse_loadable_segment(&mut self) -> Result<ContractSegment, ClickError> {
-        self.expect_ident_spelling("loadable")?;
+        self.expect_ident_spelling("viewable")?;
         self.expect(Token::LParen)?;
         let segment = self.parse_contract_segment()?;
         self.expect(Token::RParen)?;

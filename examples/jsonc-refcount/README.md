@@ -24,7 +24,7 @@ The current support is intentionally narrow:
 - one `int32` field in the json-c-shaped struct
 - pointer-to-struct parameters
 - `->` field loads and stores for that first field
-- `loadable(obj->ref_count)` as the field-loadability precondition
+- `viewable(obj->ref_count)` as the field-viewability precondition
 - `views obj[0..1]` or `consumes obj[0..1]` as the memory access resource
   (ownership bounds the field writes; no effect clause)
 

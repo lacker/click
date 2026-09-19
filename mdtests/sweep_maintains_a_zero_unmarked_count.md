@@ -43,8 +43,8 @@ theorem unmarked_frame(
     requires hi <= m;
     requires m <= n;
     requires n <= 1073741823;
-    requires n >= 0 and loadable(a[lo..n]);
-    requires n >= 0 and loadable(b[lo..n]);
+    requires n >= 0 and viewable(a[lo..n]);
+    requires n >= 0 and viewable(b[lo..n]);
     requires forall (k: int32) {
         lo <= k and k < m implies a[k] == b[k]
     };
@@ -80,8 +80,8 @@ theorem unmarked_frame(
                 hi - 1 <= m;
                 m <= n;
                 n <= 1073741823;
-                n >= 0 and loadable(a[lo..n]);
-                n >= 0 and loadable(b[lo..n]);
+                n >= 0 and viewable(a[lo..n]);
+                n >= 0 and viewable(b[lo..n]);
                 forall (k: int32) { lo <= k and k < m implies a[k] == b[k] };
                 0 <= n - lo;
                 n - lo <= 1073741823;
@@ -173,10 +173,10 @@ void sweep(int32 visited[], int32 n) {
                 arithmetic() using { n <= 1073741823; }
             }
             have n >= 0 by { arithmetic() using { 0 <= n; } }
-            have loadable(visited[0..n]) by { simp(); }
+            have viewable(visited[0..n]) by { simp(); }
             step();
-            have loadable(visited[0..n]) by { simp(); }
-            have n >= 0 and loadable(visited[0..n]) by { split(); }
+            have viewable(visited[0..n]) by { simp(); }
+            have n >= 0 and viewable(visited[0..n]) by { split(); }
             have forall (k: int32) {
                 0 <= k and k < i implies at(iter, visited[k]) == visited[k]
             } by {

@@ -133,18 +133,18 @@ fn spell_condition(
             .map_or_else(|| "the".to_string(), |bytes| format!("the {bytes}"));
         return match loadable_cell(surface.as_ref()) {
             Some(Cell { base, index }) => SpelledCondition {
-                requirement: format!("{width} bytes at `{base}[{index}]` must be loadable"),
+                requirement: format!("{width} bytes at `{base}[{index}]` must be viewable"),
                 subterm: Some(format!("{base}[{index}]")),
                 repair: Some(format!(
-                    "state that cell's own loadability as a premise in this scope, written as the \
-                     one-element range it is: `loadable({base}[{index}..{index} + 1])`"
+                    "state that cell's own viewability as a premise in this scope, written as the \
+                     one-element range it is: `viewable({base}[{index}..{index} + 1])`"
                 )),
             },
             None => SpelledCondition {
-                requirement: format!("{width} bytes read here must be loadable: `{spelled}`"),
+                requirement: format!("{width} bytes read here must be viewable: `{spelled}`"),
                 subterm: None,
                 repair: Some(
-                    "state the loadability of exactly the cell this statement reads as a premise \
+                    "state the viewability of exactly the cell this statement reads as a premise \
                      in this scope, as a one-element range"
                         .to_string(),
                 ),

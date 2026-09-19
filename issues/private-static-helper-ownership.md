@@ -23,7 +23,7 @@ unsigned long next(void);
 unsigned long twice(void) { next(); return next(); }
 ```
 
-Give `bump` a loadable/consumes/produces contract for `p->value`, proving
+Give `bump` a viewable/consumes/produces contract for `p->value`, proving
 `p->value == old(p->value) + 1u64` and `result == p->value`. The global struct
 address parses with its correct nominal type. This originally failed when the
 helper required ownership of the private field. Qualified field ownership now

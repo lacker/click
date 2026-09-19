@@ -1,7 +1,7 @@
-# composite resource loadable fact
+# composite resource viewable fact
 
-This checks that a composite resource can expose a loadability fact. Observing
-the resource produces the pure `loadable(...)` fact needed for an indexed read.
+This checks that a composite resource can expose a viewability fact. Observing
+the resource produces the pure `viewable(...)` fact needed for an indexed read.
 
 ```c filename=slice_get.c
 int32 slice_get(int32* data, int32 index, int32 len) {
@@ -12,7 +12,7 @@ int32 slice_get(int32* data, int32 index, int32 len) {
 ```click
 resource readable_slice(data: int32*, len: int32) {
     views data[0..len];
-    fact loadable(data[0..len]);
+    fact viewable(data[0..len]);
 }
 
 verifying "slice_get.c";

@@ -1,7 +1,7 @@
 # read resources
 
 This checks the first viewed permission slice. A view permits
-external loads and makes the covered memory loadable, but it does not grant write
+external loads and makes the covered memory viewable, but it does not grant write
 permission.
 
 ```c filename=read_first.c

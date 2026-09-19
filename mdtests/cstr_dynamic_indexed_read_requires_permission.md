@@ -1,6 +1,6 @@
 # Dynamic C-string reads require an explicit permission range
 
-`cstr_readable` and `loadable` describe safe contents, but neither one grants
+`cstr_readable` and `viewable` describe safe contents, but neither one grants
 the resource-sensitive permission needed by an actual C array read.
 
 ```c filename=cstr_dynamic_indexed_read_requires_permission.c

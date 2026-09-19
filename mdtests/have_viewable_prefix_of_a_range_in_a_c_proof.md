@@ -1,10 +1,10 @@
-# `have loadable(...)` proves a prefix of a range in a C proof
+# `have viewable(...)` proves a prefix of a range in a C proof
 
-`mdtests/have_loadable_prefix_of_a_range.md` narrows a stated loadable range in
+`mdtests/have_viewable_prefix_of_a_range.md` narrows a stated viewable range in
 a pure theorem, and `docs/concepts/loadability.md` promises the same narrowing
 "in a pure theorem as well as in a C proof". The C half was refused, and for a
 reason about term spelling rather than about the rule: a C contract almost
-always states its range from `0`, and `loadable(a[0..n])` lowers its extent to
+always states its range from `0`, and `viewable(a[0..n])` lowers its extent to
 `n * 4`, whose element count is `n` with the `- 0` already folded away. The
 narrowing rule read a count's endpoints off a subtraction, so a count with no
 subtraction left in it looked like no range at all, and the one shape C
@@ -31,11 +31,11 @@ verifying "have_loadable_prefix_of_a_range_in_a_c_proof.c";
 int32 probe(int32 a[], int32 n, int32 k) {
     requires 0 <= k;
     requires k <= n;
-    requires loadable(a[0..n]);
+    requires viewable(a[0..n]);
     ensures result == 0;
 } by {
     step();
-    have loadable(a[0..k]) by { simp(); }
+    have viewable(a[0..k]) by { simp(); }
     simp();
 }
 ```

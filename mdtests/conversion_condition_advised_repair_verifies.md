@@ -1,15 +1,15 @@
 # the repair a conversion-condition refusal advises verifies
 
 `conversion_condition_names_the_missing_cell.md` refuses the same theorem and
-advises stating the read cell's own loadability as the one-element range
-`loadable(p[hi - 1..hi - 1 + 1])`. Advice that has not been run is a guess, so
+advises stating the read cell's own viewability as the one-element range
+`viewable(p[hi - 1..hi - 1 + 1])`. Advice that has not been run is a guess, so
 the advised statement is a fixture of its own.
 
 ```click
 theorem cell_from_its_own_range(p: int32[], lo: int32, hi: int32) {
     requires 0 <= lo;
     requires lo < hi;
-    requires hi >= 0 and loadable(p[hi - 1..hi - 1 + 1]);
+    requires hi >= 0 and viewable(p[hi - 1..hi - 1 + 1]);
     ensures to_integer(p[hi - 1]) == to_integer(p[hi - 1]) by { simp(); }
 }
 

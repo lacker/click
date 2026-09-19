@@ -59,7 +59,7 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
             fact 0 <= owner->len;
             fact owner->len <= owner->cap;
             fact owner->cap <= 1073741823;
-            fact loadable(owner->data[0..owner->len]);
+            fact viewable(owner->data[0..owner->len]);
             fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
         }
 
@@ -73,7 +73,7 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
             fact owner->len <= owner->cap;
             fact 1 <= owner->cap;
             fact owner->cap <= 1073741823;
-            fact loadable(owner->data[0..owner->len]);
+            fact viewable(owner->data[0..owner->len]);
             fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
         }
 

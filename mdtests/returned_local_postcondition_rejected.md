@@ -22,7 +22,7 @@ int32* returned_local_postcondition_rejected() {
 }
 
 int32* return_input(int32* input) {
-    requires loadable(input[0..1]);
+    requires viewable(input[0..1]);
     ensures result[0] == input[0];
 }
 ```

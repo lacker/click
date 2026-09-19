@@ -29,7 +29,7 @@ int main(void) { return read_cell(exposed) + zero; }
 verifying "data.c";
 verifying "main.c";
 int read_cell(int *p) {
-    requires loadable(p[0..1]);
+    requires viewable(p[0..1]);
     consumes p[0..1];
     produces p[0..1];
     ensures result == old(p[0]);

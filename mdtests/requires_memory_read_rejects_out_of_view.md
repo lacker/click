@@ -24,5 +24,5 @@ int32 first(int32 a[], int32 n) {
 ```
 
 ```expect
-fail: missing pure fact: loadable
+fail: missing pure fact: viewable
 ```

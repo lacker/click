@@ -21,7 +21,7 @@ Click specs can contain C-like expressions:
 ```click
 ensures result == x + 1 by auto;
 ensures p[k] == old(p[k]) by auto;
-requires loadable(p[0..n]);
+requires viewable(p[0..n]);
 ```
 
 These are called **C fragments**. They use C-like local syntax and typing, but

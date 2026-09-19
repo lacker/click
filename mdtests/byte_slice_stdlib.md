@@ -37,8 +37,8 @@ int32 count_byte3(uint8 p[], uint8 x) {
 }
 
 int32 byte_slice_facts(uint8 p[], uint8 q[]) {
-    requires loadable(p[0..3]);
-    requires loadable(q[0..2]);
+    requires viewable(p[0..3]);
+    requires viewable(q[0..2]);
     requires shifted_equal: bytes_equal(p, 1, q, 0, 2);
     requires all_q_are_a: bytes_all_eq(q, 0, 2, 'a');
 

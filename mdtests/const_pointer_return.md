@@ -21,18 +21,18 @@ verifying "view.c";
 verifying "caller.c";
 
 const int *view(int *p) {
-    requires loadable(p[0..1]);
+    requires viewable(p[0..1]);
     ensures result == p;
-    ensures loadable(result[0..1]);
+    ensures viewable(result[0..1]);
 } by { execute(); simp(); }
 
 const int *relay(int *p) {
-    requires loadable(p[0..1]);
+    requires viewable(p[0..1]);
     ensures result == p;
 } by { execute(); simp(); }
 
 const int *assigned(int *p) {
-    requires loadable(p[0..1]);
+    requires viewable(p[0..1]);
     ensures result == p;
 } by { execute(); simp(); }
 

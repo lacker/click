@@ -21,7 +21,7 @@ fn verifies_loadable_segment_proposition_for_indexed_read() {
         "#;
 
     let verified = verify_c0_sources(click_source, &[("read_index.c", c_source)])
-        .expect("loadable segment should prove indexed read loadability");
+        .expect("viewable segment should prove indexed read viewability");
 
     assert_eq!(verified.len(), 1);
 }

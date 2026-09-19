@@ -18,7 +18,7 @@ int32 read_terminator(uint8 bytes[]) {
         execute_until(statement(1));
         have exists (len: int32) {
             0 <= len and
-                loadable(bytes[0..len + 1]) and
+                viewable(bytes[0..len + 1]) and
                 forall (k: int32) {
                     0 <= k and k < len implies bytes[k] != '\0'
                 } and
@@ -35,10 +35,10 @@ int32 read_terminator(uint8 bytes[]) {
                             simp();
                         } and {
                             transport(
-                                at(function.entry, loadable(bytes[0..found_len + 1])),
-                                loadable(bytes[0..found_len + 1])
+                                at(function.entry, viewable(bytes[0..found_len + 1])),
+                                viewable(bytes[0..found_len + 1])
                             ) using {
-                                at(statement(1).entry, loadable(bytes[0..found_len + 1]));
+                                at(statement(1).entry, viewable(bytes[0..found_len + 1]));
                             }
                         }
                     } and {

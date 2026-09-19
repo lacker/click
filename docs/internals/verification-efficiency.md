@@ -157,7 +157,7 @@ The complexity contract implies several design constraints:
   lookup must not traverse the object whose computation it is intended to
   avoid.
 - Fact stores need exact indexes plus theory-specific secondary indexes. For
-  example, condition, quantified, memory/loadability, and resource facts must
+  example, condition, quantified, memory/viewability, and resource facts must
   be discoverable without scanning all proposition kinds.
 - Derived relations such as contradiction, order reachability, resource
   coverage, and separation should be maintained incrementally or queried from
@@ -260,7 +260,7 @@ a superlinear axis.
 The deterministic gates for these paths hold one fixed decision or derivation
 while growing unrelated context: exact contradiction, consistent order
 contexts, theory-capable order endpoints, fixed overflow decisions, quantified
-fact queries, long order paths, fixed loadability queries, and condition
+fact queries, long order paths, fixed viewability queries, and condition
 derivations.
 
 ## Termination heights and local descent

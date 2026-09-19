@@ -47,7 +47,7 @@ predicate has_zero(p: int32[], n: int32) {
 }
 
 int32 find_zero(int32 p[], int32 n) {
-    requires loadable(p[0..n]);
+    requires viewable(p[0..n]);
     requires present: has_zero(p, n);
     ...
 }

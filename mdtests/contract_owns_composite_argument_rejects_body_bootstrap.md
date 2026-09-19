@@ -2,7 +2,7 @@
 
 The body of `cell` owns a range at its parameter, but owning
 `cell(node->left)` must not make the load of `node->left` available while
-forming that argument.  There is no view or loadability precondition for the
+forming that argument.  There is no view or viewability precondition for the
 pointer field here.
 
 ```c filename=body_bootstrap.c

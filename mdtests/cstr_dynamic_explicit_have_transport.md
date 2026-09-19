@@ -16,7 +16,7 @@ int32 read_terminator(uint8 bytes[], int32 known_len) {
     requires input_len: cstr_readable_len(bytes, known_len);
     requires 0 <= known_len;
     requires known_len < 2147483647;
-    requires loadable(bytes[0..known_len + 1]);
+    requires viewable(bytes[0..known_len + 1]);
     views bytes[0..known_len + 1];
     ensures result == '\0' by {
         unfold(cstr_readable);
@@ -25,7 +25,7 @@ int32 read_terminator(uint8 bytes[], int32 known_len) {
         have exists (len: int32) {
             defined(len + 1) and
                 forall (k: int32) {
-                    0 <= k and k < len implies loadable((bytes + k)[0..1])
+                    0 <= k and k < len implies viewable((bytes + k)[0..1])
                 }
         } by {
             witness(len = known_len);
@@ -37,12 +37,12 @@ int32 read_terminator(uint8 bytes[], int32 known_len) {
                 extract(0 <= k);
                 extract(k < known_len);
                 transport(
-                    at(function.entry, loadable(bytes[0..known_len + 1])),
-                    loadable((bytes + k)[0..1])
+                    at(function.entry, viewable(bytes[0..known_len + 1])),
+                    viewable((bytes + k)[0..1])
                 ) using {
                     k < known_len;
                     0 <= k;
-                    at(function.entry, loadable(bytes[0..known_len + 1]));
+                    at(function.entry, viewable(bytes[0..known_len + 1]));
                 }
             }
         }

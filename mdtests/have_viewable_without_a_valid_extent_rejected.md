@@ -1,6 +1,6 @@
-# a loadable range with no established extent cannot be narrowed
+# a viewable range with no established extent cannot be narrowed
 
-Range narrowing reads an assumed `loadable(p[a..b])` as "the elements `a..b`".
+Range narrowing reads an assumed `viewable(p[a..b])` as "the elements `a..b`".
 That reading is only legitimate while the range's extent term, `(b - a) * width`
 in 32-bit arithmetic, is the true count of bytes. At an element count of
 `1 << 30` with four-byte elements the product is `1 << 32`, which is `0`: the
@@ -16,14 +16,14 @@ and the refusal says which two facts would supply it.
 theorem range_without_a_valid_extent(v: int32[], lo: int32, hi: int32) {
     requires 0 <= lo;
     requires lo < hi;
-    requires hi >= 0 and loadable(v[lo..hi]);
-    ensures loadable(v[lo..hi - 1]) by {
+    requires hi >= 0 and viewable(v[lo..hi]);
+    ensures viewable(v[lo..hi - 1]) by {
         have 0 < hi by { arithmetic() using { 0 <= lo; lo < hi; } }
         have lo <= hi - 1 by { arithmetic() using { lo < hi; 0 < hi; } }
         have hi - 1 < hi by { arithmetic() using { 0 < hi; } }
-        extract(loadable(v[lo..hi]));
-        transport(loadable(v[lo..hi]), loadable(v[lo..hi - 1])) using {
-            loadable(v[lo..hi]);
+        extract(viewable(v[lo..hi]));
+        transport(viewable(v[lo..hi]), viewable(v[lo..hi - 1])) using {
+            viewable(v[lo..hi]);
             lo <= hi - 1;
             hi - 1 < hi;
         }
@@ -32,5 +32,5 @@ theorem range_without_a_valid_extent(v: int32[], lo: int32, hi: int32) {
 ```
 
 ```expect
-fail: narrowing a loadable range needs `loadable(v[lo..hi])` established as a valid 32-bit byte extent, which takes `0 <= hi - lo` and an upper bound on `hi - lo` within the element count a 32-bit extent holds
+fail: narrowing a viewable range needs `viewable(v[lo..hi])` established as a valid 32-bit byte extent, which takes `0 <= hi - lo` and an upper bound on `hi - lo` within the element count a 32-bit extent holds
 ```

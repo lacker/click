@@ -1538,7 +1538,7 @@ mod condition_transition_tests {
             true,
             None,
         ) {
-            Ok(_) => panic!("planning accepted an unproved loadability obligation"),
+            Ok(_) => panic!("planning accepted an unproved viewability obligation"),
             Err(error) => error,
         };
 

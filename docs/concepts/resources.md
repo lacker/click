@@ -63,12 +63,12 @@ This resource-family boundary is intentionally more general than memory
 ownership. Click also has exact-match user-defined resources, which can model
 API protocols without forcing those protocols to look like heap cells.
 
-## Loadability and authority
+## Viewability and authority
 
-`loadable(...)` and permissions still answer different questions, but access
-permissions include the loadability needed for the covered access.
+`viewable(...)` and permissions still answer different questions, but access
+permissions include the viewability needed for the covered access.
 
-`loadable(p[0..n])` says the range is loadable. It is about
+`viewable(p[0..n])` says the range is viewable. It is about
 memory safety and bounds.
 
 `views p[0..n]` or `owns p[0..n]` says the current code has authority to access
@@ -86,12 +86,12 @@ int32 first(int32 p[]) {
 ```
 
 Similarly, an owned memory resource grants authority to store and makes the
-covered range loadable. Use `loadable(...)` separately when you need to prove memory exists
+covered range viewable. Use `viewable(...)` separately when you need to prove memory exists
 without granting read or write authority, or when a larger structural bound is
 useful for index reasoning.
 
-When the same loadability fact must appear as a proposition, use
-`loadable(segment)`. This is common in composite resource definitions, where
+When the same viewability fact must appear as a proposition, use
+`viewable(segment)`. This is common in composite resource definitions, where
 `fact` clauses are pure propositions rather than structural requirements. A
 `let name: type where proposition;` clause binds an existential pointer for the
 rest of the body, which is how a resource names a tail pointer packed into an
@@ -245,14 +245,14 @@ Loads outside that footprint are preserved across the opaque call. This
 includes adjacent struct fields and composes across several calls, so callers
 do not need to save and restore unchanged metadata merely to give it a stable
 proof spelling. Expansion exposes only ordinary source-level premises such as
-the relevant `loadable(...)` range; call-havoc identities remain internal.
+the relevant `viewable(...)` range; call-havoc identities remain internal.
 Preserving a dependent load such as `owner->data[i]` additionally requires the
 address inputs (`owner->data` and `i`) and the target range to remain stable.
 If any owned range may overlap the loaded field, Click does not transport the
 equality.
 
 Opaque summaries support comparison, logical, quantified, predicate-call,
-`separate(...)`, `contains(...)`, and `loadable(...)` propositions, including
+`separate(...)`, `contains(...)`, and `viewable(...)` propositions, including
 `old(...)` and `at(function.entry, ...)`. A contract containing a snapshot of
 an internal statement or loop program point can still be verified directly, but that
 snapshot is not visible at an opaque call site. Calling such a function reports
@@ -602,7 +602,7 @@ however the model turns out. What is published is the intersection of those
 arms' own memory clauses, evaluated once per arm. A cell one possible arm does
 not own is never published: the read is refused, and the diagnostic names the
 instance and the arms the requirements left possible rather than leaving an
-unexplained missing loadability. The positive is
+unexplained missing viewability. The positive is
 `mdtests/resource_match_common_arm_cells.md` and the refusal is
 `mdtests/resource_match_arm_needs_one_entailed_arm.md`.
 

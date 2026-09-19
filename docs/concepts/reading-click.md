@@ -34,7 +34,7 @@ Read every `requires` clause:
 <!-- verified-example: mdtests/scalar.md -->
 ```click
 requires n >= 0;
-requires loadable(p[0..n]);
+requires viewable(p[0..n]);
 ```
 
 These are the assumptions for the proof. If the contract seems too strong, the
@@ -93,5 +93,5 @@ Ask:
 6. Is the proof automated, simplified, framed, or scripted?
 
 That is enough to understand simple Click code. More involved Click adds memory
-loadability, aliasing, loops, predicates, pure functions, and eventually spec or
+viewability, aliasing, loops, predicates, pure functions, and eventually spec or
 model state.

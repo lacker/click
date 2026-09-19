@@ -1,6 +1,6 @@
-# `have loadable(...)` proves one cell of a loadable range in a C proof
+# `have viewable(...)` proves one cell of a viewable range in a C proof
 
-The C companion of `mdtests/have_loadable_prefix_of_a_range.md`. The goal here
+The C companion of `mdtests/have_viewable_prefix_of_a_range.md`. The goal here
 is the single cell the function is about to read, written as the one-element
 range `p[hi - 1..hi - 1 + 1]`, and it is proved from the range the contract
 gives plus the two order facts that place that cell inside it, and the bound
@@ -24,13 +24,13 @@ int32 last_of_range(int32 *p, int32 lo, int32 hi) {
     requires 0 <= lo;
     requires lo < hi;
     requires hi - lo <= 1073741823;
-    requires hi >= 0 and loadable(p[lo..hi]);
+    requires hi >= 0 and viewable(p[lo..hi]);
     ensures result == hi by {
         have 0 < hi by { arithmetic() using { 0 <= lo; lo < hi; } }
         have lo <= hi - 1 by { arithmetic() using { lo < hi; 0 < hi; } }
         have hi - 1 < hi by { arithmetic() using { 0 < hi; } }
         have 0 <= hi - lo by { arithmetic() using { 0 <= lo; lo < hi; } }
-        have loadable(p[hi - 1..hi - 1 + 1]) by { simp(); }
+        have viewable(p[hi - 1..hi - 1 + 1]) by { simp(); }
         step();
         simp();
     }

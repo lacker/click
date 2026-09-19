@@ -10,9 +10,9 @@ int32 symn(int32 p[], int32 n) {
 verifying "t.c";
 
 int32 symn(int32 p[], int32 n) {
-    requires loadable(p[0..1]);
+    requires viewable(p[0..1]);
     requires n == 1073741825;
-    ensures loadable(p[0..n]);
+    ensures viewable(p[0..n]);
 }
 ```
 

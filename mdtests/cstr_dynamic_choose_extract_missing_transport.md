@@ -18,7 +18,7 @@ int32 read_terminator(uint8 bytes[]) {
         execute_until(statement(1));
         have exists (len: int32) {
             0 <= len and
-                loadable(bytes[0..len + 1]) and
+                viewable(bytes[0..len + 1]) and
                 forall (k: int32) {
                     0 <= k and k < len implies bytes[k] != '\0'
                 } and

@@ -3,21 +3,21 @@
 The array-reading companion of
 `mdtests/fold_function_is_nonnegative_by_induction.md`. The fold's body now
 reads `v[k]`, so every step that writes a term naming the last cell also has to
-place that cell inside a loadable range: the `have lo <= hi - 1` and
+place that cell inside a viewable range: the `have lo <= hi - 1` and
 `have hi - 1 < n` here are what make `v[hi - 1]` a value the state holds, and
 they are ordinary facts proved before the step that needs them.
 
-The loadable range ends at the separate parameter `n`, not at `hi`, so the
-hypothesis's loadability premise is the theorem's own, unchanged: `induct(hi)`
+The viewable range ends at the separate parameter `n`, not at `hi`, so the
+hypothesis's viewability premise is the theorem's own, unchanged: `induct(hi)`
 gives an induction hypothesis guarded by the theorem's own `requires` at the
 smaller endpoint, and a range the induction does not move needs nothing proved
 about it.
 
 That is no longer the only way to write this theorem. A range ending at `hi`
-makes `apply(ih(hi - 1))` demand `loadable(v[lo..hi - 1])` as an exact fact, and
+makes `apply(ih(hi - 1))` demand `viewable(v[lo..hi - 1])` as an exact fact, and
 that fact is now provable —
 `mdtests/fold_reading_an_array_is_nonnegative_over_its_own_range.md` is the same
-theorem over its own range. This version stays as the shape whose loadability
+theorem over its own range. This version stays as the shape whose viewability
 premise needs no proof at all.
 
 ```click
@@ -29,7 +29,7 @@ theorem unmarked_nonnegative(v: int32[], lo: int32, n: int32, hi: int32) {
     requires 0 <= lo;
     requires 0 <= hi;
     requires hi <= n;
-    requires n >= 0 and loadable(v[lo..n]);
+    requires n >= 0 and viewable(v[lo..n]);
     ensures 0 <= unmarked(v, lo, hi) by {
         induct(hi) as ih;
         if hi <= lo {
@@ -47,7 +47,7 @@ theorem unmarked_nonnegative(v: int32[], lo: int32, n: int32, hi: int32) {
                 hi - 1 < hi;
                 0 <= lo;
                 hi - 1 <= n;
-                n >= 0 and loadable(v[lo..n]);
+                n >= 0 and viewable(v[lo..n]);
                 0 <= n - lo;
                 n - lo <= 1073741823;
             }

@@ -27,7 +27,7 @@ int32 loop_stdlib_permutation_invariant(int32 p[3]) {
 verifying "loop_stdlib_permutation_invariant.c";
 
 int32 loop_stdlib_permutation_invariant(int32 p[3]) {
-    requires loadable(p[0..3]);
+    requires viewable(p[0..3]);
     ensures permutation_after_loop: permutation(p, old(p), 0, 3);
 } by {
     step();

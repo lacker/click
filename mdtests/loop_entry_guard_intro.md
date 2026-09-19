@@ -1,6 +1,6 @@
 # A loop-entry guard is introduced explicitly
 
-Lowering wraps this loop's quantified entry obligation in a loadability guard
+Lowering wraps this loop's quantified entry obligation in a viewability guard
 that has no Surface connective. The guard is derivable at entry but is not
 exactly among the available facts, so it stays part of the checked goal and the
 initialization certificate discharges it with an explicit `intro()`.

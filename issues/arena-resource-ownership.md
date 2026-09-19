@@ -80,7 +80,7 @@ A C scalar carried by a matched algebraic resource payload can select a memory
 range, and unfold/fold preserves the symbolic suffix. Resource facts may also
 quantify over a bounded subrange of contained memory: definition validation
 checks that the quantified interval is covered, and resource rewriting checks
-the corresponding universal loadability obligation from the same contained
+the corresponding universal viewability obligation from the same contained
 authority. The positive end-to-end regression is
 `mdtests/resource_match_payload_memory_endpoint.md`.
 

@@ -3,7 +3,7 @@
 This checks that loop invariants can explicitly unfold a named predicate before
 the loop verification condition is generated. The loop does not write through
 `p`; it carries a sorted-range fact across iterations. Initialization explicitly
-introduces the two lowering-generated loadability guards, the two indices, and
+introduces the two lowering-generated viewability guards, the two indices, and
 their range constraint, then instantiates the existing sortedness fact.
 
 ```c filename=loop_sorted_range_invariant.c
@@ -39,7 +39,7 @@ predicate all_le_range(p: int32[], lo: int32, hi: int32, x: int32) {
 }
 
 int32 loop_sorted_range_invariant(int32 p[3]) {
-    requires loadable(p[0..3]);
+    requires viewable(p[0..3]);
     requires sorted(p, 3);
     ensures still_sorted: sorted(p, 3);
 } by {

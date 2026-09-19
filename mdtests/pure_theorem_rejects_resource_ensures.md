@@ -6,7 +6,7 @@ and returns nothing, so a `produces` clause has nothing to hand back.
 
 A theorem can still say that a range is readable, as a hypothesis rather than a
 conclusion: `views v[lo..hi];` among its requirements. A theorem's `ensures`
-clauses are propositions, and `ensures loadable(...)` remains one of them.
+clauses are propositions, and `ensures viewable(...)` remains one of them.
 
 ```click
 theorem resource_conclusion_is_not_pure(p: int32*) {

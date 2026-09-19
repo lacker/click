@@ -159,58 +159,58 @@ never moves an offset. See
 two negatives, and `mdtests/rb_ascending_walk_to_root.md` for the ascending
 walk that needs it once per iteration.
 
-## Loadable ranges
+## Viewable ranges
 
-Use `loadable` to prove memory safety:
+Use `viewable` to prove memory safety:
 
 <!-- verified-example: mdtests/write_second_old_keeps_first.md -->
 ```click
-requires loadable(p[0..3]);
-requires loadable(p[0..n]);
-requires loadable((p + 1)[0..n - 1]);
+requires viewable(p[0..3]);
+requires viewable(p[0..n]);
+requires viewable((p + 1)[0..n - 1]);
 ```
 
 Segment forms are half-open `int32` element ranges. For `int32 p[]`,
-`loadable(p[0..n])` means cells `p[0]` through `p[n - 1]` are available for
+`viewable(p[0..n])` means cells `p[0]` through `p[n - 1]` are available for
 four-byte `int32` access. For `uint8 p[]`, the same spelling covers `n`
 one-byte elements.
 
 Symbolic memory access usually needs:
 
-- a covering viewed or owned memory resource, or a separate loadable range
+- a covering viewed or owned memory resource, or a separate viewable range
 - lower and upper index bounds
 - loop invariants if the bounds are established by a loop
 
-Viewed and owned memory resources imply loadability for the covered range. A separate
-`loadable(...)` clause is useful when a proof needs loadability without access
+Viewed and owned memory resources imply viewability for the covered range. A separate
+`viewable(...)` clause is useful when a proof needs viewability without access
 permission, or when it needs a larger structural range than the immediate
 permission covers.
 
 A checked universal fact that reads every `int32` cell under the exact guard
-`0 <= k and k < n` also certifies `loadable(p[0..n])` for that same memory and
+`0 <= k and k < n` also certifies `viewable(p[0..n])` for that same memory and
 base. This lets a modular copy or initialization postcondition re-establish the
-initialized prefix without an extra ad-hoc loadability proposition. A narrower
+initialized prefix without an extra ad-hoc viewability proposition. A narrower
 guard, another base, or another memory snapshot does not establish the range.
 
-Use `loadable(p[lo..hi])` for the same kind of loadability fact when Click
-expects a proposition, for example in a composite resource `fact`. `loadable`
+Use `viewable(p[lo..hi])` for the same kind of viewability fact when Click
+expects a proposition, for example in a composite resource `fact`. `viewable`
 does not grant read or write authority; it only supplies the pure fact needed
 to justify loads from that range when the index bounds are known.
 
-In an explicit proof, use proposition-level `at(...)` to refer to loadability
+In an explicit proof, use proposition-level `at(...)` to refer to viewability
 at a recorded program point:
 
 <!-- verified-example: mdtests/write_second_old_keeps_first.md -->
 ```click
-have at(statement(0).entry, loadable(p[0..n])) by {
+have at(statement(0).entry, viewable(p[0..n])) by {
     assumption();
 }
 ```
 
-This snapshots the whole loadability proposition. In particular, its pointer,
+This snapshots the whole viewability proposition. In particular, its pointer,
 range bounds, and memory state are all interpreted at `statement(0).entry`.
-Writing `loadable(at(statement(0).entry, p)[0..n])` is not equivalent: that
-would snapshot the pointer expression but still ask whether it is loadable in
+Writing `viewable(at(statement(0).entry, p)[0..n])` is not equivalent: that
+would snapshot the pointer expression but still ask whether it is viewable in
 the current memory.
 
 ## Old memory

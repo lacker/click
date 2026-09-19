@@ -3,10 +3,10 @@
 A theorem's `views` clause is a hypothesis, so applying it from a C proof owes
 that hypothesis. The C side has a resource context, and what discharges the
 premise there is the readability the contract's own `views a[0..3]` already
-gives: the clause is lowered to the same `loadable` fact the theorem's premise
+gives: the clause is lowered to the same `viewable` fact the theorem's premise
 lowers to, so the two meet as one exact fact.
 
-The premise is named in the `using` list by its fact form, `loadable(a[0..3])`.
+The premise is named in the `using` list by its fact form, `viewable(a[0..3])`.
 A `using` list is a list of propositions and stays one — there is no `views`
 statement inside it — which is also why the theorem's requirement is printed in
 that form when an application cannot discharge it; see
@@ -45,7 +45,7 @@ int32 second(int32 a[]) {
 } by {
     step();
     apply(element_of_a_viewed_range(a, 0, 3, 1)) using {
-        loadable(a[0..3]);
+        viewable(a[0..3]);
     }
     simp();
 }

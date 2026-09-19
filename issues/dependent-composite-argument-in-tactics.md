@@ -25,7 +25,7 @@ gap; both failures are prompt refusals.
    a function that owns `tree(r)` and whose proof is
    `execute(); unfold(tree(r)); unfold(leaf_cell(r->leaf)); ...` fails at the
    second unfold with
-   `missing pure fact: loadable(base=r, bytes=8)`. The same two unfolds
+   `missing pure fact: viewable(base=r, bytes=8)`. The same two unfolds
    written before `execute()` lower (`mdtests/c_chained_field_access.md`,
    `deep_get`). The outcome state holds `r->leaf` through the first unfold,
    so the second argument should lower there as it does at entry.
@@ -62,7 +62,7 @@ range counts.
 
 - `mdtests/unfold_dependent_composite_after_execute.md`: reproduction 1 with
   the two unfolds after `execute()`, expecting `pass`, plus its negative
-  where the first unfold is omitted, expecting the loadable refusal.
+  where the first unfold is omitted, expecting the viewable refusal.
 - `mdtests/theorem_observes_dependent_composite_argument.md`: reproduction 2
   expecting `pass`, plus its negative where `observe(pair(node))` is omitted,
   expecting the same refusal the function body gives.
@@ -77,7 +77,7 @@ range counts.
   composites hold, opened one level through their definitions, are
   readable for the argument's loads. Read authority only; nothing is
   owned twice, and a load the state cannot justify is still refused with
-  the existing `missing pure fact: loadable(...)` wording.
+  the existing `missing pure fact: viewable(...)` wording.
 - The two positive fixtures pass and the two negatives keep their refusals.
 - No change to what `execute()` alone proves for the plain C shapes; the
   fixtures above and `mdtests/contract_owns_composite_argument_*.md` stay

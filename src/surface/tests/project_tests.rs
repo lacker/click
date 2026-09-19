@@ -846,7 +846,7 @@ resource buffer_storage(owner: struct buffer*) {
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;
     fact owner->cap <= 1073741823;
-    fact loadable(owner->data[0..owner->len]);
+    fact viewable(owner->data[0..owner->len]);
     fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
 }
 
@@ -911,7 +911,7 @@ int32 buffer_pipeline(
         unfold(empty_buffer(owner));
         have 0 <= owner->len by simp;
         have owner->len <= owner->cap by simp;
-        have loadable(owner->data[0..owner->len]) by simp;
+        have viewable(owner->data[0..owner->len]) by simp;
         fold(buffer_storage(owner));
         execute_until(statement(3));
         unfold(buffer_storage(owner));

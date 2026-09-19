@@ -26,7 +26,7 @@ verifying "global_may_alias_an_array_argument.c";
 
 void f(int32 a[], int32 n) {
     requires 0 < n;
-    requires loadable(a[0..n]);
+    requires viewable(a[0..n]);
     requires a[0] == 5;
     owns g[0..1];
     ensures a[0] == 5;

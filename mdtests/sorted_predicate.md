@@ -23,7 +23,7 @@ predicate sorted(p: int32[], n: int32) {
 
 int32 sorted_predicate(int32 p[], int32 n) {
     requires n >= 0;
-    requires loadable(p[0..n]);
+    requires viewable(p[0..n]);
     requires sorted(p, n);
     ensures still_sorted: sorted(p, n) by {
         execute();

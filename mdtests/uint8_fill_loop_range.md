@@ -21,10 +21,10 @@ verifying "uint8_fill_loop_range.c";
 
 int32 fill_bytes(uint8 buf[], int32 n) {
     requires n >= 0 and n <= 2147483647;
-    requires loadable(buf[0..n]);
+    requires viewable(buf[0..n]);
     consumes buf[0..n];
     ensures filled_length: result == n;
-    ensures byte_range_remains_loadable: loadable(buf[0..n]);
+    ensures byte_range_remains_viewable: viewable(buf[0..n]);
 } by {
     step();
     step();

@@ -19,7 +19,7 @@ verifying "loop_quantified_memory_invariant.c";
 
 int32 loop_quantified_memory_invariant(int32 p[], int32 n) {
     requires n >= 0 and n <= 2147483647;
-    requires loadable(p[0..n]);
+    requires viewable(p[0..n]);
     ensures returns_n: result == n;
 } by {
     step();

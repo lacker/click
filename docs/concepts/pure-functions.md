@@ -275,7 +275,7 @@ an induction hypothesis already speaks about, and a range property follows by
 the ordinary `induct(hi)` over a nonnegative `int32` parameter.
 
 Two consequences are worth stating plainly. The body's memory reads stay inside
-the declaration, where the caller's `loadable` premise covers them: the proof
+the declaration, where the caller's `viewable` premise covers them: the proof
 site never writes `v[k]` at the fold's bound index, which a pure theorem cannot
 lower. And the step is a derived use of the kernel's two fold laws, not a new
 axiom — the defining equation and its predecessor instance are the law's own

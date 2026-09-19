@@ -967,7 +967,7 @@ fn refuse_impossible_loads(obligations: &[Proposition]) -> Result<(), String> {
         // snapshot it is indexed by; the bounded sentence names the base and
         // width, which is what the reader has to fix.
         return Err(format!(
-            "the proposition reads memory that is not loadable here: {}",
+            "the proposition reads memory that is not viewable here: {}",
             crate::surface::diagnostics::describe_pure_fact(obligation, &[], &[])
         ));
     }

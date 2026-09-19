@@ -3100,7 +3100,7 @@ pub(super) fn collect_loop_ranking_obligations(
             &mut obligations,
             &read_assumptions,
             obligation.proposition().clone(),
-            Some("a loop ranking measure's read is loadable"),
+            Some("a loop ranking measure's read is viewable"),
             None,
         );
     }

@@ -16,7 +16,7 @@ nobody proved that fact at all. Add the same `have` at the outer level, as
 theorem last_cell(p: int32[], lo: int32, hi: int32) {
     requires 0 <= lo;
     requires lo < hi;
-    requires hi >= 0 and loadable(p[lo..hi]);
+    requires hi >= 0 and viewable(p[lo..hi]);
     ensures lo < hi by {
         have 0 < hi by { arithmetic() using { 0 <= lo; lo < hi; } }
         have hi - 1 < hi by { arithmetic() using { 0 < hi; } }
@@ -31,7 +31,7 @@ theorem last_cell(p: int32[], lo: int32, hi: int32) {
 ```
 
 ```expect
-fail: not established: the 4 bytes at `p[hi - 1]` must be loadable
+fail: not established: the 4 bytes at `p[hi - 1]` must be viewable
   established: `hi - 1` must not overflow; the read at `p[hi - 1]` must denote the value this state holds
-  premises consulted (9, a premise that is a conjunction counted as its conjuncts): `0 < hi`, `lo < hi`, `(hi - 1) < hi`, `0 <= lo`, `0 <= hi`, `0 <= (hi - lo)`, `(hi - lo) <= 1073741823`, `hi >= 0`, `loadable(p[lo..hi])`
+  premises consulted (9, a premise that is a conjunction counted as its conjuncts): `0 < hi`, `lo < hi`, `(hi - 1) < hi`, `0 <= lo`, `0 <= hi`, `0 <= (hi - lo)`, `(hi - lo) <= 1073741823`, `hi >= 0`, `viewable(p[lo..hi])`
 ```

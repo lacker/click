@@ -6346,7 +6346,7 @@ mod selected_premise_tests {
         assert!(derivation.is_some());
         assert!(work > 0);
         let tactic = TacticEvent {
-            claim: "loadability".into(),
+            claim: "viewability".into(),
             tactic_index: 0,
             tactic_name: "simp".into(),
             class: "smart".into(),

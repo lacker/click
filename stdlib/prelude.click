@@ -680,7 +680,7 @@ predicate cstr_prefix(bytes: uint8[], len: int32) {
 
 predicate cstr_len(bytes: uint8[], len: int32) {
     0 <= len and
-        loadable(bytes[0..len + 1]) and
+        viewable(bytes[0..len + 1]) and
         cstr_prefix(bytes, len) and
         bytes_contains(bytes, len, len + 1, '\0')
 }
@@ -693,7 +693,7 @@ predicate cstr(bytes: uint8[]) {
 
 predicate cstr_readable_len(bytes: uint8[], len: int32) {
     0 <= len and
-        loadable(bytes[0..len + 1]) and
+        viewable(bytes[0..len + 1]) and
         forall (k: int32) {
             0 <= k and k < len implies bytes[k] != '\0'
         } and
@@ -757,7 +757,7 @@ theorem cstr_readable_len_unique(bytes: uint8[], left: int32, right: int32) {
 predicate cstr_readable(bytes: uint8[]) {
     exists (len: int32) {
         0 <= len and
-            loadable(bytes[0..len + 1]) and
+            viewable(bytes[0..len + 1]) and
             forall (k: int32) {
                 0 <= k and k < len implies bytes[k] != '\0'
             } and
@@ -772,7 +772,7 @@ predicate cstr_bounded(bytes: uint8[], max: int32) {
 theorem cstr_len_is_loadable(bytes: uint8[], len: int32) {
     requires cstr_len(bytes, len);
 
-    ensures loadable(bytes[0..len + 1]) by {
+    ensures viewable(bytes[0..len + 1]) by {
         unfold(cstr_len);
         simp();
     }
@@ -807,7 +807,7 @@ theorem cstr_len_has_terminator(bytes: uint8[], len: int32) {
 
 extern uint8* memcpy(uint8 destination[], uint8 source[], int32 bytes) {
     requires 0 <= bytes;
-    requires loadable(source[0..bytes]);
+    requires viewable(source[0..bytes]);
     owns destination[0..bytes];
     requires separate(memory(destination[0..bytes]), memory(source[0..bytes]));
     ensures result == destination;
@@ -816,8 +816,8 @@ extern uint8* memcpy(uint8 destination[], uint8 source[], int32 bytes) {
 
 extern int32 memcmp(uint8 left[], uint8 right[], int32 bytes) {
     requires 0 <= bytes;
-    requires loadable(left[0..bytes]);
-    requires loadable(right[0..bytes]);
+    requires viewable(left[0..bytes]);
+    requires viewable(right[0..bytes]);
     ensures result == 0 implies bytes_equal(left, 0, right, 0, bytes);
     ensures result != 0 implies not bytes_equal(left, 0, right, 0, bytes);
 }
@@ -836,7 +836,7 @@ extern uint8* memset(uint8 destination[], int32 value, int32 bytes) {
 extern int32 strlen(uint8 bytes[]) {
     requires cstr_readable(bytes);
     ensures 0 <= result;
-    ensures loadable(bytes[0..result + 1]);
+    ensures viewable(bytes[0..result + 1]);
     ensures forall (k: int32) {
         0 <= k and k < result implies bytes[k] != '\0'
     };

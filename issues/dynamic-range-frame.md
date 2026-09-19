@@ -2,7 +2,7 @@
 
 The dynamic C-string read regression currently requires the caller to expose a
 terminator-length witness and write the matching `views` range explicitly.
-`cstr_readable` supplies an existential content/loadability witness, but it is
+`cstr_readable` supplies an existential content/viewability witness, but it is
 not itself a permission or ownership resource. This issue covers the proof
 language feature that can connect those two facts ergonomically.
 
@@ -12,7 +12,7 @@ Every indexed C read must be justified by a resource covering the concrete
 cell that the execution may access. A smart tactic may select a witness from
 an existential predicate and split or reframe an already-owned compatible
 range, but it must never manufacture `views` or `owns` permission from
-`loadable` or from a pure C-string predicate alone.
+`viewable` or from a pure C-string predicate alone.
 
 The tactic must produce a checked, expandable certificate. Its search must be
 bounded by the named witness and candidate resource, rather than scanning or
@@ -40,7 +40,7 @@ length, establish the dynamic `views bytes[0..length + 1]` range, and let the
 
 Add negative coverage showing that the tactic rejects all of the following:
 
-- `cstr_readable(bytes)` or `loadable(...)` without a permission resource;
+- `cstr_readable(bytes)` or `viewable(...)` without a permission resource;
 - a resource whose endpoint cannot cover the selected terminator cell; and
 - an overlapping or otherwise incompatible resource transformation.
 
@@ -54,7 +54,7 @@ small baseline while this ergonomic form is developed.
 - The positive dynamic C-string regression verifies with the tactic and its
   certificate expands into checked simple framing and witness steps.
 - Negative regressions prove that missing or incompatible permission fails;
-  `loadable` and pure content facts never become permission implicitly.
+  `viewable` and pure content facts never become permission implicitly.
 - The tactic is bounded and output-sensitive, and the kernel validates the
   generated certificate without reproducing smart search.
 - Update the tactic and C-string documentation, add the regression to the

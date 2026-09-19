@@ -2279,7 +2279,7 @@ fn rewrite_integer_memory_loadable_with_walker(
         bytes,
     } = proposition
     else {
-        unreachable!("memory-loadable helper called for another proposition carrier")
+        unreachable!("memory-viewable helper called for another proposition carrier")
     };
     integer_work(1)?;
     let pointer = CValue::Pointer(CPointerValue::new(base.clone(), CType::VoidPointer));

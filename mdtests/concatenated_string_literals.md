@@ -14,7 +14,7 @@ uint8* concatenated_string() {
 verifying "concatenated_string_literals.c";
 
 uint8* concatenated_string() {
-    ensures readable: loadable(result[0..12]);
+    ensures readable: viewable(result[0..12]);
     ensures comma: result[5] == ',';
     ensures space: result[6] == ' ';
     ensures last: result[11] == 'd';

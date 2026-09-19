@@ -21,7 +21,7 @@ int32 wrapped_slice(int32* p, int32 n) {
 ```click
 resource slice_of(p: int32*, n: int32) {
     views p[0..n];
-    fact loadable(p[0..n]);
+    fact viewable(p[0..n]);
 }
 
 verifying "wrapped_slice.c";

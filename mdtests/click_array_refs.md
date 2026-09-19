@@ -50,8 +50,8 @@ int32 keep_first_change_second(int32 p[2], int32 x) {
 }
 
 int32 identity_two_arrays(int32 p[1], int32 q[1]) {
-    requires loadable(p[0..1]);
-    requires loadable(q[0..1]);
+    requires viewable(p[0..1]);
+    requires viewable(q[0..1]);
     requires same_first(p, q);
     ensures exact_opaque_fact: same_first(p, q) by auto;
     ensures unfolded_requirement: p[0] == q[0] by {

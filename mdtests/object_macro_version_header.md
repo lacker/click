@@ -32,7 +32,7 @@ int version_num() {
 } by { execute(); simp(); }
 
 unsigned char *version_text() {
-    ensures readable: loadable(result[0..5]);
+    ensures readable: viewable(result[0..5]);
     ensures result[0] == '0';
     ensures result[1] == '.';
     ensures result[2] == '1';

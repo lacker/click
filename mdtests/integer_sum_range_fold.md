@@ -26,7 +26,7 @@ verifying "integer_sum_range_fold.c";
 int32 sum(int32 a[], int32 n) {
     requires 0 <= n and n <= 1000;
     requires n <= 1073741823;
-    requires loadable(a[0..n]);
+    requires viewable(a[0..n]);
     views a[0..n];
     requires forall (k: int32) {
         0 <= k and k < n implies
@@ -176,7 +176,7 @@ int32 sum(int32 a[], int32 n) {
             }
             have defined(a[i]) by {
                 simp() using {
-                    loadable(a[0..n]);
+                    viewable(a[0..n]);
                     0 <= n;
                     n <= 1073741823;
                     0 <= i;
@@ -278,7 +278,7 @@ int32 sum(int32 a[], int32 n) {
                     0 <= at(statement(5).entry, i);
                     at(statement(5).entry, i) < n;
                     at(statement(5).entry, i) < 2147483647;
-                    loadable(a[0..n]);
+                    viewable(a[0..n]);
                     0 <= n;
                     n <= 1073741823;
                     forall (k: int32) {
@@ -339,7 +339,7 @@ int32 sum(int32 a[], int32 n) {
                     }
                 }
                 simp() using {
-                    loadable(a[0..n]);
+                    viewable(a[0..n]);
                     0 <= n;
                     n <= 1073741823;
                     k >= 0;

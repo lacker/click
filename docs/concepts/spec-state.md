@@ -51,7 +51,7 @@ Click already has a few spec-only mechanisms:
 - `at(statement(N).entry, ...)` and `at(statement(N).exit, ...)` can name
   complete statement-state snapshots recorded by deterministic proof
   execution, including memory and C local values. Their second argument may be
-  an expression or a complete proposition such as `loadable(p[0..n])`.
+  an expression or a complete proposition such as `viewable(p[0..n])`.
 - labels give names to requirements and guarantees.
 - predicates package abstract facts.
 - `let ... where` introduces immutable witnesses in proposition clauses.
@@ -107,7 +107,7 @@ kernel supplies their checked composition, transfer, and memory authority.
 Keep these distinctions explicit:
 
 - `let` is an immutable abbreviation, not mutable spec state.
-- `loadable` proves memory safety and bounds; it does not grant access
+- `viewable` proves memory safety and bounds; it does not grant access
   authority.
 - `owns` bounds a function's writes; it does not grant permission to access
   or free the named memory.

@@ -1437,7 +1437,7 @@ predicate cstr_prefix(bytes: uint8[], len: int32) {
 ```click
 predicate cstr_len(bytes: uint8[], len: int32) {
     0 <= len and
-        loadable(bytes[0..len + 1]) and
+        viewable(bytes[0..len + 1]) and
         cstr_prefix(bytes, len) and
         bytes_contains(bytes, len, len + 1, '\0')
 }
@@ -1472,7 +1472,7 @@ predicate cstr(bytes: uint8[]) {
 ```click
 predicate cstr_readable_len(bytes: uint8[], len: int32) {
     0 <= len and
-        loadable(bytes[0..len + 1]) and
+        viewable(bytes[0..len + 1]) and
         forall (k: int32) {
             0 <= k and k < len implies bytes[k] != '\0'
         } and
@@ -1481,7 +1481,7 @@ predicate cstr_readable_len(bytes: uint8[], len: int32) {
 ```
 
 **Meaning:** States that `len` is a nonnegative C-string length, the complete
-prefix through its terminator is dynamically loadable, the prefix has no
+prefix through its terminator is dynamically viewable, the prefix has no
 embedded terminator, and the terminator byte is null.
 
 **Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
@@ -1548,7 +1548,7 @@ theorem cstr_readable_len_unique(bytes: uint8[], left: int32, right: int32) {
 
 **Meaning:** Proves that two nonnegative lengths with the same null-free prefix
 condition and null terminator for one byte array are equal. It is a pure
-content theorem; it does not grant loadability or read/write permission.
+content theorem; it does not grant viewability or read/write permission.
 
 **Kind:** theorem. The proof is checked as part of the standard-library
 definition and its requirements and guarantee are normative in the declaration above.
@@ -1561,7 +1561,7 @@ definition and its requirements and guarantee are normative in the declaration a
 predicate cstr_readable(bytes: uint8[]) {
     exists (len: int32) {
         0 <= len and
-            loadable(bytes[0..len + 1]) and
+            viewable(bytes[0..len + 1]) and
             forall (k: int32) {
                 0 <= k and k < len implies bytes[k] != '\0'
             } and
@@ -1570,7 +1570,7 @@ predicate cstr_readable(bytes: uint8[]) {
 }
 ```
 
-**Meaning:** States that the byte array has some dynamically loadable,
+**Meaning:** States that the byte array has some dynamically viewable,
 null-terminated C-string prefix. The length remains existential; unfold the
 predicate when a proof needs to expose that witness.
 
@@ -1598,19 +1598,19 @@ predicate cstr_bounded(bytes: uint8[], max: int32) {
 theorem cstr_len_is_loadable(bytes: uint8[], len: int32) {
     requires cstr_len(bytes, len);
 
-    ensures loadable(bytes[0..len + 1]) by {
+    ensures viewable(bytes[0..len + 1]) by {
         unfold(cstr_len);
         simp();
     }
 }
 ```
 
-**Meaning:** Given an exact C-string length, exposes the loadability of the
+**Meaning:** Given an exact C-string length, exposes the viewability of the
 prefix and its terminator as a separate fact for a subsequent proof step.
 
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
-**Verified use:** [`mdtests/cstr_loadable_witness.md`](https://github.com/lacker/click/blob/master/mdtests/cstr_loadable_witness.md) checks this witness projection.
+**Verified use:** [`mdtests/cstr_viewable_witness.md`](https://github.com/lacker/click/blob/master/mdtests/cstr_viewable_witness.md) checks this witness projection.
 
 ### `cstr_len_nonnegative`
 
@@ -1680,7 +1680,7 @@ Click does not verify an implementation of the external function.
 ```click
 extern uint8* memcpy(uint8 destination[], uint8 source[], int32 bytes) {
     requires 0 <= bytes;
-    requires loadable(source[0..bytes]);
+    requires viewable(source[0..bytes]);
     owns destination[0..bytes];
     requires separate(memory(destination[0..bytes]), memory(source[0..bytes]));
     ensures result == destination;
@@ -1706,8 +1706,8 @@ effect is bound to this declaration, not to the name `memcpy`.
 ```click
 extern int32 memcmp(uint8 left[], uint8 right[], int32 bytes) {
     requires 0 <= bytes;
-    requires loadable(left[0..bytes]);
-    requires loadable(right[0..bytes]);
+    requires viewable(left[0..bytes]);
+    requires viewable(right[0..bytes]);
     ensures result == 0 implies bytes_equal(left, 0, right, 0, bytes);
     ensures result != 0 implies not bytes_equal(left, 0, right, 0, bytes);
 }
@@ -1748,7 +1748,7 @@ value and returns the destination pointer.
 extern int32 strlen(uint8 bytes[]) {
     requires cstr_readable(bytes);
     ensures 0 <= result;
-    ensures loadable(bytes[0..result + 1]);
+    ensures viewable(bytes[0..result + 1]);
     ensures forall (k: int32) {
         0 <= k and k < result implies bytes[k] != '\0'
     };
@@ -1758,7 +1758,7 @@ extern int32 strlen(uint8 bytes[]) {
 }
 ```
 
-**Meaning:** Returns a length for a dynamically loadable, null-terminated byte
+**Meaning:** Returns a length for a dynamically viewable, null-terminated byte
 string without mutation. The result satisfies the readable-length relation and
 points at its null terminator; `cstr_readable_len_unique` can connect it to an
 independently framed witness. The separate `old(bytes[0])` consequence retains

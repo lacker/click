@@ -293,12 +293,12 @@ a state that does not justify a load it makes is refused there, unless the
 clause allows symbolic contract loads (a resource segment, an effect
 footprint inside a folded composite), in which case the load stays the
 symbolic term kernel execution spells it as and certification discharges
-its loadability. The surface has no evaluator of its own. A count named at a recorded state
+its viewability. The surface has no evaluator of its own. A count named at a recorded state
 is that state's population. A negated condition is the condition with the
 other value, as an execution spells the branch it did not take, and
-loadability terms are canonical, so a proposition lowered anywhere is
+viewability terms are canonical, so a proposition lowered anywhere is
 spelled as the execution's facts are. The kernel lowering leaves a load's
-loadability as an obligation; the proof-side lowering refuses only a load
+viewability as an obligation; the proof-side lowering refuses only a load
 of memory the state shows freed, and certification discharges the rest
 from the path's facts. The two sides are compared in one canonical form
 for the folds that remain (a term compared with itself, a constant premise

@@ -7355,7 +7355,7 @@ mod integer_budget_tests {
             Box::new(defining.clone()),
             Box::new(loadable.clone()),
         ))
-        .expect("the loadability conjunct must remain");
+        .expect("the viewability conjunct must remain");
         assert!(matches!(exact, Proposition::CMemoryLoadable { .. }));
 
         let guarded = Proposition::Implies(Box::new(defining), Box::new(loadable.clone()));

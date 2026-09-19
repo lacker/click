@@ -1,6 +1,6 @@
-# loadable supports pointer-base segments
+# viewable supports pointer-base segments
 
-This checks that segment-form `loadable` uses the same pointer-base syntax
+This checks that segment-form `viewable` uses the same pointer-base syntax
 as `owns` clauses. The requirement covers only the shifted one-cell range
 `(p + 1)[0..1]`, and the function writes and reads exactly that cell.
 
@@ -15,7 +15,7 @@ int32 pointer_base_loadable(int32* p) {
 verifying "pointer_base_loadable.c";
 
 int32 pointer_base_loadable(int32* p) {
-    requires loadable((p + 1)[0..1]);
+    requires viewable((p + 1)[0..1]);
     consumes (p + 1)[0..1];
     ensures returns_written: result == 9 by auto;
 }

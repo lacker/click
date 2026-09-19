@@ -1392,7 +1392,7 @@ fn expanded_uint8_facts_print_as_parseable_typed_literals() {
     let c_source = "int32 contains(uint8 p[], int32 n) { return 0; }";
     let click_source = r#"verifying "contains.c";
 int32 contains(uint8 p[], int32 n) {
-    requires loadable(p[0..n]);
+    requires viewable(p[0..n]);
     requires has_x: bytes_contains(p, 0, n, 'x');
     ensures bytes_contains(p, 0, n, 'x') by {
         execute();
@@ -1550,7 +1550,7 @@ fn expanded_post_execution_apply_retains_its_facts_for_the_closer() {
     let c_source = "int32 inspect(uint8 p[], int32 len) { return 0; }";
     let click_source = r#"verifying "inspect.c";
 int32 inspect(uint8 p[], int32 len) {
-    requires loadable(p[0..len + 1]);
+    requires viewable(p[0..len + 1]);
     requires exact: cstr_len(p, len);
     ensures 0 <= len by {
         execute();

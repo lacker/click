@@ -1215,7 +1215,7 @@ fn pointer_has_object_provenance_evidence(
                     bytes,
                 } = proposition
                 else {
-                    unreachable!("loadability object index contains only loadability facts")
+                    unreachable!("viewability object index contains only viewability facts")
                 };
                 crate::kernel::reasoning::memory_range_still_available(memory, state.memory(), base)
                     && decide(ConditionTerm::signed_greater_than(

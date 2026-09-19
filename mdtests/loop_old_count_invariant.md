@@ -19,7 +19,7 @@ int32 loop_old_count_invariant(int32 p[3]) {
 verifying "loop_old_count_invariant.c";
 
 int32 loop_old_count_invariant(int32 p[3]) {
-    requires loadable(p[0..3]);
+    requires viewable(p[0..3]);
     ensures result_value: result == 3;
 } by {
     step();
@@ -34,8 +34,8 @@ int32 loop_old_count_invariant(int32 p[3]) {
             have i >= 0 and i <= 3 by simp;
             close_invariants by {
                 both {
-                    transport(at(function.entry, loadable(p[0..3])), at(function.entry, loadable(p[0..1]))) using {
-                        at(function.entry, loadable(p[0..3]));
+                    transport(at(function.entry, viewable(p[0..3])), at(function.entry, viewable(p[0..1]))) using {
+                        at(function.entry, viewable(p[0..3]));
                     }
                     assumption();
                 } and {

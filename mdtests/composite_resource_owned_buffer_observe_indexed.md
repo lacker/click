@@ -1,7 +1,7 @@
 # composite resource owned buffer observe indexed
 
 This checks that observing an owned buffer exposes enough immediate pure facts,
-viewed contained resource facts, and deterministic loadability projections to
+viewed contained resource facts, and deterministic viewability projections to
 justify an indexed read through a field-dependent backing-array range.
 
 ```c filename=buffer_get.c

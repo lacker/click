@@ -409,7 +409,7 @@ fn parses_expanded_typed_loads_and_old_loadability() {
             ensures result == 0;
         } by {
             simp() using {
-                loadable(old(owner[0..6]));
+                viewable(old(owner[0..6]));
                 load_int32_pointer((owner + 2)) == data;
                 separate(
                     memory(owner[0..6]),
@@ -436,7 +436,7 @@ fn parses_expanded_typed_loads_and_old_loadability() {
     ));
     assert_eq!(
         diagnostics::describe_click_proposition(&premises[0]),
-        "loadable(old(owner[0..6]))"
+        "viewable(old(owner[0..6]))"
     );
     assert!(matches!(
         &premises[1],
@@ -2820,11 +2820,11 @@ fn rejects_byte_counting_loadable_syntax() {
             verifying "fill.c";
 
             int32 fill(int32* p, int32 n) {
-                requires loadable(p, n * 4);
+                requires viewable(p, n * 4);
                 ensures result == n by auto;
             }
         "#;
-    let error = parse(source).expect_err("byte-counting loadable syntax should be retired");
+    let error = parse(source).expect_err("byte-counting viewable syntax should be retired");
     assert!(error.message().contains("expected"), "{error:?}");
 }
 
@@ -2834,11 +2834,11 @@ fn parses_loadable_segment_syntax() {
             verifying "fill.c";
 
             int32 fill(int32* p, int32 n) {
-                requires loadable(p[0..n]);
+                requires viewable(p[0..n]);
                 ensures result == n by auto;
             }
         "#;
-    let file = parse(source).expect("segment loadable should parse");
+    let file = parse(source).expect("segment viewable should parse");
     let function = &file.function_blocks()[0];
 
     assert_eq!(
@@ -2865,11 +2865,11 @@ fn parses_loadable_pointer_base_segment() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable((p + 1)[0..1]);
+                requires viewable((p + 1)[0..1]);
                 ensures result == 9 by auto;
             }
         "#;
-    let file = parse(source).expect("pointer-base loadable should parse");
+    let file = parse(source).expect("pointer-base viewable should parse");
     let function = &file.function_blocks()[0];
 
     assert_eq!(
@@ -2902,7 +2902,7 @@ fn parses_parenthesized_loaded_pointer_segment_base() {
             verifying "read.c";
 
             int32 read(int32* owner) {
-                requires at(function.entry, loadable((load_int32_pointer((owner + 2)) + 0)[0..1]));
+                requires at(function.entry, viewable((load_int32_pointer((owner + 2)) + 0)[0..1]));
                 ensures result == 0 by auto;
             }
         "#;
@@ -2916,16 +2916,16 @@ fn parses_loadable_segment_proposition() {
             verifying "read.c";
 
             predicate shifted_loadable(p: int32*, n: int32) {
-                loadable((p + 1)[0..n])
+                viewable((p + 1)[0..n])
             }
 
             int32 read(int32* p, int32 n) {
-                requires loadable((p + 1)[0..n]);
+                requires viewable((p + 1)[0..n]);
                 requires shifted_loadable(p, n);
                 ensures result == 0 by auto;
             }
         "#;
-    let file = parse(source).expect("loadable proposition should parse");
+    let file = parse(source).expect("viewable proposition should parse");
     let function = &file.function_blocks()[0];
 
     assert_eq!(
@@ -3127,7 +3127,7 @@ fn rejects_reversed_constant_loadable_segment() {
             verifying "read_second.c";
 
             int32 read_second(int32* p) {
-                requires loadable(p[3..1]);
+                requires viewable(p[3..1]);
                 ensures reads: result == p[1] by auto;
             }
         "#;
@@ -3138,7 +3138,7 @@ fn rejects_reversed_constant_loadable_segment() {
     assert!(
         error
             .message()
-            .contains("`loadable` segment has an end before its start"),
+            .contains("`viewable` segment has an end before its start"),
         "{}",
         error.message()
     );
@@ -3169,7 +3169,7 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
             verifying "json_object_ref_count.c";
 
             int32 json_object_get_ref_count(struct json_object* obj) {
-                requires loadable(obj->ref_count);
+                requires viewable(obj->ref_count);
                 ensures returns_ref_count: result == obj->ref_count by auto;
             }
         "#;
@@ -3350,7 +3350,7 @@ fn parses_struct_object_segments_without_exposing_layout_cells() {
         verifying "initialize.c";
 
         int32 initialize(struct vector* owner) {
-            requires loadable(owner->data[0..owner->cap]);
+            requires viewable(owner->data[0..owner->cap]);
             consumes object(owner);
             produces object(owner);
             ensures separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
@@ -3360,7 +3360,7 @@ fn parses_struct_object_segments_without_exposing_layout_cells() {
         .expect("whole struct objects should have a source-level segment spelling");
     let function = &file.function_blocks()[0];
     let Requirement::LoadableSegment { segment: range } = &function.requires()[0] else {
-        panic!("expected a field-backed loadable range")
+        panic!("expected a field-backed viewable range")
     };
     assert_eq!(
         super::diagnostics::describe_contract_segment(range),
@@ -3442,7 +3442,7 @@ fn parses_pilot_struct_field_owned_segment() {
             verifying "json_object_set_ref_count.c";
 
             int32 json_object_set_ref_count(struct json_object* obj, int32 count) {
-                requires loadable(obj->ref_count);
+                requires viewable(obj->ref_count);
                 owns obj->ref_count;
                 ensures returns_count: result == count by auto;
             }

@@ -1,6 +1,6 @@
-# A conjunctive requirement preserves nested dynamic loadability
+# A conjunctive requirement preserves nested dynamic viewability
 
-Loadability may be one conjunct of a larger requirement.  The checked read
+Viewability may be one conjunct of a larger requirement.  The checked read
 authority from that atom is still available when a dependent composite
 argument reads its pointer field, while the arithmetic conjunct remains part
 of the contract proposition.
@@ -23,7 +23,7 @@ verifying "nested_dynamic_dependent_pair.c";
 
 contract void NestedDynamicDependentPair(struct node* node, int32 n) {
     requires node != 0;
-    requires n >= 1 and loadable(node[0..n]);
+    requires n >= 1 and viewable(node[0..n]);
     requires n <= 2147483647;
     owns cell(node->left);
 }

@@ -1805,7 +1805,7 @@ fn array_fact_across_local_stores(statement_count: usize) -> (String, String) {
     c_source.push_str("}\n");
 
     let mut click_source = String::from(
-        "verifying \"bump.c\";\n\nfunction icount(p: int32[], lo: int32, hi: int32) -> Integer {\n    (lo..hi).fold(0, |acc, k| { acc + to_integer(p[k]) })\n}\n\nvoid bump(int32 a[], int32 n) {\n    requires 0 < n;\n    requires loadable(a[0..n]);\n    views a[0..n];\n} by {\n    step();\n    step();\n    have 0 <= 0 by { simp(); }\n    have icount(a, 0, 0) == 0 by {\n        unfold(icount(a, 0, 0)) using { 0 <= 0; }\n        normalize();\n    }\n",
+        "verifying \"bump.c\";\n\nfunction icount(p: int32[], lo: int32, hi: int32) -> Integer {\n    (lo..hi).fold(0, |acc, k| { acc + to_integer(p[k]) })\n}\n\nvoid bump(int32 a[], int32 n) {\n    requires 0 < n;\n    requires viewable(a[0..n]);\n    views a[0..n];\n} by {\n    step();\n    step();\n    have 0 <= 0 by { simp(); }\n    have icount(a, 0, 0) == 0 by {\n        unfold(icount(a, 0, 0)) using { 0 <= 0; }\n        normalize();\n    }\n",
     );
     // One use of the fact after every step: the walk is asked from a fresh
     // snapshot each time, which is the shape that goes quadratic when an

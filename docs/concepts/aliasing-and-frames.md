@@ -50,7 +50,7 @@ void f(int32 a[], int32 n) {
 
 A contract that reads `a[0]` while declaring no resource for `a` cannot carry
 that read across the store to `g[0]`, however different the two names look.
-`requires loadable(a[0..n])` says the range can be read; it says nothing about
+`requires viewable(a[0..n])` says the range can be read; it says nothing about
 where it is. State the separation:
 
 <!-- verified-example: mdtests/a_separated_array_argument_survives_a_global_store.md -->

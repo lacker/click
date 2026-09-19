@@ -219,7 +219,7 @@ impl Renderer<'_> {
                 base,
                 bytes,
             } => {
-                self.push("loadable(memory=");
+                self.push("viewable(memory=");
                 self.memory(memory);
                 self.push(", base=");
                 self.pointer(base);

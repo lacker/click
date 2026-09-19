@@ -1100,11 +1100,11 @@ fn callee_subrange_requirement_completes_without_a_body_rerun() {
         click_source,
         &[("write_at.c", write_at), ("write_at_symbolic.c", caller)],
     )
-    .expect("a callee requirement inside the caller's loadable range should verify");
+    .expect("a callee requirement inside the caller's viewable range should verify");
     assert_eq!(
         crate::kernel::take_checked_function_body_execution_count(),
         0,
-        "the callee's loadability premise is covered by the caller's retained loadable range"
+        "the callee's viewability premise is covered by the caller's retained viewable range"
     );
 }
 
@@ -2497,7 +2497,7 @@ fn verifies_old_memory_postcondition_for_unmodified_cell() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable(p[0..2]);
+                requires viewable(p[0..2]);
                 consumes p[1..2];
                 ensures writes_second: p[1] == 9 by auto;
                 ensures keeps_first: p[0] == old(p[0]) by auto;
@@ -2530,7 +2530,7 @@ fn verifies_quantified_old_memory_postcondition() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable(p[0..2]);
+                requires viewable(p[0..2]);
                 consumes p[1..2];
                 ensures keeps_first_cell: forall (k: int32) {
                     0 <= k and k < 1 implies p[k] == old(p[k])

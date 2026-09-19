@@ -211,7 +211,7 @@ fn apply_using_uses_ambient_loadability_only_to_lower_explicit_premises() {
         "#;
 
     verify_c0_sources(click_source, &[("first.c", c_source)]).expect(
-        "ambient loadability may lower an explicit premise without becoming a theorem premise",
+        "ambient viewability may lower an explicit premise without becoming a theorem premise",
     );
 }
 
@@ -1089,7 +1089,7 @@ fn unfolds_predicate_requirement_to_prove_consequence() {
             }
 
             int32 keep_pair(int32* p) {
-                requires loadable(p[0..2]);
+                requires viewable(p[0..2]);
                 requires sorted_pair(p);
                 ensures consequence: p[0] <= p[1] by {
                     execute();
@@ -1192,7 +1192,7 @@ fn unfolds_general_sorted_predicate() {
 
             int32 keep_sorted(int32* p, int32 n) {
                 requires n >= 0;
-                requires loadable(p[0..n]);
+                requires viewable(p[0..n]);
                 requires sorted(p, n);
                 ensures still_sorted: sorted(p, n) by {
                     execute();

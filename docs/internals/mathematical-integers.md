@@ -65,13 +65,13 @@ A statement whose evaluation condition is not established where the statement is
 written is refused as it is lowered, and the refusal is written for whoever wrote
 the statement. It names the clause or expression, the written subterm whose
 evaluation raised the condition, and the condition as a requirement in the
-reader's own names -- the four bytes at `p[hi - 1]` must be loadable, `hi - 1`
+reader's own names -- the four bytes at `p[hi - 1]` must be viewable, `hi - 1`
 must not overflow, an `Integer` must fit the machine type it is converted back
 to. It says how many of that evaluation's conditions the premises did establish
 and names them, lists the premises it consulted in source spelling (a premise
 that is a conjunction counted as its conjuncts, bounded like every other fact
-list), says why a loadability premise over a wider range did not settle a single
-cell, and gives one repair: the cell's own loadability as a one-element range,
+list), says why a viewability premise over a wider range did not settle a single
+cell, and gives one repair: the cell's own viewability as a one-element range,
 the operation's `defined(...)`, or the converted value's bounds. Where the
 premise set it consulted was empty, it says so rather than implying a premise
 was read and rejected. A `.click` clause carries no source span, so the refusal

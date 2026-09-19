@@ -94,11 +94,11 @@ fn an_expression_form_names_itself_its_cell_and_its_repair() {
         "{message}"
     );
     assert!(
-        message.contains("the 4 bytes at `p[index]` must be loadable"),
+        message.contains("the 4 bytes at `p[index]` must be viewable"),
         "{message}"
     );
     assert!(
-        message.contains("`loadable(p[index..index + 1])`"),
+        message.contains("`viewable(p[index..index + 1])`"),
         "{message}"
     );
     assert!(message.contains("premises consulted: none"), "{message}");
@@ -143,7 +143,7 @@ fn a_c_fragment_form_lists_the_premises_it_consulted() {
     // The range premise over the same object is the one a reader believes
     // covers the cell, so the refusal has to name it as consulted.
     assert!(
-        message.contains("why that was not enough: `loadable(p[0..index])`"),
+        message.contains("why that was not enough: `viewable(p[0..index])`"),
         "{message}"
     );
 }
@@ -211,7 +211,7 @@ fn established_conditions_are_named_beside_the_missing_one() {
         "{message}"
     );
     assert!(
-        message.contains("not established: the 4 bytes at `p[index]` must be loadable"),
+        message.contains("not established: the 4 bytes at `p[index]` must be viewable"),
         "{message}"
     );
 }

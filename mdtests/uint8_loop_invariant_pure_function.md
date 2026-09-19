@@ -25,7 +25,7 @@ function first_byte(p: uint8[]) -> uint8 {
 
 uint8 fill_byte_tail(uint8 p[], int32 n) {
     requires n >= 1 and n <= 2147483647;
-    requires loadable(p[0..n]);
+    requires viewable(p[0..n]);
     consumes p[0..n];
     ensures first_preserved: result == old(first_byte(p));
 } by {

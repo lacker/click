@@ -21,7 +21,7 @@ int32 stable_view_returned_pointer_caller(int32 *p) {
 verifying "stable_view_returned_pointer.c";
 
 const int32 *stable_view_returned_pointer(int32 *p) {
-    requires loadable(p[0..1]);
+    requires viewable(p[0..1]);
     ensures result == p;
 } by {
     execute();

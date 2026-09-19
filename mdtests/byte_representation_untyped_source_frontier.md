@@ -24,7 +24,7 @@ int h(unsigned char *raw) {
 verifying "scalar_untyped_memcpy.c";
 
 int h(uint8 raw[]) {
-    requires loadable(raw[0..4]);
+    requires viewable(raw[0..4]);
     ensures result == 0 or result == -1;
 } by {
     execute();

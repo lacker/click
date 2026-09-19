@@ -21,8 +21,8 @@ int32 copy3(int32 dst[3], int32 src[3]) {
 verifying "copy3.c";
 
 int32 copy3(int32 dst[3], int32 src[3]) {
-    requires loadable(dst[0..3]);
-    requires loadable(src[0..3]);
+    requires viewable(dst[0..3]);
+    requires viewable(src[0..3]);
     consumes dst[0..3];
     views src[0..3];
     requires separate(memory(dst[0..3]), memory(src[0..3]));
@@ -124,37 +124,37 @@ int32 copy3(int32 dst[3], int32 src[3]) {
                     }
                 } and {
                     both {
-                        have loadable((src + 0)[0..1]) by {
-                            transport(at(function.entry, loadable(src[0..3])), loadable((src + 0)[0..1])) using {
-                                at(function.entry, loadable(src[0..3]));
+                        have viewable((src + 0)[0..1]) by {
+                            transport(at(function.entry, viewable(src[0..3])), viewable((src + 0)[0..1])) using {
+                                at(function.entry, viewable(src[0..3]));
                             }
                         }
-                        have loadable((src + 1)[0..1]) by {
-                            transport(at(function.entry, loadable(src[0..3])), loadable((src + 1)[0..1])) using {
-                                at(function.entry, loadable(src[0..3]));
+                        have viewable((src + 1)[0..1]) by {
+                            transport(at(function.entry, viewable(src[0..3])), viewable((src + 1)[0..1])) using {
+                                at(function.entry, viewable(src[0..3]));
                             }
                         }
-                        have loadable((src + 2)[0..1]) by {
-                            transport(at(function.entry, loadable(src[0..3])), loadable((src + 2)[0..1])) using {
-                                at(function.entry, loadable(src[0..3]));
+                        have viewable((src + 2)[0..1]) by {
+                            transport(at(function.entry, viewable(src[0..3])), viewable((src + 2)[0..1])) using {
+                                at(function.entry, viewable(src[0..3]));
                             }
                         }
                         enumerate();
                     } and {
                         both {
-                            have at(function.entry, loadable((src + 0)[0..1])) by {
-                                transport(at(function.entry, loadable(src[0..3])), at(function.entry, loadable((src + 0)[0..1]))) using {
-                                    at(function.entry, loadable(src[0..3]));
+                            have at(function.entry, viewable((src + 0)[0..1])) by {
+                                transport(at(function.entry, viewable(src[0..3])), at(function.entry, viewable((src + 0)[0..1]))) using {
+                                    at(function.entry, viewable(src[0..3]));
                                 }
                             }
-                            have at(function.entry, loadable((src + 1)[0..1])) by {
-                                transport(at(function.entry, loadable(src[0..3])), at(function.entry, loadable((src + 1)[0..1]))) using {
-                                    at(function.entry, loadable(src[0..3]));
+                            have at(function.entry, viewable((src + 1)[0..1])) by {
+                                transport(at(function.entry, viewable(src[0..3])), at(function.entry, viewable((src + 1)[0..1]))) using {
+                                    at(function.entry, viewable(src[0..3]));
                                 }
                             }
-                            have at(function.entry, loadable((src + 2)[0..1])) by {
-                                transport(at(function.entry, loadable(src[0..3])), at(function.entry, loadable((src + 2)[0..1]))) using {
-                                    at(function.entry, loadable(src[0..3]));
+                            have at(function.entry, viewable((src + 2)[0..1])) by {
+                                transport(at(function.entry, viewable(src[0..3])), at(function.entry, viewable((src + 2)[0..1]))) using {
+                                    at(function.entry, viewable(src[0..3]));
                                 }
                             }
                             enumerate();
@@ -173,11 +173,11 @@ int32 copy3(int32 dst[3], int32 src[3]) {
                                                 __click_q0 < (i - 1);
                                             }
                                         }
-                                        transport(at(function.entry, loadable(dst[0..3])), loadable((dst + __click_q0)[0..1])) using {
+                                        transport(at(function.entry, viewable(dst[0..3])), viewable((dst + __click_q0)[0..1])) using {
                                             __click_q0 < i;
                                             at(statement(3).entry, i) < at(statement(3).entry, 3);
                                             0 <= __click_q0;
-                                            at(function.entry, loadable(dst[0..3]));
+                                            at(function.entry, viewable(dst[0..3]));
                                         }
                                     } else {
                                         have __click_q0 == (i - 1) by {
@@ -191,11 +191,11 @@ int32 copy3(int32 dst[3], int32 src[3]) {
                                                 not __click_q0 < (i - 1);
                                             }
                                         }
-                                        transport(at(function.entry, loadable(dst[0..3])), loadable((dst + __click_q0)[0..1])) using {
+                                        transport(at(function.entry, viewable(dst[0..3])), viewable((dst + __click_q0)[0..1])) using {
                                             at(statement(3).entry, i) < at(statement(3).entry, 3);
                                             at(statement(3).entry, i) >= at(statement(3).entry, 0);
                                             __click_q0 == (i - 1);
-                                            at(function.entry, loadable(dst[0..3]));
+                                            at(function.entry, viewable(dst[0..3]));
                                         }
                                     }
                                 } and {
@@ -210,11 +210,11 @@ int32 copy3(int32 dst[3], int32 src[3]) {
                                                     __click_q0 < (i - 1);
                                                 }
                                             }
-                                            transport(at(function.entry, loadable(src[0..3])), at(function.entry, loadable((src + __click_q0)[0..1]))) using {
+                                            transport(at(function.entry, viewable(src[0..3])), at(function.entry, viewable((src + __click_q0)[0..1]))) using {
                                                 __click_q0 < i;
                                                 at(statement(3).entry, i) < at(statement(3).entry, 3);
                                                 0 <= __click_q0;
-                                                at(function.entry, loadable(src[0..3]));
+                                                at(function.entry, viewable(src[0..3]));
                                             }
                                         } else {
                                             have __click_q0 == (i - 1) by {
@@ -228,11 +228,11 @@ int32 copy3(int32 dst[3], int32 src[3]) {
                                                     not __click_q0 < (i - 1);
                                                 }
                                             }
-                                            transport(at(function.entry, loadable(src[0..3])), at(function.entry, loadable((src + __click_q0)[0..1]))) using {
+                                            transport(at(function.entry, viewable(src[0..3])), at(function.entry, viewable((src + __click_q0)[0..1]))) using {
                                                 at(statement(3).entry, i) < at(statement(3).entry, 3);
                                                 at(statement(3).entry, i) >= at(statement(3).entry, 0);
                                                 __click_q0 == (i - 1);
-                                                at(function.entry, loadable(src[0..3]));
+                                                at(function.entry, viewable(src[0..3]));
                                             }
                                         }
                                     } and {

@@ -4134,7 +4134,7 @@ fn recording_covers_a_loadability_premise_from_the_retained_context() {
         context.clone(),
     ));
     complete_early_return(&candidates, &function, trace)
-        .expect("the caller's wider loadable range covers the callee's requirement");
+        .expect("the caller's wider viewable range covers the callee's requirement");
 
     // A requirement outside the covered range is refused.
     let outside = Proposition::CMemoryLoadable {

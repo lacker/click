@@ -1,17 +1,17 @@
 # a range fold over its own viewed range is proved by ordinary induction
 
 `mdtests/fold_reading_an_array_is_nonnegative_over_its_own_range.md` proves this
-theorem with the range stated as `requires hi >= 0 and loadable(v[lo..hi]);`.
-That conjunction was not a style choice: a bare `requires loadable(...)` did not
+theorem with the range stated as `requires hi >= 0 and viewable(v[lo..hi]);`.
+That conjunction was not a style choice: a bare `requires viewable(...)` did not
 compile in a theorem, so the range had to ride inside a proposition. `views
 v[lo..hi];` states the same hypothesis directly, and this file is the same proof
 with that one clause changed. The original stays as the regression for the
 spelling that still exists.
 
 Two lines disappear with the conjunction. The hypothesis premise is now the
-range itself, so `apply(ih(hi - 1))` names it as `loadable(v[lo..hi - 1])` —
+range itself, so `apply(ih(hi - 1))` names it as `viewable(v[lo..hi - 1])` —
 the fact form, which is how a `views` premise is named in a `using` list —
-instead of rebuilding `hi - 1 >= 0 and loadable(v[lo..hi - 1])` with `split()`.
+instead of rebuilding `hi - 1 >= 0 and viewable(v[lo..hi - 1])` with `split()`.
 
 Everything else is unchanged, including why the extent facts are there. The
 theorem carries `hi <= 1073741823`, which with `0 <= lo` bounds the range's
@@ -49,7 +49,7 @@ theorem unmarked_nonnegative(v: int32[], lo: int32, hi: int32) {
             have hi - lo <= 1073741823 by {
                 arithmetic() using { 0 <= lo; lo < hi; hi <= 1073741823; }
             }
-            have loadable(v[lo..hi - 1]) by { simp(); }
+            have viewable(v[lo..hi - 1]) by { simp(); }
             have 0 <= hi - 1 - lo by {
                 arithmetic() using { 0 <= lo; lo < hi; hi <= 1073741823; }
             }
@@ -59,7 +59,7 @@ theorem unmarked_nonnegative(v: int32[], lo: int32, hi: int32) {
             apply(ih(hi - 1)) using {
                 0 <= hi - 1;
                 hi - 1 < hi;
-                loadable(v[lo..hi - 1]);
+                viewable(v[lo..hi - 1]);
                 0 <= lo;
                 hi - 1 <= 1073741823;
                 0 <= hi - 1 - lo;

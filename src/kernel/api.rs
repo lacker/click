@@ -4980,7 +4980,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                             },
                         );
                         let proposition_operation = match fact {
-                            Proposition::CMemoryLoadable { .. } => "derived proposition: loadable",
+                            Proposition::CMemoryLoadable { .. } => "derived proposition: viewable",
                             Proposition::ConditionIs(_, _) => "derived proposition: condition",
                             Proposition::CResourceSeparate { .. } => {
                                 "derived proposition: resource separate"

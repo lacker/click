@@ -105,8 +105,8 @@ retain, nonfinal release, final release, and free across opaque calls.
 
 ## Memory safety and postconditions
 
-- `mdtests/pointer_range.md`: basic pointer loadability.
-- `mdtests/pointer_range_missing_requires.md`: missing loadable range fails.
+- `mdtests/pointer_range.md`: basic pointer viewability.
+- `mdtests/pointer_range_missing_requires.md`: missing viewable range fails.
 - `mdtests/pointer_range_segment_syntax.md`: segment syntax.
 - `mdtests/fill3_memory_postconditions.md`: post-state memory facts.
 - `mdtests/fill3_bad_memory_postcondition.md`: failing memory postcondition.
@@ -140,7 +140,7 @@ retain, nonfinal release, final release, and free across opaque calls.
 
 ## Aliasing and separation
 
-- `mdtests/copy3_array_demo.md`: `loadable`, `separate(memory(...))`, and old source
+- `mdtests/copy3_array_demo.md`: `viewable`, `separate(memory(...))`, and old source
   values.
 - `mdtests/pointer_params_may_alias_without_separate.md`: aliasing is allowed by
   default.
@@ -161,9 +161,9 @@ retain, nonfinal release, final release, and free across opaque calls.
 ## Structs
 
 - `mdtests/struct_multifield_explicit_permissions.md`: compact multi-field
-  struct loads/stores with explicit loadability and write ranges.
-- `mdtests/struct_field_resources_imply_loadability.md`: preferred field-resource
-  shape where viewed and owned field resources imply field loadability.
+  struct loads/stores with explicit viewability and write ranges.
+- `mdtests/struct_field_resources_imply_viewability.md`: preferred field-resource
+  shape where viewed and owned field resources imply field viewability.
 - `mdtests/struct_pointer_field_explicit_permissions.md`: pointer-valued
   struct field load followed by a write through the loaded pointer, again using
   explicit ranges rather than ownership sugar.
@@ -211,7 +211,7 @@ retain, nonfinal release, final release, and free across opaque calls.
 
 - `mdtests/uint8_literals.md`: `uint8` returns and ASCII character literals.
 - `mdtests/uint8_buffer_read.md`: `uint8[]` parameter indexing with
-  byte-sized `loadable`.
+  byte-sized `viewable`.
 - `mdtests/uint8_local_array.md`: local byte arrays and byte stores/loads.
 - `mdtests/uint8_narrowing.md`: checked `int32`-to-`uint8` narrowing with
   range requirements.
@@ -415,7 +415,7 @@ sequence:
 - `mdtests/modular_pointer_postcondition.md`: a pointer-valued postcondition
   becomes an explicit caller pure fact after a verified modular call.
 - `mdtests/opaque_resource_proposition_contract.md`: `separate(...)`,
-  `contains(...)`, and `loadable(...)` cross an opaque call as ordinary
+  `contains(...)`, and `viewable(...)` cross an opaque call as ordinary
   state-indexed propositions.
 - `mdtests/composite_resource_observe_nested_separate_contains.md`: explicit
   chained observation exposes `contains(...)` and `separate(...)` facts for a
@@ -497,14 +497,14 @@ sequence:
   predicates and `choose` after explicit predicate unfolding.
 - `mdtests/cstr_stdlib.md`: first C-string predicates over `uint8[]`, including
   exact spec length, bounded terminator, and plain existential string facts.
-- `mdtests/cstr_dynamic_loadability.md`: a dynamically loadable C-string
+- `mdtests/cstr_dynamic_viewability.md`: a dynamically viewable C-string
   witness used to verify the variable-length `strlen` contract.
 - `mdtests/cstr_dynamic_indexed_read.md`: a `strlen` result used for a real
   indexed terminator read with an explicitly framed dynamic view.
 - `mdtests/cstr_dynamic_indexed_read_requires_permission.md`: the matching
   failure showing that readable contents alone do not grant read permission.
-- `mdtests/forall_loadable_range.md` and `mdtests/exists_loadable_range.md`:
-  generic guarded universal and existential range-loadability derivations.
+- `mdtests/forall_viewable_range.md` and `mdtests/exists_viewable_range.md`:
+  generic guarded universal and existential range-viewability derivations.
 
 ## Sorting and permutation
 

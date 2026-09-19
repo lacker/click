@@ -2292,7 +2292,7 @@ impl<'a> Proof<'a> {
             ));
         }
         Some(format!(
-            "`{target}` was not proved and no stated loadable range over the same base is available here to narrow"
+            "`{target}` was not proved and no stated viewable range over the same base is available here to narrow"
         ))
     }
 
@@ -2360,7 +2360,7 @@ impl<'a> Proof<'a> {
                 self.missing_loadable_narrowing_order_fact(surface_source, surface_target)
             {
                 return Err(self.step_error(format!(
-                    "`transport using` cannot narrow `{}` to `{}`: narrowing a loadable range needs `{}`, which is not an available fact",
+                    "`transport using` cannot narrow `{}` to `{}`: narrowing a viewable range needs `{}`, which is not an available fact",
                     describe_click_proposition(surface_source),
                     describe_click_proposition(surface_target),
                     describe_click_proposition(&missing)
@@ -2374,7 +2374,7 @@ impl<'a> Proof<'a> {
                 && loadable_surface_range_endpoints(surface_target).is_some()
             {
                 return Err(self.step_error(format!(
-                    "`transport using` cannot narrow `{}` to `{}`: narrowing a loadable range needs `{}` established as a valid 32-bit byte extent, which takes `0 <= {} - {}` and an upper bound on `{} - {}` within the element count a 32-bit extent holds",
+                    "`transport using` cannot narrow `{}` to `{}`: narrowing a viewable range needs `{}` established as a valid 32-bit byte extent, which takes `0 <= {} - {}` and an upper bound on `{} - {}` within the element count a 32-bit extent holds",
                     describe_click_proposition(surface_source),
                     describe_click_proposition(surface_target),
                     describe_click_proposition(surface_source),

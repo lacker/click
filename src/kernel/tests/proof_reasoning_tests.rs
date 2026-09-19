@@ -3697,7 +3697,7 @@ fn adjacent_loadable_regions_certify_their_concatenation() {
         .assume_proposition(next_cell.clone());
     let derivation = assumptions
         .derive_atomic_proposition(&goal)
-        .expect("an initialized next cell should extend the loadable prefix");
+        .expect("an initialized next cell should extend the viewable prefix");
     assert!(derivation.check(&assumptions));
     let premises = derivation.context_premises();
     assert_eq!(premises.len(), 2);
@@ -3716,7 +3716,7 @@ fn adjacent_loadable_regions_certify_their_concatenation() {
     let stored_assumptions = PureFactContext::new().assume_proposition(prefix.clone());
     let stored_derivation = stored_assumptions
         .derive_atomic_proposition(&stored_goal)
-        .expect("a materialized next cell should extend the loadable prefix");
+        .expect("a materialized next cell should extend the viewable prefix");
     assert!(stored_derivation.check(&stored_assumptions));
     assert_eq!(stored_derivation.context_premises(), vec![prefix]);
 

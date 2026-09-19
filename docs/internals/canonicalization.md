@@ -242,7 +242,7 @@ canonicalization (`canonical_term`) remains the definition of the form, and
 the reasoning that views a load variable as the load it represents
 (`viewed_as_memory_load`, `registered_load_for_variable`) is how consumers
 keyed on load shape — substitution, quantifier triggers, frame checks,
-loadability witnesses, and the quantified-fact index — see through the
+viewability witnesses, and the quantified-fact index — see through the
 variable. None of these creation paths chooses a member of a proved equality
 class.
 

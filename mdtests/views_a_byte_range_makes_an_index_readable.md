@@ -5,10 +5,10 @@ A `views p[0..n]` clause over an `int32[]` made `p[i]` readable for a symbolic
 refused with
 `the checked execution of 'read_byte' assumed a pure fact at entry, which the contract context cannot derive`,
 so a contract that held the range and dropped its redundant
-`requires loadable(s[0..n])` stopped verifying for byte buffers only.
+`requires viewable(s[0..n])` stopped verifying for byte buffers only.
 
 The certification rule that answers "does a held resource cover this
-loadability fact" recovered the range's element width from the *shape of the
+viewability fact" recovered the range's element width from the *shape of the
 byte extent*: it wanted the product `count * 4`. A range of one-byte elements
 has no product left to read. `memory_range_byte_count` folds a factor of one
 away, so `s[0..n]` lowers its extent to the bare count `n`, which is

@@ -24,7 +24,7 @@ predicate sorted(p: int32[], n: int32) {
 }
 
 int32 preserve_sorted(int32 p[3]) {
-    requires loadable(p[0..3]);
+    requires viewable(p[0..3]);
     requires sorted(p, 3);
     ensures sorted(p, 3);
 } by {

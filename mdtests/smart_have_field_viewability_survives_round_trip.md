@@ -1,4 +1,4 @@
-# smart have retains field-derived loadability
+# smart have retains field-derived viewability
 
 A quantified smart `have` over a field-derived array must emit a certificate
 that remains valid after neighboring metadata fields have been materialized and an

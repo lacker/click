@@ -295,7 +295,7 @@ pub(super) fn describe_pure_fact(
             "algebraic value equality".to_string()
         }
         Proposition::CMemoryLoadable { base, bytes, .. } => format!(
-            "loadable(base={}, bytes={})",
+            "viewable(base={}, bytes={})",
             describe_pointer(base, parameters, arguments),
             describe_bitvector_with_context(bytes, parameters, arguments)
         ),
@@ -2184,7 +2184,7 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             describe_resource_subject(child)
         ),
         ClickProposition::Loadable { segment } => {
-            format!("loadable({})", describe_contract_segment(segment))
+            format!("viewable({})", describe_contract_segment(segment))
         }
         ClickProposition::Defined { expression } => {
             format!("defined({})", describe_contract_expression(expression))

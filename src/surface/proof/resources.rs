@@ -2426,7 +2426,7 @@ fn append_composite_resource_loadable_facts<F: ResourcePureFacts>(
     for contained in composite_body.contains() {
         let contained = instantiate_resource_clause(contained, substitutions).map_err(|message| {
             format!(
-                "could not instantiate resource `{}` contained resource for loadability: {message}",
+                "could not instantiate resource `{}` contained resource for viewability: {message}",
                 definition.name()
             )
         })?;
@@ -2439,7 +2439,7 @@ fn append_composite_resource_loadable_facts<F: ResourcePureFacts>(
         )
         .map_err(|error| {
             format!(
-                "could not project resource `{}` contained `{}` loadability: {}",
+                "could not project resource `{}` contained `{}` viewability: {}",
                 definition.name(),
                 describe_resource_clause(&contained),
                 error.message()

@@ -50,7 +50,7 @@ documentation inventory keep the following accepted words synchronized.
 | `and`, `or`, `implies`, `not`, `in` | Proposition connectives and sequence membership. `and`, `or`, and `implies` have increasing precedence except right-associative `implies`; `in` has comparison precedence. |
 | `forall`, `exists` | Universal and existential quantifiers. |
 | `all`, `any`, `fold` | Range proposition and expression methods. |
-| `defined`, `loadable`, `same_object`, `separate`, `aligned` | Definedness, readable-memory, pointer-provenance, resource-separation, and pointer-alignment propositions. |
+| `defined`, `viewable`, `same_object`, `separate`, `aligned` | Definedness, readable-memory, pointer-provenance, resource-separation, and pointer-alignment propositions. |
 | `old`, `at`, `c` | Snapshot selection and embedded C-fragment forms. |
 | `sizeof`, `byte_offset`, `address` | Supported scalar, pointer, and struct-layout sizes, byte-granularity pointer-offset expressions, and the LP64 integer representation of an object pointer. |
 | `load_int32`, `load_uint8`, `load_uint32`, `load_int64`, `load_uint64`, `load_int32_pointer`, `load_uint8_pointer`, `load_int32_pointer_pointer`, `load_uint8_pointer_pointer` | Typed memory-load expressions used by checked expansion when no higher-level source spelling is available. |

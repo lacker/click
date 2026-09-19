@@ -23,7 +23,7 @@ verifying "stdlib_external_contracts.c";
 
 int32 libc_contracts(uint8 destination[], uint8 source[]) {
     requires source_readable: cstr_readable(source);
-    requires loadable(source[0..3]);
+    requires viewable(source[0..3]);
     requires source[0] == '\0';
     owns destination[0..2];
     requires separate(memory(destination[0..2]), memory(source[0..2]));

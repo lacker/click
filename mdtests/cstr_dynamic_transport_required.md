@@ -16,12 +16,12 @@ int32 read_terminator(uint8 bytes[], int32 known_len) {
     requires input_len: cstr_readable_len(bytes, known_len);
     requires 0 <= known_len;
     requires known_len < 2147483647;
-    requires loadable(bytes[0..known_len + 1]);
+    requires viewable(bytes[0..known_len + 1]);
     ensures result >= 0 by {
         unfold(cstr_readable);
         unfold(cstr_readable_len);
         execute_until(statement(1));
-        have loadable(bytes[0..known_len + 1]) by {
+        have viewable(bytes[0..known_len + 1]) by {
             assumption();
         }
     }

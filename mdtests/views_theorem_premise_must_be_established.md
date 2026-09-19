@@ -8,7 +8,7 @@ about the rest of it.
 
 The refusal names the clause as the theorem wrote it, the arguments its own
 names were bound to, and the fact that instantiation asks for. It spells the
-clause as `loadable(v[lo..hi])`, which is the form the reader has to put in the
+clause as `viewable(v[lo..hi])`, which is the form the reader has to put in the
 `using` list, since a `using` list holds propositions and a `views` statement is
 not one.
 
@@ -36,12 +36,12 @@ int32 ignore(int32 a[]) {
 } by {
     step();
     apply(element_of_a_viewed_range(a, 0, 3, 1)) using {
-        loadable(a[0..2]);
+        viewable(a[0..2]);
     }
     simp();
 }
 ```
 
 ```expect
-fail: required exact fact for theorem `element_of_a_viewed_range` is unavailable: requirement 1 `loadable(v[lo..hi])` with v = a, lo = 0, hi = 3 instantiates to
+fail: required exact fact for theorem `element_of_a_viewed_range` is unavailable: requirement 1 `viewable(v[lo..hi])` with v = a, lo = 0, hi = 3 instantiates to
 ```

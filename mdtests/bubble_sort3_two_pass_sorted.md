@@ -55,7 +55,7 @@ predicate all_le_range(p: int32[], lo: int32, hi: int32, x: int32) {
 }
 
 int32 bubble_sort3_two_pass(int32 p[3]) {
-    requires loadable(p[0..3]);
+    requires viewable(p[0..3]);
     consumes p[0..3];
     ensures sorted: sorted(p, 3);
 } by {
@@ -109,7 +109,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                             at(statement(4).entry, j) <= at(statement(4).entry, 2);
                             at(statement(4).entry, j) >= at(statement(4).entry, 0);
                             k != (j - 1);
-                            at(function.entry, loadable(p[0..3]));
+                            at(function.entry, viewable(p[0..3]));
                         }
                         transport(at(statement(6).entry, p[k]) <= at(statement(6).entry, tmp), p[k] <= p[j]) using {
                             at(statement(6).entry, p[k]) <= at(statement(6).entry, tmp);
@@ -121,7 +121,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                             at(statement(4).entry, j) <= at(statement(4).entry, 2);
                             at(statement(4).entry, j) >= at(statement(4).entry, 0);
                             k != (j - 1);
-                            at(function.entry, loadable(p[0..3]));
+                            at(function.entry, viewable(p[0..3]));
                         }
                     } else {
                         have k == (j - 1) by {
@@ -166,11 +166,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                         __click_q0 < (j - 1);
                                     }
                                 }
-                                transport(at(function.entry, loadable(p[0..3])), loadable((p + __click_q0)[0..1])) using {
+                                transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
                                     __click_q0 < j;
                                     0 <= __click_q0;
                                     at(statement(4).entry, j) <= at(statement(4).entry, 2);
-                                    at(function.entry, loadable(p[0..3]));
+                                    at(function.entry, viewable(p[0..3]));
                                 }
                             } else {
                                 have __click_q0 == (j - 1) by {
@@ -184,11 +184,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                         not __click_q0 < (j - 1);
                                     }
                                 }
-                                transport(at(function.entry, loadable(p[0..3])), loadable((p + __click_q0)[0..1])) using {
+                                transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
                                     at(statement(4).entry, j) <= at(statement(4).entry, 2);
                                     at(statement(4).entry, j) >= at(statement(4).entry, 0);
                                     __click_q0 == (j - 1);
-                                    at(function.entry, loadable(p[0..3]));
+                                    at(function.entry, viewable(p[0..3]));
                                 }
                             }
                         } and {
@@ -268,7 +268,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                             at(statement(4).entry, j) <= at(statement(4).entry, 2);
                             at(statement(4).entry, j) >= at(statement(4).entry, 0);
                             k != (j - 1);
-                            at(function.entry, loadable(p[0..3]));
+                            at(function.entry, viewable(p[0..3]));
                         }
                         transport(at(statement(9).entry, p[k]) <= at(statement(9).entry, p[j]), p[k] <= p[j]) using {
                             at(statement(9).entry, p[k]) <= at(statement(9).entry, p[j]);
@@ -280,7 +280,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                             at(statement(4).entry, j) <= at(statement(4).entry, 2);
                             at(statement(4).entry, j) >= at(statement(4).entry, 0);
                             k != (j - 1);
-                            at(function.entry, loadable(p[0..3]));
+                            at(function.entry, viewable(p[0..3]));
                         }
                     } else {
                         have k == (j - 1) by {
@@ -328,11 +328,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                         __click_q0 < (j - 1);
                                     }
                                 }
-                                transport(at(function.entry, loadable(p[0..3])), loadable((p + __click_q0)[0..1])) using {
+                                transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
                                     __click_q0 < j;
                                     0 <= __click_q0;
                                     at(statement(4).entry, j) <= at(statement(4).entry, 2);
-                                    at(function.entry, loadable(p[0..3]));
+                                    at(function.entry, viewable(p[0..3]));
                                 }
                             } else {
                                 have __click_q0 == (j - 1) by {
@@ -346,11 +346,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                         not __click_q0 < (j - 1);
                                     }
                                 }
-                                transport(at(function.entry, loadable(p[0..3])), loadable((p + __click_q0)[0..1])) using {
+                                transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
                                     at(statement(4).entry, j) <= at(statement(4).entry, 2);
                                     at(statement(4).entry, j) >= at(statement(4).entry, 0);
                                     __click_q0 == (j - 1);
-                                    at(function.entry, loadable(p[0..3]));
+                                    at(function.entry, viewable(p[0..3]));
                                 }
                             }
                         } and {
@@ -360,10 +360,10 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                 extract(0 <= __click_q0);
                                 extract(0 <= __click_q0);
                                 extract(__click_q0 < j);
-                                transport(at(function.entry, loadable(p[0..3])), loadable((p + j)[0..1])) using {
+                                transport(at(function.entry, viewable(p[0..3])), viewable((p + j)[0..1])) using {
                                     at(statement(4).entry, j) < at(statement(4).entry, 2);
                                     at(statement(4).entry, j) >= at(statement(4).entry, 0);
-                                    at(function.entry, loadable(p[0..3]));
+                                    at(function.entry, viewable(p[0..3]));
                                 }
                             } and {
                                     both {
@@ -527,25 +527,25 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                         }
                     } and {
                         both {
-                            have loadable((p + 0)[0..1]) by {
-                                transport(at(function.entry, loadable(p[0..3])), loadable((p + 0)[0..1])) using {
-                                    at(function.entry, loadable(p[0..3]));
+                            have viewable((p + 0)[0..1]) by {
+                                transport(at(function.entry, viewable(p[0..3])), viewable((p + 0)[0..1])) using {
+                                    at(function.entry, viewable(p[0..3]));
                                 }
                             }
-                            have loadable((p + 1)[0..1]) by {
-                                transport(at(function.entry, loadable(p[0..3])), loadable((p + 1)[0..1])) using {
-                                    at(function.entry, loadable(p[0..3]));
+                            have viewable((p + 1)[0..1]) by {
+                                transport(at(function.entry, viewable(p[0..3])), viewable((p + 1)[0..1])) using {
+                                    at(function.entry, viewable(p[0..3]));
                                 }
                             }
                             enumerate();
                         } and {
                             both {
-                                have loadable((p + 2)[0..1]) by {
-                                    transport(at(function.entry, loadable(p[0..3])), loadable((p + 2)[0..1])) using {
-                                        at(function.entry, loadable(p[0..3]));
+                                have viewable((p + 2)[0..1]) by {
+                                    transport(at(function.entry, viewable(p[0..3])), viewable((p + 2)[0..1])) using {
+                                        at(function.entry, viewable(p[0..3]));
                                     }
                                 }
-                                have loadable((p + 2)[0..1]) by {
+                                have viewable((p + 2)[0..1]) by {
                                     assumption();
                                 }
                                 enumerate();
@@ -568,11 +568,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                                     __click_q0 < (j - 1);
                                                 }
                                             }
-                                            transport(at(function.entry, loadable(p[0..3])), loadable((p + __click_q0)[0..1])) using {
+                                            transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
                                                 __click_q0 < j;
                                                 0 <= __click_q0;
                                                 at(function.entry, j) == at(function.entry, 1);
-                                                at(function.entry, loadable(p[0..3]));
+                                                at(function.entry, viewable(p[0..3]));
                                             }
                                         } else {
                                             have __click_q0 == (j - 1) by {
@@ -586,10 +586,10 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                                     not __click_q0 < (j - 1);
                                                 }
                                             }
-                                            transport(at(function.entry, loadable(p[0..3])), loadable((p + __click_q0)[0..1])) using {
+                                            transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
                                                 __click_q0 == (j - 1);
                                                 at(function.entry, j) == at(function.entry, 1);
-                                                at(function.entry, loadable(p[0..3]));
+                                                at(function.entry, viewable(p[0..3]));
                                             }
                                         }
                                     } and {
@@ -705,25 +705,25 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                         }
                     } and {
                         both {
-                            have loadable((p + 0)[0..1]) by {
-                                transport(at(function.entry, loadable(p[0..3])), loadable((p + 0)[0..1])) using {
-                                    at(function.entry, loadable(p[0..3]));
+                            have viewable((p + 0)[0..1]) by {
+                                transport(at(function.entry, viewable(p[0..3])), viewable((p + 0)[0..1])) using {
+                                    at(function.entry, viewable(p[0..3]));
                                 }
                             }
-                            have loadable((p + 1)[0..1]) by {
-                                transport(at(function.entry, loadable(p[0..3])), loadable((p + 1)[0..1])) using {
-                                    at(function.entry, loadable(p[0..3]));
+                            have viewable((p + 1)[0..1]) by {
+                                transport(at(function.entry, viewable(p[0..3])), viewable((p + 1)[0..1])) using {
+                                    at(function.entry, viewable(p[0..3]));
                                 }
                             }
                             enumerate();
                         } and {
                             both {
-                                have loadable((p + 2)[0..1]) by {
-                                    transport(at(function.entry, loadable(p[0..3])), loadable((p + 2)[0..1])) using {
-                                        at(function.entry, loadable(p[0..3]));
+                                have viewable((p + 2)[0..1]) by {
+                                    transport(at(function.entry, viewable(p[0..3])), viewable((p + 2)[0..1])) using {
+                                        at(function.entry, viewable(p[0..3]));
                                     }
                                 }
-                                have loadable((p + 2)[0..1]) by {
+                                have viewable((p + 2)[0..1]) by {
                                     assumption();
                                 }
                                 enumerate();
@@ -746,11 +746,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                                     __click_q0 < (j - 1);
                                                 }
                                             }
-                                            transport(at(function.entry, loadable(p[0..3])), loadable((p + __click_q0)[0..1])) using {
+                                            transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
                                                 __click_q0 < j;
                                                 0 <= __click_q0;
                                                 at(function.entry, j) == at(function.entry, 1);
-                                                at(function.entry, loadable(p[0..3]));
+                                                at(function.entry, viewable(p[0..3]));
                                             }
                                         } else {
                                             have __click_q0 == (j - 1) by {
@@ -764,10 +764,10 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                                     not __click_q0 < (j - 1);
                                                 }
                                             }
-                                            transport(at(function.entry, loadable(p[0..3])), loadable((p + __click_q0)[0..1])) using {
+                                            transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
                                                 __click_q0 == (j - 1);
                                                 at(function.entry, j) == at(function.entry, 1);
-                                                at(function.entry, loadable(p[0..3]));
+                                                at(function.entry, viewable(p[0..3]));
                                             }
                                         }
                                     } and {
@@ -777,9 +777,9 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                                             extract(0 <= __click_q0);
                                             extract(0 <= __click_q0);
                                             extract(__click_q0 < j);
-                                            transport(at(function.entry, loadable(p[0..3])), loadable((p + j)[0..1])) using {
+                                            transport(at(function.entry, viewable(p[0..3])), viewable((p + j)[0..1])) using {
                                                 at(function.entry, j) == at(function.entry, 1);
-                                                at(function.entry, loadable(p[0..3]));
+                                                at(function.entry, viewable(p[0..3]));
                                             }
                                         } and {
                                     both {

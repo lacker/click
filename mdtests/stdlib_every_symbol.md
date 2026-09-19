@@ -576,7 +576,7 @@ theorem docs_use_cstr_len_has_terminator(bytes: uint8[], len: int32) {
 theorem docs_use_cstr_len_is_loadable(bytes: uint8[], len: int32) {
     requires cstr_len(bytes, len);
 
-    ensures loadable(bytes[0..len + 1]) by {
+    ensures viewable(bytes[0..len + 1]) by {
         apply(cstr_len_is_loadable(bytes, len));
     }
 }

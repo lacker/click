@@ -1,4 +1,4 @@
-# Dynamically loadable C-string witness for `strlen`
+# Dynamically viewable C-string witness for `strlen`
 
 ```c filename=cstr_dynamic_loadability.c
 int32 read_terminator(uint8 bytes[]) {

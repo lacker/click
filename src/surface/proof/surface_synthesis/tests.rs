@@ -430,7 +430,7 @@ fn exact_external_zero_based_byte_range_round_trips_symbolic_end() {
     )
     .expect("the exact external byte range must be spellable");
     let ClickProposition::Loadable { segment } = &synthesized else {
-        panic!("the requirement must remain one loadability: {synthesized:?}");
+        panic!("the requirement must remain one viewability: {synthesized:?}");
     };
     assert_eq!(segment.base, CExpression::Variable("bytes".into()));
     assert_eq!(segment.start, CExpression::Value(int32(0)));
@@ -472,7 +472,7 @@ fn exact_external_zero_based_byte_range_resolves_direct_variable_argument() {
     )
     .expect("the exact named local argument must resolve to its declared byte parameter");
     let ClickProposition::Loadable { segment } = synthesized else {
-        panic!("the requirement must remain one loadability");
+        panic!("the requirement must remain one viewability");
     };
     assert_eq!(segment.base, CExpression::Variable("bytes".into()));
 }
@@ -808,7 +808,7 @@ fn strlen_symbolic_element_range_round_trips_exactly() {
             .expect("strlen's reduced one-element range must be spellable")
     };
     let ClickProposition::Loadable { segment } = &synthesized else {
-        panic!("the requirement must remain one loadability: {synthesized:?}");
+        panic!("the requirement must remain one viewability: {synthesized:?}");
     };
     assert_eq!(segment.base, CExpression::Variable("bytes".into()));
     assert_eq!(segment.start, CExpression::Variable("index".into()));
@@ -836,7 +836,7 @@ fn strlen_symbolic_element_constant_byte_range_round_trips_exactly() {
             .expect("a constant one-byte symbolic range must be spellable")
     };
     let ClickProposition::Loadable { segment } = &synthesized else {
-        panic!("the requirement must remain one loadability: {synthesized:?}");
+        panic!("the requirement must remain one viewability: {synthesized:?}");
     };
     assert_eq!(
         segment.base,
@@ -928,7 +928,7 @@ fn strlen_constant_element_range_falls_back_to_general_synthesis() {
     let synthesized = synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
         .expect("a constant reduced element must retain the historical range fallback");
     let ClickProposition::Loadable { segment } = &synthesized else {
-        panic!("the requirement must remain one loadability: {synthesized:?}");
+        panic!("the requirement must remain one viewability: {synthesized:?}");
     };
     assert_eq!(segment.base, CExpression::Variable("bytes".into()));
     assert_eq!(segment.start, CExpression::Value(int32(3)));
@@ -936,7 +936,7 @@ fn strlen_constant_element_range_falls_back_to_general_synthesis() {
     let lowered = relower_written_proposition(&synthesized, &state)
         .expect("the historical fallback must still lower the constant range");
     let Proposition::CMemoryLoadable { base, bytes, .. } = lowered else {
-        panic!("the lowered fallback must remain one loadability");
+        panic!("the lowered fallback must remain one viewability");
     };
     assert_eq!(bytes, Bitvector32Term::Constant(1));
     assert_eq!(
@@ -975,7 +975,7 @@ fn strlen_zero_based_element_range_round_trips_exactly() {
     let synthesized = synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
         .expect("the canonical zero-based strlen element must be spellable");
     let ClickProposition::Loadable { segment } = &synthesized else {
-        panic!("the requirement must remain one loadability: {synthesized:?}");
+        panic!("the requirement must remain one viewability: {synthesized:?}");
     };
     assert_eq!(segment.base, CExpression::Variable("bytes".into()));
     assert_eq!(segment.start, CExpression::Variable("index".into()));
@@ -1027,7 +1027,7 @@ fn non_external_named_range_still_uses_general_synthesis() {
     let synthesized = synthesize_surface_proposition(&requirement, &[], &[], &state)
         .expect("the general named-range path must remain available for local pointers");
     let ClickProposition::Loadable { segment } = &synthesized else {
-        panic!("the requirement should remain one loadability: {synthesized:?}");
+        panic!("the requirement should remain one viewability: {synthesized:?}");
     };
     assert_eq!(segment.base, CExpression::Variable("elements".into()));
     assert_eq!(segment.start, CExpression::Variable("start".into()));
@@ -1185,7 +1185,7 @@ fn external_argument_range_loadability_round_trips_through_the_range_form() {
         panic!("the universal's body is one implication: {spelled:?}");
     };
     let ClickProposition::Loadable { segment } = consequent.as_ref() else {
-        panic!("the consequent is one loadability: {spelled:?}");
+        panic!("the consequent is one viewability: {spelled:?}");
     };
     assert_eq!(segment.base, CExpression::Variable("bytes".into()));
     assert_ne!(segment.start, CExpression::Value(int32(0)));
@@ -1227,19 +1227,19 @@ fn named_element_ranges_preserve_nonzero_starts_and_folded_byte_counts() {
                 .expect("a named element range must be spellable")
         };
         let ClickProposition::Loadable { segment } = &synthesized else {
-            panic!("the requirement should synthesize as one loadable range: {synthesized:?}");
+            panic!("the requirement should synthesize as one viewable range: {synthesized:?}");
         };
         assert_eq!(segment.base, CExpression::Variable("elements".into()));
         assert_eq!(segment.start, CExpression::Variable("start".into()));
         assert_eq!(segment.end, CExpression::Variable("end".into()));
 
         let source = format!(
-            "int32 range_{width}({spelling}* elements, int32 start, int32 end) {{ requires loadable(elements[start..end]); ensures result == 0; }}"
+            "int32 range_{width}({spelling}* elements, int32 start, int32 end) {{ requires viewable(elements[start..end]); ensures result == 0; }}"
         );
         let parsed = crate::surface::parse(&source).expect("the range spelling must parse");
         let Requirement::LoadableSegment { segment } = &parsed.function_blocks()[0].requires()[0]
         else {
-            panic!("the parsed requirement should remain a loadable range");
+            panic!("the parsed requirement should remain a viewable range");
         };
         assert_eq!(
             synthesized,
@@ -1274,7 +1274,7 @@ fn named_element_ranges_preserve_nonzero_starts_and_folded_byte_counts() {
         relower_written_proposition(&synthesized, &state)
             .expect("the folded named range must re-lower")
     else {
-        panic!("the folded range must remain a memory-loadability requirement");
+        panic!("the folded range must remain a memory-viewability requirement");
     };
     assert_eq!(bytes, Bitvector32Term::Constant(20));
     assert_eq!(

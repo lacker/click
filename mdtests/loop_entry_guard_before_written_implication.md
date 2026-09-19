@@ -2,7 +2,7 @@
 
 The kernel builds this loop's entry obligations itself, and each one now
 carries the head chain the lowering recorded for it. The second invariant's
-chain is a hidden loadability guard, then the written universal, then the
+chain is a hidden viewability guard, then the written universal, then the
 written implication in its body, so the initialization certificate spells one
 `intro()` per node in exactly that order: the first keeps the written Surface
 goal focused while the hidden guard is introduced, the second binds `k`, and

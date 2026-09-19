@@ -801,10 +801,6 @@ id = "language.word.load_uint8_pointer"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
-id = "language.word.loadable"
-path = "reference/language/grammar.md#word-index"
-
-[[item]]
 id = "language.word.loop"
 path = "reference/language/grammar.md#word-index"
 
@@ -982,6 +978,10 @@ id = "language.word.verifying"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
+id = "language.word.viewable"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
 id = "language.word.views"
 path = "reference/language/grammar.md#word-index"
 
@@ -1137,7 +1137,7 @@ id = "language.defined"
 path = "reference/language/index.md#propositions"
 
 [[item]]
-id = "language.loadable"
+id = "language.viewable"
 path = "reference/language/index.md#propositions"
 
 [[item]]
@@ -2490,8 +2490,8 @@ id = "glossary.load-variable"
 path = "reference/glossary.md#load-variable"
 
 [[item]]
-id = "glossary.loadability"
-path = "reference/glossary.md#loadability"
+id = "glossary.viewability"
+path = "reference/glossary.md#viewability"
 
 [[item]]
 id = "glossary.lowering"

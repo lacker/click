@@ -17,7 +17,7 @@ uint8 write_i_read_j(uint8 buf[], int32 j, int32 k, int32 n) {
     requires n >= 0 and n <= 2147483647;
     requires j >= 0 and j < n;
     requires k >= 0 and k < n;
-    requires loadable(buf[0..n]);
+    requires viewable(buf[0..n]);
     consumes buf[j..j + 1];
     views buf[k..k + 1];
     requires separate(memory(buf[j..j + 1]), memory(buf[k..k + 1]));

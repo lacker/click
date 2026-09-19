@@ -1,8 +1,8 @@
-# a quantified load fact does not witness loadability after free
+# a quantified load fact does not witness viewability after free
 
 `zero_one` publishes `forall k. 0 <= k and k < 1 implies p[k] == 0`, a
 fact about loads in the snapshot before `free(p)`. That fact must not
-certify that `result[j]` is loadable in the final snapshot, where the
+certify that `result[j]` is viewable in the final snapshot, where the
 allocation is gone.
 
 ```c filename=zero_one.c
@@ -50,5 +50,5 @@ int32* uaf_local(int32 fallback[], int32 j) {
 ```
 
 ```expect
-fail: loadable
+fail: viewable
 ```

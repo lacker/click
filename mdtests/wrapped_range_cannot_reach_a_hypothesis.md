@@ -5,7 +5,7 @@ so the extent guards the theorem's own proof assumes are not among the
 hypothesis's premises. That is only safe because of what it takes to satisfy a
 range premise whose extent wraps.
 
-A range is loadable for free exactly when its extent is decidably zero, and an
+A range is viewable for free exactly when its extent is decidably zero, and an
 extent is decidably zero only when its endpoints are decided — at which point
 the shared definition decides the range invalid and the lowering keeps no path
 for it. So the argument this proof would need, `ih(1073741824)`, cannot have its
@@ -20,18 +20,18 @@ the hypothesis is not stronger there.
 ```click
 theorem a_cell_from_a_wrapped_hypothesis(v: int32[], n: int32) {
     requires 1073741825 <= n;
-    requires n >= 0 and loadable(v[0..n]);
-    ensures loadable(v[0..1]) by {
+    requires n >= 0 and viewable(v[0..n]);
+    ensures viewable(v[0..1]) by {
         induct(n) as ih;
         have 0 <= 1073741824 by { simp(); }
         have 1073741824 < n by { simp() using { 1073741825 <= n; } }
-        have loadable(v[0..1073741824]) by { simp(); }
+        have viewable(v[0..1073741824]) by { simp(); }
         have 1073741824 >= 0 by { simp(); }
-        have 1073741824 >= 0 and loadable(v[0..1073741824]) by { split(); }
+        have 1073741824 >= 0 and viewable(v[0..1073741824]) by { split(); }
         apply(ih(1073741824)) using {
             0 <= 1073741824;
             1073741824 < n;
-            1073741824 >= 0 and loadable(v[0..1073741824]);
+            1073741824 >= 0 and viewable(v[0..1073741824]);
         }
         assumption();
     }

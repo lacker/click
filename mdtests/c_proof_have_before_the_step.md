@@ -7,7 +7,7 @@ the same kind of fact set — the premises in scope plus the facts proved so far
 and neither is allowed to drift into consulting nothing.
 
 `views p[lo..hi]` supplies the viewed range here in place of the pure
-theorem's `loadable` premise; the three order `have`s that place `hi - 1`
+theorem's `viewable` premise; the three order `have`s that place `hi - 1`
 inside it are the same, and so is the fourth `have` that writes the read down.
 
 ```c filename=c_proof_have_before_the_step.c

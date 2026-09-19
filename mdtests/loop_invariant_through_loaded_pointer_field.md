@@ -1,7 +1,7 @@
 # A contents invariant over a slice reached through a loaded pointer field
 
 The written slice's base is `j->p`, a pointer loaded from a viewed field, not
-a parameter. The quantified invariant's loadability leaves then need a
+a parameter. The quantified invariant's viewability leaves then need a
 spelling for that base, and the smart certificate must name the owned range
 through the same field read. This pins the synthesis that spells memory
 reached through struct-pointer fields.

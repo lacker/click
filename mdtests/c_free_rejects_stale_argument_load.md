@@ -2,7 +2,7 @@
 
 `data` is an external allocation whose block outlives `free` in the memory
 model, so the entry-state view of `data[0..count]` must not transport
-loadability of `data[0]` into the final snapshot.
+viewability of `data[0]` into the final snapshot.
 
 ```c filename=c_free_rejects_stale_argument_load.c
 int32 free_then_read(int32 data[], int32 count) {
@@ -33,5 +33,5 @@ int32 free_then_read(int32 data[], int32 count) {
 ```
 
 ```expect
-fail: loadable
+fail: viewable
 ```

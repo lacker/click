@@ -112,7 +112,7 @@ fn reordered_cstr_requirement_expands_without_planning_and_reverifies() {
         int32 read_terminator(uint8 haystack[], int32 known_len) {
             requires nonnegative: 0 <= known_len;
             requires successor: defined(known_len + 1);
-            requires unrelated: loadable(haystack[0..known_len + 1]);
+            requires unrelated: viewable(haystack[0..known_len + 1]);
             requires input: cstr_readable(haystack);
             views haystack[0..known_len + 1];
             ensures result >= 0;
@@ -157,7 +157,7 @@ fn reordered_cstr_requirement_expands_without_planning_and_reverifies() {
         "the expansion should select the exact nonzero caller source ordinal: {expanded_source}"
     );
     assert!(
-        expanded_source.contains("extract(at(function.entry, loadable(haystack[0.."),
+        expanded_source.contains("extract(at(function.entry, viewable(haystack[0.."),
         "the expansion should consume a retained source projection: {expanded_source}"
     );
     assert!(!expanded_source.contains("execute();"));
@@ -317,7 +317,7 @@ fn assert_quantified_range_call_requirement_expands_and_deletion_rejects(
 #[test]
 fn forall_loadable_range_call_requirement_expands_and_deletion_rejects() {
     assert_quantified_range_call_requirement_expands_and_deletion_rejects(
-        "mdtests/forall_loadable_range.md",
+        "mdtests/forall_viewable_range.md",
         "have forall (k: int32) {",
     );
 }
@@ -325,7 +325,7 @@ fn forall_loadable_range_call_requirement_expands_and_deletion_rejects() {
 #[test]
 fn exists_loadable_range_call_requirement_expands_and_deletion_rejects() {
     assert_quantified_range_call_requirement_expands_and_deletion_rejects(
-        "mdtests/exists_loadable_range.md",
+        "mdtests/exists_viewable_range.md",
         "have exists (len: int32) {",
     );
 }
@@ -1451,7 +1451,7 @@ fn program_entry_resource_bindings_expand_and_reverify() {
 resource pair(p: {click_type}*) {{ owns p[0..2]; }}
 verifying "main.c";
 {c_type} read_pair({c_type} *p) {{
-    requires loadable(p[0..2]); consumes pair(p); produces pair(p);
+    requires viewable(p[0..2]); consumes pair(p); produces pair(p);
     ensures result == old(p[0]) + old(p[1]);
 }} {helper_proof}
 int main() {{ ensures result == 16; }} {main_proof}
@@ -1486,7 +1486,7 @@ fn composite_uint64_range_expansion_preserves_type() {
     let click_source = r#"resource pair(p: uint64*) { owns p[0..2]; }
 verifying "main.c";
 unsigned long read_pair(unsigned long *p) {
-    requires loadable(p[0..2]); consumes pair(p); produces pair(p);
+    requires viewable(p[0..2]); consumes pair(p); produces pair(p);
     ensures result == old(p[0]) + old(p[1]);
 } by { unfold(pair(p)); execute(); fold(pair(p)); simp(); }"#;
     let sources = [("main.c", c_source)];
@@ -1508,7 +1508,7 @@ fn program_entry_typed_dereference_snapshots_expand_and_reverify() {
         let click_source = format!(
             r#"verifying "main.c";
 {c_type} bump({c_type} *p) {{
-    requires loadable(p[0..1]); consumes p[0..1]; produces p[0..1];
+    requires viewable(p[0..1]); consumes p[0..1]; produces p[0..1];
     ensures *p == old(*p) + 1{suffix};
     ensures *p == p[0];
     ensures old(*p) == old(p[0]);
@@ -1564,7 +1564,7 @@ fn const_char_return_expansion_preserves_target_and_qualification() {
     let c_source = "const char *version(void) { return \"0.17\"; }";
     let click_source = r#"verifying "version.c";
 const char *version() {
-    ensures loadable(result[0..5]);
+    ensures viewable(result[0..5]);
     ensures result[0] == '0';
     ensures result[4] == '\0';
 } by { execute(); simp(); }"#;
@@ -1685,7 +1685,7 @@ fn unsigned_narrowing_snapshot_expansion_reverifies() {
     let click_source = r#"
         verifying "take.c";
         unsigned int take(struct state *p) {
-            requires loadable(p->value);
+            requires viewable(p->value);
             consumes p->value;
             produces p->value;
             ensures result == old((uint32)p->value);
@@ -3395,14 +3395,14 @@ fn statement_snapshots_support_complete_loadability_propositions() {
                 ensures result == p[0];
             } by {
                 step();
-                have at(statement(0).entry, loadable(p[0..2])) by {
+                have at(statement(0).entry, viewable(p[0..2])) by {
                     assumption();
                 }
                 transport(
-                    at(statement(0).entry, loadable(p[0..2])),
-                    loadable(p[0..2])
+                    at(statement(0).entry, viewable(p[0..2])),
+                    viewable(p[0..2])
                 ) using {
-                    at(statement(0).entry, loadable(p[0..2]));
+                    at(statement(0).entry, viewable(p[0..2]));
                 }
                 execute();
                 simp();
@@ -3410,7 +3410,7 @@ fn statement_snapshots_support_complete_loadability_propositions() {
         "#;
 
     verify_c0_sources(click_source, &[("snapshot_loadable.c", c_source)])
-        .expect("a complete loadability proposition should lower and transport from a snapshot");
+        .expect("a complete viewability proposition should lower and transport from a snapshot");
 }
 
 #[test]
@@ -3563,7 +3563,7 @@ fn smart_apply_uses_ambient_loadability_only_for_argument_lowering() {
         line,
         column,
     )
-    .expect("pointer theorem arguments should lower from the ambient loadability context");
+    .expect("pointer theorem arguments should lower from the ambient viewability context");
     assert!(
         expanded.contains("apply(pointer_equality_transitive(") && expanded.contains(" using {"),
         "{expanded}"
@@ -5849,7 +5849,7 @@ fn restricted_simp_certifies_unchanged_prefix_after_indexed_store() {
             fact 0 <= owner->len;
             fact owner->len <= owner->cap;
             fact owner->cap <= 1073741823;
-            fact loadable(owner->data[0..owner->len]);
+            fact viewable(owner->data[0..owner->len]);
             fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
         }
 
@@ -6644,9 +6644,9 @@ fn restricted_simp_expands_loadable_subrange_to_explicit_transport() {
             views data[0..length];
             ensures result == old(data[index]);
         } by {
-            have loadable(data[index..index + 1]) by {
+            have viewable(data[index..index + 1]) by {
                 simp() using {
-                    loadable(data[0..length]);
+                    viewable(data[0..length]);
                     0 <= index;
                     index < length;
                 }
@@ -6656,7 +6656,7 @@ fn restricted_simp_expands_loadable_subrange_to_explicit_transport() {
         }
     "#;
     let offset = click_source
-        .find("have loadable(data[index..index + 1])")
+        .find("have viewable(data[index..index + 1])")
         .unwrap();
     let line = click_source[..offset]
         .bytes()
@@ -6681,17 +6681,17 @@ fn restricted_simp_expands_loadable_subrange_to_explicit_transport() {
                 })
             }
         });
-    verified.expect("the leading loadability have should verify through Proof");
+    verified.expect("the leading viewability have should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(context_exports, 0, "the loadability Proof exported state");
+    assert_eq!(context_exports, 0, "the viewability Proof exported state");
     assert_eq!(
         certificate_checks, 0,
-        "ordinary loadability verification checked a certificate"
+        "ordinary viewability verification checked a certificate"
     );
 
     let expanded = expand_c0_tactic_source_at(click_source, &sources, line, column)
-        .expect("restricted simp loadability proof should expand");
-    let expanded_have_start = expanded.find("have loadable(").unwrap();
+        .expect("restricted simp viewability proof should expand");
+    let expanded_have_start = expanded.find("have viewable(").unwrap();
     let expanded_have_end = expanded[expanded_have_start..]
         .find("execute();")
         .map(|relative| expanded_have_start + relative)
@@ -6699,7 +6699,7 @@ fn restricted_simp_expands_loadable_subrange_to_explicit_transport() {
     let expanded_have = &expanded[expanded_have_start..expanded_have_end];
     assert!(
         expanded_have.contains(
-            "transport(loadable(data[0..length]), loadable(data[index..(index + 1)])) using"
+            "transport(viewable(data[0..length]), viewable(data[index..(index + 1)])) using"
         ),
         "{expanded_have}"
     );
@@ -6713,9 +6713,9 @@ fn restricted_simp_expands_loadable_subrange_to_explicit_transport() {
         .join("\n");
     assert_eq!(
         normalized_have,
-        "have loadable(data[index..(index + 1)]) by {\n\
-         transport(loadable(data[0..length]), loadable(data[index..(index + 1)])) using {\n\
-         loadable(data[0..length]);\n\
+        "have viewable(data[index..(index + 1)]) by {\n\
+         transport(viewable(data[0..length]), viewable(data[index..(index + 1)])) using {\n\
+         viewable(data[0..length]);\n\
          0 <= index;\n\
          index < length;\n\
          }\n\
@@ -6723,7 +6723,7 @@ fn restricted_simp_expands_loadable_subrange_to_explicit_transport() {
     );
     assert!(!expanded_have.contains("simp() using"), "{expanded_have}");
     assert!(!expanded_have.contains("derive using"), "{expanded_have}");
-    verify_c0_sources(&expanded, &sources).expect("explicit loadability transport should check");
+    verify_c0_sources(&expanded, &sources).expect("explicit viewability transport should check");
 }
 
 #[test]
@@ -11855,16 +11855,16 @@ fn outcome_simp_transports_loadability_on_the_checked_proof() {
         verifying "use_summary.c";
 
         int32 summarize(int32* p) {
-            requires loadable(p[0..1]);
-            ensures loadable(p[0..1]);
+            requires viewable(p[0..1]);
+            ensures viewable(p[0..1]);
         } by {
             execute();
             simp();
         }
 
         int32 use_summary(int32* p) {
-            requires loadable(p[0..1]);
-            ensures loadable(p[0..1]);
+            requires viewable(p[0..1]);
+            ensures viewable(p[0..1]);
         } by {
             execute();
             simp();
@@ -11874,22 +11874,22 @@ fn outcome_simp_transports_loadability_on_the_checked_proof() {
 
     let (verified, events) =
         crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
-    verified.expect("the call-preserved loadability should transport through Proof");
+    verified.expect("the call-preserved viewability should transport through Proof");
     assert!(
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
                 if name == "outcome simp compatibility construction"
         )),
-        "outcome loadability transport must bypass compatibility construction: {events:#?}"
+        "outcome viewability transport must bypass compatibility construction: {events:#?}"
     );
 
     let expanded =
         expand_c0_claim_source(click_source, &sources, "use_summary", CProofClaim::Grouped)
-            .expect("the retained loadability transport should expand");
+            .expect("the retained viewability transport should expand");
     assert!(expanded.contains("transport"), "{expanded}");
     verify_c0_sources(&expanded, &sources)
-        .expect("the retained loadability transport should check independently");
+        .expect("the retained viewability transport should check independently");
 }
 
 #[test]
@@ -11991,7 +11991,7 @@ fn outcome_simp_instantiates_an_unfolded_byte_predicate_on_the_checked_proof() {
         verifying "byte_prefix.c";
 
         int32 byte_prefix(uint8 p[], int32 n) {
-            requires loadable(p[0..3]);
+            requires viewable(p[0..3]);
             requires no_y: bytes_all_not_eq(p, 0, 3, 'y');
             ensures p[1] != 'y' by {
                 execute();

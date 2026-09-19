@@ -86,7 +86,7 @@ snapshot and pointer identities; failed answers can be retried after new
 derivation information becomes available.
 
 The stronger bridging that crosses `BlockDeclared` and `CellsForgotten` is
-scoped to loadability reasoning through `with_extended_dag_bridging`. Enabling
+scoped to viewability reasoning through `with_extended_dag_bridging`. Enabling
 that reasoning globally can change which surface facts a planner selects and
 therefore change expansion spellings. Isolated memory-resolution fuel keeps
 a nested graph query from consuming the caller's bounded reasoning budget.

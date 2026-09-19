@@ -3,7 +3,7 @@
 This is `loop_entry_guard_before_written_implication.md` with one `intro()`
 removed from the second invariant's initialization certificate. The entry
 obligation's recorded chain has three introducible nodes — the hidden
-loadability guard, the written universal, and the written implication — so two
+viewability guard, the written universal, and the written implication — so two
 introductions leave the written implication as the goal, and `normalize` does
 not close it.
 

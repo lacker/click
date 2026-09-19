@@ -125,7 +125,7 @@ int32 range_helpers() {
 }
 
 int32 identity_permutation(int32 p[3]) {
-    requires loadable(p[0..3]);
+    requires viewable(p[0..3]);
     ensures same_multiset: permutation(p, p, 0, 3) by {
         execute();
         unfold(permutation);

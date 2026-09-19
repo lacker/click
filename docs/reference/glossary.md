@@ -538,11 +538,6 @@ connected by steps proved not to write that cell use the same variable. A
 defining fact equates it to the load it represents. Load variables differ
 from other kernel variables only by a reserved id range, not by type.
 
-### Loadability
-
-Evidence that a memory access can read the required bytes at a pointer in a
-  particular memory state. See [Loadability](../concepts/loadability.md).
-
 ### Lowering
 
 Translation from validated Surface Click into kernel propositions, terms,
@@ -1109,6 +1104,11 @@ recorded snapshots rather than providing general visit-index syntax.
 
 A logical interpretation of underlying state, usually represented by a viewed
 resource fact and related to other views by explicit resource-family rules.
+
+### Viewability
+
+Evidence that a memory access can read the required bytes at a pointer in a
+  particular memory state. See [Viewable ranges](../concepts/loadability.md).
 
 ## W
 

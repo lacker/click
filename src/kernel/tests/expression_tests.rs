@@ -2309,7 +2309,7 @@ fn nonempty_loadability_establishes_external_pointer_object_provenance() {
     ] {
         let mut budget = ExecutionBudget::for_c_expression(&expression);
         let paths = evaluate_c_expression_paths(&state, &expression, &nonempty, &mut budget)
-            .expect("loadable pointer operation should stay within its execution budget");
+            .expect("viewable pointer operation should stay within its execution budget");
         assert!(!paths.is_empty());
         assert!(
             paths
@@ -2322,7 +2322,7 @@ fn nonempty_loadability_establishes_external_pointer_object_provenance() {
     let expression = c_less_equal(c_variable("pointer"), c_variable("pointer"));
     let mut budget = ExecutionBudget::for_c_expression(&expression);
     let paths = evaluate_c_expression_paths(&state, &expression, &empty, &mut budget)
-        .expect("empty-loadable pointer operation should stay within its execution budget");
+        .expect("empty-viewable pointer operation should stay within its execution budget");
     assert!(paths.iter().any(|path| matches!(
         path.outcome,
         CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic)

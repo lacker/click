@@ -1,15 +1,15 @@
-# a range fold over its own loadable range is proved by ordinary induction
+# a range fold over its own viewable range is proved by ordinary induction
 
 `mdtests/fold_reading_an_array_is_nonnegative_by_induction.md` proves the same
-theorem with the loadable range pinned to a separate parameter `n` that the
+theorem with the viewable range pinned to a separate parameter `n` that the
 induction never moves. That was a workaround, and this is the shape it was
 working around: the range ends at `hi`, the endpoint `induct(hi)` descends on,
-so `apply(ih(hi - 1))` demands `loadable(v[lo..hi - 1])` as an exactly available
+so `apply(ih(hi - 1))` demands `viewable(v[lo..hi - 1])` as an exactly available
 fact.
 
 That fact is now provable, so the workaround is not needed. `induct(hi)` gives
 an induction hypothesis guarded by the theorem's own `requires` at the smaller
-endpoint; `have loadable(v[lo..hi - 1]) by { simp(); }` narrows the theorem's
+endpoint; `have viewable(v[lo..hi - 1]) by { simp(); }` narrows the theorem's
 own range to that endpoint, against the order facts proved just above it, and
 `split()` assembles the hypothesis premise the guard is written as. Every other
 step is unchanged from the version with `n`.
@@ -31,7 +31,7 @@ theorem unmarked_nonnegative(v: int32[], lo: int32, hi: int32) {
     requires 0 <= lo;
     requires 0 <= hi;
     requires hi <= 1073741823;
-    requires hi >= 0 and loadable(v[lo..hi]);
+    requires hi >= 0 and viewable(v[lo..hi]);
     ensures 0 <= unmarked(v, lo, hi) by {
         induct(hi) as ih;
         if hi <= lo {
@@ -52,8 +52,8 @@ theorem unmarked_nonnegative(v: int32[], lo: int32, hi: int32) {
             have hi - lo <= 1073741823 by {
                 arithmetic() using { 0 <= lo; lo < hi; hi <= 1073741823; }
             }
-            have loadable(v[lo..hi - 1]) by { simp(); }
-            have hi - 1 >= 0 and loadable(v[lo..hi - 1]) by { split(); }
+            have viewable(v[lo..hi - 1]) by { simp(); }
+            have hi - 1 >= 0 and viewable(v[lo..hi - 1]) by { split(); }
             have 0 <= hi - 1 - lo by {
                 arithmetic() using { 0 <= lo; lo < hi; hi <= 1073741823; }
             }
@@ -65,7 +65,7 @@ theorem unmarked_nonnegative(v: int32[], lo: int32, hi: int32) {
                 hi - 1 < hi;
                 0 <= lo;
                 hi - 1 <= 1073741823;
-                hi - 1 >= 0 and loadable(v[lo..hi - 1]);
+                hi - 1 >= 0 and viewable(v[lo..hi - 1]);
                 0 <= hi - 1 - lo;
                 hi - 1 - lo <= 1073741823;
             }

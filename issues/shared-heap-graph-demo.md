@@ -262,7 +262,7 @@ held by owns child_ref(p->kid)
 
 The corrected attempted handoff is `produces child_ref(old(p->kid))`. The
 surface resource check can now resolve that entry-state pointer from checked
-loadability evidence, so the old `missing resource fact owns
+viewability evidence, so the old `missing resource fact owns
 child_ref(null@0)` is no longer the first failure. The current first failure
 is instead:
 

@@ -261,7 +261,7 @@ measure off the named function's own interface, so asking for an anchor cannot
 choose what it ranks. At a call step whose callee is the anchored function,
 `prepare_verified_function_call` reads the same component at the state the
 callee's preconditions are read at and emits `0 <= m` and `m < M0`, plus the
-loadability the two readings owe, as ordinary verification conditions. A proof
+viewability the two readings owe, as ordinary verification conditions. A proof
 that does not discharge them does not get past the `step()`, and one that
 somehow retained them carries them as premises of its path theorem.
 
@@ -315,7 +315,7 @@ scalar truthiness, and branch polarity are normalized from the source body.
 A direct child named through a `let` witness is compared semantically instead:
 the definition's guard and `where` facts are lowered over a symbolic entry
 state with no memory, the call's measure arguments are evaluated there, and
-the pure kernel decides the argument equals the witness pointer. Loadability
+the pure kernel decides the argument equals the witness pointer. Viewability
 obligations are assumed, as the syntactic comparison already treats loads as
 uninterpreted; every other obligation must be decided.
 The already certified partial contract remains responsible
@@ -342,8 +342,8 @@ or a pure mathematical `Integer` expression lowered exactly as a clause's
 Integer operand is. The kernel evaluates that one object at the
 iteration-entry state and again at the back-edge state. A pure component
 publishes the evaluator's facts
-and keeps its reads' loadability obligations, so a measure that reads memory
-owes the same loadability the invariant about those cells owes. A component
+and keeps its reads' viewability obligations, so a measure that reads memory
+owes the same viewability the invariant about those cells owes. A component
 whose value is not a single value of its carrier at a state, because the state
 splits it into
 several paths or because a view it reads is gone, is refused rather than
@@ -392,13 +392,13 @@ to distinguish the stronger result.
 
 Composite resource unfolding is also checked at this boundary. Resource
 definitions carry their logical facts into the kernel, and fold/unfold,
-loadability, separation, and post-resource checks are performed against the
+viewability, separation, and post-resource checks are performed against the
 exact definition rather than accepted as caller assertions.
 
 Applying a verified function rule lowers the callee's ensures twice when
 allocation lifetime effects depend on an outcome: once provisionally to select
 the lifetime transition, then against the final memory to publish the public
-postconditions. Non-exact loadability needed to state either ensure remains an
+postconditions. Non-exact viewability needed to state either ensure remains an
 explicit certified path obligation. The call rule does not invoke the general
 contextual prover to rediscover those range proofs during lowering; their
 authority is the already certified callee contract.
@@ -434,7 +434,7 @@ In `src/kernel/`:
   state-parametric loop invariants. They can include current-state C fragments,
   fixed-memory loads, pure `if`, `let`, and `RangeFold`. Specification memory
   loads lower deterministically: an exact stored cell reduces to its value;
-  otherwise lowering produces a symbolic load term and a loadability
+  otherwise lowering produces a symbolic load term and a viewability
   obligation, rather than selecting an operational alias-resolution path.
 - `Proposition`: proof propositions, including `ForAll` and `Exists`, C
   semantic judgments, memory facts, and loop invariant rules.

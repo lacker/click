@@ -1,8 +1,8 @@
-# struct field resources imply loadability
+# struct field resources imply viewability
 
 This checks the intended field-resource shape. A viewed or owned field resource
-is enough to make that field loadable for symbolic
-execution, so the contract does not need separate `loadable(...)` clauses.
+is enough to make that field viewable for symbolic
+execution, so the contract does not need separate `viewable(...)` clauses.
 
 ```c filename=set_second.c
 struct pair {

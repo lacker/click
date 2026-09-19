@@ -1,10 +1,10 @@
-# restricted simp pointer alias loadability
+# restricted simp pointer alias viewability
 
 An explicit equality rewrite may mention an element through a pointer alias.
-The surrounding array ownership makes the expression loadable; the restricted
+The surrounding array ownership makes the expression viewable; the restricted
 simplifier must use only its listed equalities to prove the value claim, and
 its expanded certificate must check without requiring a redundant
-element-loadability premise.
+element-viewability premise.
 
 ```c filename=restricted_simp_pointer_alias_loadability.c
 int32 alias_value(

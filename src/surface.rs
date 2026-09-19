@@ -256,7 +256,6 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "load_int32_pointer",
     "load_uint8",
     "load_uint8_pointer",
-    "loadable",
     "loop",
     "lt_from_neq",
     "mark",
@@ -304,6 +303,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "using",
     "vacuous",
     "verifying",
+    "viewable",
     "views",
     "void",
     "where",
@@ -341,7 +341,6 @@ pub const SURFACE_CLICK_FORMS: &[&str] = &[
     "import",
     "implies",
     "let-where",
-    "loadable",
     "match-expression",
     "modifies",
     "not",
@@ -381,6 +380,7 @@ pub const SURFACE_CLICK_FORMS: &[&str] = &[
     "target",
     "theorem",
     "verifying",
+    "viewable",
     "write",
 ];
 

@@ -898,7 +898,7 @@ fn explicit_range_alias_bounds_stay_on_the_shallow_candidate_path() {
 fn memory_loadable_candidates_ignore_unrelated_pointer_blocks() {
     let memory = CMemory::new();
     let target = Pointer {
-        block: "indexed-loadable-target".into(),
+        block: "indexed-viewable-target".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let mut assumptions = PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {
@@ -910,7 +910,7 @@ fn memory_loadable_candidates_ignore_unrelated_pointer_blocks() {
         assumptions = assumptions.assume_proposition(Proposition::CMemoryLoadable {
             memory: memory.clone(),
             base: Pointer {
-                block: format!("indexed-loadable-unrelated-{index}").into(),
+                block: format!("indexed-viewable-unrelated-{index}").into(),
                 offset: PointerOffsetTerm::Constant(0),
             },
             bytes: Bitvector32Term::Constant(4),
@@ -932,7 +932,7 @@ fn memory_loadable_candidates_ignore_unrelated_pointer_blocks() {
 fn memory_loadable_query_ignores_same_block_unrelated_pointer_shapes() {
     let memory = CMemory::new();
     let target = Pointer {
-        block: "indexed-loadable-shapes".into(),
+        block: "indexed-viewable-shapes".into(),
         offset: PointerOffsetTerm::Constant(10_000),
     };
     let samples = [16, 32, 64, 128]
@@ -968,7 +968,7 @@ fn memory_loadable_query_ignores_same_block_unrelated_pointer_shapes() {
 
     assert!(
         samples.windows(2).all(|pair| pair[1].1 <= pair[0].1 + 1),
-        "fixed loadability query should not inspect unrelated pointer shapes: {samples:?}"
+        "fixed viewability query should not inspect unrelated pointer shapes: {samples:?}"
     );
 }
 
@@ -4006,7 +4006,7 @@ mod constant_range_byte_count_guards {
 /// byte extent `n * 4`, which is `1 << 32`, which is `0`. The fact is true and
 /// covers nothing. A rule that divides that extent by four and reads `n`
 /// elements out of it turns nothing into real bytes, and
-/// `mdtests/wrapped_loadable_extent_is_not_a_cell.md` is the surface witness
+/// `mdtests/wrapped_viewable_extent_is_not_a_cell.md` is the surface witness
 /// for the cell rules specifically. These cover each reader directly, in both
 /// polarities: refused without the bound, accepted with it.
 mod wrapped_assumed_extent_is_refused {

@@ -65,7 +65,7 @@ needs a safety fact:
 - arithmetic needs numeric bounds,
 - division needs nonzero divisors,
 - shifts need valid counts and representable results,
-- memory access needs loadable ranges and index bounds.
+- memory access needs viewable ranges and index bounds.
 - local reads need an assignment on every path that reaches them.
 
 The right fix is usually a requirement, a loop invariant, or a narrower

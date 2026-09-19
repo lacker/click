@@ -28,7 +28,7 @@ verifying "file.c";
 
 int32 function_name(int32 p[], int32 n) {
     requires n >= 0;
-    requires loadable(p[0..n]);
+    requires viewable(p[0..n]);
     ensures label: result == n by auto;
 }
 ```
@@ -298,7 +298,7 @@ a pure Click function, a resource model field. Click evaluates the one
 declared component at the iteration's entry state and again at the back-edge
 state, exactly as it evaluates an invariant about the same cells at those two
 states, and ranks the two values it gets. A component that reads memory owes
-the same loadability an invariant reading those cells owes.
+the same viewability an invariant reading those cells owes.
 
 A component may read memory, as `decreases box->len - i` does for
 a loop whose bound is a field the C keeps no local copy of: the read is
@@ -685,7 +685,7 @@ instantiation over their logical, unbounded domains. Integer range folds support
 typed scalar bodies and checked empty and append laws for `Int32` and `Integer`;
 expansion preserves those checked applications. Array- and memory-reading fold
 bodies use scoped definedness and exact snapshot identity. Integer existential
-witnesses may contain indexed reads when their loadability and conversion
+witnesses may contain indexed reads when their viewability and conversion
 obligations are checked. A complete C loop proof still needs its own prefix,
 intermediate definedness, and loop-invariant obligations; range folds do not
 enumerate a symbolic array to discharge those obligations.
@@ -729,7 +729,7 @@ Theorems are intentionally pure. They do not support `owns`, `consumes`,
 One resource clause does have a reading without a resource context. `views
 v[lo..hi];` states that reads of the range are defined, which is an ordinary
 hypothesis, so a theorem accepts it and lowers it to the proposition
-`loadable(v[lo..hi])` states, in the position it was written:
+`viewable(v[lo..hi])` states, in the position it was written:
 
 <!-- verified-example: mdtests/theorem_views_states_a_readable_range.md -->
 ```click
@@ -743,9 +743,9 @@ theorem cell_of_a_viewed_range(v: int32[], lo: int32, hi: int32, k: int32) {
 
 Nothing is lent by writing it and nothing is returned. Like every stated range
 it carries its valid-extent facts, which the theorem's proof assumes and an
-application owes; see [Memory loadability](../../concepts/loadability.md). An
+application owes; see [Viewable ranges](../../concepts/loadability.md). An
 `apply ... using` list holds propositions, so the premise is named there as
-`loadable(v[lo..hi])`.
+`viewable(v[lo..hi])`.
 
 Pure theorem scripts can simplify, unfold predicates and pure functions, apply
 theorems, introduce logical structure, rewrite, use exact assumptions, and
@@ -1159,8 +1159,8 @@ Supported structural requirements:
 <!-- verified-example: mdtests/pointer_range_segment_syntax.md -->
 ```click
 requires input_nonnegative: n >= 0;
-requires loadable(p[0..n]);
-requires loadable((p + 1)[0..1]);
+requires viewable(p[0..n]);
+requires viewable((p + 1)[0..1]);
 requires separate(memory(dst[0..n]), memory(src[0..n]));
 requires same_object(begin, end);
 requires defined(x + 1);
@@ -1172,12 +1172,12 @@ Requirement labels use the same `label:` spelling as `ensures` labels. Labels
 are optional, but they are the preferred way for proof scripts to refer to a
 specific precondition, for example `choose(k from requirement has_k);`.
 
-`loadable(base[start..end])` and `memory(base[start..end])` use half-open
+`viewable(base[start..end])` and `memory(base[start..end])` use half-open
 `int32` element ranges. The byte count is derived from the base pointer's
 element type: four bytes for `int32[]`, one byte for `uint8[]`. This `..`
 syntax is Click contract syntax, not C fragment syntax.
 
-`loadable(base[start..end])` is the proposition form of memory loadability
+`viewable(base[start..end])` is the proposition form of memory viewability
 for a segment. Use it when the fact needs to appear where Click expects a
 proposition, such as a composite resource `fact`.
 
@@ -1200,13 +1200,13 @@ relational pointer comparison or pointer subtraction between independently
 supplied pointer parameters. Pointer arithmetic preserves the relationship,
 so the fact also covers pointers derived from either argument. It does not say
 that the pointer values are equal, grant access to pointee memory, or replace
-an `owns`, `views`, or `loadable` clause. Conversely, pointer equality does
+an `owns`, `views`, or `viewable` clause. Conversely, pointer equality does
 not establish `same_object`: equal addresses can carry provenance from
 adjacent objects. Null pointers do not carry object provenance, so
 `same_object(0, 0)` is false even though the pointers compare equal. The caller
 must establish the relationship from its concrete pointer objects, a nonempty
-`loadable` proposition or memory resource, or its own retained `same_object`
-requirement. An empty loadable or memory range does not establish that its
+`viewable` proposition or memory resource, or its own retained `same_object`
+requirement. An empty viewable or memory range does not establish that its
 base has object provenance.
 
 `aligned(pointer, n)` states that the pointer's address is a multiple of `n`,
@@ -1876,15 +1876,15 @@ A call can pass a covered subrange, such as consuming `p[0..1]` from a caller
 that owns `p[0..2]`; Click keeps the residue and rejoins adjacent returned
 ranges. The same applies to symbolic ranges when the current facts prove the
 subrange is covered. Viewed and owned memory elements also make the covered
-range loadable for symbolic execution, so ordinary external reads and writes
-do not need a separate `loadable(...)` requirement for the same range.
+range viewable for symbolic execution, so ordinary external reads and writes
+do not need a separate `viewable(...)` requirement for the same range.
 
 This is intentionally not a complete resource system. Memory permissions have
 no fractional form, and there are no general ownership predicates, general
 allocator APIs, or user-defined resource algebras. Exact struct allocation and
 runtime-sized `int32` arrays are the
-supported heap slices. `loadable` remains a separate concept from memory
-permission: loadability proves an access is in bounds, while memory resources
+supported heap slices. `viewable` remains a separate concept from memory
+permission: viewability proves an access is in bounds, while memory resources
 authorize the access.
 
 ### Calls that transport named instances
@@ -1973,7 +1973,7 @@ Range proposition helpers:
 bounded existential proposition when its bounds are symbolic; concrete `.any`
 ranges still unroll to a finite disjunction. While lowering the range body, the
 elaborator assumes the item is inside the range, so bodies such as `p[k] == x`
-can use `loadable(p[lo..hi])` for memory safety.
+can use `viewable(p[lo..hi])` for memory safety.
 
 Prefer these range combinators for guarded memory reads. A plain proposition
 such as `exists (k: int32) { lo <= k and k < hi and p[k] == x }` does not
@@ -2150,7 +2150,7 @@ at(loop_label.entry, x)
 at(statement(0).entry, x)
 at(statement(0).exit, x)
 at(statement(0).entry, p[0] == 7)
-at(statement(0).entry, loadable(p[0..n]))
+at(statement(0).entry, viewable(p[0..n]))
 ```
 
 An execution proof can give its current frontier state a local name and use
@@ -2171,8 +2171,8 @@ region.
 
 `at(function.entry, expression)` is equivalent to `old(expression)`. The
 proposition form snapshots every state-relative part of the proposition
-together. This matters for propositions such as `loadable(...)`: both the
-address expression and the memory in which it is loadable come from the
+together. This matters for propositions such as `viewable(...)`: both the
+address expression and the memory in which it is viewable come from the
 selected state.
 
 The selected snapshot is a complete recorded C state, not only a memory
@@ -2321,7 +2321,7 @@ ensures result == k by {
 proposition and body }`. Contract-level `let ... where` applies that shape to
 each later proposition clause. The type annotation is required. The current
 implementation supports this in proposition clauses; it is intentionally
-rejected in `loadable`, `owns`, and other memory-segment expressions until
+rejected in `viewable`, `owns`, and other memory-segment expressions until
 Click has a contract-wide witness environment.
 
 In pure Click function parameters, `int32 p[]` and `int32* p` are treated as
@@ -2351,7 +2351,7 @@ fields. The C side lowers chained `obj->child->field` loads and stores at
 LP64-aligned byte offsets while retaining intermediate struct-pointer types.
 Click contracts can use field places in resources:
 `views obj->field` and `owns obj->field`. The access resource also makes the
-field loadable for symbolic execution.
+field viewable for symbolic execution.
 
 Use `object(obj)` for the complete storage of a struct object:
 

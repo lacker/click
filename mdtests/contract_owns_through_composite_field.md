@@ -4,7 +4,7 @@
 owns `node->right->augmented`, whose base is loaded through `node->right` — a
 cell the same contract already owns, from inside a folded composite.
 
-A resource clause is evaluated against the loadability the whole clause set
+A resource clause is evaluated against the viewability the whole clause set
 supplies, the way a `requires` clause is, so the base load denotes and the
 segment evaluates. The body then writes the segment, which is only possible if
 the contract really transferred that cell; the proof opens `pair(node)` because

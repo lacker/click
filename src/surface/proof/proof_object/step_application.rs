@@ -2409,7 +2409,7 @@ fn describe_assumption_goal(goal: &Proposition) -> &'static str {
         Proposition::Not(..) => "a negation",
         Proposition::ForAll { .. } => "a universal proposition",
         Proposition::Exists { .. } => "an existential proposition",
-        Proposition::CMemoryLoadable { .. } => "a memory-loadability fact",
+        Proposition::CMemoryLoadable { .. } => "a memory-viewability fact",
         Proposition::ConditionIs(condition, _) => match condition {
             ConditionTerm::IntegerLessThan(..) => "an Integer less-than fact",
             ConditionTerm::IntegerLessEqual(..) => "an Integer less-or-equal fact",

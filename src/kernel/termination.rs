@@ -2158,7 +2158,7 @@ pub(super) fn c_function_recursion_anchor(
             &mut entry_obligations,
             &read_assumptions,
             obligation.proposition().clone(),
-            Some("a recursion measure's read is loadable at the function entry"),
+            Some("a recursion measure's read is viewable at the function entry"),
             None,
         );
     }
@@ -4497,7 +4497,7 @@ mod ranking_member_tests {
             .count();
         assert!(
             loadable > 0,
-            "the read's loadability is a member, not an assumption: {:?}",
+            "the read's viewability is a member, not an assumption: {:?}",
             obligations
                 .iter()
                 .map(ProofObligation::proposition)
@@ -4506,13 +4506,13 @@ mod ranking_member_tests {
         assert!(
             obligations[..loadable].iter().all(|obligation| obligation
                 .context()
-                .is_some_and(|context| context.contains("loadable"))),
-            "loadability members come first and say what they are"
+                .is_some_and(|context| context.contains("viewable"))),
+            "viewability members come first and say what they are"
         );
         assert_eq!(
             obligations.len(),
             loadable + 2,
-            "the ranking members follow the loadability members"
+            "the ranking members follow the viewability members"
         );
     }
 

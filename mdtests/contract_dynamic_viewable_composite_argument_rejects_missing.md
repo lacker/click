@@ -1,7 +1,7 @@
-# A dynamic composite argument still needs a loadability requirement
+# A dynamic composite argument still needs a viewability requirement
 
 The bound on the symbolic length does not itself authorize reading the
-pointer field used to form the composite argument.  Without `loadable`, the
+pointer field used to form the composite argument.  Without `viewable`, the
 entry evaluator must reject the clause even though its body is a memory
 resource.
 

@@ -1,7 +1,7 @@
-# A dynamic loadability requirement authorizes a dependent composite argument
+# A dynamic viewability requirement authorizes a dependent composite argument
 
 The resource argument reads a pointer field.  Its caller supplies a symbolic
-length loadability requirement, so the kernel may use the checked read view
+length viewability requirement, so the kernel may use the checked read view
 without inventing a constant memory cell.
 
 ```c filename=dynamic_dependent_pair.c
@@ -24,7 +24,7 @@ contract void DynamicDependentPair(struct node* node, int32 n) {
     requires node != 0;
     requires n >= 1;
     requires n <= 2147483647;
-    requires loadable(node[0..n]);
+    requires viewable(node[0..n]);
     owns cell(node->left);
 }
 ```

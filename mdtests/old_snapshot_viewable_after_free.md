@@ -1,4 +1,4 @@
-# field-derived old snapshot remains loadable after free
+# field-derived old snapshot remains viewable after free
 
 Unfolding a composite can materialize its fields at several harmlessly
 different memory snapshots. Retiring the old allocation must not prevent a

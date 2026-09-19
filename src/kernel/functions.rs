@@ -19639,7 +19639,7 @@ mod provisional_ensure_obligation_tests {
                 facts
                     .iter()
                     .any(|fact| fact.proposition() == &element_loadable),
-                "contextual loadability must remain an explicit provisional obligation"
+                "contextual viewability must remain an explicit provisional obligation"
             );
             work_by_size.push((unrelated_count, work));
         }

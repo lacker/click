@@ -16,7 +16,7 @@ theorem hypothesis_owes_the_range_extent(v: int32[], lo: int32, n: int32, hi: in
     requires 0 <= lo;
     requires 0 <= hi;
     requires hi <= n;
-    requires n >= 0 and loadable(v[lo..n]);
+    requires n >= 0 and viewable(v[lo..n]);
     ensures 0 <= hi by {
         induct(hi) as ih;
         if hi <= 0 {
@@ -31,7 +31,7 @@ theorem hypothesis_owes_the_range_extent(v: int32[], lo: int32, n: int32, hi: in
                 hi - 1 < hi;
                 0 <= lo;
                 hi - 1 <= n;
-                n >= 0 and loadable(v[lo..n]);
+                n >= 0 and viewable(v[lo..n]);
             }
             assumption();
         }

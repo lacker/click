@@ -305,7 +305,7 @@ Examples:
 
 - Observing a folded composite resource exposes its declared pure `fact`
   clauses without consuming or unfolding the composite.
-- A declared `fact loadable(data[0..cap])` exposes a pure memory-loadability fact
+- A declared `fact viewable(data[0..cap])` exposes a pure memory-viewability fact
   for the segment without exposing the contained resource fact that justified it.
 - A valid state containing two owned memory resources exposes that their ranges
   are separate.
