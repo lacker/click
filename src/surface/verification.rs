@@ -6524,11 +6524,17 @@ fn resource_clause_to_resource_spec_with_metadata(
                 role,
                 snapshot,
             )?;
-            CResourceSpec::quantified(
-                resource_argument_to_c_expression(quantity)?,
+            let (quantity, quantity_snapshot) =
+                crate::surface::lowering::resource_argument_to_typed_c_expression_with_snapshot(
+                    quantity,
+                    syntax::C0Type::Int32,
+                )?;
+            CResourceSpec::quantified_with_quantity_snapshot(
+                quantity,
                 inner,
                 role,
                 snapshot,
+                quantity_snapshot,
             )
             .map_err(|error| ClickError::new(error.to_string()))
         }
@@ -6577,21 +6583,23 @@ fn resource_clause_to_resource_spec_with_metadata(
             parameter_types,
         } => {
             let access = resource_access_to_kernel(*access);
-            let arguments = arguments
+            let lowered_arguments = arguments
                 .iter()
                 .zip(parameter_types)
                 .map(|(argument, parameter_type)| {
-                    crate::surface::lowering::resource_argument_to_typed_c_expression(
+                    crate::surface::lowering::resource_argument_to_typed_c_expression_with_snapshot(
                         argument,
                         *parameter_type,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let (arguments, argument_snapshots): (Vec<_>, Vec<_>) =
+                lowered_arguments.into_iter().unzip();
             let parameter_types = parameter_types
                 .iter()
                 .map(|c_type| c_type.to_kernel_type())
                 .collect();
-            CResourceSpec::declared(
+            CResourceSpec::declared_with_argument_snapshots(
                 match kind {
                     ResourceKind::Composite => ResourceFamily::Composite,
                     ResourceKind::Token => ResourceFamily::Token,
@@ -6599,6 +6607,7 @@ fn resource_clause_to_resource_spec_with_metadata(
                 access,
                 name.clone(),
                 arguments,
+                argument_snapshots,
                 parameter_types,
                 role,
                 snapshot,

@@ -4803,11 +4803,13 @@ pub enum CResourceTerm {
     Composite {
         name: String,
         arguments: Vec<CExpression>,
+        argument_snapshots: Vec<CResourceSnapshot>,
         parameter_types: Vec<CType>,
     },
     Token {
         name: String,
         arguments: Vec<CExpression>,
+        argument_snapshots: Vec<CResourceSnapshot>,
         parameter_types: Vec<CType>,
     },
     Instance {
@@ -4864,6 +4866,7 @@ pub struct CResourceSpec {
     term: CResourceTerm,
     access: CResourceAccessMode,
     quantity: CResourceQuantity,
+    quantity_snapshot: CResourceSnapshot,
     role: CResourceTransferRole,
     snapshot: CResourceSnapshot,
     /// Source-level clause identity, when lowering expanded one source
@@ -4967,6 +4970,18 @@ impl CResourceTerm {
         }
     }
 
+    pub fn declared_argument_snapshots(&self) -> Option<&[CResourceSnapshot]> {
+        match self {
+            Self::Composite {
+                argument_snapshots, ..
+            }
+            | Self::Token {
+                argument_snapshots, ..
+            } => Some(argument_snapshots),
+            _ => None,
+        }
+    }
+
     pub fn declared_parameter_types(&self) -> Option<&[CType]> {
         match self {
             Self::Composite {
@@ -4992,6 +5007,7 @@ impl CResourceSpec {
             term,
             access,
             quantity,
+            quantity_snapshot: CResourceSnapshot::Current,
             role,
             snapshot,
             clause_position: None,
@@ -5047,15 +5063,47 @@ impl CResourceSpec {
         role: CResourceTransferRole,
         snapshot: CResourceSnapshot,
     ) -> Result<Self, CResourceSpecError> {
+        Self::declared_with_argument_snapshots(
+            family,
+            access,
+            name,
+            arguments,
+            Vec::new(),
+            parameter_types,
+            role,
+            snapshot,
+        )
+    }
+
+    pub fn declared_with_argument_snapshots(
+        family: ResourceFamily,
+        access: CResourceAccessMode,
+        name: String,
+        arguments: Vec<CExpression>,
+        mut argument_snapshots: Vec<CResourceSnapshot>,
+        parameter_types: Vec<CType>,
+        role: CResourceTransferRole,
+        snapshot: CResourceSnapshot,
+    ) -> Result<Self, CResourceSpecError> {
+        if argument_snapshots.is_empty() {
+            argument_snapshots = vec![CResourceSnapshot::Current; arguments.len()];
+        }
+        if arguments.len() != argument_snapshots.len() || arguments.len() != parameter_types.len() {
+            return Err(CResourceSpecError::InvalidNestedTerm(
+                "resource argument metadata has the wrong length".into(),
+            ));
+        }
         let term = match family {
             ResourceFamily::Composite => CResourceTerm::Composite {
                 name,
                 arguments,
+                argument_snapshots,
                 parameter_types,
             },
             ResourceFamily::Token => CResourceTerm::Token {
                 name,
                 arguments,
+                argument_snapshots,
                 parameter_types,
             },
             ResourceFamily::Memory | ResourceFamily::Instance => {
@@ -5141,6 +5189,18 @@ impl CResourceSpec {
         )
     }
 
+    pub fn quantified_with_quantity_snapshot(
+        quantity: CExpression,
+        resource: CResourceSpec,
+        role: CResourceTransferRole,
+        snapshot: CResourceSnapshot,
+        quantity_snapshot: CResourceSnapshot,
+    ) -> Result<Self, CResourceSpecError> {
+        let mut spec = Self::quantified(quantity, resource, role, snapshot)?;
+        spec.quantity_snapshot = quantity_snapshot;
+        Ok(spec)
+    }
+
     pub fn term(&self) -> &CResourceTerm {
         &self.term
     }
@@ -5151,6 +5211,10 @@ impl CResourceSpec {
 
     pub fn quantity(&self) -> &CResourceQuantity {
         &self.quantity
+    }
+
+    pub fn quantity_snapshot(&self) -> CResourceSnapshot {
+        self.quantity_snapshot
     }
 
     pub fn role(&self) -> CResourceTransferRole {
@@ -5234,6 +5298,10 @@ impl CResourceSpec {
         self.term.declared_arguments()
     }
 
+    pub fn declared_argument_snapshots(&self) -> Option<&[CResourceSnapshot]> {
+        self.term.declared_argument_snapshots()
+    }
+
     pub fn declared_parameter_types(&self) -> Option<&[CType]> {
         self.term.declared_parameter_types()
     }
@@ -5299,6 +5367,7 @@ impl PartialEq for CResourceSpec {
         self.term == other.term
             && self.access == other.access
             && self.quantity == other.quantity
+            && self.quantity_snapshot == other.quantity_snapshot
             && self.role == other.role
             && self.snapshot == other.snapshot
     }
@@ -5311,6 +5380,7 @@ impl Hash for CResourceSpec {
         self.term.hash(state);
         self.access.hash(state);
         self.quantity.hash(state);
+        self.quantity_snapshot.hash(state);
         self.role.hash(state);
         self.snapshot.hash(state);
     }
@@ -5322,6 +5392,7 @@ impl Ord for CResourceSpec {
             &self.term,
             self.access,
             &self.quantity,
+            self.quantity_snapshot,
             self.role,
             self.snapshot,
         )
@@ -5329,6 +5400,7 @@ impl Ord for CResourceSpec {
                 &other.term,
                 other.access,
                 &other.quantity,
+                other.quantity_snapshot,
                 other.role,
                 other.snapshot,
             ))

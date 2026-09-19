@@ -57,6 +57,7 @@ pub(super) fn prove_ensure_resource<'e>(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
+    entry_state: &CState,
     outcome: &CFunctionOutcome,
 ) -> Result<CheckedResourceClaim<'e>, ClickError> {
     // Post-return resource folds can extend the checked path before final
@@ -94,12 +95,14 @@ pub(super) fn prove_ensure_resource<'e>(
     } else {
         post_state
     };
-    let expected = lower_resource_clause_facts_at_state_with_result(
+    let expected = lower_resource_clause_facts_at_state_with_result_and_entry(
         resource,
         parameters,
         arguments,
+        entry_state,
         clause_state,
         result,
+        &assumptions_from_propositions(available_pure_facts),
     )?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
     if expected.iter().all(|expected| {

@@ -4651,6 +4651,7 @@ mod evidence_tests {
             &[],
             arguments,
             state,
+            state,
             outcome,
         )
         .unwrap();

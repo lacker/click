@@ -4300,6 +4300,7 @@ fn substitute_bitvector_variable_in_resource_term(
         CResourceTerm::Composite {
             name,
             arguments,
+            argument_snapshots,
             parameter_types,
         } => CResourceTerm::Composite {
             name: name.clone(),
@@ -4307,11 +4308,13 @@ fn substitute_bitvector_variable_in_resource_term(
                 .iter()
                 .map(|argument| substitute_bitvector_variable_in_c_expression(argument, from, to))
                 .collect(),
+            argument_snapshots: argument_snapshots.clone(),
             parameter_types: parameter_types.clone(),
         },
         CResourceTerm::Token {
             name,
             arguments,
+            argument_snapshots,
             parameter_types,
         } => CResourceTerm::Token {
             name: name.clone(),
@@ -4319,6 +4322,7 @@ fn substitute_bitvector_variable_in_resource_term(
                 .iter()
                 .map(|argument| substitute_bitvector_variable_in_c_expression(argument, from, to))
                 .collect(),
+            argument_snapshots: argument_snapshots.clone(),
             parameter_types: parameter_types.clone(),
         },
     }
@@ -7581,6 +7585,7 @@ fn substitute_pointer_variable_in_resource_term(
         CResourceTerm::Composite {
             name,
             arguments,
+            argument_snapshots,
             parameter_types,
         } => CResourceTerm::Composite {
             name: name.clone(),
@@ -7588,11 +7593,13 @@ fn substitute_pointer_variable_in_resource_term(
                 .iter()
                 .map(|argument| substitute_pointer_variable_in_c_expression(argument, from, to))
                 .collect(),
+            argument_snapshots: argument_snapshots.clone(),
             parameter_types: parameter_types.clone(),
         },
         CResourceTerm::Token {
             name,
             arguments,
+            argument_snapshots,
             parameter_types,
         } => CResourceTerm::Token {
             name: name.clone(),
@@ -7600,6 +7607,7 @@ fn substitute_pointer_variable_in_resource_term(
                 .iter()
                 .map(|argument| substitute_pointer_variable_in_c_expression(argument, from, to))
                 .collect(),
+            argument_snapshots: argument_snapshots.clone(),
             parameter_types: parameter_types.clone(),
         },
     }

@@ -1150,6 +1150,29 @@ pub(in crate::surface) fn lower_resource_clause_facts_at_state_with_result(
     lower_resource_clause_facts_with_values(resource, parameters, &values, state, Some(result))
 }
 
+pub(in crate::surface) fn lower_resource_clause_facts_at_state_with_result_and_entry(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    entry_state: &CState,
+    state: &CState,
+    result: &CValue,
+    base_assumptions: &PureFactContext,
+) -> Result<Vec<CResourceFact>, ClickError> {
+    let values =
+        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
+    lower_resource_clause_facts_with_values_mode_at_entry(
+        resource,
+        parameters,
+        &values,
+        entry_state,
+        state,
+        Some(result),
+        false,
+        base_assumptions,
+    )
+}
+
 fn lower_resource_clause_with_values(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -1168,15 +1191,40 @@ fn lower_resource_clause_with_values_mode(
     result: Option<&CValue>,
     allow_symbolic_resource_arguments: bool,
 ) -> Result<CResourceFact, ClickError> {
+    let base_assumptions = PureFactContext::new();
+    lower_resource_clause_with_values_mode_at_entry(
+        resource,
+        parameters,
+        values,
+        state,
+        state,
+        result,
+        allow_symbolic_resource_arguments,
+        &base_assumptions,
+    )
+}
+
+fn lower_resource_clause_with_values_mode_at_entry(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    values: &BTreeMap<String, CValue>,
+    entry_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    allow_symbolic_resource_arguments: bool,
+    base_assumptions: &PureFactContext,
+) -> Result<CResourceFact, ClickError> {
     match resource {
         ResourceClause::Named { binding, resource } => {
-            let lowered = lower_resource_clause_with_values_mode(
+            let lowered = lower_resource_clause_with_values_mode_at_entry(
                 resource,
                 parameters,
                 values,
+                entry_state,
                 state,
                 result,
                 allow_symbolic_resource_arguments,
+                base_assumptions,
             )?;
             let CResourceFact::Own(CResource::Composite { name, arguments }, _) = lowered else {
                 return Err(ClickError::new(
@@ -1210,20 +1258,29 @@ fn lower_resource_clause_with_values_mode(
             "aggregate resource clauses require batch lowering",
         )),
         ResourceClause::Quantified { quantity, resource } => {
-            let quantity = resource_argument_to_c_expression(quantity)?;
+            let original_quantity = quantity.clone();
+            let (quantity, quantity_snapshot) =
+                resource_argument_to_typed_c_expression_with_snapshot(
+                    quantity,
+                    syntax::C0Type::Int32,
+                )?;
             let assumptions = if allow_symbolic_resource_arguments {
-                PureFactContext::new()
+                base_assumptions
+                    .clone()
                     .allow_symbolic_contract_loads()
                     .prefer_symbolic_external_loads()
             } else {
-                PureFactContext::new()
+                base_assumptions.clone()
             };
             let array_refs = array_refs_for_parameters(parameters, values, state.memory());
-            let quantity = crate::surface::proof::evaluate_resource_fragment_through_kernel(
+            let quantity = evaluate_resource_argument_with_snapshot(
+                &original_quantity,
                 &quantity,
+                quantity_snapshot,
                 &assumptions,
                 values,
                 &array_refs,
+                entry_state,
                 state,
                 result,
             )
@@ -1237,13 +1294,15 @@ fn lower_resource_clause_with_values_mode(
                     "declared resource quantity must evaluate to int32",
                 ));
             };
-            let lowered = lower_resource_clause_with_values_mode(
+            let lowered = lower_resource_clause_with_values_mode_at_entry(
                 resource,
                 parameters,
                 values,
+                entry_state,
                 state,
                 result,
                 allow_symbolic_resource_arguments,
+                base_assumptions,
             )?;
             let CResourceFact::Own(resource, _) = lowered else {
                 return Err(ClickError::new(
@@ -1298,11 +1357,12 @@ fn lower_resource_clause_with_values_mode(
             parameter_types,
         } => {
             let assumptions = if allow_symbolic_resource_arguments {
-                PureFactContext::new()
+                base_assumptions
+                    .clone()
                     .allow_symbolic_contract_loads()
                     .prefer_symbolic_external_loads()
             } else {
-                PureFactContext::new()
+                base_assumptions.clone()
             };
             let array_refs = array_refs_for_parameters(parameters, values, state.memory());
             let mut resource_values = Vec::new();
@@ -1314,12 +1374,20 @@ fn lower_resource_clause_with_values_mode(
             for (index, (argument, parameter_type)) in
                 resource_arguments.iter().zip(parameter_types).enumerate()
             {
-                let argument = resource_argument_to_typed_c_expression(argument, *parameter_type)?;
-                let value = crate::surface::proof::evaluate_resource_fragment_through_kernel(
+                let original_argument = argument.clone();
+                let (argument, argument_snapshot) =
+                    resource_argument_to_typed_c_expression_with_snapshot(
+                        argument,
+                        *parameter_type,
+                    )?;
+                let value = evaluate_resource_argument_with_snapshot(
+                    &original_argument,
                     &argument,
+                    argument_snapshot,
                     &assumptions,
                     values,
                     &array_refs,
+                    entry_state,
                     state,
                     result,
                 )
@@ -1360,6 +1428,42 @@ fn lower_resource_clause_with_values_mode(
     }
 }
 
+fn evaluate_resource_argument_with_snapshot(
+    original: &ContractExpression,
+    lowered: &CExpression,
+    snapshot: crate::kernel::CResourceSnapshot,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    entry_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+) -> Result<CValue, String> {
+    if snapshot == crate::kernel::CResourceSnapshot::Entry {
+        return crate::surface::proof::evaluate_fixed_state_expression_through_kernel(
+            original,
+            assumptions,
+            values,
+            array_refs,
+            entry_state,
+            state,
+            result,
+            &RecordedSnapshots::new(),
+            &PredicateEnvironment::new(&[]),
+            &ClickFunctionEnvironment::new(&[]),
+            &BTreeSet::new(),
+        );
+    }
+    crate::surface::proof::evaluate_resource_fragment_through_kernel(
+        lowered,
+        assumptions,
+        values,
+        array_refs,
+        state,
+        result,
+    )
+}
+
 fn lower_resource_clause_facts_with_values(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -1378,6 +1482,29 @@ fn lower_resource_clause_facts_with_values_mode(
     result: Option<&CValue>,
     allow_symbolic_resource_arguments: bool,
 ) -> Result<Vec<CResourceFact>, ClickError> {
+    let base_assumptions = PureFactContext::new();
+    lower_resource_clause_facts_with_values_mode_at_entry(
+        resource,
+        parameters,
+        values,
+        state,
+        state,
+        result,
+        allow_symbolic_resource_arguments,
+        &base_assumptions,
+    )
+}
+
+fn lower_resource_clause_facts_with_values_mode_at_entry(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    values: &BTreeMap<String, CValue>,
+    entry_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    allow_symbolic_resource_arguments: bool,
+    base_assumptions: &PureFactContext,
+) -> Result<Vec<CResourceFact>, ClickError> {
     match resource {
         ResourceClause::MemoryAggregate { access, segments } => segments
             .iter()
@@ -1386,31 +1513,42 @@ fn lower_resource_clause_facts_with_values_mode(
                     ResourceAccessMode::Own => ResourceClause::OwnMemory(segment.clone()),
                     ResourceAccessMode::View => ResourceClause::ViewMemory(segment.clone()),
                 };
-                lower_resource_clause_with_values_mode(
+                lower_resource_clause_with_values_mode_at_entry(
                     &leaf,
                     parameters,
                     values,
+                    entry_state,
                     state,
                     result,
                     allow_symbolic_resource_arguments,
+                    base_assumptions,
                 )
             })
             .collect(),
         ResourceClause::Quantified { quantity, resource } => {
-            let quantity = resource_argument_to_c_expression(quantity)?;
+            let original_quantity = quantity.clone();
+            let (quantity, quantity_snapshot) =
+                resource_argument_to_typed_c_expression_with_snapshot(
+                    quantity,
+                    syntax::C0Type::Int32,
+                )?;
             let assumptions = if allow_symbolic_resource_arguments {
-                PureFactContext::new()
+                base_assumptions
+                    .clone()
                     .allow_symbolic_contract_loads()
                     .prefer_symbolic_external_loads()
             } else {
-                PureFactContext::new()
+                base_assumptions.clone()
             };
             let array_refs = array_refs_for_parameters(parameters, values, state.memory());
-            let quantity = crate::surface::proof::evaluate_resource_fragment_through_kernel(
+            let quantity = evaluate_resource_argument_with_snapshot(
+                &original_quantity,
                 &quantity,
+                quantity_snapshot,
                 &assumptions,
                 values,
                 &array_refs,
+                entry_state,
                 state,
                 result,
             )
@@ -1424,13 +1562,15 @@ fn lower_resource_clause_facts_with_values_mode(
                     "declared resource quantity must evaluate to int32",
                 ));
             };
-            lower_resource_clause_facts_with_values_mode(
+            lower_resource_clause_facts_with_values_mode_at_entry(
                 resource,
                 parameters,
                 values,
+                entry_state,
                 state,
                 result,
                 allow_symbolic_resource_arguments,
+                base_assumptions,
             )?
             .into_iter()
             .map(|lowered| {
@@ -1487,6 +1627,26 @@ pub(in crate::surface) fn resource_argument_to_typed_c_expression(
         ));
     }
     resource_argument_to_c_expression(argument)
+}
+
+/// Lowers a declared-resource argument together with the state that supplies
+/// its value.  The surrounding resource clause still has its own snapshot
+/// (entry for requirements, post for produced resources); `old(...)` selects
+/// the entry state for only this argument.
+pub(in crate::surface) fn resource_argument_to_typed_c_expression_with_snapshot(
+    argument: &ContractExpression,
+    parameter_type: C0Type,
+) -> Result<(CExpression, crate::kernel::CResourceSnapshot), ClickError> {
+    if let ContractExpression::Old(inner) = argument {
+        return Ok((
+            resource_argument_to_typed_c_expression(inner, parameter_type)?,
+            crate::kernel::CResourceSnapshot::Entry,
+        ));
+    }
+    Ok((
+        resource_argument_to_typed_c_expression(argument, parameter_type)?,
+        crate::kernel::CResourceSnapshot::Current,
+    ))
 }
 
 pub(in crate::surface) fn resource_argument_to_c_expression(

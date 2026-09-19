@@ -5646,7 +5646,8 @@ fn exact_resource_interfaces_match(
         .iter()
         .zip(function.resource_requires())
     {
-        let contract_resource = match evaluate_function_resource_spec(
+        let contract_resource = match evaluate_function_resource_spec_with_entry(
+            contract_entry,
             contract_entry,
             contract_resource,
             assumptions,
@@ -5655,7 +5656,8 @@ fn exact_resource_interfaces_match(
             Ok(resource) => resource,
             Err(_) => return Ok(false),
         };
-        let function_resource = match evaluate_function_resource_spec(
+        let function_resource = match evaluate_function_resource_spec_with_entry(
+            function_entry,
             function_entry,
             function_resource,
             assumptions,
@@ -5677,7 +5679,8 @@ fn exact_resource_interfaces_match(
             CResourceSnapshot::Entry => contract_entry,
             CResourceSnapshot::Current | CResourceSnapshot::Post => contract_post,
         };
-        let contract_resource = match evaluate_function_resource_spec(
+        let contract_resource = match evaluate_function_resource_spec_with_entry(
+            contract_entry,
             contract_state,
             contract_resource,
             assumptions,
@@ -5690,7 +5693,8 @@ fn exact_resource_interfaces_match(
             CResourceSnapshot::Entry => function_entry,
             CResourceSnapshot::Current | CResourceSnapshot::Post => function_post,
         };
-        let function_resource = match evaluate_function_resource_spec(
+        let function_resource = match evaluate_function_resource_spec_with_entry(
+            function_entry,
             function_state,
             function_resource,
             assumptions,
@@ -12197,7 +12201,8 @@ fn evaluate_contract_return_resource_context(
         let evaluation_state = state
             .clone()
             .with_resource_context(supply.unchecked_with_facts(views));
-        let evaluated = match evaluate_function_resource_spec(
+        let evaluated = match evaluate_function_resource_spec_with_entry(
+            entry_state,
             &evaluation_state,
             resource,
             assumptions,
@@ -18203,6 +18208,16 @@ pub(super) fn evaluate_function_resource_spec(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
+    evaluate_function_resource_spec_with_entry(state, state, resource, assumptions, budget)
+}
+
+pub(super) fn evaluate_function_resource_spec_with_entry(
+    entry_state: &CState,
+    state: &CState,
+    resource: &CResourceSpec,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
     match resource.term() {
         CResourceTerm::Instance {
             identity,
@@ -18224,11 +18239,16 @@ pub(super) fn evaluate_function_resource_spec(
                     ))));
                 }
             };
-            let required =
-                match evaluate_function_resource_spec(state, &inner, assumptions, budget)? {
-                    Ok(resource) => resource,
-                    Err(error) => return Ok(Err(error)),
-                };
+            let required = match evaluate_function_resource_spec_with_entry(
+                entry_state,
+                state,
+                &inner,
+                assumptions,
+                budget,
+            )? {
+                Ok(resource) => resource,
+                Err(error) => return Ok(Err(error)),
+            };
             let Some(instance) = state.owned_resource_instance(*identity) else {
                 return Ok(Err(CRuntimeError::FunctionContract(
                     "named resource instance is not owned".into(),
@@ -18287,20 +18307,24 @@ pub(super) fn evaluate_function_resource_spec(
         CResourceTerm::Composite {
             name,
             arguments,
+            argument_snapshots,
             parameter_types,
         }
         | CResourceTerm::Token {
             name,
             arguments,
+            argument_snapshots,
             parameter_types,
         } => {
             let family = resource.family();
             let mut fact = match evaluate_function_declared_resource_spec(
+                entry_state,
                 state,
                 resource.access(),
                 family,
                 name,
                 arguments,
+                argument_snapshots,
                 parameter_types,
                 assumptions,
                 budget,
@@ -18317,7 +18341,10 @@ pub(super) fn evaluate_function_resource_spec(
                     )));
                 }
                 let quantity = match evaluate_loop_effect_segment_value(
-                    state,
+                    match resource.quantity_snapshot() {
+                        CResourceSnapshot::Entry => entry_state,
+                        CResourceSnapshot::Current | CResourceSnapshot::Post => state,
+                    },
                     quantity,
                     assumptions,
                     "declared resource quantity",
@@ -18397,22 +18424,33 @@ pub(crate) fn quantified_resource_requirement_assumptions(
 }
 
 fn evaluate_function_declared_resource_spec(
+    entry_state: &CState,
     state: &CState,
     access: CResourceAccessMode,
     family: ResourceFamily,
     name: &str,
     arguments: &[CExpression],
+    argument_snapshots: &[CResourceSnapshot],
     parameter_types: &[CType],
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
-    if arguments.len() != parameter_types.len() {
+    if arguments.len() != parameter_types.len() || arguments.len() != argument_snapshots.len() {
         return Ok(Err(CRuntimeError::FunctionContract(format!(
             "resource `{name}` received the wrong number of arguments"
         ))));
     }
     let mut values = Vec::new();
-    for (index, (argument, parameter_type)) in arguments.iter().zip(parameter_types).enumerate() {
+    for (index, ((argument, argument_snapshot), parameter_type)) in arguments
+        .iter()
+        .zip(argument_snapshots)
+        .zip(parameter_types)
+        .enumerate()
+    {
+        let argument_state = match argument_snapshot {
+            CResourceSnapshot::Entry => entry_state,
+            CResourceSnapshot::Current | CResourceSnapshot::Post => state,
+        };
         let allocation_element_count = (name == CResourceFact::ALLOCATION_RESOURCE_NAME
             && index == 1)
             .then(|| match argument {
@@ -18431,7 +18469,7 @@ fn evaluate_function_declared_resource_spec(
             .flatten();
         let value = if let Some(element_count) = allocation_element_count {
             let count = match evaluate_loop_effect_segment_value(
-                state,
+                argument_state,
                 element_count,
                 assumptions,
                 &format!("resource `{name}` argument {index} element count"),
@@ -18450,7 +18488,7 @@ fn evaluate_function_declared_resource_spec(
             ))
         } else {
             match evaluate_loop_effect_segment_value(
-                state,
+                argument_state,
                 argument,
                 assumptions,
                 &format!("resource `{name}` argument {index}"),

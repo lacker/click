@@ -164,6 +164,16 @@ impl<'a> Proof<'a> {
                 .core
                 .frontier
                 .execution_start_state(&execution.core.state),
+            context
+                .constants
+                .function_entry_state
+                .as_ref()
+                .unwrap_or_else(|| {
+                    execution
+                        .core
+                        .frontier
+                        .execution_start_state(&execution.core.state)
+                }),
             &self.focused_outcome_snapshot()?,
         )
     }

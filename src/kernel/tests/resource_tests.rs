@@ -108,6 +108,7 @@ fn normalized_resource_specs_validate_families_and_preserve_transfer_metadata() 
         resource: Box::new(CResourceTerm::Composite {
             name: "cell".into(),
             arguments: vec![],
+            argument_snapshots: vec![],
             parameter_types: vec![],
         }),
     };
@@ -143,6 +144,7 @@ fn normalized_resource_specs_validate_families_and_preserve_transfer_metadata() 
                 resource: Box::new(CResourceTerm::Token {
                     name: "token".into(),
                     arguments: vec![],
+                    argument_snapshots: vec![],
                     parameter_types: vec![],
                 }),
             },
@@ -219,6 +221,7 @@ fn validated_resource_rebuilds_preserve_metadata_and_instance_bodies() {
         CResourceTerm::Token {
             name: "permit".into(),
             arguments: vec![quantity.clone()],
+            argument_snapshots: vec![CResourceSnapshot::Current],
             parameter_types: vec![CType::Int32],
         },
         CResourceAccessMode::Own,
@@ -274,6 +277,7 @@ fn validated_resource_rebuilds_preserve_metadata_and_instance_bodies() {
                 resource: Box::new(CResourceTerm::Composite {
                     name: "cell".into(),
                     arguments: vec![],
+                    argument_snapshots: vec![],
                     parameter_types: vec![],
                 }),
             },
