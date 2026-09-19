@@ -307,6 +307,33 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
                 ),
             ));
         }
+        // A range premise states two things, and the theorem's own proof
+        // assumed both: that `a..b` is a valid 32-bit byte extent, and that
+        // those bytes are loadable. Applying it owes both, or a range that is
+        // vacuously loadable because its extent wrapped would hand the theorem
+        // the valid-extent fact it never established. The guards are spelled
+        // over the element count, which is the spelling a proof can write.
+        for guard in crate::kernel::stated_loadable_extent_guards(&lowered) {
+            if exact_fact_is_available(&guard, available)
+                || matches!(normalize_proposition(&guard), SimpProposition::True)
+            {
+                continue;
+            }
+            return Err(theorem_application_error(
+                claim_label,
+                path_index,
+                tactic_index,
+                format!(
+                    "theorem `{}` requirement {requirement_index} states a memory range, so \
+                     applying it needs that range to be a valid 32-bit byte extent here: `{}` is \
+                     not an available fact. A range's extent is `(end - start) * width` in 32-bit \
+                     arithmetic, and without that bound it can wrap to fewer bytes than its \
+                     element count names",
+                    theorem.name(),
+                    crate::surface::proof::describe_pure_fact(&guard, &[], &[]),
+                ),
+            ));
+        }
     }
 
     let mut conclusions = Vec::new();

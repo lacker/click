@@ -1106,6 +1106,22 @@ pub(super) fn pure_theorem_context(
     ) {
         surface_requirements.record_lowering(surface, kernel)?;
     }
+    // A stated range premise carries its byte-count guards. Appending them
+    // after the principal premises is the whole assume side for a theorem:
+    // `context.requires` is what the theorem's own proof assumes and what the
+    // exported implication demands of anyone who applies it, so one list makes
+    // both directions agree. The zip above has already paired the principals
+    // with their source clauses, and a guard has no source clause of its own.
+    let mut requires = requires;
+    for guard in requires
+        .iter()
+        .flat_map(crate::kernel::stated_loadable_extent_guards)
+        .collect::<Vec<_>>()
+    {
+        if !requires.contains(&guard) {
+            requires.push(guard);
+        }
+    }
     Ok(PureTheoremContext {
         memory,
         values,

@@ -4106,7 +4106,17 @@ fn recording_covers_a_loadability_premise_from_the_retained_context() {
         )
         .assume_condition(ConditionTerm::signed_less_than(i, n.clone()), true)
         .assume_condition(
-            ConditionTerm::signed_less_equal(n, Bitvector32Term::Constant(2_147_483_647)),
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), n.clone()),
+            true,
+        )
+        // The caller's range is read at element granularity, so `n` has to be
+        // an element count that fits a `u32` byte extent once scaled by four —
+        // `i32::MAX` elements of four bytes do not.
+        .assume_condition(
+            ConditionTerm::signed_less_equal(
+                n,
+                Bitvector32Term::Constant(crate::kernel::memory_range_element_count_limit(4)),
+            ),
             true,
         );
     let (candidates, function, mut trace) =

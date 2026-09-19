@@ -16,12 +16,16 @@ loadability decision the implicit check asks, so the explicit proof accepts
 everything the implicit check accepts.
 
 An extent is modular arithmetic, so the rule also needs the assumed range to be
-a valid 32-bit byte extent: its element count has to sit in
-`0..=1073741823`, which for four-byte elements is what keeps `(hi - lo) * 4`
-from wrapping. `hi - lo <= 1073741823` is the theorem's own precondition and
-`0 <= hi - lo` is proved beside the order facts. Without them a range whose
-count is `1 << 30` has an extent of `0` bytes — vacuously loadable — and
-narrowing it would manufacture a real cell from nothing.
+a valid 32-bit byte extent: its element count has to sit in `0..=1073741823`,
+which for four-byte elements is what keeps `(hi - lo) * 4` from wrapping.
+Without that a range whose count is `1 << 30` has an extent of `0` bytes —
+vacuously loadable — and narrowing it would manufacture a real cell from
+nothing.
+
+That bound is not restated here. `requires hi >= 0 and loadable(v[lo..hi])`
+states the range, and a stated range means both halves of what it says: that
+`lo..hi` is a valid byte extent, and that those bytes are loadable. The proof
+below writes only the order facts placing the goal inside the premise.
 
 The order facts come first, each proved on its own, and then the loadability
 goal is discharged against them — the ordinary `have`-before-the-step shape of
@@ -31,13 +35,11 @@ goal is discharged against them — the ordinary `have`-before-the-step shape of
 theorem prefix_of_a_loadable_range(v: int32[], lo: int32, hi: int32) {
     requires 0 <= lo;
     requires lo < hi;
-    requires hi - lo <= 1073741823;
     requires hi >= 0 and loadable(v[lo..hi]);
     ensures loadable(v[lo..hi - 1]) by {
         have 0 < hi by { arithmetic() using { 0 <= lo; lo < hi; } }
         have lo <= hi - 1 by { arithmetic() using { lo < hi; 0 < hi; } }
         have hi - 1 < hi by { arithmetic() using { 0 < hi; } }
-        have 0 <= hi - lo by { arithmetic() using { 0 <= lo; lo < hi; } }
         simp();
     }
 }

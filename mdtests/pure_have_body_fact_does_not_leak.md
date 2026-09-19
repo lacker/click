@@ -33,5 +33,5 @@ theorem last_cell(p: int32[], lo: int32, hi: int32) {
 ```expect
 fail: not established: the 4 bytes at `p[hi - 1]` must be loadable
   established: `hi - 1` must not overflow; the read at `p[hi - 1]` must denote the value this state holds
-  premises consulted (7, a premise that is a conjunction counted as its conjuncts): `0 < hi`, `lo < hi`, `(hi - 1) < hi`, `0 <= lo`, `0 <= hi`, `hi >= 0`, `loadable(p[lo..hi])`
+  premises consulted (9, a premise that is a conjunction counted as its conjuncts): `0 < hi`, `lo < hi`, `(hi - 1) < hi`, `0 <= lo`, `0 <= hi`, `0 <= (hi - lo)`, `(hi - lo) <= 1073741823`, `hi >= 0`, `loadable(p[lo..hi])`
 ```

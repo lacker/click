@@ -3639,10 +3639,30 @@ fn loadable_symbolic_subrange_proves_an_indexed_cell() {
         base: data.offset_by_int32_elements(index.clone()),
         bytes: Bitvector32Term::Constant(4),
     };
+    // Reading `[split..len]` as its element count needs that count to be a
+    // valid byte extent once scaled by four; a stated range carries this.
+    let count = Bitvector32Term::subtract(len.clone(), split.clone());
     let assumptions = PureFactContext::new()
         .assume_proposition(range)
-        .assume_condition(ConditionTerm::signed_less_equal(split, index.clone()), true)
-        .assume_condition(ConditionTerm::signed_less_than(index, len), true);
+        .assume_condition(
+            ConditionTerm::signed_less_equal(split.clone(), index.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(index.clone(), len.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), count.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(
+                count,
+                Bitvector32Term::Constant(crate::kernel::memory_range_element_count_limit(4)),
+            ),
+            true,
+        );
 
     assert!(
         assumptions.derive_atomic_proposition(&target).is_some(),
@@ -3784,7 +3804,21 @@ fn field_derived_capacity_range_covers_a_shorter_live_prefix() {
             ConditionTerm::signed_less_than(index.clone(), len.clone()),
             true,
         )
-        .assume_condition(ConditionTerm::signed_less_equal(len, cap), true);
+        .assume_condition(ConditionTerm::signed_less_equal(len, cap.clone()), true)
+        // The capacity range is read as `cap` elements, so `cap` has to be a
+        // count whose four-byte extent does not wrap; the clause that states
+        // the range carries this.
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), cap.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(
+                cap,
+                Bitvector32Term::Constant(crate::kernel::memory_range_element_count_limit(4)),
+            ),
+            true,
+        );
     let target = Proposition::CMemoryLoadable {
         memory: entry_memory,
         base: entry_data.offset_by_int32_elements(index),
@@ -5428,6 +5462,15 @@ fn symbolic_int32_range_directly_proves_constant_element_loadable() {
     let assumptions = PureFactContext::new()
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length.clone()),
+            true,
+        )
+        // The range's element count has to be one whose four-byte extent does
+        // not wrap before it can be read as `length` elements.
+        .assume_condition(
+            ConditionTerm::signed_less_equal(
+                length.clone(),
+                Bitvector32Term::Constant(crate::kernel::memory_range_element_count_limit(4)),
+            ),
             true,
         )
         .assume_proposition(Proposition::CMemoryLoadable {

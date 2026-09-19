@@ -14,6 +14,7 @@ resource empty_vector(owner: struct vector*) {
     owns owner->data[0..owner->cap];
     fact owner->len == 0;
     fact 1 <= owner->cap;
+    fact owner->cap <= 1073741823;
     fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
 }
 
@@ -24,6 +25,7 @@ resource nonempty_vector(owner: struct vector*) {
     owns owner->data[0..owner->cap];
     fact 1 <= owner->len;
     fact owner->len <= owner->cap;
+    fact owner->cap <= 1073741823;
     fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
 }
 
@@ -34,6 +36,7 @@ resource vector_storage(owner: struct vector*) {
     owns owner->data[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;
+    fact owner->cap <= 1073741823;
     fact loadable(owner->data[0..owner->len]);
     fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
 }
@@ -868,6 +871,7 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
 
 int32 vector_init(struct vector* owner, int32 data[], int32 capacity) {
     requires 1 <= capacity;
+    requires capacity <= 1073741823;
     consumes object(owner);
     consumes data[0..capacity];
     produces empty_vector(owner);
@@ -1203,6 +1207,7 @@ int32 vector_pipeline(
     int32 replacement
 ) {
     requires 1 <= capacity;
+    requires capacity <= 1073741823;
     consumes object(owner);
     consumes data[0..capacity];
 

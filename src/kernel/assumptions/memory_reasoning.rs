@@ -66,23 +66,46 @@ fn frame_composite_definitions() -> Option<std::sync::Arc<Vec<CCompositeResource
     FRAME_COMPOSITE_DEFINITIONS.with(|definitions| definitions.borrow().last().cloned())
 }
 
-/// The element width a byte extent was scaled by, when it is a product with a
-/// positive constant factor. A segment `p[x..y]` of `w`-byte elements lowers
-/// its extent to `(y - x) * w`, so recovering `w` is what lets two extents be
-/// compared at element granularity. This inspects the term only; it neither
-/// simplifies nor consults facts.
-fn scaled_extent_element_width(bytes: &Bitvector32Term) -> Option<u32> {
-    let Bitvector32Term::Multiply(left, right) = bytes else {
+use crate::kernel::scaled_extent_element_width;
+
+/// A term as a base plus a constant shift, peeling the additive and
+/// subtractive constants a range endpoint is written with. `hi - 1` is `hi`
+/// shifted by `-1`; anything else is itself shifted by `0`. One level, no
+/// facts, no recursion budget.
+fn endpoint_base_and_shift(term: &Bitvector32Term) -> (&Bitvector32Term, i64) {
+    match term {
+        Bitvector32Term::Add(left, right) => match (left.as_ref(), right.as_ref()) {
+            (base, Bitvector32Term::Constant(shift)) => (base, i64::from(*shift as i32)),
+            (Bitvector32Term::Constant(shift), base) => (base, i64::from(*shift as i32)),
+            _ => (term, 0),
+        },
+        Bitvector32Term::Subtract(left, right) => match right.as_ref() {
+            Bitvector32Term::Constant(shift) => (left.as_ref(), -i64::from(*shift as i32)),
+            _ => (term, 0),
+        },
+        _ => (term, 0),
+    }
+}
+
+/// The value of an element-count term that is a constant, including the
+/// structural case where the two endpoints are the same term shifted by
+/// constants: `hi - (hi - 1)` counts one element whatever `hi` is.
+///
+/// This decides the extent of a single-cell range written from a symbolic
+/// endpoint, which the byte-count canonicalizer leaves as a subtraction. It
+/// reads the term and consults no facts, and the difference it reports is the
+/// term's own modular value: for a shared base the base cancels, so the count
+/// is exactly the shift difference.
+fn constant_element_count(element_count: &Bitvector32Term) -> Option<i64> {
+    if let Some(value) = signed_bitvector_constant(element_count) {
+        return Some(value);
+    }
+    let Bitvector32Term::Subtract(end, start) = element_count else {
         return None;
     };
-    match (left.as_ref(), right.as_ref()) {
-        (Bitvector32Term::Constant(width), _) | (_, Bitvector32Term::Constant(width))
-            if *width > 0 =>
-        {
-            Some(*width)
-        }
-        _ => None,
-    }
+    let (end_base, end_shift) = endpoint_base_and_shift(end);
+    let (start_base, start_shift) = endpoint_base_and_shift(start);
+    (end_base == start_base).then_some(end_shift - start_shift)
 }
 
 impl PureFactContext {
@@ -364,6 +387,11 @@ impl PureFactContext {
                     .zip(int32_element_count_from_bytes(suffix_bytes))
                     .zip(int32_element_count_from_bytes(bytes))
                     .is_some_and(|((prefix_count, suffix_count), goal_count)| {
+                        if !self.assumed_extent_covers_its_element_count(&prefix_count, 4)
+                            || !self.assumed_extent_covers_its_element_count(&suffix_count, 4)
+                        {
+                            return false;
+                        }
                         let expected_suffix = base.offset_by_int32_elements(prefix_count.clone());
                         (suffix_base == &expected_suffix
                             || crate::kernel::reasoning::pointers_proven_equal_for_memory_resolution(
@@ -431,6 +459,9 @@ impl PureFactContext {
                 let Some(element_count) = element_count_from_bytes(range_bytes, byte_width) else {
                     return false;
                 };
+                if !self.assumed_extent_covers_its_element_count(&element_count, byte_width) {
+                    return false;
+                }
                 pointer_in_range_for_memory_resolution(
                     base,
                     range_base,
@@ -455,6 +486,12 @@ impl PureFactContext {
         if let Some(byte_width) = bytes.as_const()
             && let Some(index) = base.element_index_from_base_with_width(range_base, byte_width)
             && let Some(element_count) = element_count_from_bytes(range_bytes, byte_width)
+            // Every branch below reads the assumed extent as `element_count`
+            // elements and compares an index against it in signed arithmetic.
+            // That reading is the fact's meaning only while the extent is a
+            // valid byte extent; a wrapped one covers fewer bytes than its
+            // count claims, and the cell would come from nothing.
+            && self.assumed_extent_covers_its_element_count(&element_count, byte_width)
         {
             let lower =
                 ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone());
@@ -621,7 +658,9 @@ impl PureFactContext {
     /// shared `fits` guard uses, read from the same place. The guard itself is
     /// an unsigned comparison, and Click's surface has no unsigned comparison
     /// to write it with; these two signed facts imply it and a proof can state
-    /// both. `0 <= b - a` is the load-bearing one: without it `a = INT_MIN`,
+    /// both, which is the spelling
+    /// [`crate::kernel::memory_range_element_count_guards`] states them in.
+    /// `0 <= b - a` is the load-bearing one: without it `a = INT_MIN`,
     /// `b = INT_MAX` satisfies `a <= b` and `b - a <= limit` while `b - a` is
     /// really `-1` and the extent has wrapped.
     fn assumed_range_is_a_valid_byte_extent(
@@ -631,6 +670,13 @@ impl PureFactContext {
         element_width: u32,
     ) -> bool {
         crate::instrumentation::record_deterministic_work(1);
+        // One-byte elements: the extent is the count, unscaled, so no product
+        // can wrap and the fact's byte count is already exact. There is
+        // nothing for a proof to establish, and the signed index comparison
+        // the readers make handles a count whose bit pattern is negative.
+        if element_width == 1 {
+            return true;
+        }
         match crate::kernel::memory_range_byte_count_extent(
             start.clone(),
             end.clone(),
@@ -638,15 +684,72 @@ impl PureFactContext {
         ) {
             crate::kernel::MemoryRangeExtent::ConstantValid => true,
             crate::kernel::MemoryRangeExtent::ConstantInvalid { .. } => false,
-            crate::kernel::MemoryRangeExtent::Guards(_) => {
+            crate::kernel::MemoryRangeExtent::Guards(guards) => {
+                // The shared guards themselves, where the range was stated and
+                // so carries them: a contract's own `a <= b` and the unsigned
+                // `b - a <= limit` are the definition, and an assumed range
+                // brings both. This is the route that lets a range fact be
+                // used at element granularity without the proof restating a
+                // bound the range already promised.
+                if guards.iter().all(|guard| self.proves_exact(guard)) {
+                    return true;
+                }
                 let element_count = Bitvector32Term::subtract(end.clone(), start.clone());
-                let limit = Bitvector32Term::Constant(
-                    crate::kernel::memory_range_element_count_limit(element_width),
-                );
-                self.proves_element_endpoint_order(&Bitvector32Term::Constant(0), &element_count)
-                    && self.proves_element_endpoint_order(&element_count, &limit)
+                // A count the term itself decides needs no facts: the shared
+                // definition above only sees two symbolic endpoints, while
+                // `hi - (hi - 1)` is one element for every `hi`.
+                if let Some(count) = constant_element_count(&element_count) {
+                    return (0..=i64::from(crate::kernel::memory_range_element_count_limit(
+                        element_width,
+                    )))
+                        .contains(&count);
+                }
+                // The count spelling, which is both what a proof can write and
+                // what a stated range carries: each guard by the exact routes
+                // the loadability rules already use.
+                crate::kernel::memory_range_element_count_guards(element_count, element_width)
+                    .iter()
+                    .all(|guard| match guard {
+                        Proposition::ConditionIs(
+                            ConditionTerm::Bitvector32SignedLessEqual(lower, upper),
+                            true,
+                        ) => self.proves_element_endpoint_order(lower, upper),
+                        guard => self.proves_exact(guard),
+                    })
             }
         }
+    }
+
+    /// [`Self::assumed_range_is_a_valid_byte_extent`] for an extent recovered
+    /// as an element count rather than as a pair of endpoints.
+    ///
+    /// A rule that divides an assumed extent by an element width has the count
+    /// but not always the endpoints: `loadable(p[0..n])` lowers its extent to
+    /// `n * w`, whose count term is `n` with the zero start already folded
+    /// away. The condition is the same one, and it is a condition on the count:
+    /// `0 <= count` signed and `count <= u32::MAX / w` unsigned make `count * w`
+    /// the true number of bytes the fact covers, so reading the fact as `count`
+    /// elements of `w` bytes is exact. Restoring the start as `0` states it in
+    /// the shared definition's own terms, and `count - 0` is `count`, so the
+    /// facts a proof must supply are spelled over the count the user wrote.
+    fn assumed_extent_covers_its_element_count(
+        &self,
+        element_count: &Bitvector32Term,
+        element_width: u32,
+    ) -> bool {
+        // When the count still names both endpoints, ask about those: the
+        // guards a contract states for `p[a..b]` are written over `a` and `b`,
+        // and asking in the same spelling finds them.
+        if let Bitvector32Term::Subtract(end, start) = element_count
+            && self.assumed_range_is_a_valid_byte_extent(start, end, element_width)
+        {
+            return true;
+        }
+        self.assumed_range_is_a_valid_byte_extent(
+            &Bitvector32Term::Constant(0),
+            element_count,
+            element_width,
+        )
     }
 
     /// `lower <= upper` for two element endpoints, by the exact routes the
@@ -738,6 +841,7 @@ impl PureFactContext {
         if let Some(index) =
             self.pointer_element_index_from_base_with_width(pointer, base, byte_width)
             && let Some(element_count) = element_count_from_bytes(bytes, byte_width)
+            && self.assumed_extent_covers_its_element_count(&element_count, byte_width)
         {
             let lower_condition =
                 ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone());

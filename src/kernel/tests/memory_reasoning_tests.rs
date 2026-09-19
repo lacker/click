@@ -3895,3 +3895,180 @@ mod constant_range_byte_count_guards {
         assert!(refuses(&guards(-1_073_741_824, 0, 4)));
     }
 }
+
+/// Every rule that reads an assumed loadable extent at element granularity
+/// must first establish that the extent is a valid 32-bit byte extent.
+///
+/// The witness is one shape: `loadable(v[0..n])` at `n == 1 << 30` has the
+/// byte extent `n * 4`, which is `1 << 32`, which is `0`. The fact is true and
+/// covers nothing. A rule that divides that extent by four and reads `n`
+/// elements out of it turns nothing into real bytes, and
+/// `mdtests/wrapped_loadable_extent_is_not_a_cell.md` is the surface witness
+/// for the cell rules specifically. These cover each reader directly, in both
+/// polarities: refused without the bound, accepted with it.
+mod wrapped_assumed_extent_is_refused {
+    use super::*;
+
+    const WRAPPING_COUNT: u32 = 1 << 30;
+
+    fn array_base(byte_offset: i64) -> Pointer {
+        Pointer {
+            block: "arg-memory".into(),
+            offset: PointerOffsetTerm::Constant(byte_offset),
+        }
+    }
+
+    /// `loadable(v[0..count])` with a symbolic element count, plus the order
+    /// facts a reader needs about an index inside it. The extent bound is the
+    /// one fact that varies.
+    fn context(count: Variable, bounded: bool) -> (CMemory, PureFactContext) {
+        let memory = CMemory::new();
+        let count_term = Bitvector32Term::Variable(count);
+        let mut assumptions = PureFactContext::new()
+            .assume_proposition(Proposition::CMemoryLoadable {
+                memory: memory.clone(),
+                base: array_base(0),
+                bytes: Bitvector32Term::multiply(count_term.clone(), Bitvector32Term::Constant(4)),
+            })
+            .assume_condition(
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), count_term.clone()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(Bitvector32Term::Constant(1), count_term.clone()),
+                true,
+            );
+        if bounded {
+            assumptions = assumptions.assume_condition(
+                ConditionTerm::signed_less_equal(
+                    count_term,
+                    Bitvector32Term::Constant(crate::kernel::memory_range_element_count_limit(4)),
+                ),
+                true,
+            );
+        }
+        (memory, assumptions)
+    }
+
+    /// The cell rules: `proves_memory_loadable` for a cell inside the range,
+    /// which routes through `proves_loadable_region_from_structural_range` and
+    /// `proves_loadable_cell_from_region`.
+    #[test]
+    fn a_cell_inside_a_wrapped_range_is_refused() {
+        let count = Variable(9_100_000);
+        for bounded in [false, true] {
+            let (memory, assumptions) = context(count, bounded);
+            assert_eq!(
+                assumptions.proves_memory_access(&memory, &array_base(0), 4),
+                bounded,
+                "a cell inside `v[0..n]` needs the range's extent bound (bounded: {bounded})"
+            );
+            assert_eq!(
+                assumptions.proves_memory_access(&memory, &array_base(4), 4),
+                bounded,
+                "so does a later cell (bounded: {bounded})"
+            );
+        }
+    }
+
+    /// The memory-resolution reader, which reads the same extent as an element
+    /// count to place a pointer inside it.
+    #[test]
+    fn memory_resolution_refuses_a_wrapped_range() {
+        let count = Variable(9_100_001);
+        for bounded in [false, true] {
+            let (memory, assumptions) = context(count, bounded);
+            assert_eq!(
+                assumptions.proves_memory_loadable_for_memory_resolution(
+                    &memory,
+                    &array_base(4),
+                    &Bitvector32Term::Constant(4),
+                ),
+                bounded,
+                "memory resolution reads the extent at element granularity too \
+                 (bounded: {bounded})"
+            );
+        }
+    }
+
+    /// The region reader used by covering-span certification.
+    #[test]
+    fn a_region_read_refuses_a_wrapped_extent() {
+        let count = Variable(9_100_002);
+        for bounded in [false, true] {
+            let (_, assumptions) = context(count, bounded);
+            let extent = Bitvector32Term::multiply(
+                Bitvector32Term::Variable(count),
+                Bitvector32Term::Constant(4),
+            );
+            assert_eq!(
+                assumptions.proves_loadable_cell_from_region(
+                    &array_base(0),
+                    &extent,
+                    &array_base(4),
+                    4,
+                ),
+                bounded,
+                "a region's extent is read as an element count (bounded: {bounded})"
+            );
+        }
+    }
+
+    /// A constant range whose element count wraps is decided without facts,
+    /// and so is the widest one that does not.
+    #[test]
+    fn a_constant_wrapped_extent_needs_no_facts_to_refuse() {
+        let memory = CMemory::new();
+        let wrapped = PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {
+            memory: memory.clone(),
+            base: array_base(0),
+            bytes: Bitvector32Term::multiply(
+                Bitvector32Term::Constant(WRAPPING_COUNT),
+                Bitvector32Term::Constant(4),
+            ),
+        });
+        // `1 << 30` four-byte elements scale to `0` bytes: the fact is true
+        // and covers nothing, so no cell comes out of it.
+        assert!(
+            !wrapped.proves_memory_access(&memory, &array_base(0), 4),
+            "a constant wrapped extent yields no cell"
+        );
+        let widest = PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {
+            memory: memory.clone(),
+            base: array_base(0),
+            bytes: Bitvector32Term::multiply(
+                Bitvector32Term::Constant(WRAPPING_COUNT - 1),
+                Bitvector32Term::Constant(4),
+            ),
+        });
+        assert!(
+            widest.proves_memory_access(&memory, &array_base(0), 4),
+            "one element fewer is the widest extent that fits, and it still works"
+        );
+    }
+
+    /// One-byte elements cannot wrap: the extent is the count, unscaled, so
+    /// nothing has to be established before reading it.
+    #[test]
+    fn a_byte_range_needs_no_extent_bound() {
+        let count = Variable(9_100_004);
+        let memory = CMemory::new();
+        let assumptions = PureFactContext::new()
+            .assume_proposition(Proposition::CMemoryLoadable {
+                memory: memory.clone(),
+                base: array_base(0),
+                bytes: Bitvector32Term::Variable(count),
+            })
+            .assume_condition(
+                ConditionTerm::signed_less_than(
+                    Bitvector32Term::Constant(1),
+                    Bitvector32Term::Variable(count),
+                ),
+                true,
+            );
+        assert!(
+            assumptions.proves_memory_access(&memory, &array_base(1), 1),
+            "a one-byte element range is its own byte count"
+        );
+    }
+}

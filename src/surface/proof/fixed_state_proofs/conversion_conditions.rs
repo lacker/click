@@ -393,6 +393,27 @@ fn loadability_explanation(
         || render::render_proposition_labeled(covering, labels),
         |surface| crate::surface::diagnostics::describe_click_proposition(&surface),
     );
+    // Reading that range at element granularity needs it to be a valid 32-bit
+    // byte extent. A range stated in this scope carries that; one this proof
+    // established itself does not, and saying which fact is missing is the
+    // difference between a usable refusal and "not true".
+    let missing_extent = crate::kernel::stated_loadable_extent_guards(covering)
+        .into_iter()
+        .find(|guard| !assumptions.proves(guard));
+    if let Some(guard) = missing_extent {
+        let guard = site.spell_proposition(&guard).map_or_else(
+            || render::render_proposition_labeled(&guard, labels),
+            |surface| crate::surface::diagnostics::describe_click_proposition(&surface),
+        );
+        return Some(format!(
+            "`{spelled}` is a premise here and was consulted, but it is not a valid 32-bit byte \
+             extent in this scope: `{guard}` is not an established fact. A range's extent is \
+             `(end - start) * width` in 32-bit arithmetic, so without that bound the extent can \
+             wrap to fewer bytes than its element count names — a count of `1 << 30` four-byte \
+             elements scales to `0` — and the range would not cover the cell it appears to. \
+             State that bound where the range is stated"
+        ));
+    }
     Some(format!(
         "`{spelled}` is a premise here and was consulted. A range premise establishes one cell \
          only where the cell's index bounds inside that range are themselves established order \

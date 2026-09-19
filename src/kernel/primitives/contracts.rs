@@ -1777,6 +1777,55 @@ pub(crate) fn memory_range_element_count_limit(element_width: u32) -> u32 {
     u32::MAX / element_width
 }
 
+/// A range's element count as a term: the same difference
+/// [`memory_range_byte_count`] scales, unscaled.
+pub(crate) fn memory_range_element_count(range: &CMemoryRange) -> Bitvector32Term {
+    canonical_subtract(range.end().clone(), range.start().clone())
+}
+
+/// Whether that limit constrains a nonnegative `int32` element count at all.
+/// For one- and two-byte elements it does not: `i32::MAX` elements of two
+/// bytes still fit a `u32` byte extent, so nonnegativity is the whole
+/// condition and a second guard would be a fact every count already has.
+fn element_count_limit_constrains_int32(element_width: u32) -> bool {
+    memory_range_element_count_limit(element_width) < i32::MAX as u32
+}
+
+/// The valid-byte-extent condition written over a range's element count, in
+/// the spelling a proof can state.
+///
+/// This is [`memory_range_byte_count_guards`] for a caller that holds the
+/// count rather than the two endpoints, and it is the same condition. Over a
+/// count the unsigned `fits` comparison becomes a signed one, because
+/// `0 <= count` already pins the count below `2^31` and the limit is itself
+/// below `2^31` for every element width past two bytes; over two endpoints it
+/// cannot, since `a <= b` signed leaves `b - a` free to wrap and that is the
+/// hazard the unsigned form exists for.
+///
+/// Click's surface has no unsigned comparison, so this is also the only form
+/// of the condition a user can write down, and the form every diagnostic about
+/// a missing extent should print.
+pub(crate) fn memory_range_element_count_guards(
+    element_count: Bitvector32Term,
+    element_width: u32,
+) -> Vec<Proposition> {
+    assert!(element_width > 0, "memory element width must be positive");
+    let mut guards = vec![Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), element_count.clone()),
+        true,
+    )];
+    if element_count_limit_constrains_int32(element_width) {
+        guards.push(Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(
+                element_count,
+                Bitvector32Term::Constant(memory_range_element_count_limit(element_width)),
+            ),
+            true,
+        ));
+    }
+    guards
+}
+
 /// Whether a logical element range is usable as a 32-bit physical byte
 /// extent, and what it takes.
 ///
@@ -1832,6 +1881,114 @@ pub(crate) fn memory_range_byte_count_extent(
         Proposition::ConditionIs(forward, true),
         Proposition::ConditionIs(fits, true),
     ])
+}
+
+/// The element width a byte extent was scaled by, when it is a product with a
+/// positive constant factor. A segment `p[x..y]` of `w`-byte elements lowers
+/// its extent to `(y - x) * w`, so recovering `w` is what lets an extent be
+/// read back at element granularity. The inverse of
+/// [`memory_range_byte_count`], on the term only: it neither simplifies nor
+/// consults facts.
+pub(crate) fn scaled_extent_element_width(bytes: &Bitvector32Term) -> Option<u32> {
+    let Bitvector32Term::Multiply(left, right) = bytes else {
+        return None;
+    };
+    match (left.as_ref(), right.as_ref()) {
+        (Bitvector32Term::Constant(width), _) | (_, Bitvector32Term::Constant(width))
+            if *width > 0 =>
+        {
+            Some(*width)
+        }
+        _ => None,
+    }
+}
+
+/// The byte-count guards a stated range-loadable proposition carries.
+///
+/// A surface `loadable(p[a..b])` means two things at once: that `a..b` is a
+/// valid 32-bit byte extent, and that those bytes are loadable. The kernel
+/// proposition holds only the second, as the byte count `(b - a) * w`, so the
+/// first has to travel beside it. Recovering it from the lowered proposition
+/// keeps one definition for both directions of that meaning: wherever such a
+/// proposition is assumed these are available with it, and wherever it is a
+/// premise a proof must supply these are owed with it. Deriving them here,
+/// from the proposition alone, is what makes the two sides agree without a
+/// per-site rule about where the proposition came from.
+///
+/// The guards are stated over the extent's element count, which is the form
+/// the loadability rules read it back in and the form a proof can write: for
+/// `p[a..b]` the count term is `b - a`, so `0 <= b - a` and
+/// `b - a <= u32::MAX / w` are the two facts, and for `p[0..n]` they are over
+/// `n` itself.
+///
+/// Conjunctions are walked, because a `requires` clause is written as one.
+/// A quantifier or an implication is not: a guard over a bound variable is not
+/// a fact about anything the surrounding scope can state. A byte count that is
+/// not a scaled element range carries nothing — a constant cell width and a
+/// block size are already true counts of bytes.
+pub(crate) fn stated_loadable_extent_guards(proposition: &Proposition) -> Vec<Proposition> {
+    let mut guards = Vec::new();
+    collect_stated_loadable_extent_guards(proposition, &mut guards, false);
+    guards
+}
+
+/// [`stated_loadable_extent_guards`] in every spelling of the same condition.
+///
+/// Contract and resource lowering states a stated range's guards over the
+/// range's two endpoints, where the `fits` half has to be an unsigned
+/// comparison; the element-count form above states the same condition in the
+/// signed spelling a proof can write. A consumer asking "is this condition
+/// available here" has to accept either, because which one is present depends
+/// on the lowering that installed the range, not on what the range means. A
+/// consumer asking a proof to *establish* the condition asks for the count
+/// form only, since that is the one the surface can spell.
+pub(crate) fn stated_loadable_extent_guard_spellings(
+    proposition: &Proposition,
+) -> Vec<Proposition> {
+    let mut guards = Vec::new();
+    collect_stated_loadable_extent_guards(proposition, &mut guards, true);
+    guards
+}
+
+fn collect_stated_loadable_extent_guards(
+    proposition: &Proposition,
+    guards: &mut Vec<Proposition>,
+    every_spelling: bool,
+) {
+    match proposition {
+        Proposition::And(left, right) => {
+            collect_stated_loadable_extent_guards(left, guards, every_spelling);
+            collect_stated_loadable_extent_guards(right, guards, every_spelling);
+        }
+        Proposition::CMemoryLoadable { bytes, .. } => {
+            let Some(element_width) = scaled_extent_element_width(bytes) else {
+                return;
+            };
+            let Some(element_count) =
+                crate::kernel::reasoning::element_count_from_bytes(bytes, element_width)
+            else {
+                return;
+            };
+            let endpoints = if every_spelling {
+                memory_range_byte_count_guards(
+                    Bitvector32Term::Constant(0),
+                    element_count.clone(),
+                    element_width,
+                )
+            } else {
+                Vec::new()
+            };
+            for guard in memory_range_element_count_guards(element_count, element_width)
+                .into_iter()
+                .chain(endpoints)
+            {
+                if !guards.contains(&guard) {
+                    guards.push(guard);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// [`memory_range_byte_count_extent`] as a flat guard list: an invalid

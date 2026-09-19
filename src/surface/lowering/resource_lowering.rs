@@ -1918,15 +1918,18 @@ pub(in crate::surface) fn resource_clause_loadable_props_at_state(
         .map(|range| memory_range_loadable_atom_prop(state.memory(), range))
         .reduce(|left, right| Proposition::And(Box::new(left), Box::new(right)))
         .expect("memory resource clause has at least one range");
+    // Every stated range carries its byte-count guards, whichever clause
+    // states it. `owns p[lo..hi]` and an aggregate range mean the same thing
+    // about `lo..hi` as `views p[lo..hi]` does, and the loadability rules read
+    // all three at element granularity; a guard that rode along with one
+    // clause and not another would make the same range mean two things.
     let mut propositions = vec![loadable];
-    if matches!(resource, ResourceClause::ViewMemory(_)) {
-        let guards = ranges
-            .iter()
-            .flat_map(memory_range_loadable_guards)
-            .collect::<Vec<_>>();
-        reject_impossible_range_guards(&guards, assumptions)?;
-        propositions.extend(guards);
-    }
+    let guards = ranges
+        .iter()
+        .flat_map(memory_range_loadable_guards)
+        .collect::<Vec<_>>();
+    reject_impossible_range_guards(&guards, assumptions)?;
+    propositions.extend(guards);
     Ok(Some(propositions))
 }
 

@@ -1523,7 +1523,10 @@ pub(super) fn c_function_contract_certification_assumptions(
         }
     };
     for fact in required_resources.facts() {
-        let Some(range) = fact.memory_view_range() else {
+        // Owned ranges carry their byte-count guards exactly as viewed ranges
+        // do: the clause states the same range, and the loadability rules read
+        // both at element granularity.
+        let Some(range) = fact.memory_view_range().or_else(|| fact.memory_own_range()) else {
             continue;
         };
         for guard in crate::kernel::memory_range_byte_count_guards(
@@ -1548,9 +1551,38 @@ pub(super) fn c_function_contract_certification_assumptions(
         entry_state.memory(),
         &assumptions,
     );
-    let (_, resource_definition_facts) = expanded.ok_or_else(|| {
+    let (expanded_resources, resource_definition_facts) = expanded.ok_or_else(|| {
         "could not expand the composite resources required at the contract entry".to_string()
     })?;
+    // A composite's contained ranges are stated ranges too, and their
+    // byte-count guards ride with the composite wherever it is held. Install
+    // them here as well, so what the certified entry context knows about an
+    // expanded range matches what the proof side installed for it.
+    for fact in expanded_resources.facts() {
+        let Some(range) = fact.memory_view_range().or_else(|| fact.memory_own_range()) else {
+            continue;
+        };
+        for guard in crate::kernel::memory_range_byte_count_guards(
+            range.start().clone(),
+            range.end().clone(),
+            range.element_width(),
+        )
+        .into_iter()
+        .chain(crate::kernel::memory_range_element_count_guards(
+            crate::kernel::memory_range_element_count(range),
+            range.element_width(),
+        )) {
+            let guard_is_false = match &guard {
+                Proposition::ConditionIs(condition, true) => {
+                    assumptions.decide(condition) == Some(false)
+                }
+                _ => false,
+            };
+            if !guard_is_false {
+                assumptions = assumptions.assume_proposition(guard);
+            }
+        }
+    }
     for proposition in resource_definition_facts {
         assumptions = assumptions.assume_proposition(proposition);
     }

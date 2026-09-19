@@ -239,6 +239,20 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
                 )
             )));
         }
+        // Citing a stated range cites what the range says. `loadable(p[a..b])`
+        // means `a..b` is a valid 32-bit byte extent and those bytes are
+        // loadable, so naming the range in a `using` list names both halves;
+        // the proof does not restate a bound the range already carries, and
+        // the endpoint spelling of that bound is an unsigned comparison the
+        // surface cannot write at all. This relaxes the restriction only: a
+        // guard joins the list only where it is already available here.
+        for guard in crate::kernel::stated_loadable_extent_guard_spellings(&premise) {
+            if !explicit_premises.contains(&guard)
+                && available.exact_available_across_effects(&guard, &[])
+            {
+                explicit_premises.push(guard);
+            }
+        }
         if !explicit_premises.contains(&premise) {
             explicit_premises.push(premise);
         }

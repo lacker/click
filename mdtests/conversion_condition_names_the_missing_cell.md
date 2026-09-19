@@ -23,6 +23,6 @@ theorem cell_from_range(p: int32[], lo: int32, hi: int32) {
 fail: its subterm `p[hi - 1]` denotes a value only where 3 conditions of that evaluation hold, and the premises in scope where it is stated establish 2 of them, not this one.
   not established: the 4 bytes at `p[hi - 1]` must be loadable
   established: `hi - 1` must not overflow; the read at `p[hi - 1]` must denote the value this state holds
-  premises consulted (4, a premise that is a conjunction counted as its conjuncts): `lo < hi`, `0 <= lo`, `hi >= 0`, `loadable(p[lo..hi])`
+  premises consulted (6, a premise that is a conjunction counted as its conjuncts): `lo < hi`, `0 <= lo`, `0 <= (hi - lo)`, `(hi - lo) <= 1073741823`, `hi >= 0`, `loadable(p[lo..hi])`
   why that was not enough: `loadable(p[lo..hi])` is a premise here and was consulted.
 ```

@@ -834,6 +834,7 @@ resource empty_buffer(owner: struct buffer*) {
     owns owner->data[0..owner->cap];
     fact owner->len == 0;
     fact 1 <= owner->cap;
+    fact owner->cap <= 1073741823;
     fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
 }
 
@@ -844,6 +845,7 @@ resource buffer_storage(owner: struct buffer*) {
     owns owner->data[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;
+    fact owner->cap <= 1073741823;
     fact loadable(owner->data[0..owner->len]);
     fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
 }
@@ -855,6 +857,7 @@ resource nonempty_buffer(owner: struct buffer*) {
     owns owner->data[0..owner->cap];
     fact 1 <= owner->len;
     fact owner->len <= owner->cap;
+    fact owner->cap <= 1073741823;
     fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
 }
 
@@ -864,6 +867,7 @@ verifying "buffer_pipeline.c";
 
 int32 buffer_init(struct buffer* owner, int32 data[], int32 capacity) {
     requires 1 <= capacity;
+    requires capacity <= 1073741823;
     consumes object(owner);
     consumes data[0..capacity];
     produces empty_buffer(owner);
@@ -899,6 +903,7 @@ int32 buffer_pipeline(
     int32 value
 ) {
     requires 1 <= capacity;
+    requires capacity <= 1073741823;
     consumes object(owner);
     consumes data[0..capacity];
     produces nonempty_buffer(owner) by {

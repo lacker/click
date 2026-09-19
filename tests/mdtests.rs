@@ -15,20 +15,7 @@ const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
 /// green gate. Run one with `MDTEST_FILTER=<name>`, or all of them with
 /// `CLICK_RUN_QUARANTINED=1`. Each entry names the reason; remove entries as
 /// they are fixed (see docs/internals/testing.md).
-const QUARANTINED: &[(&str, &str)] = &[(
-    "wrapped_loadable_extent_is_not_a_cell.md",
-    "a confirmed witness, not a speculation: a range whose element count is \
-         1 << 30 has a byte extent of 0 for four-byte elements, so it is vacuously \
-         loadable for any pointer, and the cell rules in \
-         `proves_loadable_region_from_structural_range` then read it as its element \
-         count and hand back a real cell. The byte-count guards that exclude this \
-         are obligations only at a C call site; every proof-side entry point drops \
-         them. The symbolic range-narrowing rule beside those cell rules asks for \
-         the guards and refuses, which is why this is quarantined rather than \
-         fixed here: extending the same requirement to the cell rules changes what \
-         every array proof must state, and that is the user's call. Remove this \
-         entry when the cell rules require the guards too",
-)];
+const QUARANTINED: &[(&str, &str)] = &[];
 
 /// The artifact reuse rejection ratchet (`docs/internals/testing.md`): count
 /// contract certification rejections of checked execution artifacts over the

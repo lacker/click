@@ -5847,6 +5847,7 @@ fn restricted_simp_certifies_unchanged_prefix_after_indexed_store() {
             owns owner->data[0..owner->cap];
             fact 0 <= owner->len;
             fact owner->len <= owner->cap;
+            fact owner->cap <= 1073741823;
             fact loadable(owner->data[0..owner->len]);
             fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
         }

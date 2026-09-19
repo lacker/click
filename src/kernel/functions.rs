@@ -14173,6 +14173,17 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     for fact in &facts {
         body_assumptions = body_assumptions.assume_proposition(fact.clone());
     }
+    // A contained range is stated by the composite's own clause, so while the
+    // body's later clauses are evaluated its byte-count guards are available,
+    // exactly as a contract's range carries them. These stay inside the body
+    // evaluation: the published facts below are unchanged.
+    for guard in facts
+        .iter()
+        .flat_map(crate::kernel::stated_loadable_extent_guards)
+        .collect::<Vec<_>>()
+    {
+        body_assumptions = body_assumptions.assume_proposition(guard);
+    }
     let facts_to_rewrite = selected.map_or(&definition.facts, |arm| &arm.facts);
     let (body_clauses, retained_conditions) = if active {
         lower_selected_resource_body_clauses(
@@ -14396,6 +14407,9 @@ pub(in crate::kernel) fn matched_resource_instance_case_clauses(
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
     for fact in supporting_facts {
+        for guard in crate::kernel::stated_loadable_extent_guards(&fact) {
+            body_assumptions = body_assumptions.assume_proposition(guard);
+        }
         body_assumptions = body_assumptions.assume_proposition(fact);
     }
 
