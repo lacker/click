@@ -782,6 +782,24 @@ impl Renderer<'_> {
             self.depth -= 1;
             return;
         }
+        // A registered load variable is a name for one load, and the load it
+        // names is the part a reader compares. Printing the bare id made two
+        // reads of one address at two snapshots look like two unrelated
+        // numbers, and printing only the address made them look identical;
+        // neither says which memory each side reads, which is the whole
+        // question wherever a load fact fails to carry across a step.
+        if let Bitvector32Term::Variable(variable) = v
+            && crate::kernel::is_load_variable(variable)
+            && let Some((snapshot, pointer)) = crate::kernel::registered_load_for_variable(variable)
+        {
+            self.fmt(format_args!("v{}=load(", variable.0));
+            self.memory(snapshot.memory());
+            self.push(", pointer=");
+            self.pointer(&pointer);
+            self.push(")");
+            self.depth -= 1;
+            return;
+        }
         match v {
             Bitvector32Term::Constant(v) => self.fmt(format_args!("{v}")),
             Bitvector32Term::Int64Constant(v) => self.fmt(format_args!("{v}i64")),

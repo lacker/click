@@ -1478,15 +1478,36 @@ impl<'a> Proof<'a> {
         // goal has a load), which only the two lowered forms show.
         let mut rewritten = rewrite_proposition_by_exact_equality(&goal, &equality, available)
             .map_err(|message| {
-                self.step_error(format!(
-                    "{message}\n  equality: {}\n  goal: {}",
-                    crate::surface::diagnostics::describe_pure_fact_spelled(
-                        &equality, names.0, names.1
-                    ),
-                    crate::surface::diagnostics::describe_pure_fact_spelled(
-                        &goal, names.0, names.1
-                    ),
-                ))
+                let spelled_equality = crate::surface::diagnostics::describe_pure_fact_spelled(
+                    &equality, names.0, names.1,
+                );
+                let spelled_goal = crate::surface::diagnostics::describe_pure_fact_spelled(
+                    &goal, names.0, names.1,
+                );
+                let mut message =
+                    format!("{message}\n  equality: {spelled_equality}\n  goal: {spelled_goal}");
+                // The source spelling of a read is its address, and two reads
+                // of one address at two states spell the same. When that
+                // happens the two lines above are the same text and say
+                // nothing, so add the rendering that labels the memory each
+                // side reads and say why it is there.
+                if spelled_equality == spelled_goal && equality.as_ref() != goal.as_ref() {
+                    let mut labels =
+                        crate::surface::proof_diagnostics::render::SnapshotLabels::default();
+                    message.push_str(&format!(
+                        "\n  the two spell alike but are different propositions; with each \
+                         memory labelled they read\n  equality: {}\n  goal: {}",
+                        crate::surface::proof_diagnostics::render::render_proposition_labeled(
+                            &equality,
+                            &mut labels
+                        ),
+                        crate::surface::proof_diagnostics::render::render_proposition_labeled(
+                            &goal,
+                            &mut labels
+                        ),
+                    ));
+                }
+                self.step_error(message)
             })?;
         let mut facts = self.facts().clone();
         let surface_goal = self.surface_goal().and_then(|surface_goal| {
