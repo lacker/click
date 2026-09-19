@@ -3189,6 +3189,8 @@ fn body_safety_claim_rejects_an_unproved_execution_condition() {
     let execution = CFunctionContractExecution {
         cases: vec![vec![CContractPathSet {
             paths: vec![path],
+            checked_resource_claims: vec![Vec::new()],
+            checked_resource_transitions: vec![false],
             completion_origin_state: None,
         }]],
         reuse_diagnostic: None,
@@ -3274,6 +3276,8 @@ fn contract_claims_are_judged_over_each_path_set_of_a_case() {
     };
     let set = |path: &SymbolicCExecutionPath| CContractPathSet {
         paths: vec![path.clone()],
+        checked_resource_claims: vec![Vec::new()],
+        checked_resource_transitions: vec![false],
         completion_origin_state: None,
     };
     let certified = |cases: Vec<Vec<CContractPathSet>>| {
@@ -3357,6 +3361,8 @@ fn body_safety_claim_uses_path_facts_for_verification_conditions() {
     let execution = CFunctionContractExecution {
         cases: vec![vec![CContractPathSet {
             paths: vec![path],
+            checked_resource_claims: vec![Vec::new()],
+            checked_resource_transitions: vec![false],
             completion_origin_state: None,
         }]],
         reuse_diagnostic: None,

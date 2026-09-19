@@ -99,6 +99,7 @@ pub(crate) use functions::stable_symbolic_pointer_cell_value;
 pub(crate) use functions::storage_writes_outside_owned_footprint;
 pub(crate) use functions::symbolic_call_result;
 pub(crate) use functions::unreturned_allocation_at_function_exit;
+pub(crate) use functions::unreturned_allocation_with_checked_returned_resources;
 pub(crate) use functions::{
     evaluate_function_resource_context, evaluate_function_resource_context_with_metadata,
     project_contract_memory_effects, quantified_resource_requirement_assumptions,

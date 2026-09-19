@@ -18768,6 +18768,82 @@ pub(in crate::kernel) fn function_exit_memory(
     }
 }
 
+/// Checks allocation support using a resource context that a caller has
+/// already lowered and checked.  This is the shared path for explicit
+/// `produces` claims: re-evaluating the function's declared return resources
+/// here would discard entry snapshots such as `old(...)` and make the
+/// allocation-lifetime closer prove the same claim a second time.
+pub(crate) fn unreturned_allocation_with_checked_returned_resources(
+    state: &CState,
+    value: &CValue,
+    function: &CFunction,
+    arguments: &[CExpression],
+    returned_resources: &ResourceContext,
+    assumptions: &PureFactContext,
+    _budget: &mut ExecutionBudget,
+) -> Result<Option<crate::kernel::proof::LiveAllocationObligation>, CRuntimeError> {
+    let Some(argument_values) = arguments
+        .iter()
+        .map(|argument| match argument {
+            CExpression::Value(value) => Some(value.clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Err(CRuntimeError::FunctionContract(
+            "allocation-delta checking requires concrete symbolic contract arguments".to_string(),
+        ));
+    };
+    let mut output_state = with_contract_argument_views(state, function, &argument_values);
+    if function.return_type() != CType::Void {
+        set_function_result(&mut output_state, function, value.clone());
+    }
+    let function_can_package_allocation =
+        function
+            .composite_resource_definitions()
+            .iter()
+            .any(|definition| {
+                definition.contains().iter().any(|resource| {
+                    resource.family() == ResourceFamily::Token
+                        && resource.declared_name() == Some(CResourceFact::ALLOCATION_RESOURCE_NAME)
+                })
+            });
+    if !function_can_package_allocation
+        && !output_state
+            .resources()
+            .facts()
+            .iter()
+            .any(|fact| fact.allocation().is_some())
+    {
+        return Ok(None);
+    }
+    let Some(actual_resources) = expand_all_composite_resource_facts(
+        output_state.resources(),
+        function.composite_resource_definitions(),
+        output_state.memory(),
+        assumptions,
+    ) else {
+        return Err(CRuntimeError::FunctionContract(
+            "could not inspect allocation obligations at function return".to_string(),
+        ));
+    };
+    if !actual_resources
+        .facts()
+        .iter()
+        .any(|fact| fact.allocation().is_some())
+    {
+        return Ok(None);
+    }
+    let Some((allocation, holder)) =
+        unreturned_allocation_obligation(&output_state, returned_resources, function, assumptions)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(crate::kernel::proof::LiveAllocationObligation::new(
+        allocation, holder,
+    )))
+}
+
 pub(crate) fn unreturned_allocation_at_function_exit(
     state: &CState,
     value: &CValue,

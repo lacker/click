@@ -6083,6 +6083,7 @@ impl ExecutionProofCore {
         }
         let (paths, has_checked_entry) =
             self.checked_execution_paths(candidates, checked_function, &assumptions, None)?;
+        let path_count = paths.len();
         Ok(crate::kernel::CCheckedFunctionExecution {
             state: candidates.state().clone(),
             function: checked_function.clone(),
@@ -6092,6 +6093,8 @@ impl ExecutionProofCore {
             execution_semantics,
             mode,
             execution: crate::kernel::SymbolicCExecution { paths, limit: None },
+            checked_resource_claims: vec![Vec::new(); path_count],
+            checked_resource_transitions: vec![false; path_count],
             entry_representation_origin: has_checked_entry
                 .then_some(self.function_entry.as_ref())
                 .flatten()
