@@ -4082,3 +4082,51 @@ fn a_diverges_function_never_yields_termination_evidence() {
         .expect("a marked function still verifies its ranked loop's bundle");
     assert!(!session.function_termination_is_verified("drain_then_wait"));
 }
+
+/// Every documented typed load and `sizeof` is an expression primitive, not a
+/// user call. A proposition starting with one must parse as that expression on
+/// either side of a comparison, inside arithmetic, and inside parentheses,
+/// while user-style calls keep the call interpretation.
+#[test]
+fn parses_built_in_expressions_on_either_comparison_side() {
+    let loads = [
+        "load_int32",
+        "load_uint8",
+        "load_uint32",
+        "load_int64",
+        "load_uint64",
+        "load_int32_pointer",
+        "load_uint8_pointer",
+        "load_int32_pointer_pointer",
+        "load_uint8_pointer_pointer",
+    ];
+    for load in loads {
+        parser::parse_file_items(&format!(
+            "theorem side_left(p: uint64*) {{ ensures {load}(p) == 0; }}"
+        ))
+        .unwrap_or_else(|error| panic!("`{load}(...) == 0` should parse: {error:?}"));
+        parser::parse_file_items(&format!(
+            "theorem side_right(p: uint64*) {{ ensures 0 == {load}(p); }}"
+        ))
+        .unwrap_or_else(|error| panic!("`0 == {load}(p)` should parse: {error:?}"));
+        parser::parse_file_items(&format!(
+            "theorem arithmetic(p: uint64*) {{ ensures 1 + {load}(p) == 0; }}"
+        ))
+        .unwrap_or_else(|error| panic!("`1 + {load}(p)` should parse: {error:?}"));
+        parser::parse_file_items(&format!(
+            "theorem parenthesized(p: uint64*) {{ ensures ({load}(p)) == 0; }}"
+        ))
+        .unwrap_or_else(|error| panic!("`({load}(p)) == 0` should parse: {error:?}"));
+    }
+    parser::parse_file_items("theorem sizes() { ensures sizeof(int32) == 4; }")
+        .expect("`sizeof(int32) == 4` should parse");
+    parser::parse_file_items("theorem sizes_arithmetic() { ensures sizeof(int32) + 4 == 8; }")
+        .expect("`sizeof(int32) + 4` should parse");
+    parser::parse_file_items(
+        "theorem address_and_byte_offset(p: uint64*) {
+            requires byte_offset(p, 4) == 4;
+            ensures 0 == 0;
+        }",
+    )
+    .expect("`byte_offset` keeps its built-in meaning");
+}

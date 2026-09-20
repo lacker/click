@@ -4101,15 +4101,9 @@ impl Parser {
                 && self.tokens.get(self.position + 3) == Some(&Token::LParen))
             && !matches!(
                 self.peek_ident(),
-                Some(
-                    "load_int32"
-                        | "load_uint8"
-                        | "load_int32_pointer"
-                        | "load_uint8_pointer"
-                        | "address"
-                        | "byte_offset"
-                )
+                Some("address" | "byte_offset" | "sizeof")
             )
+            && typed_load_type_from_name(self.peek_ident()).is_none()
             && self.peek_next() == Some(&Token::LParen)
         {
             let start = self.position;
@@ -6212,10 +6206,8 @@ impl Parser {
                 contract_expression_as_c_fragment(&surface).expect("C segment base"),
             ));
             (ContractExpression::CFragment(surface), base)
-        } else if matches!(
-            self.peek_ident(),
-            Some("load_int32" | "load_uint8" | "load_int32_pointer" | "load_uint8_pointer")
-        ) && self.peek_next() == Some(&Token::LParen)
+        } else if typed_load_type_from_name(self.peek_ident()).is_some()
+            && self.peek_next() == Some(&Token::LParen)
         {
             let expression = self.parse_contract_primary()?;
             let base = contract_expression_as_c_fragment(&expression).ok_or_else(|| {
@@ -7980,18 +7972,7 @@ impl Parser {
             ));
         }
 
-        let typed_load = match self.peek_ident() {
-            Some("load_int32") => Some(CType::Int32),
-            Some("load_uint8") => Some(CType::UInt8),
-            Some("load_uint32") => Some(CType::UInt32),
-            Some("load_int64") => Some(CType::Int64),
-            Some("load_uint64") => Some(CType::UInt64),
-            Some("load_int32_pointer") => Some(CType::Int32Pointer),
-            Some("load_uint8_pointer") => Some(CType::UInt8Pointer),
-            Some("load_int32_pointer_pointer") => Some(CType::Int32PointerPointer),
-            Some("load_uint8_pointer_pointer") => Some(CType::UInt8PointerPointer),
-            _ => None,
-        };
+        let typed_load = typed_load_type_from_name(self.peek_ident());
         if self.peek_next() == Some(&Token::LParen)
             && let Some(value_type) = typed_load
         {
@@ -8781,6 +8762,21 @@ fn loop_clause_description(label: Option<&str>) -> String {
     match label {
         Some(label) => format!("the loop `{label}`"),
         None => "the loop".to_string(),
+    }
+}
+
+fn typed_load_type_from_name(name: Option<&str>) -> Option<CType> {
+    match name {
+        Some("load_int32") => Some(CType::Int32),
+        Some("load_uint8") => Some(CType::UInt8),
+        Some("load_uint32") => Some(CType::UInt32),
+        Some("load_int64") => Some(CType::Int64),
+        Some("load_uint64") => Some(CType::UInt64),
+        Some("load_int32_pointer") => Some(CType::Int32Pointer),
+        Some("load_uint8_pointer") => Some(CType::UInt8Pointer),
+        Some("load_int32_pointer_pointer") => Some(CType::Int32PointerPointer),
+        Some("load_uint8_pointer_pointer") => Some(CType::UInt8PointerPointer),
+        _ => None,
     }
 }
 
