@@ -1297,6 +1297,33 @@ impl CBlock {
     }
 }
 
+/// Whether a call havoc keeps the cell at this address: the one rule, asked
+/// by the producer that applies it and by the checker that re-derives what the
+/// producer would have written.
+///
+/// This is the *eager* half of a call's write set, and it is deliberately not
+/// the resource tracker's `CallHavoc` arm: that arm is re-derived per query
+/// against the querying context and may look through composite definitions,
+/// while this one runs once, over every cell, in the producing context. The
+/// two are compared in `docs/internals/resource-tracker.md`.
+///
+/// The `local:` disjunct is the `local_versus_argument` arm of
+/// [`PointerBlock::proven_distinct`] spelled as a prefix: a `local:` block is
+/// storage this function declared, and memory a callee reaches through its
+/// arguments existed before the call. It is only sound while a checked write
+/// set can never be based in a `local:` block, which holds because such a
+/// write set is the callee's owned ranges resolved at the call site, and a
+/// `local:` range cannot be owned — passing `&t` to a callee that owns
+/// `t[0..1]` is refused for want of `owns local:t@0[0..1]`.
+fn call_havoc_keeps_cell(
+    pointer: &Pointer,
+    mutable_ranges: &[CMemoryRange],
+    assumptions: &PureFactContext,
+) -> bool {
+    pointer.block.starts_with("local:")
+        || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+}
+
 fn heap_allocation_may_contain_pointer(base: &Pointer, pointer: &Pointer) -> bool {
     if base.block != pointer.block {
         return false;
@@ -2089,10 +2116,8 @@ impl CMemory {
         assumptions: &PureFactContext,
     ) -> Self {
         let base = Some(intern_c_memory_ref(&self));
-        std::sync::Arc::make_mut(&mut self.cells).retain(|pointer, _| {
-            pointer.block.starts_with("local:")
-                || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
-        });
+        std::sync::Arc::make_mut(&mut self.cells)
+            .retain(|pointer, _| call_havoc_keeps_cell(pointer, mutable_ranges, assumptions));
         self.forget_zeroed_allocations_written_by(mutable_ranges);
         std::sync::Arc::make_mut(&mut self.blocks).insert(
             format!("call-havoc:{}", variable.0).into(),
@@ -2171,15 +2196,11 @@ impl CMemory {
         }
 
         let mut expected_cells = before.cells.as_ref().clone();
-        expected_cells.retain(|pointer, _| {
-            pointer.block.starts_with("local:")
-                || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
-        });
+        expected_cells
+            .retain(|pointer, _| call_havoc_keeps_cell(pointer, mutable_ranges, assumptions));
         let mut expected_union_cells = before.union_cells.as_ref().clone();
-        expected_union_cells.retain(|(pointer, _), _| {
-            pointer.block.starts_with("local:")
-                || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
-        });
+        expected_union_cells
+            .retain(|(pointer, _), _| call_havoc_keeps_cell(pointer, mutable_ranges, assumptions));
         self.cells.as_ref() == &expected_cells && self.union_cells.as_ref() == &expected_union_cells
     }
 
