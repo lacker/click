@@ -1709,6 +1709,16 @@ fn describe_source_cell(
     }
     let declared = describe_memory_block(&pointer.block, parameters, arguments)?;
     match &pointer.offset {
+        // A local's block holds one declared object, and the name the reader
+        // wrote for it *is* the address: `q`, not `q[0]`, which would read as a
+        // store through `q` rather than to it. A local array's element zero
+        // loses its index this way, which costs an index-inequality repair the
+        // reader could not have used anyway -- the array is one object, so the
+        // two spellings name the same storage either way.
+        PointerOffsetTerm::Constant(0) if pointer.block.starts_with("local:") => Some(SourceCell {
+            object: declared,
+            index: CellIndex::Whole,
+        }),
         PointerOffsetTerm::Constant(0) => Some(SourceCell {
             object: declared,
             index: CellIndex::Named("0".to_string()),
@@ -1817,12 +1827,16 @@ fn describe_memory_block(
         }
     }
     match block {
+        // A block's spelling carries where the storage lives, which is the
+        // verifier's business; the reader wrote only the name. `local:` covers
+        // the re-declaration and call-frame forms too (`local:lifetime:2:q`,
+        // `local:frame:3:__return`), whose last segment is that name.
         PointerBlock::Concrete(name) => Some(
             name.strip_prefix("global:")
                 .or_else(|| {
                     name.rsplit(':')
                         .next()
-                        .filter(|_| name.starts_with("static:"))
+                        .filter(|_| name.starts_with("static:") || name.starts_with("local:"))
                 })
                 .unwrap_or(name)
                 .to_string(),
