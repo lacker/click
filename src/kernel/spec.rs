@@ -312,6 +312,116 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
+    if let Some(paths) = lower_simple_spec_implication_chain(
+        state,
+        proposition,
+        loop_entry_state,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )? {
+        return Ok(paths);
+    }
+    lower_spec_proposition_at_state_with_algebraic_bindings_one(
+        state,
+        proposition,
+        loop_entry_state,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )
+}
+
+/// Lowers the common right-associated implication shape iteratively. The
+/// ordinary recursive lowering remains the fallback for propositions whose
+/// antecedents need path routing, facts, or obligations.
+fn lower_simple_spec_implication_chain(
+    state: &CState,
+    proposition: &SpecProposition,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<Vec<SpecPropositionPath>>> {
+    let mut antecedents = Vec::new();
+    let mut consequent = proposition;
+    while let SpecProposition::Implies(left, right) = consequent {
+        antecedents.push(left.as_ref());
+        consequent = right;
+    }
+    if antecedents.is_empty() {
+        return Ok(None);
+    }
+
+    let mut chain_assumptions = assumptions.clone();
+    let mut lowered_antecedents = Vec::with_capacity(antecedents.len());
+    let antecedent_count = antecedents.len();
+    for antecedent in &antecedents {
+        let mut paths = lower_spec_proposition_at_state_with_algebraic_bindings_one(
+            state,
+            antecedent,
+            loop_entry_state,
+            &chain_assumptions,
+            algebraic_bindings,
+            budget,
+        )?;
+        if paths.len() != 1 {
+            return Ok(None);
+        }
+        let path = paths.pop().expect("the path count was checked");
+        if !path.facts.is_empty() || !path.obligations.is_empty() {
+            return Ok(None);
+        }
+        chain_assumptions = chain_assumptions.assume_proposition(path.proposition.clone());
+        lowered_antecedents.push(path.proposition);
+    }
+
+    let mut paths = lower_spec_proposition_at_state_with_algebraic_bindings_one(
+        state,
+        consequent,
+        loop_entry_state,
+        &chain_assumptions,
+        algebraic_bindings,
+        budget,
+    )?;
+    if paths.len() != 1 {
+        return Ok(None);
+    }
+    let mut path = paths.pop().expect("the path count was checked");
+    if !path.facts.is_empty() || !path.obligations.is_empty() {
+        return Ok(None);
+    }
+
+    let mut lowered = path.proposition;
+    for antecedent in lowered_antecedents.into_iter().rev() {
+        lowered = Proposition::Implies(Box::new(antecedent), Box::new(lowered));
+    }
+    Ok(Some(vec![SpecPropositionPath {
+        proposition: lowered,
+        facts: Vec::new(),
+        obligations: Vec::new(),
+        introductions: {
+            let mut introductions = Vec::new();
+            introductions.resize(
+                // Each written implication contributes one introduction; the
+                // consequent's introductions retain their original order.
+                antecedent_count,
+                LoweringIntroduction::WrittenImplication,
+            );
+            introductions.append(&mut path.introductions);
+            introductions
+        },
+    }]))
+}
+
+fn lower_spec_proposition_at_state_with_algebraic_bindings_one(
+    state: &CState,
+    proposition: &SpecProposition,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecPropositionPath>> {
     match proposition {
         SpecProposition::IntegerComparison {
             left,
@@ -4899,6 +5009,107 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
 }
 
 fn evaluate_spec_expression_paths_with_algebraic_bindings(
+    state: &CState,
+    expression: &SpecExpression,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecExpressionPath>> {
+    let mut right_operands = Vec::new();
+    let mut current = expression;
+    while let SpecExpression::Add(left, right) = current {
+        if !matches!(right.as_ref(), SpecExpression::Value(_)) {
+            break;
+        }
+        right_operands.push(right.as_ref());
+        current = left;
+    }
+    if right_operands.len() > 128 && matches!(current, SpecExpression::Value(_)) {
+        return evaluate_spec_add_chain_paths(
+            state,
+            current,
+            &right_operands,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+        );
+    }
+    evaluate_spec_expression_paths_with_algebraic_bindings_one(
+        state,
+        expression,
+        loop_entry_state,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )
+}
+
+fn evaluate_spec_add_chain_paths(
+    state: &CState,
+    base: &SpecExpression,
+    right_operands: &[&SpecExpression],
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecExpressionPath>> {
+    let mut paths = evaluate_spec_expression_paths_with_algebraic_bindings_one(
+        state,
+        base,
+        loop_entry_state,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )?;
+    for right in right_operands.iter().rev() {
+        budget.consume_expression_step()?;
+        let mut next = Vec::new();
+        for left_path in paths {
+            let right_assumptions = assumptions_with_path_context(
+                assumptions,
+                &left_path.facts,
+                &left_path.obligations,
+            );
+            for right_path in evaluate_spec_expression_paths_with_algebraic_bindings_one(
+                state,
+                right,
+                loop_entry_state,
+                &right_assumptions,
+                algebraic_bindings,
+                budget,
+            )? {
+                let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                    &left_path.facts,
+                    &left_path.obligations,
+                    &right_path.facts,
+                    &right_path.obligations,
+                    assumptions,
+                ) else {
+                    continue;
+                };
+                next.extend(spec_value_paths(
+                    apply_c_add(
+                        state,
+                        left_path.value.clone(),
+                        right_path.value,
+                        None,
+                        None,
+                        facts,
+                        obligations,
+                        assumptions,
+                    ),
+                    budget,
+                ));
+            }
+        }
+        paths = next;
+    }
+    Ok(paths)
+}
+
+fn evaluate_spec_expression_paths_with_algebraic_bindings_one(
     state: &CState,
     expression: &SpecExpression,
     loop_entry_state: Option<&CState>,

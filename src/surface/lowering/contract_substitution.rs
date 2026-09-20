@@ -2176,6 +2176,48 @@ pub(in crate::surface) fn collect_contract_expression_referenced_names(
     expression: &ContractExpression,
     names: &mut BTreeSet<String>,
 ) {
+    let mut depth = 0;
+    let mut current = expression;
+    while let ContractExpression::Add(left, _) = current {
+        depth += 1;
+        current = left;
+    }
+    if depth > 128 {
+        let mut pending = vec![expression];
+        while let Some(expression) = pending.pop() {
+            match expression {
+                ContractExpression::Add(left, right)
+                | ContractExpression::Subtract(left, right)
+                | ContractExpression::Multiply(left, right)
+                | ContractExpression::Divide(left, right)
+                | ContractExpression::Remainder(left, right)
+                | ContractExpression::ShiftLeft(left, right)
+                | ContractExpression::ShiftRight(left, right)
+                | ContractExpression::BitwiseAnd(left, right)
+                | ContractExpression::BitwiseOr(left, right)
+                | ContractExpression::BitwiseXor(left, right)
+                | ContractExpression::Index(left, right) => {
+                    pending.push(right);
+                    pending.push(left);
+                }
+                ContractExpression::Negate(inner)
+                | ContractExpression::Old(inner)
+                | ContractExpression::BitwiseNot(inner)
+                | ContractExpression::At {
+                    expression: inner, ..
+                } => pending.push(inner),
+                expression => collect_contract_expression_referenced_names_one(expression, names),
+            }
+        }
+        return;
+    }
+    collect_contract_expression_referenced_names_one(expression, names);
+}
+
+fn collect_contract_expression_referenced_names_one(
+    expression: &ContractExpression,
+    names: &mut BTreeSet<String>,
+) {
     match expression {
         ContractExpression::ResourceField(_) | ContractExpression::IntegerLiteral(_) => {}
         ContractExpression::Negate(inner) => {

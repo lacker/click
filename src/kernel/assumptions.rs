@@ -3475,10 +3475,13 @@ impl PureFactContext {
             }
             return;
         }
-        if std::sync::Arc::make_mut(&mut self.prop_facts).insert(proposition.clone()) {
+        if std::sync::Arc::make_mut(&mut self.prop_facts)
+            .insert(crate::kernel::clone_proposition_iteratively(&proposition))
+        {
             self.adjust_stated_proposition_index(&proposition, true);
             if matches!(proposition, Proposition::Or(_, _)) {
-                std::sync::Arc::make_mut(&mut self.disjunction_facts).insert(proposition.clone());
+                std::sync::Arc::make_mut(&mut self.disjunction_facts)
+                    .insert(crate::kernel::clone_proposition_iteratively(&proposition));
             }
             self.adjust_algebraic_constructor_field_equalities(&proposition, true);
             self.adjust_algebraic_constructor_conflict(&proposition, true);

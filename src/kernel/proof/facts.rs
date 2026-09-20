@@ -128,7 +128,7 @@ pub(crate) trait PropositionSource {
     fn propositions(&self) -> impl Iterator<Item = &Proposition>;
     fn pure_context(&self) -> PureFactContext {
         self.propositions()
-            .cloned()
+            .map(crate::kernel::clone_proposition_iteratively)
             .fold(PureFactContext::new(), PureFactContext::assume_proposition)
     }
     fn exact_available(&self, required: &Proposition) -> bool {
@@ -329,8 +329,9 @@ impl ProofFacts {
             }
             #[cfg(test)]
             INDEXED_FACT_ENTRIES.with(|count| count.set(count.get() + 1));
-            ordered.push(fact.clone());
-            top_level_exact = top_level_exact.with_value(fact.clone());
+            ordered.push(crate::kernel::clone_proposition_iteratively(fact));
+            top_level_exact =
+                top_level_exact.with_value(crate::kernel::clone_proposition_iteratively(fact));
             by_quantified_equivalence = index_quantified_fact(by_quantified_equivalence, fact);
             implications_by_consequent =
                 index_implication_consequents(implications_by_consequent, fact);
@@ -355,7 +356,7 @@ impl ProofFacts {
                     exact = exact.with_value(conjunct.as_ref().clone());
                 }
             }
-            let fact = Arc::new(fact.clone());
+            let fact = Arc::new(crate::kernel::clone_proposition_iteratively(fact));
             by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact.as_ref());
             by_integer_condition_alpha =
                 index_integer_condition_fact(by_integer_condition_alpha, fact.as_ref());
@@ -365,8 +366,9 @@ impl ProofFacts {
                 index_finite_classification_fact(finite_classifications_by_key, &fact);
             algebraic_equalities_by_term =
                 index_algebraic_equality_fact(algebraic_equalities_by_term, fact.as_ref());
-            exact = exact.with_value(fact.as_ref().clone());
-            assumptions = assumptions.assume_proposition(fact.as_ref().clone());
+            exact = exact.with_value(crate::kernel::clone_proposition_iteratively(fact.as_ref()));
+            assumptions = assumptions
+                .assume_proposition(crate::kernel::clone_proposition_iteratively(fact.as_ref()));
             implicit_transport_assumptions =
                 index_implicit_transport_context(implicit_transport_assumptions, fact.as_ref());
         }
@@ -1746,6 +1748,18 @@ fn index_implication_consequents(
     mut index: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>>,
     fact: &Proposition,
 ) -> PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>> {
+    let mut depth = 0;
+    let mut depth_cursor = fact;
+    while let Proposition::Implies(_, consequent) = depth_cursor {
+        depth += 1;
+        depth_cursor = consequent;
+    }
+    if depth > 128 {
+        // This index is an optional search accelerator. Keep a very deep
+        // implication in the authoritative fact stores without materializing
+        // one candidate per suffix.
+        return index;
+    }
     let mut antecedents = PersistentSequence::default();
     let mut current = fact;
     while let Proposition::Implies(antecedent, consequent) = current {

@@ -334,7 +334,7 @@ pub(crate) fn check_forall_int32_instantiation(
 fn assumptions_from_propositions(propositions: &[Proposition]) -> PureFactContext {
     propositions
         .iter()
-        .cloned()
+        .map(crate::kernel::clone_proposition_iteratively)
         .fold(PureFactContext::new(), PureFactContext::assume_proposition)
 }
 

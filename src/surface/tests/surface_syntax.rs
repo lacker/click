@@ -562,10 +562,7 @@ fn parser_bounds_non_parenthesized_surface_nesting_before_ast_construction() {
 
 #[test]
 fn supported_surface_depth_boundaries_survive_consumption() {
-    // The parser accepts the larger 512-link compatibility boundary, while
-    // this end-to-end check exercises the largest shape that all current
-    // recursive kernel consumers can consume on the gate's stack budget.
-    let expression_chain_depth = 128;
+    let expression_chain_depth = parser::EXPRESSION_CHAIN_LIMIT;
     let implications = (0..expression_chain_depth)
         .map(|_| "0 == 0")
         .collect::<Vec<_>>()

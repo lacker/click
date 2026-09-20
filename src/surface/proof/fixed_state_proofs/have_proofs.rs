@@ -2,6 +2,49 @@ use super::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
 use crate::surface::proof::surface_lowering::substitute_lexical_bindings_in_proposition;
 
+struct IterativeSpecPropositionDrop(Option<SpecProposition>);
+
+impl IterativeSpecPropositionDrop {
+    fn new(proposition: SpecProposition) -> Self {
+        Self(Some(proposition))
+    }
+
+    fn as_ref(&self) -> &SpecProposition {
+        self.0.as_ref().expect("the proposition guard is live")
+    }
+}
+
+impl Drop for IterativeSpecPropositionDrop {
+    fn drop(&mut self) {
+        let Some(proposition) = self.0.take() else {
+            return;
+        };
+        drop_spec_proposition_iteratively(proposition);
+    }
+}
+
+fn drop_spec_proposition_iteratively(proposition: SpecProposition) {
+    let mut pending = vec![proposition];
+    while let Some(proposition) = pending.pop() {
+        match proposition {
+            SpecProposition::And(left, right)
+            | SpecProposition::Or(left, right)
+            | SpecProposition::Implies(left, right) => {
+                pending.push(*right);
+                pending.push(*left);
+            }
+            SpecProposition::Not(body)
+            | SpecProposition::ForAllInt32 { body, .. }
+            | SpecProposition::ForAllInteger { body, .. }
+            | SpecProposition::ForAllPointer { body, .. }
+            | SpecProposition::ExistsInt32 { body, .. }
+            | SpecProposition::ExistsInteger { body, .. }
+            | SpecProposition::ExistsPointer { body, .. } => pending.push(*body),
+            proposition => drop(proposition),
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn lower_fixed_state_proposition(
     proposition: &ClickProposition,
@@ -376,10 +419,11 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording
         opaque_click_functions.clone(),
         pointer_element_widths,
     )?;
+    let spec = IterativeSpecPropositionDrop::new(spec);
     let (lowered, _, obligations, introductions) =
         crate::kernel::c_lower_spec_proposition_with_checked_obligations(
             &states.lowering_state,
-            &spec,
+            spec.as_ref(),
             Some(&states.entry_state),
             assumptions,
         )

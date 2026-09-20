@@ -1,5 +1,34 @@
 use super::*;
 
+fn deep_literal_add_type(expression: &ContractExpression) -> Option<C0Type> {
+    let mut operands = Vec::new();
+    let mut current = expression;
+    while let ContractExpression::Add(left, right) = current {
+        operands.push(right.as_ref());
+        current = left;
+    }
+    if operands.len() <= 128 || !matches!(current, ContractExpression::IntegerLiteral(_)) {
+        return None;
+    }
+    operands.push(current);
+    let mut result = None;
+    for operand in operands {
+        let ContractExpression::IntegerLiteral(value) = operand else {
+            return None;
+        };
+        let value = value.parse::<u64>().ok()?;
+        let value_type = if value <= i32::MAX as u64 {
+            C0Type::Int32
+        } else if value <= i64::MAX as u64 {
+            C0Type::Int64
+        } else {
+            C0Type::UInt64
+        };
+        result = arithmetic_result_type(result, Some(value_type)).or(Some(value_type));
+    }
+    result
+}
+
 pub(super) fn function_signature_type_environment(
     signature: &FunctionSignature,
     include_result: bool,
@@ -477,6 +506,9 @@ fn integer_expression_kind(
     click_functions: &BTreeMap<String, ClickFunctionType>,
     locals: &mut BTreeSet<String>,
 ) -> Option<bool> {
+    if deep_literal_add_type(expression).is_some() {
+        return Some(false);
+    }
     match expression {
         ContractExpression::IntegerLiteral(_) => Some(false),
         ContractExpression::Call { name, arguments } if name == "to_integer" => {
@@ -625,6 +657,9 @@ fn contains_scoped_expression_shape(
     expression: &ContractExpression,
     shape: ScopedExpressionShape,
 ) -> bool {
+    if deep_literal_add_type(expression).is_some() {
+        return false;
+    }
     match expression {
         ContractExpression::AlgebraicMatch { scrutinee, arms } => {
             shape == ScopedExpressionShape::AlgebraicMatch
@@ -2250,6 +2285,9 @@ pub(super) fn infer_contract_expression_type(
     click_functions: &BTreeMap<String, ClickFunctionType>,
     context: &str,
 ) -> Result<Option<C0Type>, ClickError> {
+    if let Some(value_type) = deep_literal_add_type(expression) {
+        return Ok(Some(value_type));
+    }
     match expression {
         ContractExpression::ResourceField(access) => match &access.click_type {
             Some(ClickType::C(ty)) => Ok(Some(*ty)),
@@ -3238,6 +3276,9 @@ fn validate_contract_expression_calls(
     click_functions: &BTreeMap<String, usize>,
     context: &str,
 ) -> Result<(), ClickError> {
+    if deep_literal_add_type(expression).is_some() {
+        return Ok(());
+    }
     match expression {
         ContractExpression::IntegerLiteral(_) => Ok(()),
         ContractExpression::Negate(inner) => {

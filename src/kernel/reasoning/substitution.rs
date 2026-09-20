@@ -648,6 +648,37 @@ pub(in crate::kernel) fn collect_proposition_bound_variables(
     proposition: &Proposition,
     variables: &mut BTreeSet<Variable>,
 ) {
+    let mut depth = 0;
+    let mut current = proposition;
+    while let Proposition::Implies(_, body) = current {
+        depth += 1;
+        current = body;
+    }
+    if depth > 128 {
+        let mut pending = vec![proposition];
+        while let Some(proposition) = pending.pop() {
+            match proposition {
+                Proposition::And(left, right)
+                | Proposition::Or(left, right)
+                | Proposition::Implies(left, right) => {
+                    pending.push(right);
+                    pending.push(left);
+                }
+                Proposition::Not(body)
+                | Proposition::ForAll { body, .. }
+                | Proposition::Exists { body, .. } => pending.push(body),
+                proposition => collect_proposition_bound_variables_one(proposition, variables),
+            }
+        }
+        return;
+    }
+    collect_proposition_bound_variables_one(proposition, variables);
+}
+
+fn collect_proposition_bound_variables_one(
+    proposition: &Proposition,
+    variables: &mut BTreeSet<Variable>,
+) {
     match proposition {
         Proposition::Equal(left, right) => {
             collect_term_bound_variables(left, variables);
