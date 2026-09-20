@@ -3231,6 +3231,50 @@ pub enum ExecutionLimit {
     /// bound-variable range, or the site needs the execution's mark and
     /// `ExecutionBudget::continuing_from`.
     ExecutionIdentityBesideLiveState,
+    /// A model-field projection was evaluated at a state that holds no
+    /// instance of its identity, or whose instance has no field of the
+    /// projected type at that index. This is not a budget: it is the
+    /// ordinary consequence of `unfold`, `consumes` or a transfer having
+    /// taken the instance away, and a reader needs to be told *that* rather
+    /// than which counter the evaluation was holding at the time.
+    ResourceFieldInstanceUnavailable,
+}
+
+impl ExecutionLimit {
+    /// The one naming table for a bounded evaluation's stopping point, as a
+    /// noun phrase that reads after "stopped at". Every message a user can
+    /// see goes through here: a `{:?}` of this enum in user text is a leak,
+    /// because the variant names are the kernel's counters rather than
+    /// anything the reader wrote.
+    pub fn describe(self) -> String {
+        match self {
+            Self::Deadline => "the verification deadline".to_string(),
+            Self::ExpressionSteps => "the expression step budget".to_string(),
+            Self::StatementSteps => "the statement step budget".to_string(),
+            Self::FunctionCalls => "the function call budget".to_string(),
+            Self::LoopUnrolls => "the loop unrolling budget".to_string(),
+            // `Paths` is returned both by the path-width budget and, all over
+            // spec evaluation, by a shape the evaluator has no single value
+            // for. The phrase has to cover both without claiming a counter
+            // ran out.
+            Self::Paths => "no single evaluation path".to_string(),
+            Self::UnsupportedIntegerExistentialBody => {
+                "an Integer existential body that must be pure and total".to_string()
+            }
+            Self::KernelVariables { ceiling } => {
+                format!("the execution's fresh-identity range, which ends below {ceiling}")
+            }
+            Self::MatchBinderVariables { ceiling } => {
+                format!("the match-binder identity range, which ends below {ceiling}")
+            }
+            Self::ExecutionIdentityBesideLiveState => {
+                "an internal request for an execution identity beside a live state".to_string()
+            }
+            Self::ResourceFieldInstanceUnavailable => {
+                "a model field of a resource instance this state does not hold".to_string()
+            }
+        }
+    }
 }
 
 impl CRuntimeError {

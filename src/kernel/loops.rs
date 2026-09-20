@@ -1382,7 +1382,12 @@ pub(crate) fn c_loop_condition_may_continue(
 ) -> Result<bool, String> {
     c_loop_condition_feasibility(state, condition, assumptions)
         .map(|(may_continue, _)| may_continue)
-        .map_err(|limit| format!("could not classify the loop condition: {limit:?}"))
+        .map_err(|limit| {
+            format!(
+                "could not classify the loop condition: it stopped at {}",
+                limit.describe()
+            )
+        })
 }
 
 fn c_loop_condition_feasibility(
@@ -2183,7 +2188,10 @@ fn fresh_resource_value_like(
 /// beside the states it could not make common. An exhausted identity counter
 /// is one of those refusals, named rather than swallowed.
 fn exhausted_identities(limit: ExecutionLimit) -> String {
-    format!("the execution has no fresh identity left ({limit:?})")
+    format!(
+        "the execution has no fresh identity left: it stopped at {}",
+        limit.describe()
+    )
 }
 
 /// One resource argument or field as the term an equation is written over.

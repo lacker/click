@@ -1160,9 +1160,12 @@ fn join_variable(
     variables: &mut KernelVariableGenerator,
     budget: &mut ExecutionBudget,
 ) -> Result<Variable, String> {
-    variables
-        .next_in(budget)
-        .map_err(|limit| format!("the branch join has no fresh identity left ({limit:?})"))
+    variables.next_in(budget).map_err(|limit| {
+        format!(
+            "the branch join has no fresh identity left: it stopped at {}",
+            limit.describe()
+        )
+    })
 }
 
 fn validate_branch_memory_delta_against_loans(
@@ -2024,6 +2027,38 @@ impl From<LoweringRefusal> for String {
     }
 }
 
+/// Why a specification lowering or evaluation stopped, in the reader's terms.
+///
+/// The kernel's own stopping points are budgets and internal defects, and a
+/// `{:?}` of one is a leak: `the kernel evaluation hit Paths` told a reader
+/// holding a `fold` with an unowned model field nothing they could act on.
+/// The classified variants say what happened; everything else names its
+/// budget through the one table, [`ExecutionLimit::describe`].
+fn describe_spec_lowering_limit(what: &str, limit: ExecutionLimit) -> String {
+    match limit {
+        ExecutionLimit::UnsupportedIntegerExistentialBody => {
+            "Integer existential bodies must currently be pure and total".to_string()
+        }
+        // The lowering runs beside a live execution whose identity mark it
+        // does not carry, so an identity from the base of that range would
+        // name a havocked local or a join abstraction. Everything this
+        // lowering invents is a bound variable drawn from the match-binder
+        // range instead; a request for an execution identity is a defect in
+        // the kernel, and it is reported as one rather than satisfied.
+        ExecutionLimit::ExecutionIdentityBesideLiveState => {
+            "internal: execution identity requested beside a live state".to_string()
+        }
+        // The kernel knows the identity is absent; it does not know the name
+        // the reader wrote for it. A caller that has the source expression
+        // says which field and which repair instead of printing this.
+        ExecutionLimit::ResourceFieldInstanceUnavailable => {
+            "this expression reads a model field of a resource instance the state does not hold"
+                .to_string()
+        }
+        limit => format!("the kernel {what} stopped at {}", limit.describe()),
+    }
+}
+
 /// Why a specification evaluation did not produce exactly one path. No path
 /// at all is almost always every path ending in a runtime error, and the
 /// first such error is the message; the count alone hid a 4-byte load of an
@@ -2137,21 +2172,7 @@ pub(crate) fn c_lower_spec_proposition_with_checked_obligations(
         &lowering_assumptions,
         &mut budget,
     )
-    .map_err(|limit| match limit {
-        ExecutionLimit::UnsupportedIntegerExistentialBody => {
-            "Integer existential bodies must currently be pure and total".to_string()
-        }
-        // The lowering runs beside a live execution whose identity mark it
-        // does not carry, so an identity from the base of that range would
-        // name a havocked local or a join abstraction. Everything this
-        // lowering invents is a bound variable drawn from the match-binder
-        // range instead; a request for an execution identity is a defect in
-        // the kernel, and it is reported as one rather than satisfied.
-        ExecutionLimit::ExecutionIdentityBesideLiveState => {
-            "internal: execution identity requested beside a live state".to_string()
-        }
-        limit => format!("the kernel lowering hit {limit:?}"),
-    })
+    .map_err(|limit| describe_spec_lowering_limit("lowering", limit))
     .map_err(|message| LoweringRefusal {
         message,
         dropped_fold_body: None,
@@ -2224,7 +2245,7 @@ pub(crate) fn c_evaluate_spec_expression_with_checked_obligations(
         &lowering_assumptions,
         &mut budget,
     )
-    .map_err(|limit| format!("the kernel evaluation hit {limit:?}"))?;
+    .map_err(|limit| describe_spec_lowering_limit("evaluation", limit))?;
     let [path] = paths.as_slice() else {
         return Err(no_single_path_message("evaluation", &paths, &budget));
     };
@@ -2607,7 +2628,8 @@ pub fn c_function_contract_entry_state(
         Ok(Ok(state)) => Ok(state),
         Ok(Err(error)) => Err(format!("could not prepare contract resources: {error:?}")),
         Err(limit) => Err(format!(
-            "contract resource preparation hit execution limit {limit:?}"
+            "contract resource preparation stopped at {}",
+            limit.describe()
         )),
     }
 }
@@ -2656,7 +2678,8 @@ pub fn apply_c_function_contract_resource_transition(
             super::api::contract_certification::describe_certification_runtime_error(&error)
         )),
         Err(limit) => Err(format!(
-            "contract resource transition hit execution limit {limit:?}"
+            "contract resource transition stopped at {}",
+            limit.describe()
         )),
     }
 }
@@ -2712,7 +2735,8 @@ pub fn construct_c_function_resource(
             super::api::contract_certification::describe_certification_runtime_error(&error)
         )),
         Err(limit) => Err(format!(
-            "resource construction hit execution limit {limit:?}"
+            "resource construction stopped at {}",
+            limit.describe()
         )),
     }
 }

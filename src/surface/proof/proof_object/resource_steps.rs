@@ -93,7 +93,20 @@ impl<'a> Proof<'a> {
                     context.predicate_environment,
                     context.click_function_environment,
                 )
-                .map_err(|message| self.step_error(format!("fold field `{name}`: {message}")))?;
+                .map_err(|message| {
+                    // The kernel can only say the identity is absent. Here the
+                    // reader's own initializer is in hand, so the field, the
+                    // instance and the repair are named instead.
+                    let message =
+                        crate::surface::diagnostics::describe_unheld_model_field_initializer(
+                            name,
+                            &expression,
+                            before,
+                            pre_state,
+                        )
+                        .unwrap_or(message);
+                    self.step_error(format!("fold field `{name}`: {message}"))
+                })?;
                 proposed.push(value);
             }
             let identity = pre_state

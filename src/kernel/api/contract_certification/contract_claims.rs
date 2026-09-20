@@ -891,7 +891,8 @@ fn prepare_function_claim_path(
             }
             Err(limit) => {
                 return Err(format!(
-                    "the required resource context hit execution limit {limit:?}"
+                    "the required resource context stopped at {}",
+                    limit.describe()
                 ));
             }
         };

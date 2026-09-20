@@ -1269,26 +1269,6 @@ fn format_loan_operation(operation: crate::kernel::LoanRefusalOperation) -> &'st
     }
 }
 
-/// Names the budget or deadline a bounded evaluation ran into.
-pub(super) fn describe_execution_limit(limit: ExecutionLimit) -> &'static str {
-    match limit {
-        ExecutionLimit::Deadline => "the verification deadline",
-        ExecutionLimit::ExpressionSteps => "the expression step budget",
-        ExecutionLimit::StatementSteps => "the statement step budget",
-        ExecutionLimit::FunctionCalls => "the function call budget",
-        ExecutionLimit::LoopUnrolls => "the loop unrolling budget",
-        ExecutionLimit::Paths => "the path budget",
-        ExecutionLimit::UnsupportedIntegerExistentialBody => {
-            "an unsupported integer existential body"
-        }
-        ExecutionLimit::KernelVariables { .. } => "the execution's fresh-identity range",
-        ExecutionLimit::MatchBinderVariables { .. } => "the match-binder identity range",
-        ExecutionLimit::ExecutionIdentityBesideLiveState => {
-            "an internal request for an execution identity beside a live state"
-        }
-    }
-}
-
 /// Builds the assumptions an exact contract certification runs under, or says
 /// why it could not. The failure text is reported to the user: certification
 /// with no paths and no reason is a dead end for whoever wrote the contract,
@@ -1337,7 +1317,7 @@ pub(super) fn c_function_contract_certification_assumptions(
             Err(limit) => {
                 return Err(format!(
                     "building the aggregate contract entry state stopped at {}",
-                    describe_execution_limit(limit)
+                    limit.describe()
                 ));
             }
         };
@@ -1388,7 +1368,8 @@ pub(super) fn c_function_contract_certification_assumptions(
                 if crate::instrumentation::enabled() {
                     crate::instrumentation::emit(
                         crate::instrumentation::VerificationEvent::Diagnostic(format!(
-                            "contract requirement lowering hit {limit:?} for {}",
+                            "contract requirement lowering stopped at {} for {}",
+                            limit.describe(),
                             function.name()
                         )),
                     );
@@ -1396,7 +1377,7 @@ pub(super) fn c_function_contract_certification_assumptions(
                 return Err(format!(
                     "lowering `requires` clause {} stopped at {}",
                     requirement_index + 1,
-                    describe_execution_limit(limit)
+                    limit.describe()
                 ));
             }
         };
@@ -1494,7 +1475,7 @@ pub(super) fn c_function_contract_certification_assumptions(
             return Err(format!(
                 "evaluating the declared resource quantities of the contract entry resources \
                  stopped at {}",
-                describe_execution_limit(limit)
+                limit.describe()
             ));
         }
     };
@@ -1519,7 +1500,7 @@ pub(super) fn c_function_contract_certification_assumptions(
             Err(limit) => {
                 return Err(format!(
                     "evaluating the contract entry resources stopped at {}",
-                    describe_execution_limit(limit)
+                    limit.describe()
                 ));
             }
         };

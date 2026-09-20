@@ -903,7 +903,8 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
                 }
                 Err(limit) => {
                     return Err(ClickError::new(format!(
-                        "resource-derived loop-frame establishment for `{}` exceeded its execution budget: {limit:?}",
+                        "resource-derived loop-frame establishment for `{}` stopped at {}",
+                        limit.describe(),
                         parsed_function.name()
                     )));
                 }

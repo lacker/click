@@ -2667,7 +2667,8 @@ fn execute_step_from_frontier_position_selecting_path(
         )
         .map_err(|error| match error {
             CheckedCallOutcomeSplitError::Limit(limit) => ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: call outcome split hit execution limit {limit:?}"
+                "`{claim_label}` tactic {tactic_index}: call outcome split stopped at {}",
+                limit.describe()
             )),
             CheckedCallOutcomeSplitError::InvalidEvidence => ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: call outcomes lack an exhaustive checked split"

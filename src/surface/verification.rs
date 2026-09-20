@@ -2646,8 +2646,9 @@ fn verify_c0_sources_with_context(
                 }
                 Err(limit) => {
                     return Err(ClickError::new(format!(
-                        "resource-derived loop-frame validation for `{}` exceeded its execution budget: {limit:?}",
-                        function_block.signature.name()
+                        "resource-derived loop-frame validation for `{}` stopped at {}",
+                        function_block.signature.name(),
+                        limit.describe()
                     )));
                 }
             }
@@ -2717,8 +2718,9 @@ fn verify_c0_sources_with_context(
                     }
                     Err(limit) => {
                         return Err(ClickError::new(format!(
-                            "`{}`: checked storage resource transition exceeded its execution budget: {limit:?}",
-                            function_block.signature.name()
+                            "`{}`: checked storage resource transition stopped at {}",
+                            function_block.signature.name(),
+                            limit.describe()
                         )));
                     }
                 }
@@ -2743,8 +2745,9 @@ fn verify_c0_sources_with_context(
                     }
                     Err(limit) => {
                         return Err(ClickError::new(format!(
-                            "`{}`: checked storage resource effect projection exceeded its execution budget: {limit:?}",
-                            function_block.signature.name()
+                            "`{}`: checked storage resource effect projection stopped at {}",
+                            function_block.signature.name(),
+                            limit.describe()
                         )));
                     }
                 }

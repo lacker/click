@@ -2726,7 +2726,8 @@ fn evaluate_entry_resource_context(
         }
         Err(limit) => {
             return Err(ClickError::new(format!(
-                "`{claim_label}` setup failed: could not evaluate the contract entry resources: execution limit {limit:?}"
+                "`{claim_label}` setup failed: could not evaluate the contract entry resources: it stopped at {}",
+                limit.describe()
             )));
         }
     };
@@ -2768,7 +2769,8 @@ fn evaluate_entry_resource_context(
             }
             Err(limit) => {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` setup failed: could not evaluate the contract entry resources: execution limit {limit:?}"
+                    "`{claim_label}` setup failed: could not evaluate the contract entry resources: it stopped at {}",
+                    limit.describe()
                 )));
             }
         };

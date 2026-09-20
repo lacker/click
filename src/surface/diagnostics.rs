@@ -1203,6 +1203,96 @@ pub(super) fn describe_unseparated_write(
     .map(|mismatch| format!("; {mismatch}"))
 }
 
+/// A `fold` field initializer that reads a model this state no longer holds.
+///
+/// `let c = fold(cell(p), { rank: c.rank })` after `unfold(c)` is the shape:
+/// the `unfold` consumed the instance, so `c.rank` names no model at the
+/// `fold`. The kernel reports only that the identity is absent — it has no
+/// spelling for `c` — so the sentence is written here, where the reader's own
+/// expression is at hand, and it prints the initializer that verifies.
+///
+/// Nothing is said unless the state really does not hold the field and the
+/// entry state does: a repair is printed only where it works, and where
+/// `old(..)` would name nothing either the text says so instead.
+pub(super) fn describe_unheld_model_field_initializer(
+    field: &str,
+    initializer: &ContractExpression,
+    state: &CState,
+    entry_state: &CState,
+) -> Option<String> {
+    let access = unheld_model_field_access(initializer, state)?;
+    let spelled = describe_contract_expression(&ContractExpression::ResourceField(access.clone()));
+    let owner = &access.owner;
+    if entry_state
+        .resource_instance_at_path(access.identity, &access.children)
+        .and_then(|instance| instance.fields().get(access.field_index))
+        .is_none()
+    {
+        return Some(format!(
+            "`{spelled}` names no model here: this state does not hold `{owner}`, and neither does \
+             function entry, so `old({spelled})` would name nothing either. Fold the field from a \
+             value the proof already has."
+        ));
+    }
+    Some(format!(
+        "`{spelled}` names no model here: `{owner}` was consumed since function entry, so this \
+         state holds no field to read. Name the value it had there: \
+         `{{ {field}: old({spelled}) }}`."
+    ))
+}
+
+/// The first model field in `expression` that `state` cannot resolve, skipping
+/// the subtrees that resolve somewhere else: `old(..)` and `at(..)` read their
+/// own snapshot, so a field they name is not this state's to hold. A shape
+/// this bounded walk does not enter contributes nothing, and then the caller
+/// falls back to the kernel's own sentence rather than guessing.
+fn unheld_model_field_access<'a>(
+    expression: &'a ContractExpression,
+    state: &CState,
+) -> Option<&'a ResourceFieldAccess> {
+    let mut pending = vec![expression];
+    while let Some(expression) = pending.pop() {
+        match expression {
+            ContractExpression::ResourceField(access) => {
+                if state
+                    .resource_instance_at_path(access.identity, &access.children)
+                    .and_then(|instance| instance.fields().get(access.field_index))
+                    .is_none()
+                {
+                    return Some(access);
+                }
+            }
+            ContractExpression::Old(_) | ContractExpression::At { .. } => {}
+            ContractExpression::Negate(inner)
+            | ContractExpression::BitwiseNot(inner)
+            | ContractExpression::Field { base: inner, .. }
+            | ContractExpression::ArrayIndex { base: inner, .. } => pending.push(inner),
+            ContractExpression::Add(left, right)
+            | ContractExpression::Subtract(left, right)
+            | ContractExpression::Multiply(left, right)
+            | ContractExpression::Divide(left, right)
+            | ContractExpression::Remainder(left, right)
+            | ContractExpression::ShiftLeft(left, right)
+            | ContractExpression::ShiftRight(left, right)
+            | ContractExpression::BitwiseAnd(left, right)
+            | ContractExpression::BitwiseOr(left, right)
+            | ContractExpression::BitwiseXor(left, right)
+            | ContractExpression::Index(left, right)
+            | ContractExpression::SequenceConcat(left, right) => {
+                pending.push(left);
+                pending.push(right);
+            }
+            ContractExpression::AlgebraicConstructor { arguments, .. }
+            | ContractExpression::Call { arguments, .. } => pending.extend(arguments),
+            ContractExpression::SequenceLiteral(elements) => pending.extend(elements),
+            // Every other shape either names no model field or reaches one
+            // only through a form this bounded walk does not enter.
+            _ => {}
+        }
+    }
+    None
+}
+
 /// The explanation for two evaluated sides that read one address at two
 /// program points.
 pub(super) fn describe_two_sided_version_mismatch(

@@ -99,7 +99,8 @@ pub(super) fn check_allocation_lifetime(
         )
         .map_err(|limit| {
             ClickError::new(format!(
-                "allocation-lifetime obligation exceeded its execution budget: {limit:?}"
+                "allocation-lifetime obligation stopped at {}",
+                limit.describe()
             ))
         })?,
     };

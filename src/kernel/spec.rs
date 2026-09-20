@@ -62,7 +62,12 @@ pub(crate) fn capture_spec_algebraic_value(
         &BTreeMap::new(),
         &mut ExecutionBudget::beside_live_state(),
     )
-    .map_err(|limit| format!("algebraic initializer evaluation hit {limit:?}"))?;
+    .map_err(|limit| {
+        format!(
+            "algebraic initializer evaluation stopped at {}",
+            limit.describe()
+        )
+    })?;
     let [path] = paths.as_slice() else {
         return Err("algebraic initializer must denote one symbolic value".into());
     };
@@ -135,7 +140,10 @@ pub(crate) fn capture_spec_integer_value(
         &mut ExecutionBudget::beside_live_state(),
     )
     .map_err(|limit| {
-        SpecCaptureRefusal::Message(format!("Integer expression evaluation hit {limit:?}"))
+        SpecCaptureRefusal::Message(format!(
+            "Integer expression evaluation stopped at {}",
+            limit.describe()
+        ))
     })?;
     let [path] = paths.as_slice() else {
         return Err(SpecCaptureRefusal::Message(format!(
@@ -1040,7 +1048,7 @@ fn evaluate_spec_integer_expression_paths(
                 .resource_instance_at_path(projection.identity, &projection.children)
                 .and_then(|instance| instance.fields().get(projection.field_index))
             else {
-                return Err(ExecutionLimit::Paths);
+                return Err(ExecutionLimit::ResourceFieldInstanceUnavailable);
             };
             Ok(vec![SpecIntegerPath {
                 value: value.clone(),
@@ -2631,7 +2639,7 @@ fn evaluate_spec_algebraic_at_state_with_bindings(
                 .resource_instance_at_path(projection.identity, &projection.children)
                 .and_then(|instance| instance.fields().get(projection.field_index))
             else {
-                return Err(ExecutionLimit::Paths);
+                return Err(ExecutionLimit::ResourceFieldInstanceUnavailable);
             };
             if value.algebraic_type != expression.algebraic_type {
                 return Err(ExecutionLimit::Paths);
@@ -4968,7 +4976,7 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                 .resource_instance_at_path(projection.identity, &projection.children)
                 .and_then(|instance| instance.fields().get(projection.field_index))
             else {
-                return Err(ExecutionLimit::Paths);
+                return Err(ExecutionLimit::ResourceFieldInstanceUnavailable);
             };
             if value.c_type() != *c_type {
                 return Err(ExecutionLimit::Paths);

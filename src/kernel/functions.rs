@@ -18753,7 +18753,8 @@ fn unreturned_allocation_obligation(
         Ok(Err(error)) => return Err(error),
         Err(limit) => {
             return Err(CRuntimeError::FunctionContract(format!(
-                "counted population allocation inspection hit execution limit {limit:?}"
+                "counted population allocation inspection stopped at {}",
+                limit.describe()
             )));
         }
     };

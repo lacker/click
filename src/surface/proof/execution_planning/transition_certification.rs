@@ -86,9 +86,9 @@ pub(in crate::surface::proof) fn certified_proof_condition_split(
                 crate::instrumentation::deadline_context()
             ))
         }
-        CheckedBranchSplitError::Limit(limit) => ClickError::new(format!(
-            "{context_label} hit condition execution limit {limit:?}"
-        )),
+        CheckedBranchSplitError::Limit(limit) => {
+            ClickError::new(format!("{context_label} stopped at {}", limit.describe()))
+        }
         CheckedBranchSplitError::InvalidEvidence => ClickError::new(format!(
             "{context_label} received malformed checked condition evidence"
         )),
@@ -184,7 +184,8 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
             )));
         }
         return Err(ClickError::new(format!(
-            "{context_label} hit condition execution limit {limit:?}"
+            "{context_label} stopped at {}",
+            limit.describe()
         )));
     }
     evaluation
@@ -683,7 +684,8 @@ fn certified_transitions_from_execution(
             )));
         }
         return Err(ClickError::new(format!(
-            "{context_label} hit execution limit {limit:?}"
+            "{context_label} stopped at {}",
+            limit.describe()
         )));
     }
     let has_failure_path = execution.paths().iter().any(|path| {
