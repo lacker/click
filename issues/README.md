@@ -132,7 +132,6 @@ Proof language and tooling:
 - [Extend modules and imports beyond the delivered rbtree slice](specification-imports.md)
 - [Parse built-in expressions consistently on either side of comparisons](built-in-comparison-parsing.md)
 - [Preserve source context when expansion writes to another directory](expansion-output-source-context.md)
-- [Bound structural nesting beyond parentheses without aborting the CLI](surface-unbounded-recursive-depth.md)
 - [Reduce repeated work in deeply nested `Integer` quantifiers](deep-quantifier-scaling.md)
 - [Complete general-purpose algebraic data type support](algebraic-data-types.md)
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
