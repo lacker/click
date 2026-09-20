@@ -151,4 +151,141 @@ mod tests {
 
         fs::remove_dir_all(directory).unwrap();
     }
+
+    #[test]
+    fn every_cli_tool_reports_overdeep_surface_input_without_aborting() {
+        const STRUCTURAL_LIMIT: usize = 32;
+        const CONTRACT_LET_LIMIT: usize = 128;
+
+        let directory =
+            std::env::temp_dir().join(format!("click-surface-depth-cli-{}", std::process::id()));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+
+        let sources = [
+            (
+                "not",
+                format!(
+                    "theorem too_deep_not() {{ requires {}0 == 0; ensures 0 == 0; }}\n",
+                    "not ".repeat(128)
+                ),
+                "too_deep_not.ensures_0",
+            ),
+            (
+                "implies",
+                format!(
+                    "theorem too_deep_implies() {{ requires {}; ensures 0 == 0; }}\n",
+                    (0..=512)
+                        .map(|_| "0 == 0")
+                        .collect::<Vec<_>>()
+                        .join(" implies ")
+                ),
+                "too_deep_implies.ensures_0",
+            ),
+            (
+                "add",
+                format!(
+                    "theorem too_deep_add() {{ requires {} == 0; ensures 0 == 0; }}\n",
+                    (0..=1024).map(|_| "0").collect::<Vec<_>>().join(" + ")
+                ),
+                "too_deep_add.ensures_0",
+            ),
+            (
+                "let",
+                format!(
+                    "theorem too_deep_let() {{ requires {}; ensures 0 == 0; }}\n",
+                    (0..=CONTRACT_LET_LIMIT)
+                        .rev()
+                        .fold("0 == 0".to_string(), |body, index| {
+                            format!("let value{index} = 0; {body}")
+                        })
+                ),
+                "too_deep_let.ensures_0",
+            ),
+            (
+                "quantifier",
+                format!(
+                    "theorem too_deep_quantifier() {{ requires {}; ensures 0 == 0; }}\n",
+                    (0..STRUCTURAL_LIMIT)
+                        .rev()
+                        .fold("0 == 0".to_string(), |body, index| {
+                            format!("forall (q{index}: Integer) {{ {body} }}")
+                        })
+                ),
+                "too_deep_quantifier.ensures_0",
+            ),
+            (
+                "bracket",
+                format!(
+                    "theorem too_deep_bracket() {{ ensures {} == {}; }}\n",
+                    (0..=STRUCTURAL_LIMIT).fold("0".to_string(), |expression, _| {
+                        format!("[{expression}]")
+                    }),
+                    (0..=STRUCTURAL_LIMIT).fold("0".to_string(), |expression, _| {
+                        format!("[{expression}]")
+                    })
+                ),
+                "too_deep_bracket.ensures_0",
+            ),
+            (
+                "proof",
+                format!(
+                    "theorem too_deep_proof() {{ ensures 0 == 0 by {{ {} }} }}\n",
+                    (0..=STRUCTURAL_LIMIT).fold("normalize();".to_string(), |body, _| format!(
+                        "both {{ {body} }} and {{ normalize(); }}"
+                    ))
+                ),
+                "too_deep_proof.ensures_0",
+            ),
+        ];
+
+        for (name, source, claim) in sources {
+            let path = directory.join(format!("{name}.click"));
+            fs::write(&path, source).unwrap();
+            let path_string = path.display().to_string();
+
+            for command in ["verify", "expand", "audit"] {
+                let arguments = match command {
+                    "verify" => vec![command.to_string(), path_string.clone()],
+                    "expand" => vec![
+                        command.to_string(),
+                        "--claim".to_string(),
+                        claim.to_string(),
+                        path_string.clone(),
+                    ],
+                    "audit" => vec![command.to_string(), path_string.clone()],
+                    _ => unreachable!(),
+                };
+                let error = entry(arguments).expect_err("over-deep input must be rejected");
+                assert_bounded_depth_error(name, command, &error);
+            }
+
+            let error = profile::verify_target_for_test(&path)
+                .expect_err("profile must reject over-deep input through its verifier");
+            assert_bounded_depth_error(name, "profile", &error);
+        }
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn assert_bounded_depth_error(family: &str, command: &str, error: &str) {
+        assert!(
+            error.contains("supported depth"),
+            "{command} on {family} did not report a supported-depth diagnostic: {error}"
+        );
+        assert!(
+            error.len() < 4096,
+            "{command} on {family} produced an unexpectedly large diagnostic"
+        );
+        assert!(
+            error.contains("line ") || error.contains(".click:"),
+            "{command} on {family} did not preserve a source location: {error}"
+        );
+        assert!(
+            !error.contains("stack overflow"),
+            "{command} on {family} reported a stack overflow: {error}"
+        );
+    }
 }

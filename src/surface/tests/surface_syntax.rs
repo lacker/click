@@ -501,6 +501,21 @@ fn parser_bounds_non_parenthesized_surface_nesting_before_ast_construction() {
             .message()
             .contains("expression operator nesting exceeds Click's supported depth")
     );
+
+    let nested_lets = (0..=parser::CONTRACT_LET_CHAIN_LIMIT)
+        .rev()
+        .fold("0 == 0".to_string(), |body, index| {
+            format!("let value{index} = 0; {body}")
+        });
+    let let_error = parser::parse_file_items(&format!(
+        "theorem too_deep_lets() {{ requires {nested_lets}; ensures 0 == 0; }}"
+    ))
+    .expect_err("over-deep value-binding expressions should fail at the parser boundary");
+    assert!(
+        let_error
+            .message()
+            .contains("contract value-binding chain exceeds Click's supported depth")
+    );
 }
 
 #[test]

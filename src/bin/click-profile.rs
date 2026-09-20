@@ -551,6 +551,16 @@ fn profile_target(
     Ok(profile)
 }
 
+#[cfg(test)]
+#[allow(dead_code)] // Used by the shared dispatcher regression matrix.
+pub(crate) fn verify_target_for_test(path: &Path) -> Result<(), String> {
+    let profile = profile_target(path, Thresholds::default(), Duration::from_secs(5))?;
+    match profile.verification_failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
 fn count_smart_source_sites(events: &[VerificationEvent]) -> Result<usize, String> {
     let paths = events
         .iter()

@@ -37,6 +37,12 @@ const DELIMITER_NESTING_LIMIT: usize = 128;
 /// issue's 512-link and 1024-term reproductions on the bounded-error path.
 pub(super) const EXPRESSION_CHAIN_LIMIT: usize = 512;
 const UNARY_NESTING_LIMIT: usize = 64;
+/// Sequential value bindings are parsed iteratively so this limit bounds the
+/// resulting contract-expression chain without consuming parser stack.
+pub(super) const CONTRACT_LET_CHAIN_LIMIT: usize = 128;
+/// A value binding whose initializer contains another value binding remains
+/// recursive, so keep that separate nesting path deliberately small.
+const CONTRACT_LET_RECURSION_LIMIT: usize = 8;
 
 /// The memory-range fact was spelled `loadable(...)` before it was named after
 /// the `views` clause it shadows. There is no compatibility alias, so a source
@@ -290,6 +296,7 @@ struct Parser {
     match_nesting: usize,
     proposition_nesting: usize,
     proof_nesting: usize,
+    contract_expression_nesting: usize,
     tokens: Vec<Token>,
     positions: Vec<SourcePosition>,
     matching_parentheses: Vec<Option<usize>>,
@@ -567,6 +574,7 @@ impl Parser {
             match_nesting: 0,
             proposition_nesting: 0,
             proof_nesting: 0,
+            contract_expression_nesting: 0,
             position: 0,
             struct_layouts,
             union_layouts,
@@ -7738,27 +7746,15 @@ impl Parser {
             ))));
         }
         if self.peek_ident() == Some("let") {
-            let binding = self.parse_contract_let_binding()?;
-            let ContractLetBindingKind::Value(value) = binding.kind else {
-                return Err(
-                    self.error("`let ... where` is a proposition binding, not an expression")
-                );
-            };
-            let binding_was_in_scope = !self.current_contract_bindings.insert(binding.name.clone());
-            let previous_integer_context = self.integer_literal_context;
-            self.integer_literal_context |= matches!(binding.click_type, Some(ClickType::Integer));
-            let body = self.parse_contract_expression();
-            self.integer_literal_context = previous_integer_context;
-            if !binding_was_in_scope {
-                self.current_contract_bindings.remove(&binding.name);
+            if self.contract_expression_nesting >= CONTRACT_LET_RECURSION_LIMIT {
+                return Err(self.error(format!(
+                    "nested contract value binding exceeds Click's supported depth of {CONTRACT_LET_RECURSION_LIMIT}"
+                )));
             }
-            let body = body?;
-            return Ok(ContractExpression::Let {
-                name: binding.name,
-                click_type: binding.click_type,
-                value: Box::new(value),
-                body: Box::new(body),
-            });
+            self.contract_expression_nesting += 1;
+            let result = self.parse_contract_value_let_expression();
+            self.contract_expression_nesting -= 1;
+            return result;
         }
 
         if self.peek_ident() == Some("if") {
@@ -7966,6 +7962,53 @@ impl Parser {
             Some(token) => Err(self.error(format!("expected contract expression, got {token:?}"))),
             None => Err(self.error("expected contract expression, got end of input")),
         }
+    }
+
+    fn parse_contract_value_let_expression(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut bindings = Vec::new();
+        loop {
+            if bindings.len() >= CONTRACT_LET_CHAIN_LIMIT {
+                return Err(self.error(format!(
+                    "contract value-binding chain exceeds Click's supported depth of {CONTRACT_LET_CHAIN_LIMIT}"
+                )));
+            }
+            let binding = self.parse_contract_let_binding()?;
+            let ContractLetBindingKind::Value(value) = binding.kind else {
+                return Err(self.error("let ... where is a proposition binding, not an expression"));
+            };
+            let binding_was_in_scope = !self.current_contract_bindings.insert(binding.name.clone());
+            let previous_integer_context = self.integer_literal_context;
+            let click_type = binding.click_type;
+            self.integer_literal_context |= matches!(click_type, Some(ClickType::Integer));
+            bindings.push((
+                binding.name,
+                click_type,
+                value,
+                binding_was_in_scope,
+                previous_integer_context,
+            ));
+            if self.peek_ident() != Some("let") {
+                break;
+            }
+        }
+
+        let body = self.parse_contract_expression();
+        for (name, _, _, binding_was_in_scope, previous_integer_context) in bindings.iter().rev() {
+            self.integer_literal_context = *previous_integer_context;
+            if !*binding_was_in_scope {
+                self.current_contract_bindings.remove(name);
+            }
+        }
+        let mut body = body?;
+        for (name, click_type, value, _, _) in bindings.into_iter().rev() {
+            body = ContractExpression::Let {
+                name,
+                click_type,
+                value: Box::new(value),
+                body: Box::new(body),
+            };
+        }
+        Ok(body)
     }
 
     fn looks_like_algebraic_constructor(&self) -> bool {
