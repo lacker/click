@@ -155,6 +155,8 @@ mod tests {
     #[test]
     fn every_cli_tool_accepts_the_supported_expression_boundary() {
         const EXPRESSION_CHAIN_LIMIT: usize = 512;
+        const STRUCTURAL_NESTING_LIMIT: usize = 32;
+        const ALGEBRAIC_TYPE_NESTING_LIMIT: usize = 32;
 
         let directory = std::env::temp_dir().join(format!(
             "click-surface-depth-cli-valid-{}",
@@ -174,11 +176,34 @@ mod tests {
             .map(|_| "0 == 0")
             .collect::<Vec<_>>()
             .join(" implies ");
+        let mut quantifier_body = String::from("0 == 0");
+        for index in (0..STRUCTURAL_NESTING_LIMIT - 1).rev() {
+            quantifier_body = format!("forall (q{index}: Integer) {{ {quantifier_body} }}");
+        }
+        let nested_conditionals = (0..STRUCTURAL_NESTING_LIMIT - 1)
+            .fold("0".to_string(), |body, _| {
+                format!("if 0 == 0 {{ {body} }} else {{ 0 }}")
+            });
+        let mut proof_goal = String::from("0 == 0");
+        let mut proof_body = String::from("normalize();");
+        for _ in 0..STRUCTURAL_NESTING_LIMIT - 2 {
+            proof_goal.push_str(" and 0 == 0");
+            proof_body = format!("both {{ {proof_body} }} and {{ normalize(); }}");
+        }
+        let nested_type = (0..ALGEBRAIC_TYPE_NESTING_LIMIT)
+            .fold("Integer".to_string(), |type_name, _| {
+                format!("BoundaryBox<{type_name}>")
+            });
         fs::write(
             &source_path,
             format!(
                 "theorem at_limit_expression() {{ requires {additions} == 0; ensures 0 == 0 by auto; }}\n\
-                 theorem at_limit_implication() {{ requires {implications}; ensures 0 == 0 by auto; }}\n"
+                 theorem at_limit_implication() {{ requires {implications}; ensures 0 == 0 by auto; }}\n\
+                 theorem at_limit_quantifiers() {{ requires {quantifier_body}; ensures 0 == 0 by auto; }}\n\
+                 theorem at_limit_conditionals() {{ requires {nested_conditionals} == 0; ensures 0 == 0 by auto; }}\n\
+                 theorem at_limit_proof() {{ ensures {proof_goal} by {{ {proof_body} }} }}\n\
+                 spec enum BoundaryBox<T> {{ Wrapped(T) }}\n\
+                 theorem at_limit_type(value: {nested_type}) {{ ensures 0 == 0 by auto; }}\n"
             ),
         )
         .unwrap();

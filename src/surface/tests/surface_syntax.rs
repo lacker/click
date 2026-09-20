@@ -603,10 +603,13 @@ fn supported_surface_depth_boundaries_survive_consumption() {
     for index in (0..parser::STRUCTURAL_NESTING_LIMIT - 1).rev() {
         quantifier_body = format!("forall (q{index}: Integer) {{ {quantifier_body} }}");
     }
-    let quantifier_file = parser::parse_file_items(&format!(
+    let quantifier_source = format!(
         "theorem at_limit_quantifiers() {{ requires {quantifier_body}; ensures 0 == 0 by {{ normalize(); }} }}"
-    ))
-    .expect("the supported quantifier boundary");
+    );
+    verify_click_theorems(&quantifier_source)
+        .expect("the supported quantifier boundary should verify");
+    let quantifier_file =
+        parser::parse_file_items(&quantifier_source).expect("the supported quantifier boundary");
     let quantifier = quantifier_file.theorem_definitions()[0].requires()[0]
         .theorem_proposition()
         .expect("the quantifier requirement should be a proposition");
@@ -619,10 +622,15 @@ fn supported_surface_depth_boundaries_survive_consumption() {
     for _ in 0..parser::STRUCTURAL_NESTING_LIMIT - 1 {
         nested_sequence = format!("[{nested_sequence}]");
     }
-    let sequence_file = parser::parse_file_items(&format!(
+    let sequence_source = format!(
         "theorem at_limit_brackets() {{ ensures {nested_sequence} == {nested_sequence}; }}"
-    ))
-    .expect("the supported bracket boundary");
+    );
+    // Nested sequence values are intentionally parser-valid but not a valid
+    // semantic value: the current sequence type is scalar-element only.
+    // Keep this boundary at parse/print/destruction coverage until nested
+    // sequence types are introduced independently.
+    let sequence_file =
+        parser::parse_file_items(&sequence_source).expect("the supported bracket boundary");
     let Ensure::Proposition(sequence) =
         sequence_file.theorem_definitions()[0].ensures()[0].ensure()
     else {
@@ -633,14 +641,16 @@ fn supported_surface_depth_boundaries_survive_consumption() {
     drop(printed_sequence);
     drop(sequence_file);
 
+    let mut proof_goal = String::from("0 == 0");
     let mut proof_body = String::from("normalize();");
     for _ in 0..parser::STRUCTURAL_NESTING_LIMIT - 2 {
+        proof_goal.push_str(" and 0 == 0");
         proof_body = format!("both {{ {proof_body} }} and {{ normalize(); }}");
     }
-    let proof_file = parser::parse_file_items(&format!(
-        "theorem at_limit_proof() {{ ensures 0 == 0 by {{ {proof_body} }} }}"
-    ))
-    .expect("the supported proof boundary");
+    let proof_source =
+        format!("theorem at_limit_proof() {{ ensures {proof_goal} by {{ {proof_body} }} }}");
+    verify_click_theorems(&proof_source).expect("the supported proof boundary should verify");
+    let proof_file = parser::parse_file_items(&proof_source).expect("the supported proof boundary");
     let SourceProof::Script(tactics) = proof_file.theorem_definitions()[0].ensures()[0].proof()
     else {
         panic!("the supported proof boundary should remain a script");
@@ -654,16 +664,29 @@ fn supported_surface_depth_boundaries_survive_consumption() {
         .fold("Integer".to_string(), |type_name, _| {
             format!("Box<{type_name}>")
         });
-    let type_file = parser::parse_file_items(&format!(
+    let type_source = format!(
         "spec enum Box<T> {{ Wrapped(T) }} theorem at_limit_type(value: {nested_type}) {{ ensures 0 == 0; }}"
-    ))
-    .expect("the supported algebraic type boundary");
+    );
+    verify_click_theorems(&type_source)
+        .expect("the supported algebraic type boundary should verify");
+    let type_file =
+        parser::parse_file_items(&type_source).expect("the supported algebraic type boundary");
     let type_name = validation::describe_click_type(
         type_file.theorem_definitions()[0].parameters()[0].click_type(),
     );
     assert!(type_name.starts_with("Box<") && type_name.ends_with(">"));
     drop(type_name);
     drop(type_file);
+
+    let nested_conditionals = (0..parser::CONTRACT_IF_NESTING_LIMIT - 1)
+        .fold("0".to_string(), |body, _| {
+            format!("if 0 == 0 {{ {body} }} else {{ 0 }}")
+        });
+    let conditional_source = format!(
+        "theorem at_limit_conditionals() {{ requires {nested_conditionals} == 0; ensures 0 == 0 by {{ normalize(); }} }}"
+    );
+    verify_click_theorems(&conditional_source)
+        .expect("the supported conditional boundary should verify");
 }
 
 #[test]
