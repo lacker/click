@@ -2377,8 +2377,87 @@ impl AnnotationLowerer<'_> {
         proposition: &ClickProposition,
         environment: &SpecElaborationContext,
     ) -> Result<SpecProposition, String> {
-        #[cfg(test)]
-        tests::PROPOSITION_VISITS.with(|visits| visits.set(visits.get() + 1));
+        enum Frame<'a> {
+            Visit(&'a ClickProposition),
+            BuildAnd,
+            BuildOr,
+            BuildImplies,
+        }
+
+        if !matches!(
+            proposition,
+            ClickProposition::And(..) | ClickProposition::Or(..) | ClickProposition::Implies(..)
+        ) {
+            #[cfg(test)]
+            tests::PROPOSITION_VISITS.with(|visits| visits.set(visits.get() + 1));
+            return self.click_proposition_to_spec_proposition_one(proposition, environment);
+        }
+
+        let mut frames = vec![Frame::Visit(proposition)];
+        let mut expanded = Vec::new();
+        while let Some(frame) = frames.pop() {
+            match frame {
+                Frame::Visit(proposition) => {
+                    #[cfg(test)]
+                    tests::PROPOSITION_VISITS.with(|visits| visits.set(visits.get() + 1));
+                    match proposition {
+                        ClickProposition::And(left, right) => {
+                            frames.push(Frame::BuildAnd);
+                            frames.push(Frame::Visit(right));
+                            frames.push(Frame::Visit(left));
+                        }
+                        ClickProposition::Or(left, right) => {
+                            frames.push(Frame::BuildOr);
+                            frames.push(Frame::Visit(right));
+                            frames.push(Frame::Visit(left));
+                        }
+                        ClickProposition::Implies(left, right) => {
+                            frames.push(Frame::BuildImplies);
+                            frames.push(Frame::Visit(right));
+                            frames.push(Frame::Visit(left));
+                        }
+                        proposition => {
+                            expanded.push(self.click_proposition_to_spec_proposition_one(
+                                proposition,
+                                environment,
+                            )?)
+                        }
+                    }
+                }
+                Frame::BuildAnd => {
+                    let right = expanded
+                        .pop()
+                        .expect("elaborated conjunction right operand");
+                    let left = expanded.pop().expect("elaborated conjunction left operand");
+                    expanded.push(SpecProposition::And(Box::new(left), Box::new(right)));
+                }
+                Frame::BuildOr => {
+                    let right = expanded
+                        .pop()
+                        .expect("elaborated disjunction right operand");
+                    let left = expanded.pop().expect("elaborated disjunction left operand");
+                    expanded.push(SpecProposition::Or(Box::new(left), Box::new(right)));
+                }
+                Frame::BuildImplies => {
+                    let right = expanded
+                        .pop()
+                        .expect("elaborated implication right operand");
+                    let left = expanded.pop().expect("elaborated implication left operand");
+                    expanded.push(SpecProposition::Implies(Box::new(left), Box::new(right)));
+                }
+            }
+        }
+        Ok(expanded
+            .pop()
+            .expect("elaborated proposition should have one root"))
+    }
+
+    #[inline(never)]
+    fn click_proposition_to_spec_proposition_one(
+        &mut self,
+        proposition: &ClickProposition,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecProposition, String> {
         match proposition {
             ClickProposition::At { .. } => {
                 self.lower_at_proposition_to_spec(proposition, environment)

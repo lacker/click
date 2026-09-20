@@ -37,12 +37,10 @@ pub(super) const ALGEBRAIC_TYPE_NESTING_LIMIT: usize = STRUCTURAL_NESTING_LIMIT;
 /// smaller structural limit; this larger bound keeps malformed or mixed
 /// delimiter input from reaching an unguarded helper.
 const DELIMITER_NESTING_LIMIT: usize = 128;
-/// Left-associated operators create a deeply nested boxed AST even though the
-/// precedence loops themselves are iterative. Bound those chains before the
-/// first over-deep node is constructed so later validation, printing, and
-/// destruction cannot inherit an unbounded shape. The limit leaves room for
-/// the existing deep-certificate and arithmetic regressions while keeping the
-/// issue's 512-link and 1024-term reproductions on the bounded-error path.
+/// Operator chains create deeply nested boxed ASTs even though the precedence
+/// loops themselves are iterative. Bound those chains before the first
+/// over-deep node is constructed, keeping malformed source on a bounded-error
+/// path and preserving the existing deep-certificate compatibility boundary.
 pub(super) const EXPRESSION_CHAIN_LIMIT: usize = 512;
 const UNARY_NESTING_LIMIT: usize = 64;
 /// Sequential value bindings are parsed iteratively so this limit bounds the
@@ -3888,129 +3886,8 @@ impl Parser {
             });
         }
 
-        if self.peek_ident() == Some("forall") {
-            self.position += 1;
-            self.expect(Token::LParen)?;
-            let name = self.expect_ident("forall variable name")?;
-            if is_c_type_keyword(&name) {
-                return Err(self.error(
-                    "Click-native binders use `name: type`, for example `forall (k: int32)`",
-                ));
-            }
-            self.expect(Token::Colon)?;
-            let (click_type, parsed_type) = self.parse_click_type()?;
-            if let Some(parsed_type) = &parsed_type
-                && parsed_type.struct_name.is_some()
-                && !parsed_type.struct_pointer
-            {
-                return Err(self.error("only pointer-to-struct types are supported"));
-            }
-            self.expect(Token::RParen)?;
-            self.expect(Token::LBrace)?;
-            let previous_integer_context = self.integer_literal_context;
-            let integer_was_bound = self.current_integer_params.contains(&name);
-            let integer_let_was_bound = self.current_integer_lets.contains(&name);
-            let c_was_bound = self.current_contract_bindings.contains(&name);
-            match &click_type {
-                ClickType::Integer => {
-                    self.current_contract_bindings.remove(&name);
-                    self.current_integer_params.insert(name.clone());
-                    self.integer_literal_context = true;
-                }
-                ClickType::C(_) => {
-                    self.current_integer_params.remove(&name);
-                    self.current_integer_lets.remove(&name);
-                    // Keep C quantifier references on the legacy C-fragment
-                    // path. Inserting a contract binding here changes the
-                    // lowering of existing C quantifier bodies.
-                    self.current_contract_bindings.remove(&name);
-                    self.integer_literal_context = false;
-                }
-                _ => return Err(self.error("quantifier type must be a C type or Integer")),
-            }
-            let body = self.parse_proposition()?;
-            self.expect(Token::RBrace)?;
-            self.integer_literal_context = previous_integer_context;
-            if integer_was_bound {
-                self.current_integer_params.insert(name.clone());
-            } else {
-                self.current_integer_params.remove(&name);
-            }
-            if integer_let_was_bound {
-                self.current_integer_lets.insert(name.clone());
-            }
-            if c_was_bound {
-                self.current_contract_bindings.insert(name.clone());
-            } else {
-                self.current_contract_bindings.remove(&name);
-            }
-            return Ok(ClickProposition::ForAll {
-                click_type,
-                name,
-                written_name: None,
-                body: Box::new(body),
-            });
-        }
-
-        if self.peek_ident() == Some("exists") {
-            self.position += 1;
-            self.expect(Token::LParen)?;
-            let name = self.expect_ident("exists variable name")?;
-            if is_c_type_keyword(&name) {
-                return Err(self.error(
-                    "Click-native binders use `name: type`, for example `exists (k: int32)`",
-                ));
-            }
-            self.expect(Token::Colon)?;
-            let (click_type, parsed_type) = self.parse_click_type()?;
-            if let Some(parsed_type) = &parsed_type
-                && parsed_type.struct_name.is_some()
-                && !parsed_type.struct_pointer
-            {
-                return Err(self.error("only pointer-to-struct types are supported"));
-            }
-            self.expect(Token::RParen)?;
-            self.expect(Token::LBrace)?;
-            let previous_integer_context = self.integer_literal_context;
-            let integer_was_bound = self.current_integer_params.contains(&name);
-            let integer_let_was_bound = self.current_integer_lets.contains(&name);
-            let c_was_bound = self.current_contract_bindings.contains(&name);
-            match &click_type {
-                ClickType::Integer => {
-                    self.current_contract_bindings.remove(&name);
-                    self.current_integer_params.insert(name.clone());
-                    self.integer_literal_context = true;
-                }
-                ClickType::C(_) => {
-                    self.current_integer_params.remove(&name);
-                    self.current_integer_lets.remove(&name);
-                    self.current_contract_bindings.remove(&name);
-                    self.integer_literal_context = false;
-                }
-                _ => return Err(self.error("quantifier type must be a C type or Integer")),
-            }
-            let body = self.parse_proposition()?;
-            self.expect(Token::RBrace)?;
-            self.integer_literal_context = previous_integer_context;
-            if integer_was_bound {
-                self.current_integer_params.insert(name.clone());
-            } else {
-                self.current_integer_params.remove(&name);
-            }
-            if integer_let_was_bound {
-                self.current_integer_lets.insert(name.clone());
-            }
-            if c_was_bound {
-                self.current_contract_bindings.insert(name.clone());
-            } else {
-                self.current_contract_bindings.remove(&name);
-            }
-            return Ok(ClickProposition::Exists {
-                click_type,
-                name,
-                written_name: None,
-                body: Box::new(body),
-            });
+        if matches!(self.peek_ident(), Some("forall" | "exists")) {
+            return self.parse_quantifier_chain();
         }
 
         if self.peek() == Some(&Token::LParen) && self.looks_like_range_proposition_method() {
@@ -4183,6 +4060,210 @@ impl Parser {
         }
 
         self.parse_proposition_comparison()
+    }
+
+    fn parse_quantifier_chain(&mut self) -> Result<ClickProposition, ClickError> {
+        #[derive(Clone, Copy)]
+        enum Operator {
+            And,
+            Or,
+            Implies,
+            Scope,
+        }
+        struct Scope {
+            forall: bool,
+            click_type: ClickType,
+            name: String,
+            negations: usize,
+            previous_integer_context: bool,
+            integer_was_bound: bool,
+            integer_let_was_bound: bool,
+            c_was_bound: bool,
+        }
+
+        let mut scopes = Vec::new();
+        let mut operands = Vec::new();
+        let mut operators = Vec::new();
+        let mut expect_operand = true;
+        let reduce = |operator: Operator, operands: &mut Vec<ClickProposition>| {
+            let right = operands.pop().expect("quantifier expression right operand");
+            let left = operands.pop().expect("quantifier expression left operand");
+            operands.push(match operator {
+                Operator::And => ClickProposition::And(Box::new(left), Box::new(right)),
+                Operator::Or => ClickProposition::Or(Box::new(left), Box::new(right)),
+                Operator::Implies => ClickProposition::Implies(Box::new(left), Box::new(right)),
+                Operator::Scope => unreachable!("scope marker is not a binary operator"),
+            });
+        };
+        let precedence = |operator| match operator {
+            Operator::And => 2,
+            Operator::Or => 1,
+            Operator::Implies => 0,
+            Operator::Scope => usize::MAX,
+        };
+
+        loop {
+            if expect_operand {
+                let mut negations = 0;
+                while self.peek_ident() == Some("not") {
+                    if negations >= UNARY_NESTING_LIMIT {
+                        return Err(self.error(format!(
+                            "proposition unary nesting exceeds Click's supported depth of {UNARY_NESTING_LIMIT}"
+                        )));
+                    }
+                    self.position += 1;
+                    negations += 1;
+                }
+                if matches!(self.peek_ident(), Some("forall" | "exists")) {
+                    let forall = self.peek_ident() == Some("forall");
+                    if self.proposition_nesting + scopes.len() >= STRUCTURAL_NESTING_LIMIT {
+                        return Err(self.error(format!(
+                            "structural proposition nesting exceeds Click's supported depth of {STRUCTURAL_NESTING_LIMIT}"
+                        )));
+                    }
+                    self.position += 1;
+                    self.expect(Token::LParen)?;
+                    let name = self.expect_ident(if forall {
+                        "forall variable name"
+                    } else {
+                        "exists variable name"
+                    })?;
+                    if is_c_type_keyword(&name) {
+                        return Err(self.error(
+                            "Click-native binders use `name: type`, for example `forall (k: int32)`",
+                        ));
+                    }
+                    self.expect(Token::Colon)?;
+                    let (click_type, parsed_type) = self.parse_click_type()?;
+                    if let Some(parsed_type) = &parsed_type
+                        && parsed_type.struct_name.is_some()
+                        && !parsed_type.struct_pointer
+                    {
+                        return Err(self.error("only pointer-to-struct types are supported"));
+                    }
+                    self.expect(Token::RParen)?;
+                    self.expect(Token::LBrace)?;
+                    let previous_integer_context = self.integer_literal_context;
+                    let integer_was_bound = self.current_integer_params.contains(&name);
+                    let integer_let_was_bound = self.current_integer_lets.contains(&name);
+                    let c_was_bound = self.current_contract_bindings.contains(&name);
+                    match &click_type {
+                        ClickType::Integer => {
+                            self.current_contract_bindings.remove(&name);
+                            self.current_integer_params.insert(name.clone());
+                            self.integer_literal_context = true;
+                        }
+                        ClickType::C(_) => {
+                            self.current_integer_params.remove(&name);
+                            self.current_integer_lets.remove(&name);
+                            self.current_contract_bindings.remove(&name);
+                            self.integer_literal_context = false;
+                        }
+                        _ => return Err(self.error("quantifier type must be a C type or Integer")),
+                    }
+                    scopes.push(Scope {
+                        forall,
+                        click_type,
+                        name,
+                        negations,
+                        previous_integer_context,
+                        integer_was_bound,
+                        integer_let_was_bound,
+                        c_was_bound,
+                    });
+                    operators.push(Operator::Scope);
+                    continue;
+                }
+                let mut operand = self.parse_proposition_atom()?;
+                for _ in 0..negations {
+                    operand = ClickProposition::Not(Box::new(operand));
+                }
+                operands.push(operand);
+                expect_operand = false;
+                continue;
+            }
+
+            let next_operator = match self.peek_ident() {
+                Some("and") => Some(Operator::And),
+                Some("or") => Some(Operator::Or),
+                Some("implies") => Some(Operator::Implies),
+                _ => None,
+            };
+            if let Some(operator) = next_operator {
+                self.position += 1;
+                while let Some(&top) = operators.last() {
+                    if matches!(top, Operator::Scope)
+                        || !(precedence(top) > precedence(operator)
+                            || (precedence(top) == precedence(operator)
+                                && !matches!(operator, Operator::Implies)))
+                    {
+                        break;
+                    }
+                    let top = operators.pop().expect("operator stack has a top");
+                    reduce(top, &mut operands);
+                }
+                operators.push(operator);
+                expect_operand = true;
+                continue;
+            }
+
+            if self.peek() == Some(&Token::RBrace) {
+                self.position += 1;
+                loop {
+                    let operator = operators
+                        .pop()
+                        .ok_or_else(|| self.error("quantifier body closed without a scope"))?;
+                    if matches!(operator, Operator::Scope) {
+                        break;
+                    }
+                    reduce(operator, &mut operands);
+                }
+                let scope = scopes.pop().expect("quantifier scope marker has a scope");
+                self.integer_literal_context = scope.previous_integer_context;
+                if scope.integer_was_bound {
+                    self.current_integer_params.insert(scope.name.clone());
+                } else {
+                    self.current_integer_params.remove(&scope.name);
+                }
+                if scope.integer_let_was_bound {
+                    self.current_integer_lets.insert(scope.name.clone());
+                } else {
+                    self.current_integer_lets.remove(&scope.name);
+                }
+                if scope.c_was_bound {
+                    self.current_contract_bindings.insert(scope.name.clone());
+                } else {
+                    self.current_contract_bindings.remove(&scope.name);
+                }
+                let body = operands.pop().expect("quantifier body operand");
+                let mut quantifier = if scope.forall {
+                    ClickProposition::ForAll {
+                        click_type: scope.click_type,
+                        name: scope.name,
+                        written_name: None,
+                        body: Box::new(body),
+                    }
+                } else {
+                    ClickProposition::Exists {
+                        click_type: scope.click_type,
+                        name: scope.name,
+                        written_name: None,
+                        body: Box::new(body),
+                    }
+                };
+                for _ in 0..scope.negations {
+                    quantifier = ClickProposition::Not(Box::new(quantifier));
+                }
+                operands.push(quantifier);
+                if scopes.is_empty() {
+                    return Ok(operands.pop().expect("quantifier chain root"));
+                }
+                expect_operand = false;
+                continue;
+            }
+
+            return Err(self.error("expected a proposition operator or `}`"));
+        }
     }
 
     fn parse_range_proposition_method(&mut self) -> Result<ClickProposition, ClickError> {
@@ -4587,16 +4668,57 @@ impl Parser {
 
     #[inline(never)]
     fn parse_both_proof_tactic(&mut self) -> Result<ProofTactic, ClickError> {
-        let left_tactics = self.parse_possibly_empty_tactic_block()?;
-        self.expect_ident_spelling("and")?;
-        let right_tactics = self.parse_possibly_empty_tactic_block()?;
+        let mut nested_both = 0;
+        self.expect(Token::LBrace)?;
+        let mut left_tactics = if self.peek_ident() == Some("both") {
+            self.position += 1;
+            nested_both += 1;
+            None
+        } else {
+            Some(self.parse_tactics_until_rbrace()?)
+        };
+
+        while left_tactics.is_none() {
+            if self.proof_nesting + nested_both >= STRUCTURAL_NESTING_LIMIT {
+                return Err(self.error(format!(
+                    "structural proof nesting exceeds Click's supported depth of {STRUCTURAL_NESTING_LIMIT}"
+                )));
+            }
+            self.expect(Token::LBrace)?;
+            if self.peek_ident() == Some("both") {
+                self.position += 1;
+                nested_both += 1;
+            } else {
+                left_tactics = Some(self.parse_tactics_until_rbrace()?);
+            }
+        }
+        self.expect(Token::RBrace)?;
+
+        let mut current = None;
+        for level in 0..=nested_both {
+            self.expect_ident_spelling("and")?;
+            self.expect(Token::LBrace)?;
+            let right_tactics = self.parse_tactics_until_rbrace()?;
+            self.expect(Token::RBrace)?;
+            let left = if let Some(current) = current.take() {
+                vec![current]
+            } else {
+                left_tactics
+                    .take()
+                    .expect("the deepest both tactic has a left block")
+            };
+            current = Some(ProofTactic::Both(ProofBoth {
+                left_tactics: left,
+                right_tactics,
+            }));
+            if level < nested_both {
+                self.expect(Token::RBrace)?;
+            }
+        }
         if self.peek() == Some(&Token::Semicolon) {
             self.position += 1;
         }
-        Ok(ProofTactic::Both(ProofBoth {
-            left_tactics,
-            right_tactics,
-        }))
+        Ok(current.expect("the both tactic chain has a root"))
     }
 
     // Conjunction spines do not retain the larger frames for loop, resource,
@@ -5307,11 +5429,16 @@ impl Parser {
 
     fn parse_possibly_empty_tactic_block(&mut self) -> Result<Vec<ProofTactic>, ClickError> {
         self.expect(Token::LBrace)?;
+        let tactics = self.parse_tactics_until_rbrace()?;
+        self.expect(Token::RBrace)?;
+        Ok(tactics)
+    }
+
+    fn parse_tactics_until_rbrace(&mut self) -> Result<Vec<ProofTactic>, ClickError> {
         let mut tactics = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             tactics.push(self.parse_proof_tactic()?);
         }
-        self.expect(Token::RBrace)?;
         Ok(tactics)
     }
 
@@ -7869,17 +7996,7 @@ impl Parser {
         }
 
         if self.peek() == Some(&Token::LBracket) {
-            self.position += 1;
-            let mut elements = Vec::new();
-            if self.peek() != Some(&Token::RBracket) {
-                elements.push(self.parse_contract_expression()?);
-                while self.peek() == Some(&Token::Comma) {
-                    self.position += 1;
-                    elements.push(self.parse_contract_expression()?);
-                }
-            }
-            self.expect(Token::RBracket)?;
-            return Ok(ContractExpression::SequenceLiteral(elements));
+            return self.parse_contract_sequence_literal();
         }
 
         if self.peek_ident() == Some("sizeof") && self.peek_next() == Some(&Token::LParen) {
@@ -8101,6 +8218,50 @@ impl Parser {
             }
             Some(token) => Err(self.error(format!("expected contract expression, got {token:?}"))),
             None => Err(self.error("expected contract expression, got end of input")),
+        }
+    }
+
+    fn parse_contract_sequence_literal(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut frames = vec![Vec::new()];
+        self.position += 1;
+        loop {
+            if self.peek() == Some(&Token::RBracket) {
+                self.position += 1;
+                let sequence = ContractExpression::SequenceLiteral(
+                    frames.pop().expect("sequence literal frame"),
+                );
+                if let Some(parent) = frames.last_mut() {
+                    parent.push(sequence);
+                    if self.peek() == Some(&Token::Comma) {
+                        self.position += 1;
+                    }
+                    continue;
+                }
+                return Ok(sequence);
+            }
+
+            if self.peek() == Some(&Token::LBracket) {
+                self.check_expression_chain_limit(frames.len())?;
+                self.position += 1;
+                frames.push(Vec::new());
+                continue;
+            }
+
+            let element = self.parse_contract_expression()?;
+            let Some(frame) = frames.last_mut() else {
+                unreachable!("sequence literal parser always has a frame")
+            };
+            frame.push(element);
+            match self.peek() {
+                Some(Token::Comma) => self.position += 1,
+                Some(Token::RBracket) => {}
+                Some(token) => {
+                    return Err(self.error(format!(
+                        "expected `,` or `]` after sequence element, got {token:?}"
+                    )));
+                }
+                None => return Err(self.error("expected `]` after sequence element")),
+            }
         }
     }
 

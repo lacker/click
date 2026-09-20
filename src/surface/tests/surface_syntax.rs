@@ -561,6 +561,115 @@ fn parser_bounds_non_parenthesized_surface_nesting_before_ast_construction() {
 }
 
 #[test]
+fn supported_surface_depth_boundaries_survive_consumption() {
+    // The parser accepts the larger 512-link compatibility boundary, while
+    // this end-to-end check exercises the largest shape that all current
+    // recursive kernel consumers can consume on the gate's stack budget.
+    let expression_chain_depth = 128;
+    let implications = (0..expression_chain_depth)
+        .map(|_| "0 == 0")
+        .collect::<Vec<_>>()
+        .join(" implies ");
+    let implication_source =
+        format!("theorem at_limit_implies() {{ requires {implications}; ensures 0 == 0; }}");
+    verify_click_theorems(&implication_source)
+        .expect("the supported implication boundary should validate");
+    let implication_file = parser::parse_file_items(&implication_source)
+        .expect("the supported implication boundary should parse");
+    let implication = implication_file.theorem_definitions()[0].requires()[0]
+        .theorem_proposition()
+        .expect("the implication requirement should be a proposition");
+    let printed_implication = super::super::printing::source_click_proposition(&implication);
+    assert!(printed_implication.contains("implies"));
+    drop(printed_implication);
+    drop(implication_file);
+
+    let additions = (0..expression_chain_depth)
+        .map(|_| "0")
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let expression_source =
+        format!("theorem at_limit_expression() {{ requires {additions} == 0; ensures 0 == 0; }}");
+    verify_click_theorems(&expression_source)
+        .expect("the supported expression boundary should validate");
+    let expression_file = parser::parse_file_items(&expression_source)
+        .expect("the supported expression boundary should parse");
+    let expression = expression_file.theorem_definitions()[0].requires()[0]
+        .theorem_proposition()
+        .expect("the expression requirement should be a proposition");
+    let printed_expression = diagnostics::describe_click_proposition(&expression);
+    assert!(printed_expression.contains(" + "));
+    drop(printed_expression);
+    drop(expression_file);
+
+    let mut quantifier_body = String::from("0 == 0");
+    for index in (0..parser::STRUCTURAL_NESTING_LIMIT - 1).rev() {
+        quantifier_body = format!("forall (q{index}: Integer) {{ {quantifier_body} }}");
+    }
+    let quantifier_file = parser::parse_file_items(&format!(
+        "theorem at_limit_quantifiers() {{ requires {quantifier_body}; ensures 0 == 0 by {{ normalize(); }} }}"
+    ))
+    .expect("the supported quantifier boundary");
+    let quantifier = quantifier_file.theorem_definitions()[0].requires()[0]
+        .theorem_proposition()
+        .expect("the quantifier requirement should be a proposition");
+    let printed_quantifier = super::super::printing::source_click_proposition(&quantifier);
+    assert!(printed_quantifier.contains("forall"));
+    drop(printed_quantifier);
+    drop(quantifier_file);
+
+    let mut nested_sequence = String::from("0");
+    for _ in 0..parser::STRUCTURAL_NESTING_LIMIT - 1 {
+        nested_sequence = format!("[{nested_sequence}]");
+    }
+    let sequence_file = parser::parse_file_items(&format!(
+        "theorem at_limit_brackets() {{ ensures {nested_sequence} == {nested_sequence}; }}"
+    ))
+    .expect("the supported bracket boundary");
+    let Ensure::Proposition(sequence) =
+        sequence_file.theorem_definitions()[0].ensures()[0].ensure()
+    else {
+        panic!("the sequence ensure should be a proposition");
+    };
+    let printed_sequence = diagnostics::describe_click_proposition(sequence);
+    assert!(printed_sequence.starts_with("[") && printed_sequence.ends_with("]"));
+    drop(printed_sequence);
+    drop(sequence_file);
+
+    let mut proof_body = String::from("normalize();");
+    for _ in 0..parser::STRUCTURAL_NESTING_LIMIT - 2 {
+        proof_body = format!("both {{ {proof_body} }} and {{ normalize(); }}");
+    }
+    let proof_file = parser::parse_file_items(&format!(
+        "theorem at_limit_proof() {{ ensures 0 == 0 by {{ {proof_body} }} }}"
+    ))
+    .expect("the supported proof boundary");
+    let SourceProof::Script(tactics) = proof_file.theorem_definitions()[0].ensures()[0].proof()
+    else {
+        panic!("the supported proof boundary should remain a script");
+    };
+    let printed_proof = super::super::printing::format_partial_tactic_sequence(tactics);
+    assert!(printed_proof.contains("both"));
+    drop(printed_proof);
+    drop(proof_file);
+
+    let nested_type = (0..parser::ALGEBRAIC_TYPE_NESTING_LIMIT)
+        .fold("Integer".to_string(), |type_name, _| {
+            format!("Box<{type_name}>")
+        });
+    let type_file = parser::parse_file_items(&format!(
+        "spec enum Box<T> {{ Wrapped(T) }} theorem at_limit_type(value: {nested_type}) {{ ensures 0 == 0; }}"
+    ))
+    .expect("the supported algebraic type boundary");
+    let type_name = validation::describe_click_type(
+        type_file.theorem_definitions()[0].parameters()[0].click_type(),
+    );
+    assert!(type_name.starts_with("Box<") && type_name.ends_with(">"));
+    drop(type_name);
+    drop(type_file);
+}
+
+#[test]
 fn parser_preserves_mixed_grouped_proposition_and_contract_expression_syntax() {
     let source = r#"
         theorem mixed_parentheses(x: int32, y: int32) {

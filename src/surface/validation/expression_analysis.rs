@@ -829,6 +829,24 @@ pub(in crate::surface) fn collect_click_function_calls_in_proposition(
     proposition: &ClickProposition,
     calls: &mut BTreeSet<String>,
 ) {
+    let mut pending = vec![proposition];
+    while let Some(proposition) = pending.pop() {
+        match proposition {
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            proposition => collect_click_function_calls_in_proposition_one(proposition, calls),
+        }
+    }
+}
+
+fn collect_click_function_calls_in_proposition_one(
+    proposition: &ClickProposition,
+    calls: &mut BTreeSet<String>,
+) {
     match proposition {
         ClickProposition::Comparison { left, right, .. } => {
             collect_click_function_calls(left, calls);

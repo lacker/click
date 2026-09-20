@@ -1130,6 +1130,64 @@ fn expand_declared_resource_proposition(
     proposition: ClickProposition,
     resource_definitions: &DeclaredResourceScope,
 ) -> Result<ClickProposition, ClickError> {
+    enum Frame {
+        Visit(ClickProposition),
+        BuildAnd,
+        BuildOr,
+        BuildImplies,
+    }
+
+    let mut frames = vec![Frame::Visit(proposition)];
+    let mut expanded = Vec::new();
+    while let Some(frame) = frames.pop() {
+        match frame {
+            Frame::Visit(proposition) => match proposition {
+                ClickProposition::And(left, right) => {
+                    frames.push(Frame::BuildAnd);
+                    frames.push(Frame::Visit(*right));
+                    frames.push(Frame::Visit(*left));
+                }
+                ClickProposition::Or(left, right) => {
+                    frames.push(Frame::BuildOr);
+                    frames.push(Frame::Visit(*right));
+                    frames.push(Frame::Visit(*left));
+                }
+                ClickProposition::Implies(left, right) => {
+                    frames.push(Frame::BuildImplies);
+                    frames.push(Frame::Visit(*right));
+                    frames.push(Frame::Visit(*left));
+                }
+                proposition => expanded.push(expand_declared_resource_proposition_one(
+                    proposition,
+                    resource_definitions,
+                )?),
+            },
+            Frame::BuildAnd => {
+                let right = expanded.pop().expect("expanded conjunction right operand");
+                let left = expanded.pop().expect("expanded conjunction left operand");
+                expanded.push(ClickProposition::And(Box::new(left), Box::new(right)));
+            }
+            Frame::BuildOr => {
+                let right = expanded.pop().expect("expanded disjunction right operand");
+                let left = expanded.pop().expect("expanded disjunction left operand");
+                expanded.push(ClickProposition::Or(Box::new(left), Box::new(right)));
+            }
+            Frame::BuildImplies => {
+                let right = expanded.pop().expect("expanded implication right operand");
+                let left = expanded.pop().expect("expanded implication left operand");
+                expanded.push(ClickProposition::Implies(Box::new(left), Box::new(right)));
+            }
+        }
+    }
+    Ok(expanded
+        .pop()
+        .expect("expanded proposition should have one root"))
+}
+
+fn expand_declared_resource_proposition_one(
+    proposition: ClickProposition,
+    resource_definitions: &DeclaredResourceScope,
+) -> Result<ClickProposition, ClickError> {
     match proposition {
         ClickProposition::Comparison {
             left,

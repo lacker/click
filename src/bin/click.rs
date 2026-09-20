@@ -153,6 +153,51 @@ mod tests {
     }
 
     #[test]
+    fn every_cli_tool_accepts_the_supported_expression_boundary() {
+        const EXPRESSION_CHAIN_LIMIT: usize = 128;
+
+        let directory = std::env::temp_dir().join(format!(
+            "click-surface-depth-cli-valid-{}",
+            std::process::id()
+        ));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        let source_path = directory.join("at-limit.click");
+        let expanded_path = directory.join("at-limit-expanded.click");
+        let additions = (0..EXPRESSION_CHAIN_LIMIT)
+            .map(|_| "0")
+            .collect::<Vec<_>>()
+            .join(" + ");
+        fs::write(
+            &source_path,
+            format!(
+                "theorem at_limit_expression() {{ requires {additions} == 0; ensures 0 == 0 by auto; }}\n"
+            ),
+        )
+        .unwrap();
+
+        entry(["verify".to_string(), source_path.display().to_string()])
+            .expect("click verify should accept the supported expression boundary");
+        entry([
+            "expand".to_string(),
+            "--claim".to_string(),
+            "at_limit_expression.ensures_0".to_string(),
+            "--output".to_string(),
+            expanded_path.display().to_string(),
+            source_path.display().to_string(),
+        ])
+        .expect("click expand should accept the supported expression boundary");
+        entry(["profile".to_string(), source_path.display().to_string()])
+            .expect("click profile should accept the supported expression boundary");
+        entry(["audit".to_string(), source_path.display().to_string()])
+            .expect("click audit should accept the supported expression boundary");
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn every_cli_tool_reports_overdeep_surface_input_without_aborting() {
         const STRUCTURAL_LIMIT: usize = 32;
         const CONTRACT_LET_LIMIT: usize = 128;

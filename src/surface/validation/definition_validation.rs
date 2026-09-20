@@ -559,6 +559,36 @@ fn validate_contract_applications_in_proposition(
     click_functions: &BTreeMap<String, ClickFunctionType>,
     context: &str,
 ) -> Result<(), ClickError> {
+    let mut pending = vec![(proposition, variables)];
+    while let Some((proposition, variables)) = pending.pop() {
+        match proposition {
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                pending.push((right, variables));
+                pending.push((left, variables));
+            }
+            proposition => {
+                validate_contract_applications_in_proposition_one(
+                    proposition,
+                    contracts,
+                    variables,
+                    click_functions,
+                    context,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_contract_applications_in_proposition_one(
+    proposition: &ClickProposition,
+    contracts: &BTreeMap<String, C0Type>,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<(), ClickError> {
     match proposition {
         ClickProposition::PredicateCall { name, arguments } => {
             if name == "same_object" {

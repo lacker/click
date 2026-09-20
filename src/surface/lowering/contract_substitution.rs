@@ -1792,6 +1792,9 @@ pub(in crate::surface) fn apply_contract_let_expressions_to_proposition(
     proposition: ClickProposition,
     bindings: &[ContractLetBinding],
 ) -> Result<ClickProposition, String> {
+    if bindings.is_empty() {
+        return Ok(proposition);
+    }
     let mut capture_names = BTreeSet::new();
     for binding in bindings {
         if let Some(value) = binding.value() {
@@ -2299,6 +2302,24 @@ pub(in crate::surface) fn collect_contract_expression_referenced_names(
 }
 
 pub(in crate::surface) fn collect_click_proposition_referenced_names(
+    proposition: &ClickProposition,
+    names: &mut BTreeSet<String>,
+) {
+    let mut pending = vec![proposition];
+    while let Some(proposition) = pending.pop() {
+        match proposition {
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            proposition => collect_click_proposition_referenced_names_one(proposition, names),
+        }
+    }
+}
+
+fn collect_click_proposition_referenced_names_one(
     proposition: &ClickProposition,
     names: &mut BTreeSet<String>,
 ) {

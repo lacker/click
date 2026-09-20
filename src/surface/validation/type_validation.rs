@@ -34,6 +34,32 @@ pub(super) fn validate_proposition_expression_types(
     click_functions: &BTreeMap<String, ClickFunctionType>,
     context: &str,
 ) -> Result<(), ClickError> {
+    let mut pending = vec![proposition];
+    while let Some(proposition) = pending.pop() {
+        match proposition {
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            proposition => validate_proposition_expression_types_one(
+                proposition,
+                variables,
+                click_functions,
+                context,
+            )?,
+        }
+    }
+    Ok(())
+}
+
+fn validate_proposition_expression_types_one(
+    proposition: &ClickProposition,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<(), ClickError> {
     match proposition {
         ClickProposition::Comparison {
             left,
@@ -201,6 +227,34 @@ pub(super) fn validate_theorem_proposition_expression_types(
 }
 
 fn validate_scoped_integer_proposition(
+    proposition: &ClickProposition,
+    variables: &mut BTreeMap<String, C0Type>,
+    integer_bindings: &mut BTreeSet<String>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<(), ClickError> {
+    let mut pending = vec![proposition];
+    while let Some(proposition) = pending.pop() {
+        match proposition {
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            proposition => validate_scoped_integer_proposition_one(
+                proposition,
+                variables,
+                integer_bindings,
+                click_functions,
+                context,
+            )?,
+        }
+    }
+    Ok(())
+}
+
+fn validate_scoped_integer_proposition_one(
     proposition: &ClickProposition,
     variables: &mut BTreeMap<String, C0Type>,
     integer_bindings: &mut BTreeSet<String>,
@@ -3028,6 +3082,34 @@ pub(super) fn validate_resource_clause(
 }
 
 pub(super) fn validate_predicate_calls_in_proposition(
+    proposition: &ClickProposition,
+    predicates: &BTreeMap<String, usize>,
+    click_functions: &BTreeMap<String, usize>,
+    context: &str,
+) -> Result<(), ClickError> {
+    let mut pending = vec![proposition];
+    while let Some(proposition) = pending.pop() {
+        match proposition {
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            proposition => {
+                validate_predicate_calls_in_proposition_one(
+                    proposition,
+                    predicates,
+                    click_functions,
+                    context,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_predicate_calls_in_proposition_one(
     proposition: &ClickProposition,
     predicates: &BTreeMap<String, usize>,
     click_functions: &BTreeMap<String, usize>,
