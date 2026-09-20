@@ -1,11 +1,12 @@
 //! The resource tracker: the one place in the kernel that knows **which
 //! resources are known to be the same at which program points**.
 //!
-//! A *resource* is a piece of mutable state, or part of one: today a memory
-//! cell, or a memory block as a pure function reads it through an array
-//! argument. A *program point* is a point on the current proof path,
-//! identified by the memory snapshot the kernel had reached there. The
-//! tracker answers two questions about them:
+//! A *resource* is a piece of mutable state, or part of one: a memory cell, a
+//! memory block as a pure function reads it through an array argument, one
+//! model field of a resource instance, or one counted population. A *program
+//! point* is a point on the current proof path, identified by the memory
+//! snapshot the kernel had reached there. The tracker answers two questions
+//! about them:
 //!
 //! * [`last_same`] — walking back from a point, where was this resource last
 //!   known to be the same, and what stopped the walk there;
@@ -18,6 +19,16 @@
 //! terms; that is [`last_same_point`], and it is the only form on the hot
 //! path. [`explain`] adds nothing to the answer — it names the step that
 //! broke the chain so a refusal can say what went wrong.
+//!
+//! **Two kinds of point, because there are two kinds of version.** A memory
+//! resource's version *is* a point: the snapshot it was last written at, which
+//! is why a load variable's name can embed one. A model field's version is the
+//! **value stored in the instance**, and a population's is the `count` term the
+//! state holds, so their points are whole saved states — [`StatePoint`], a
+//! handle to the state the kernel already keeps at `entry`, at a `mark` or at
+//! an iteration, never a copy. Those kinds have no naming walk and no recorded
+//! edge to walk; [`same_at_states`] is their whole interface, and it is two
+//! keyed lookups and one term comparison.
 //!
 //! **What the tracker is not.** It has no ownership rules: it never decides
 //! who may read or write a resource, and it has no overlap logic of its own —
@@ -88,6 +99,51 @@ impl ProgramPoint {
     }
 }
 
+/// A program point for a resource that does not live in memory: a borrowed
+/// handle to the whole execution state the kernel already holds there — the
+/// contract's entry state, a `mark`ed state out of `RecordedSnapshots`, a
+/// loop's iteration state, or the live one.
+///
+/// It is a handle, never a copy. The tracker reads one keyed entry out of the
+/// state and nothing else, and two points are one point when they are one
+/// state: nothing compares two states' contents, because a resource context's
+/// `PartialEq` walks its facts and no tracker answer may cost that.
+///
+/// Memory keeps [`ProgramPoint`] instead, whose identity is one interned
+/// snapshot id. That is what the naming path needs and what a load variable's
+/// name embeds; a whole state is neither interned nor ordered, so it could not
+/// serve there.
+#[derive(Clone, Copy)]
+pub(crate) struct StatePoint<'a> {
+    state: &'a CState,
+}
+
+impl<'a> StatePoint<'a> {
+    pub(crate) fn at(state: &'a CState) -> Self {
+        Self { state }
+    }
+
+    pub(crate) fn state(self) -> &'a CState {
+        self.state
+    }
+
+    /// True when the two handles are the same state. Pointer identity only:
+    /// a `Same` answer this gives is exact, and where it says nothing the
+    /// two keyed lookups below decide.
+    fn is_one_state(self, other: Self) -> bool {
+        std::ptr::eq(self.state, other.state)
+    }
+}
+
+impl std::fmt::Debug for StatePoint<'_> {
+    /// A state's own `Debug` is the whole symbolic state. A point is a
+    /// handle, and a diagnostic that printed one would be the repeated raw
+    /// memory snapshot the tooling rules forbid.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("StatePoint(<saved state>)")
+    }
+}
+
 /// A resource the tracker can answer about, borrowed from the caller so that
 /// asking costs nothing on the naming path.
 ///
@@ -109,6 +165,24 @@ pub(crate) enum Resource<'a> {
     /// footprint walk does not enter. Every step that can write memory affects
     /// it, because nothing bounds what it covers.
     AnyMemory,
+    /// One model field of one resource instance: which instance, by the
+    /// identity a contract's binder names, and which field of its schema.
+    ///
+    /// A field's **version is the value stored in the instance**. There is no
+    /// generation counter and no new per-instance state: an instance that
+    /// survived a call keeps its identity and gets fresh field variables, so
+    /// the stored value already distinguishes the versions.
+    ModelField {
+        identity: Variable,
+        children: &'a [String],
+        field_index: usize,
+    },
+    /// One counted population: a resource family and the arguments that
+    /// instantiate it. Its version is the `count` term the state holds.
+    Population {
+        name: &'a str,
+        arguments: &'a [AlgebraicValue],
+    },
 }
 
 impl Resource<'_> {
@@ -118,7 +192,27 @@ impl Resource<'_> {
             Self::Block(block) => OwnedResource::Block(block.clone()),
             Self::Ranges(ranges) => OwnedResource::Ranges(ranges.to_vec()),
             Self::AnyMemory => OwnedResource::AnyMemory,
+            Self::ModelField {
+                identity,
+                children,
+                field_index,
+            } => OwnedResource::ModelField {
+                identity,
+                children: children.to_vec(),
+                field_index,
+            },
+            Self::Population { name, arguments } => OwnedResource::Population {
+                name: name.to_string(),
+                arguments: arguments.to_vec(),
+            },
         }
+    }
+
+    /// Whether this resource's versions are values in a saved state rather
+    /// than points on the memory history. Those kinds have no naming path and
+    /// no recorded edge; [`same_at_states`] is their whole interface.
+    pub(crate) fn lives_in_a_saved_state(self) -> bool {
+        matches!(self, Self::ModelField { .. } | Self::Population { .. })
     }
 }
 
@@ -129,6 +223,15 @@ pub(crate) enum OwnedResource {
     Block(PointerBlock),
     Ranges(Vec<CMemoryRange>),
     AnyMemory,
+    ModelField {
+        identity: Variable,
+        children: Vec<String>,
+        field_index: usize,
+    },
+    Population {
+        name: String,
+        arguments: Vec<AlgebraicValue>,
+    },
 }
 
 impl OwnedResource {
@@ -138,6 +241,16 @@ impl OwnedResource {
             Self::Block(block) => Resource::Block(block),
             Self::Ranges(ranges) => Resource::Ranges(ranges),
             Self::AnyMemory => Resource::AnyMemory,
+            Self::ModelField {
+                identity,
+                children,
+                field_index,
+            } => Resource::ModelField {
+                identity: *identity,
+                children,
+                field_index: *field_index,
+            },
+            Self::Population { name, arguments } => Resource::Population { name, arguments },
         }
     }
 }
@@ -225,6 +338,15 @@ pub(crate) enum Change {
     CellsForgotten,
     /// Nothing: the recorded history starts here.
     BeginningOfHistory,
+    /// No recorded step names this change.
+    ///
+    /// The memory DAG records one write set per snapshot, so a cell's answer
+    /// can name the step it stopped at. Nothing records "field *k* of this
+    /// instance was replaced" or "this population moved": the version is a
+    /// value in two saved states, and the difference between them is all the
+    /// tracker sees. Naming the step belongs to the site that minted the new
+    /// value, which is the only place that knows why it did.
+    Unrecorded,
 }
 
 impl Change {
@@ -273,6 +395,16 @@ pub(crate) enum StopReason {
     NotShownSeparate(SeparationCheck),
     /// Nothing earlier is recorded.
     HistoryEnds,
+    /// The two saved states hold different values at the one key that was
+    /// asked about. Deliberately not [`StopReason::Affected`]: nothing
+    /// recorded says a step wrote it, and a tracker that claimed one would
+    /// print a step the reader never took.
+    DifferentVersion,
+    /// One of the two saved states does not hold the resource at all — the
+    /// instance was consumed, the population ended, or the state never had
+    /// it. This is the fail-closed answer: a version that cannot be found is
+    /// never reported the same.
+    NotHeld,
 }
 
 /// The check that would have had to succeed for the walk to carry the
@@ -299,29 +431,33 @@ pub(crate) enum SeparationCheck {
 }
 
 /// Whether one resource is known to hold the same version at two points.
+///
+/// `at` is the memory point the blocking step sits below. It is absent for a
+/// resource whose versions are values in two saved states: no recorded edge
+/// carries the change, so there is no point to name.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Sameness {
     Same,
     /// A step between the two points wrote the resource.
     Changed {
-        at: ProgramPoint,
+        at: Option<ProgramPoint>,
         by: Stop,
     },
     /// A step between the two points could not be shown to leave the
     /// resource alone. The resource may well be unchanged; nothing states it.
     Unknown {
-        at: ProgramPoint,
+        at: Option<ProgramPoint>,
         why: Stop,
     },
 }
 
 impl Sameness {
     /// The step that broke the chain, for the two answers that have one.
-    pub(crate) fn blocking_step(&self) -> Option<(&ProgramPoint, &Stop)> {
+    pub(crate) fn blocking_step(&self) -> Option<(Option<&ProgramPoint>, &Stop)> {
         match self {
             Self::Same => None,
-            Self::Changed { at, by } => Some((at, by)),
-            Self::Unknown { at, why } => Some((at, why)),
+            Self::Changed { at, by } => Some((at.as_ref(), by)),
+            Self::Unknown { at, why } => Some((at.as_ref(), why)),
         }
     }
 }
@@ -335,7 +471,10 @@ const MAX_REPORTED_STEPS: usize = 64;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Explanation {
     pub(crate) resource: OwnedResource,
-    pub(crate) here: ProgramPoint,
+    /// The point the question was asked at, for a resource that has one.
+    /// Absent for the kinds whose points are saved states: a state is neither
+    /// interned nor ordered, so it cannot be one of these.
+    pub(crate) here: Option<ProgramPoint>,
     /// The other point, when the question had one.
     pub(crate) there: Option<ProgramPoint>,
     pub(crate) outcome: Sameness,
@@ -350,9 +489,10 @@ impl Explanation {
     /// refusal says the resource may have changed *since*. False when the
     /// question had a single point, or when the two are not comparable.
     pub(crate) fn there_is_earlier(&self) -> bool {
-        self.there
-            .as_ref()
-            .is_some_and(|there| self.here.is_later_than(there))
+        match (&self.here, &self.there) {
+            (Some(here), Some(there)) => here.is_later_than(there),
+            _ => false,
+        }
     }
 }
 
@@ -367,7 +507,15 @@ pub(crate) fn last_same_point(resource: Resource<'_>, at: &ProgramPoint) -> Opti
         // to be the oldest point of. Its one caller knows both ends of the
         // interval it cares about and asks [`step_effect::affects`] at every
         // step in between, which is the same rule this walk would run.
-        Resource::Ranges(_) | Resource::AnyMemory => None,
+        //
+        // A model field and a population have no naming path either, for a
+        // different reason: their versions are values in saved states rather
+        // than points on the memory history, so there is no oldest point to
+        // be. [`same_at_states`] is their whole interface.
+        Resource::Ranges(_)
+        | Resource::AnyMemory
+        | Resource::ModelField { .. }
+        | Resource::Population { .. } => None,
     }
 }
 
@@ -389,7 +537,10 @@ pub(crate) fn last_same(resource: Resource<'_>, at: &ProgramPoint) -> Option<Las
             let stopped_by = Stop::at_point(&point, resource);
             Some(LastSame { point, stopped_by })
         }
-        Resource::Ranges(_) | Resource::AnyMemory => None,
+        Resource::Ranges(_)
+        | Resource::AnyMemory
+        | Resource::ModelField { .. }
+        | Resource::Population { .. } => None,
     }
 }
 
@@ -407,7 +558,7 @@ pub(crate) fn same(resource: Resource<'_>, left: &ProgramPoint, right: &ProgramP
         (last_same(resource, left), last_same(resource, right))
     else {
         return Sameness::Unknown {
-            at: left.clone(),
+            at: Some(left.clone()),
             why: Stop {
                 change: Change::BeginningOfHistory,
                 reason: StopReason::HistoryEnds,
@@ -424,13 +575,130 @@ pub(crate) fn same(resource: Resource<'_>, left: &ProgramPoint, right: &ProgramP
     };
     match blocking.stopped_by.reason {
         StopReason::Affected => Sameness::Changed {
-            at: blocking.point,
+            at: Some(blocking.point),
             by: blocking.stopped_by,
         },
-        StopReason::NotShownSeparate(_) | StopReason::HistoryEnds => Sameness::Unknown {
-            at: blocking.point,
+        StopReason::NotShownSeparate(_)
+        | StopReason::HistoryEnds
+        | StopReason::DifferentVersion
+        | StopReason::NotHeld => Sameness::Unknown {
+            at: Some(blocking.point),
             why: blocking.stopped_by,
         },
+    }
+}
+
+/// Whether a resource whose version is a **value in a saved state** holds one
+/// version at two such states.
+///
+/// This is the whole interface for [`Resource::ModelField`] and
+/// [`Resource::Population`], and it is a two-point value comparison rather
+/// than a walk. There is no recorded history to walk: the memory DAG records
+/// one write set per snapshot, and nothing records "field *k* of this instance
+/// was replaced" or "this population moved". A field that survived a call kept
+/// its identity and got fresh field variables, so the two stored values are
+/// already the two versions — which is why this needs no generation counter
+/// and no new per-instance state.
+///
+/// **Cost.** One keyed lookup in each state — `instances` by identity for a
+/// field, the state's own population list for a population — and one term
+/// comparison at the single key asked about. Nothing enumerates a resource
+/// context, nothing compares two states, and nothing is memoized: the answer
+/// reads path state, which may not be cached by content across verifications.
+/// Like the memory cases, it is asked **only while building a refusal**.
+///
+/// **Fail closed.** `Same` needs both lookups to succeed and the two values to
+/// be syntactically equal. Anything else is `Unknown`: a field a contract did
+/// not promise must never be reported the same, because a caller that believed
+/// it would hold a false theorem.
+///
+/// **Never `Changed`.** Nothing recorded says a step replaced the value, so
+/// the tracker does not claim one did. The site that minted the new value is
+/// the only place that knows why it did, and that is where a refusal reads the
+/// step from (`registered_model_field_origin`), not here.
+pub(crate) fn same_at_states(
+    resource: Resource<'_>,
+    left: StatePoint<'_>,
+    right: StatePoint<'_>,
+) -> Sameness {
+    debug_assert!(
+        resource.lives_in_a_saved_state(),
+        "a memory resource is answered by `same` over program points"
+    );
+    if left.is_one_state(right) {
+        return Sameness::Same;
+    }
+    let unknown = |reason| Sameness::Unknown {
+        at: None,
+        why: Stop {
+            change: Change::Unrecorded,
+            reason,
+        },
+    };
+    let (Some(left_version), Some(right_version)) = (
+        version_at_state(resource, left),
+        version_at_state(resource, right),
+    ) else {
+        return unknown(StopReason::NotHeld);
+    };
+    if left_version == right_version {
+        Sameness::Same
+    } else {
+        unknown(StopReason::DifferentVersion)
+    }
+}
+
+/// [`same_at_states`], with the bounded context a refusal prints.
+pub(crate) fn explain_at_states(
+    resource: Resource<'_>,
+    here: StatePoint<'_>,
+    there: StatePoint<'_>,
+) -> Explanation {
+    Explanation {
+        resource: resource.to_owned(),
+        here: None,
+        there: None,
+        outcome: same_at_states(resource, here, there),
+        crossed_after: 0,
+    }
+}
+
+/// One version of a saved-state resource: the value the state stores at the
+/// one key asked about, by one keyed lookup.
+///
+/// A `Term` rather than the stored representation, so a field and a population
+/// count are compared by the same equality. The comparison is syntactic: two
+/// spellings of one value answer `Unknown`, which is the safe direction.
+fn version_at_state(resource: Resource<'_>, point: StatePoint<'_>) -> Option<Term> {
+    match resource {
+        Resource::ModelField {
+            identity,
+            children,
+            field_index,
+        } => point
+            .state()
+            .resource_instance_at_path(identity, children)
+            .and_then(|instance| instance.fields().get(field_index))
+            .map(algebraic_value_term),
+        // `CState::counted_population` is the one keyed lookup for this, and
+        // it is the lookup every other consumer already uses. A state's
+        // population list holds one entry per resource family the contract's
+        // clauses brought into scope, so it is sized by the selected source
+        // rather than by the project.
+        Resource::Population { name, arguments } => point
+            .state()
+            .counted_population(name, arguments)
+            .map(|count| Term::Bitvector32(count.clone())),
+        // A memory resource's version is a program point, not a value.
+        Resource::Cell(_) | Resource::Block(_) | Resource::Ranges(_) | Resource::AnyMemory => None,
+    }
+}
+
+fn algebraic_value_term(value: &AlgebraicValue) -> Term {
+    match value {
+        AlgebraicValue::Integer(term) => Term::Integer(term.clone()),
+        AlgebraicValue::C(value) => Term::CValue(value.clone()),
+        AlgebraicValue::Algebraic(term) => Term::Algebraic(term.clone()),
     }
 }
 
@@ -453,11 +721,13 @@ pub(crate) fn explain_last_same(resource: Resource<'_>, here: &ProgramPoint) -> 
         Some(last) => match last.stopped_by.reason {
             StopReason::HistoryEnds => Sameness::Same,
             StopReason::Affected => Sameness::Changed {
-                at: last.point,
+                at: Some(last.point),
                 by: last.stopped_by,
             },
-            StopReason::NotShownSeparate(_) => Sameness::Unknown {
-                at: last.point,
+            StopReason::NotShownSeparate(_)
+            | StopReason::DifferentVersion
+            | StopReason::NotHeld => Sameness::Unknown {
+                at: Some(last.point),
                 why: last.stopped_by,
             },
         },
@@ -474,11 +744,12 @@ fn explanation_for(
 ) -> Explanation {
     let crossed_after = outcome
         .blocking_step()
-        .map(|(at, _)| recorded_steps_between(here, at))
+        .and_then(|(at, _)| at)
+        .map(|at| recorded_steps_between(here, at))
         .unwrap_or_default();
     Explanation {
         resource: resource.to_owned(),
-        here: here.clone(),
+        here: Some(here.clone()),
         there,
         outcome,
         crossed_after,

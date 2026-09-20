@@ -62,7 +62,7 @@ fn a_store_to_the_cell_reports_changed() {
     let Sameness::Changed { at: stopped, by } = outcome else {
         panic!("a store to the cell is a change, not {outcome:?}");
     };
-    assert_eq!(stopped, point(&after));
+    assert_eq!(stopped, Some(point(&after)));
     assert_eq!(
         by.change,
         Change::Store {
@@ -85,7 +85,7 @@ fn a_store_that_may_alias_reports_unknown_and_the_check_it_needs() {
     let Sameness::Unknown { at: stopped, why } = outcome else {
         panic!("an unseparated store is unknown, not {outcome:?}");
     };
-    assert_eq!(stopped, point(&after));
+    assert_eq!(stopped, Some(point(&after)));
     assert_eq!(why.change, Change::Store { pointer: written });
     assert_eq!(
         why.reason,
@@ -506,7 +506,7 @@ fn an_explanation_counts_the_steps_it_crossed() {
         explanation
             .outcome
             .blocking_step()
-            .map(|(at, _)| at.clone()),
+            .and_then(|(at, _)| at.cloned()),
         Some(point(&blocked))
     );
     assert_eq!(explanation.crossed_after, 2);
@@ -577,6 +577,227 @@ fn a_session_reset_empties_the_version_memos() {
         0,
         "a session reset must not leave one verification's versions for the next"
     );
+}
+
+/// The kinds whose versions are values in two saved states rather than points
+/// on the memory history: a model field and a counted population. They have no
+/// naming walk and no recorded edge, so `same_at_states` is their whole
+/// interface, and every answer here is one keyed lookup per state plus one term
+/// comparison.
+mod saved_states {
+    use super::*;
+
+    fn schema() -> ResourceFieldSchema {
+        ResourceFieldSchema::new(vec![
+            ("rank".into(), ResourceFieldType::C(CType::Int32)),
+            ("mark".into(), ResourceFieldType::Integer),
+        ])
+        .unwrap()
+    }
+
+    fn instance(identity: u64, rank: u32, mark: i64) -> ResourceInstance {
+        ResourceInstance::new(
+            Variable(identity),
+            "cell".into(),
+            vec![CValue::Int32(Bitvector32Term::Constant(7)).into()].into(),
+            schema(),
+            vec![
+                AlgebraicValue::C(CValue::Int32(Bitvector32Term::Constant(rank))),
+                AlgebraicValue::Integer(IntegerTerm::constant(num_bigint::BigInt::from(mark))),
+            ]
+            .into(),
+        )
+        .unwrap()
+    }
+
+    fn holding(identity: u64, rank: u32, mark: i64) -> CState {
+        CState::new().with_resource_context(ResourceContext::new().unchecked_with_fact(
+            CResourceFact::own(CResource::Instance(instance(identity, rank, mark))),
+        ))
+    }
+
+    fn rank() -> Resource<'static> {
+        Resource::ModelField {
+            identity: Variable(1),
+            children: &[],
+            field_index: 0,
+        }
+    }
+
+    fn unknown(reason: StopReason) -> Sameness {
+        Sameness::Unknown {
+            at: None,
+            why: Stop {
+                change: Change::Unrecorded,
+                reason,
+            },
+        }
+    }
+
+    /// One state is one point: the handle decides, and no state contents are
+    /// compared to reach it.
+    #[test]
+    fn one_state_is_one_point() {
+        let state = holding(1, 3, 0);
+        let point = StatePoint::at(&state);
+        assert_eq!(same_at_states(rank(), point, point), Sameness::Same);
+    }
+
+    /// Two states that store the same value at the one field asked about hold
+    /// one version of it, even though the states are different objects and the
+    /// other field differs. Only the asked-about key is read.
+    #[test]
+    fn equal_stored_values_are_one_version() {
+        let entry = holding(1, 3, 0);
+        let after = holding(1, 3, 9);
+        assert_eq!(
+            same_at_states(rank(), StatePoint::at(&after), StatePoint::at(&entry)),
+            Sameness::Same
+        );
+    }
+
+    /// A call that returned ownership kept the identity and replaced the field
+    /// values. Nothing recorded says which step did it, so the answer is
+    /// `Unknown` and never `Changed`: a refusal reads the step from the site
+    /// that minted the new value.
+    #[test]
+    fn a_replaced_field_value_is_unknown_not_changed() {
+        let entry = holding(1, 3, 0);
+        let after = holding(1, 4, 0);
+        assert_eq!(
+            same_at_states(rank(), StatePoint::at(&after), StatePoint::at(&entry)),
+            unknown(StopReason::DifferentVersion)
+        );
+    }
+
+    /// `unfold` consumed the instance, so the later state holds no field to
+    /// read. A version that cannot be found is never reported the same: a
+    /// field a contract did not promise must not become a premise.
+    #[test]
+    fn a_consumed_instance_is_unknown() {
+        let entry = holding(1, 3, 0);
+        let consumed = CState::new();
+        assert_eq!(
+            same_at_states(rank(), StatePoint::at(&consumed), StatePoint::at(&entry)),
+            unknown(StopReason::NotHeld)
+        );
+        assert_eq!(
+            same_at_states(rank(), StatePoint::at(&entry), StatePoint::at(&consumed)),
+            unknown(StopReason::NotHeld)
+        );
+    }
+
+    /// A field of another instance is another resource: the identity is part
+    /// of the key, so an instance the state does not hold answers `NotHeld`
+    /// rather than reading the one it does.
+    #[test]
+    fn another_identity_is_another_resource() {
+        let entry = holding(1, 3, 0);
+        let after = holding(1, 3, 0);
+        let other = Resource::ModelField {
+            identity: Variable(2),
+            children: &[],
+            field_index: 0,
+        };
+        assert_eq!(
+            same_at_states(other, StatePoint::at(&after), StatePoint::at(&entry)),
+            unknown(StopReason::NotHeld)
+        );
+    }
+
+    /// A parent-qualified path is not resolved by this lookup, so it fails
+    /// closed rather than answering about the parent's own field.
+    #[test]
+    fn a_child_path_fails_closed() {
+        let entry = holding(1, 3, 0);
+        let after = holding(1, 3, 0);
+        let child = &["left".to_string()];
+        let field = Resource::ModelField {
+            identity: Variable(1),
+            children: child,
+            field_index: 0,
+        };
+        assert_eq!(
+            same_at_states(field, StatePoint::at(&after), StatePoint::at(&entry)),
+            unknown(StopReason::NotHeld)
+        );
+    }
+
+    fn population_state(count: u32) -> CState {
+        CState::new().with_counted_population(
+            "object_ref",
+            vec![CValue::Int32(Bitvector32Term::Constant(7)).into()].into(),
+            Bitvector32Term::Constant(count),
+        )
+    }
+
+    /// A population's version is the `count` term the state holds, by the same
+    /// keyed lookup every other consumer uses.
+    #[test]
+    fn a_population_count_is_its_version() {
+        let arguments = [CValue::Int32(Bitvector32Term::Constant(7)).into()];
+        let population = Resource::Population {
+            name: "object_ref",
+            arguments: &arguments,
+        };
+        let one = population_state(1);
+        let same_count = population_state(1);
+        let two = population_state(2);
+        assert_eq!(
+            same_at_states(
+                population,
+                StatePoint::at(&same_count),
+                StatePoint::at(&one)
+            ),
+            Sameness::Same
+        );
+        assert_eq!(
+            same_at_states(population, StatePoint::at(&two), StatePoint::at(&one)),
+            unknown(StopReason::DifferentVersion)
+        );
+        let ended = CState::new();
+        assert_eq!(
+            same_at_states(population, StatePoint::at(&ended), StatePoint::at(&one)),
+            unknown(StopReason::NotHeld)
+        );
+    }
+
+    /// Neither kind has a naming path: no term is named by one of these
+    /// points, so there is no oldest point to be, exactly as for a footprint.
+    #[test]
+    fn neither_kind_has_a_naming_walk() {
+        let memory = entry_memory();
+        let arguments = [CValue::Int32(Bitvector32Term::Constant(7)).into()];
+        for resource in [
+            rank(),
+            Resource::Population {
+                name: "object_ref",
+                arguments: &arguments,
+            },
+        ] {
+            assert!(last_same_point(resource, &point(&memory)).is_none());
+            assert!(last_same(resource, &point(&memory)).is_none());
+            assert!(resource.lives_in_a_saved_state());
+        }
+    }
+
+    /// The explanation a refusal is built from carries the answer and no
+    /// program point, and nothing of the states themselves.
+    #[test]
+    fn an_explanation_carries_the_answer_and_no_state() {
+        let entry = holding(1, 3, 0);
+        let after = holding(1, 4, 0);
+        let explanation = explain_at_states(rank(), StatePoint::at(&after), StatePoint::at(&entry));
+        assert_eq!(explanation.here, None);
+        assert_eq!(explanation.there, None);
+        assert_eq!(explanation.crossed_after, 0);
+        assert_eq!(explanation.outcome, unknown(StopReason::DifferentVersion));
+        assert_eq!(explanation.resource.as_resource(), rank());
+        assert_eq!(
+            format!("{:?}", StatePoint::at(&entry)),
+            "StatePoint(<saved state>)"
+        );
+    }
 }
 
 /// A footprint is the third resource the rule answers about, and it has no

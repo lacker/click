@@ -171,6 +171,16 @@ pub(in crate::kernel) fn affects(
         // record no premise, so it is handed no evidence either.
         Resource::Ranges(ranges) => footprint_effect(step, Some(ranges)),
         Resource::AnyMemory => footprint_effect(step, None),
+        // A recorded memory edge says nothing about a model field or a
+        // population: they are not memory, and their versions are values in
+        // saved states rather than points on this history. Answering
+        // `Affected` for every step would be wrong (a store does not replace a
+        // model) and `Separate` would be a claim no edge supports, so the one
+        // rule has nothing to decide here and these kinds never reach a walk.
+        // `resource_tracker::same_at_states` is their whole interface.
+        Resource::ModelField { .. } | Resource::Population { .. } => {
+            unreachable!("a saved-state resource is answered by `same_at_states`, not by a walk")
+        }
     }
 }
 
@@ -241,6 +251,11 @@ pub(in crate::kernel) fn separation_check(
                 ..
             } => SeparationCheck::RangeDisjointness,
         },
+        // No separation check carries a model field or a population across a
+        // memory edge, because no memory edge is between them; see `affects`.
+        Resource::ModelField { .. } | Resource::Population { .. } => {
+            unreachable!("a saved-state resource is answered by `same_at_states`, not by a walk")
+        }
     }
 }
 

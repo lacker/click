@@ -1405,6 +1405,11 @@ pub(super) fn describe_resource_version_mismatch(
         resource_tracker::OwnedResource::Ranges(_) | resource_tracker::OwnedResource::AnyMemory => {
             return None;
         }
+        // The saved-state kinds are spelled from the registry that minted
+        // their values, not from a memory step; the arms are added with that
+        // registry.
+        resource_tracker::OwnedResource::ModelField { .. }
+        | resource_tracker::OwnedResource::Population { .. } => return None,
     };
     if explanation.crossed_after > 0 {
         let steps = explanation.crossed_after;
@@ -1518,6 +1523,11 @@ fn describe_cell_cause(
         }
         resource_tracker::Change::BeginningOfHistory => {
             "the recorded execution reaches no further back.".to_string()
+        }
+        // A cell's change is always a recorded step, so this is unreachable
+        // for this resource; saying it plainly beats inventing a cause.
+        resource_tracker::Change::Unrecorded => {
+            "no recorded step in between names this cell.".to_string()
         }
     }
 }
@@ -1704,6 +1714,7 @@ fn describe_step(
         resource_tracker::Change::BeginningOfHistory => {
             "the start of the recorded execution".to_string()
         }
+        resource_tracker::Change::Unrecorded => "a step nothing recorded".to_string(),
     }
 }
 
