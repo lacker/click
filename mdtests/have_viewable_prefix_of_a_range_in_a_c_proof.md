@@ -1,7 +1,7 @@
 # `have viewable(...)` proves a prefix of a range in a C proof
 
 `mdtests/have_viewable_prefix_of_a_range.md` narrows a stated viewable range in
-a pure theorem, and `docs/concepts/loadability.md` promises the same narrowing
+a pure theorem, and `docs/concepts/viewability.md` promises the same narrowing
 "in a pure theorem as well as in a C proof". The C half was refused, and for a
 reason about term spelling rather than about the rule: a C contract almost
 always states its range from `0`, and `viewable(a[0..n])` lowers its extent to

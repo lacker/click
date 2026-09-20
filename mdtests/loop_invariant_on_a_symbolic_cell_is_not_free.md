@@ -46,5 +46,5 @@ void mark_prefix(int32 a[], int32 n, int32 m) {
 ```
 
 ```expect
-fail: `a[m]` in the goal and `a[m]` in an available fact may be different reads
+fail: `a[m]` may have changed since the available fact was stated: the store to `a[…]` may have written it. Nothing states that its index differs from `m`.
 ```

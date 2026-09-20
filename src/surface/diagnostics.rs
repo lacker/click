@@ -1196,7 +1196,6 @@ pub(super) fn describe_unseparated_write(
     );
     describe_resource_version_mismatch(
         &explanation,
-        "here",
         "earlier in this function",
         parameters,
         arguments,
@@ -1224,22 +1223,25 @@ pub(super) fn describe_two_sided_version_mismatch(
         &resource_tracker::ProgramPoint::at(&left_memory),
         &resource_tracker::ProgramPoint::at(&right_memory),
     );
-    describe_resource_version_mismatch(
-        &explanation,
-        &format!("at {left_point}"),
-        &format!("at {right_point}"),
-        parameters,
-        arguments,
-    )
+    // Both labels name real program points, so the sentence is written
+    // against the earlier of the two: that is the one the value may have
+    // changed *since*.
+    let since = if explanation.there_is_earlier() {
+        right_point
+    } else {
+        left_point
+    };
+    describe_resource_version_mismatch(&explanation, since, parameters, arguments)
 }
 
 /// The explanation for a goal and an available fact that spell alike and
 /// differ only in which version they read, or for one proposition that reads
 /// one resource at two program points.
+/// `premise_point` names, as the reader would, the place the matching fact was
+/// stated; the text says the resource may have changed since then.
 pub(super) fn describe_proposition_version_mismatch(
     goal: &Proposition,
     premises: &[&Proposition],
-    goal_point: &str,
     premise_point: &str,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -1254,8 +1256,7 @@ pub(super) fn describe_proposition_version_mismatch(
         let explanation = resource_tracker::explain(resource.as_resource(), &here, &there);
         return describe_resource_version_mismatch(
             &explanation,
-            "on one side",
-            "on the other",
+            "the snapshot the other side reads",
             parameters,
             arguments,
         );
@@ -1273,195 +1274,383 @@ pub(super) fn describe_proposition_version_mismatch(
             .then_some(mismatch)
         })?;
     let explanation = resource_tracker::explain(resource.as_resource(), &here, &there);
-    describe_resource_version_mismatch(
-        &explanation,
-        &format!("in {goal_point}"),
-        &format!("in {premise_point}"),
-        parameters,
-        arguments,
-    )
+    describe_resource_version_mismatch(&explanation, premise_point, parameters, arguments)
 }
 
 /// One user-grade explanation of "these two same-looking terms read different
 /// versions of a resource", used by every refusal whose real cause is that,
 /// so the wording is identical wherever it is met.
 ///
-/// `here` and `there` label the two program points in the reader's terms
-/// ("here", "function entry", "a recorded snapshot"). The text names the
-/// resource in the source spelling, says which recorded step broke the chain,
-/// distinguishes a write from an unproved separation, and — only where it
-/// works today — says what fact would settle it. It prints no memory: at most
-/// the one blocking step, plus a count of the steps after it.
+/// `since` names, in the reader's own terms, the earlier of the two points
+/// the question was about: "function entry", "the start of this iteration", a
+/// `mark` label, or the place a fact was stated. The text picks the case that
+/// applies, spells the resource and the blocking step with the caller's names,
+/// and prints the concrete clause that would settle *that* case — an index
+/// inequality for two indexes into one array, a filled-in `separate(..)` for
+/// two objects nothing separates. A repair is printed only where it is known
+/// to work; where none does, the text says what is missing instead. It prints
+/// no memory: at most the blocking step, plus a count of the steps after it.
 pub(super) fn describe_resource_version_mismatch(
     explanation: &resource_tracker::Explanation,
-    here: &str,
-    there: &str,
+    since: &str,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> Option<String> {
     let (_, stop) = explanation.outcome.blocking_step()?;
-    let resource = describe_resource(&explanation.resource, parameters, arguments);
-    let certain = stop.reason == resource_tracker::StopReason::Affected;
-    let verb = if certain { "are" } else { "may be" };
-    // Without the C names — a pure theorem has none — the address has no
-    // source spelling, so the sentence names the two points instead of
-    // repeating a verifier-owned one.
-    let mut message = match &resource {
-        Some(resource) => format!(
-            "`{resource}` {here} and `{resource}` {there} {verb} different reads: {}",
-            describe_change(&stop.change, certain, parameters, arguments)
-        ),
-        None => format!(
-            "the same address {here} and {there} {verb} different reads: {}",
-            describe_change(&stop.change, certain, parameters, arguments)
-        ),
-    };
-    if let resource_tracker::StopReason::NotShownSeparate(check) = stop.reason {
-        message.push_str(&describe_missing_separation(
-            check,
-            resource.as_deref(),
-            &stop.change,
-            parameters,
-            arguments,
+    if stop.reason == resource_tracker::StopReason::HistoryEnds {
+        return Some(format!(
+            "the recorded execution does not connect {since} to here."
         ));
     }
+    let mut message = match &explanation.resource {
+        resource_tracker::OwnedResource::Block(block) => {
+            describe_block_fact_stop(block, &stop.change, parameters, arguments)
+        }
+        resource_tracker::OwnedResource::Cell(pointer) => {
+            describe_cell_version_stop(pointer, stop, since, parameters, arguments)
+        }
+    };
     if explanation.crossed_after > 0 {
         let steps = explanation.crossed_after;
         let plural = if steps == 1 { "step" } else { "steps" };
-        let _ = write!(message, "; the {steps} later {plural} do not touch it");
+        let _ = write!(message, " The {steps} later {plural} do not touch it.");
     }
     Some(message)
 }
 
-/// The recorded step the walk stopped at, by kind and target. No recorded
-/// step carries a source span today, so it is described rather than quoted;
-/// `docs/internals/resource-tracker.md` says what a line number would take.
-fn describe_change(
+/// A fact about a whole array. The block walk crosses only a step the kernel
+/// proves leaves the object alone, and it reads no stated separation at all,
+/// so this case has no `separate(..)` to offer and says so rather than
+/// sending the reader to write one.
+fn describe_block_fact_stop(
+    block: &PointerBlock,
     change: &resource_tracker::Change,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let named = describe_memory_block(block, parameters, arguments)
+        .map(|name| format!("`{name}`"))
+        .unwrap_or_else(|| "this array".to_string());
+    format!(
+        "a fact about {named} as a whole does not carry across {}. Only a step the kernel proves \
+         leaves the whole object alone carries one, and a stated `separate(...)` is not read here.",
+        describe_step(change, parameters, arguments)
+    )
+}
+
+/// One cell, and the step that ended the stretch its version was known over.
+fn describe_cell_version_stop(
+    pointer: &Pointer,
+    stop: &resource_tracker::Stop,
+    since: &str,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let cell = describe_source_cell(pointer, parameters, arguments);
+    // Without the C names — a pure theorem has none — the address has no
+    // source spelling, so the sentence says "this read" rather than repeating
+    // a verifier-owned one.
+    let named = match &cell {
+        Some(cell) => format!("`{}`", cell.text()),
+        None => "this read".to_string(),
+    };
+    let certain = stop.reason == resource_tracker::StopReason::Affected;
+    let changed = if certain {
+        "changed"
+    } else {
+        "may have changed"
+    };
+    format!(
+        "{named} {changed} since {since}: {}",
+        describe_cell_cause(cell.as_ref(), stop, certain, parameters, arguments)
+    )
+}
+
+/// Why this cell's chain broke, and the clause that would mend it.
+fn describe_cell_cause(
+    cell: Option<&SourceCell>,
+    stop: &resource_tracker::Stop,
     certain: bool,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> String {
-    let wrote = if certain {
-        "wrote it"
-    } else {
-        "may have written it"
-    };
-    match change {
+    match &stop.change {
         resource_tracker::Change::Store { pointer } => {
-            match describe_source_pointer(pointer, parameters, arguments) {
-                Some(written) => format!("the store to `{written}` in between {wrote}"),
-                None => format!("a store in between {wrote}"),
-            }
+            describe_store_cause(cell, pointer, certain, parameters, arguments)
         }
-        resource_tracker::Change::Call { .. } => {
-            format!("the call in between {wrote}")
+        resource_tracker::Change::Call { ranges } => {
+            describe_havoc_cause("the call in between", cell, ranges, parameters, arguments)
         }
-        resource_tracker::Change::Loop { .. } => format!("the loop in between {wrote}"),
+        resource_tracker::Change::Loop {
+            ranges: Some(ranges),
+        } => describe_havoc_cause("the loop in between", cell, ranges, parameters, arguments),
+        resource_tracker::Change::Loop { ranges: None } => {
+            "the loop in between may have written it. The loop declares no write set, so nothing \
+             can be shown separate from it: carry the fact through it as an invariant instead."
+                .to_string()
+        }
         resource_tracker::Change::Free { allocation } => {
-            match describe_source_pointer(allocation, parameters, arguments) {
-                Some(freed) => format!("the memory at `{freed}` was released in between"),
-                None => "an allocation was released in between".to_string(),
+            match describe_memory_block(&allocation.block, parameters, arguments) {
+                Some(freed) => format!(
+                    "the allocation at `{freed}` was released in between, and nothing shows it \
+                     separate from this cell."
+                ),
+                None => {
+                    "an allocation was released in between, and nothing shows it separate from \
+                     this cell."
+                        .to_string()
+                }
             }
         }
         resource_tracker::Change::Allocation { .. } => {
-            "an allocation in between made this storage live".to_string()
+            "an allocation in between made this storage live.".to_string()
         }
         resource_tracker::Change::AllocationPending => {
-            "an allocation in between has no resolved address yet".to_string()
+            "an allocation in between has no resolved address yet.".to_string()
         }
         resource_tracker::Change::ContractAllocationClaims => {
-            "a contract's allocation claims moved in between".to_string()
+            "a contract's allocation claims moved in between.".to_string()
         }
         resource_tracker::Change::Declaration { .. } => {
-            "a declaration in between added storage to the state".to_string()
+            "a declaration in between added storage to the state.".to_string()
         }
         resource_tracker::Change::LifetimeEnd { .. } => {
-            "a local's lifetime ended in between".to_string()
+            "a local's lifetime ended in between.".to_string()
         }
         resource_tracker::Change::CellsForgotten => {
-            "a step in between dropped the cell values it had cached".to_string()
+            "a step in between dropped the cell values it had cached.".to_string()
         }
         resource_tracker::Change::BeginningOfHistory => {
-            "the recorded execution does not connect the two points".to_string()
+            "the recorded execution reaches no further back.".to_string()
         }
     }
 }
 
-/// What the step would have had to be shown separate from, and the fact that
-/// would show it. Only repairs that work today are named.
-fn describe_missing_separation(
-    check: resource_tracker::SeparationCheck,
-    resource: Option<&str>,
+/// A store, and the fact that would tell it apart from this cell: an index
+/// inequality when both address one array, a filled-in `separate(..)` when
+/// they address two objects. Both are printed with the reader's own terms,
+/// and only when the terms are the reader's — an index the lowering owns is
+/// spelled `a[…]`, and no inequality is proposed over a name nobody wrote.
+fn describe_store_cause(
+    cell: Option<&SourceCell>,
+    written: &Pointer,
+    certain: bool,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let store = describe_source_cell(written, parameters, arguments);
+    if certain {
+        return match &store {
+            Some(store) => format!("the store to `{}` wrote it.", store.text()),
+            None => "a store in between wrote it.".to_string(),
+        };
+    }
+    let (Some(cell), Some(store)) = (cell, &store) else {
+        return "a store in between may have written it, and nothing tells the two addresses \
+                apart."
+            .to_string();
+    };
+    if cell.object == store.object {
+        return match (cell.named_index(), store.named_index()) {
+            (Some(read), Some(written)) if read != written => format!(
+                "the store to `{}` may have written it. If `{read}` and `{written}` differ, state \
+                 `{read} != {written}`.",
+                store.text()
+            ),
+            (Some(read), _) => format!(
+                "the store to `{}` may have written it. Nothing states that its index differs \
+                 from `{read}`.",
+                store.text()
+            ),
+            _ => format!(
+                "the store to `{}` may have written it, and nothing tells the two indexes apart.",
+                store.text()
+            ),
+        };
+    }
+    let repair = match (cell.element_range(), store.element_range()) {
+        (Some(read), Some(written)) => {
+            format!(" If they are separate, require `separate(memory({read}), memory({written}))`.")
+        }
+        _ => format!(
+            " If they are separate, require a `separate(memory({}[…]), memory({}[…]))` between \
+             them.",
+            cell.object, store.object
+        ),
+    };
+    format!(
+        "the store to `{}` may have written it, because `{}` may point into `{}`.{repair}",
+        store.text(),
+        cell.object,
+        store.object
+    )
+}
+
+/// A call or a loop, which declares the ranges it may write. The repair is a
+/// separation from that write set, and it is spelled out when the step
+/// declares exactly one range and the cell has a source spelling.
+fn describe_havoc_cause(
+    step: &str,
+    cell: Option<&SourceCell>,
+    ranges: &[CMemoryRange],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let spelled = ranges
+        .iter()
+        .map(|range| describe_source_range(range, parameters, arguments))
+        .collect::<Option<Vec<_>>>()
+        .filter(|spelled| !spelled.is_empty());
+    let Some(spelled) = spelled else {
+        return format!(
+            "{step} may have written it, and the ranges it may write are not shown separate from \
+             it."
+        );
+    };
+    let cell_range = cell.and_then(SourceCell::element_range);
+    if let ([written], Some(read)) = (spelled.as_slice(), cell_range.as_ref()) {
+        return format!(
+            "{step} may write `{written}`, which is not shown separate from it. If they are \
+             separate, require `separate(memory({read}), memory({written}))`."
+        );
+    }
+    format!(
+        "{step} may write {}, and none of them is shown separate from it.",
+        bounded_range_list(&spelled)
+    )
+}
+
+/// At most three written ranges, so a wide write set stays one short clause.
+fn bounded_range_list(ranges: &[String]) -> String {
+    const SHOWN: usize = 3;
+    let listed = ranges
+        .iter()
+        .take(SHOWN)
+        .map(|range| format!("`{range}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    match ranges.len().checked_sub(SHOWN) {
+        Some(rest) if rest > 0 => format!("{listed} and {rest} more"),
+        _ => listed,
+    }
+}
+
+/// The recorded step the walk stopped at, as a noun phrase a sentence can be
+/// built around. No recorded step carries a source span today, so it is
+/// described rather than quoted; `docs/internals/resource-tracker.md` says
+/// what a line number would take.
+fn describe_step(
     change: &resource_tracker::Change,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> String {
-    let read = match resource {
-        Some(resource) => format!("`{resource}`"),
-        None => "the read".to_string(),
-    };
-    match check {
-        resource_tracker::SeparationCheck::PointerDistinctness => {
-            let resource_tracker::Change::Store { pointer: write } = change else {
-                return format!(", and it is not shown separate from {read}");
-            };
-            let written = describe_source_pointer(write, parameters, arguments)
-                .map(|written| format!("`{written}`"))
-                .unwrap_or_else(|| "what it wrote".to_string());
-            format!(
-                ", and {written} is not shown separate from {read}: different names are not \
-                 different objects. State `separate(memory(...), memory(...))` between the two \
-                 ranges, or, for two indexes into one array, state that the indexes differ"
-            )
+    match change {
+        resource_tracker::Change::Store { pointer } => {
+            match describe_source_cell(pointer, parameters, arguments) {
+                Some(store) => format!("the store to `{}`", store.text()),
+                None => "a store".to_string(),
+            }
         }
-        resource_tracker::SeparationCheck::RangeDisjointness => format!(
-            ", and the ranges it may write are not shown separate from {read}. State \
-             `separate(memory(...), memory(...))` between them"
-        ),
-        resource_tracker::SeparationCheck::HeapAllocationSeparation => format!(
-            ", and the released allocation is not shown separate from {read}. State \
-             `separate(memory(...), memory(...))` between them"
-        ),
-        resource_tracker::SeparationCheck::NoCheckedWriteSet => {
-            ", and it states no write set, so nothing can be shown separate from it: carry the \
-             fact across it with an invariant instead"
-                .to_string()
+        resource_tracker::Change::Call { .. } => "the call".to_string(),
+        resource_tracker::Change::Loop { .. } => "the loop".to_string(),
+        resource_tracker::Change::Free { allocation } => {
+            match describe_memory_block(&allocation.block, parameters, arguments) {
+                Some(freed) => format!("the release of `{freed}`"),
+                None => "a released allocation".to_string(),
+            }
         }
-        resource_tracker::SeparationCheck::WholeBlockAgreement => format!(
-            ", and a fact about {read} as a whole is carried only across a step the kernel proves \
-             leaves the whole object alone — a stated `separate(...)` is not read here"
-        ),
+        resource_tracker::Change::Allocation { .. } => "an allocation".to_string(),
+        resource_tracker::Change::AllocationPending => {
+            "an allocation with no resolved address".to_string()
+        }
+        resource_tracker::Change::ContractAllocationClaims => {
+            "a contract's allocation claims moving".to_string()
+        }
+        resource_tracker::Change::Declaration { .. } => "a declaration".to_string(),
+        resource_tracker::Change::LifetimeEnd { .. } => "a local's lifetime ending".to_string(),
+        resource_tracker::Change::CellsForgotten => {
+            "a step that dropped its cached cell values".to_string()
+        }
+        resource_tracker::Change::BeginningOfHistory => {
+            "the start of the recorded execution".to_string()
+        }
     }
 }
 
-/// A resource in the spelling the source uses, or nothing when the C names
-/// this diagnostic was given cannot recover one.
-fn describe_resource(
-    resource: &resource_tracker::OwnedResource,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-) -> Option<String> {
-    match resource.pointer() {
-        Some(pointer) => describe_source_pointer(pointer, parameters, arguments),
-        None => describe_memory_block(resource.block(), parameters, arguments),
+/// Where an address sits inside the object that holds it.
+enum CellIndex {
+    /// The element index, spelled with the caller's own names.
+    Named(String),
+    /// The address is the object itself: a struct field, a declaration.
+    Whole,
+    /// The address is inside the object, at an index only the lowering has a
+    /// name for. The reader is shown `a[…]` rather than a kernel variable.
+    Unnamed,
+}
+
+/// An address as the source writes it, split into the object it names and the
+/// element index inside it, so a repair can name either part: `a` and `m` for
+/// `a[m]`, `g` and `0` for `g[0]`.
+struct SourceCell {
+    object: String,
+    index: CellIndex,
+}
+
+impl SourceCell {
+    fn text(&self) -> String {
+        match &self.index {
+            CellIndex::Named(index) => format!("{}[{index}]", self.object),
+            CellIndex::Whole => self.object.clone(),
+            CellIndex::Unnamed => format!("{}[…]", self.object),
+        }
+    }
+
+    fn named_index(&self) -> Option<&str> {
+        match &self.index {
+            CellIndex::Named(index) => Some(index),
+            CellIndex::Whole | CellIndex::Unnamed => None,
+        }
+    }
+
+    /// The one-element range holding exactly this cell, as `memory(..)` takes
+    /// it: `a[0]` is `a[0..1]` and `a[m]` is `a[m..m + 1]`. Only a literal or
+    /// a plain name is pasted in; a compound index would need a parenthesised
+    /// form this has not been shown to get right, and a repair that has not
+    /// been shown to work is not offered.
+    fn element_range(&self) -> Option<String> {
+        let CellIndex::Named(index) = &self.index else {
+            return None;
+        };
+        if let Ok(start) = index.parse::<i64>() {
+            // A negative element index is not a range `separate` would take,
+            // and a clause that would not parse is not a repair.
+            return start
+                .checked_add(1)
+                .filter(|_| start >= 0)
+                .map(|end| format!("{}[{start}..{end}]", self.object));
+        }
+        let plain = !index.is_empty()
+            && index.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && !index.starts_with(|c: char| c.is_ascii_digit());
+        plain.then(|| format!("{}[{index}..{index} + 1]", self.object))
     }
 }
 
-/// An address as the source writes it — `a[m]`, `g[0]`, `visited` — or
-/// nothing. Unlike [`describe_pointer`], the index is spelled with the
-/// caller's own names rather than the kernel variables it lowered to, and a
-/// name that could only be a verifier-owned one is refused instead of shown.
-fn describe_source_pointer(
+/// An address as the source writes it — `a[m]`, `g[0]`, `p->next` — or
+/// nothing when the C names this diagnostic was given recover none. Unlike
+/// [`describe_pointer`], the index is spelled with the caller's own names,
+/// and a name that could only be a verifier-owned one is refused instead of
+/// shown.
+fn describe_source_cell(
     pointer: &Pointer,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-) -> Option<String> {
+) -> Option<SourceCell> {
     // Two parameters can point into one block, and then every one of them
     // can express the address -- `b[j]` is also `a[(b - a) + j]`. The
     // shortest spelling is the one written through the parameter the address
     // actually belongs to, and picking it is deterministic.
-    let mut best: Option<String> = None;
+    let mut best: Option<SourceCell> = None;
     for (parameter, argument) in parameters.iter().zip(arguments) {
         let CExpression::Value(CValue::Pointer(base)) = argument else {
             continue;
@@ -1469,7 +1658,10 @@ fn describe_source_pointer(
         if let Some(field) =
             describe_parameter_struct_field_pointer(pointer, parameter, base.pointer())
         {
-            return Some(field);
+            return Some(SourceCell {
+                object: field,
+                index: CellIndex::Whole,
+            });
         }
         let Some(index) = diagnostic_pointer_element_index_from_base(
             pointer,
@@ -1478,16 +1670,20 @@ fn describe_source_pointer(
         ) else {
             continue;
         };
-        let spelled = if index == Bitvector32Term::Constant(0) {
-            parameter.name().to_string()
-        } else {
-            format!(
-                "{}[{}]",
-                parameter.name(),
-                describe_bitvector_with_context(&index, parameters, arguments)
-            )
+        let spelled = SourceCell {
+            object: parameter.name().to_string(),
+            index: if bitvector_is_source_spelled(&index, parameters, arguments) {
+                CellIndex::Named(describe_bitvector_with_context(
+                    &index, parameters, arguments,
+                ))
+            } else {
+                CellIndex::Unnamed
+            },
         };
-        if best.as_ref().is_none_or(|best| spelled.len() < best.len()) {
+        if best
+            .as_ref()
+            .is_none_or(|best| prefer_source_cell(&spelled, best))
+        {
             best = Some(spelled);
         }
     }
@@ -1496,9 +1692,97 @@ fn describe_source_pointer(
     }
     let declared = describe_memory_block(&pointer.block, parameters, arguments)?;
     match &pointer.offset {
-        PointerOffsetTerm::Constant(0) => Some(declared),
-        offset => Some(format!("{declared}+{}", describe_pointer_offset(offset))),
+        PointerOffsetTerm::Constant(0) => Some(SourceCell {
+            object: declared,
+            index: CellIndex::Named("0".to_string()),
+        }),
+        PointerOffsetTerm::Constant(_) => Some(SourceCell {
+            object: format!("{declared}+{}", describe_pointer_offset(&pointer.offset)),
+            index: CellIndex::Whole,
+        }),
+        // Any other offset is a term the lowering owns; the object is still
+        // the reader's, so it is named and the index is not.
+        _ => Some(SourceCell {
+            object: declared,
+            index: CellIndex::Unnamed,
+        }),
     }
+}
+
+/// A spelling the reader can act on beats one they cannot, and among equals
+/// the shortest wins. Deterministic either way.
+fn prefer_source_cell(candidate: &SourceCell, best: &SourceCell) -> bool {
+    match (
+        candidate.named_index().is_some(),
+        best.named_index().is_some(),
+    ) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => candidate.text().len() < best.text().len(),
+    }
+}
+
+/// A memory range as the source writes it, or nothing when its base or its
+/// bounds have no spelling in the caller's own names.
+fn describe_source_range(
+    range: &CMemoryRange,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    for (parameter, argument) in parameters.iter().zip(arguments) {
+        let CExpression::Value(CValue::Pointer(base)) = argument else {
+            continue;
+        };
+        let Some(base_index) = diagnostic_pointer_element_index_from_base(
+            range.base(),
+            base,
+            diagnostic_parameter_element_width(parameter),
+        ) else {
+            continue;
+        };
+        let start = bitvector32_add(base_index.clone(), range.start().clone());
+        let end = bitvector32_add(base_index, range.end().clone());
+        if !bitvector_is_source_spelled(&start, parameters, arguments)
+            || !bitvector_is_source_spelled(&end, parameters, arguments)
+        {
+            continue;
+        }
+        return Some(format!(
+            "{}[{}..{}]",
+            parameter.name(),
+            describe_bitvector_with_context(&start, parameters, arguments),
+            describe_bitvector_with_context(&end, parameters, arguments)
+        ));
+    }
+    if range.base().offset != PointerOffsetTerm::Constant(0)
+        || !bitvector_is_source_spelled(range.start(), parameters, arguments)
+        || !bitvector_is_source_spelled(range.end(), parameters, arguments)
+    {
+        return None;
+    }
+    let declared = describe_memory_block(&range.base().block, parameters, arguments)?;
+    Some(format!(
+        "{declared}[{}..{}]",
+        describe_bitvector_with_context(range.start(), parameters, arguments),
+        describe_bitvector_with_context(range.end(), parameters, arguments)
+    ))
+}
+
+/// True when every variable in this term has one of the caller's own names. A
+/// kernel variable — a loop counter, a lowering temporary — has none, and a
+/// term that mentions one is not shown to the reader at all: a repair written
+/// over a name nobody wrote is not a repair.
+fn bitvector_is_source_spelled(
+    term: &Bitvector32Term,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> bool {
+    let mut variables = std::collections::BTreeSet::new();
+    crate::kernel::collect_bitvector_variables(term, &mut variables);
+    variables.iter().all(|variable| {
+        describe_parameter_bitvector(&Bitvector32Term::Variable(*variable), parameters, arguments)
+            .is_some()
+    })
 }
 
 /// The whole object a block names, spelled as the source declares it: a
@@ -1537,6 +1821,12 @@ pub(super) fn describe_pointer(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> String {
+    // Two parameters can point into one block, and then every one of them can
+    // express the address -- `b[j]` is also `a[(b - a) + j]`. As in
+    // [`describe_source_cell`], the shortest spelling is the one written
+    // through the parameter the address actually belongs to, and picking it is
+    // deterministic.
+    let mut best: Option<String> = None;
     for (parameter, argument) in parameters.iter().zip(arguments) {
         let CExpression::Value(CValue::Pointer(base)) = argument else {
             continue;
@@ -1551,11 +1841,18 @@ pub(super) fn describe_pointer(
             base,
             diagnostic_parameter_element_width(parameter),
         ) {
-            if index == Bitvector32Term::Constant(0) {
-                return parameter.name().to_string();
+            let spelled = if index == Bitvector32Term::Constant(0) {
+                parameter.name().to_string()
+            } else {
+                format!("{}[{}]", parameter.name(), describe_bitvector(&index))
+            };
+            if best.as_ref().is_none_or(|best| spelled.len() < best.len()) {
+                best = Some(spelled);
             }
-            return format!("{}[{}]", parameter.name(), describe_bitvector(&index));
         }
+    }
+    if let Some(best) = best {
+        return best;
     }
     match &pointer.block {
         // External argument blocks are verifier-owned lowering artifacts. Do

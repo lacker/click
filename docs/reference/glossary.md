@@ -1108,7 +1108,7 @@ resource fact and related to other views by explicit resource-family rules.
 ### Viewability
 
 Evidence that a memory access can read the required bytes at a pointer in a
-  particular memory state. See [Viewable ranges](../concepts/loadability.md).
+  particular memory state. See [Viewable ranges](../concepts/viewability.md).
 
 ## W
 

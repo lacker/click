@@ -41,5 +41,5 @@ void caller() {
 ```
 
 ```expect
-fail: the store to `g` in between may have written it, and `g` is not shown separate from `a`: different names are not different objects
+fail: `a[0]` may have changed since earlier in this function: the store to `g[0]` may have written it, because `a` may point into `g`. If they are separate, require `separate(memory(a[0..1]), memory(g[0..1]))`.
 ```

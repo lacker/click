@@ -636,6 +636,10 @@ fn memory_dag_cell_source_walk(
     assumptions: &PureFactContext,
     cross_loop_havoc: bool,
 ) -> MemoryDagCell {
+    let evidence = super::step_effect::Evidence {
+        assumptions,
+        cross_loop_havoc,
+    };
     let mut current = memory.clone();
     let mut path = Vec::new();
     // The walk ends at a snapshot with no derivation: ids strictly
@@ -650,246 +654,40 @@ fn memory_dag_cell_source_walk(
                 path,
             };
         };
-        let justification = match derivation.as_ref() {
-            CMemoryDerivation::Store {
-                pointer: write,
-                value,
-                ..
-            } => {
-                if write == pointer
-                    || explicit_dag_check_active()
-                        && write.block == pointer.block
-                        && pointer_offsets_match_from_memory_derivations(
-                            &write.offset,
-                            &pointer.offset,
-                            assumptions,
-                        )
-                    || write.block == pointer.block
-                        && assumptions.exact_condition_value(&ConditionTerm::pointer_offset_equal(
-                            write.offset.clone(),
-                            pointer.offset.clone(),
-                        )) == Some(true)
-                {
+        // One rule decides every step for every resource; this walk's part is
+        // to keep the hop it justified, and to read the written value off the
+        // edge when the step turns out to be the write itself.
+        let justification = match super::step_effect::affects(
+            derivation.as_ref(),
+            &current,
+            super::Resource::Cell(pointer),
+            &evidence,
+        ) {
+            super::step_effect::StepEffect::Affected => {
+                if let CMemoryDerivation::Store { value, .. } = derivation.as_ref() {
                     return MemoryDagCell::Stored {
                         node: current,
                         value: value.clone(),
                         path,
                     };
                 }
-                // The recorded-range fallback covers writes into a
-                // proven-separate region (a buffer store crossed while
-                // resolving a struct field); the same predicate
-                // The memory-DAG cell resolver crosses `Store` hops with.
-                // Extended-bridging scope only, and under its own capped
-                // budget so this advisory walk can never drain the
-                // enclosing query's fuel — fuel-coupled forms elsewhere
-                // must check byte-for-byte.
-                if write.blocks_proven_distinct(pointer) {
-                    MemoryDagHopJustification::StoreDistinctBlocks
-                } else if pointer_offsets_with_common_base_proven_distinct(
-                    write,
-                    pointer,
-                    assumptions,
-                ) {
-                    let condition =
-                        pointer_offsets_with_common_base_distinctness_condition(write, pointer)
-                            .expect("a successful common-base check has a cancellation condition");
-                    let unequal_constants = condition == ConditionTerm::Constant(false);
-                    if unequal_constants {
-                        MemoryDagHopJustification::StoreCommonBaseUnequalConstants { condition }
-                    } else if assumptions.exact_condition_value(&condition) == Some(false) {
-                        MemoryDagHopJustification::StoreCommonBaseExactInequality { condition }
-                    } else if let ConditionTerm::Bitvector32Equal(left, right) = &condition
-                        && let Some(path) =
-                            assumptions.exact_signed_order_path_evidence(left, right, true)
-                    {
-                        MemoryDagHopJustification::StoreCommonBaseSignedOrder {
-                            condition,
-                            path,
-                            reversed: false,
-                        }
-                    } else if let ConditionTerm::Bitvector32Equal(left, right) = &condition
-                        && let Some(path) =
-                            assumptions.exact_signed_order_path_evidence(right, left, true)
-                    {
-                        MemoryDagHopJustification::StoreCommonBaseSignedOrder {
-                            condition,
-                            path,
-                            reversed: true,
-                        }
-                    } else {
-                        MemoryDagHopJustification::AssumptionDependent(
-                            MemoryDagAssumptionKind::StoreCommonBaseDistinctness,
-                        )
-                    }
-                } else if explicit_dag_check_active()
-                    && let Some(justification) =
-                        typed_store_separated_ranges_evidence(write, pointer, assumptions)
-                {
-                    justification
-                } else if explicit_dag_check_active()
-                    && assumptions
-                        .pointers_proven_disjoint_by_shallow_explicit_range(write, pointer)
-                {
-                    MemoryDagHopJustification::AssumptionDependent(
-                        MemoryDagAssumptionKind::StoreExplicitRange,
-                    )
-                } else if extended_dag_bridging_active()
-                    && pointers_proven_distinct_for_memory_resolution(write, pointer, assumptions)
-                {
-                    MemoryDagHopJustification::AssumptionDependent(
-                        MemoryDagAssumptionKind::StoreGeneralDistinctness,
-                    )
-                } else {
-                    return MemoryDagCell::Unwritten {
-                        node: current,
-                        path,
-                    };
-                }
+                return MemoryDagCell::Unwritten {
+                    node: current,
+                    path,
+                };
             }
-            // Declaring a block or forgetting cached cells writes nothing,
-            // so every load is untouched — but only the extended-bridging
-            // scope may exploit that: elsewhere these edges must look like
-            // the pre-arc absence of an edge.
-            CMemoryDerivation::BlockDeclared { .. }
-            | CMemoryDerivation::HeapAllocationPending { .. }
-            | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
-            | CMemoryDerivation::CellsForgotten { .. } => {
-                if !extended_dag_bridging_active() {
-                    return MemoryDagCell::Unwritten {
-                        node: current,
-                        path,
-                    };
-                }
-                MemoryDagHopJustification::IntrinsicNoWrite
+            super::step_effect::StepEffect::NotShownSeparate(_) => {
+                return MemoryDagCell::Unwritten {
+                    node: current,
+                    path,
+                };
             }
-            CMemoryDerivation::HeapAllocated { block, .. } => {
-                if pointer.block == *block || !extended_dag_bridging_active() {
-                    return MemoryDagCell::Unwritten {
-                        node: current,
-                        path,
-                    };
-                }
-                MemoryDagHopJustification::AllocationOfOtherBlock
-            }
-            CMemoryDerivation::LocalLifetimeEnded { block, .. } => {
-                if pointer.block == *block
-                    || !extended_dag_bridging_active()
-                    || !pointers_proven_distinct_for_memory_resolution(
-                        &Pointer {
-                            block: block.clone(),
-                            offset: PointerOffsetTerm::Constant(0),
-                        },
-                        pointer,
-                        assumptions,
-                    )
-                {
-                    return MemoryDagCell::Unwritten {
-                        node: current,
-                        path,
-                    };
-                }
-                MemoryDagHopJustification::LocalLifetimeEndedOfOtherBlock
-            }
-            CMemoryDerivation::HeapFreed {
-                allocation_base,
-                bytes,
-                ..
-            } => {
-                if !extended_dag_bridging_active() {
-                    return MemoryDagCell::Unwritten {
-                        node: current,
-                        path,
-                    };
-                }
-                if allocation_base.blocks_proven_distinct(pointer) {
-                    MemoryDagHopJustification::HeapFreeOfDistinctBlock
-                } else if pointers_proven_distinct_for_memory_resolution(
-                    allocation_base,
-                    pointer,
-                    assumptions,
-                ) {
-                    MemoryDagHopJustification::AssumptionDependent(
-                        MemoryDagAssumptionKind::HeapFreeGeneralDistinctness,
-                    )
-                } else if heap_allocation_proven_separate_from_pointer(
-                    allocation_base,
-                    bytes,
-                    pointer,
-                    assumptions,
-                ) {
-                    MemoryDagHopJustification::AssumptionDependent(
-                        MemoryDagAssumptionKind::HeapFreeResourceSeparation,
-                    )
-                } else {
-                    return MemoryDagCell::Unwritten {
-                        node: current,
-                        path,
-                    };
-                }
-            }
-            CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
-                if let Some(ranges) = typed_ranges_disjoint_from_pointer_evidence(
-                    mutable_ranges,
-                    pointer,
-                    assumptions,
-                ) {
-                    MemoryDagHopJustification::CallHavocRanges { ranges }
-                } else if assumptions.ranges_proven_disjoint_from_pointer_for_frame(
-                    mutable_ranges,
-                    pointer,
-                    current.memory(),
-                ) {
-                    MemoryDagHopJustification::AssumptionDependent(
-                        MemoryDagAssumptionKind::CallHavocRangeSeparation,
-                    )
-                } else {
-                    return MemoryDagCell::Unwritten {
-                        node: current,
-                        path,
-                    };
-                }
-            }
-            CMemoryDerivation::LoopHavoc {
-                mutable_ranges: Some(mutable_ranges),
-                ..
-            } => {
-                if !cross_loop_havoc
-                    || !extended_dag_bridging_active()
-                    || !explicit_dag_check_active()
-                {
-                    return MemoryDagCell::Unwritten {
-                        node: current,
-                        path,
-                    };
-                }
-                if let Some(ranges) = typed_ranges_disjoint_from_pointer_evidence(
-                    mutable_ranges,
-                    pointer,
-                    assumptions,
-                ) {
-                    MemoryDagHopJustification::LoopHavocRanges { ranges }
-                } else if explicit_dag_check_active()
-                    && assumptions.ranges_proven_disjoint_from_pointer_for_frame(
-                        mutable_ranges,
-                        pointer,
-                        current.memory(),
-                    )
-                {
-                    MemoryDagHopJustification::AssumptionDependent(
-                        MemoryDagAssumptionKind::LoopHavocRangeSeparation,
-                    )
-                } else {
-                    return MemoryDagCell::Unwritten {
-                        node: current,
-                        path,
-                    };
-                }
-            }
-            CMemoryDerivation::LoopHavoc {
-                mutable_ranges: None,
-                ..
-            } => {
+            super::step_effect::StepEffect::Separate(super::step_effect::Separation::Cell(
+                justification,
+            )) => justification,
+            // A block separation cannot be the answer to a cell question, and
+            // if one ever were, stopping is the fail-closed reading.
+            super::step_effect::StepEffect::Separate(super::step_effect::Separation::Block(_)) => {
                 return MemoryDagCell::Unwritten {
                     node: current,
                     path,

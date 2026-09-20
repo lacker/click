@@ -29,7 +29,7 @@ fits into verification.
 ## Memory and resources
 
 - [Memory model](memory-model.md)
-- [Viewable ranges](loadability.md)
+- [Viewable ranges](viewability.md)
 - [Resources and memory permissions](resources.md)
 - [Aliasing and frames](aliasing-and-frames.md)
 - [Specification state](spec-state.md)

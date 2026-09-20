@@ -57,5 +57,5 @@ void f(int32 a[], int32 n) {
 ```
 
 ```expect
-fail: `a` in the goal and `a` in an available fact may be different reads: the store to `g` in between may have written it, and `g` is not shown separate from `a`
+fail: a fact about `a` as a whole does not carry across the store to `g[0]`. Only a step the kernel proves leaves the whole object alone carries one, and a stated `separate(...)` is not read here.
 ```

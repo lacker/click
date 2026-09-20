@@ -1865,10 +1865,13 @@ fn an_array_refs_epoch_stops_at_a_store_that_may_alias_it() {
         .clone()
     };
 
-    let entry = CMemory::new()
-        .with_block(global(), 16)
-        .with_block(other_global(), 16)
-        .with_block(local(), 4);
+    // Declaring an object writes nothing, and a declaration proven distinct
+    // from the subject is crossed too, so an epoch reaches back past the
+    // declarations that precede it. The assertions below name the snapshot the
+    // walk actually reaches rather than "the entry state".
+    let just_g = CMemory::new().with_block(global(), 16);
+    let globals = just_g.clone().with_block(other_global(), 16);
+    let entry = globals.clone().with_block(local(), 4);
 
     // The hole this closes: `g` may be the array the caller passed as `a`.
     let after_global_store = entry.clone().store(at(global(), 0), one());
@@ -1891,15 +1894,16 @@ fn an_array_refs_epoch_stops_at_a_store_that_may_alias_it() {
     let after_local_store = entry.clone().store(at(local(), 0), one());
     assert_eq!(
         epoch(&after_local_store, PointerBlock::ExternalArgument),
-        entry,
-        "a store to a local cannot touch an array argument"
+        globals,
+        "a store to a local, and the local's own declaration, cannot touch an array argument"
     );
 
     // Two file-scope declarations are two objects.
     assert_eq!(
         epoch(&entry.clone().store(at(other_global(), 0), one()), global()),
-        entry,
-        "a store to another global cannot touch this one"
+        just_g,
+        "a store to another global cannot touch this one, and neither can either \
+         declaration that follows this one's"
     );
     // A store into the subject's own block always stops the walk.
     assert_eq!(

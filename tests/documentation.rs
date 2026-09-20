@@ -1078,10 +1078,11 @@ fn canonical_documentation_terms_have_no_retired_aliases() {
         "canonical load variables",
         "canonical name",
         "canonical names",
-        // The memory-range fact is `viewable(...)`. Only the call spelling is
-        // retired here: `docs/concepts/loadability.md` keeps its URL, and the
-        // kernel's own `proves_memory_loadable` is still named in internals
-        // prose.
+        // The memory-range fact is `viewable(...)` and its concept page is
+        // `docs/concepts/viewability.md`, so no documentation URL spells the
+        // old noun any more. The adjective is not retired: the kernel's own
+        // `proves_memory_loadable` is still named in internals prose.
+        "loadability",
         "loadable(",
         "memory dag",
         "proof frontier",

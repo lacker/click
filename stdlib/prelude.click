@@ -769,7 +769,7 @@ predicate cstr_bounded(bytes: uint8[], max: int32) {
     bytes_contains(bytes, 0, max, '\0')
 }
 
-theorem cstr_len_is_loadable(bytes: uint8[], len: int32) {
+theorem cstr_len_is_viewable(bytes: uint8[], len: int32) {
     requires cstr_len(bytes, len);
 
     ensures viewable(bytes[0..len + 1]) by {
