@@ -2818,6 +2818,82 @@ fn one_exact_pointer_equality_resolves_an_unresolved_pointer_and_nothing_else_do
     ));
 }
 
+/// The recorded history behind
+/// `mdtests/an_unresolved_pointer_sees_the_store_to_a_local.md`, asked of the
+/// snapshot comparison that fact transport uses: `x = 5`, then `q = echo(&x)`
+/// binding an unresolved pointer into a local, then `x = 1`.
+///
+/// The two snapshots either side of `x = 1` differ in one cell, and that cell
+/// is in a `local:` block. The comparison used to drop every such cell before
+/// asking anything, so it called the two snapshots agreed about a load through
+/// the returned pointer — which is `&x`, the very address the store wrote. The
+/// cells it keeps are now the ones `observable_by_load` keeps, so the answer
+/// comes from `pointers_proven_distinct_for_memory_resolution` for every block
+/// the structural rule can decide, and from nothing for the one it cannot.
+#[test]
+fn a_store_to_a_local_is_not_framed_away_for_an_unresolved_pointer() {
+    let at = |block: PointerBlock| Pointer {
+        block,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let symbolic = at(PointerBlock::Symbolic(Variable(1_000_001)));
+    let x = at("local:x".into());
+    let q = at("local:q".into());
+    let argument = at(PointerBlock::ExternalArgument);
+    let global = at("global:g".into());
+    let bare = PureFactContext::new();
+
+    let entry = CMemory::new()
+        .with_block("local:x", 4)
+        .with_block("local:q", 8)
+        .with_block("global:g", 16);
+    // `x = 5`, then the call's result stored into the caller's own `q`, then
+    // the store this read has to be told apart from.
+    let after_call = entry.store(x.clone(), crate::kernel::api::int32(5));
+    let after_binding = after_call.without_possible_aliasing_cells(&q, &bare).store(
+        q.clone(),
+        CValue::Pointer(CPointerValue::new(symbolic.clone(), CType::Int32Pointer)),
+    );
+    let after_store = after_binding
+        .clone()
+        .without_possible_aliasing_cells(&x, &bare)
+        .store(x.clone(), crate::kernel::api::int32(1));
+
+    assert!(
+        !memory_snapshots_proven_equal_at_pointer(&after_binding, &after_store, &symbolic, &bare),
+        "a store to `x` must not be framed away for a load through a pointer \
+         nothing resolves: the pointer may be `&x`"
+    );
+
+    // Nothing is lost where skipping the `local:` cell was sound: every block
+    // a store can name that is not the read's own is proven distinct from a
+    // local, so the per-cell check answers those on its first rung.
+    assert!(
+        memory_snapshots_proven_equal_at_pointer(&after_binding, &after_store, &argument, &bare),
+        "memory the caller passed in cannot be this function's own local"
+    );
+    assert!(
+        memory_snapshots_proven_equal_at_pointer(&after_binding, &after_store, &global, &bare),
+        "two differently named declared objects are two objects"
+    );
+
+    // And the tracker's walk stops at that same store, which is the step the
+    // refusal names.
+    let point = crate::kernel::resource_tracker::ProgramPoint::at(
+        &crate::kernel::intern_c_memory_ref(&after_store),
+    );
+    let stop = crate::kernel::resource_tracker::last_same(
+        crate::kernel::resource_tracker::Resource::Cell(&symbolic),
+        &point,
+    )
+    .expect("a cell always has a naming point");
+    assert_eq!(
+        stop.stopped_by.change,
+        crate::kernel::resource_tracker::Change::Store { pointer: x },
+        "the walk must stop at the store to `x`"
+    );
+}
+
 #[test]
 fn memory_resolution_alias_check_uses_explicit_separation() {
     let left_base = Pointer {

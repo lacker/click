@@ -246,6 +246,7 @@ them without losing every pair the DAG does not connect.
 | --- | --- | --- |
 | `c_memory_load_is_directly_unchanged`, `memories_directly_match_for_pointer_load` `src/kernel/memory_provenance.rs` | disagrees | The transport rule. It already asks the tracker as one disjunct — two snapshots that name the cell by one point hold the same cell — and the rest reads `CMemoryMutatesOnly`, `CMemoryEffectSummary` and `CHeapAllocationFreed` over *stated* endpoints. Its per-write ladder is the same four predicates the rule's `Store` arm uses, applied to a stated write list. |
 | `memories_match_for_pointer_load` `src/kernel/reasoning/memory_resolution.rs` | disagrees | Assumption-free structural agreement about one load: equal havoc markers, equal extent for the load's block, and equal cells under `observable_by_load`. Decides pairs with no common ancestor. |
+| `memory_snapshots_match_for_resolution`, `memories_match_for_pointer_load_bounded_alias`, `memories_match_for_pointer_load_under_assumptions` `src/kernel/reasoning/memory_resolution.rs` | disagrees | The same question with assumptions: every cell the two snapshots differ on must be proven distinct from the load. All three refuse a load whose own block is `local:`, and all three select the cells to check with `cell_is_observable_by_load`, the one filter — *not*, as they used to, by dropping every differing `local:` cell unasked. See below. |
 | `canonical_memory_for_pointer_load` | separation | A normal form, so that two snapshots can be compared at all. Its filters are `observable_by_load` and `cell_disjoint_from_load_by_constant_offset`, one shared function each. |
 | `memories_proven_equal_for_memory_resolution`, `memory_cells_definitionally_contained` | another question | Whole-state equality under assumptions. |
 | `differing_cell_pointers_possibly_aliasing` | separation | One call to `observable_by_load`. |
@@ -305,6 +306,47 @@ case holds its exact equality
 so it is also what keeps the attack refused: resolving a returned `&x` moves the
 read to `x`, which is not distinct from a store to `x`
 (`mdtests/returned_pointer_to_a_caller_local_may_alias_it.md`).
+
+##### The same shortcut, spelled on the other side
+
+Withdrawing the exception from `observable_by_load` did not withdraw it
+everywhere, because one filter of the same shape was written out by hand.
+The three assumption-carrying snapshot comparisons —
+`memory_snapshots_match_for_resolution`,
+`memories_match_for_pointer_load_bounded_alias` and
+`memories_match_for_pointer_load_under_assumptions` — check the cells two
+snapshots differ on against the load, and each selected those cells with
+`!cell.block.starts_with("local:")`. A differing `local:` cell was therefore
+dropped before anything was asked about it.
+
+That is the withdrawn exception with the sides swapped: instead of claiming an
+unresolved load reads only its own block, it claims no local is a block such a
+load reads. `&x` passed to a callee and returned is the counterexample in both
+directions, and
+`mdtests/an_unresolved_pointer_sees_the_store_to_a_local.md` is the false
+theorem the second spelling admitted — the same C as the mdtest above with the
+`ensures result == p` clause removed, so that no equality is involved at all
+and only the framing decides. A store to a *global* was never skipped, which is
+why the global attack was refused while this one was not.
+
+The filter is now `cell_is_observable_by_load`, the one filter, and nothing is
+lost where the skip was sound: a load whose own block is `local:` is refused by
+all three before they reach it, and every other block a store can name —
+`ExternalArgument`, `ExternalObject`, another `Concrete` block, `Heap`,
+`Temporary` — is proven distinct from a `local:` block, so those cells are
+answered on the first rung of the ladder rather than skipped.
+`a_store_to_a_local_is_not_framed_away_for_an_unresolved_pointer`
+(`src/kernel/tests/memory_reasoning_tests.rs`) pins the history directly.
+
+One pointerless neighbour still carries the shortcut and is not part of this
+fix: `memories_proven_equal_for_memory_resolution` compares whole snapshots
+with the `local:` cells and blocks filtered out, and
+`PureFactContext::has_order_path_for_memory_resolution`
+(`src/kernel/assumptions/condition_reasoning/order_paths.rs`) uses it to decide
+that two memory loads at one pointer are the same term. It has no load pointer
+to ask about, so making it exact is a separate change with its own blast
+radius. The false theorem above does not reach it: the order-fact form of the
+same attack (`have q[0] < 6`) is refused.
 
 Two kinds of evidence a contract can state still do not reach a load:
 

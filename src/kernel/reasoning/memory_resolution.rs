@@ -1020,10 +1020,49 @@ fn memory_snapshots_match_for_resolution(
     );
     differing
         .into_iter()
-        .filter(|cell_pointer| !cell_pointer.block.starts_with("local:"))
+        .filter(|cell_pointer| cell_is_observable_by_load(cell_pointer, pointer))
         .all(|cell_pointer| {
             pointers_proven_distinct_for_memory_resolution(&cell_pointer, pointer, assumptions)
         })
+}
+
+/// The filter the three "do these snapshots agree about this load" comparisons
+/// — [`memory_snapshots_match_for_resolution`],
+/// [`memories_match_for_pointer_load_bounded_alias`] and
+/// [`memories_match_for_pointer_load_under_assumptions`] — apply to the cells
+/// the two snapshots differ on, before asking whether each one is separate
+/// from the load.
+///
+/// It is [`PointerBlock::observable_by_load`] — the same filter the rest of
+/// the load-framing routes use — and this note exists because it used to be
+/// `!cell.block.starts_with("local:")`, a block-name shortcut that dropped
+/// every differing `local:` cell from the comparison without asking anything.
+///
+/// The shortcut's implicit claim was that a load the caller cannot resolve to
+/// a named object never reads one of this function's own automatic objects.
+/// That is the same claim the `Symbolic` exception in `observable_by_load`
+/// used to make, and it is false in the same way: `&x` may be passed to a
+/// callee and come back as the callee's result, so a `Symbolic` pointer can
+/// designate exactly the local a later statement stores to. With the shortcut
+/// in place, two snapshots that differed only in `local:x` were declared to
+/// agree about a load through such a pointer, and `q[0] == 5` survived
+/// `x = 1` with `q == &x`
+/// (`mdtests/an_unresolved_pointer_sees_the_store_to_a_local.md`, and
+/// `mdtests/returned_pointer_to_a_caller_local_may_alias_it.md` for the same
+/// C with the equality stated). A store to a *global* was never skipped,
+/// which is the difference that made the local case the surviving one.
+///
+/// Nothing is lost where the shortcut was sound. A load pointer in a `local:`
+/// block is refused by each of the three before they reach here; for every
+/// other spelling the program can write a store through —
+/// `ExternalArgument`, `ExternalObject`, another `Concrete` block, `Heap`,
+/// `Temporary` — `PointerBlock::proven_distinct` separates it from a `local:`
+/// block, so those cells are answered `true` on the first rung of the
+/// distinctness ladder instead of being skipped. What the filter keeps is
+/// exactly the set of cells whose block the kernel cannot tell apart from the
+/// load's, which is the set the comparison exists to decide.
+fn cell_is_observable_by_load(cell_pointer: &Pointer, load: &Pointer) -> bool {
+    cell_pointer.block.observable_by_load(&load.block)
 }
 
 pub(in crate::kernel) fn memory_snapshots_proven_equal_at_pointer(
@@ -1438,7 +1477,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_bounded_alias(
     }
     left.differing_cell_pointers(right)
         .into_iter()
-        .filter(|cell_pointer| !cell_pointer.block.starts_with("local:"))
+        .filter(|cell_pointer| cell_is_observable_by_load(cell_pointer, pointer))
         .all(|cell_pointer| {
             let value = left
                 .cells
@@ -1495,7 +1534,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_under_assumptions(
 
     left.differing_cell_pointers(right)
         .into_iter()
-        .filter(|cell_pointer| !cell_pointer.block.starts_with("local:"))
+        .filter(|cell_pointer| cell_is_observable_by_load(cell_pointer, pointer))
         .all(|cell_pointer| {
             crate::instrumentation::measure_operation(
                 "kernel",
