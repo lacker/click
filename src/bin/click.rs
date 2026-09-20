@@ -239,6 +239,56 @@ mod tests {
                 ),
                 "too_deep_proof.ensures_0",
             ),
+            (
+                "conditional",
+                format!(
+                    "theorem too_deep_conditional() {{ requires {}; ensures 0 == 0; }}\n",
+                    (0..=STRUCTURAL_LIMIT).fold("0".to_string(), |body, _| {
+                        format!("if 0 == 0 {{ {body} }} else {{ 0 }}")
+                    })
+                ),
+                "too_deep_conditional.ensures_0",
+            ),
+            (
+                "old",
+                format!(
+                    "theorem too_deep_old() {{ requires {} == 0; ensures 0 == 0; }}\n",
+                    (0..=16).fold("0".to_string(), |expression, _| {
+                        format!("old({expression})")
+                    })
+                ),
+                "too_deep_old.ensures_0",
+            ),
+            (
+                "at",
+                format!(
+                    "theorem too_deep_at() {{ requires {} == 0; ensures 0 == 0; }}\n",
+                    (0..=16).fold("0".to_string(), |expression, _| {
+                        format!("at(function.entry, {expression})")
+                    })
+                ),
+                "too_deep_at.ensures_0",
+            ),
+            (
+                "call",
+                format!(
+                    "theorem too_deep_call() {{ requires {} == 0; ensures 0 == 0; }}\n",
+                    (0..=16).fold("0".to_string(), |expression, _| {
+                        format!("identity({expression})")
+                    })
+                ),
+                "too_deep_call.ensures_0",
+            ),
+            (
+                "constructor",
+                format!(
+                    "theorem too_deep_constructor() {{ requires {} == 0; ensures 0 == 0; }}\n",
+                    (0..=16).fold("0".to_string(), |expression, _| {
+                        format!("Box::Wrapped({expression})")
+                    })
+                ),
+                "too_deep_constructor.ensures_0",
+            ),
         ];
 
         for (name, source, claim) in sources {

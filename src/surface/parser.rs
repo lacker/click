@@ -24,6 +24,10 @@ pub(super) const MATCH_NESTING_LIMIT: usize = 16;
 /// already bounded independently, while nested theorem/proof blocks and
 /// quantifier bodies share the ordinary structural budget.
 pub(super) const STRUCTURAL_NESTING_LIMIT: usize = 32;
+/// Conditional contract expressions recurse through both branch bodies. Keep
+/// that expression-specific path on the same bounded structural budget as
+/// quantifier and proof bodies instead of relying on the broad delimiter cap.
+pub(super) const CONTRACT_IF_NESTING_LIMIT: usize = STRUCTURAL_NESTING_LIMIT;
 /// A final token-level backstop for delimiter nesting that is not owned by a
 /// single recursive parser. The grammar-specific counters below use the
 /// smaller structural limit; this larger bound keeps malformed or mixed
@@ -305,6 +309,7 @@ struct Parser {
     proposition_nesting: usize,
     proof_nesting: usize,
     contract_expression_nesting: usize,
+    contract_if_nesting: usize,
     tokens: Vec<Token>,
     positions: Vec<SourcePosition>,
     matching_parentheses: Vec<Option<usize>>,
@@ -583,6 +588,7 @@ impl Parser {
             proposition_nesting: 0,
             proof_nesting: 0,
             contract_expression_nesting: 0,
+            contract_if_nesting: 0,
             position: 0,
             struct_layouts,
             union_layouts,
@@ -7893,23 +7899,15 @@ impl Parser {
         }
 
         if self.peek_ident() == Some("if") {
-            self.position += 1;
-            let condition = self.parse_proposition()?;
-            self.expect(Token::LBrace)?;
-            let then_branch = self.parse_contract_expression()?;
-            self.expect(Token::RBrace)?;
-            if self.peek_ident() != Some("else") {
-                return Err(self.error("expected `else` in `if` expression"));
+            if self.contract_if_nesting >= CONTRACT_IF_NESTING_LIMIT {
+                return Err(self.error(format!(
+                    "contract conditional expression nesting exceeds Click's supported depth of {CONTRACT_IF_NESTING_LIMIT}"
+                )));
             }
-            self.position += 1;
-            self.expect(Token::LBrace)?;
-            let else_branch = self.parse_contract_expression()?;
-            self.expect(Token::RBrace)?;
-            return Ok(ContractExpression::If {
-                condition: Box::new(condition),
-                then_branch: Box::new(then_branch),
-                else_branch: Box::new(else_branch),
-            });
+            self.contract_if_nesting += 1;
+            let result = self.parse_contract_if_expression();
+            self.contract_if_nesting -= 1;
+            return result;
         }
 
         if self.peek_ident() == Some("old") && self.peek_next() == Some(&Token::LParen) {
@@ -8144,6 +8142,26 @@ impl Parser {
             };
         }
         Ok(body)
+    }
+
+    fn parse_contract_if_expression(&mut self) -> Result<ContractExpression, ClickError> {
+        self.position += 1;
+        let condition = self.parse_proposition()?;
+        self.expect(Token::LBrace)?;
+        let then_branch = self.parse_contract_expression()?;
+        self.expect(Token::RBrace)?;
+        if self.peek_ident() != Some("else") {
+            return Err(self.error("expected `else` in `if` expression"));
+        }
+        self.position += 1;
+        self.expect(Token::LBrace)?;
+        let else_branch = self.parse_contract_expression()?;
+        self.expect(Token::RBrace)?;
+        Ok(ContractExpression::If {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch),
+            else_branch: Box::new(else_branch),
+        })
     }
 
     fn looks_like_algebraic_constructor(&self) -> bool {

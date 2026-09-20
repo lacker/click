@@ -9,6 +9,12 @@ sidecar. Deeper input receives a source-positioned parser diagnostic before
 recursive descent begins. This bound covers grouped propositions, grouped
 contract expressions, calls, and the other parenthesized surface forms.
 
+Other recursive surface forms have their own bounded budgets: `match`
+expressions and conditional contract expressions are limited independently,
+while quantifier bodies, proof blocks, and sequence brackets share the
+structural nesting budget. These limits likewise fail with a source-positioned
+diagnostic before an unbounded recursive parse or AST construction can occur.
+
 ## C0 is small
 
 Click does not parse general C. See [Supported C0](c0.md). Missing

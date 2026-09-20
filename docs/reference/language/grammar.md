@@ -5,9 +5,10 @@ reference](index.md). It describes Surface Click, the syntax accepted in
 `.click` files. Kernel Click is an internal representation and has no textual
 user syntax.
 
-The recursive parser currently supports at most 16 nested parentheses and
-16 nested `match` expressions. Excessive nesting is rejected with a source
-diagnostic rather than risking a native stack overflow.
+The recursive parser currently bounds nested parentheses, `match` expressions,
+conditional expressions, quantifier bodies, proof blocks, and sequence
+brackets. Excessive nesting is rejected with a source diagnostic rather than
+risking a native stack overflow.
 
 ## Lexical conventions
 

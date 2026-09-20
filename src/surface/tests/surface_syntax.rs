@@ -516,6 +516,20 @@ fn parser_bounds_non_parenthesized_surface_nesting_before_ast_construction() {
             .message()
             .contains("contract value-binding chain exceeds Click's supported depth")
     );
+
+    let nested_conditionals = (0..=parser::CONTRACT_IF_NESTING_LIMIT)
+        .fold("0".to_string(), |body, _| {
+            format!("if 0 == 0 {{ {body} }} else {{ 0 }}")
+        });
+    let conditional_error = parser::parse_file_items(&format!(
+        "theorem too_deep_conditionals() {{ requires {nested_conditionals} == 0; ensures 0 == 0; }}"
+    ))
+    .expect_err("over-deep conditional expressions should fail at the parser boundary");
+    assert!(
+        conditional_error
+            .message()
+            .contains("contract conditional expression nesting exceeds Click's supported depth")
+    );
 }
 
 #[test]
