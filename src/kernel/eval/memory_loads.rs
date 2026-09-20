@@ -2388,7 +2388,11 @@ pub(crate) fn load_variable_for_cell_with_origin(
     // snapshots that differ only by effects provably disjoint from this
     // cell then share the variable, so bookkeeping drift and unrelated
     // stores do not mint new identities for one load.
-    let epoch = crate::kernel::memory_provenance::cell_epoch_for_load_variable(memory, pointer);
+    let epoch = crate::kernel::resource_tracker::last_same_point(
+        crate::kernel::resource_tracker::Resource::Cell(pointer),
+        &crate::kernel::resource_tracker::ProgramPoint::at(memory),
+    )
+    .map(|point| point.snapshot().clone());
     let memory = epoch.as_ref().unwrap_or(memory);
     mint_load_variable_identity(memory, pointer, origin)
 }

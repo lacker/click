@@ -453,14 +453,16 @@ fn describe_unnamed_cell_addition(
     let held = truncate_debug(value, 240);
     let expected = truncate_debug(load, 240);
     let (base_arena, base_id) = base.arena_id();
-    let epoch_note =
-        match crate::kernel::memory_provenance::cell_epoch_for_load_variable(base, pointer) {
-            Some(epoch) => {
-                let (epoch_arena, epoch_id) = epoch.arena_id();
-                format!("epoch snapshot ({epoch_arena},{epoch_id})")
-            }
-            None => "epoch snapshot none (unwritten at a derivation root)".to_string(),
-        };
+    let epoch_note = match crate::kernel::resource_tracker::last_same_point(
+        crate::kernel::resource_tracker::Resource::Cell(pointer),
+        &crate::kernel::resource_tracker::ProgramPoint::at(base),
+    ) {
+        Some(epoch) => {
+            let (epoch_arena, epoch_id) = epoch.snapshot().arena_id();
+            format!("epoch snapshot ({epoch_arena},{epoch_id})")
+        }
+        None => "epoch snapshot none (unwritten at a derivation root)".to_string(),
+    };
     let mut detail = format!(
         "added a cell at {pointer:?} that is not the canonical load of its own pointer at the pre-rewrite snapshot; \
 held {held} but canonical is {expected}; \

@@ -10,6 +10,7 @@ use super::loans::{
 };
 pub(super) use super::memory_provenance::*;
 use super::prelude::*;
+pub(super) use super::resource_tracker::cell_source::*;
 use crate::instrumentation::ArtifactReuseRejection;
 use std::sync::Arc;
 

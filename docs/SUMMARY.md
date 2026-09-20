@@ -63,6 +63,7 @@
 - [Separation logic](internals/separation-logic.md)
 - [Stable views](internals/stable-views.md)
 - [Memory derivation DAG](internals/memory-dag.md)
+  - [The resource tracker](internals/resource-tracker.md)
 - [Mathematical integers](internals/mathematical-integers.md)
 - [Canonicalization](internals/canonicalization.md)
 - [Verification efficiency](internals/verification-efficiency.md)

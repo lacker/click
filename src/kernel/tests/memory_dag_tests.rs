@@ -1854,10 +1854,13 @@ fn an_array_refs_epoch_stops_at_a_store_that_may_alias_it() {
     let local = || PointerBlock::Concrete("local:f:i".to_string());
     let one = || CValue::Int32(Bitvector32Term::Constant(1));
     let epoch = |memory: &CMemory, block: PointerBlock| {
-        crate::kernel::memory_provenance::block_epoch_for_array_ref(
-            &crate::kernel::intern_c_memory(memory.clone()),
-            &block,
+        crate::kernel::resource_tracker::last_same_point(
+            crate::kernel::resource_tracker::Resource::Block(&block),
+            &crate::kernel::resource_tracker::ProgramPoint::at(&crate::kernel::intern_c_memory(
+                memory.clone(),
+            )),
         )
+        .expect("a block always has a last-same point")
         .memory()
         .clone()
     };
@@ -1935,18 +1938,18 @@ fn a_session_reset_empties_the_block_epoch_memo() {
             },
             CValue::Int32(Bitvector32Term::Constant(1)),
         );
-    crate::kernel::memory_provenance::block_epoch_for_array_ref(
-        &crate::kernel::intern_c_memory(memory),
-        &PointerBlock::ExternalArgument,
+    crate::kernel::resource_tracker::last_same_point(
+        crate::kernel::resource_tracker::Resource::Block(&PointerBlock::ExternalArgument),
+        &crate::kernel::resource_tracker::ProgramPoint::at(&crate::kernel::intern_c_memory(memory)),
     );
     assert!(
-        crate::kernel::memory_provenance::block_epoch_memo_len() > 0,
+        crate::kernel::resource_tracker::block_epoch_memo_len() > 0,
         "the walk should have recorded its epoch"
     );
 
     crate::kernel::memory_provenance::clear_canonical_form_caches();
     assert_eq!(
-        crate::kernel::memory_provenance::block_epoch_memo_len(),
+        crate::kernel::resource_tracker::block_epoch_memo_len(),
         0,
         "a session reset must not leave one verification's epochs for the next"
     );

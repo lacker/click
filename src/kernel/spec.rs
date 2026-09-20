@@ -5826,7 +5826,7 @@ fn evaluate_spec_pure_function_argument_paths(
 /// The snapshot an array argument at `pointer` names, given the state it was
 /// evaluated at.
 ///
-/// See [`crate::kernel::memory_provenance::block_epoch_for_array_ref`] for
+/// See [`crate::kernel::resource_tracker`] for
 /// what the epoch guarantees and which derivation edges it crosses. An
 /// argument that is not a pointer at all keeps the live snapshot, which is
 /// always sound and merely as fragile as before; so does a block the walk
@@ -5836,9 +5836,12 @@ fn array_ref_argument_memory(memory: &CMemory, pointer: &CValue) -> CMemory {
         return memory.clone();
     };
     let interned = crate::kernel::intern_c_memory(memory.clone());
-    crate::kernel::memory_provenance::block_epoch_for_array_ref(&interned, &pointer.pointer().block)
-        .memory()
-        .clone()
+    crate::kernel::resource_tracker::last_same_point(
+        crate::kernel::resource_tracker::Resource::Block(&pointer.pointer().block),
+        &crate::kernel::resource_tracker::ProgramPoint::at(&interned),
+    )
+    .map(|point| point.memory().clone())
+    .unwrap_or_else(|| memory.clone())
 }
 
 pub(in crate::kernel) fn c_value_bitvector_term(value: &CValue) -> Option<Bitvector32Term> {

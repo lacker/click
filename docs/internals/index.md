@@ -12,6 +12,7 @@ name differ, user-facing documentation uses the Surface Click name.
 - [Separation logic](separation-logic.md)
 - [Stable views](stable-views.md)
 - [Memory derivation DAG](memory-dag.md)
+- [The resource tracker](resource-tracker.md)
 - [Mathematical integers](mathematical-integers.md)
 
 ## Engineering constraints

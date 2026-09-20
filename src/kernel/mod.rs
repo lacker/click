@@ -48,6 +48,7 @@ pub use pure_functions::{
     CPureFunctionDefinition, CPureFunctionParameter, register_pure_function_definition,
 };
 pub(crate) mod reasoning;
+pub(crate) mod resource_tracker;
 mod spec;
 pub(crate) use spec::{
     SpecCaptureRefusal, capture_spec_algebraic_value, capture_spec_integer_value,
