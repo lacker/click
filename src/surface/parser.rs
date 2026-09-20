@@ -28,6 +28,10 @@ pub(super) const STRUCTURAL_NESTING_LIMIT: usize = 32;
 /// that expression-specific path on the same bounded structural budget as
 /// quantifier and proof bodies instead of relying on the broad delimiter cap.
 pub(super) const CONTRACT_IF_NESTING_LIMIT: usize = STRUCTURAL_NESTING_LIMIT;
+/// Generic algebraic applications and datatype fields recurse through angle
+/// brackets, which are not part of the delimiter preflight because they also
+/// spell comparison operators. Keep that type-only recursion bounded here.
+pub(super) const ALGEBRAIC_TYPE_NESTING_LIMIT: usize = STRUCTURAL_NESTING_LIMIT;
 /// A final token-level backstop for delimiter nesting that is not owned by a
 /// single recursive parser. The grammar-specific counters below use the
 /// smaller structural limit; this larger bound keeps malformed or mixed
@@ -310,6 +314,7 @@ struct Parser {
     proof_nesting: usize,
     contract_expression_nesting: usize,
     contract_if_nesting: usize,
+    algebraic_type_nesting: usize,
     tokens: Vec<Token>,
     positions: Vec<SourcePosition>,
     matching_parentheses: Vec<Option<usize>>,
@@ -589,6 +594,7 @@ impl Parser {
             proof_nesting: 0,
             contract_expression_nesting: 0,
             contract_if_nesting: 0,
+            algebraic_type_nesting: 0,
             position: 0,
             struct_layouts,
             union_layouts,
@@ -1007,29 +1013,49 @@ impl Parser {
         }
 
         self.position += 1;
-        let mut arguments = Vec::new();
         if self.peek() == Some(&Token::LessThan) {
-            self.position += 1;
-            loop {
-                arguments.push(self.parse_algebraic_field_type(type_parameters)?);
-                match self.peek() {
-                    Some(Token::Comma) => self.position += 1,
-                    Some(Token::GreaterThan) => {
-                        self.position += 1;
-                        break;
-                    }
-                    Some(Token::ShiftRight) => {
-                        self.tokens[self.position] = Token::GreaterThan;
-                        break;
-                    }
-                    Some(token) => {
-                        return Err(self.error(format!(
-                            "expected `,` or `>` after datatype argument, got {}",
-                            token.describe()
-                        )));
-                    }
-                    None => return Err(self.error("expected `>` after datatype arguments")),
+            if self.algebraic_type_nesting >= ALGEBRAIC_TYPE_NESTING_LIMIT {
+                return Err(self.error(format!(
+                    "algebraic datatype nesting exceeds Click's supported depth of {ALGEBRAIC_TYPE_NESTING_LIMIT}"
+                )));
+            }
+            self.algebraic_type_nesting += 1;
+            let result = self.parse_algebraic_field_type_arguments(name, type_parameters);
+            self.algebraic_type_nesting -= 1;
+            return result;
+        }
+        Ok(AlgebraicFieldType::Algebraic {
+            name,
+            arguments: Vec::new(),
+        })
+    }
+
+    fn parse_algebraic_field_type_arguments(
+        &mut self,
+        name: String,
+        type_parameters: &[String],
+    ) -> Result<AlgebraicFieldType, ClickError> {
+        self.position += 1;
+        let mut arguments = Vec::new();
+        loop {
+            arguments.push(self.parse_algebraic_field_type(type_parameters)?);
+            match self.peek() {
+                Some(Token::Comma) => self.position += 1,
+                Some(Token::GreaterThan) => {
+                    self.position += 1;
+                    break;
                 }
+                Some(Token::ShiftRight) => {
+                    self.tokens[self.position] = Token::GreaterThan;
+                    break;
+                }
+                Some(token) => {
+                    return Err(self.error(format!(
+                        "expected `,` or `>` after datatype argument, got {}",
+                        token.describe()
+                    )));
+                }
+                None => return Err(self.error("expected `>` after datatype arguments")),
             }
         }
         Ok(AlgebraicFieldType::Algebraic { name, arguments })
@@ -8181,35 +8207,55 @@ impl Parser {
 
     fn parse_algebraic_type_application(&mut self) -> Result<AlgebraicTypeApplication, ClickError> {
         let name = self.expect_ident("algebraic datatype name")?;
-        let mut arguments = Vec::new();
         if self.peek() == Some(&Token::LessThan) {
-            self.position += 1;
-            loop {
-                let (argument, parsed_c_type) = self.parse_click_type()?;
-                if let Some(parsed) = parsed_c_type
-                    && !algebraic_field_c_type_supported(parsed.c_type)
-                {
-                    return Err(self.error("algebraic datatype arguments must be value types"));
+            if self.algebraic_type_nesting >= ALGEBRAIC_TYPE_NESTING_LIMIT {
+                return Err(self.error(format!(
+                    "algebraic datatype nesting exceeds Click's supported depth of {ALGEBRAIC_TYPE_NESTING_LIMIT}"
+                )));
+            }
+            self.algebraic_type_nesting += 1;
+            let result = self.parse_algebraic_type_application_arguments(name);
+            self.algebraic_type_nesting -= 1;
+            return result;
+        }
+        Ok(AlgebraicTypeApplication {
+            rigid: false,
+            name,
+            arguments: Vec::new(),
+        })
+    }
+
+    fn parse_algebraic_type_application_arguments(
+        &mut self,
+        name: String,
+    ) -> Result<AlgebraicTypeApplication, ClickError> {
+        self.position += 1;
+        let mut arguments = Vec::new();
+        loop {
+            let (argument, parsed_c_type) = self.parse_click_type()?;
+            if let Some(parsed) = parsed_c_type
+                && !algebraic_field_c_type_supported(parsed.c_type)
+            {
+                return Err(self.error("algebraic datatype arguments must be value types"));
+            }
+            arguments.push(argument);
+            match self.peek() {
+                Some(Token::Comma) => self.position += 1,
+                Some(Token::GreaterThan) => {
+                    self.position += 1;
+                    break;
                 }
-                arguments.push(argument);
-                match self.peek() {
-                    Some(Token::Comma) => self.position += 1,
-                    Some(Token::GreaterThan) => {
-                        self.position += 1;
-                        break;
-                    }
-                    Some(Token::ShiftRight) => {
-                        self.tokens[self.position] = Token::GreaterThan;
-                        break;
-                    }
-                    Some(token) => {
-                        return Err(self.error(format!(
-                            "expected `,` or `>` after datatype argument, got {}",
-                            token.describe()
-                        )));
-                    }
-                    None => return Err(self.error("expected `>` after datatype arguments")),
+                Some(Token::ShiftRight) => {
+                    self.tokens[self.position] = Token::GreaterThan;
+                    break;
                 }
+                Some(token) => {
+                    return Err(self.error(format!(
+                        "expected `,` or `>` after datatype argument, got {}",
+                        token.describe()
+                    )));
+                }
+                None => return Err(self.error("expected `>` after datatype arguments")),
             }
         }
         Ok(AlgebraicTypeApplication {

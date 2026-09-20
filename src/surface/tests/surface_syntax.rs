@@ -530,6 +530,34 @@ fn parser_bounds_non_parenthesized_surface_nesting_before_ast_construction() {
             .message()
             .contains("contract conditional expression nesting exceeds Click's supported depth")
     );
+
+    let nested_generic_type = (0..=parser::ALGEBRAIC_TYPE_NESTING_LIMIT)
+        .fold("Integer".to_string(), |type_name, _| {
+            format!("Box<{type_name}>")
+        });
+    let generic_type_error = parser::parse_file_items(&format!(
+        "theorem too_deep_generic(value: {nested_generic_type}) {{ ensures 0 == 0; }}"
+    ))
+    .expect_err("over-deep algebraic type applications should fail at the parser boundary");
+    assert!(
+        generic_type_error
+            .message()
+            .contains("algebraic datatype nesting exceeds Click's supported depth")
+    );
+
+    let nested_generic_field = (0..=parser::ALGEBRAIC_TYPE_NESTING_LIMIT)
+        .fold("Integer".to_string(), |type_name, _| {
+            format!("Box<{type_name}>")
+        });
+    let generic_field_error = parser::parse_file_items(&format!(
+        "spec enum too_deep<T> {{ Wrapped({nested_generic_field}) }}"
+    ))
+    .expect_err("over-deep algebraic field types should fail at the parser boundary");
+    assert!(
+        generic_field_error
+            .message()
+            .contains("algebraic datatype nesting exceeds Click's supported depth")
+    );
 }
 
 #[test]

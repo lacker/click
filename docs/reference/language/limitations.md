@@ -14,6 +14,9 @@ expressions and conditional contract expressions are limited independently,
 while quantifier bodies, proof blocks, and sequence brackets share the
 structural nesting budget. These limits likewise fail with a source-positioned
 diagnostic before an unbounded recursive parse or AST construction can occur.
+Nested algebraic datatype applications and fields use a separate bounded
+angle-bracket budget; angle brackets are not included in the general delimiter
+preflight because they also spell comparison operators.
 
 ## C0 is small
 

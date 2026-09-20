@@ -7,8 +7,9 @@ user syntax.
 
 The recursive parser currently bounds nested parentheses, `match` expressions,
 conditional expressions, quantifier bodies, proof blocks, and sequence
-brackets. Excessive nesting is rejected with a source diagnostic rather than
-risking a native stack overflow.
+brackets. Algebraic generic applications and fields have a separate type
+nesting budget. Excessive nesting is rejected with a source diagnostic rather
+than risking a native stack overflow.
 
 ## Lexical conventions
 

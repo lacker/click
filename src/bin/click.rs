@@ -156,6 +156,16 @@ mod tests {
     fn every_cli_tool_reports_overdeep_surface_input_without_aborting() {
         const STRUCTURAL_LIMIT: usize = 32;
         const CONTRACT_LET_LIMIT: usize = 128;
+        const ALGEBRAIC_TYPE_LIMIT: usize = 32;
+
+        let nested_generic_type = (0..=ALGEBRAIC_TYPE_LIMIT)
+            .fold("Integer".to_string(), |type_name, _| {
+                format!("Box<{type_name}>")
+            });
+        let nested_generic_field = (0..=ALGEBRAIC_TYPE_LIMIT)
+            .fold("Integer".to_string(), |type_name, _| {
+                format!("Box<{type_name}>")
+            });
 
         let directory =
             std::env::temp_dir().join(format!("click-surface-depth-cli-{}", std::process::id()));
@@ -288,6 +298,21 @@ mod tests {
                     })
                 ),
                 "too_deep_constructor.ensures_0",
+            ),
+            (
+                "generic-type",
+                format!(
+                    "theorem too_deep_generic(value: {nested_generic_type}) {{ ensures 0 == 0; }}\n"
+                ),
+                "too_deep_generic.ensures_0",
+            ),
+            (
+                "generic-field",
+                format!(
+                    "spec enum too_deep<T> {{ Wrapped({nested_generic_field}) }}\n\
+                     theorem too_deep_field() {{ ensures 0 == 0; }}\n"
+                ),
+                "too_deep_field.ensures_0",
             ),
         ];
 
