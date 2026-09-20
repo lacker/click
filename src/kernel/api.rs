@@ -2292,6 +2292,37 @@ pub(crate) fn c_state_with_borrowed_contract_inputs(
     Ok(rooted)
 }
 
+/// `assumptions` with every explicit memory separation removed.
+///
+/// Used by the one check that decides whether a contract's own viewed and
+/// owned clauses may coexist; see the comment at its call site for why a
+/// separation is not evidence there.
+fn assumptions_without_memory_separations(assumptions: &PureFactContext) -> PureFactContext {
+    let separations = assumptions
+        .prop_facts
+        .iter()
+        .filter(|fact| {
+            matches!(
+                fact,
+                Proposition::CMemoryDisjoint { .. }
+                    | Proposition::CResourceSeparate {
+                        left: CResource::Memory(_),
+                        right: CResource::Memory(_),
+                    }
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if separations.is_empty() {
+        return assumptions.clone();
+    }
+    let mut stripped = assumptions.clone();
+    for fact in &separations {
+        stripped.remove_proposition_fact(fact);
+    }
+    stripped
+}
+
 fn install_borrowed_contract_inputs(
     state: CState,
     function: &CFunction,
@@ -2320,6 +2351,21 @@ fn install_borrowed_contract_inputs(
         .filter(|input| input.fact.is_own())
         .filter_map(|input| input.fact.memory_range().cloned())
         .collect::<Vec<_>>();
+    // This check decides the partition, so it may not read a claim *of* the
+    // partition. `memory_ranges_proven_overlapping` answers "not
+    // overlapping" as soon as the context holds an explicit separation of
+    // the two ranges, and the entry partition
+    // (`functions::contract_entry_partition_facts`) is exactly such a
+    // separation over exactly these two clauses: reading one here would let
+    // the claim license itself, and `requires q == p; views p[0..1]; owns
+    // q[0..1];` would stop being refused
+    // (`root_view_refuses_an_owned_alias_of_the_viewed_range`). Every memory
+    // separation is dropped rather than the derived ones by name, so nothing
+    // rests on the two sides spelling one fact identically: a stated
+    // `separate(..)` over the same two clauses is a second spelling of the
+    // same claim, not evidence about where the ranges are. Dropping them can
+    // only make this check refuse more.
+    let partition_free_assumptions = assumptions_without_memory_separations(assumptions);
     let refuse_owned_overlap = |viewed_range: &CMemoryRange| {
         owned_input_ranges
             .iter()
@@ -2327,7 +2373,7 @@ fn install_borrowed_contract_inputs(
                 crate::kernel::loans::protected_range_proven_overlapping(
                     owned,
                     viewed_range,
-                    assumptions,
+                    &partition_free_assumptions,
                 )
             })
             .map(|owned| {
@@ -2392,9 +2438,15 @@ fn install_borrowed_contract_inputs(
         // A view the same contract already owns is not authority a caller
         // lends: the two clauses describe one right twice. Name both so the
         // reader can see which `views` and which `owns` overlap.
+        //
+        // Asked without the memory separations, for the reason above:
+        // `memory_range_covers` answers "does not cover" as soon as the
+        // context separates the two ranges, and the entry partition is
+        // exactly a separation of an owned clause from a viewed one. This is
+        // the decision that licenses that fact, so it cannot consume it.
         if let Some((_, owner)) = state
             .resources()
-            .directly_supporting_owned_entry(&viewed, assumptions)
+            .directly_supporting_owned_entry(&viewed, &partition_free_assumptions)
         {
             let owner = owner.clone();
             return Err(LoanRefusal::ActiveDependency.diagnostic_with_subject(

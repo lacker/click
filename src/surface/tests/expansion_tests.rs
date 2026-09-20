@@ -11385,19 +11385,54 @@ fn snapshot_and_post_call_transport_fixtures_have_no_outcome_fallbacks() {
             "`{}` checked after deleting its selected retained step",
             path.display()
         );
-        if filename == "separate_symbolic_unwritten_read.md" {
-            let without_separation = expanded
-                .lines()
-                .filter(|line| !line.contains("separate(memory("))
-                .collect::<Vec<_>>()
-                .join("\n");
-            assert!(
-                verify_c0_sources(&without_separation, &c_sources).is_err(),
-                "`{}` checked after deleting its required separation premises",
-                path.display()
-            );
-        }
     }
+}
+
+/// A stated `separate(..)` the proof consumed is load-bearing: deleting it
+/// breaks the proof.
+///
+/// `separate_symbolic_unwritten_read` used to carry this check inside the
+/// loop above, and stopped being able to when the entry partition
+/// (`kernel::contract_entry_partition_facts`) made its own
+/// `consumes p[i..i + 1]` / `views p[j..j + 1]` pair imply the separation it
+/// states. This fixture declares no resource for `a` at all -- it is read
+/// under a bare `viewable(..)` requirement -- so nothing implies its
+/// separation from the owned global, and deleting it must still break the
+/// proof.
+#[test]
+fn a_stated_separation_is_load_bearing() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests")
+        .join("a_separated_array_argument_survives_a_global_store.md");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .unwrap_or_else(|| panic!("`{}` has no Click source", path.display()));
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(click_source, &c_sources)
+        .unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
+    let without_separation = click_source
+        .lines()
+        .filter(|line| !line.contains("separate(memory("))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_ne!(
+        without_separation, click_source,
+        "the fixture no longer states a separation"
+    );
+    assert!(
+        verify_c0_sources(&without_separation, &c_sources).is_err(),
+        "`{}` checked after deleting its required separation premise",
+        path.display()
+    );
 }
 
 const RESOURCE_EXAMPLE_PIPELINE_CASES: &[(&str, &str, &str, &str)] = &[
