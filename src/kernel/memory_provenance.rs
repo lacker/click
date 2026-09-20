@@ -1677,6 +1677,99 @@ pub(in crate::kernel) fn typed_store_separated_ranges_evidence(
         })
 }
 
+/// Whether one separating resource composition in the context tells a store
+/// apart from a load, and the evidence that says so.
+///
+/// **The rule.** A store is separate from a load when some valid composition
+/// in the context owns both addresses through *different* members. Two owned
+/// memory facts of one composition hold disjoint bytes — that is the
+/// partition invariant, enforced at every insertion by
+/// `MemoryResourceAlgebra::pair_validity_error`, whose
+/// `OverlappingOwnedMemoryResources` is the error a context violating it
+/// raises, and stated as a law by `observable_facts_assuming_valid`: "two
+/// owned members are pairwise separate". `owns value[0..1]` beside
+/// `owns Cell(result)` is the shape that needs it: `value` is an
+/// `ExternalArgument` address and `result` is a pointer a callback returned,
+/// so `proven_distinct` separates them from nothing and no offset relates
+/// them. Ownership is the only thing that does.
+///
+/// **Why a composition fact survives the step it is used across.** What the
+/// two members yield is a claim about *addresses*, and an address is a value.
+/// The ranges are spelled with pointer terms whose loads carry their own
+/// snapshot, so each denotes one fixed address however far the proof has
+/// moved on; a store cannot move the bytes a range named, and consuming,
+/// transferring or freeing a resource does not make two address ranges that
+/// were disjoint coincide. The composition is therefore not being read as a
+/// statement about the state at the point of use — which is the reading that
+/// would need the resource to still be held — but as a statement about two
+/// addresses, which is as true afterwards as it was when it was recorded.
+///
+/// **Where it may be spent.** Only on the fact-consulting route, exactly
+/// where a typed `separate(..)` is spent today: composition facts are path
+/// facts, and the two naming walks must not read one, because their answers
+/// are embedded in a term's name and memoized across every path that reaches
+/// the same interned snapshot. Both walks pass `PureFactContext::new()`
+/// (`resource_tracker::cell_source_for_naming` and the block-epoch walk in
+/// `resource_tracker::mod`), so an empty composition set is what this
+/// function is handed there and it can decide nothing; on the querying route
+/// the answer is re-derived per query and keyed by the context
+/// (`resolution_query_memo_id`), never stored on an interned edge.
+///
+/// **Cost.** Two block-bucket lookups per composition held, and no expansion:
+/// `frame_frontier_compositions` is not consulted, so a composite that is
+/// still folded simply does not answer. This runs as the last disjunct of a
+/// load-framing ladder, after every cheaper check has failed.
+pub(in crate::kernel) fn owned_composition_store_separated_evidence(
+    write: &Pointer,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> Option<MemoryDagHopJustification> {
+    if assumptions.resource_compositions.is_empty()
+        || write.block == pointer.block && write.offset == pointer.offset
+    {
+        return None;
+    }
+    crate::instrumentation::measure_operation(
+        "kernel",
+        "general pointer distinctness",
+        "composition-owned store separation",
+        || {
+            assumptions
+                .resource_compositions
+                .iter()
+                .find_map(|resources| {
+                    crate::instrumentation::record_deterministic_work(1);
+                    let (write_entry, left) =
+                        resources.owned_memory_member_containing_pointer(write)?;
+                    let (load_entry, right) =
+                        resources.owned_memory_member_containing_pointer(pointer)?;
+                    if write_entry == load_entry {
+                        return None;
+                    }
+                    let (left, right) = (left.clone(), right.clone());
+                    let write_membership =
+                        PointerInRangeEvidence::for_pointer(write, &left, assumptions)?;
+                    let load_membership =
+                        PointerInRangeEvidence::for_pointer(pointer, &right, assumptions)?;
+                    crate::kernel::record_implicit_reasoning_provenance(
+                        assumptions,
+                        &Proposition::CResourceComposition(resources.clone()),
+                    );
+                    Some(MemoryDagHopJustification::StoreSeparatedRanges {
+                        authority: StoreSeparatedRangesAuthority::ResourceComposition(
+                            resources.clone(),
+                        ),
+                        left,
+                        right,
+                        orientation: StoreSeparatedRangeOrientation::WriteLeftLoadRight,
+                        write_membership,
+                        load_membership,
+                    })
+                })
+        },
+    )
+}
+
 pub(in crate::kernel) fn typed_ranges_disjoint_from_pointer_evidence(
     ranges: &[CMemoryRange],
     pointer: &Pointer,
@@ -2175,6 +2268,13 @@ fn c_memory_load_is_directly_unchanged(
                             || pointer_byte_offset_from_base(write, pointer)
                                 .and_then(|offset| offset.as_const())
                                 .is_some_and(|offset| offset != 0)
+                            // Last: a separating composition owns the written
+                            // address and the read address through different
+                            // members.
+                            || owned_composition_store_separated_evidence(
+                                write, pointer, assumptions,
+                            )
+                            .is_some()
                     })
             }
             Proposition::CMemoryEffectSummary {
@@ -2290,12 +2390,15 @@ fn memories_directly_match_for_pointer_load(
                     .is_some_and(|offset| offset != 0)
                 || assumptions.ranges_directly_disjoint_from_pointer(
                     &[CMemoryRange::new(
-                        cell,
+                        cell.clone(),
                         Bitvector32Term::Constant(0),
                         Bitvector32Term::Constant(1),
                     )],
                     pointer,
                 )
+                // Last: the same composition rule the mutates-only arm above
+                // and the tracker's `Store` arm spend, so the three agree.
+                || owned_composition_store_separated_evidence(&cell, pointer, assumptions).is_some()
         })
 }
 

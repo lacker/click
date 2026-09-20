@@ -132,7 +132,7 @@ pub(in crate::kernel) struct Evidence<'a> {
 ///
 /// | Recorded step | A cell | A block, as an array argument |
 /// | --- | --- | --- |
-/// | `Store` | separate on proven-distinct blocks, a common-base offset inequality, typed `separate(..)` evidence, an explicit range, or general distinctness; affected when the written address is provably the loaded one | separate **only** on `PointerBlock::proven_distinct` |
+/// | `Store` | separate on proven-distinct blocks, a common-base offset inequality, typed `separate(..)` evidence, an explicit range, general distinctness, or two owned members of one composition; affected when the written address is provably the loaded one | separate **only** on `PointerBlock::proven_distinct` |
 /// | `BlockDeclared` | separate: it writes nothing | separate when the declared object is proven distinct; affected for this block's own declaration |
 /// | `HeapAllocated` | separate when the block differs | separate when the fresh object is proven distinct; affected for this one |
 /// | `HeapAllocationPending` | separate: it writes nothing | separate: no read of any block consults a pending request |
@@ -335,6 +335,17 @@ fn cell_effect(
                 hop(MemoryDagHopJustification::AssumptionDependent(
                     MemoryDagAssumptionKind::StoreGeneralDistinctness,
                 ))
+            } else if let Some(justification) =
+                owned_composition_store_separated_evidence(write, pointer, assumptions)
+            {
+                // Last, after every cheaper check: one composition in the
+                // context owns the written address and the read address
+                // through two different members, so the partition invariant
+                // separates them. The evidence names the composition and each
+                // side's membership, and the naming walks cannot reach it:
+                // they are handed no facts at all, and this reads nothing but
+                // facts.
+                hop(justification)
             } else {
                 unknown()
             }

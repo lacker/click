@@ -2940,6 +2940,129 @@ fn memory_resolution_alias_check_uses_explicit_separation() {
     ));
 }
 
+/// What a separating composition may and may not say about a store and a
+/// load (`owned_composition_store_separated_evidence`).
+///
+/// The rule it implements is the partition invariant and nothing else: two
+/// **owned** members of one valid composition hold disjoint bytes. Every
+/// attack below is a context where that sentence does not apply, and each one
+/// must come back with no evidence.
+#[test]
+fn a_composition_separates_a_store_from_a_load_only_through_two_owners() {
+    use crate::kernel::memory_provenance::owned_composition_store_separated_evidence;
+
+    let value = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(94_001)), 4),
+    };
+    let acquired = Pointer {
+        block: PointerBlock::Symbolic(Variable(1_000_001)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let value_cell = memory_range(value.clone(), 0, 1);
+    let acquired_cell = memory_range(acquired.clone(), 0, 1);
+    let compose = |facts: Vec<CResourceFact>| {
+        let context = facts
+            .into_iter()
+            .fold(ResourceContext::new(), ResourceContext::unchecked_with_fact);
+        PureFactContext::new().assume_proposition(Proposition::CResourceComposition(context))
+    };
+
+    // The shape `mdtests/c_contract_executes_acquire.md` needs. The two
+    // members are spelled in different blocks, and nothing structural relates
+    // an `ExternalArgument` address to a pointer a callback returned; only
+    // ownership does.
+    let owners = compose(vec![
+        CResourceFact::own_memory(value_cell.clone()),
+        CResourceFact::own_memory(acquired_cell.clone()),
+    ]);
+    assert!(
+        owned_composition_store_separated_evidence(&value, &acquired, &owners).is_some(),
+        "two owned members of one composition are disjoint by the partition invariant"
+    );
+
+    // An owner beside a *view* is not two owners. The view may be an
+    // observation of that very ownership (`owner_observation_core`), which is
+    // why `MemoryResourceAlgebra::pair_validity_error` refuses only
+    // owner/owner overlap; whether a particular view is independent is
+    // decided by its loan binding, which this rule cannot see.
+    let owner_and_view = compose(vec![
+        CResourceFact::own_memory(value_cell.clone()),
+        CResourceFact::view_memory(acquired_cell.clone()),
+    ]);
+    assert!(
+        owned_composition_store_separated_evidence(&value, &acquired, &owner_and_view).is_none(),
+        "an owner beside a view is not a partition: the view may describe the owner's own bytes"
+    );
+
+    // A cell one element past the owned range is in no member at all.
+    let past_the_end = acquired.offset_by_int32_elements(Bitvector32Term::Constant(1));
+    assert!(
+        owned_composition_store_separated_evidence(&value, &past_the_end, &owners).is_none(),
+        "a read outside every owned member inherits nothing from the composition"
+    );
+
+    // A folded composite contributes no memory range, so a cell its body
+    // would cover is not separated by it: the rule reads `memory_own_range`
+    // and never opens a definition.
+    let folded = compose(vec![
+        CResourceFact::own_memory(value_cell.clone()),
+        CResourceFact::own(CResource::Composite {
+            name: "Cell".to_string(),
+            arguments: vec![CValue::pointer(acquired.clone()).into()].into(),
+        }),
+    ]);
+    assert!(
+        owned_composition_store_separated_evidence(&value, &acquired, &folded).is_none(),
+        "a composite that is still folded owns no range this rule can read"
+    );
+
+    // Two owned members of one block whose bounds are symbolic are the same
+    // rule: what makes them disjoint is that one context holds both, and it
+    // is whoever handed both out that had to establish the split. Only the
+    // spelling changes, which is exactly why the rule may not read one.
+    let symbolic_member = |index: u64| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(index)), 4),
+    };
+    let (front, back) = (symbolic_member(94_002), symbolic_member(94_003));
+    let one_block = compose(vec![
+        CResourceFact::own_memory(memory_range(front.clone(), 0, 1)),
+        CResourceFact::own_memory(memory_range(back.clone(), 0, 1)),
+    ]);
+    assert!(
+        owned_composition_store_separated_evidence(&front, &back, &one_block).is_some(),
+        "the partition does not care how the two members are spelled"
+    );
+
+    // One member cannot separate an address from itself, whichever end of the
+    // question it is asked from.
+    let single = compose(vec![CResourceFact::own_memory(value_cell.clone())]);
+    assert!(
+        owned_composition_store_separated_evidence(&value, &value, &single).is_none(),
+        "one member is not two"
+    );
+
+    // The evidence names its premise. A composition the context no longer
+    // holds does not re-check, which is what keeps a hop retained at an
+    // earlier program point from being spent in a context that has moved on.
+    let hop = owned_composition_store_separated_evidence(&value, &acquired, &owners)
+        .expect("the two-owner case produced evidence");
+    let store = CMemoryDerivation::Store {
+        base: crate::kernel::intern_c_memory(CMemory::new()),
+        pointer: value.clone(),
+        value: crate::kernel::api::int32(1),
+    };
+    assert!(
+        hop.checks(&store, &acquired, &owners),
+        "the hop re-checks against the composition it named"
+    );
+    assert!(
+        !hop.checks(&store, &acquired, &PureFactContext::new()),
+        "a retained hop is worthless in a context that does not hold its composition"
+    );
+}
+
 #[test]
 fn memory_resolution_uses_compact_resource_composition_with_shallow_equalities() {
     let member_left_index = Bitvector32Term::Variable(Variable(93_410));

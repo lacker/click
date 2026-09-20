@@ -2401,6 +2401,19 @@ impl CMemory {
                 // distinctness path, where this scan is too hot.
                 || assumptions
                     .pointers_directly_disjoint_by_range(&normalized_cell_pointer, &normalized_pointer)
+                // Last: a separating composition owns the written address and
+                // this cell's address through two different members, so the
+                // partition invariant keeps the cell. Kept here beside the
+                // range scan above, for the same reason: once the store has
+                // dropped a cell, the two snapshots differ *at the read's own
+                // address*, and no later framing route can recover it — the
+                // question is only decidable while the cell is still there.
+                || crate::kernel::memory_provenance::owned_composition_store_separated_evidence(
+                    &normalized_pointer,
+                    &normalized_cell_pointer,
+                    assumptions,
+                )
+                .is_some()
         });
         std::sync::Arc::make_mut(&mut memory.union_cells).retain(|(cell_pointer, _), _| {
             let normalized_cell_pointer = Pointer {
@@ -2416,6 +2429,12 @@ impl CMemory {
                 assumptions,
             ) || assumptions
                 .pointers_directly_disjoint_by_range(&normalized_cell_pointer, &normalized_pointer)
+                || crate::kernel::memory_provenance::owned_composition_store_separated_evidence(
+                    &normalized_pointer,
+                    &normalized_cell_pointer,
+                    assumptions,
+                )
+                .is_some()
         });
         // Forgetting nothing is not a transition: the memory is the same
         // snapshot, so a later load keeps resolving through it unchanged

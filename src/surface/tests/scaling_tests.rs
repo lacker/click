@@ -1963,3 +1963,75 @@ fn an_array_fact_carried_across_local_stores_scales_linearly() {
         .collect::<Vec<_>>();
     assert_near_linear_scaling("array-ref block epoch walk", &walk);
 }
+
+/// One project with `size` stores made while `size` owned ranges are held, so
+/// that every store's per-cell drop is asked about a composition with `size`
+/// members.
+///
+/// This is the shape that pays for
+/// `memory_provenance::owned_composition_store_separated_evidence`: it runs
+/// per surviving cell per store, and looks each side up in the composition's
+/// own block bucket, so a context holding many owned ranges is exactly where
+/// a per-member scan would show.
+fn stores_beside_many_owned_ranges(size: usize) -> (String, String) {
+    let mut c_source = String::from(
+        "int32* read_acquired(int32* (*acquire)(), int32* value) {\n    int32* cell = acquire();\n    if (cell != 0) {\n",
+    );
+    for index in 0..size {
+        c_source.push_str(&format!("        value[{index}] = *cell;\n"));
+    }
+    c_source.push_str("    }\n    return cell;\n}\n");
+
+    let mut click_source = String::from(
+        "resource MaybeRaw(p: int32*) {\n    if p != 0 {\n        owns p[0..1];\n    }\n}\nresource Cell(p: int32*) {\n    owns p[0..1];\n}\nresource MaybeCell(p: int32*) {\n    if p != 0 { owns Cell(p); }\n}\ncontract int32* Raw() {\n    produces MaybeRaw(result);\n}\ncontract int32* Boxed() {\n    produces MaybeCell(result);\n}\ntheorem lift(acquire: int32* (*)()) executes acquire() {\n    requires Raw(acquire);\n    ensures Boxed(acquire) by {\n        step(Raw);\n        if result != 0 {\n            unfold(MaybeRaw(result));\n            fold(Cell(result));\n            fold(MaybeCell(result));\n            simp();\n        } else {\n            unfold(MaybeRaw(result));\n            fold(MaybeCell(result));\n            simp();\n        }\n    }\n}\nverifying \"acquire.c\";\nint32* read_acquired(int32* (*acquire)(), int32* value) {\n    requires Raw(acquire);\n",
+    );
+    click_source.push_str(&format!("    owns value[0..{size}];\n"));
+    // One claim, not one per store: the fixture is here to measure the
+    // per-store composition query, and `size` claims about `size` stores
+    // would be quadratic before the query is ever reached.
+    click_source.push_str(
+        "    produces MaybeCell(result);\n    ensures result != 0 implies value[0] == result[0];\n} by {\n    apply(lift(acquire));\n    step();\n    step(Boxed);\n    if c(cell) != 0 {\n        unfold(MaybeCell(c(cell)));\n        unfold(Cell(c(cell)));\n        execute();\n        fold(Cell(result));\n        fold(MaybeCell(result));\n        simp();\n    } else {\n        unfold(MaybeCell(c(cell)));\n        execute();\n        fold(MaybeCell(result));\n        simp();\n    }\n}\n",
+    );
+    (c_source, click_source)
+}
+
+/// The cost contract for the composition disjunct on the store path
+/// (`docs/internals/verification-efficiency.md`): stores and held owned
+/// ranges grow together, and the work must not turn over into their product.
+#[test]
+fn stores_beside_many_owned_ranges_scale_near_linearly() {
+    let samples = [2, 4, 8, 16]
+        .into_iter()
+        .map(|size| {
+            let (c_source, click_source) = stores_beside_many_owned_ranges(size);
+            let (verified, sample) = scaling_sample(size, || {
+                verify_c0_sources(&click_source, &[("acquire.c", c_source.as_str())])
+            });
+            verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} owned-range store fixture failed: {}",
+                    error.message()
+                )
+            });
+            sample
+        })
+        .collect::<Vec<_>>();
+
+    assert_near_linear_scaling("stores beside many owned ranges", &samples);
+
+    // And on the query's own measured work, so a regression in it cannot hide
+    // inside the proof's total. A missing entry would mean the fixture stopped
+    // reaching the query, which would make the assertion above vacuous.
+    const QUERY: &str = "operation `composition-owned store separation`";
+    let query = samples
+        .iter()
+        .map(|sample| ScalingSample {
+            size: sample.size,
+            work: *sample.named_work.get(QUERY).unwrap_or_else(|| {
+                panic!("fixture did not reach the composition query: {sample:?}")
+            }),
+            named_work: BTreeMap::new(),
+        })
+        .collect::<Vec<_>>();
+    assert_near_linear_scaling("composition-owned store separation", &query);
+}
