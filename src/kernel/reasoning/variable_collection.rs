@@ -2651,7 +2651,7 @@ fn collect_shared_integer_variables(
     collect_integer_variables_seen(term, variables, seen);
 }
 
-pub(in crate::kernel) fn collect_bitvector_variables(
+pub(crate) fn collect_bitvector_variables(
     term: &Bitvector32Term,
     variables: &mut BTreeSet<Variable>,
 ) {

@@ -78,7 +78,7 @@ impl ProgramPoint {
     /// True when this point is later in the recorded history than `other`.
     /// Snapshot ids strictly increase along derivation edges, so comparing
     /// them orders two points of one arena without walking.
-    fn is_later_than(&self, other: &Self) -> bool {
+    pub(crate) fn is_later_than(&self, other: &Self) -> bool {
         let (arena, id) = self.0.arena_id();
         let (other_arena, other_id) = other.0.arena_id();
         arena == other_arena && id > other_id
@@ -121,21 +121,6 @@ impl OwnedResource {
         match self {
             Self::Cell(pointer) => Resource::Cell(pointer),
             Self::Block(block) => Resource::Block(block),
-        }
-    }
-
-    /// The address to spell this resource by in a diagnostic.
-    pub(crate) fn pointer(&self) -> Option<&Pointer> {
-        match self {
-            Self::Cell(pointer) => Some(pointer),
-            Self::Block(_) => None,
-        }
-    }
-
-    pub(crate) fn block(&self) -> &PointerBlock {
-        match self {
-            Self::Cell(pointer) => &pointer.block,
-            Self::Block(block) => block,
         }
     }
 }
@@ -386,6 +371,17 @@ pub(crate) struct Explanation {
     /// [`MAX_REPORTED_STEPS`]. The tracker crossed all of them, so a
     /// renderer may say they do not touch the resource.
     pub(crate) crossed_after: usize,
+}
+
+impl Explanation {
+    /// True when `there` is the earlier of the two points, which is the one a
+    /// refusal says the resource may have changed *since*. False when the
+    /// question had a single point, or when the two are not comparable.
+    pub(crate) fn there_is_earlier(&self) -> bool {
+        self.there
+            .as_ref()
+            .is_some_and(|there| self.here.is_later_than(there))
+    }
 }
 
 /// The point a resource read at `at` is named by: the oldest point it is

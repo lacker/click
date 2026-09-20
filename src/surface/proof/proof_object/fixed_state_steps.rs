@@ -1498,8 +1498,7 @@ impl<'a> Proof<'a> {
                         crate::surface::diagnostics::describe_proposition_version_mismatch(
                             &goal,
                             &[equality.as_ref()],
-                            "the goal",
-                            "the equality",
+                            "the equality was stated",
                             names.0,
                             names.1,
                         )

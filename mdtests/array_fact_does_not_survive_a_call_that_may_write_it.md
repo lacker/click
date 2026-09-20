@@ -44,5 +44,5 @@ void caller(int32 a[], int32 n) {
 ```
 
 ```expect
-fail: `a` in the goal and `a` in an available fact may be different reads: the call in between may have written it, and a fact about `a` as a whole is carried only across a step the kernel proves leaves the whole object alone
+fail: a fact about `a` as a whole does not carry across the call. Only a step the kernel proves leaves the whole object alone carries one, and a stated `separate(...)` is not read here.
 ```

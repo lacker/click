@@ -1498,8 +1498,7 @@ fn source_have_error(
                 crate::surface::diagnostics::describe_proposition_version_mismatch(
                     goal,
                     &premises,
-                    "the goal",
-                    "an available fact",
+                    "the available fact was stated",
                     &[],
                     &[],
                 )

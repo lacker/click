@@ -124,8 +124,9 @@ pub(crate) use reasoning::substitute_integer_variable_in_pure_proposition;
 pub(crate) use reasoning::substitute_pointer_variable_in_proposition;
 pub use reasoning::{LoweringIntroduction, LoweringIntroductions};
 pub(crate) use reasoning::{
-    collect_c_value_bitvector_variables, collect_spec_algebraic_expression_bitvector_variables,
-    collect_spec_integer_bound_variables, collect_spec_integer_variables,
+    collect_bitvector_variables, collect_c_value_bitvector_variables,
+    collect_spec_algebraic_expression_bitvector_variables, collect_spec_integer_bound_variables,
+    collect_spec_integer_variables,
 };
 pub use termination::{
     CTerminationRefusal, CTerminationVerdicts, CUnsuitableCallback, c_termination_height_plan,

@@ -126,11 +126,28 @@ cause is "two same-looking terms read different versions" uses it, so the
 wording is identical everywhere:
 `crate::surface::diagnostics::describe_resource_version_mismatch`.
 
-It spells the resource with the user's own names (`a[m]`, `g[0]`), says where
-each side's value comes from, names the one step that broke the chain, and —
-for `Unknown` — says which check failed and what would settle it. It never
-prints memory, and it reports at most the blocking step plus a count of the
-steps after it.
+It spells the resource with the user's own names (`a[m]`, `g[0]`), names the
+one step that broke the chain, and prints, in short sentences, the repair for
+the case that actually applies:
+
+| Case | What it says |
+| --- | --- |
+| one array, two indexes | ``the store to `a[i]` may have written it. If `m` and `i` differ, state `m != i`.`` |
+| two objects nothing separates | ``the store to `g[0]` may have written it, because `a` may point into `g`. If they are separate, require `separate(memory(a[0..1]), memory(g[0..1]))`.`` |
+| a call or a loop with a write set | ``the call in between may write `g[0..1]` … require `separate(memory(a[0..1]), memory(g[0..1]))`.`` |
+| the resource was written | ``the store to `a[i]` wrote it.`` |
+| a fact about a block | ``a fact about `a` as a whole does not carry across the store to `b[j]`.`` plus the note below |
+
+Every clause it proposes is one that verifies the situation it is printed for;
+where none does, it says what is missing instead of naming a repair that would
+not work. A whole-array fact is the case with no repair to name: the block walk
+reads no stated separation at all, so the text says so rather than sending the
+reader to write a `separate(..)` the walk will never consult.
+
+An index only the lowering has a name for is printed `a[…]`, never as the
+kernel variable, and no inequality is proposed over a name nobody wrote. It
+never prints memory, and it reports at most the blocking step plus a count of
+the steps after it.
 
 No recorded step carries a source span or statement text today, so a step is
 described by kind and target ("a store to `g[0]`", "the call", "the loop"). A

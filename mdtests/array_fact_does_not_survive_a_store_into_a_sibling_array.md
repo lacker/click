@@ -35,5 +35,5 @@ void mark_other(int32 a[], int32 b[], int32 n, int32 j) {
 ```
 
 ```expect
-fail: `a` in the goal and `a` in an available fact are different reads: the store to `b[j]` in between wrote it
+fail: a fact about `a` as a whole does not carry across the store to `b[j]`. Only a step the kernel proves leaves the whole object alone carries one, and a stated `separate(...)` is not read here.
 ```

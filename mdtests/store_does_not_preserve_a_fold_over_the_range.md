@@ -36,5 +36,5 @@ void mark_one(int32 a[], int32 n, int32 i) {
 ```
 
 ```expect
-fail: `a` on one side and `a` on the other are different reads: the store to `a[i]` in between wrote it
+fail: a fact about `a` as a whole does not carry across the store to `a[i]`. Only a step the kernel proves leaves the whole object alone carries one, and a stated `separate(...)` is not read here.
 ```

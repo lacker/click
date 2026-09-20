@@ -47,5 +47,5 @@ void wipe(int32 a[], int32 n) {
 ```
 
 ```expect
-fail: `a` in the goal and `a` in an available fact may be different reads: the loop in between may have written it
+fail: a fact about `a` as a whole does not carry across the loop. Only a step the kernel proves leaves the whole object alone carries one, and a stated `separate(...)` is not read here.
 ```
