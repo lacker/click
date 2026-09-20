@@ -181,6 +181,103 @@ line number would mean adding a source location to the `CMemoryDerivation`
 edges at their producers in `src/kernel/primitives/memory_state.rs`; the edge
 may carry it, since a span is path-independent.
 
+## Every site that decides whether a change matters
+
+This is the map of the kernel outside `src/kernel/resource_tracker/`, taken
+against `origin/master` **48f960f8**. It exists so that the next reader does
+not have to rediscover which of these sites are copies of the tracker's rule
+and which are different questions wearing similar predicates. Line numbers
+drift; the function names do not.
+
+The four classes:
+
+- **routed** — the same question as `affects`, and it now calls it;
+- **separation** — a resource-versus-resource separation predicate. These are
+  not copies: each is one function, and `affects` itself calls them. Leaving
+  one in place is the point;
+- **another question** — not a staleness decision at all;
+- **disagrees** — the same shape of question, but a rule that would answer
+  differently. Routing it would change which programs verify, so it stays, and
+  the difference is written down here instead.
+
+### Step versus resource: the question `affects` answers
+
+| Site | Class | Note |
+| --- | --- | --- |
+| `ResourceContext::invalidate_memory_support` → `memory_derivation_affects_footprint` `src/kernel/primitives/resource_algebra.rs` | **routed** | Walks the edges between two snapshots and drops every resource projection a step could have written. It now asks `affects` about `Resource::Ranges` for a stated footprint and `Resource::AnyMemory` for one the kernel could not name. |
+| `ResourceContext::entries_affected_by_memory_derivation` | another question | Chooses *candidates* from the interval index; the rule then decides. Its one obligation is to stay a superset of the steps `affects` does not answer `Separate` for — narrowing it would silently keep a stale projection. |
+| `statement_call_havoc_views` `src/kernel/proof/execution.rs` | another question | Collects the call nodes between two states; asks nothing about a resource. |
+| `matching_recomputed_call_havoc_views`, `c_memories_definitionally_equal` `src/kernel/api/contract_certification/contract_claims.rs` | another question | Matches two derivation chains edge for edge, to certify a recomputation. A whole-state equality, not a footprint. |
+
+### The eager half: a step applying its own write set
+
+These run *at* the step, over every cell, in the producing context, before the
+edge exists. Each decides the same abstract question as the matching arm of
+`affects` and each decides it differently, so none is routed.
+
+| Site | Class | Why it differs |
+| --- | --- | --- |
+| `CMemory::with_call_memory_havoc` retain `src/kernel/primitives/memory_state.rs` | disagrees | Keeps a cell on `local:` **or** `ranges_proven_disjoint_from_pointer`. The rule's `CallHavoc` arm has neither the `local:` disjunct nor the plain variant: it reads typed range evidence and the `_for_frame` expansion, which looks through composite definitions. Weaker in one direction, stronger in the other. The `local:` disjunct is sound only because a call's checked write set can never be based in a `local:` block — nothing in this function says so, and passing `&t` to a callee that owns `t[0..1]` is refused for want of `owns local:t@0[0..1]`, which is what enforces it today. |
+| `CMemory::matches_call_memory_havoc_result` | disagrees | The same retain rule again, for the checker that re-derives the producer. It must stay identical to the producer, not to the rule. |
+| `CMemory::with_loop_memory_havoc_preserving_loans` retain | disagrees | Preserved-block membership plus `LoanLedger::permits_memory_access`. An ownership question, with fail-open polarity, and no pointer-alias reasoning at all. |
+| `CMemory::with_interface_memory_havoc_preserving_loans` retain | disagrees | Byte for byte the loop retain, in a second function. A join records no edge, so no rule covers it. |
+| `CMemory::without_possible_aliasing_cells` | disagrees | `pointers_proven_distinct_for_memory_resolution` **or** `pointers_directly_disjoint_by_range`. The second exists only here, deliberately: it is a range-index scan the rule's hot `Store` arm must not pay for. |
+| `CMemory::without_field_cells` | disagrees | Same-block equality and a constant byte interval. Across blocks it removes too little, which for a copy is the safe direction; a completeness difference only. |
+| `heap_allocation_may_contain_pointer` | disagrees | `base.block != pointer.block` answers "not contained", which is fail-open on a spelling. The rule's `HeapFreed` arm is three separation ladders instead. Reaching it needs a freed allocation whose base block is not proven distinct from a live cell's block. |
+| loop frame assembly `src/kernel/loops.rs`, `collect_loop_effect_check_obligations`, the multi-exit join | disagrees | Each reinstates or drops cells against the loop's *stated* effect summaries rather than a recorded edge, with a hardcoded `local:` skip. |
+| `memory_diff_is_covered_by_changed_pointers`, `memory_diff_is_covered_by_ranges` `src/kernel/proof/execution.rs` | another question | The containment direction: is every observed change *inside* the declared write set. The tracker has no containment question. |
+
+### State versus state: "do these two snapshots agree about this read"
+
+The tracker's `same` answers this for two points on one recorded history. These
+sites answer it for two snapshots that need no ancestry — an effect summary's
+endpoints, a recomputed chain, a canonical form — so `same` cannot replace
+them without losing every pair the DAG does not connect.
+
+| Site | Class | Note |
+| --- | --- | --- |
+| `c_memory_load_is_directly_unchanged`, `memories_directly_match_for_pointer_load` `src/kernel/memory_provenance.rs` | disagrees | The transport rule. It already asks the tracker as one disjunct — two snapshots that name the cell by one point hold the same cell — and the rest reads `CMemoryMutatesOnly`, `CMemoryEffectSummary` and `CHeapAllocationFreed` over *stated* endpoints. Its per-write ladder is the same four predicates the rule's `Store` arm uses, applied to a stated write list. |
+| `memories_match_for_pointer_load` `src/kernel/reasoning/memory_resolution.rs` | disagrees | Assumption-free structural agreement about one load: equal havoc markers, equal extent for the load's block, and equal cells under `observable_by_load`. Decides pairs with no common ancestor. |
+| `canonical_memory_for_pointer_load` | separation | A normal form, so that two snapshots can be compared at all. Its filters are `observable_by_load` and `cell_disjoint_from_load_by_constant_offset`, one shared function each. |
+| `memories_proven_equal_for_memory_resolution`, `memory_cells_definitionally_contained` | another question | Whole-state equality under assumptions. |
+| `differing_cell_pointers_possibly_aliasing` | separation | One call to `observable_by_load`. |
+
+### The separation predicates, which stay one function each
+
+`affects` has no overlap logic of its own; it asks these. They are listed so
+that a fix lands in one of them rather than beside it.
+
+| Predicate | Home |
+| --- | --- |
+| `PointerBlock::proven_distinct`, `may_alias`, `observable_by_load`; `Pointer::blocks_proven_distinct` | `src/kernel/primitives.rs` |
+| `pointers_proven_distinct_for_memory_resolution`, `pointer_offsets_with_common_base_proven_distinct`, `cell_disjoint_from_load_by_constant_offset` | `src/kernel/reasoning/memory_resolution.rs` |
+| `range_proven_disjoint_from_pointer`, `ranges_proven_disjoint_from_pointer`, `ranges_directly_disjoint_from_pointer`, `ranges_proven_disjoint_from_pointer_for_frame`, `frame_frontier_compositions`, `pointers_directly_disjoint_by_range` | `src/kernel/assumptions/memory_reasoning.rs` |
+| `typed_store_separated_ranges_evidence`, `typed_ranges_disjoint_from_pointer_evidence`, `heap_allocation_proven_separate_from_pointer` | `src/kernel/memory_provenance.rs` |
+| `memory_block_may_alias`, `memory_range_overlaps_pointer`, `memory_ranges_overlap`, `proves_resource_separate`, `proves_owned_range_separate_from_pointer_with`, `resources_structurally_separate` | `src/kernel/primitives/resource_algebra.rs` |
+| `MemoryLoadAliasCache::resolution_distinct` | `src/kernel/eval/memory_loads.rs` — a per-load memo over the first of these, not a rule of its own |
+
+The loan family — `LoanLedger::permits_memory_access`,
+`protected_range_proven_overlapping`, `active_memory_overlaps` — is **not** in
+that list. It is fail-open by design and its soundness rests on the ownership
+partition rather than on the predicate (`src/kernel/loans.rs`), so it must
+never be merged with the fail-closed families above.
+
+### Sites that only look like this question
+
+`may_refer_to_memory_block` (resource selection before
+`is_proven_separate_from_allocation`), the `held_child_witness` block filter
+(witness naming for a `fold`), `is_external_memory_pointer` (evaluation
+classification), the `local:` authority gates in `src/kernel/api.rs` and
+`src/kernel/functions.rs`, `is_preexisting_write_pointer`, and the block
+comparisons in `src/surface/diagnostics.rs` all compare block identities
+without deciding staleness. Two carry a residual risk worth naming:
+`may_refer_to_memory_block` compares a block by spelling before the proof-based
+allocation-separation check runs, so a caller resource spelled differently from
+a retired allocation is skipped rather than refused; and the
+`held_child_witness` filter accepts `own.block != pointer.block` as "a
+different pointer" with no proof, which selects a witness rather than proving
+anything.
+
 ## Next chunks
 
 - **Chunk 2** — one question, asked one way. The step-side deciders are one
@@ -189,3 +286,8 @@ may carry it, since a span is path-independent.
 - **Chunk 3** — the other resource kinds. Register the "changed here" events
   for composite instances, occurrence identities and loans, so `same` and
   `explain` cover model fields too.
+- **From the map above** — the two duplicated retain closures (call havoc
+  against its own checker, loop havoc against the interface join) are one rule
+  written twice in one file each, which the map calls *disagrees* only because
+  they disagree with `affects`. Making each pair share one function is a
+  behaviour-preserving change that the next chunk can take first.
