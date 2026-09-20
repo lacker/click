@@ -336,6 +336,22 @@ Two kinds of evidence a contract can state still do not reach a load:
   local share, while the resolution memo and the canonical-projection cache are
   scoped per verification and not per function.
 
+##### Parked proofs
+
+Four proofs state true claims that the two missing routes would prove, and
+stopped being provable when the name filter went. They are quarantined rather
+than weakened: their C and their sidecars are untouched, so each is the
+regression for the route it waits on
+(`docs/internals/testing.md`, *Quarantine*). Unquarantine an entry in the
+change that gives it its route.
+
+| Parked | Needs |
+| --- | --- |
+| `mdtests/c_contract_executes_acquire.md` | a separating resource composition as evidence for one cell: `[owns value[0..1], owns Cell(result)]` |
+| `surface::tests::expansion_tests::acquired_callback_ownership_expands_at_every_smart_site` | the same; it `include_str!`s that mdtest's fixture, so the two move together |
+| `mdtests/const_callback_field.md` | the same, for `owns object(r)` beside `views p[0..1]` — the equality hop already resolves the read to `p` |
+| `mdtests/string_literals_call.md` | a never-address-taken local to be separate from a pointer value: the blocking step is the store of the returned pointer into the caller's own `message` |
+
 The loan family — `LoanLedger::permits_memory_access`,
 `protected_range_proven_overlapping`, `active_memory_overlaps` — is **not** in
 that list. It is fail-open by design and its soundness rests on the ownership
