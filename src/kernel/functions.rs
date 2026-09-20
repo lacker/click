@@ -16458,11 +16458,17 @@ fn evaluate_function_resource_context_with_normalization(
 ///   skipped outright rather than approximated; `owns object(r)` is *not* one
 ///   of those, because `object(r)` lowers to the plain range `r[0..size/4]`.
 ///
-/// **Cost.** `#owned × #viewed` clauses of one contract, built once at that
-/// contract's entry and never on a query path. This is not the eager pairwise
-/// derivation `CLAUDE.md` bans: that ban is about a verifier hot path, and a
-/// contract's clause list is bounded written syntax that is walked once per
-/// proof.
+/// **Cost.** At most `#owned × #viewed` clauses of one contract, built once at
+/// that contract's entry and never on a query path. This is not the eager
+/// pairwise derivation `CLAUDE.md` bans: that ban is about a verifier hot
+/// path, and a contract's clause list is bounded written syntax that is walked
+/// once per proof. What the facts then cost is what the same clauses written
+/// as `requires separate(..)` would cost, which is why a pair the block
+/// algebra already decides is skipped: every memory separation the context
+/// holds is one more entry the block-pair bucket a coverage or overlap query
+/// lands in has to walk (`memory_range_covers`,
+/// `memory_ranges_proven_overlapping`), so recording an answer those queries
+/// reach anyway buys nothing and is paid for on every query.
 pub(crate) fn contract_entry_partition_facts(
     entry_clauses: &[CCheckedResourceFact],
 ) -> Vec<Proposition> {
@@ -16479,6 +16485,11 @@ pub(crate) fn contract_entry_partition_facts(
     let mut facts = Vec::new();
     for viewed in borrowed {
         for owned in &transferred {
+            // A property of the two ranges alone, so the body proof and
+            // contract certification skip the same pairs.
+            if owned.base().blocks_proven_distinct(viewed.base()) {
+                continue;
+            }
             let fact = Proposition::CResourceSeparate {
                 left: CResource::Memory((*owned).clone()),
                 right: CResource::Memory(viewed.clone()),

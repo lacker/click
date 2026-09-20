@@ -3169,6 +3169,32 @@ fn the_entry_partition_pairs_a_transferred_clause_only_with_a_borrowed_one() {
         "the clause list is the only filter: a context's derived views must never be passed here"
     );
 
+    // A pair the block algebra already decides records nothing. Every memory
+    // separation the context holds is one more entry in the block-pair bucket
+    // that each coverage and overlap query walks, so an answer those queries
+    // reach anyway is pure scan cost. An `ExternalArgument` range beside a
+    // global is *not* such a pair — that is the case
+    // `mdtests/global_may_alias_an_array_argument.md` exists for — so this
+    // uses two file-scope declarations, which are two objects.
+    let global = |name: &str| Pointer {
+        block: PointerBlock::Concrete(name.to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    assert!(
+        contract_entry_partition_facts(&[
+            clause(
+                CResourceFact::own_memory(memory_range(global("global:g"), 0, 1)),
+                CResourceTransferRole::Consume,
+            ),
+            clause(
+                CResourceFact::view_memory(memory_range(global("global:h"), 0, 1)),
+                CResourceTransferRole::Borrow,
+            ),
+        ])
+        .is_empty(),
+        "two proven-distinct blocks need no recorded separation"
+    );
+
     // A clause that is not plain memory has no range to name. `separate` over
     // two memory operands cannot express a folded composite's footprint
     // without expanding it, so the pair is skipped outright.
