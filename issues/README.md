@@ -94,7 +94,7 @@ Specification and proof:
 
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
 
-## P2: after launch (26)
+## P2: after launch (25)
 
 - [Make `step` simple across a call precondition](simplify-step.md)
 - [Lower a dependent composite argument in every tactic position](dependent-composite-argument-in-tactics.md)
@@ -130,7 +130,6 @@ Semantics and reasoning:
 Proof language and tooling:
 
 - [Extend modules and imports beyond the delivered rbtree slice](specification-imports.md)
-- [Parse built-in expressions consistently on either side of comparisons](built-in-comparison-parsing.md)
 - [Preserve source context when expansion writes to another directory](expansion-output-source-context.md)
 - [Reduce repeated work in deeply nested `Integer` quantifiers](deep-quantifier-scaling.md)
 - [Complete general-purpose algebraic data type support](algebraic-data-types.md)
