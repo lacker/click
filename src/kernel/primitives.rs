@@ -32,8 +32,10 @@ pub use integer::{MachineIntegerType, SharedMachineIntegerTerm};
 mod derivations;
 mod memory_state;
 pub(crate) use memory_state::{
-    clear_block_alignment_registry, register_block_alignment, registered_block_alignment,
-    registered_block_alignment_charged,
+    block_is_never_address_taken_local, clear_block_alignment_registry,
+    clear_never_address_taken_locals, register_block_alignment, registered_block_alignment,
+    registered_block_alignment_charged, set_never_address_taken_locals,
+    withdraw_never_address_taken_locals,
 };
 mod resource_algebra;
 mod term_operations;

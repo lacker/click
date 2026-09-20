@@ -2009,6 +2009,7 @@ fn verify_c0_sources_with_context(
     let _session = initial_function_environment
         .is_none()
         .then(crate::kernel::VerificationSession::enter);
+    let session_is_fresh = _session.as_ref().is_some_and(|session| session.is_fresh());
     let (file, parsed_sources, selected_functions, resource_struct_layouts) = {
         let _timing = VerificationTimingPhase::new("frontend");
         let (
@@ -2043,6 +2044,7 @@ fn verify_c0_sources_with_context(
         };
         modules::reject_theorem_justification_cycles(&file)?;
         let parsed_sources = parse_verified_sources_context(&file, c_sources)?;
+        record_never_address_taken_locals(&parsed_sources, session_is_fresh);
         let expansion_functions = expansion_capture
             .as_deref()
             .map(|capture| {
@@ -5036,6 +5038,40 @@ pub(in crate::surface) fn parse_verified_sources(
     parse_verified_sources_context(file, &context)
 }
 
+/// Publishes the program-wide never-address-taken names to the kernel, from
+/// every function body this verification parsed.
+///
+/// Completeness of the source set is what makes the answer usable: a `local:`
+/// block exists only because some function *body* executed a declaration, and
+/// the only bodies a verification can execute are the ones in `parsed_sources`
+/// — every function of every `verifying "...";` source the session loaded.
+/// An external declaration has no body and no automatic objects of this
+/// program; a callee reached through its contract contributes no block at all.
+/// So a name that survives the pass cannot be addressed by anything that runs
+/// here.
+///
+/// A verification that joins an enclosing session (it continues from an
+/// earlier one's environment) must not raise the answer, because the memo
+/// tables may already hold one. It can only lower it, by withdrawing a name
+/// its own sources address; doing so drops those tables, since an answer they
+/// cached was computed while the name was still in the registry. No caller
+/// joins a session today, so this is a lock rather than a code path in use.
+fn record_never_address_taken_locals(
+    parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
+    session_is_fresh: bool,
+) {
+    let summary = crate::languages::c::address_taken::summarize_address_taken(
+        parsed_sources.values().map(|(_, function)| function),
+    );
+    if session_is_fresh {
+        crate::kernel::set_never_address_taken_locals(summary.never_taken());
+        return;
+    }
+    if crate::kernel::withdraw_never_address_taken_locals(summary.taken()) {
+        crate::kernel::clear_memory_resolution_memos_and_caches();
+    }
+}
+
 pub(in crate::surface) fn parse_verified_sources_context(
     file: &ClickFile,
     c_sources: &CSourceContext<'_>,
@@ -7063,6 +7099,49 @@ int32 answer() {
         assert_eq!(
             forward.environment_identity(CTarget::SUPPORTED),
             reverse.environment_identity(CTarget::SUPPORTED)
+        );
+    }
+
+    /// The pre-pass must see what verification parses, not what a standalone
+    /// parse produces: a name whose address the C takes has to be refused on
+    /// the exact `C0Function` values the registry is built from.
+    #[test]
+    fn the_address_taken_pass_reads_the_bodies_verification_parses() {
+        const C: &str = "int32* echo(int32* p) { return p; }\nvoid v4(void) { int32 x; int32* q; x = 5; q = echo(&x); x = 1; }\n";
+        const SIDECAR: &str = "verifying \"a2.c\";\nint32* echo(int32* p) { ensures result == p; } by { execute(); simp(); }\nvoid v4() { ensures 1 == 1; } by { execute(); simp(); }\n";
+        let sources = [("a2.c", C)];
+        let context = CSourceContext::bundle(&sources);
+        let file = super::selected_c_target(SIDECAR)
+            .and_then(|target| {
+                let (
+                    struct_layouts,
+                    union_layouts,
+                    aggregate_objects,
+                    aggregate_array_objects,
+                    global_array_shapes,
+                    qualified_objects,
+                    local_struct_pointers,
+                ) = parse_c_layouts_for_target(SIDECAR, &context, target)?;
+                parser::parse_with_layouts_and_aggregate_objects(
+                    SIDECAR,
+                    struct_layouts,
+                    union_layouts,
+                    aggregate_objects,
+                    aggregate_array_objects,
+                    global_array_shapes,
+                    qualified_objects,
+                    local_struct_pointers,
+                )
+            })
+            .expect("the fixture parses");
+        let parsed = parse_verified_sources_context(&file, &context).expect("sources parse");
+        let summary = crate::languages::c::address_taken::summarize_address_taken(
+            parsed.values().map(|(_, function)| function),
+        );
+        assert!(
+            !summary.never_taken().contains("x"),
+            "`&x` is written in v4, so `x` must not be reported: {:?}",
+            summary.never_taken()
         );
     }
 

@@ -222,6 +222,7 @@ impl VerificationSession {
             primitives::start_fresh_c_memory_arena();
             eval::clear_load_variable_registry();
             primitives::clear_block_alignment_registry();
+            primitives::clear_never_address_taken_locals();
             pure_functions::clear_pure_function_definitions();
             eval::clear_load_canonicalization_caches();
             memory_provenance::clear_canonical_form_caches();
@@ -244,6 +245,16 @@ impl VerificationSession {
     pub fn is_fresh(&self) -> bool {
         self.fresh
     }
+}
+
+/// Drops every memoized answer that may depend on which locals the session
+/// considers never address-taken. Used only when that set shrinks mid-session,
+/// which no caller does today; see `record_never_address_taken_locals`.
+pub fn clear_memory_resolution_memos_and_caches() {
+    reasoning::memory_resolution::clear_memory_resolution_memos();
+    reasoning::memory_resolution::clear_canonical_memory_cache();
+    memory_provenance::clear_provenance_memos();
+    assumptions::clear_assumption_memos();
 }
 
 /// Begins a new load-origin epoch for the function about to be verified;

@@ -3198,3 +3198,102 @@ pub(crate) fn registered_block_alignment_charged(
 pub(crate) fn clear_block_alignment_registry() {
     BLOCK_ALIGNMENT_REGISTRY.with(|registry| registry.borrow_mut().clear());
 }
+
+thread_local! {
+    /// The names of automatic objects — locals and parameters — whose address
+    /// no function in this session's C sources ever takes, and which are
+    /// declared everywhere with a scalar or pointer type.
+    ///
+    /// Deliberately a set of *names*, not of blocks. A block identity says
+    /// nothing about which function declared it (`local:x` in `f` and in `g`
+    /// are one spelling), and the resolution memo and the canonical-load
+    /// projection cache are scoped to a verification rather than to a
+    /// function. An answer that differed between two functions of one session
+    /// would therefore be cached under the first function's answer and served
+    /// to the second. Indexing by name makes the answer function-independent:
+    /// a name taken in *any* function is absent for *every* function, which
+    /// loses proofs about the innocent one and can never serve a stale answer.
+    ///
+    /// Populated once, before any query, by the surface's pre-pass over every
+    /// parsed function body, and emptied when a session starts. Absence is the
+    /// answer for everything else, including the verifier's own synthetic
+    /// names, so an unpopulated registry decides nothing.
+    static NEVER_ADDRESS_TAKEN_LOCALS: std::cell::RefCell<BTreeSet<String>> =
+        const { std::cell::RefCell::new(BTreeSet::new()) };
+}
+
+/// Records the program-wide never-address-taken names for this session. The
+/// surface computes them from every function body it parsed; see
+/// `never_address_taken_local_names`.
+pub(crate) fn set_never_address_taken_locals(names: BTreeSet<String>) {
+    NEVER_ADDRESS_TAKEN_LOCALS.with(|registry| *registry.borrow_mut() = names);
+}
+
+/// Withdraws names a later source bundle shows to be address-taken, for a
+/// verification that joins an enclosing session instead of starting one.
+///
+/// Returns whether anything was withdrawn, so the caller can drop the memo
+/// tables that may already hold an answer computed while the name was still
+/// in the registry. Today no caller joins a session with different sources,
+/// and this keeps that from becoming a silent staleness bug if one appears.
+pub(crate) fn withdraw_never_address_taken_locals(taken: &BTreeSet<String>) -> bool {
+    NEVER_ADDRESS_TAKEN_LOCALS.with(|registry| {
+        let mut registry = registry.borrow_mut();
+        let before = registry.len();
+        registry.retain(|name| !taken.contains(name));
+        registry.len() != before
+    })
+}
+
+/// The automatic object a `local:` block holds, as the program names it, or
+/// `None` when the spelling is not one automatic object's.
+///
+/// Three spellings reach a `local:` block: `local:x` for a declaration,
+/// `local:lifetime:2:x` for a re-entered one, and `local:frame:3:x` for a
+/// call frame's. A C identifier contains no colon, so the forms cannot be
+/// confused with a local genuinely named `frame` or `lifetime`, and any other
+/// shape is refused rather than guessed.
+fn local_block_object_name(block: &PointerBlock) -> Option<&str> {
+    let rest = block.strip_prefix("local:")?;
+    match rest.split_once(':') {
+        None => Some(rest),
+        Some(("lifetime" | "frame", tail)) => {
+            let (_, name) = tail.split_once(':')?;
+            (!name.contains(':')).then_some(name)
+        }
+        Some(_) => None,
+    }
+}
+
+/// Whether this block holds an automatic object whose address no function in
+/// this session's C sources takes.
+///
+/// Soundness. C gives a program exactly two ways to obtain the address of an
+/// automatic object: the `&` operator, and the array-to-pointer conversion of
+/// an array or aggregate object's name. The pre-pass behind this registry
+/// refuses a name that is ever declared with an array, struct or union type,
+/// and refuses a name that occurs anywhere under an address-of node in any
+/// function body, so neither way is available for a name that survives into
+/// it. No other pointer can reach the object either: arithmetic that leaves
+/// the object it was derived from is undefined behaviour, which Click enforces
+/// with the bounds obligation on every displaced access
+/// (`CMemoryCanStore` / `access_in_bounds`), and an integer cast to a pointer
+/// is outside the supported C0 subset. A `&x` written in a *proof* creates no
+/// runtime pointer, so an annotation cannot make an object addressable that
+/// the program never addresses.
+///
+/// This is therefore a claim about addressability, not about one pair of
+/// pointers: a never-address-taken object is not memory any pointer value can
+/// designate. The caller must still defer to an equality the context *states*
+/// about the pointer, because an assumed `p == &x` would otherwise be refuted
+/// and the context silently made inconsistent.
+pub(crate) fn block_is_never_address_taken_local(block: &PointerBlock) -> bool {
+    let Some(name) = local_block_object_name(block) else {
+        return false;
+    };
+    NEVER_ADDRESS_TAKEN_LOCALS.with(|registry| registry.borrow().contains(name))
+}
+
+pub(crate) fn clear_never_address_taken_locals() {
+    NEVER_ADDRESS_TAKEN_LOCALS.with(|registry| registry.borrow_mut().clear());
+}

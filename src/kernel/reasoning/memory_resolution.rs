@@ -373,6 +373,65 @@ fn pointers_proven_distinct_for_memory_resolution_unmemoized(
             "general distinctness: exact alias hop",
             || pointers_distinct_through_one_exact_alias(left, right, assumptions),
         )
+        || crate::instrumentation::measure_operation(
+            "kernel",
+            "general pointer distinctness",
+            "general distinctness: never-address-taken local",
+            || never_address_taken_local_versus_pointer_value(left, right, assumptions),
+        )
+}
+
+/// Whether one side is an automatic object whose address the program never
+/// takes, and the other is a pointer value the verifier has not resolved.
+///
+/// This is what frames the commonest read of all. `p = f(); … p[0]` stores the
+/// returned pointer into the caller's own `p`, and that store is itself a step
+/// the read has to be told apart from; no contract can say anything about it,
+/// because `p` belongs to the caller of the function whose contract is being
+/// written. Structure says nothing either: a `Symbolic` block is proven
+/// distinct from nothing.
+///
+/// The claim is about *addressability*, and it is made once for the whole
+/// session by the registry behind
+/// [`crate::kernel::primitives::block_is_never_address_taken_local`], whose
+/// soundness argument is on that function: an object whose name is never
+/// declared with an aggregate type and never appears under `&` in any function
+/// body has no address any C value in this program can hold, so no pointer
+/// value designates it. That is why `local_versus_argument` in
+/// `PointerBlock::proven_distinct` can stay the narrower structural rule and
+/// this one lives here, where the assumptions are in scope.
+///
+/// Deferring to what the context states is the other half of the rule, and it
+/// is not an optimization. An equality the context *assumes* between the
+/// pointer and this very object would be refuted by the paragraph above, and a
+/// refuted assumption is an inconsistent context, from which everything
+/// follows. So when any exact equality places the pointer in this object's
+/// block, this rule declines and leaves the answer to
+/// [`pointers_distinct_through_one_exact_alias`], which substitutes the
+/// equality instead of contradicting it. Today such an equality can only be
+/// established, never assumed — every surface form that introduces one proves
+/// it first — so the guard is a second lock on a door that is already shut.
+///
+/// Boundedness: one registry lookup on a name of bounded length, plus the one
+/// keyed alias lookup the guard needs. No fact-set scan, no walk.
+fn never_address_taken_local_versus_pointer_value(
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &PureFactContext,
+) -> bool {
+    let separated = |local: &Pointer, value: &Pointer| {
+        if !matches!(value.block, PointerBlock::Symbolic(_))
+            || !crate::kernel::primitives::block_is_never_address_taken_local(&local.block)
+        {
+            return false;
+        }
+        crate::instrumentation::record_deterministic_work(1);
+        // Defer to a stated equality that puts the pointer in this object.
+        !assumptions
+            .exact_pointer_aliases(value)
+            .any(|alias| alias.block == local.block)
+    };
+    separated(left, right) || separated(right, left)
 }
 
 /// Whether one exact pointer equality resolves an unresolved pointer to an
