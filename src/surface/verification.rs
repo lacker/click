@@ -488,7 +488,7 @@ fn selected_theorem_definitions(
             .theorem_definitions()
             .iter()
             .filter(|definition| definition.name() == name && file.theorem_is_selected(name))
-            .cloned()
+            .map(clone_theorem_definition_iteratively)
             .collect();
     }
     if selected_functions.is_some() {
@@ -497,7 +497,7 @@ fn selected_theorem_definitions(
     file.theorem_definitions()
         .iter()
         .filter(|definition| file.theorem_is_selected(definition.name()))
-        .cloned()
+        .map(clone_theorem_definition_iteratively)
         .collect()
 }
 
@@ -709,7 +709,11 @@ pub(in crate::surface) fn verify_click_project_theorem_context(
         &standard_library_theorem_definitions()?
             .iter()
             .cloned()
-            .chain(file.theorem_definitions().iter().cloned())
+            .chain(
+                file.theorem_definitions()
+                    .iter()
+                    .map(clone_theorem_definition_iteratively),
+            )
             .collect::<Vec<_>>(),
     );
     if theorem.executes.is_some() {
@@ -723,7 +727,7 @@ pub(in crate::surface) fn verify_click_project_theorem_context(
                 file.theorem_definitions()
                     .iter()
                     .take_while(|definition| definition.name() != theorem_name)
-                    .cloned(),
+                    .map(clone_theorem_definition_iteratively),
             )
             .collect::<Vec<_>>();
         return verify_theorem_definitions(
@@ -2131,10 +2135,14 @@ fn verify_c0_sources_with_context(
             .theorem_definitions()
             .iter()
             .filter(|theorem| !selected_theorem_names.contains(theorem.name()))
-            .cloned()
+            .map(clone_theorem_definition_iteratively)
             .collect::<Vec<_>>();
         let mut theorem_dependencies = standard_library_theorems.to_vec();
-        theorem_dependencies.extend(unselected_theorem_definitions.iter().cloned());
+        theorem_dependencies.extend(
+            unselected_theorem_definitions
+                .iter()
+                .map(clone_theorem_definition_iteratively),
+        );
         let predicate_environment = PredicateEnvironment::new(&predicate_definitions)
             .with_contracts(file.contract_definitions());
         let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
@@ -2232,8 +2240,12 @@ fn verify_c0_sources_with_context(
         let theorem_environment = TheoremEnvironment::new(
             &standard_library_theorems
                 .iter()
-                .chain(file.theorem_definitions())
-                .cloned()
+                .map(Clone::clone)
+                .chain(
+                    file.theorem_definitions()
+                        .iter()
+                        .map(clone_theorem_definition_iteratively),
+                )
                 .collect::<Vec<_>>(),
         );
         check_verification_deadline()?;

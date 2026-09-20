@@ -391,9 +391,12 @@ fn merge_modules(
         merged
             .resource_definitions
             .extend(local.resource_definitions.iter().cloned());
-        merged
-            .theorem_definitions
-            .extend(local.theorem_definitions.iter().cloned());
+        merged.theorem_definitions.extend(
+            local
+                .theorem_definitions
+                .iter()
+                .map(clone_theorem_definition_iteratively),
+        );
     }
     Ok(merged)
 }

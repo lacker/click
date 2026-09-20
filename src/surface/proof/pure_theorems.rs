@@ -66,7 +66,7 @@ pub(in crate::surface) fn verify_theorem_definitions(
                 resource_environment,
                 function_source_registry.clone(),
             )?);
-            theorem_environment.insert(theorem.clone());
+            theorem_environment.insert(clone_theorem_definition_iteratively(theorem));
             continue;
         }
         {
@@ -101,7 +101,7 @@ pub(in crate::surface) fn verify_theorem_definitions(
                 function_environment,
             )?);
         }
-        theorem_environment.insert(theorem.clone());
+        theorem_environment.insert(clone_theorem_definition_iteratively(theorem));
     }
     Ok(verified)
 }
@@ -1655,7 +1655,11 @@ fn verify_theorem_ensure(
             )
             .and_then(|rewrites| {
                 prove_universally_quantified_pure_implication_by_int32_rewrites(
-                    context.requires.clone(),
+                    context
+                        .requires
+                        .iter()
+                        .map(crate::kernel::clone_proposition_iteratively)
+                        .collect(),
                     goal.clone(),
                     variables.clone(),
                     rewrites,
@@ -1664,7 +1668,11 @@ fn verify_theorem_ensure(
             })
             .or_else(|| {
                 prove_universally_quantified_pure_implication(
-                    context.requires.clone(),
+                    context
+                        .requires
+                        .iter()
+                        .map(crate::kernel::clone_proposition_iteratively)
+                        .collect(),
                     goal.clone(),
                     variables,
                     completion,
@@ -1674,12 +1682,16 @@ fn verify_theorem_ensure(
         _ => None,
     };
     Ok(VerifiedPureTheorem {
-        theorem_definition: theorem.clone(),
+        theorem_definition: clone_theorem_definition_iteratively(theorem),
         ensure_index,
         ensure_clause: ensure_clause.clone(),
         proof_kind,
         proof: Some(certificate),
-        requires: context.requires.clone(),
+        requires: context
+            .requires
+            .iter()
+            .map(crate::kernel::clone_proposition_iteratively)
+            .collect(),
         conclusion: goal,
         kernel_authority,
         checked_completion: Some(checked_completion),
