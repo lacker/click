@@ -18,6 +18,17 @@ Nested algebraic datatype applications and fields use a separate bounded
 angle-bracket budget; angle brackets are not included in the general delimiter
 preflight because they also spell comparison operators.
 
+The current budgets are 16 for parenthesized and `match` nesting, 32 for the
+shared structural and conditional-expression nesting, and 32 for nested
+algebraic type applications and fields. Operator chains accept up to 512
+operands, unary proposition negation accepts up to 64 prefixes, sequential
+contract `let` bindings accept up to 128 bindings, and recursively nested
+contract `let` initializers accept up to 8 levels. These are parser/tooling
+boundaries, not a promise that every accepted shape is semantically useful:
+for example, sequence literals currently require scalar elements, so deeply
+nested bracket literals are checked for safe parsing and rendering but are not
+valid theorem values.
+
 ## C0 is small
 
 Click does not parse general C. See [Supported C0](c0.md). Missing
