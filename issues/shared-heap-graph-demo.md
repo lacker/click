@@ -99,34 +99,44 @@ when proof tooling exposes a blocker.
 
 ## Current status, 2026-09-19
 
-The first verifier chunk is green, but the complete frozen two-parent lifecycle
-is not finished. The companion encoding is the supported shape for the next
-steps: each parent owns its link cell and keeps a top-level `child_ref(kid)`
-unit; the parent resource does not nest the memory-bearing counted family.
+This issue remains open, but the work is now split into verified pieces and a
+specific composition gap. The frozen C source is unchanged. The helper-level
+proofs pass through the normal gate; the complete two-parent caller has not
+yet been added as a passing fixture.
 
-Landed and covered by the normal gate:
+Verified and landed:
 
-- `mdtests/child_release_branch_on_count.md` proves the single C
-  branch-on-count release, including the explicit nonempty-population goal on
-  the non-final path.
-- `mdtests/parent_attach_call_frame.md` covers attach, a disjoint retain call,
-  the post-call parent fold, and a payload read through the companion link.
-- The call/frame transport now resolves a pointer-valued load through the
-  checked memory-DAG history when the call excludes that cell. The fallback is
-  scoped to explicit resource-body pointer facts; unrelated general fact
-  discharge does not gain a new search route.
-- `scripts/check.sh` passes, including the full unit, integration, example,
-  and mdtest gates.
+- `mdtests/child_release_branch_on_count.md` proves the exact branch-on-count
+  `child_release`, including the nonempty counted-population obligation on
+  the decrement path.
+- `mdtests/parent_attach_call_frame.md` proves the attach shape: storing the
+  parent link, calling a disjoint retain helper, folding the parent resource,
+  and reading through the surviving link.
+- `mdtests/shared_heap_detach_old_resource_handoff.md` proves the minimal
+  detach handoff with `produces child_ref(old(p->kid))`. Its old-pointer
+  lookup is resolved from checked entry-memory evidence, and it no longer
+  fails with the stale `child_ref(null@0)` diagnostic.
+- `mdtests/shared_heap_detach_leak_diagnostic.md` covers the negative case and
+  names both the leaked allocation and the counted resource holding it.
+- The call/frame transport and surface diagnostics are covered by the normal
+  `scripts/check.sh` gate.
 
-The full frozen `shared_parent.c` diamond is still open. In particular, the
-parent-detach path decrements a counted child reference and then clears
-`p->kid`; the surviving counted unit must still be returned under the old
-child pointer. Declared resource arguments now accept `old(...)`, and the
-minimal handoff reduction resolves `old(p->kid)` from checked entry-memory
-evidence. The next failure is the allocation-lifetime check for that produced
-counted resource, which still reports the allocation as held by the old
-`child_ref` rather than returned. No parent resource nesting workaround was
-accepted.
+Still failing to compose:
+
+- The exact frozen `design/shared-heap-probes/shared_parent.c` diamond has
+  two allocation-failure paths and two destruction orders, but no passing
+  sidecar yet.
+- A parent resource that records the initialized child pointer is usable in a
+  focused helper, but an automatic caller proof cannot currently transport
+  that resource into `parent_detach` and then evaluate `child_ref(p->kid)`.
+  Removing the resource binder makes the caller reach the detach call, but
+  leaves the field load unavailable; retaining the binder brings back the
+  unbound-instance transport failure. This is the remaining composition
+  problem, not a failure of the child release proof or the old-pointer
+  handoff itself.
+- The full positive caller, allocation-failure regressions, negative caller
+  regressions, and deterministic scaling fixtures therefore remain to be
+  composed before this issue can be closed.
 
 ## Completed chunk, 2026-09-18: one branch-on-count release
 
@@ -155,12 +165,12 @@ and only then folds `parent(p)`. The pointer-valued `p->kid` fact is recovered
 from the checked memory-DAG call frame because the retain call excludes that
 cell. Calls that may write the field do not receive this transport.
 
-The remaining next chunk is the parent-detach handoff: preserve the surviving
-`child_ref` and its allocation under the pre-store child pointer while the
-parent link transitions after `p->kid = 0`. Then wire both destruction orders,
+The remaining composition work is at the caller boundary: transport the
+initialized parent-link resource into `parent_detach`, preserve the surviving
+`child_ref` across `p->kid = 0`, and then wire both destruction orders,
 allocation-failure paths, and the negative regressions from the frozen probe.
 
-## Minimal detach reduction, 2026-09-18
+## Historical minimal detach reduction, 2026-09-18
 
 The detach blocker is now reduced independently of the branch-on-count
 release. The following split-release source is only a reducer; it is not a
@@ -248,7 +258,7 @@ void parent_detach(struct parent* p) {
 }
 ```
 
-The first failing proof step is the post-state/resource check for
+The original first failing proof step was the post-state/resource check for
 `parent_detach`, not the `child_release_nonfinal` call. With only
 `consumes child_ref(p->kid)`, the call fails immediately because the
 non-final release contract needs two units: one `owns` unit for the surviving
@@ -260,11 +270,12 @@ live allocation obligation was neither returned nor freed: `owns allocation(p->k
 held by owns child_ref(p->kid)
 ```
 
-The corrected attempted handoff is `produces child_ref(old(p->kid))`. The
-surface resource check can now resolve that entry-state pointer from checked
-viewability evidence, so the old `missing resource fact owns
-child_ref(null@0)` is no longer the first failure. The current first failure
-is instead:
+The corrected handoff is `produces child_ref(old(p->kid))`. The surface
+The corrected handoff is `produces child_ref(old(p->kid))`. The surface
+resource check now resolves that entry-state pointer from checked viewability
+evidence, so the old `missing resource fact owns child_ref(null@0)` failure is
+gone. The following diagnostic records the original allocation-lifetime
+failure that motivated the fix:
 
 ```text
 could not prove `produces child_ref(old(p->kid))`: live allocation obligation
@@ -272,19 +283,8 @@ was neither returned nor freed: `owns allocation(p->kid, 8)`; held by owns
 child_ref(p->kid)
 ```
 
-This isolates the remaining gap: the allocation-lifetime closer and the
-explicit old-pointer resource handoff do not yet share the same returned
-resource evidence.
-
 The diagnostic now identifies the exact live allocation and the owning
-`child_ref` population, and renders the recovered pointer in this leak path as
-the surface field expression `p->kid` instead of the lowered load expression.
-The remaining proof failure is therefore the ownership gap itself: the
-reduction still needs a checked handoff for the entry-state `p->kid` value
-after the field is cleared.
-
-Therefore this is a genuine Click contract/resource-state gap, now with a
-minimal first failing obligation. The branch-on-count release and the parent
-link fold are independently green; the missing capability is to connect a
-checked old-pointer resource handoff to the allocation-lifetime closer. Any
-fix must keep the handoff generic and must not alter the frozen C.
+`child_ref` population, and renders the recovered pointer in this leak path
+using surface Click syntax rather than an internal pointer expression. The
+minimal reducer is now a historical explanation of the original failure; the
+current blocker is the caller-side resource transport described above.
