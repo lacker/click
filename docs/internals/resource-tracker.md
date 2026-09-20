@@ -100,12 +100,12 @@ what was actually established.
 | --- | --- | --- |
 | `Store` | separate on proven-distinct blocks, a common-base offset inequality, typed `separate(..)` evidence, an explicit range, or general distinctness | separate **only** on `PointerBlock::proven_distinct` |
 | `BlockDeclared` | separate: it writes nothing | separate when the declared object is proven distinct: it has its own `blocks` key, so this block's extent is the entry it was |
-| `HeapAllocationPending` | separate | **stops** |
+| `HeapAllocationPending` | separate | separate: a request with no address yet records nothing a read of a block consults |
 | `ContractAllocationClaimsChanged` | separate | **stops** |
 | `CellsForgotten` | separate | **stops**: the state is the same, the cell map is not |
-| `HeapAllocated` | separate when the block differs | **stops** |
-| `LocalLifetimeEnded` | separate on proven distinctness | **stops** |
-| `HeapFreed` | separate on three separation ladders | **stops** |
+| `HeapAllocated` | separate when the block differs | separate when the fresh object is proven distinct |
+| `LocalLifetimeEnded` | separate on proven distinctness | separate when the retired object is proven distinct |
+| `HeapFreed` | separate on three separation ladders | separate when the released allocation's object is proven distinct |
 | `CallHavoc` | separate on range disjointness | **stops** |
 | `LoopHavoc(Some)` | separate under the extended-bridging and explicit-check gates, and never on the naming path | **stops** |
 | `LoopHavoc(None)` | never separate | **stops** |

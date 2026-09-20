@@ -209,6 +209,158 @@ fn a_block_does_not_cross_its_own_declaration_or_an_unseparated_one() {
     );
 }
 
+/// Releasing an object proven distinct from this one leaves everything the
+/// block contains, so both resources cross it — and releasing the block's own
+/// object is a change, not a missing separation.
+///
+/// A heap allocation is the reachable case: `mdtests/…_freeing_the_array.md` is
+/// the user's view of the negative, and the positive is here because a `free`
+/// of a distinct object is only reachable after a `malloc`, whose branch
+/// continuation the recorded execution does not connect across.
+#[test]
+fn a_release_of_another_object_keeps_one_version() {
+    let heap = PointerBlock::Heap(1);
+    let fresh = Pointer {
+        block: heap.clone(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let live = entry_memory()
+        .with_heap_allocation_claim(fresh.clone(), 16)
+        .expect("a fresh allocation claim");
+    let freed = live
+        .clone()
+        .free_heap_block(&fresh)
+        .expect("the allocation is live, so it can be released");
+
+    // The release edge records a base that is not the pre-free state -- the
+    // producer interns it after dropping the live entry -- so this asks the
+    // walk directly whether it crossed the release rather than comparing two
+    // program points across it.
+    let crossed = last_same(Resource::Block(&block("global:g")), &point(&freed))
+        .expect("a block always has a last-same point");
+    assert_ne!(
+        crossed.point,
+        point(&freed),
+        "a released heap object is proven distinct from a global, so the walk crosses it"
+    );
+
+    let own = last_same(Resource::Block(&heap), &point(&freed))
+        .expect("a block always has a last-same point");
+    assert_eq!(own.point, point(&freed));
+    assert_eq!(own.stopped_by.change, Change::Free { allocation: fresh });
+    assert_eq!(own.stopped_by.reason, StopReason::Affected);
+}
+
+/// An allocation the caller's object could be a subrange of is not separate
+/// from it: a contract may claim `ExternalArgument` memory, which is the block
+/// every array parameter of a function shares.
+#[test]
+fn a_release_inside_the_argument_object_stops_a_block_fact() {
+    let inside = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let live = entry_memory()
+        .with_heap_allocation_claim(inside.clone(), 16)
+        .expect("a fresh allocation claim");
+    let freed = live
+        .free_heap_block(&inside)
+        .expect("the allocation is live, so it can be released");
+    let stopped = last_same(
+        Resource::Block(&PointerBlock::ExternalArgument),
+        &point(&freed),
+    )
+    .expect("a block always has a last-same point");
+    assert_eq!(
+        stopped.point,
+        point(&freed),
+        "a release inside the argument object must stop the walk"
+    );
+    assert_eq!(
+        stopped.stopped_by.reason,
+        StopReason::Affected,
+        "the object released is the one the fact reads through"
+    );
+}
+
+/// A local's lifetime ending retires that object alone, so a block proven
+/// distinct from it crosses the step and the retired block itself does not.
+#[test]
+fn a_lifetime_end_of_another_local_keeps_one_version() {
+    let entry = entry_memory();
+    let retired = entry.without_local_block(&block("local:f:i"));
+    assert_eq!(
+        same(
+            Resource::Block(&block("global:g")),
+            &point(&retired),
+            &point(&entry)
+        ),
+        Sameness::Same,
+        "another function-local object is proven distinct from a global"
+    );
+    let outcome = same(
+        Resource::Block(&block("local:f:i")),
+        &point(&retired),
+        &point(&entry),
+    );
+    let Sameness::Changed { by, .. } = outcome else {
+        panic!("a block's own lifetime ending is a change, not {outcome:?}");
+    };
+    assert_eq!(
+        by.change,
+        Change::LifetimeEnd {
+            block: block("local:f:i")
+        }
+    );
+    assert_eq!(by.reason, StopReason::Affected);
+}
+
+/// An allocation request with no address yet records only that request, and
+/// nothing that decides what a read of a block sees consults it. The pin is
+/// that the step changes no extent, no cell, no overlay, no liveness and no
+/// heap status other than the pending maps.
+#[test]
+fn a_pending_allocation_records_nothing_a_block_can_observe() {
+    let entry = entry_memory();
+    let requested = entry.clone().with_pending_heap_allocation(
+        Pointer {
+            block: PointerBlock::Symbolic(Variable(1_000)),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        Bitvector32Term::Constant(16),
+        false,
+    );
+    assert_eq!(entry.blocks, requested.blocks);
+    assert_eq!(entry.cells, requested.cells);
+    assert_eq!(entry.union_cells, requested.union_cells);
+    assert_eq!(entry.ended_local_blocks, requested.ended_local_blocks);
+    let same_heap_but_pending = CHeapMemory {
+        pending_allocations: entry.heap.pending_allocations.clone(),
+        ..requested.heap.as_ref().clone()
+    };
+    assert_eq!(
+        &same_heap_but_pending,
+        entry.heap.as_ref(),
+        "a pending request must change nothing else about the heap"
+    );
+
+    for subject in [
+        PointerBlock::ExternalArgument,
+        block("global:g"),
+        PointerBlock::Symbolic(Variable(1_000)),
+    ] {
+        assert_eq!(
+            same(
+                Resource::Block(&subject),
+                &point(&requested),
+                &point(&entry)
+            ),
+            Sameness::Same,
+            "a pending request is separate from every block, including {subject:?}"
+        );
+    }
+}
+
 /// With one point and no second one to compare against, the tracker reports
 /// the step that ended the last stretch of agreement — and reports `Same`
 /// when the recorded history holds no such step.

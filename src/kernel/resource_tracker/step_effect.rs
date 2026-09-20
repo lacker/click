@@ -52,11 +52,13 @@ pub(in crate::kernel) enum Separation {
 /// Why a step was known not to touch anything a pure function can observe
 /// through a pointer into one block.
 ///
-/// Every variant is a claim about *objects*, decided by
-/// [`PointerBlock::proven_distinct`], never about spellings: a file-scope
+/// Every variant that names another object is a claim about *objects*, decided
+/// by [`PointerBlock::proven_distinct`], never about spellings: a file-scope
 /// `global:g` and a parameter's `ExternalArgument` memory are two known,
 /// differing spellings that the caller is free to make one object, and every
-/// array parameter of one function shares `ExternalArgument`.
+/// array parameter of one function shares `ExternalArgument`. The one variant
+/// that names no object instead rests on the step recording nothing a read can
+/// consult, which is a stronger claim, not a weaker one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::kernel) enum BlockSeparation {
     /// The written address is in an object the kernel proves is not this one,
@@ -67,6 +69,17 @@ pub(in crate::kernel) enum BlockSeparation {
     /// one, so it has its own `blocks` key and this block's extent entry is
     /// untouched.
     DeclarationOfDistinctBlock,
+    /// The object that became live is proven distinct from this one, so its
+    /// extent and its fresh-allocation status are its own.
+    AllocationOfDistinctBlock,
+    /// An allocation was requested and has no address yet. The step records
+    /// only that pending request, which nothing deciding a read of a block
+    /// consults; resolving it is a separate step, judged on its own.
+    PendingAllocationMetadata,
+    /// The automatic-storage object retired, or the heap allocation released,
+    /// is proven distinct from this one, so this block keeps its contents,
+    /// extent, liveness and heap status.
+    ReleaseOfDistinctBlock,
 }
 
 /// What the querying context offers a walk towards an answer.
@@ -88,12 +101,12 @@ pub(in crate::kernel) struct Evidence<'a> {
 /// | --- | --- | --- |
 /// | `Store` | separate on proven-distinct blocks, a common-base offset inequality, typed `separate(..)` evidence, an explicit range, or general distinctness; affected when the written address is provably the loaded one | separate **only** on `PointerBlock::proven_distinct` |
 /// | `BlockDeclared` | separate: it writes nothing | separate when the declared object is proven distinct; affected for this block's own declaration |
-/// | `HeapAllocated` | separate when the block differs | **not shown separate** |
-/// | `HeapAllocationPending` | separate: it writes nothing | **not shown separate** |
+/// | `HeapAllocated` | separate when the block differs | separate when the fresh object is proven distinct; affected for this one |
+/// | `HeapAllocationPending` | separate: it writes nothing | separate: no read of any block consults a pending request |
 /// | `ContractAllocationClaimsChanged` | separate: it writes nothing | **not shown separate** |
 /// | `CellsForgotten` | separate: the state is the same | **not shown separate** |
-/// | `LocalLifetimeEnded` | separate on proven distinctness | **not shown separate** |
-/// | `HeapFreed` | separate on three separation ladders | **not shown separate** |
+/// | `LocalLifetimeEnded` | separate on proven distinctness | separate when the retired object is proven distinct; affected for this one |
+/// | `HeapFreed` | separate on three separation ladders | separate when the released allocation's object is proven distinct; affected when it is this one |
 /// | `CallHavoc` | separate on range disjointness | **not shown separate** |
 /// | `LoopHavoc(Some)` | separate under the extended-bridging and explicit-check gates, and never on the naming path | **not shown separate** |
 /// | `LoopHavoc(None)` | never separate | never separate |
@@ -430,6 +443,30 @@ fn cell_effect(
 ///   was, and everything a body reads through the pointer is untouched. This is
 ///   why `int32 t;` now carries a fact about `a` as a whole, as it has always
 ///   carried `a[0] == 5`.
+/// * `HeapAllocated` inserts the fresh object's extent under its own key and
+///   marks that one base live and uninitialized-or-zeroed. An object proven
+///   distinct from this block therefore leaves this block's extent, contents,
+///   liveness and zeroed status alone. A `Heap` block is a fresh object, which
+///   is the `proven_distinct` arm this rides.
+/// * `HeapAllocationPending` records a requested allocation that has no
+///   address yet: `pending_allocations`, and `zeroed_pending_allocations` for a
+///   `calloc`. Nothing that decides what a read of a block sees consults
+///   either map — not its extent, not its cells, not its liveness, not its
+///   zeroed status — so this step is separate from every block, with no
+///   distinctness claim needed. That is also why the cell arm crosses it. The
+///   moment the request resolves is a `HeapAllocated` edge, judged on its own,
+///   and a pending *reallocation* records no edge at all, so a walk stops at
+///   it for want of a derivation.
+/// * `HeapFreed` moves one allocation from live to deallocated, drops its
+///   uninitialized and zeroed status, removes its extent, and drops the cells
+///   that allocation may contain — which `heap_allocation_may_contain_pointer`
+///   confines to that allocation's own block. `LocalLifetimeEnded` removes the
+///   retired block's extent, its cells and its overlays, and adds it to the
+///   ended-local set, all under that block's key. An object proven distinct
+///   from this block keeps everything this block contains. Neither is a
+///   spelling test: a contract-imported allocation can be a subrange of
+///   `ExternalArgument` memory, so freeing it is not separate from an array
+///   parameter, and every array parameter of one function shares that block.
 /// * Every other kind stops the walk, exactly as it did before there was one
 ///   rule. Each blanket refusal below is a finding to settle on its own.
 ///
@@ -466,20 +503,21 @@ fn block_effect(step: &CMemoryDerivation, block: &PointerBlock) -> StepEffect {
         CMemoryDerivation::BlockDeclared {
             block: declared, ..
         } => one_object(declared, BlockSeparation::DeclarationOfDistinctBlock),
-        // They change heap status, which decides whether a read is defined,
-        // is zeroed, or has a pending reallocation.
         CMemoryDerivation::HeapAllocated {
             block: allocated, ..
-        } => stops(Some(allocated)),
-        CMemoryDerivation::HeapAllocationPending {
-            allocation_base, ..
-        } => stops(Some(&allocation_base.block)),
+        } => one_object(allocated, BlockSeparation::AllocationOfDistinctBlock),
+        CMemoryDerivation::HeapAllocationPending { .. } => StepEffect::Separate(Separation::Block(
+            BlockSeparation::PendingAllocationMetadata,
+        )),
         CMemoryDerivation::HeapFreed {
             allocation_base, ..
-        } => stops(Some(&allocation_base.block)),
-        // It retires an object every alias to which must stop reading, and
-        // this rule decides no aliases.
-        CMemoryDerivation::LocalLifetimeEnded { block: retired, .. } => stops(Some(retired)),
+        } => one_object(
+            &allocation_base.block,
+            BlockSeparation::ReleaseOfDistinctBlock,
+        ),
+        CMemoryDerivation::LocalLifetimeEnded { block: retired, .. } => {
+            one_object(retired, BlockSeparation::ReleaseOfDistinctBlock)
+        }
         // It writes no bytes, but the claims it moves are what authorize a
         // read.
         CMemoryDerivation::ContractAllocationClaimsChanged { .. } => stops(None),
