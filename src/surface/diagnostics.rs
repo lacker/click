@@ -3071,6 +3071,15 @@ pub(super) fn describe_bitvector_with_context(
                 describe_pointer(&pointer, parameters, arguments)
             )
         }
+        // And a model-field variable prints as the field it is. The value is
+        // stored inside the instance fact, so there is nothing in the term to
+        // recover it from; the mint registered it.
+        Bitvector32Term::Variable(variable)
+            if crate::kernel::model_fields::model_field_spelling(*variable).is_some() =>
+        {
+            crate::kernel::model_fields::model_field_spelling(*variable)
+                .expect("checked registered above")
+        }
         Bitvector32Term::Variable(variable) => format!("v{}", variable.0),
         Bitvector32Term::Add(left, right) => {
             describe_binary_bitvector_with_context(left, "+", right, parameters, arguments)

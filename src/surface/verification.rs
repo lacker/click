@@ -2322,6 +2322,11 @@ fn verify_c0_sources_with_context(
         // visible at an interrupted project deadline. Nested tactic and
         // certification spans take precedence in the active-work snapshot.
         let _verifier_core_timing = VerificationTimingPhase::new("verifier-core");
+        // The entry model of each declared binder is what `old(c.rank)` names,
+        // and the registry that lets a refusal spell it that way is per
+        // verification, like the load-origin epoch above. One insert per field
+        // of each binder this function declares.
+        crate::surface::lowering::register_entry_model_fields(&function_block);
         let function_timing_start = std::time::Instant::now();
         let (_, source_path, parsed_function) =
             parsed_function_for_source_name(&parsed_sources, function_block.signature.name())?

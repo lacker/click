@@ -4,6 +4,7 @@ use super::loans::{
     StableViewTransferPlan, append_checked_loan_evidence, concat_checked_loan_evidence,
     empty_checked_loan_evidence_sequence, plan_stable_view_transfer_with_bindings_and_composites,
 };
+use super::model_fields::{ModelFieldOrigin, ModelMint, algebraic_value_variable};
 use super::prelude::*;
 use std::sync::Arc;
 
@@ -2460,7 +2461,17 @@ fn execute_verified_function_applications(
                     }]);
                 }
             };
-            let fields = fresh_resource_instance_fields(schema, &mut variables, budget)?;
+            let fields = fresh_resource_instance_fields(
+                schema,
+                ModelFieldMintSite {
+                    identity: produced,
+                    minted_by: &ModelMint::Produced {
+                        callee: std::sync::Arc::from(application.name),
+                    },
+                },
+                &mut variables,
+                budget,
+            )?;
             produced_instances.insert(
                 identity,
                 ResourceInstance::new(produced, name, arguments, schema.clone(), fields)
@@ -2551,8 +2562,17 @@ fn execute_verified_function_applications(
                         "returned resource parameter is not owned at call entry",
                     )]);
                 };
-                let fields =
-                    fresh_resource_instance_fields(before.schema(), &mut variables, budget)?;
+                let fields = fresh_resource_instance_fields(
+                    before.schema(),
+                    ModelFieldMintSite {
+                        identity: before.identity,
+                        minted_by: &ModelMint::CallReturn {
+                            callee: std::sync::Arc::from(application.name),
+                        },
+                    },
+                    &mut variables,
+                    budget,
+                )?;
                 ResourceInstance::new(
                     before.identity,
                     before.name.clone(),
@@ -4465,7 +4485,14 @@ fn forced_refinement_instance_bindings(
         }
         let identity = budget.allocate_kernel_variable()?;
         let instance = |budget: &mut ExecutionBudget| -> ExecutionResult<ResourceInstance> {
-            let fields = arbitrary_resource_instance_fields(&target.schema, budget)?;
+            let fields = arbitrary_resource_instance_fields(
+                &target.schema,
+                ModelFieldMintSite {
+                    identity,
+                    minted_by: &ModelMint::Refinement,
+                },
+                budget,
+            )?;
             Ok(ResourceInstance::new(
                 identity,
                 target.family.clone(),
@@ -4500,11 +4527,45 @@ pub(super) fn resource_instance_field_value(
     }
 }
 
+/// Which instance's model is being replaced, and why. Carried to the two
+/// field-minting funnels below so each fresh variable is registered as what it
+/// is: a refusal that meets one later has no other way to find out
+/// (`crate::kernel::model_fields`).
+pub(super) struct ModelFieldMintSite<'a> {
+    pub(super) identity: Variable,
+    pub(super) minted_by: &'a ModelMint,
+}
+
+/// Registers the fields just minted for one instance. One insert per field,
+/// beside the allocation that produced it, so this is bounded by the schema the
+/// mint already walked.
+fn register_minted_model_fields(
+    schema: &ResourceFieldSchema,
+    site: &ModelFieldMintSite<'_>,
+    fields: &[AlgebraicValue],
+) {
+    for (field_index, ((name, _), value)) in schema.fields().iter().zip(fields).enumerate() {
+        let Some(variable) = algebraic_value_variable(value) else {
+            continue;
+        };
+        crate::kernel::model_fields::register_model_field_variable(
+            variable,
+            ModelFieldOrigin {
+                identity: site.identity,
+                field: std::sync::Arc::from(name.as_str()),
+                field_index,
+                minted_by: site.minted_by.clone(),
+            },
+        );
+    }
+}
+
 /// An arbitrary model for one instance, drawn through `variables` so the
 /// fields avoid everything that stream reserves as well as everything else
 /// the budget has issued.
 pub(super) fn fresh_resource_instance_fields(
     schema: &ResourceFieldSchema,
+    site: ModelFieldMintSite<'_>,
     variables: &mut KernelVariableGenerator,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<ResourceArguments> {
@@ -4515,11 +4576,13 @@ pub(super) fn fresh_resource_instance_fields(
             variables.next_in(budget)?,
         ));
     }
+    register_minted_model_fields(schema, &site, &fields);
     Ok(fields.into_iter().collect())
 }
 
 pub(super) fn arbitrary_resource_instance_fields(
     schema: &ResourceFieldSchema,
+    site: ModelFieldMintSite<'_>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<ResourceArguments> {
     let mut fields = Vec::with_capacity(schema.fields().len());
@@ -4529,6 +4592,7 @@ pub(super) fn arbitrary_resource_instance_fields(
             budget.allocate_kernel_variable()?,
         ));
     }
+    register_minted_model_fields(schema, &site, &fields);
     Ok(fields.into_iter().collect())
 }
 

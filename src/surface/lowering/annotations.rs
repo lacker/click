@@ -293,6 +293,56 @@ pub(in crate::surface) fn check_resource_field_schemas(
     Ok(())
 }
 
+/// Registers one verified function's entry model fields, so a refusal can
+/// spell them `old(c.rank)` instead of printing a kernel variable.
+///
+/// `check_resource_field_schemas` mints these variables once per sidecar, while
+/// the registry they belong in is per verification — a field variable's meaning
+/// is the verification's, because every other range restarts. So the selected
+/// function registers its own binders here, beside the load-origin epoch that
+/// starts for the same reason. One insert per field of each declared binder,
+/// over the clause list the verification is about to walk anyway.
+pub(in crate::surface) fn register_entry_model_fields(function: &FunctionBlock) {
+    let bindings = function
+        .requires
+        .iter()
+        .filter_map(|requirement| match requirement {
+            Requirement::Resource(ResourceClause::Named { binding, .. }) => Some(binding),
+            _ => None,
+        })
+        .chain(
+            function
+                .ensures
+                .iter()
+                .filter_map(|ensure| match &ensure.ensure {
+                    Ensure::Resource(ResourceClause::Named { binding, .. }) => Some(binding),
+                    _ => None,
+                }),
+        );
+    for binding in bindings {
+        let (Some(schema), Some(fields)) = (&binding.schema, &binding.fields) else {
+            continue;
+        };
+        for (field_index, ((field, _), value)) in
+            schema.fields().iter().zip(fields.iter()).enumerate()
+        {
+            let Some(variable) = crate::kernel::algebraic_value_variable(value) else {
+                continue;
+            };
+            crate::kernel::model_fields::register_model_field_variable(
+                variable,
+                crate::kernel::model_fields::ModelFieldOrigin {
+                    identity: binding.identity,
+                    field: std::sync::Arc::from(field.as_str()),
+                    field_index,
+                    minted_by: crate::kernel::model_fields::ModelMint::ContractEntry,
+                },
+            );
+        }
+        crate::kernel::model_fields::register_instance_spelling(binding.identity, &binding.name);
+    }
+}
+
 fn contract_expression_is_sequence(expression: &ContractExpression) -> bool {
     match expression {
         ContractExpression::SequenceLiteral(_) | ContractExpression::SequenceConcat(_, _) => true,
@@ -3108,6 +3158,13 @@ impl AnnotationLowerer<'_> {
         access: &ResourceFieldAccess,
         environment: &SpecElaborationContext,
     ) -> Result<Option<AlgebraicValue>, String> {
+        // Every field access reaches here, whichever of the three lowering
+        // paths it takes, and here both halves of `c.rank` are in hand: the
+        // reader's own name for the instance, and the kernel identity the
+        // fresh field variables were registered under. One insert per access,
+        // so that a refusal downstream can spell a model-field variable
+        // instead of printing it (`crate::kernel::model_fields`).
+        crate::kernel::model_fields::register_instance_spelling(access.identity, &access.owner);
         if let Some(state) = environment.snapshot_state.as_ref() {
             return state
                 .resource_instance_at_path(access.identity, &access.children)

@@ -4584,6 +4584,10 @@ fn havoc_loop_binder_instance_fields(
         };
         let fields = crate::kernel::functions::fresh_resource_instance_fields(
             &instance.schema,
+            crate::kernel::functions::ModelFieldMintSite {
+                identity,
+                minted_by: &crate::kernel::model_fields::ModelMint::LoopHead,
+            },
             variables,
             budget,
         )?;

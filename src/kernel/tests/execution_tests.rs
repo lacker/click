@@ -2475,8 +2475,15 @@ fn a_rebound_binder_field_never_reuses_a_havocked_local_variable() {
             issued.insert(local),
             "the loop-local havoc stream reissued {local:?}"
         );
-        let fields = arbitrary_resource_instance_fields(&schema, &mut budget)
-            .expect("the execution's counter is nowhere near its ceiling");
+        let fields = arbitrary_resource_instance_fields(
+            &schema,
+            crate::kernel::functions::ModelFieldMintSite {
+                identity: Variable(1),
+                minted_by: &crate::kernel::model_fields::ModelMint::Refinement,
+            },
+            &mut budget,
+        )
+        .expect("the execution's counter is nowhere near its ceiling");
         let [AlgebraicValue::C(CValue::Int32(Bitvector32Term::Variable(field)))] = fields.as_ref()
         else {
             panic!("an int32 model field is one symbolic int32: {fields:?}");

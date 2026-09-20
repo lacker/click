@@ -38,6 +38,7 @@ pub use loans::{
 };
 mod loops;
 mod memory_provenance;
+pub(crate) mod model_fields;
 mod nat_integer;
 pub(crate) use nat_integer::{check_nat_integer_law, is_conversion_nat_type};
 mod primitives;
@@ -114,6 +115,7 @@ pub(crate) use loops::{
     loop_structural_descent_failure,
 };
 pub use memory_provenance::*;
+pub(crate) use model_fields::algebraic_value_variable;
 pub(crate) use primitives::resource_context_has_symbolic_range_read;
 pub use primitives::*;
 pub(crate) use reasoning::memory_effect_write_pointers;
@@ -221,6 +223,7 @@ impl VerificationSession {
         if outermost {
             primitives::start_fresh_c_memory_arena();
             eval::clear_load_variable_registry();
+            model_fields::clear_model_field_registry();
             primitives::clear_block_alignment_registry();
             primitives::clear_never_address_taken_locals();
             pure_functions::clear_pure_function_definitions();

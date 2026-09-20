@@ -678,7 +678,15 @@ impl Renderer<'_> {
                 self.fmt(format_args!("<integer constant: {} bits>", value.bits()))
             }
             IntegerTerm::Constant(value) => self.fmt(format_args!("{value}")),
-            IntegerTerm::Variable(variable) => self.fmt(format_args!("i{}", variable.0)),
+            // An Integer model field prints as the field it is; the mint
+            // registered it, because the value lives inside the instance fact
+            // and the term carries nothing to recover it from.
+            IntegerTerm::Variable(variable) => {
+                match crate::kernel::model_fields::model_field_spelling(*variable) {
+                    Some(spelling) => self.push(&spelling),
+                    None => self.fmt(format_args!("i{}", variable.0)),
+                }
+            }
             IntegerTerm::Machine(value) => {
                 self.fmt(format_args!("machine-integer<{:?}>(", value.ty()));
                 self.bitvector(value.value());
@@ -804,6 +812,15 @@ impl Renderer<'_> {
             Bitvector32Term::Constant(v) => self.fmt(format_args!("{v}")),
             Bitvector32Term::Int64Constant(v) => self.fmt(format_args!("{v}i64")),
             Bitvector32Term::UInt64Constant(v) => self.fmt(format_args!("{v}u64")),
+            // A model-field variable is a name for one field of one instance,
+            // and the field is the part a reader compares. The id is kept
+            // beside it here, as a load variable's is, because this renderer
+            // prints the kernel's own goal and premises.
+            Bitvector32Term::Variable(v)
+                if let Some(spelling) = crate::kernel::model_fields::model_field_spelling(*v) =>
+            {
+                self.fmt(format_args!("v{}={spelling}", v.0))
+            }
             Bitvector32Term::Variable(v) => self.fmt(format_args!("v{}", v.0)),
             Bitvector32Term::Add(a, b) => self.binary_bv("+", a, b),
             Bitvector32Term::Subtract(a, b) => self.binary_bv("-", a, b),
