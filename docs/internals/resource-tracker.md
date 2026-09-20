@@ -98,7 +98,7 @@ what was actually established.
 
 | Recorded step | A cell | A block, as an array argument |
 | --- | --- | --- |
-| `Store` | separate on proven-distinct blocks, a common-base offset inequality, typed `separate(..)` evidence, an explicit range, or general distinctness | separate **only** on `PointerBlock::proven_distinct` |
+| `Store` | separate on proven-distinct blocks, a common-base offset inequality, typed `separate(..)` evidence, an explicit range, general distinctness, or two owned members of one composition | separate **only** on `PointerBlock::proven_distinct` |
 | `BlockDeclared` | separate: it writes nothing | separate when the declared object is proven distinct: it has its own `blocks` key, so this block's extent is the entry it was |
 | `HeapAllocationPending` | separate | separate: a request with no address yet records nothing a read of a block consults |
 | `ContractAllocationClaimsChanged` | separate | **stops** |
@@ -229,7 +229,7 @@ edge exists. Each decides the same abstract question as the matching arm of
 | `CMemory::matches_call_memory_havoc_result` | disagrees | The same retain rule again, for the checker that re-derives the producer. It must stay identical to the producer, not to the rule. |
 | `CMemory::with_loop_memory_havoc_preserving_loans` retain | disagrees | Preserved-block membership plus `LoanLedger::permits_memory_access`. An ownership question, with fail-open polarity, and no pointer-alias reasoning at all. |
 | `CMemory::with_interface_memory_havoc_preserving_loans` retain | disagrees | Byte for byte the loop retain, in a second function. A join records no edge, so no rule covers it. |
-| `CMemory::without_possible_aliasing_cells` | disagrees | `pointers_proven_distinct_for_memory_resolution` **or** `pointers_directly_disjoint_by_range`. The second exists only here, deliberately: it is a range-index scan the rule's hot `Store` arm must not pay for. |
+| `CMemory::without_possible_aliasing_cells` | disagrees | `pointers_proven_distinct_for_memory_resolution`, **or** `pointers_directly_disjoint_by_range`, **or** `owned_composition_store_separated_evidence`. The second exists only here, deliberately: it is a range-index scan the rule's hot `Store` arm must not pay for. The third is shared with the rule's `Store` arm and the two transport sites, and it has to be here too: a cell this function drops is lost to every later route, because the two snapshots then differ at the read's own address. |
 | `CMemory::without_field_cells` | disagrees | Same-block equality and a constant byte interval. Across blocks it removes too little, which for a copy is the safe direction; a completeness difference only. |
 | `heap_allocation_may_contain_pointer` | disagrees | `base.block != pointer.block` answers "not contained", which is fail-open on a spelling. The rule's `HeapFreed` arm is three separation ladders instead. Reaching it needs a freed allocation whose base block is not proven distinct from a live cell's block. |
 | loop frame assembly `src/kernel/loops.rs`, `collect_loop_effect_check_obligations`, the multi-exit join | disagrees | Each reinstates or drops cells against the loop's *stated* effect summaries rather than a recorded edge, with a hardcoded `local:` skip. |
@@ -261,7 +261,7 @@ that a fix lands in one of them rather than beside it.
 | `PointerBlock::proven_distinct`, `may_alias`, `observable_by_load`; `Pointer::blocks_proven_distinct` | `src/kernel/primitives.rs` |
 | `pointers_proven_distinct_for_memory_resolution`, `pointer_offsets_with_common_base_proven_distinct`, `cell_disjoint_from_load_by_constant_offset` | `src/kernel/reasoning/memory_resolution.rs` |
 | `range_proven_disjoint_from_pointer`, `ranges_proven_disjoint_from_pointer`, `ranges_directly_disjoint_from_pointer`, `ranges_proven_disjoint_from_pointer_for_frame`, `frame_frontier_compositions`, `pointers_directly_disjoint_by_range` | `src/kernel/assumptions/memory_reasoning.rs` |
-| `typed_store_separated_ranges_evidence`, `typed_ranges_disjoint_from_pointer_evidence`, `heap_allocation_proven_separate_from_pointer` | `src/kernel/memory_provenance.rs` |
+| `typed_store_separated_ranges_evidence`, `typed_ranges_disjoint_from_pointer_evidence`, `heap_allocation_proven_separate_from_pointer`, `owned_composition_store_separated_evidence` | `src/kernel/memory_provenance.rs` |
 | `memory_block_may_alias`, `memory_range_overlaps_pointer`, `memory_ranges_overlap`, `proves_resource_separate`, `proves_owned_range_separate_from_pointer_with`, `resources_structurally_separate` | `src/kernel/primitives/resource_algebra.rs` |
 | `MemoryLoadAliasCache::resolution_distinct` | `src/kernel/eval/memory_loads.rs` — a per-load memo over the first of these, not a rule of its own |
 
@@ -401,34 +401,96 @@ true side; on the false side the four ways an address escapes —
 `src/languages/c/address_taken.rs`, where the address never comes back from
 the call it was handed to.
 
-One kind of evidence a contract can state still does not reach a load:
+##### Two owners are two places
 
-- **a separating resource composition.** `owns value[0..1]` beside
-  `owns Cell(result)` in one context says the two are disjoint, and nothing on
-  the load path asks. The predicate cannot simply be reused: the rule's `Store`
-  arm (`src/kernel/resource_tracker/step_effect.rs`, `cell_effect`) has no
-  composition disjunct at all — its ladder is `blocks_proven_distinct`,
-  common-base offsets, `typed_store_separated_ranges_evidence`, shallow explicit
-  ranges, then the general query — and the composition route
-  (`ranges_proven_disjoint_from_pointer_for_frame`) is *deliberately* kept off
-  the per-cell path: "whose per-cell store-drop callers must not pay for an
-  expansion they never need". Adding it is a new route and a per-cell cost
-  decision, not a reuse.
+The other evidence a contract can state is a **separating resource
+composition**. `owns value[0..1]` beside `owns Cell(result)` in one context
+says the two hold disjoint bytes; `value` is an `ExternalArgument` address and
+`result` is a pointer a callback returned, so nothing structural relates them
+and no offset cancels, and ownership is the only thing that tells them apart.
+
+`memory_provenance::owned_composition_store_separated_evidence` is the rule:
+a store is separate from a load when one composition in the context owns the
+written address and the read address through **different members**. Three
+things make it the narrow claim it is.
+
+- **Two owners, never an owner and a view.** The rule reads
+  `memory_own_range`, so a viewed member contributes nothing. That is not
+  conservatism, it is the invariant: `MemoryResourceAlgebra::pair_validity_error`
+  refuses only *owner/owner* overlap (`OverlappingOwnedMemoryResources`), and
+  says in as many words that an owner overlapping a view is decided by the
+  view's binding, which it cannot see — an unbound view beside its owner is an
+  observation of that very ownership (`owner_observation_core`) and perfectly
+  valid. `observable_facts_assuming_valid` states the half that is a law:
+  "two owned members are pairwise separate".
+- **A claim about addresses, not about state.** What two members yield is that
+  two address ranges do not overlap, and an address is a value: each range is
+  spelled with pointer terms whose loads carry their own snapshot. A store
+  cannot move the bytes a range named, and consuming, transferring or freeing
+  a resource cannot make two ranges that were disjoint coincide. So a
+  composition recorded at an earlier program point is as true later as it was
+  then — which is why the rule does not need the resource to still be held,
+  and why the retained hop names the composition as its premise all the same.
+- **Facts only, never a name.** Composition facts are path facts. The rule is
+  spent exactly where a typed `separate(..)` is spent — the fact-consulting
+  route — and the two naming walks cannot reach it, because both are handed
+  `PureFactContext::new()` (`resource_tracker::cell_source_for_naming` and the
+  block-epoch walk) and an empty composition set decides nothing. On the
+  querying route the answer is re-derived per query, keyed by the context
+  (`resolution_query_memo_id`), and never written onto an interned edge.
+
+It sits **last**, after every cheaper check, at the four places the
+store-versus-load question is asked: the tracker's `Store` arm, the two
+transport sites in `memory_provenance` (`memories_directly_match_for_pointer_load`
+and the `CMemoryMutatesOnly` arm of `c_memory_load_is_directly_unchanged`), and
+`CMemory::without_possible_aliasing_cells`. The last of those is the one that
+decides `c_contract_executes_acquire`, and it is not optional: once a store has
+dropped a cell, the two snapshots differ *at the read's own address*, and no
+later framing route can recover it. It is kept beside
+`pointers_directly_disjoint_by_range`, which is at that site for the same
+reason, and it does **not** expand composites — `frame_frontier_compositions`
+stays off this path, which is what the comment on
+`ranges_proven_disjoint_from_pointer_for_frame` asks for.
+
+Cost: an emptiness gate first, then two block-bucket lookups per composition
+held, no pair materialization and no expansion.
+`stores_beside_many_owned_ranges_scale_near_linearly`
+(`src/surface/tests/scaling_tests.rs`) is the deterministic regression: the
+query's own work over 2/4/8/16 stores is 9, 11, 15, 23 units.
+`a_composition_separates_a_store_from_a_load_only_through_two_owners`
+(`src/kernel/tests/memory_reasoning_tests.rs`) is the attack set — an owner
+beside a view, a cell past the end of every member, a folded composite whose
+body would cover the cell, a single member asked to separate an address from
+itself, and a retained hop offered to a context that no longer holds its
+composition.
 
 ##### Parked proofs
 
-Three proofs state true claims that the missing route would prove, and
-stopped being provable when the name filter went. They are quarantined rather
-than weakened: their C and their sidecars are untouched, so each is the
-regression for the route it waits on
-(`docs/internals/testing.md`, *Quarantine*). Unquarantine an entry in the
-change that gives it its route.
+One proof states a true claim that this route does not reach. It is
+quarantined rather than weakened: its C and its sidecar are untouched, so it
+is the regression for the route it waits on
+(`docs/internals/testing.md`, *Quarantine*). Unquarantine it in the change
+that gives it that route.
 
 | Parked | Needs |
 | --- | --- |
-| `mdtests/c_contract_executes_acquire.md` | a separating resource composition as evidence for one cell: `[owns value[0..1], owns Cell(result)]` |
-| `surface::tests::expansion_tests::acquired_callback_ownership_expands_at_every_smart_site` | the same; it `include_str!`s that mdtest's fixture, so the two move together |
-| `mdtests/const_callback_field.md` | the same, for `owns object(r)` beside `views p[0..1]` — the equality hop already resolves the read to `p` |
+| `mdtests/const_callback_field.md` | a live borrow's backing as evidence for one cell |
+
+`const_callback_field` is the case the composition rule must *not* be widened
+to cover. `read_view(struct reader *r, const int *p)` holds `owns object(r)`
+and `views p[0..1]`, both spelled in one `external` block with symbolic
+offsets, and its claim is true: a caller cannot both transfer `object(r)` and
+lend a window inside it, because suspending the write authority for the loan
+leaves no usable copy to transfer (`docs/internals/stable-views.md`, law 1,
+and "usable ownership and an active independent view of overlapping memory
+cannot coexist"). But that is a statement about the `views p[0..1]` occurrence
+carrying a **live loan binding**, and the same context also holds
+`views r[0..2]` beside `owns r[0..2]` — an owner observation of the very range
+it describes. Owner-beside-view therefore cannot mean separation; the
+discriminator is the binding, which lives in the loan ledger
+(`src/kernel/loans.rs`) and which no load-framing site is handed. Giving this
+proof its route means carrying the binding, or the lend's escrow, to where the
+load is framed.
 
 The loan family — `LoanLedger::permits_memory_access`,
 `protected_range_proven_overlapping`, `active_memory_overlaps` — is **not** in

@@ -9771,13 +9771,6 @@ fn nested_callback_status_closer_cases_expand_and_reverify() {
 }
 
 #[test]
-#[ignore = "quarantined: reads the fixture of the quarantined mdtest \
-            `c_contract_executes_acquire.md`, whose true claim stopped being provable when the \
-            name filter for unresolved-pointer loads was removed (soundness, witness \
-            returned_pointer_may_alias_a_global). The read through the acquired pointer is \
-            separated from the store to `value` only by the resource composition `[owns \
-            value[0..1], owns Cell(result)]`, which no load-framing route consults. Unquarantine \
-            together with that mdtest, when a separating composition is evidence for one cell"]
 fn acquired_callback_ownership_expands_at_every_smart_site() {
     let markdown = include_str!("../../../mdtests/c_contract_executes_acquire.md");
     let mdtest = crate::cli::parse_mdtest(std::path::Path::new("acquire.md"), markdown).unwrap();
