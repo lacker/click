@@ -1490,8 +1490,24 @@ fn source_have_error(
     let detail = if pointer_equality {
         "missing pure fact: pointer equality is true".to_string()
     } else {
+        // A nested goal that matches an available fact except for which
+        // version it reads gets the one explanation for that.
+        let premises = proof.facts().propositions().collect::<Vec<_>>();
+        let mismatch = goal
+            .and_then(|goal| {
+                crate::surface::diagnostics::describe_proposition_version_mismatch(
+                    goal,
+                    &premises,
+                    "the goal",
+                    "an available fact",
+                    &[],
+                    &[],
+                )
+            })
+            .map(|mismatch| format!("\n  {mismatch}"))
+            .unwrap_or_default();
         format!(
-            "`have {}` did not close its checked nested goal",
+            "`have {}` did not close its checked nested goal{mismatch}",
             crate::surface::diagnostics::describe_click_proposition(&have.proposition)
         )
     };

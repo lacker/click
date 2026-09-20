@@ -5224,7 +5224,7 @@ impl<'a> Proof<'a> {
             ));
         }
         self.step_error(format!(
-            "`simp` failed for `{}`: simplified proposition was not true: {}",
+            "`simp` failed for `{}`: simplified proposition was not true: {}{}",
             self.claim_label(),
             self.goal()
                 .map(|goal| match goal {
@@ -5235,8 +5235,37 @@ impl<'a> Proof<'a> {
                     | Proposition::Exists { .. } => "compound proposition".to_string(),
                     _ => describe_pure_fact(goal, &[], &[]),
                 })
-                .unwrap_or_else(|| "no open proposition".into())
+                .unwrap_or_else(|| "no open proposition".into()),
+            self.describe_goal_version_mismatch()
+                .map(|mismatch| format!("\n  {mismatch}"))
+                .unwrap_or_default(),
         ))
+    }
+
+    /// The one explanation for "the goal and an available fact spell alike
+    /// and read different versions", which is what a `simp` over a term that
+    /// reads memory most often fails on.
+    pub(super) fn describe_goal_version_mismatch(&self) -> Option<String> {
+        let goal = self.goal()?;
+        let names = self
+            .outcome_fixed_state_view()
+            .or_else(|| self.execution_fixed_state_view());
+        let (parameters, arguments) = names
+            .as_ref()
+            .map(|view| (view.parameters, view.arguments))
+            .unwrap_or((&[], &[]));
+        if !crate::kernel::resource_tracker::reads_any_resource(goal) {
+            return None;
+        }
+        let premises = self.facts().propositions().collect::<Vec<_>>();
+        crate::surface::diagnostics::describe_proposition_version_mismatch(
+            goal,
+            &premises,
+            "the goal",
+            "an available fact",
+            parameters,
+            arguments,
+        )
     }
 
     /// Plan a numeric induction application against the current checked facts.

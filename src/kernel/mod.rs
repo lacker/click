@@ -251,15 +251,6 @@ pub fn begin_load_origin_epoch() {
     eval::begin_load_origin_epoch();
 }
 
-/// Whether these two pointers are in blocks the kernel cannot tell apart, so
-/// a write through one may be a write through the other. Two blocks with
-/// different names are not two objects: a parameter's memory and a file-scope
-/// array are separated by a resource or a stated `separate`, never by their
-/// spellings. Diagnostics use this to name the write a frame could not skip.
-pub(crate) fn pointer_blocks_may_alias(left: &Pointer, right: &Pointer) -> bool {
-    left.block.may_alias(&right.block)
-}
-
 impl Drop for VerificationSession {
     fn drop(&mut self) {
         VERIFICATION_SESSION_DEPTH.with(|depth| depth.set(depth.get() - 1));

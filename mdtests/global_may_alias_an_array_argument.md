@@ -41,5 +41,5 @@ void caller() {
 ```
 
 ```expect
-fail: `a` may be `g`: different names are not different objects
+fail: the store to `g` in between may have written it, and `g` is not shown separate from `a`: different names are not different objects
 ```

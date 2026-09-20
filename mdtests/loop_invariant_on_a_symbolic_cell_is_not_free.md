@@ -46,5 +46,5 @@ void mark_prefix(int32 a[], int32 n, int32 m) {
 ```
 
 ```expect
-fail: `have` failed for `a[m] == 7`
+fail: `a[m]` in the goal and `a[m]` in an available fact may be different reads
 ```

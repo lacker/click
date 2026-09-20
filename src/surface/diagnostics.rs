@@ -1,4 +1,6 @@
 use super::*;
+use crate::kernel::SharedCMemory;
+use crate::kernel::resource_tracker;
 use crate::kernel::{CComparisonOperator, CFloatBinaryOperator, CFloatCondition, CUpdateOperator};
 use crate::surface::validation::describe_click_type;
 use std::fmt::Write;
@@ -1148,9 +1150,10 @@ pub(super) fn describe_parameter_relative_range(
     None
 }
 
-/// The pointer a still-unresolved comparison side loads from, if that side is
-/// exactly one load. A resolved side is a value and names no address.
-fn unresolved_load_pointer(value: &CValue) -> Option<Pointer> {
+/// The snapshot and pointer a still-unresolved comparison side loads from, if
+/// that side is exactly one load. A resolved side is a value and reads
+/// nothing.
+pub(super) fn unresolved_load(value: &CValue) -> Option<(SharedCMemory, Pointer)> {
     let term = match value {
         CValue::Bool(term)
         | CValue::Int16(term)
@@ -1163,29 +1166,19 @@ fn unresolved_load_pointer(value: &CValue) -> Option<Pointer> {
         _ => return None,
     };
     match term {
-        Bitvector32Term::MemoryLoad(_, pointer) => Some(pointer.as_ref().clone()),
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            Some((memory.clone(), pointer.as_ref().clone()))
+        }
         Bitvector32Term::Variable(variable) => {
-            crate::kernel::registered_load_origin_for_variable(variable).map(|(_, pointer)| pointer)
+            crate::kernel::registered_load_origin_for_variable(variable)
         }
         _ => None,
     }
 }
 
-/// The addresses a recorded effect fact says the body may have written.
-fn recorded_written_pointers(fact: &Proposition) -> Vec<Pointer> {
-    match fact {
-        Proposition::CMemoryMutatesOnly { pointers, .. } => pointers.clone(),
-        Proposition::CMemoryEffectSummary { mutable_ranges, .. } => mutable_ranges
-            .iter()
-            .map(|range| range.base().clone())
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
 /// Names the write that stopped a comparison side from being carried across
-/// the body, when the only thing standing between the two addresses is that
-/// they are spelled differently.
+/// the body: the step the resource tracker's walk stopped at, in the source
+/// spelling, with what would settle it.
 ///
 /// A parameter's memory and a file-scope array are separated by a resource
 /// the contract holds or by a stated `separate`, never by their names, so a
@@ -1193,48 +1186,349 @@ fn recorded_written_pointers(fact: &Proposition) -> Vec<Pointer> {
 /// write it has to rule out and how.
 pub(super) fn describe_unseparated_write(
     value: &CValue,
-    facts: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> Option<String> {
-    let load = unresolved_load_pointer(value)?;
-    let write = facts
-        .iter()
-        .flat_map(recorded_written_pointers)
-        .find(|write| {
-            write.block != load.block && crate::kernel::pointer_blocks_may_alias(write, &load)
-        })?;
-    Some(format!(
-        "; `{load}` may be `{write}`: different names are not different objects, and this \
-         contract states nothing that separates them — require \
-         `separate(memory(...), memory(...))` between the range it reads through `{load}` and \
-         the one it writes through `{write}`",
-        load = describe_pointer(&load, parameters, arguments),
-        write = describe_written_pointer(&write, parameters, arguments),
-    ))
+    let (memory, load) = unresolved_load(value)?;
+    let explanation = resource_tracker::explain_last_same(
+        resource_tracker::Resource::Cell(&load),
+        &resource_tracker::ProgramPoint::at(&memory),
+    );
+    describe_resource_version_mismatch(
+        &explanation,
+        "here",
+        "earlier in this function",
+        parameters,
+        arguments,
+    )
+    .map(|mismatch| format!("; {mismatch}"))
 }
 
-/// A written address in the spelling the source uses. A file-scope or static
-/// object is named by its declaration, not by the block the lowering gave it.
-fn describe_written_pointer(
-    pointer: &Pointer,
+/// The explanation for two evaluated sides that read one address at two
+/// program points.
+pub(super) fn describe_two_sided_version_mismatch(
+    left: &CValue,
+    right: &CValue,
+    left_point: &str,
+    right_point: &str,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    let (left_memory, left_load) = unresolved_load(left)?;
+    let (right_memory, right_load) = unresolved_load(right)?;
+    if left_load != right_load {
+        return None;
+    }
+    let explanation = resource_tracker::explain(
+        resource_tracker::Resource::Cell(&left_load),
+        &resource_tracker::ProgramPoint::at(&left_memory),
+        &resource_tracker::ProgramPoint::at(&right_memory),
+    );
+    describe_resource_version_mismatch(
+        &explanation,
+        &format!("at {left_point}"),
+        &format!("at {right_point}"),
+        parameters,
+        arguments,
+    )
+}
+
+/// The explanation for a goal and an available fact that spell alike and
+/// differ only in which version they read, or for one proposition that reads
+/// one resource at two program points.
+pub(super) fn describe_proposition_version_mismatch(
+    goal: &Proposition,
+    premises: &[&Proposition],
+    goal_point: &str,
+    premise_point: &str,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    // A goal that reads no resource has no version to differ about. Deciding
+    // that first keeps this diagnostic, and the tracker's walk, off the
+    // failure path of every proof that never touches memory.
+    if !resource_tracker::reads_any_resource(goal) {
+        return None;
+    }
+    if let Some((resource, here, there)) = resource_tracker::internal_version_mismatch(goal) {
+        let explanation = resource_tracker::explain(resource.as_resource(), &here, &there);
+        return describe_resource_version_mismatch(
+            &explanation,
+            "on one side",
+            "on the other",
+            parameters,
+            arguments,
+        );
+    }
+    // The structural question — do these two read the same resources at
+    // different points — is asked first, so only a premise that answers it
+    // is rendered and compared as text.
+    let (resource, here, there) = premises
+        .iter()
+        .filter(|premise| **premise != goal)
+        .find_map(|premise| {
+            let mismatch = resource_tracker::version_mismatch(goal, premise)?;
+            (describe_pure_fact_spelled(premise, parameters, arguments)
+                == describe_pure_fact_spelled(goal, parameters, arguments))
+            .then_some(mismatch)
+        })?;
+    let explanation = resource_tracker::explain(resource.as_resource(), &here, &there);
+    describe_resource_version_mismatch(
+        &explanation,
+        &format!("in {goal_point}"),
+        &format!("in {premise_point}"),
+        parameters,
+        arguments,
+    )
+}
+
+/// One user-grade explanation of "these two same-looking terms read different
+/// versions of a resource", used by every refusal whose real cause is that,
+/// so the wording is identical wherever it is met.
+///
+/// `here` and `there` label the two program points in the reader's terms
+/// ("here", "function entry", "a recorded snapshot"). The text names the
+/// resource in the source spelling, says which recorded step broke the chain,
+/// distinguishes a write from an unproved separation, and — only where it
+/// works today — says what fact would settle it. It prints no memory: at most
+/// the one blocking step, plus a count of the steps after it.
+pub(super) fn describe_resource_version_mismatch(
+    explanation: &resource_tracker::Explanation,
+    here: &str,
+    there: &str,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    let (_, stop) = explanation.outcome.blocking_step()?;
+    let resource = describe_resource(&explanation.resource, parameters, arguments);
+    let certain = stop.reason == resource_tracker::StopReason::Affected;
+    let verb = if certain { "are" } else { "may be" };
+    // Without the C names — a pure theorem has none — the address has no
+    // source spelling, so the sentence names the two points instead of
+    // repeating a verifier-owned one.
+    let mut message = match &resource {
+        Some(resource) => format!(
+            "`{resource}` {here} and `{resource}` {there} {verb} different reads: {}",
+            describe_change(&stop.change, certain, parameters, arguments)
+        ),
+        None => format!(
+            "the same address {here} and {there} {verb} different reads: {}",
+            describe_change(&stop.change, certain, parameters, arguments)
+        ),
+    };
+    if let resource_tracker::StopReason::NotShownSeparate(check) = stop.reason {
+        message.push_str(&describe_missing_separation(
+            check,
+            resource.as_deref(),
+            &stop.change,
+            parameters,
+            arguments,
+        ));
+    }
+    if explanation.crossed_after > 0 {
+        let steps = explanation.crossed_after;
+        let plural = if steps == 1 { "step" } else { "steps" };
+        let _ = write!(message, "; the {steps} later {plural} do not touch it");
+    }
+    Some(message)
+}
+
+/// The recorded step the walk stopped at, by kind and target. No recorded
+/// step carries a source span today, so it is described rather than quoted;
+/// `docs/internals/resource-tracker.md` says what a line number would take.
+fn describe_change(
+    change: &resource_tracker::Change,
+    certain: bool,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> String {
-    let declared = match &pointer.block {
-        PointerBlock::Concrete(name) => name.strip_prefix("global:").or_else(|| {
-            name.rsplit(':')
-                .next()
-                .filter(|_| name.starts_with("static:"))
-        }),
-        _ => None,
+    let wrote = if certain {
+        "wrote it"
+    } else {
+        "may have written it"
     };
-    let Some(declared) = declared else {
-        return describe_pointer(pointer, parameters, arguments);
+    match change {
+        resource_tracker::Change::Store { pointer } => {
+            match describe_source_pointer(pointer, parameters, arguments) {
+                Some(written) => format!("the store to `{written}` in between {wrote}"),
+                None => format!("a store in between {wrote}"),
+            }
+        }
+        resource_tracker::Change::Call { .. } => {
+            format!("the call in between {wrote}")
+        }
+        resource_tracker::Change::Loop { .. } => format!("the loop in between {wrote}"),
+        resource_tracker::Change::Free { allocation } => {
+            match describe_source_pointer(allocation, parameters, arguments) {
+                Some(freed) => format!("the memory at `{freed}` was released in between"),
+                None => "an allocation was released in between".to_string(),
+            }
+        }
+        resource_tracker::Change::Allocation { .. } => {
+            "an allocation in between made this storage live".to_string()
+        }
+        resource_tracker::Change::AllocationPending => {
+            "an allocation in between has no resolved address yet".to_string()
+        }
+        resource_tracker::Change::ContractAllocationClaims => {
+            "a contract's allocation claims moved in between".to_string()
+        }
+        resource_tracker::Change::Declaration { .. } => {
+            "a declaration in between added storage to the state".to_string()
+        }
+        resource_tracker::Change::LifetimeEnd { .. } => {
+            "a local's lifetime ended in between".to_string()
+        }
+        resource_tracker::Change::CellsForgotten => {
+            "a step in between dropped the cell values it had cached".to_string()
+        }
+        resource_tracker::Change::BeginningOfHistory => {
+            "the recorded execution does not connect the two points".to_string()
+        }
+    }
+}
+
+/// What the step would have had to be shown separate from, and the fact that
+/// would show it. Only repairs that work today are named.
+fn describe_missing_separation(
+    check: resource_tracker::SeparationCheck,
+    resource: Option<&str>,
+    change: &resource_tracker::Change,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let read = match resource {
+        Some(resource) => format!("`{resource}`"),
+        None => "the read".to_string(),
     };
+    match check {
+        resource_tracker::SeparationCheck::PointerDistinctness => {
+            let resource_tracker::Change::Store { pointer: write } = change else {
+                return format!(", and it is not shown separate from {read}");
+            };
+            let written = describe_source_pointer(write, parameters, arguments)
+                .map(|written| format!("`{written}`"))
+                .unwrap_or_else(|| "what it wrote".to_string());
+            format!(
+                ", and {written} is not shown separate from {read}: different names are not \
+                 different objects. State `separate(memory(...), memory(...))` between the two \
+                 ranges, or, for two indexes into one array, state that the indexes differ"
+            )
+        }
+        resource_tracker::SeparationCheck::RangeDisjointness => format!(
+            ", and the ranges it may write are not shown separate from {read}. State \
+             `separate(memory(...), memory(...))` between them"
+        ),
+        resource_tracker::SeparationCheck::HeapAllocationSeparation => format!(
+            ", and the released allocation is not shown separate from {read}. State \
+             `separate(memory(...), memory(...))` between them"
+        ),
+        resource_tracker::SeparationCheck::NoCheckedWriteSet => {
+            ", and it states no write set, so nothing can be shown separate from it: carry the \
+             fact across it with an invariant instead"
+                .to_string()
+        }
+        resource_tracker::SeparationCheck::WholeBlockAgreement => format!(
+            ", and a fact about {read} as a whole is carried only across a step the kernel proves \
+             leaves the whole object alone — a stated `separate(...)` is not read here"
+        ),
+    }
+}
+
+/// A resource in the spelling the source uses, or nothing when the C names
+/// this diagnostic was given cannot recover one.
+fn describe_resource(
+    resource: &resource_tracker::OwnedResource,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    match resource.pointer() {
+        Some(pointer) => describe_source_pointer(pointer, parameters, arguments),
+        None => describe_memory_block(resource.block(), parameters, arguments),
+    }
+}
+
+/// An address as the source writes it — `a[m]`, `g[0]`, `visited` — or
+/// nothing. Unlike [`describe_pointer`], the index is spelled with the
+/// caller's own names rather than the kernel variables it lowered to, and a
+/// name that could only be a verifier-owned one is refused instead of shown.
+fn describe_source_pointer(
+    pointer: &Pointer,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    // Two parameters can point into one block, and then every one of them
+    // can express the address -- `b[j]` is also `a[(b - a) + j]`. The
+    // shortest spelling is the one written through the parameter the address
+    // actually belongs to, and picking it is deterministic.
+    let mut best: Option<String> = None;
+    for (parameter, argument) in parameters.iter().zip(arguments) {
+        let CExpression::Value(CValue::Pointer(base)) = argument else {
+            continue;
+        };
+        if let Some(field) =
+            describe_parameter_struct_field_pointer(pointer, parameter, base.pointer())
+        {
+            return Some(field);
+        }
+        let Some(index) = diagnostic_pointer_element_index_from_base(
+            pointer,
+            base,
+            diagnostic_parameter_element_width(parameter),
+        ) else {
+            continue;
+        };
+        let spelled = if index == Bitvector32Term::Constant(0) {
+            parameter.name().to_string()
+        } else {
+            format!(
+                "{}[{}]",
+                parameter.name(),
+                describe_bitvector_with_context(&index, parameters, arguments)
+            )
+        };
+        if best.as_ref().is_none_or(|best| spelled.len() < best.len()) {
+            best = Some(spelled);
+        }
+    }
+    if best.is_some() {
+        return best;
+    }
+    let declared = describe_memory_block(&pointer.block, parameters, arguments)?;
     match &pointer.offset {
-        PointerOffsetTerm::Constant(0) => declared.to_string(),
-        offset => format!("{declared}+{}", describe_pointer_offset(offset)),
+        PointerOffsetTerm::Constant(0) => Some(declared),
+        offset => Some(format!("{declared}+{}", describe_pointer_offset(offset))),
+    }
+}
+
+/// The whole object a block names, spelled as the source declares it: a
+/// parameter whose argument points into it, or a file-scope declaration.
+fn describe_memory_block(
+    block: &PointerBlock,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    for (parameter, argument) in parameters.iter().zip(arguments) {
+        if let CExpression::Value(CValue::Pointer(base)) = argument
+            && &base.pointer().block == block
+        {
+            return Some(parameter.name().to_string());
+        }
+    }
+    match block {
+        PointerBlock::Concrete(name) => Some(
+            name.strip_prefix("global:")
+                .or_else(|| {
+                    name.rsplit(':')
+                        .next()
+                        .filter(|_| name.starts_with("static:"))
+                })
+                .unwrap_or(name)
+                .to_string(),
+        ),
+        // Every other block is a verifier-owned lowering artifact; naming it
+        // would tell the reader nothing they wrote.
+        _ => None,
     }
 }
 

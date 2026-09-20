@@ -827,6 +827,33 @@ pub(crate) fn version_mismatch(
         .map(|(left, right)| (left.resource, left.point, right.point))
 }
 
+/// Whether a proposition reads any resource at all. A fact that reads none
+/// has no version to differ about, which is what lets a diagnostic rule out
+/// this whole class before looking at anything else.
+pub(crate) fn reads_any_resource(fact: &Proposition) -> bool {
+    !reads_of_proposition(fact).is_empty()
+}
+
+/// The resource one proposition reads at two different program points — the
+/// shape an equation between a term and its own earlier value takes.
+pub(crate) fn internal_version_mismatch(
+    fact: &Proposition,
+) -> Option<(OwnedResource, ProgramPoint, ProgramPoint)> {
+    let reads = reads_of_proposition(fact);
+    reads.iter().enumerate().find_map(|(index, read)| {
+        reads[index + 1..]
+            .iter()
+            .find(|later| later.resource == read.resource && later.point != read.point)
+            .map(|later| {
+                (
+                    read.resource.clone(),
+                    read.point.clone(),
+                    later.point.clone(),
+                )
+            })
+    })
+}
+
 fn push_read(reads: &mut Vec<ResourceRead>, resource: OwnedResource, point: ProgramPoint) {
     let read = ResourceRead { resource, point };
     if !reads.contains(&read) {

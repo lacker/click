@@ -36,5 +36,5 @@ void mark_one(int32 a[], int32 n, int32 i) {
 ```
 
 ```expect
-fail: `have` failed for `icount(a, 0, n) == icount(at(entry, a), 0, n)`
+fail: `a` on one side and `a` on the other are different reads: the store to `a[i]` in between wrote it
 ```

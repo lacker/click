@@ -35,5 +35,5 @@ void mark_other(int32 a[], int32 b[], int32 n, int32 j) {
 ```
 
 ```expect
-fail: tactic 3: `have` failed for `icount(a, 0, 0) == 0`
+fail: `a` in the goal and `a` in an available fact are different reads: the store to `b[j]` in between wrote it
 ```

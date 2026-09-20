@@ -57,5 +57,5 @@ void f(int32 a[], int32 n) {
 ```
 
 ```expect
-fail: tactic 5: `have` failed for `icount(a, 0, 1) == 5`
+fail: `a` in the goal and `a` in an available fact may be different reads: the store to `g` in between may have written it, and `g` is not shown separate from `a`
 ```

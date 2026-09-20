@@ -1492,6 +1492,20 @@ impl<'a> Proof<'a> {
                 // nothing, so add the rendering that labels the memory each
                 // side reads and say why it is there.
                 if spelled_equality == spelled_goal && equality.as_ref() != goal.as_ref() {
+                    // Why they differ is one question with one answer: the
+                    // resource tracker names the step in between.
+                    if let Some(mismatch) =
+                        crate::surface::diagnostics::describe_proposition_version_mismatch(
+                            &goal,
+                            &[equality.as_ref()],
+                            "the goal",
+                            "the equality",
+                            names.0,
+                            names.1,
+                        )
+                    {
+                        message.push_str(&format!("\n  {mismatch}"));
+                    }
                     let mut labels =
                         crate::surface::proof_diagnostics::render::SnapshotLabels::default();
                     message.push_str(&format!(
@@ -1693,7 +1707,9 @@ impl<'a> Proof<'a> {
     /// frontier snapshot solely for lowering and requirement selection;
     /// checked fixed-state steps can refine only that proposition and proof-local
     /// bindings.
-    fn execution_fixed_state_view(&self) -> Option<FixedStateOperationView<'_>> {
+    pub(in crate::surface::proof) fn execution_fixed_state_view(
+        &self,
+    ) -> Option<FixedStateOperationView<'_>> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return None;
         };

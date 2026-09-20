@@ -47,5 +47,5 @@ void wipe(int32 a[], int32 n) {
 ```
 
 ```expect
-fail: tactic 5: `have` failed for `icount(a, 0, 0) == 0`
+fail: `a` in the goal and `a` in an available fact may be different reads: the loop in between may have written it
 ```
