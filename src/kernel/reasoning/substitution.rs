@@ -1248,7 +1248,8 @@ fn collect_pointer_bound_variables(pointer: &Pointer, variables: &mut BTreeSet<V
         | PointerBlock::StringLiteral { .. }
         | PointerBlock::Function(_)
         | PointerBlock::ExternalArgument
-        | PointerBlock::Heap(_) => {}
+        | PointerBlock::Heap(_)
+        | PointerBlock::Temporary(_) => {}
     }
     collect_pointer_offset_bound_variables(&pointer.offset, variables);
 }
@@ -5614,7 +5615,8 @@ fn pointer_capture_avoiding_quantifier_body(
         | PointerBlock::StringLiteral { .. }
         | PointerBlock::Function(_)
         | PointerBlock::ExternalArgument
-        | PointerBlock::Heap(_) => None,
+        | PointerBlock::Heap(_)
+        | PointerBlock::Temporary(_) => None,
     };
     if replacement_variable != Some(binder) || !matches!(sort, Sort::CPointer(_)) {
         return (body.clone(), binder);

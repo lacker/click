@@ -3068,7 +3068,8 @@ fn collect_pointer_capture_variables(
         | PointerBlock::StringLiteral { .. }
         | PointerBlock::Function(_)
         | PointerBlock::ExternalArgument
-        | PointerBlock::Heap(_) => {}
+        | PointerBlock::Heap(_)
+        | PointerBlock::Temporary(_) => {}
     }
     if crate::instrumentation::checked_collection_exhausted() {
         return;
@@ -4740,7 +4741,8 @@ pub(in crate::kernel) fn collect_pointer_bitvector_variables(
         | PointerBlock::StringLiteral { .. }
         | PointerBlock::Function(_)
         | PointerBlock::ExternalArgument
-        | PointerBlock::Heap(_) => {}
+        | PointerBlock::Heap(_)
+        | PointerBlock::Temporary(_) => {}
     }
     collect_pointer_offset_bitvector_variables(&pointer.offset, variables);
 }
@@ -4760,7 +4762,8 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables(
             | PointerBlock::StringLiteral { .. }
             | PointerBlock::Function(_)
             | PointerBlock::ExternalArgument
-            | PointerBlock::Heap(_) => {}
+            | PointerBlock::Heap(_)
+            | PointerBlock::Temporary(_) => {}
         }
         // A memory-havoc marker spells the identity it was minted with in its
         // block name instead of carrying it in a term, so a scan of the

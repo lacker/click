@@ -61,6 +61,9 @@ fn write_havoc_block(identity: &mut String, block: PointerBlock) {
         PointerBlock::Heap(value) => {
             let _ = write!(identity, "bh{value};");
         }
+        PointerBlock::Temporary(value) => {
+            let _ = write!(identity, "bt{value};");
+        }
     }
 }
 

@@ -8757,17 +8757,22 @@ fn set_contract_result(state: &mut CState, interface: &CFunctionContractInterfac
     if let Some(layout) = interface.return_aggregate_layout()
         && let CValue::Pointer(pointer) = &value
     {
-        state.set_memory(if matches!(pointer.block, PointerBlock::Symbolic(_)) {
-            state
-                .memory
-                .clone()
-                .with_block_without_derivation(pointer.block.clone(), layout.size_bytes())
-        } else {
-            state
-                .memory
-                .clone()
-                .with_block(pointer.block.clone(), layout.size_bytes())
-        });
+        state.set_memory(
+            if matches!(
+                pointer.block,
+                PointerBlock::Symbolic(_) | PointerBlock::Temporary(_)
+            ) {
+                state
+                    .memory
+                    .clone()
+                    .with_block_without_derivation(pointer.block.clone(), layout.size_bytes())
+            } else {
+                state
+                    .memory
+                    .clone()
+                    .with_block(pointer.block.clone(), layout.size_bytes())
+            },
+        );
         state.locals.set_aggregate_object_at(
             "result".to_string(),
             layout.clone(),
@@ -8876,6 +8881,22 @@ fn symbolic_function_result(function: &CFunction, variable: Variable) -> CValue 
 }
 
 fn symbolic_contract_result(interface: &CFunctionContractInterface, variable: Variable) -> CValue {
+    // An aggregate returned by value is not a pointer the callee handed over:
+    // it is a fresh object the C abstract machine creates for the caller to
+    // copy out of, and the program has no name and no prior pointer for it.
+    // Giving it a `Temporary` identity rather than a symbolic one is what lets
+    // `PointerBlock::proven_distinct` separate it from every other block, so a
+    // read of one of its fields is framed across an unrelated store by
+    // structure alone. A symbolic block would be separated from nothing, and a
+    // load through it would then need aliasing evidence that no honest contract
+    // about a returned struct can state.
+    if interface.return_aggregate_layout().is_some() {
+        return CValue::typed_pointer(
+            Pointer::verifier_temporary(variable),
+            interface.return_type(),
+        )
+        .with_pointer_pointee_constant(interface.return_pointee_is_constant());
+    }
     symbolic_call_result(interface.return_type(), variable)
         .with_pointer_pointee_constant(interface.return_pointee_is_constant())
 }
@@ -10741,7 +10762,10 @@ fn copy_aggregate_fields(
                     };
                 }
                 if memory.has_block(&source_field.block)
-                    && !matches!(source_field.block, PointerBlock::Symbolic(_))
+                    && !matches!(
+                        source_field.block,
+                        PointerBlock::Symbolic(_) | PointerBlock::Temporary(_)
+                    )
                     && memory.access_in_bounds(&source_field, element_type.byte_width())
                 {
                     return None;
@@ -10847,7 +10871,10 @@ fn copy_aggregate_union_member(
         return zero_union_member_value(element_type);
     }
     if memory.has_block(&source_field.block)
-        && !matches!(source_field.block, PointerBlock::Symbolic(_))
+        && !matches!(
+            source_field.block,
+            PointerBlock::Symbolic(_) | PointerBlock::Temporary(_)
+        )
         && memory.access_in_bounds(source_field, element_type.byte_width())
     {
         return None;

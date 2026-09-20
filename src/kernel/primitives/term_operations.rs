@@ -2868,6 +2868,17 @@ impl Pointer {
         }
     }
 
+    /// The base of storage the verifier introduced for an object the C
+    /// abstract machine creates but the program never names. The identity must
+    /// come from the single kernel variable allocator, so that it is fresh.
+    /// See [`PointerBlock::Temporary`].
+    pub(crate) fn verifier_temporary(identity: Variable) -> Self {
+        Self {
+            block: PointerBlock::Temporary(identity.0),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
     pub(crate) fn symbolic_function(variable: Variable) -> Self {
         Self {
             block: PointerBlock::FunctionSymbolic(variable),

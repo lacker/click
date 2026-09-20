@@ -1452,9 +1452,20 @@ fn describe_store_cause(
         };
     }
     let (Some(cell), Some(store)) = (cell, &store) else {
-        return "a store in between may have written it, and nothing tells the two addresses \
-                apart."
-            .to_string();
+        // A read through a pointer the function received rather than an object
+        // it names has no source spelling, so only one side can be printed.
+        // Printing the store is still the whole content of the answer: it is
+        // the step the reader has to separate their read from.
+        return match &store {
+            Some(store) => format!(
+                "the store to `{}` may have written it, and nothing tells that address apart \
+                 from this read.",
+                store.text()
+            ),
+            None => "a store in between may have written it, and nothing tells the two addresses \
+                     apart."
+                .to_string(),
+        };
     };
     if cell.object == store.object {
         return match (cell.named_index(), store.named_index()) {

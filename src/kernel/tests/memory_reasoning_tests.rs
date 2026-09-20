@@ -3908,13 +3908,57 @@ fn a_load_observes_every_block_not_proven_distinct_from_its_own() {
     assert!(argument.observable_by_load(&argument));
 
     // A symbolic block is proven distinct from nothing, so it may alias
-    // everything. `observable_by_load` keeps the narrower name filter at a
-    // symbolic *load* block, which is the remaining gap documented on it.
+    // everything -- in both directions. A load through a pointer a call
+    // returned therefore observes a store to a global: the filter no longer
+    // has an exception that would drop it
+    // (`mdtests/returned_pointer_may_alias_a_global.md`).
     assert!(symbolic.may_alias(&global));
     assert!(global.may_alias(&symbolic));
     assert!(symbolic.observable_by_load(&global));
-    assert!(!global.observable_by_load(&symbolic));
+    assert!(global.observable_by_load(&symbolic));
+    assert!(local.observable_by_load(&symbolic));
+    assert!(fresh.observable_by_load(&symbolic));
     assert!(symbolic.observable_by_load(&symbolic));
+}
+
+/// The identity the verifier gives an object it introduced itself. Withdrawing
+/// the symbolic-load name filter would otherwise have taken the structural
+/// frame away from a struct returned by value, which is not a pointer the
+/// callee handed over but fresh storage nothing else can name.
+#[test]
+fn a_verifier_temporary_is_proven_distinct_from_every_named_block() {
+    let temporary = PointerBlock::Temporary(1_000_001);
+    let other_temporary = PointerBlock::Temporary(1_000_002);
+    let global = PointerBlock::Concrete("global:g".to_string());
+    let local = PointerBlock::Concrete("local:caller:copy".to_string());
+    let argument = PointerBlock::ExternalArgument;
+    let object = PointerBlock::ExternalObject(Variable(5));
+    let literal = PointerBlock::StringLiteral {
+        identity: "string:one".to_string(),
+        bytes: b"ok\0".to_vec(),
+    };
+    let heap = PointerBlock::Heap(1000001);
+    let symbolic = PointerBlock::Symbolic(Variable(77));
+
+    // Nothing the program or its caller names is this object, so a store
+    // anywhere else drops out of a question about it.
+    for other in [&global, &local, &argument, &object, &literal, &heap] {
+        assert!(temporary.proven_distinct(other), "{other} vs {temporary}");
+        assert!(other.proven_distinct(&temporary), "{temporary} vs {other}");
+        assert!(!other.observable_by_load(&temporary));
+        assert!(!temporary.observable_by_load(other));
+    }
+    // Two temporaries are two objects; one is observable by its own load.
+    assert!(temporary.proven_distinct(&other_temporary));
+    assert!(!temporary.proven_distinct(&temporary));
+    assert!(temporary.observable_by_load(&temporary));
+    // A symbolic block stays the one thing structure does not separate: an
+    // assumed equality may still constrain it to any address, and being
+    // coarse here only ever keeps more cells in the question.
+    assert!(!temporary.proven_distinct(&symbolic));
+    assert!(!symbolic.proven_distinct(&temporary));
+    assert!(symbolic.observable_by_load(&temporary));
+    assert!(temporary.observable_by_load(&symbolic));
 }
 
 /// Two string literal occurrences with different bytes cannot be one object;

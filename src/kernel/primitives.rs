@@ -420,6 +420,23 @@ pub enum PointerBlock {
     /// A trusted allocation identity. Unlike a symbolic/opaque block, this is
     /// fresh and distinct from every other block identity.
     Heap(u64),
+    /// Storage the verifier introduced for an object the C abstract machine
+    /// creates but the program never names: today, the temporary that holds an
+    /// aggregate a call returns by value.
+    ///
+    /// Soundness of treating this as fresh and distinct from every other
+    /// block: the object does not exist before the call that produces it, so
+    /// no pointer the program already holds can point into it, and C gives the
+    /// program no way to obtain its address afterwards either. A by-value
+    /// return is a copy: the callee's own storage, whatever it was, is a
+    /// different object from this temporary, and the copy is what the caller
+    /// reads. Every later use spells the temporary through this identity or
+    /// copies out of it; a program that stores the aggregate into a local and
+    /// then takes `&local.field` is addressing the local's block, not this
+    /// one. Identities come from the single kernel variable allocator, so two
+    /// temporaries are never confused, and a fresh identity is never the
+    /// identity of storage that already existed.
+    Temporary(u64),
 }
 
 impl std::hash::Hash for PointerBlock {
@@ -458,6 +475,10 @@ impl std::hash::Hash for PointerBlock {
                 7u64.hash(state);
                 variable.hash(state);
             }
+            Self::Temporary(identity) => {
+                8u64.hash(state);
+                identity.hash(state);
+            }
         }
     }
 }
@@ -484,7 +505,8 @@ impl PointerBlock {
             | Self::ExternalArgument
             | Self::ExternalObject(_)
             | Self::Symbolic(_)
-            | Self::Heap(_) => None,
+            | Self::Heap(_)
+            | Self::Temporary(_) => None,
         }
     }
 
@@ -497,6 +519,12 @@ impl PointerBlock {
     /// A parameter's `ExternalArgument` memory and a file-scope
     /// `global:` block are the standard example: the caller decides whether
     /// they are the same object, and nothing in the callee does.
+    ///
+    /// The two identities that are distinct from every other one are the ones
+    /// that name storage nothing else could already be pointing into:
+    /// [`Self::Heap`], a trusted fresh allocation, and [`Self::Temporary`], an
+    /// object the verifier introduced for a value the C abstract machine
+    /// creates without naming it.
     pub(in crate::kernel) fn proven_distinct(&self, other: &Self) -> bool {
         // A symbolic block is a logic variable that later facts may constrain
         // to any address, including a heap block named below (a contract
@@ -515,8 +543,8 @@ impl PointerBlock {
                 && matches!(right, Self::ExternalArgument | Self::ExternalObject(_))
         };
         self != other
-            && (matches!(self, Self::Heap(_))
-                || matches!(other, Self::Heap(_))
+            && (matches!(self, Self::Heap(_) | Self::Temporary(_))
+                || matches!(other, Self::Heap(_) | Self::Temporary(_))
                 || match (self, other) {
                     (
                         Self::StringLiteral { bytes: left, .. },
@@ -548,19 +576,22 @@ impl PointerBlock {
     /// one filter the load-framing routes share, so that a write to a block
     /// that merely has another spelling cannot be dropped from the question.
     ///
-    /// It is [`Self::may_alias`] with one exception, which is a known
-    /// remaining gap and not a claim about aliasing: a load whose own block is
-    /// `Symbolic` is still filtered by name. A symbolic block is a pointer
-    /// value the function received rather than an object it can name, and
-    /// `proven_distinct` separates it from nothing at all, so widening here
-    /// would keep every cell of every block for such a load and withdraw the
-    /// structural route from every pointer a call returned. Closing that case
-    /// means giving those loads their effect-summary and resource evidence
-    /// instead, which is its own change.
+    /// It is exactly [`Self::may_alias`]; there is no longer an exception for a
+    /// load whose own block is `Symbolic`. That exception used to filter such a
+    /// load by block name, which silently assumed the pointer a call returned
+    /// could not point into any other block: a fact about `a[0]` then survived
+    /// a store to `g[0]` even with `a == &g[0]` in the context
+    /// (`mdtests/returned_pointer_may_alias_a_global.md`).
+    ///
+    /// Withdrawing it means a load through a pointer whose target the verifier
+    /// does not know keeps every cell not proven distinct from it, so framing
+    /// such a load needs evidence: an effect summary, a pointer equality that
+    /// resolves the pointer to storage the program names, a separation or
+    /// disequality fact, or resource ownership. The objects the verifier
+    /// introduces itself are not in that position, because they are
+    /// [`Self::Temporary`] rather than `Symbolic` and `proven_distinct`
+    /// separates them from everything.
     pub(in crate::kernel) fn observable_by_load(&self, load: &Self) -> bool {
-        if matches!(load, Self::Symbolic(_)) {
-            return self == load;
-        }
         self.may_alias(load)
     }
 }
@@ -590,6 +621,7 @@ impl std::fmt::Display for PointerBlock {
             Self::ExternalObject(variable) => write!(formatter, "arg-object:{}", variable.0),
             Self::Symbolic(variable) => write!(formatter, "symbolic-pointer:{}", variable.0),
             Self::Heap(identity) => write!(formatter, "heap-allocation:{identity}"),
+            Self::Temporary(identity) => write!(formatter, "temporary:{identity}"),
         }
     }
 }

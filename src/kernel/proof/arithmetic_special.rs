@@ -39,7 +39,8 @@ fn pointer_block_payload(block: &PointerBlock) -> Option<usize> {
         | PointerBlock::ExternalArgument
         | PointerBlock::ExternalObject(_)
         | PointerBlock::Symbolic(_)
-        | PointerBlock::Heap(_) => 1,
+        | PointerBlock::Heap(_)
+        | PointerBlock::Temporary(_) => 1,
     };
     (payload <= MAX_TERM_PAYLOAD).then_some(payload)
 }
@@ -175,7 +176,8 @@ fn pointer_block_equal(left: &PointerBlock, right: &PointerBlock) -> bool {
         (PointerBlock::FunctionSymbolic(left), PointerBlock::FunctionSymbolic(right))
         | (PointerBlock::Symbolic(left), PointerBlock::Symbolic(right)) => left == right,
         (PointerBlock::ExternalArgument, PointerBlock::ExternalArgument)
-        | (PointerBlock::Heap(_), PointerBlock::Heap(_)) => left == right,
+        | (PointerBlock::Heap(_), PointerBlock::Heap(_))
+        | (PointerBlock::Temporary(_), PointerBlock::Temporary(_)) => left == right,
         _ => false,
     }
 }

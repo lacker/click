@@ -796,6 +796,7 @@ enum AlphaPointerBlockKey {
     ExternalObject(AlphaVariableKey),
     Symbolic(AlphaVariableKey),
     Heap(u64),
+    Temporary(u64),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -1593,6 +1594,7 @@ fn alpha_pointer_key_with_bindings<const ALLOW_LOADS: bool>(
             )?)
         }
         PointerBlock::Heap(identity) => AlphaPointerBlockKey::Heap(*identity),
+        PointerBlock::Temporary(identity) => AlphaPointerBlockKey::Temporary(*identity),
     };
     Some(AlphaPointerKey {
         block,

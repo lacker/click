@@ -915,6 +915,7 @@ impl Renderer<'_> {
                 self.push(s)
             }
             crate::kernel::PointerBlock::Heap(id) => self.fmt(format_args!("heap#{id}")),
+            crate::kernel::PointerBlock::Temporary(id) => self.fmt(format_args!("temporary#{id}")),
             crate::kernel::PointerBlock::Symbolic(v)
             | crate::kernel::PointerBlock::FunctionSymbolic(v)
             | crate::kernel::PointerBlock::ExternalObject(v) => {
