@@ -367,6 +367,67 @@ fn pointers_proven_distinct_for_memory_resolution_unmemoized(
                     .pointers_proven_disjoint_by_explicit_range_for_memory_resolution(left, right)
             },
         )
+        || crate::instrumentation::measure_operation(
+            "kernel",
+            "general pointer distinctness",
+            "general distinctness: exact alias hop",
+            || pointers_distinct_through_one_exact_alias(left, right, assumptions),
+        )
+}
+
+/// Whether one exact pointer equality resolves an unresolved pointer to an
+/// address the program names, and *that* address is proven distinct from the
+/// other one.
+///
+/// A `Symbolic` block is a pointer value, not an object the function can name:
+/// [`PointerBlock::proven_distinct`] separates it from nothing at all, so a
+/// load through a pointer a call returned is framed only by evidence. The most
+/// direct evidence a contract can state is where the pointer points --
+/// `ensures result == &g[0]`, `ensures result == p` -- and this is the rule
+/// that spends it. Without it, the honest `observable_by_load` keeps every
+/// cell in the question and the stated equality never gets a say.
+///
+/// Soundness. `exact_pointer_aliases` reads the index of *assumed*
+/// `PointerEqual` facts: never a derived, heuristic or disjunctive conclusion,
+/// and never a `!=`. Two pointers such a fact relates are one address, so a
+/// pointer proven distinct from one is proven distinct from the other; that is
+/// substitution of equals, not a new separation claim.
+/// `ConditionTerm::pointer_equal` folds an equality between two offsets of one
+/// block to a `PointerOffsetEqual`, which is not a `PointerEqual` at all, so an
+/// entry can only ever exchange two spellings of *one* address and never shifts
+/// an offset. The resolved spelling must itself be non-symbolic, so the hop
+/// always moves towards a block the structural rule can decide, and the answer
+/// is `false` whenever no such equality is stated.
+///
+/// Boundedness. One keyed lookup per side, over the equalities stated about
+/// that one pointer, with no transitive closure and no fact-set scan: an alias
+/// of an alias is not reported. The re-ask is the ordinary query, but on a
+/// pointer that is *not* unresolved, so this rule is a no-op inside it and one
+/// hop cannot become a walk; `ResolutionQueryGuard` closes the remaining cycle.
+/// This is the same bound `arm_binding_program_spelling` accepts for the same
+/// index.
+fn pointers_distinct_through_one_exact_alias(
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &PureFactContext,
+) -> bool {
+    let unresolved = |pointer: &Pointer| {
+        matches!(
+            pointer.block,
+            PointerBlock::Symbolic(_) | PointerBlock::FunctionSymbolic(_)
+        )
+    };
+    let resolved_side_is_distinct = |pointer: &Pointer, other: &Pointer| {
+        if !unresolved(pointer) {
+            return false;
+        }
+        crate::instrumentation::record_deterministic_work(1);
+        assumptions.exact_pointer_aliases(pointer).any(|alias| {
+            !unresolved(alias)
+                && pointers_proven_distinct_for_memory_resolution(alias, other, assumptions)
+        })
+    };
+    resolved_side_is_distinct(left, right) || resolved_side_is_distinct(right, left)
 }
 
 fn pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
@@ -562,8 +623,18 @@ pub(in crate::kernel) fn pointer_offsets_equal_for_memory_resolution(
 
 /// The value stored at `pointer` or at a pointer proven equal to it: the
 /// exact cell, then one lookup per member of the element index's recorded
-/// equality class, then the block's cells through the memoized pointer
+/// equality class, then the observable cells through the memoized pointer
 /// equality query, so a pair is resolved once per fact set.
+///
+/// The last search is filtered by `observable_by_load`, the one filter the
+/// load-framing routes share, and not by block name. A cell in another block
+/// can be the cell this pointer reads whenever the two are not proven distinct:
+/// `ensures result == &g[0]` makes the store to `g[0]` the store this load
+/// reads, and a name filter here would answer "no stored value" for it. The
+/// pointer equality is still what decides; the filter only says which cells are
+/// worth asking about. Keeping a cell that is proven distinct would be wasted
+/// work, never a wrong answer, and dropping one that may alias is what used to
+/// lose the read.
 fn stored_value_at_equal_pointer(
     memory: &CMemory,
     pointer: &Pointer,
@@ -611,7 +682,7 @@ fn stored_value_at_equal_pointer(
         .cells
         .iter()
         .find(|(stored, _)| {
-            stored.block == pointer.block
+            stored.block.observable_by_load(&pointer.block)
                 && pointers_proven_equal_for_memory_resolution(pointer, stored, assumptions)
         })
         .map(|(_, value)| value.clone())
@@ -621,7 +692,7 @@ fn stored_value_at_equal_pointer(
                 .iter()
                 .find(|((stored, value_type), _)| {
                     *value_type == CType::Int32
-                        && stored.block == pointer.block
+                        && stored.block.observable_by_load(&pointer.block)
                         && pointers_proven_equal_for_memory_resolution(pointer, stored, assumptions)
                 })
                 .map(|(_, value)| value.clone())

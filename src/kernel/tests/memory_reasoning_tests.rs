@@ -2743,6 +2743,81 @@ fn symbolic_store_invalidates_only_possible_aliasing_cells() {
     assert_eq!(distinct.known_value(&concrete_cell), Some(int32(42)));
 }
 
+/// One hop through an exact pointer equality, and every way that hop must not
+/// be taken. Without the rule, a load through a pointer a call returned is
+/// framed by nothing at all once `observable_by_load` stopped filtering by
+/// name; with it, a contract that says where the pointer points is spent.
+#[test]
+fn one_exact_pointer_equality_resolves_an_unresolved_pointer_and_nothing_else_does() {
+    let symbolic = Pointer {
+        block: PointerBlock::Symbolic(Variable(1_000_001)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let other_symbolic = Pointer {
+        block: PointerBlock::Symbolic(Variable(1_000_002)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let global = Pointer {
+        block: "global:g".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let local = Pointer {
+        block: "local:q".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let equal = |left: &Pointer, right: &Pointer| {
+        Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(left.clone(), right.clone()),
+            true,
+        )
+    };
+
+    // With nothing stated, the symbolic pointer is separated from nothing.
+    let bare = PureFactContext::new();
+    assert!(!pointers_proven_distinct_for_memory_resolution(
+        &local, &symbolic, &bare
+    ));
+
+    // `ensures result == &g[0]` resolves it, and `local:q` is then proven
+    // distinct from `global:g` by the ordinary structural rule.
+    let resolved = PureFactContext::new().assume_proposition(equal(&symbolic, &global));
+    assert!(pointers_proven_distinct_for_memory_resolution(
+        &local, &symbolic, &resolved
+    ));
+    assert!(pointers_proven_distinct_for_memory_resolution(
+        &symbolic, &local, &resolved
+    ));
+    // The same equality must NOT separate the read from the block it resolves
+    // to: that is `mdtests/returned_pointer_may_alias_a_global.md`.
+    assert!(!pointers_proven_distinct_for_memory_resolution(
+        &global, &symbolic, &resolved
+    ));
+
+    // An equality to another unresolved pointer resolves nothing: the hop
+    // always moves towards a block the structural rule can decide.
+    let laundered = PureFactContext::new().assume_proposition(equal(&symbolic, &other_symbolic));
+    assert!(!pointers_proven_distinct_for_memory_resolution(
+        &local, &symbolic, &laundered
+    ));
+
+    // Two hops are not one hop: there is no transitive closure over the index.
+    let two_hops = PureFactContext::new()
+        .assume_proposition(equal(&symbolic, &other_symbolic))
+        .assume_proposition(equal(&other_symbolic, &global));
+    assert!(!pointers_proven_distinct_for_memory_resolution(
+        &local, &symbolic, &two_hops
+    ));
+
+    // A disequality is not an alias.
+    let disequal = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+        ConditionTerm::pointer_equal(symbolic.clone(), global.clone()),
+        false,
+    ));
+    assert!(!pointers_proven_distinct_for_memory_resolution(
+        &local, &symbolic, &disequal
+    ));
+}
+
 #[test]
 fn memory_resolution_alias_check_uses_explicit_separation() {
     let left_base = Pointer {
