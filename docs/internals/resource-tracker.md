@@ -348,7 +348,60 @@ to ask about, so making it exact is a separate change with its own blast
 radius. The false theorem above does not reach it: the order-fact form of the
 same attack (`have q[0] < 6`) is refused.
 
-Two kinds of evidence a contract can state still do not reach a load:
+##### The local nobody can point at
+
+The commonest read there is — `p = f(); … p[0]` — has no contract to appeal
+to. The store of the returned pointer into the caller's own `p` is itself a
+step the read must be told apart from, and `p` belongs to the caller of the
+function whose contract is being written, so nothing a contract can say
+mentions it. `proven_distinct` says nothing either: a `Symbolic` block is
+separated from nothing.
+
+The claim that decides it is about *addressability* rather than about one
+pair of pointers. C offers exactly two ways to obtain the address of an
+automatic object — the `&` operator and the array-to-pointer conversion of an
+aggregate object's name — so an object neither of them reaches is storage no
+pointer value in the program designates. Nothing else can reach it either:
+arithmetic that leaves the object it was derived from is undefined behaviour
+that Click refuses on every displaced access (`CMemoryCanStore` /
+`access_in_bounds`), and an integer cast to a pointer is outside C0. An `&x`
+written in a *proof* creates no runtime pointer.
+
+`src/languages/c/address_taken.rs` is the one conservative syntactic pass
+that decides it, run over every parsed body before any query, and
+`primitives::block_is_never_address_taken_local` carries the argument for
+spending its answer. The pass is default-deny in both directions: a name is
+reported only if every declaration of it is scalar or pointer typed and it
+never occurs below an address-forming node, and anything the walk cannot
+account for is simply absent, which is the same as addressable. The rule
+itself is the last disjunct of
+`pointers_proven_distinct_for_memory_resolution`, after every cheaper check,
+and costs one lookup on a bounded name.
+
+Two things follow from where the answer is kept.
+
+- It is a set of **names**, program-wide. A `local:` block says nothing about
+  which function declared it — `local:x` in `f` and in `g` are one spelling —
+  while the resolution memo and the canonical-projection cache are scoped per
+  verification, not per function. A per-function answer would be cached under
+  whichever function asked first and served to the next.
+  `mdtests/a_local_addressed_in_another_function_is_not_framed.md` is what
+  that costs: one `&guard` anywhere loses every `guard`.
+- It is safe on the **naming** walks, which carry no facts, because it is a
+  property of the whole program's source rather than of one proof path. That
+  is the opposite of a composition fact, below.
+
+The regressions are `mdtests/string_literals_call.md` and
+`mdtests/a_returned_pointer_reads_across_stores_to_caller_locals.md` on the
+true side; on the false side the four ways an address escapes —
+`an_unresolved_pointer_sees_the_store_to_a_local.md` (`&x`),
+`…_to_a_local_array.md` (array decay), `…_to_an_addressed_field.md`
+(`&s.first`), `…_to_an_addressed_parameter.md` (a parameter's `&`) — plus
+`an_address_parked_in_storage_is_still_an_address` in
+`src/languages/c/address_taken.rs`, where the address never comes back from
+the call it was handed to.
+
+One kind of evidence a contract can state still does not reach a load:
 
 - **a separating resource composition.** `owns value[0..1]` beside
   `owns Cell(result)` in one context says the two are disjoint, and nothing on
@@ -361,26 +414,10 @@ Two kinds of evidence a contract can state still do not reach a load:
   the per-cell path: "whose per-cell store-drop callers must not pay for an
   expansion they never need". Adding it is a new route and a per-cell cost
   decision, not a reuse.
-- **that a local's address is never taken.** When a call returns a pointer,
-  the store of that pointer into the caller's own local is itself a store the
-  load must be told apart from, and no contract can state anything about a
-  callee's caller's local. The sound rule is that C offers no way to form a
-  pointer into an object whose address is never taken, so a never-address-taken
-  local is separate from every pointer value; the kernel already has the
-  syntactic pre-pass this needs (`statement_takes_address_of`,
-  `src/kernel/termination.rs`, used to refuse an address-escaped `decreases`
-  measure). Two things stand in the way of reading it from
-  `proven_distinct`, which sees only two block identities and no function body:
-  putting the answer in the block's *spelling* gives one object two names if any
-  of the four `local:`-minting sites disagrees, which is a false theorem rather
-  than a lost proof; and putting it in a registry beside the block, as block
-  alignment is, is keyed by a spelling that two functions with a same-named
-  local share, while the resolution memo and the canonical-projection cache are
-  scoped per verification and not per function.
 
 ##### Parked proofs
 
-Four proofs state true claims that the two missing routes would prove, and
+Three proofs state true claims that the missing route would prove, and
 stopped being provable when the name filter went. They are quarantined rather
 than weakened: their C and their sidecars are untouched, so each is the
 regression for the route it waits on
@@ -392,7 +429,6 @@ change that gives it its route.
 | `mdtests/c_contract_executes_acquire.md` | a separating resource composition as evidence for one cell: `[owns value[0..1], owns Cell(result)]` |
 | `surface::tests::expansion_tests::acquired_callback_ownership_expands_at_every_smart_site` | the same; it `include_str!`s that mdtest's fixture, so the two move together |
 | `mdtests/const_callback_field.md` | the same, for `owns object(r)` beside `views p[0..1]` — the equality hop already resolves the read to `p` |
-| `mdtests/string_literals_call.md` | a never-address-taken local to be separate from a pointer value: the blocking step is the store of the returned pointer into the caller's own `message` |
 
 The loan family — `LoanLedger::permits_memory_access`,
 `protected_range_proven_overlapping`, `active_memory_overlaps` — is **not** in

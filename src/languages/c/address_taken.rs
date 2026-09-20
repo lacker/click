@@ -461,6 +461,23 @@ mod tests {
         assert!(!field.never_taken().contains("s"));
     }
 
+    /// An address does not have to come back from the call it was handed to.
+    /// `stash` parks it in storage and `fetch` hands it back later, so nothing
+    /// connects the pointer `v` reads through to the `&x` it wrote. The pass
+    /// answers about the `&`, not about where the address went, so the name is
+    /// refused all the same.
+    #[test]
+    fn an_address_parked_in_storage_is_still_an_address() {
+        let summary = summary(
+            "void stash(int32** slot, int32* p) { *slot = p; }\nint32* fetch(int32** slot) { return *slot; }\nvoid v(int32** slot) { int32 x; int32* q; x = 5; stash(slot, &x); q = fetch(slot); x = 1; }\n",
+        );
+        assert!(
+            !summary.never_taken().contains("x"),
+            "the address escaped into `*slot`: {:?}",
+            summary.never_taken()
+        );
+    }
+
     #[test]
     fn a_name_taken_in_another_function_is_refused_everywhere() {
         let summary = summary(

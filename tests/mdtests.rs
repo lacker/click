@@ -16,12 +16,12 @@ const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
 /// `CLICK_RUN_QUARANTINED=1`. Each entry names the reason; remove entries as
 /// they are fixed (see docs/internals/testing.md).
 const QUARANTINED: &[(&str, &str)] = &[
-    // The three below state true claims and stopped being provable when the
+    // The two below state true claims and stopped being provable when the
     // block-name filter for a load through an unresolved pointer was removed
     // (`PointerBlock::observable_by_load`; the false theorem it admitted is
     // `mdtests/returned_pointer_may_alias_a_global.md`). Each needs one
-    // evidence route that the load-framing path does not have; the routes and
-    // why neither is a reuse of an existing predicate are in
+    // evidence route that the load-framing path does not have; the route and
+    // why it is not a reuse of an existing predicate are in
     // `docs/internals/resource-tracker.md` under "Parked proofs".
     (
         "c_contract_executes_acquire.md",
@@ -38,14 +38,6 @@ const QUARANTINED: &[(&str, &str)] = &[
          p` now resolves the read to `p`, but telling `p` and `r` apart inside one `external` \
          block rests on `owns object(r)` beside `views p[0..1]` in one composition; remove with \
          the same route",
-    ),
-    (
-        "string_literals_call.md",
-        "true claim, no longer provable since the name filter for unresolved-pointer loads was \
-         removed (soundness, witness returned_pointer_may_alias_a_global); the read through the \
-         returned literal pointer must be told apart from the store of that pointer into the \
-         caller's own local `message`, which no contract can name; remove when a \
-         never-address-taken local is separate from a pointer value",
     ),
 ];
 
