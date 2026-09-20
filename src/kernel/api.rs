@@ -2168,15 +2168,15 @@ pub(crate) fn c_lower_spec_proposition_with_checked_obligations(
                 .flatten(),
         });
     };
-    Ok((
-        path.proposition.clone(),
-        path.facts
-            .iter()
-            .map(|fact| fact.proposition().clone())
-            .collect(),
-        path.obligations.clone(),
-        path.introductions.clone(),
-    ))
+    let lowered_proposition = crate::kernel::clone_proposition_iteratively(&path.proposition);
+    let facts = path
+        .facts
+        .iter()
+        .map(|fact| crate::kernel::clone_proposition_iteratively(fact.proposition()))
+        .collect();
+    let obligations = path.obligations.clone();
+    let introductions = path.introductions.clone();
+    Ok((lowered_proposition, facts, obligations, introductions))
 }
 
 /// Evaluates a spec expression at `state`: the one evaluation every
@@ -6477,13 +6477,14 @@ fn checked_pure_implication_matches(
     conclusion: &Proposition,
     completion: &crate::kernel::proof::CheckedProposition,
 ) -> bool {
-    completion.proposition() == conclusion
-        && completion
-            .root_assumptions()
-            .to_vec()
-            .into_iter()
-            .collect::<BTreeSet<_>>()
-            == requirements.iter().cloned().collect::<BTreeSet<_>>()
+    let root_assumptions = completion.root_assumptions().to_vec();
+    root_assumptions.len() == requirements.len()
+        && crate::kernel::propositions_equal_iteratively(completion.proposition(), conclusion)
+        && root_assumptions.iter().all(|assumption| {
+            requirements.iter().any(|requirement| {
+                crate::kernel::propositions_equal_iteratively(assumption, requirement)
+            })
+        })
 }
 
 /// Folds the explicit requirements and binders around an established

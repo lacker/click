@@ -5845,6 +5845,65 @@ pub(crate) fn clone_proposition_iteratively(proposition: &Proposition) -> Propos
     values.pop().expect("the root proposition is cloned")
 }
 
+/// Compares a proposition tree without consuming stack per logical connective.
+/// Atomic terms retain their ordinary equality implementation; the unbounded
+/// surface shape is the proposition connective spine handled here.
+pub(crate) fn propositions_equal_iteratively(left: &Proposition, right: &Proposition) -> bool {
+    let mut pending = vec![(left, right)];
+    while let Some((left, right)) = pending.pop() {
+        match (left, right) {
+            (Proposition::And(left, right), Proposition::And(other_left, other_right))
+            | (Proposition::Or(left, right), Proposition::Or(other_left, other_right))
+            | (Proposition::Implies(left, right), Proposition::Implies(other_left, other_right)) => {
+                pending.push((right, other_right));
+                pending.push((left, other_left));
+            }
+            (Proposition::Not(body), Proposition::Not(other_body)) => {
+                pending.push((body, other_body));
+            }
+            (
+                Proposition::ForAll { var, sort, body },
+                Proposition::ForAll {
+                    var: other_var,
+                    sort: other_sort,
+                    body: other_body,
+                },
+            ) => {
+                if var != other_var || sort != other_sort {
+                    return false;
+                }
+                pending.push((body, other_body));
+            }
+            (
+                Proposition::Exists {
+                    name,
+                    var,
+                    sort,
+                    body,
+                },
+                Proposition::Exists {
+                    name: other_name,
+                    var: other_var,
+                    sort: other_sort,
+                    body: other_body,
+                },
+            ) => {
+                if name != other_name || var != other_var || sort != other_sort {
+                    return false;
+                }
+                pending.push((body, other_body));
+            }
+            (left, right) if std::mem::discriminant(left) == std::mem::discriminant(right) => {
+                if left != right {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
 /// An abstract proven proposition produced by kernel axioms.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Theorem {

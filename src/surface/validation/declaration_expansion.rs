@@ -1675,7 +1675,11 @@ pub(in crate::surface) fn combined_theorem_definitions(
     file: &ClickFile,
 ) -> Result<Vec<TheoremDefinition>, ClickError> {
     let mut definitions = standard_library()?.theorem_definitions().to_vec();
-    definitions.extend(file.theorem_definitions().iter().cloned());
+    definitions.extend(
+        file.theorem_definitions()
+            .iter()
+            .map(clone_theorem_definition_iteratively),
+    );
     Ok(definitions)
 }
 

@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn every_cli_tool_accepts_the_supported_expression_boundary() {
-        const EXPRESSION_CHAIN_LIMIT: usize = 128;
+        const EXPRESSION_CHAIN_LIMIT: usize = 512;
 
         let directory = std::env::temp_dir().join(format!(
             "click-surface-depth-cli-valid-{}",
@@ -170,10 +170,15 @@ mod tests {
             .map(|_| "0")
             .collect::<Vec<_>>()
             .join(" + ");
+        let implications = (0..EXPRESSION_CHAIN_LIMIT)
+            .map(|_| "0 == 0")
+            .collect::<Vec<_>>()
+            .join(" implies ");
         fs::write(
             &source_path,
             format!(
-                "theorem at_limit_expression() {{ requires {additions} == 0; ensures 0 == 0 by auto; }}\n"
+                "theorem at_limit_expression() {{ requires {additions} == 0; ensures 0 == 0 by auto; }}\n\
+                 theorem at_limit_implication() {{ requires {implications}; ensures 0 == 0 by auto; }}\n"
             ),
         )
         .unwrap();

@@ -1508,6 +1508,54 @@ pub(crate) fn clone_click_proposition_iteratively(
     values.pop().expect("the root proposition is cloned")
 }
 
+pub(crate) fn clone_theorem_definition_iteratively(
+    theorem: &TheoremDefinition,
+) -> TheoremDefinition {
+    TheoremDefinition {
+        name: theorem.name.clone(),
+        type_parameters: theorem.type_parameters.clone(),
+        parameters: theorem.parameters.clone(),
+        executes: theorem.executes.clone(),
+        requires: theorem
+            .requires
+            .iter()
+            .map(clone_requirement_iteratively)
+            .collect(),
+        ensures: theorem
+            .ensures
+            .iter()
+            .map(clone_ensure_clause_iteratively)
+            .collect(),
+    }
+}
+
+fn clone_requirement_iteratively(requirement: &Requirement) -> Requirement {
+    match requirement {
+        Requirement::Proposition(proposition) => {
+            Requirement::Proposition(clone_click_proposition_iteratively(proposition))
+        }
+        Requirement::Labeled { label, requirement } => Requirement::Labeled {
+            label: label.clone(),
+            requirement: Box::new(clone_requirement_iteratively(requirement)),
+        },
+        requirement => requirement.clone(),
+    }
+}
+
+fn clone_ensure_clause_iteratively(clause: &EnsureClause) -> EnsureClause {
+    EnsureClause {
+        name: clause.name.clone(),
+        ensure: match &clause.ensure {
+            Ensure::Proposition(proposition) => {
+                Ensure::Proposition(clone_click_proposition_iteratively(proposition))
+            }
+            ensure => ensure.clone(),
+        },
+        proof: clause.proof.clone(),
+        borrowed: clause.borrowed,
+    }
+}
+
 impl ClickProposition {
     fn written_quantifier_name(&self) -> Option<&str> {
         match self {
@@ -5572,7 +5620,12 @@ impl TheoremEnvironment {
         Self {
             definitions: definitions
                 .iter()
-                .map(|definition| (definition.name().to_string(), definition.clone()))
+                .map(|definition| {
+                    (
+                        definition.name().to_string(),
+                        clone_theorem_definition_iteratively(definition),
+                    )
+                })
                 .collect(),
             verified_generic_instances: RefCell::new(BTreeSet::new()),
             active_generic_instances: RefCell::new(BTreeSet::new()),
