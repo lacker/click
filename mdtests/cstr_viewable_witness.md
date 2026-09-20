@@ -18,7 +18,7 @@ theorem cstr_len_exposes_viewable(source: uint8[], len: int32) {
     requires cstr_len(source, len);
 
     ensures viewable(source[0..len + 1]) by {
-        apply(cstr_len_is_loadable(source, len));
+        apply(cstr_len_is_viewable(source, len));
     }
 }
 

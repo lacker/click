@@ -573,11 +573,11 @@ theorem docs_use_cstr_len_has_terminator(bytes: uint8[], len: int32) {
     }
 }
 
-theorem docs_use_cstr_len_is_loadable(bytes: uint8[], len: int32) {
+theorem docs_use_cstr_len_is_viewable(bytes: uint8[], len: int32) {
     requires cstr_len(bytes, len);
 
     ensures viewable(bytes[0..len + 1]) by {
-        apply(cstr_len_is_loadable(bytes, len));
+        apply(cstr_len_is_viewable(bytes, len));
     }
 }
 theorem use_integer_to_int16_round_trip(z: Integer) {

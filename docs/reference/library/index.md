@@ -1592,10 +1592,10 @@ predicate cstr_bounded(bytes: uint8[], max: int32) {
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr_bounded)` when a proof needs the predicate body.
 
-### `cstr_len_is_loadable`
+### `cstr_len_is_viewable`
 
 ```click
-theorem cstr_len_is_loadable(bytes: uint8[], len: int32) {
+theorem cstr_len_is_viewable(bytes: uint8[], len: int32) {
     requires cstr_len(bytes, len);
 
     ensures viewable(bytes[0..len + 1]) by {
