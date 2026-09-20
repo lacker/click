@@ -47,6 +47,35 @@ pub(in crate::kernel) enum Separation {
     Cell(MemoryDagHopJustification),
     /// A whole block, justified by structure alone.
     Block(BlockSeparation),
+    /// A stated byte footprint, justified by the step's own write set being
+    /// outside every range of it.
+    Footprint(FootprintSeparation),
+}
+
+/// Why a step was known not to touch the byte ranges a resource fact was
+/// derived from.
+///
+/// This is the evidence language of a footprint, and it is deliberately the
+/// narrowest of the three: the answer is spent invalidating resource
+/// projections, which no premise records, so it consults no fact context and
+/// no ownership. Every variant that names another object is
+/// [`PointerBlock::proven_distinct`] plus, where both sides are constant,
+/// interval arithmetic inside one object.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::kernel) enum FootprintSeparation {
+    /// The step writes no byte and moves no claim a range read consults, so
+    /// no footprint can be stale because of it.
+    WritesNothing,
+    /// The written address lies outside every range of the footprint.
+    StoreOutsideRanges,
+    /// Every range the call or loop declared it may write lies outside every
+    /// range of the footprint.
+    WriteSetOutsideRanges,
+    /// The released allocation lies outside every range of the footprint.
+    ReleaseOutsideRanges,
+    /// The retired automatic-storage object is proven distinct from the object
+    /// every range of the footprint is in.
+    ReleaseOfDistinctObject,
 }
 
 /// Why a step was known not to touch anything a pure function can observe
@@ -138,6 +167,10 @@ pub(in crate::kernel) fn affects(
         // is enforced rather than remembered: it has no parameter a fact
         // could arrive through.
         Resource::Block(block) => block_effect(step, block),
+        // A footprint's answer is spent dropping resource projections, which
+        // record no premise, so it is handed no evidence either.
+        Resource::Ranges(ranges) => footprint_effect(step, Some(ranges)),
+        Resource::AnyMemory => footprint_effect(step, None),
     }
 }
 
@@ -185,6 +218,28 @@ pub(in crate::kernel) fn separation_check(
             | CMemoryDerivation::HeapFreed { .. }
             | CMemoryDerivation::CallHavoc { .. }
             | CMemoryDerivation::LoopHavoc { .. } => SeparationCheck::WholeBlockAgreement,
+        },
+        // A footprint is a list of byte ranges, so the check is always "is the
+        // step's own write set outside all of them"; only the two kinds that
+        // name no write set at all answer otherwise.
+        Resource::Ranges(_) | Resource::AnyMemory => match step {
+            CMemoryDerivation::LoopHavoc {
+                mutable_ranges: None,
+                ..
+            } => SeparationCheck::NoCheckedWriteSet,
+            CMemoryDerivation::HeapFreed { .. } => SeparationCheck::HeapAllocationSeparation,
+            CMemoryDerivation::Store { .. }
+            | CMemoryDerivation::BlockDeclared { .. }
+            | CMemoryDerivation::HeapAllocated { .. }
+            | CMemoryDerivation::HeapAllocationPending { .. }
+            | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
+            | CMemoryDerivation::CellsForgotten { .. }
+            | CMemoryDerivation::LocalLifetimeEnded { .. }
+            | CMemoryDerivation::CallHavoc { .. }
+            | CMemoryDerivation::LoopHavoc {
+                mutable_ranges: Some(_),
+                ..
+            } => SeparationCheck::RangeDisjointness,
         },
     }
 }
@@ -592,5 +647,144 @@ fn block_effect(step: &CMemoryDerivation, block: &PointerBlock) -> StepEffect {
             mutable_ranges: None,
             ..
         } => stops(None),
+    }
+}
+
+/// One stated byte footprint's answer: separate means the step's own write set
+/// is outside every range of it, decided from the edge alone.
+///
+/// `ranges` is `None` for a footprint the kernel could not name
+/// ([`Resource::AnyMemory`]), and then only the kinds that write no byte are
+/// separate — nothing bounds what such a footprint covers, so there is no
+/// range to be outside of.
+///
+/// The per-kind argument is the cell arm's, restricted to what a footprint may
+/// spend. Like the block arm this reads no fact context, but for a different
+/// reason: the answer is not embedded in a name, it is spent *removing* a
+/// resource fact, and removing one is only ever sound to do more often. So the
+/// arm is free to be coarser than the cell arm and is: it treats a write
+/// through a block that may be any object
+/// ([`crate::kernel::primitives::resource_algebra::memory_block_may_alias`]) as
+/// affecting every footprint, rather than asking a range whether that block is
+/// proven distinct from it.
+///
+/// * `Store` is separate when the written bytes miss every range of the
+///   footprint, which
+///   [`crate::kernel::primitives::resource_algebra::memory_range_overlaps_pointer`]
+///   decides by block distinctness first and then by constant byte intervals.
+/// * `CallHavoc` and `LoopHavoc` with a checked write set are separate when
+///   every declared range misses every range of the footprint. The declared
+///   write set is the complete footprint of the code behind the edge, which is
+///   what a cell fact already trusts it to be.
+/// * `HeapFreed` is separate when the released bytes miss every range. A
+///   symbolic byte count is read as the whole address space, so it misses
+///   nothing.
+/// * `LocalLifetimeEnded` is separate when the retired object is proven
+///   distinct from the object every range is in. It drops that block's cells
+///   and extent and nothing else.
+/// * `BlockDeclared`, `HeapAllocated`, `HeapAllocationPending`,
+///   `ContractAllocationClaimsChanged` and `CellsForgotten` write no byte of
+///   any pre-existing object, so no stated footprint can be stale because of
+///   them. `HeapAllocated` belongs here because a projection's footprint is
+///   stated over objects that already existed; the fresh object's own bytes
+///   are in no range of it.
+/// * `LoopHavoc` without a write set is an unconditional barrier.
+fn footprint_effect(step: &CMemoryDerivation, ranges: Option<&[CMemoryRange]>) -> StepEffect {
+    let resource = match ranges {
+        Some(ranges) => Resource::Ranges(ranges),
+        None => Resource::AnyMemory,
+    };
+    let unknown = || StepEffect::NotShownSeparate(separation_check(step, resource));
+    let separate = |separation| StepEffect::Separate(Separation::Footprint(separation));
+    // A step that writes no byte and moves no claim is separate from every
+    // footprint, named or not.
+    if matches!(
+        step,
+        CMemoryDerivation::BlockDeclared { .. }
+            | CMemoryDerivation::HeapAllocated { .. }
+            | CMemoryDerivation::HeapAllocationPending { .. }
+            | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
+            | CMemoryDerivation::CellsForgotten { .. }
+    ) {
+        return separate(FootprintSeparation::WritesNothing);
+    }
+    // Nothing bounds an unnamed footprint, so every other kind may reach it.
+    let Some(ranges) = ranges else {
+        return unknown();
+    };
+    match step {
+        CMemoryDerivation::Store { pointer, value, .. } => {
+            if !memory_block_may_alias(&pointer.block)
+                && !ranges
+                    .iter()
+                    .any(|range| memory_range_overlaps_pointer(range, pointer, value.byte_width()))
+            {
+                separate(FootprintSeparation::StoreOutsideRanges)
+            } else {
+                unknown()
+            }
+        }
+        CMemoryDerivation::CallHavoc { mutable_ranges, .. }
+        | CMemoryDerivation::LoopHavoc {
+            mutable_ranges: Some(mutable_ranges),
+            ..
+        } => {
+            if !mutable_ranges
+                .iter()
+                .any(|written| memory_block_may_alias(&written.base().block))
+                && !ranges.iter().any(|footprint| {
+                    mutable_ranges
+                        .iter()
+                        .any(|written| memory_ranges_overlap(footprint, written))
+                })
+            {
+                separate(FootprintSeparation::WriteSetOutsideRanges)
+            } else {
+                unknown()
+            }
+        }
+        CMemoryDerivation::HeapFreed {
+            allocation_base,
+            bytes,
+            ..
+        } => {
+            if !memory_block_may_alias(&allocation_base.block)
+                && !ranges.iter().any(|range| {
+                    memory_range_overlaps_pointer(
+                        range,
+                        allocation_base,
+                        bytes.as_const().unwrap_or(u32::MAX),
+                    )
+                })
+            {
+                separate(FootprintSeparation::ReleaseOutsideRanges)
+            } else {
+                unknown()
+            }
+        }
+        CMemoryDerivation::LocalLifetimeEnded { block, .. } => {
+            let retired = Pointer {
+                block: block.clone(),
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            if ranges
+                .iter()
+                .all(|range| range.base().blocks_proven_distinct(&retired))
+            {
+                separate(FootprintSeparation::ReleaseOfDistinctObject)
+            } else {
+                unknown()
+            }
+        }
+        CMemoryDerivation::LoopHavoc {
+            mutable_ranges: None,
+            ..
+        } => unknown(),
+        // Answered above, before the footprint had to be named.
+        CMemoryDerivation::BlockDeclared { .. }
+        | CMemoryDerivation::HeapAllocated { .. }
+        | CMemoryDerivation::HeapAllocationPending { .. }
+        | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
+        | CMemoryDerivation::CellsForgotten { .. } => separate(FootprintSeparation::WritesNothing),
     }
 }

@@ -153,7 +153,17 @@ pub(crate) fn memory_interval_nodes(
     Some(nodes)
 }
 
-fn memory_block_may_alias(block: &PointerBlock) -> bool {
+/// Whether a write through this block may land in any object at all, so that a
+/// resource footprint stated over another block cannot be shown to miss it.
+///
+/// This is a *variant* test, not a name test, and it is deliberately coarser
+/// than [`PointerBlock::proven_distinct`]: one of these blocks stands for an
+/// address the caller chose, and the answer here is spent dropping a resource
+/// projection, where being coarse only ever drops more. The three predicates
+/// below are the evidence language of the resource tracker's footprint arm
+/// (`src/kernel/resource_tracker/step_effect.rs`), which is the only decider
+/// that reads them.
+pub(in crate::kernel) fn memory_block_may_alias(block: &PointerBlock) -> bool {
     matches!(
         block,
         PointerBlock::ExternalArgument
@@ -321,75 +331,41 @@ impl ResourceContextIndex {
     }
 }
 
+/// Whether one recorded step can have written a projection's stated footprint.
+///
+/// The per-step rule is the resource tracker's, asked about
+/// [`crate::kernel::resource_tracker::Resource::Ranges`] for a footprint the
+/// kernel could name and
+/// [`crate::kernel::resource_tracker::Resource::AnyMemory`] for one it could
+/// not, so a new step kind has one answer for a footprint rather than one per
+/// caller. A footprint with no memory in it is never touched and is not asked
+/// about at all.
+/// `evidence` is the caller's, built once per invalidation rather than per
+/// step: the footprint arm reads none of it, and constructing an empty context
+/// inside this loop would be work the rule does not need.
 fn memory_derivation_affects_footprint(
     derivation: &CMemoryDerivation,
+    produced: &crate::kernel::SharedCMemory,
     footprint: &ResourceMemoryFootprint,
+    evidence: &crate::kernel::resource_tracker::step_effect::Evidence<'_>,
 ) -> bool {
-    let ResourceMemoryFootprint::Exact(ranges) = footprint else {
-        return matches!(footprint, ResourceMemoryFootprint::Unknown)
-            && !matches!(
-                derivation,
-                CMemoryDerivation::BlockDeclared { .. }
-                    | CMemoryDerivation::HeapAllocated { .. }
-                    | CMemoryDerivation::HeapAllocationPending { .. }
-                    | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
-                    | CMemoryDerivation::CellsForgotten { .. }
-            );
+    use crate::kernel::resource_tracker::{Resource, step_effect};
+    let resource = match footprint {
+        ResourceMemoryFootprint::Exact(ranges) => Resource::Ranges(ranges),
+        ResourceMemoryFootprint::Unknown => Resource::AnyMemory,
+        ResourceMemoryFootprint::None => return false,
     };
-    match derivation {
-        CMemoryDerivation::Store { pointer, value, .. } => {
-            memory_block_may_alias(&pointer.block)
-                || ranges
-                    .iter()
-                    .any(|range| memory_range_overlaps_pointer(range, pointer, value.byte_width()))
-        }
-        CMemoryDerivation::CallHavoc { mutable_ranges, .. }
-        | CMemoryDerivation::LoopHavoc {
-            mutable_ranges: Some(mutable_ranges),
-            ..
-        } => {
-            mutable_ranges
-                .iter()
-                .any(|written| memory_block_may_alias(&written.base().block))
-                || ranges.iter().any(|footprint| {
-                    mutable_ranges
-                        .iter()
-                        .any(|written| memory_ranges_overlap(footprint, written))
-                })
-        }
-        CMemoryDerivation::HeapFreed {
-            allocation_base,
-            bytes,
-            ..
-        } => {
-            memory_block_may_alias(&allocation_base.block)
-                || ranges.iter().any(|range| {
-                    memory_range_overlaps_pointer(
-                        range,
-                        allocation_base,
-                        bytes.as_const().unwrap_or(u32::MAX),
-                    )
-                })
-        }
-        CMemoryDerivation::LocalLifetimeEnded { block, .. } => ranges.iter().any(|range| {
-            !range.base().blocks_proven_distinct(&Pointer {
-                block: block.clone(),
-                offset: PointerOffsetTerm::Constant(0),
-            })
-        }),
-        CMemoryDerivation::LoopHavoc {
-            mutable_ranges: None,
-            ..
-        } => true,
-        CMemoryDerivation::BlockDeclared { .. }
-        | CMemoryDerivation::HeapAllocated { .. }
-        | CMemoryDerivation::HeapAllocationPending { .. }
-        | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
-        | CMemoryDerivation::CellsForgotten { .. } => false,
-    }
+    !matches!(
+        step_effect::affects(derivation, produced, resource, evidence),
+        step_effect::StepEffect::Separate(step_effect::Separation::Footprint(_))
+    )
 }
 
-fn memory_range_overlaps_pointer(range: &CMemoryRange, pointer: &Pointer, bytes: u32) -> bool {
+pub(in crate::kernel) fn memory_range_overlaps_pointer(
+    range: &CMemoryRange,
+    pointer: &Pointer,
+    bytes: u32,
+) -> bool {
     let pointer_base = Pointer {
         block: pointer.block.clone(),
         offset: pointer.offset.clone(),
@@ -445,7 +421,7 @@ fn add_memory_interval_candidates(
     }
 }
 
-fn memory_ranges_overlap(left: &CMemoryRange, right: &CMemoryRange) -> bool {
+pub(in crate::kernel) fn memory_ranges_overlap(left: &CMemoryRange, right: &CMemoryRange) -> bool {
     if left.base().blocks_proven_distinct(right.base()) {
         return false;
     }
@@ -2015,6 +1991,14 @@ impl ResourceContext {
         {
             return self;
         }
+        // A footprint's answer is spent removing a resource fact, which records
+        // no premise, so the rule's footprint arm reads no fact context. Built
+        // once here so the walk below pays nothing per step for it.
+        let no_facts = PureFactContext::new();
+        let evidence = crate::kernel::resource_tracker::step_effect::Evidence {
+            assumptions: &no_facts,
+            cross_loop_havoc: false,
+        };
         let before_node = crate::kernel::intern_c_memory_ref(before);
         let mut current = crate::kernel::intern_c_memory_ref(after);
         let mut affected = ResourceEntryIds::default();
@@ -2033,8 +2017,12 @@ impl ResourceContext {
                 else {
                     continue;
                 };
-                if memory_derivation_affects_footprint(&derivation, &metadata.footprint)
-                    && let Some(entry) = self.storage.entry_by_occurrence.get(occurrence)
+                if memory_derivation_affects_footprint(
+                    &derivation,
+                    &current,
+                    &metadata.footprint,
+                    &evidence,
+                ) && let Some(entry) = self.storage.entry_by_occurrence.get(occurrence)
                 {
                     affected = affected.with_value(*entry);
                 }

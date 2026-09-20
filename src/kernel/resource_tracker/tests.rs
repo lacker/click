@@ -578,3 +578,105 @@ fn a_session_reset_empties_the_version_memos() {
         "a session reset must not leave one verification's versions for the next"
     );
 }
+
+/// A footprint is the third resource the rule answers about, and it has no
+/// naming walk: its one caller knows both ends of the interval it cares about
+/// and asks at every step in between. So these ask the rule directly.
+mod footprints {
+    use super::*;
+    use crate::kernel::resource_tracker::step_effect::{
+        Evidence, FootprintSeparation, Separation, StepEffect, affects,
+    };
+
+    fn bytes(base: Pointer, count: u32) -> CMemoryRange {
+        CMemoryRange::new_with_element_width(
+            base,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(count),
+            1,
+        )
+    }
+
+    /// The rule's answer for the step that produced `after`, asked about a
+    /// footprint that is `Some(ranges)` when the kernel could name it.
+    fn effect(after: &CMemory, ranges: Option<&[CMemoryRange]>) -> StepEffect {
+        let produced = intern_c_memory(after.clone());
+        let derivation = produced
+            .derivation()
+            .expect("the constructed step records an edge");
+        let no_facts = PureFactContext::new();
+        affects(
+            derivation.as_ref(),
+            &produced,
+            match ranges {
+                Some(ranges) => Resource::Ranges(ranges),
+                None => Resource::AnyMemory,
+            },
+            &Evidence {
+                assumptions: &no_facts,
+                cross_loop_havoc: false,
+            },
+        )
+    }
+
+    /// A write into another object cannot make a fact derived from this one
+    /// stale, so the projection built over it stays.
+    #[test]
+    fn a_store_in_another_object_is_separate_from_a_stated_footprint() {
+        let after = entry_memory().store(at(block("global:h"), 0), one());
+        let footprint = [bytes(at(block("global:g"), 0), 4)];
+        assert_eq!(
+            effect(&after, Some(&footprint)),
+            StepEffect::Separate(Separation::Footprint(
+                FootprintSeparation::StoreOutsideRanges
+            ))
+        );
+    }
+
+    /// A write inside the stated bytes is not separate from them, whatever
+    /// else the two spellings have in common.
+    #[test]
+    fn a_store_inside_a_stated_footprint_is_not_separate_from_it() {
+        let after = entry_memory().store(at(block("global:g"), 0), one());
+        let footprint = [bytes(at(block("global:g"), 0), 4)];
+        assert!(!matches!(
+            effect(&after, Some(&footprint)),
+            StepEffect::Separate(_)
+        ));
+    }
+
+    /// A block a write could be in, because the caller chose its address,
+    /// reaches every footprint. This is coarser than the cell and block arms
+    /// on purpose: a footprint's answer is spent *removing* a resource fact,
+    /// and removing one more often is the safe direction.
+    #[test]
+    fn a_store_through_an_argument_reaches_every_stated_footprint() {
+        let after = entry_memory().store(at(PointerBlock::ExternalArgument, 64), one());
+        let footprint = [bytes(at(block("global:g"), 0), 4)];
+        assert!(!matches!(
+            effect(&after, Some(&footprint)),
+            StepEffect::Separate(_)
+        ));
+    }
+
+    /// Declaring an object writes no byte of any object that already existed,
+    /// so it leaves every footprint alone — including one the kernel could not
+    /// name, which nothing else is separate from.
+    #[test]
+    fn a_declaration_is_separate_from_every_footprint() {
+        let after = entry_memory().with_block(block("local:f:j"), 4);
+        let footprint = [bytes(at(block("global:g"), 0), 4)];
+        let writes_nothing =
+            StepEffect::Separate(Separation::Footprint(FootprintSeparation::WritesNothing));
+        assert_eq!(effect(&after, Some(&footprint)), writes_nothing);
+        assert_eq!(effect(&after, None), writes_nothing);
+    }
+
+    /// Nothing bounds a footprint the kernel could not name, so every step
+    /// that writes a byte reaches it.
+    #[test]
+    fn an_unnamed_footprint_is_reached_by_every_write() {
+        let after = entry_memory().store(at(block("global:h"), 0), one());
+        assert!(!matches!(effect(&after, None), StepEffect::Separate(_)));
+    }
+}

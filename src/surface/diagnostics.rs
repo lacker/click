@@ -1309,6 +1309,12 @@ pub(super) fn describe_resource_version_mismatch(
         resource_tracker::OwnedResource::Cell(pointer) => {
             describe_cell_version_stop(pointer, stop, since, parameters, arguments)
         }
+        // No term names a memory footprint, so no goal or premise a refusal
+        // compares reads one. There is nothing to say rather than something
+        // vague to say.
+        resource_tracker::OwnedResource::Ranges(_) | resource_tracker::OwnedResource::AnyMemory => {
+            return None;
+        }
     };
     if explanation.crossed_after > 0 {
         let steps = explanation.crossed_after;

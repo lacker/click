@@ -685,9 +685,13 @@ fn memory_dag_cell_source_walk(
             super::step_effect::StepEffect::Separate(super::step_effect::Separation::Cell(
                 justification,
             )) => justification,
-            // A block separation cannot be the answer to a cell question, and
-            // if one ever were, stopping is the fail-closed reading.
-            super::step_effect::StepEffect::Separate(super::step_effect::Separation::Block(_)) => {
+            // Another resource's separation cannot be the answer to a cell
+            // question, and if one ever were, stopping is the fail-closed
+            // reading.
+            super::step_effect::StepEffect::Separate(
+                super::step_effect::Separation::Block(_)
+                | super::step_effect::Separation::Footprint(_),
+            ) => {
                 return MemoryDagCell::Unwritten {
                     node: current,
                     path,

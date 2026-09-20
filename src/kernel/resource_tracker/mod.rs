@@ -101,6 +101,14 @@ pub(crate) enum Resource<'a> {
     /// A whole memory block, as a pure function reads it through an array
     /// argument: the footprint is every cell reachable through the pointer.
     Block(&'a PointerBlock),
+    /// The byte ranges a resource fact was derived from: the footprint a
+    /// projection's support states, as a list of ranges.
+    Ranges(&'a [CMemoryRange]),
+    /// A memory footprint the kernel cannot name — a composite core, or a
+    /// projection whose address is itself read from memory through a shape the
+    /// footprint walk does not enter. Every step that can write memory affects
+    /// it, because nothing bounds what it covers.
+    AnyMemory,
 }
 
 impl Resource<'_> {
@@ -108,6 +116,8 @@ impl Resource<'_> {
         match self {
             Self::Cell(pointer) => OwnedResource::Cell(pointer.clone()),
             Self::Block(block) => OwnedResource::Block(block.clone()),
+            Self::Ranges(ranges) => OwnedResource::Ranges(ranges.to_vec()),
+            Self::AnyMemory => OwnedResource::AnyMemory,
         }
     }
 }
@@ -117,6 +127,8 @@ impl Resource<'_> {
 pub(crate) enum OwnedResource {
     Cell(Pointer),
     Block(PointerBlock),
+    Ranges(Vec<CMemoryRange>),
+    AnyMemory,
 }
 
 impl OwnedResource {
@@ -124,6 +136,8 @@ impl OwnedResource {
         match self {
             Self::Cell(pointer) => Resource::Cell(pointer),
             Self::Block(block) => Resource::Block(block),
+            Self::Ranges(ranges) => Resource::Ranges(ranges),
+            Self::AnyMemory => Resource::AnyMemory,
         }
     }
 }
@@ -349,6 +363,11 @@ pub(crate) fn last_same_point(resource: Resource<'_>, at: &ProgramPoint) -> Opti
     match resource {
         Resource::Cell(pointer) => cell_last_same_point(at.snapshot(), pointer).map(ProgramPoint),
         Resource::Block(block) => Some(ProgramPoint(block_last_same_point(at.snapshot(), block))),
+        // No term names a memory footprint, so a footprint has no naming path
+        // to be the oldest point of. Its one caller knows both ends of the
+        // interval it cares about and asks [`step_effect::affects`] at every
+        // step in between, which is the same rule this walk would run.
+        Resource::Ranges(_) | Resource::AnyMemory => None,
     }
 }
 
@@ -370,6 +389,7 @@ pub(crate) fn last_same(resource: Resource<'_>, at: &ProgramPoint) -> Option<Las
             let stopped_by = Stop::at_point(&point, resource);
             Some(LastSame { point, stopped_by })
         }
+        Resource::Ranges(_) | Resource::AnyMemory => None,
     }
 }
 
