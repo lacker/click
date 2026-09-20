@@ -162,6 +162,7 @@ the case that actually applies:
 | two objects nothing separates | ``the store to `g[0]` may have written it, because `a` may point into `g`. If they are separate, require `separate(memory(a[0..1]), memory(g[0..1]))`.`` |
 | a call or a loop with a write set | ``the call in between may write `g[0..1]` … require `separate(memory(a[0..1]), memory(g[0..1]))`.`` |
 | the resource was written | ``the store to `a[i]` wrote it.`` |
+| the read has no source spelling | ``the store to `g[0]` may have written it, and nothing tells that address apart from this read.`` |
 | a fact about a block | ``a fact about `a` as a whole does not carry across the store to `b[j]`.`` plus the note below |
 
 Every clause it proposes is one that verifies the situation it is printed for;
@@ -174,6 +175,13 @@ An index only the lowering has a name for is printed `a[…]`, never as the
 kernel variable, and no inequality is proposed over a name nobody wrote. It
 never prints memory, and it reports at most the blocking step plus a count of
 the steps after it.
+
+A read through a pointer the function received rather than an object it names —
+a pointer a call returned, a pointer a branch join selected — has no source
+spelling at all, so only one side of the comparison can be printed. The text
+still names the store, because that is the step the reader has to be told
+apart from their read, and it does not offer a `separate(..)` it could not
+spell.
 
 No recorded step carries a source span or statement text today, so a step is
 described by kind and target ("a store to `g[0]`", "the call", "the loop"). A
@@ -255,6 +263,43 @@ that a fix lands in one of them rather than beside it.
 | `typed_store_separated_ranges_evidence`, `typed_ranges_disjoint_from_pointer_evidence`, `heap_allocation_proven_separate_from_pointer` | `src/kernel/memory_provenance.rs` |
 | `memory_block_may_alias`, `memory_range_overlaps_pointer`, `memory_ranges_overlap`, `proves_resource_separate`, `proves_owned_range_separate_from_pointer_with`, `resources_structurally_separate` | `src/kernel/primitives/resource_algebra.rs` |
 | `MemoryLoadAliasCache::resolution_distinct` | `src/kernel/eval/memory_loads.rs` — a per-load memo over the first of these, not a rule of its own |
+
+#### A load whose own block the verifier cannot resolve
+
+`observable_by_load` is the filter the three load-framing sites above share, and
+it used to carry one exception: when the *load's* own block was `Symbolic`, it
+degenerated to `self == load`, a comparison of block names. A symbolic block is
+a pointer value the verifier does not resolve, and `proven_distinct` separates
+it from nothing, so that exception assumed exactly what the predicate exists to
+deny. `mdtests/returned_pointer_may_alias_a_global.md` is the false theorem it
+admitted: with `result == &g[0]` stated in the contract and in the context,
+`a[0] == 5` survived `g[0] = 1`.
+
+The exception is gone, and `observable_by_load` is now `may_alias` for every
+load. Two things were `Symbolic` before, and only one of them still is:
+
+- an object the verifier introduced, today the temporary that holds an
+  aggregate a call returns by value, carries `PointerBlock::Temporary`. It is
+  fresh — the program has no prior pointer into it and C gives it no way to
+  take its address — so `proven_distinct` separates it from every other block,
+  as it does `Heap`. Its loads keep the structural frame they had, which is why
+  a struct-by-value result still reads correctly across an unrelated store with
+  nothing added to the sidecar;
+- a pointer value whose target is unknown — a returned `T*`, a callback result,
+  a pointer loaded from storage the state does not hold, a branch join's
+  selection — stays `Symbolic`, and a load through it now observes every cell
+  not proven distinct from it.
+
+Framing a load of the second kind therefore needs evidence, and the
+load-framing path does not yet have the routes to use the evidence such
+contracts state. Specifically, `pointers_proven_distinct_for_memory_resolution`
+does not follow an exact `PointerEqual` fact from a symbolic pointer to the
+block the program names, the way `resolve_symbolic_pointer_alias` already does
+for resource-range membership; it reads no disjunction of such equalities; and
+neither it nor `memories_directly_match_for_pointer_load` consults a separating
+resource composition. Until those exist, a proof that reads through a returned
+pointer after any store — including the store of that pointer into the caller's
+own local — is refused.
 
 The loan family — `LoanLedger::permits_memory_access`,
 `protected_range_proven_overlapping`, `active_memory_overlaps` — is **not** in
