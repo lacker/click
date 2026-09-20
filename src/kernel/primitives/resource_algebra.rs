@@ -2229,28 +2229,70 @@ impl ResourceContext {
         })
     }
 
+    /// The owned memory fact of this composition that structurally contains
+    /// `range`, as its entry and its own range.
+    ///
+    /// One block bucket, structural containment only: this cannot re-enter
+    /// snapshot or alias reasoning. Two lookups decide the composition law
+    /// for a pair without materializing any pair.
+    fn owned_memory_member_containing(
+        &self,
+        range: &CMemoryRange,
+    ) -> Option<(ResourceEntryId, &CMemoryRange)> {
+        self.storage
+            .index
+            .memory_by_block
+            .get(&range.base().block)?
+            .iter()
+            .copied()
+            .find_map(|entry| {
+                let available = self.fact(entry).memory_own_range()?;
+                crate::kernel::assumptions::memory_range_shallowly_contained(range, available)
+                    .then_some((entry, available))
+            })
+    }
+
+    /// The owned memory fact of this composition that structurally contains
+    /// `pointer`, as its entry and its own range.
+    pub(in crate::kernel) fn owned_memory_member_containing_pointer(
+        &self,
+        pointer: &Pointer,
+    ) -> Option<(ResourceEntryId, &CMemoryRange)> {
+        self.storage
+            .index
+            .memory_by_block
+            .get(&pointer.block)?
+            .iter()
+            .copied()
+            .find_map(|entry| {
+                let available = self.fact(entry).memory_own_range()?;
+                crate::kernel::assumptions::pointer_in_memory_range_shallow(pointer, available)
+                    .then_some((entry, available))
+            })
+    }
+
     /// Non-recursive projection for memory-resolution fast paths. It uses
     /// only block indexing and structural containment, so it cannot re-enter
     /// snapshot or alias reasoning.
+    ///
+    /// Each side is looked up in its own block's bucket. Two owned members of
+    /// one valid composition hold disjoint *bytes* — the partition invariant
+    /// `MemoryResourceAlgebra::pair_validity_error` enforces — and a byte set
+    /// does not depend on how the pointer that names it is spelled, so the
+    /// law answers a cross-block pair exactly as it answers a same-block one.
+    /// Restricting it to one bucket would have been an indexing shortcut with
+    /// no rule behind it, and it is precisely the pair the kernel cannot
+    /// spell apart — an unresolved `Symbolic` pointer beside a named object —
+    /// that the shortcut refused.
     pub(in crate::kernel) fn proves_owned_memory_ranges_separate_shallow(
         &self,
         left: &CMemoryRange,
         right: &CMemoryRange,
     ) -> bool {
-        if left.base().block != right.base().block {
-            return false;
-        }
-        let Some(positions) = self.storage.index.memory_by_block.get(&left.base().block) else {
+        let Some((left_position, _)) = self.owned_memory_member_containing(left) else {
             return false;
         };
-        let left_position = positions.iter().copied().find(|entry| {
-            self.fact(*entry)
-                .memory_own_range()
-                .is_some_and(|available| {
-                    crate::kernel::assumptions::memory_range_shallowly_contained(left, available)
-                })
-        });
-        let Some(left_position) = left_position else {
+        let Some(positions) = self.storage.index.memory_by_block.get(&right.base().block) else {
             return false;
         };
         positions.iter().copied().any(|entry| {
