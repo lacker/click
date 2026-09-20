@@ -1818,6 +1818,104 @@ fn array_fact_across_local_stores(statement_count: usize) -> (String, String) {
     (c_source, click_source)
 }
 
+/// One project with `statement_count` bare declarations between two uses of
+/// the same fact about an array no declaration can touch.
+fn array_fact_across_declarations(statement_count: usize) -> (String, String) {
+    let mut c_source = String::from("void bump(int32 a[], int32 n) {\n");
+    for index in 0..statement_count {
+        c_source.push_str(&format!("    int32 t{index};\n"));
+    }
+    c_source.push_str("}\n");
+
+    let mut click_source = String::from(
+        "verifying \"bump.c\";\n\nfunction icount(p: int32[], lo: int32, hi: int32) -> Integer {\n    (lo..hi).fold(0, |acc, k| { acc + to_integer(p[k]) })\n}\n\nvoid bump(int32 a[], int32 n) {\n    requires 0 < n;\n    requires viewable(a[0..n]);\n    views a[0..n];\n} by {\n    have 0 <= 0 by { simp(); }\n    have icount(a, 0, 0) == 0 by {\n        unfold(icount(a, 0, 0)) using { 0 <= 0; }\n        normalize();\n    }\n",
+    );
+    for _ in 0..statement_count {
+        click_source.push_str("    step();\n");
+        click_source.push_str("    have icount(a, 0, 0) == 0 by { simp(); }\n");
+    }
+    click_source.push_str("    execute();\n    simp();\n}\n");
+    (c_source, click_source)
+}
+
+/// One project with `statement_count` calls that may write only another
+/// object, between two uses of the same fact about `h`.
+fn array_fact_across_calls(statement_count: usize) -> (String, String) {
+    let mut c_source = String::from(
+        "int32 g[4];\nint32 h[4];\n\nvoid touch_g() {\n    g[0] = 1;\n}\n\nint32 keep_h() {\n",
+    );
+    for _ in 0..statement_count {
+        c_source.push_str("    touch_g();\n");
+    }
+    c_source.push_str("    return h[0];\n}\n");
+
+    let mut click_source = String::from(
+        "verifying \"keep_h.c\";\n\nfunction icount(p: int32[], lo: int32, hi: int32) -> Integer {\n    (lo..hi).fold(0, |acc, k| { acc + to_integer(p[k]) })\n}\n\nvoid touch_g() {\n    owns g[0..1];\n} by {\n    execute();\n    simp();\n}\n\nint32 keep_h() {\n    requires h[0] == 5;\n    owns g[0..1];\n    views h[0..1];\n    ensures result == 5;\n} by {\n    have 0 <= 0 by { simp(); }\n    have icount(h, 0, 0) == 0 by {\n        unfold(icount(h, 0, 0)) using { 0 <= 0; }\n        normalize();\n    }\n",
+    );
+    for _ in 0..statement_count {
+        click_source.push_str("    step();\n");
+        click_source.push_str("    have icount(h, 0, 0) == 0 by { simp(); }\n");
+    }
+    click_source.push_str("    execute();\n    simp();\n}\n");
+    (c_source, click_source)
+}
+
+/// The block epoch walk's own work over one fixture family, for the sizes
+/// given. A missing entry means the fixture stopped exercising the walk, which
+/// would make an assertion about its shape vacuous.
+fn block_epoch_walk_curve(
+    label: &str,
+    file: &str,
+    fixture: impl Fn(usize) -> (String, String),
+) -> Vec<ScalingSample> {
+    const WALK: &str = "operation `array-ref block epoch walk`";
+    [4, 8, 16, 32]
+        .into_iter()
+        .map(|size| {
+            let (c_source, click_source) = fixture(size);
+            let (verified, sample) = scaling_sample(size, || {
+                verify_c0_sources(&click_source, &[(file, c_source.as_str())])
+            });
+            verified.unwrap_or_else(|error| {
+                panic!("size {size} {label} fixture failed: {}", error.message())
+            });
+            ScalingSample {
+                size: sample.size,
+                work: *sample
+                    .named_work
+                    .get(WALK)
+                    .unwrap_or_else(|| panic!("fixture did not reach the epoch walk: {sample:?}")),
+                named_work: BTreeMap::new(),
+            }
+        })
+        .collect()
+}
+
+/// The two steps a whole-array fact learned to cross scale like the store it
+/// always crossed: linear in the number of steps, not quadratic.
+///
+/// A declaration and a call are the interesting shapes because the walk crosses
+/// them with different evidence -- one object proven distinct for a
+/// declaration, a whole checked write set for a call -- and because a call's
+/// arrival at a fresh snapshot per step is exactly the shape that goes
+/// quadratic when the epoch walk cannot reuse the answer it computed one
+/// snapshot ago.
+#[test]
+fn an_array_fact_carried_across_declarations_and_calls_scales_linearly() {
+    assert_near_linear_scaling(
+        "array-ref block epoch walk across declarations",
+        &block_epoch_walk_curve("array-fact-across-declarations", "bump.c", |size| {
+            array_fact_across_declarations(size)
+        }),
+    );
+    assert_near_linear_scaling(
+        "array-ref block epoch walk across calls",
+        &block_epoch_walk_curve("array-fact-across-calls", "keep_h.c", |size| {
+            array_fact_across_calls(size)
+        }),
+    );
+}
+
 /// Carrying one array fact across N steps that cannot touch the array costs
 /// work linear in N, not quadratic.
 ///

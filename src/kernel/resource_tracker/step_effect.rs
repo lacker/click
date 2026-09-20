@@ -80,6 +80,10 @@ pub(in crate::kernel) enum BlockSeparation {
     /// is proven distinct from this one, so this block keeps its contents,
     /// extent, liveness and heap status.
     ReleaseOfDistinctBlock,
+    /// Every range the call or loop declared it may write lies in an object
+    /// proven distinct from this one, and so does everything else the step
+    /// forgets on that account.
+    WriteSetInDistinctObjects,
 }
 
 /// What the querying context offers a walk towards an answer.
@@ -107,18 +111,21 @@ pub(in crate::kernel) struct Evidence<'a> {
 /// | `CellsForgotten` | separate: the state is the same | **not shown separate** |
 /// | `LocalLifetimeEnded` | separate on proven distinctness | separate when the retired object is proven distinct; affected for this one |
 /// | `HeapFreed` | separate on three separation ladders | separate when the released allocation's object is proven distinct; affected when it is this one |
-/// | `CallHavoc` | separate on range disjointness | **not shown separate** |
-/// | `LoopHavoc(Some)` | separate under the extended-bridging and explicit-check gates, and never on the naming path | **not shown separate** |
+/// | `CallHavoc` | separate on range disjointness | separate when every declared range's object is proven distinct |
+/// | `LoopHavoc(Some)` | separate under the extended-bridging and explicit-check gates, and never on the naming path | separate when every declared range's object is proven distinct |
 /// | `LoopHavoc(None)` | never separate | never separate |
 ///
-/// The block column's blanket refusals are the two walks' remaining
-/// differences, carried over unchanged from when they were two separate sets
-/// of hard-coded answers. Each one is a finding to settle on its own now that
-/// there is one place to settle it in.
+/// Two kinds still refuse a block outright, and both for want of a name on the
+/// edge: `ContractAllocationClaimsChanged` names no allocation and
+/// `CellsForgotten` names no cell, so neither can be shown to leave this
+/// block's claims or known values alone.
 ///
-/// The difference that will remain is *what evidence a resource may spend*: a
-/// block may use only the kernel's structural separation, because its answer
-/// is shared across proof paths.
+/// The difference that remains by design is *what evidence a resource may
+/// spend*: a block may use only the kernel's structural separation, because its
+/// answer is shared across proof paths. Where the cell column reads a stated
+/// `separate(..)`, an offset inequality or a resource composition, the block
+/// column reads only `PointerBlock::proven_distinct` and the write set the edge
+/// itself carries.
 pub(in crate::kernel) fn affects(
     step: &CMemoryDerivation,
     produced: &SharedCMemory,
@@ -467,8 +474,46 @@ fn cell_effect(
 ///   spelling test: a contract-imported allocation can be a subrange of
 ///   `ExternalArgument` memory, so freeing it is not separate from an array
 ///   parameter, and every array parameter of one function shares that block.
-/// * Every other kind stops the walk, exactly as it did before there was one
-///   rule. Each blanket refusal below is a finding to settle on its own.
+/// * `CallHavoc` and `LoopHavoc` with a checked write set are the two steps
+///   that stand for code this rule cannot see, so what they *do* to the
+///   snapshot has to be enumerated rather than assumed. A call havoc forgets
+///   every cell that is neither in a `local:` block nor proven disjoint from
+///   the declared ranges, drops the zeroed reading of every allocation those
+///   ranges may reach, and inserts its two marker blocks. A loop havoc forgets
+///   every cell outside the preserved scalar-local blocks and the
+///   loan-protected ones, and inserts its marker block; it changes no extent,
+///   no ended-local entry and no heap status at all. When every declared range
+///   lies in an object proven distinct from this block:
+///     * its cells keep their values across a call havoc, because block
+///       distinctness is the first thing `range_proven_disjoint_from_pointer`
+///       decides, so the retention test holds for every one of them;
+///     * its zeroed status survives, because
+///       `heap_allocation_may_contain_pointer` needs equal blocks before it
+///       will call an allocation written;
+///     * the marker blocks are fresh keys, so this block's extent entry is
+///       untouched;
+///     * and a loop havoc does drop this block's cached values, which is a
+///       change of *form* only. The argument names the older snapshot, and its
+///       known values stay true of the real object precisely because the
+///       declared write set excludes that object; forgetting what the newer
+///       snapshot knew removes knowledge from the newer state rather than
+///       changing the object.
+///
+///   The declared write set is the same thing a cell fact already trusts to be
+///   the complete footprint of the code behind the edge; a block trusts it no
+///   further. Because the write set is checked and path-independent it may be
+///   read off the interned edge, which is what separates it from a stated
+///   `separate(..)`.
+/// * `ContractAllocationClaimsChanged` and `CellsForgotten` still stop the
+///   walk, and for the same reason as each other: the edge names no object.
+///   The first moves live, uninitialized and zeroed-prefix claims for *some*
+///   allocation, and a contract claim may cover a subrange of
+///   `ExternalArgument` memory — the very object an array parameter points
+///   into. The second is a form change with the same state, but nothing on the
+///   edge says which cells it dropped. Recording what they concern is what
+///   would settle either.
+/// * `LoopHavoc` without a write set never crosses: a body that may write
+///   anything it can reach has no footprint to be separate from.
 ///
 /// No arm consults a fact, a stated `separate(..)` or ownership, because this
 /// answer is memoized per `(snapshot, block)` and an interned edge is shared
@@ -519,13 +564,33 @@ fn block_effect(step: &CMemoryDerivation, block: &PointerBlock) -> StepEffect {
             one_object(retired, BlockSeparation::ReleaseOfDistinctBlock)
         }
         // It writes no bytes, but the claims it moves are what authorize a
-        // read.
+        // read, and the edge names no allocation they could belong to.
         CMemoryDerivation::ContractAllocationClaimsChanged { .. } => stops(None),
-        // The state is the same but the cell map is not, so a read that
-        // resolves concretely at one end resolves symbolically at the other.
+        // The state is the same but the cell map is not, and the edge names no
+        // cell, so nothing says the dropped values were not this block's.
         CMemoryDerivation::CellsForgotten { .. } => stops(None),
-        // Both are exactly the barriers whose write sets have to be justified
-        // in a querying context, which this rule does not have.
-        CMemoryDerivation::CallHavoc { .. } | CMemoryDerivation::LoopHavoc { .. } => stops(None),
+        CMemoryDerivation::CallHavoc { mutable_ranges, .. }
+        | CMemoryDerivation::LoopHavoc {
+            mutable_ranges: Some(mutable_ranges),
+            ..
+        } => {
+            if mutable_ranges
+                .iter()
+                .all(|range| range.base().block.proven_distinct(block))
+            {
+                StepEffect::Separate(Separation::Block(
+                    BlockSeparation::WriteSetInDistinctObjects,
+                ))
+            } else {
+                unknown()
+            }
+        }
+        // Without a checked write set the edge is an unconditional barrier:
+        // nothing can be shown separate from a body that may write anything it
+        // can reach.
+        CMemoryDerivation::LoopHavoc {
+            mutable_ranges: None,
+            ..
+        } => stops(None),
     }
 }

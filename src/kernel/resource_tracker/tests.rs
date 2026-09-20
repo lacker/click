@@ -126,6 +126,112 @@ fn a_call_havoc_carries_a_cell_outside_its_write_set_only() {
     );
 }
 
+/// One rule, one answer: a checked write set entirely in objects proven
+/// distinct from the subject carries both a cell and a whole block across a
+/// call, and a write set in the subject's own object carries neither.
+#[test]
+fn a_call_havoc_carries_a_block_outside_its_write_set_only() {
+    let entry = entry_memory();
+    let ranges = vec![CMemoryRange::new(
+        at(block("global:g"), 0),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(4),
+    )];
+    let after =
+        entry
+            .clone()
+            .with_call_memory_havoc(Variable(903), &ranges, &PureFactContext::new());
+    assert_eq!(
+        same(
+            Resource::Block(&block("global:h")),
+            &point(&after),
+            &point(&entry)
+        ),
+        Sameness::Same,
+        "another file-scope object is proven distinct from every range the call declared"
+    );
+
+    let outcome = same(
+        Resource::Block(&block("global:g")),
+        &point(&after),
+        &point(&entry),
+    );
+    let Sameness::Unknown { why, .. } = outcome else {
+        panic!("a call that may write the block is unknown, not {outcome:?}");
+    };
+    assert_eq!(
+        why.change,
+        Change::Call {
+            ranges: ranges.clone()
+        }
+    );
+    assert_eq!(
+        why.reason,
+        StopReason::NotShownSeparate(SeparationCheck::WholeBlockAgreement)
+    );
+
+    // An array parameter and a global are two known, differing spellings of
+    // possibly one object, so a write set naming the global separates from
+    // neither.
+    let outcome = same(
+        Resource::Block(&PointerBlock::ExternalArgument),
+        &point(&after),
+        &point(&entry),
+    );
+    assert!(
+        matches!(outcome, Sameness::Unknown { .. }),
+        "a global write set is not separate from an array argument, and got {outcome:?}"
+    );
+}
+
+/// A loop havoc forgets this block's cached cell values whatever its write set
+/// says, and is crossed all the same when the write set is in another object:
+/// forgetting a cached value removes what the newer snapshot knows, and the
+/// argument names the older one, whose values stay true of an object the write
+/// set excludes.
+///
+/// This is a unit test because no C loop reaches it yet: the loop rule
+/// assembles its abstract head memory by rebuilding the snapshot's maps, which
+/// records no derivation edge, so the recorded execution stops connecting the
+/// two points one step below the havoc.
+#[test]
+fn a_loop_havoc_carries_a_block_outside_its_checked_write_set() {
+    let entry = entry_memory().store(at(block("global:h"), 0), one());
+    let ranges = vec![CMemoryRange::new(
+        at(block("global:g"), 0),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(4),
+    )];
+    let after = entry.clone().with_loop_memory_havoc_preserving_loans(
+        Variable(904),
+        &std::collections::BTreeSet::new(),
+        Some(&ranges),
+        None,
+    );
+    assert!(
+        !after.has_known_cell_at(&at(block("global:h"), 0)),
+        "the havoc drops the subject's cached values, which is what makes this the hard case"
+    );
+    assert_eq!(
+        same(
+            Resource::Block(&block("global:h")),
+            &point(&after),
+            &point(&entry)
+        ),
+        Sameness::Same,
+        "a checked write set in another object leaves this one's contents alone"
+    );
+    let outcome = same(
+        Resource::Block(&block("global:g")),
+        &point(&after),
+        &point(&entry),
+    );
+    assert!(
+        matches!(outcome, Sameness::Unknown { .. }),
+        "the object the loop declared it may write is not carried, and got {outcome:?}"
+    );
+}
+
 /// A loop with no checked footprint is an unconditional barrier, and the
 /// answer says so rather than naming a separation nothing could supply.
 #[test]

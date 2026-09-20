@@ -106,17 +106,32 @@ what was actually established.
 | `HeapAllocated` | separate when the block differs | separate when the fresh object is proven distinct |
 | `LocalLifetimeEnded` | separate on proven distinctness | separate when the retired object is proven distinct |
 | `HeapFreed` | separate on three separation ladders | separate when the released allocation's object is proven distinct |
-| `CallHavoc` | separate on range disjointness | **stops** |
-| `LoopHavoc(Some)` | separate under the extended-bridging and explicit-check gates, and never on the naming path | **stops** |
-| `LoopHavoc(None)` | never separate | **stops** |
+| `CallHavoc` | separate on range disjointness | separate when every declared range's object is proven distinct |
+| `LoopHavoc(Some)` | separate under the extended-bridging and explicit-check gates, and never on the naming path | separate when every declared range's object is proven distinct |
+| `LoopHavoc(None)` | never separate | never separate |
 
-The block column's blanket refusals are what two separate sets of hard-coded
-answers left behind; they are findings to settle one at a time, each with its
-own regression, now that there is one place to settle them in. The difference
-that stays is *what evidence a resource may spend*: a block may use only the
-kernel's structural separation, because its answer is embedded in a name that
-is shared across proof paths, and the rule enforces that by handing the block
-arm no fact context at all.
+Two kinds still refuse a block outright, and both for want of a name on the
+edge: `ContractAllocationClaimsChanged` names no allocation, and a contract
+claim may cover a subrange of `ExternalArgument` memory; `CellsForgotten` names
+no cell, so nothing says the values it dropped were not this block's. Recording
+what they concern is what would settle either.
+
+The difference that stays is *what evidence a resource may spend*: a block may
+use only the kernel's structural separation, because its answer is embedded in a
+name that is shared across proof paths, and the rule enforces that by handing
+the block arm no fact context at all. Where the cell column reads a stated
+`separate(..)`, an offset inequality or a resource composition, the block column
+reads only `PointerBlock::proven_distinct` and the checked write set the edge
+itself carries — which is path-independent, and so may be read off an interned
+edge.
+
+Two of those answers are not reachable from C0 yet, and fail closed where they
+stop: a `free` of an object distinct from the subject needs a `malloc`, whose
+`branch` continuation is reached by a transition that records no edge, and a
+loop's checked write set is separated from its own head state by a memory the
+loop rule assembles map by map, also without an edge. Both are gaps in what the
+execution records, not in the rule, and
+`src/kernel/resource_tracker/tests.rs` pins the rule's answers directly.
 
 One consequence a user meets today: a stated `separate(..)` carries a cell fact
 across a call and does not carry an array fact, because the block walk has no
