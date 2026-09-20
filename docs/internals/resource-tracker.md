@@ -487,10 +487,63 @@ cannot coexist"). But that is a statement about the `views p[0..1]` occurrence
 carrying a **live loan binding**, and the same context also holds
 `views r[0..2]` beside `owns r[0..2]` — an owner observation of the very range
 it describes. Owner-beside-view therefore cannot mean separation; the
-discriminator is the binding, which lives in the loan ledger
-(`src/kernel/loans.rs`) and which no load-framing site is handed. Giving this
-proof its route means carrying the binding, or the lend's escrow, to where the
-load is framed.
+discriminator is the origin of the clause.
+
+###### The entry partition, and why it is not built yet
+
+The route this proof waits on is an **entry partition**: a contract's
+transferred members (`owns`/`consumes`) and its *borrowed* members (a `views`
+clause the caller lends) denote disjoint memory, so a store through one can be
+framed from a load through the other. That claim holds, and it holds the way
+the ownership partition itself does — inductively, with the outer boundary as
+an environment assumption.
+
+Every way a contract can be entered checks it, and each check is **fail-closed**:
+
+| Entry | Where | Checked by |
+| --- | --- | --- |
+| an ordinary call, a self-call (recursion) | `prepare_function_resource_transfer` → `prepare_contract_resource_transfer` `src/kernel/functions.rs` | `plan_stable_view_transfer_with_bindings_and_composites`: exclusive requirements are reserved out of the caller's `residual` *before* any view is planned, and each view's backing owner must still be found in that residual (`ConflictingRequirement` → `ProvenOverlap`) |
+| a call through a function pointer or a `contract` interface | the same funnel, from `execute_c_function_call_paths` and the contract-transition sites | the same planner |
+| contract/implementation refinement | `prepare_contract_resource_transfer(.., "refinement", ..)` | the same planner |
+| the contract's own entry, for the body proof | `install_borrowed_contract_inputs` `src/kernel/api.rs` | a viewed clause that provably overlaps an owned clause, or that the contract's own resources already own, is refused (`protected_range_proven_overlapping`, `directly_supporting_owned_entry`) |
+| the outer boundary | — | an **assumption** about the environment, in the same class as the ownership the contract also assumes: a precondition's clauses are read as a separating conjunction |
+
+There is no thread or fork/join entry on master. The entry self-check is
+fail-*open* (`protected_range_proven_overlapping` refuses only a *proven*
+overlap), which is exactly why the call-site planner has to be fail-closed,
+and it is: a caller that cannot prove the lent range sits inside an owned
+entry it still holds is refused for want of backing, not admitted.
+
+Measured, on the minimized `split(int32* a, int32* b) { owns a[0..1]; views
+b[0..1]; }`:
+
+- `split(g, g)` from a caller holding `owns g[0..4]` — refused, *"a required
+  resource overlaps a live borrowed footprint refused during planning;
+  selected resource `owns global:g@0[0..1]`"*;
+- the same through a function pointer under `contract Split` — refused
+  identically;
+- `split(g, q)` where the caller holds `owns g[0..4]` and nothing about `q` —
+  refused, *"the required loan backing or binding is missing … `views
+  q[0..1]`"*;
+- `split(g, q)` where the caller also holds `views q[0..1]` — accepted, which
+  is the induction step: the callee's pair is a reborrow of the caller's own
+  pair.
+
+What is missing is not the claim but a place to record it. The evidence has to
+reach the load-framing site as a path fact, and the only emission point the
+body proof and contract certification share is
+`ResourceContext::observable_facts_assuming_valid` — which sees a context, not
+an entry, and cannot tell a borrowed contract input from a view a callee
+produced or a frontier piece of a viewed composite. Emitting there would
+assert the partition for **every** bound view in every context, which is a
+strictly larger claim than the one established above, and the retained hop
+would need an (owner, borrowed) form beside the (owner, owner) one that
+`proves_owned_memory_ranges_separate_shallow` checks today. Recording it at
+the two sites that *do* know they are at a contract entry — the proof's
+`install_borrowed_contract_inputs` caller and
+`contract_certification::contract_claims` — makes the two sides responsible
+for producing byte-identical compositions, and a mismatch there is a rejected
+certificate. Either shape is a change of its own, not a disjunct.
 
 The loan family — `LoanLedger::permits_memory_access`,
 `protected_range_proven_overlapping`, `active_memory_overlaps` — is **not** in

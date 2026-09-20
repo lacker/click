@@ -30,9 +30,12 @@ const QUARANTINED: &[(&str, &str)] = &[
          apart inside one `external` block rests on `owns object(r)` beside a *bound* \
          `views p[0..1]`, and owner-beside-view is not separation: the same context holds \
          `views r[0..2]` beside `owns r[0..2]`, an owner observation of the very range it \
-         describes (MemoryResourceAlgebra::pair_validity_error). The discriminator is the loan \
-         binding, which no load-framing site can see; remove when a live borrow's backing is \
-         evidence for one cell",
+         describes (MemoryResourceAlgebra::pair_validity_error). The discriminator is the \
+         clause's origin: a contract `views` clause is disjoint from the same contract's `owns` \
+         clauses, and every entry path enforces that fail-closed, but the fact has nowhere to be \
+         recorded that the body proof and contract certification both see. See \
+         `docs/internals/resource-tracker.md`, \"The entry partition\"; remove when a borrowed \
+         contract input is evidence for one cell",
     ),
 ];
 
