@@ -19,6 +19,24 @@ pub(super) struct QualifiedCObject {
 /// parsing begins.
 pub(super) const PARENTHESIS_NESTING_LIMIT: usize = 16;
 pub(super) const MATCH_NESTING_LIMIT: usize = 16;
+/// Braces and brackets also introduce recursive surface-parser frames. This
+/// limit is deliberately separate from parentheses: a match expression is
+/// already bounded independently, while nested theorem/proof blocks and
+/// quantifier bodies share the ordinary structural budget.
+pub(super) const STRUCTURAL_NESTING_LIMIT: usize = 32;
+/// A final token-level backstop for delimiter nesting that is not owned by a
+/// single recursive parser. The grammar-specific counters below use the
+/// smaller structural limit; this larger bound keeps malformed or mixed
+/// delimiter input from reaching an unguarded helper.
+const DELIMITER_NESTING_LIMIT: usize = 128;
+/// Left-associated operators create a deeply nested boxed AST even though the
+/// precedence loops themselves are iterative. Bound those chains before the
+/// first over-deep node is constructed so later validation, printing, and
+/// destruction cannot inherit an unbounded shape. The limit leaves room for
+/// the existing deep-certificate and arithmetic regressions while keeping the
+/// issue's 512-link and 1024-term reproductions on the bounded-error path.
+pub(super) const EXPRESSION_CHAIN_LIMIT: usize = 512;
+const UNARY_NESTING_LIMIT: usize = 64;
 
 /// The memory-range fact was spelled `loadable(...)` before it was named after
 /// the `views` clause it shadows. There is no compatibility alias, so a source
@@ -270,6 +288,8 @@ struct Parser {
     current_resource_fields: BTreeMap<String, ResourceFieldAccess>,
     current_resource_targets: BTreeMap<String, ResourceClause>,
     match_nesting: usize,
+    proposition_nesting: usize,
+    proof_nesting: usize,
     tokens: Vec<Token>,
     positions: Vec<SourcePosition>,
     matching_parentheses: Vec<Option<usize>>,
@@ -545,6 +565,8 @@ impl Parser {
             positions,
             matching_parentheses,
             match_nesting: 0,
+            proposition_nesting: 0,
+            proof_nesting: 0,
             position: 0,
             struct_layouts,
             union_layouts,
@@ -3642,49 +3664,94 @@ impl Parser {
     }
 
     fn parse_proposition(&mut self) -> Result<ClickProposition, ClickError> {
-        self.parse_proposition_implies()
+        if self.proposition_nesting > STRUCTURAL_NESTING_LIMIT {
+            return Err(self.error(format!(
+                "structural proposition nesting exceeds Click's supported depth of {STRUCTURAL_NESTING_LIMIT}"
+            )));
+        }
+        self.proposition_nesting += 1;
+        let result = self.parse_proposition_implies();
+        self.proposition_nesting -= 1;
+        result
     }
 
     fn parse_proposition_implies(&mut self) -> Result<ClickProposition, ClickError> {
-        let left = self.parse_proposition_or()?;
-        if self.peek_ident() == Some("implies") {
+        // `implies` is right associative, but parsing it recursively makes a
+        // short source-level chain consume one Rust frame per link. Collect
+        // the operands iteratively and fold them from the right instead.
+        let mut operands = vec![self.parse_proposition_or()?];
+        while self.peek_ident() == Some("implies") {
+            if operands.len() >= EXPRESSION_CHAIN_LIMIT {
+                return Err(self.error(format!(
+                    "proposition operator nesting exceeds Click's supported depth of {EXPRESSION_CHAIN_LIMIT}"
+                )));
+            }
             self.position += 1;
-            let right = self.parse_proposition_implies()?;
-            Ok(ClickProposition::Implies(Box::new(left), Box::new(right)))
-        } else {
-            Ok(left)
+            operands.push(self.parse_proposition_or()?);
         }
+        let mut propositions = operands.into_iter().rev();
+        let mut proposition = propositions
+            .next()
+            .expect("an implication chain always has one operand");
+        for left in propositions {
+            proposition = ClickProposition::Implies(Box::new(left), Box::new(proposition));
+        }
+        Ok(proposition)
     }
 
     fn parse_proposition_or(&mut self) -> Result<ClickProposition, ClickError> {
         let mut proposition = self.parse_proposition_and()?;
+        let mut operands = 1;
         while self.peek_ident() == Some("or") {
+            if operands >= EXPRESSION_CHAIN_LIMIT {
+                return Err(self.error(format!(
+                    "proposition operator nesting exceeds Click's supported depth of {EXPRESSION_CHAIN_LIMIT}"
+                )));
+            }
             self.position += 1;
             let right = self.parse_proposition_and()?;
             proposition = ClickProposition::Or(Box::new(proposition), Box::new(right));
+            operands += 1;
         }
         Ok(proposition)
     }
 
     fn parse_proposition_and(&mut self) -> Result<ClickProposition, ClickError> {
         let mut proposition = self.parse_proposition_not()?;
+        let mut operands = 1;
         while self.peek_ident() == Some("and") {
+            if operands >= EXPRESSION_CHAIN_LIMIT {
+                return Err(self.error(format!(
+                    "proposition operator nesting exceeds Click's supported depth of {EXPRESSION_CHAIN_LIMIT}"
+                )));
+            }
             self.position += 1;
             let right = self.parse_proposition_not()?;
             proposition = ClickProposition::And(Box::new(proposition), Box::new(right));
+            operands += 1;
         }
         Ok(proposition)
     }
 
     fn parse_proposition_not(&mut self) -> Result<ClickProposition, ClickError> {
-        if self.peek_ident() == Some("not") {
+        // Unlike `implies`, unary negation has no intervening delimiter that
+        // the tokenizer preflight can use as a structural bound. Consume the
+        // prefix iteratively and rebuild it after parsing the atom.
+        let mut negations = 0;
+        while self.peek_ident() == Some("not") {
+            if negations >= UNARY_NESTING_LIMIT {
+                return Err(self.error(format!(
+                    "proposition unary nesting exceeds Click's supported depth of {UNARY_NESTING_LIMIT}"
+                )));
+            }
             self.position += 1;
-            Ok(ClickProposition::Not(Box::new(
-                self.parse_proposition_not()?,
-            )))
-        } else {
-            self.parse_proposition_atom()
+            negations += 1;
         }
+        let mut proposition = self.parse_proposition_atom()?;
+        for _ in 0..negations {
+            proposition = ClickProposition::Not(Box::new(proposition));
+        }
+        Ok(proposition)
     }
 
     fn parse_proposition_atom(&mut self) -> Result<ClickProposition, ClickError> {
@@ -4229,6 +4296,18 @@ impl Parser {
     }
 
     fn parse_proof_tactic(&mut self) -> Result<ProofTactic, ClickError> {
+        if self.proof_nesting > STRUCTURAL_NESTING_LIMIT {
+            return Err(self.error(format!(
+                "structural proof nesting exceeds Click's supported depth of {STRUCTURAL_NESTING_LIMIT}"
+            )));
+        }
+        self.proof_nesting += 1;
+        let result = self.parse_proof_tactic_inner();
+        self.proof_nesting -= 1;
+        result
+    }
+
+    fn parse_proof_tactic_inner(&mut self) -> Result<ProofTactic, ClickError> {
         let name = self.expect_ident("tactic")?;
         match name.as_str() {
             "let" => {
@@ -5856,10 +5935,13 @@ impl Parser {
 
     fn parse_contract_concat(&mut self) -> Result<ContractExpression, ClickError> {
         let mut expression = self.parse_contract_bitwise_or()?;
+        let mut operands = 1;
         while self.peek() == Some(&Token::PlusPlus) {
+            self.check_expression_chain_limit(operands)?;
             self.position += 1;
             let right = self.parse_contract_bitwise_or()?;
             expression = ContractExpression::SequenceConcat(Box::new(expression), Box::new(right));
+            operands += 1;
         }
         Ok(expression)
     }
@@ -6058,9 +6140,12 @@ impl Parser {
         };
         let mut indexed_scalar_field: Option<(String, u32, CType)> = None;
         let mut scalar_range_offset = None;
+        let mut postfixes = 0;
         while matches!(self.peek(), Some(Token::Arrow | Token::Dot))
             || (self.peek() == Some(&Token::LBracket) && !self.contract_bracket_is_range())
         {
+            self.check_expression_chain_limit(postfixes)?;
+            postfixes += 1;
             if self.peek() == Some(&Token::LBracket) {
                 self.position += 1;
                 let index = self.parse_contract_expression()?;
@@ -6899,46 +6984,60 @@ impl Parser {
 
     fn parse_contract_bitwise_or(&mut self) -> Result<ContractExpression, ClickError> {
         let mut expression = self.parse_contract_bitwise_xor()?;
+        let mut operands = 1;
         while self.peek() == Some(&Token::Pipe) {
+            self.check_expression_chain_limit(operands)?;
             self.position += 1;
             let right = self.parse_contract_bitwise_xor()?;
             expression = ContractExpression::BitwiseOr(Box::new(expression), Box::new(right));
+            operands += 1;
         }
         Ok(expression)
     }
 
     fn parse_contract_bitwise_xor(&mut self) -> Result<ContractExpression, ClickError> {
         let mut expression = self.parse_contract_bitwise_and()?;
+        let mut operands = 1;
         while self.peek() == Some(&Token::Caret) {
+            self.check_expression_chain_limit(operands)?;
             self.position += 1;
             let right = self.parse_contract_bitwise_and()?;
             expression = ContractExpression::BitwiseXor(Box::new(expression), Box::new(right));
+            operands += 1;
         }
         Ok(expression)
     }
 
     fn parse_contract_bitwise_and(&mut self) -> Result<ContractExpression, ClickError> {
         let mut expression = self.parse_contract_shift()?;
+        let mut operands = 1;
         while self.peek() == Some(&Token::Amp) {
+            self.check_expression_chain_limit(operands)?;
             self.position += 1;
             let right = self.parse_contract_shift()?;
             expression = ContractExpression::BitwiseAnd(Box::new(expression), Box::new(right));
+            operands += 1;
         }
         Ok(expression)
     }
 
     fn parse_contract_shift(&mut self) -> Result<ContractExpression, ClickError> {
         let mut expression = self.parse_contract_add()?;
+        let mut operands = 1;
         loop {
             expression = match self.peek() {
                 Some(Token::ShiftLeft) => {
+                    self.check_expression_chain_limit(operands)?;
                     self.position += 1;
                     let right = self.parse_contract_add()?;
+                    operands += 1;
                     ContractExpression::ShiftLeft(Box::new(expression), Box::new(right))
                 }
                 Some(Token::ShiftRight) => {
+                    self.check_expression_chain_limit(operands)?;
                     self.position += 1;
                     let right = self.parse_contract_add()?;
+                    operands += 1;
                     ContractExpression::ShiftRight(Box::new(expression), Box::new(right))
                 }
                 _ => return Ok(expression),
@@ -6948,16 +7047,21 @@ impl Parser {
 
     fn parse_contract_add(&mut self) -> Result<ContractExpression, ClickError> {
         let mut expression = self.parse_contract_multiply()?;
+        let mut operands = 1;
         loop {
             expression = match self.peek() {
                 Some(Token::Plus) => {
+                    self.check_expression_chain_limit(operands)?;
                     self.position += 1;
                     let right = self.parse_contract_multiply()?;
+                    operands += 1;
                     ContractExpression::Add(Box::new(expression), Box::new(right))
                 }
                 Some(Token::Minus) => {
+                    self.check_expression_chain_limit(operands)?;
                     self.position += 1;
                     let right = self.parse_contract_multiply()?;
+                    operands += 1;
                     ContractExpression::Subtract(Box::new(expression), Box::new(right))
                 }
                 _ => return Ok(expression),
@@ -6967,6 +7071,7 @@ impl Parser {
 
     fn parse_contract_multiply(&mut self) -> Result<ContractExpression, ClickError> {
         let mut expression = self.parse_contract_unary()?;
+        let mut operands = 1;
         while let Some(operator) = self.peek() {
             let constructor = match operator {
                 Token::Star => ContractExpression::Multiply,
@@ -6974,8 +7079,10 @@ impl Parser {
                 Token::Percent => ContractExpression::Remainder,
                 _ => break,
             };
+            self.check_expression_chain_limit(operands)?;
             self.position += 1;
             let right = self.parse_contract_unary()?;
+            operands += 1;
             expression = constructor(Box::new(expression), Box::new(right));
         }
         Ok(expression)
@@ -7061,9 +7168,17 @@ impl Parser {
     }
 
     fn parse_contract_unary(&mut self) -> Result<ContractExpression, ClickError> {
+        self.parse_contract_unary_at_depth(0)
+    }
+
+    fn parse_contract_unary_at_depth(
+        &mut self,
+        depth: usize,
+    ) -> Result<ContractExpression, ClickError> {
         if let Some(cast) = self.peek_struct_pointer_cast() {
+            self.check_unary_nesting_limit(depth)?;
             self.consume_struct_pointer_cast(&cast)?;
-            let operand = self.parse_contract_unary()?;
+            let operand = self.parse_contract_unary_at_depth(depth + 1)?;
             let Some(operand) = contract_expression_as_c_fragment(&operand) else {
                 return Err(self.error(
                     "struct pointer cast expects a current C `void *` expression; put old(...) around the whole cast for an entry-state value",
@@ -7085,13 +7200,14 @@ impl Parser {
         if self.peek() == Some(&Token::LParen)
             && matches!(self.peek_next(), Some(Token::Ident(name)) if name == "uint32")
         {
+            self.check_unary_nesting_limit(depth)?;
             self.position += 1;
             let target_type = self.parse_type()?.c_type.to_kernel_type();
             if target_type.is_pointer() {
                 return Err(self.error("contract scalar casts do not accept pointer target types"));
             }
             self.expect(Token::RParen)?;
-            let operand = self.parse_contract_unary()?;
+            let operand = self.parse_contract_unary_at_depth(depth + 1)?;
             let Some(expression) = contract_expression_as_c_fragment(&operand) else {
                 return Err(self.error("scalar cast expects a current C expression; put old(...) around the whole cast for an entry-state value"));
             };
@@ -7104,20 +7220,23 @@ impl Parser {
             }));
         }
         if self.peek() == Some(&Token::Minus) {
+            self.check_unary_nesting_limit(depth)?;
             self.position += 1;
             return Ok(ContractExpression::Negate(Box::new(
-                self.parse_contract_unary()?,
+                self.parse_contract_unary_at_depth(depth + 1)?,
             )));
         }
         if self.peek() == Some(&Token::Tilde) {
+            self.check_unary_nesting_limit(depth)?;
             self.position += 1;
             return Ok(ContractExpression::BitwiseNot(Box::new(
-                self.parse_contract_unary()?,
+                self.parse_contract_unary_at_depth(depth + 1)?,
             )));
         }
         if self.peek() == Some(&Token::Star) {
+            self.check_unary_nesting_limit(depth)?;
             self.position += 1;
-            let pointer = self.parse_contract_unary()?;
+            let pointer = self.parse_contract_unary_at_depth(depth + 1)?;
             let Some(pointer) = contract_expression_as_c_fragment(&pointer) else {
                 return Err(
                     self.error("pointer dereference is only supported on current C fragments")
@@ -7128,8 +7247,9 @@ impl Parser {
             ))));
         }
         if self.peek() == Some(&Token::Amp) {
+            self.check_unary_nesting_limit(depth)?;
             self.position += 1;
-            let expression = self.parse_contract_unary()?;
+            let expression = self.parse_contract_unary_at_depth(depth + 1)?;
             let Some(expression) = contract_expression_as_c_fragment(&expression) else {
                 return Err(self.error("address-of is only supported on current C expressions"));
             };
@@ -7208,7 +7328,16 @@ impl Parser {
                 .map(|array| array.shape.clone()),
             _ => None,
         };
+        let mut postfixes = 0;
         loop {
+            if !matches!(
+                self.peek(),
+                Some(Token::LBracket | Token::Arrow | Token::Dot)
+            ) {
+                return Ok(expression);
+            }
+            self.check_expression_chain_limit(postfixes)?;
+            postfixes += 1;
             match self.peek() {
                 Some(Token::LBracket) => {
                     self.position += 1;
@@ -7436,7 +7565,7 @@ impl Parser {
                         scalar_array_shape = None;
                     }
                 }
-                _ => return Ok(expression),
+                _ => unreachable!("postfix expression token checked above"),
             }
         }
     }
@@ -7982,46 +8111,60 @@ impl Parser {
 
     fn parse_ensure_bitwise_or(&mut self) -> Result<C0Expression, ClickError> {
         let mut expression = self.parse_ensure_bitwise_xor()?;
+        let mut operands = 1;
         while self.peek() == Some(&Token::Pipe) {
+            self.check_expression_chain_limit(operands)?;
             self.position += 1;
             let right = self.parse_ensure_bitwise_xor()?;
             expression = C0Expression::BitwiseOr(Box::new(expression), Box::new(right));
+            operands += 1;
         }
         Ok(expression)
     }
 
     fn parse_ensure_bitwise_xor(&mut self) -> Result<C0Expression, ClickError> {
         let mut expression = self.parse_ensure_bitwise_and()?;
+        let mut operands = 1;
         while self.peek() == Some(&Token::Caret) {
+            self.check_expression_chain_limit(operands)?;
             self.position += 1;
             let right = self.parse_ensure_bitwise_and()?;
             expression = C0Expression::BitwiseXor(Box::new(expression), Box::new(right));
+            operands += 1;
         }
         Ok(expression)
     }
 
     fn parse_ensure_bitwise_and(&mut self) -> Result<C0Expression, ClickError> {
         let mut expression = self.parse_ensure_shift()?;
+        let mut operands = 1;
         while self.peek() == Some(&Token::Amp) {
+            self.check_expression_chain_limit(operands)?;
             self.position += 1;
             let right = self.parse_ensure_shift()?;
             expression = C0Expression::BitwiseAnd(Box::new(expression), Box::new(right));
+            operands += 1;
         }
         Ok(expression)
     }
 
     fn parse_ensure_shift(&mut self) -> Result<C0Expression, ClickError> {
         let mut expression = self.parse_ensure_add()?;
+        let mut operands = 1;
         loop {
             expression = match self.peek() {
                 Some(Token::ShiftLeft) => {
+                    self.check_expression_chain_limit(operands)?;
                     self.position += 1;
                     let right = self.parse_ensure_add()?;
+                    operands += 1;
                     C0Expression::ShiftLeft(Box::new(expression), Box::new(right))
                 }
                 Some(Token::ShiftRight) => {
+                    self.check_expression_chain_limit(operands)?;
                     self.position += 1;
                     let right = self.parse_ensure_add()?;
+                    operands += 1;
                     C0Expression::ShiftRight(Box::new(expression), Box::new(right))
                 }
                 _ => return Ok(expression),
@@ -8031,16 +8174,21 @@ impl Parser {
 
     fn parse_ensure_add(&mut self) -> Result<C0Expression, ClickError> {
         let mut expression = self.parse_ensure_multiply()?;
+        let mut operands = 1;
         loop {
             expression = match self.peek() {
                 Some(Token::Plus) => {
+                    self.check_expression_chain_limit(operands)?;
                     self.position += 1;
                     let right = self.parse_ensure_multiply()?;
+                    operands += 1;
                     C0Expression::Add(Box::new(expression), Box::new(right))
                 }
                 Some(Token::Minus) => {
+                    self.check_expression_chain_limit(operands)?;
                     self.position += 1;
                     let right = self.parse_ensure_multiply()?;
+                    operands += 1;
                     C0Expression::Subtract(Box::new(expression), Box::new(right))
                 }
                 _ => return Ok(expression),
@@ -8050,6 +8198,7 @@ impl Parser {
 
     fn parse_ensure_multiply(&mut self) -> Result<C0Expression, ClickError> {
         let mut expression = self.parse_ensure_unary()?;
+        let mut operands = 1;
         while let Some(operator) = self.peek() {
             let constructor = match operator {
                 Token::Star => C0Expression::Multiply,
@@ -8057,15 +8206,22 @@ impl Parser {
                 Token::Percent => C0Expression::Remainder,
                 _ => break,
             };
+            self.check_expression_chain_limit(operands)?;
             self.position += 1;
             let right = self.parse_ensure_unary()?;
+            operands += 1;
             expression = constructor(Box::new(expression), Box::new(right));
         }
         Ok(expression)
     }
 
     fn parse_ensure_unary(&mut self) -> Result<C0Expression, ClickError> {
+        self.parse_ensure_unary_at_depth(0)
+    }
+
+    fn parse_ensure_unary_at_depth(&mut self, depth: usize) -> Result<C0Expression, ClickError> {
         if self.peek() == Some(&Token::Minus) {
+            self.check_unary_nesting_limit(depth)?;
             if let Some(value) = self.peek_next().and_then(negatable_int32_magnitude) {
                 self.position += 2;
                 return Ok(C0Expression::Int32Literal(0u32.wrapping_sub(value)));
@@ -8073,19 +8229,21 @@ impl Parser {
             self.position += 1;
             return Ok(C0Expression::Subtract(
                 Box::new(C0Expression::Int32Literal(0)),
-                Box::new(self.parse_ensure_unary()?),
+                Box::new(self.parse_ensure_unary_at_depth(depth + 1)?),
             ));
         }
         if self.peek() == Some(&Token::Tilde) {
+            self.check_unary_nesting_limit(depth)?;
             self.position += 1;
             return Ok(C0Expression::BitwiseNot(Box::new(
-                self.parse_ensure_unary()?,
+                self.parse_ensure_unary_at_depth(depth + 1)?,
             )));
         }
         if self.peek() == Some(&Token::Amp) {
+            self.check_unary_nesting_limit(depth)?;
             self.position += 1;
             return Ok(C0Expression::AddressOf(Box::new(
-                self.parse_ensure_unary()?,
+                self.parse_ensure_unary_at_depth(depth + 1)?,
             )));
         }
 
@@ -8094,7 +8252,16 @@ impl Parser {
 
     fn parse_ensure_postfix(&mut self) -> Result<C0Expression, ClickError> {
         let mut expression = self.parse_ensure_primary()?;
+        let mut postfixes = 0;
         loop {
+            if !matches!(
+                self.peek(),
+                Some(Token::LBracket | Token::Arrow | Token::Dot)
+            ) {
+                return Ok(expression);
+            }
+            self.check_expression_chain_limit(postfixes)?;
+            postfixes += 1;
             match self.peek() {
                 Some(Token::LBracket) => {
                     self.position += 1;
@@ -8110,7 +8277,7 @@ impl Parser {
                         .resolve_c0_field_load(base.clone(), &field_name)?
                         .unwrap_or_else(|| C0Expression::Load(Box::new(base)));
                 }
-                _ => return Ok(expression),
+                _ => unreachable!("postfix expression token checked above"),
             }
         }
     }
@@ -8152,6 +8319,26 @@ impl Parser {
             }
             Some(token) => Err(self.error(format!("expected result expression, got {token:?}"))),
             None => Err(self.error("expected result expression, got end of input")),
+        }
+    }
+
+    fn check_expression_chain_limit(&self, operands: usize) -> Result<(), ClickError> {
+        if operands >= EXPRESSION_CHAIN_LIMIT {
+            Err(self.error(format!(
+                "expression operator nesting exceeds Click's supported depth of {EXPRESSION_CHAIN_LIMIT}"
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn check_unary_nesting_limit(&self, depth: usize) -> Result<(), ClickError> {
+        if depth >= UNARY_NESTING_LIMIT {
+            Err(self.error(format!(
+                "expression unary nesting exceeds Click's supported depth of {UNARY_NESTING_LIMIT}"
+            )))
+        } else {
+            Ok(())
         }
     }
 
@@ -8606,10 +8793,26 @@ fn validate_parenthesis_nesting(
 ) -> Result<Vec<Option<usize>>, ClickError> {
     let mut openings = Vec::new();
     let mut matching = vec![None; tokens.len()];
+    let mut structural_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut quantifier_depth = 0usize;
+    let mut proof_depth = 0usize;
+    let mut pending_quantifier = false;
+    let mut pending_proof_blocks = 0usize;
+    let mut brace_kinds = Vec::new();
     for (index, token) in tokens.iter().enumerate() {
         crate::instrumentation::record_deterministic_work(1);
         match token {
+            Token::Ident(name) if matches!(name.as_str(), "forall" | "exists") => {
+                pending_quantifier = true;
+            }
+            Token::Ident(name)
+                if name == "by" && matches!(tokens.get(index + 1), Some(Token::LBrace)) =>
+            {
+                pending_proof_blocks = pending_proof_blocks.saturating_add(1);
+            }
             Token::LParen => {
+                structural_depth += 1;
                 openings.push(index);
                 if openings.len() > PARENTHESIS_NESTING_LIMIT {
                     let message = format!(
@@ -8620,17 +8823,113 @@ fn validate_parenthesis_nesting(
                         None => ClickError::new(message),
                     });
                 }
+                if structural_depth > DELIMITER_NESTING_LIMIT {
+                    return Err(delimiter_nesting_error(index, positions));
+                }
+            }
+            Token::LBracket => {
+                structural_depth += 1;
+                bracket_depth += 1;
+                if bracket_depth >= STRUCTURAL_NESTING_LIMIT {
+                    return Err(source_nesting_error(
+                        index,
+                        positions,
+                        "bracket",
+                        STRUCTURAL_NESTING_LIMIT,
+                    ));
+                }
+                if structural_depth > DELIMITER_NESTING_LIMIT {
+                    return Err(delimiter_nesting_error(index, positions));
+                }
+            }
+            Token::LBrace => {
+                structural_depth += 1;
+                let quantifier = pending_quantifier;
+                pending_quantifier = false;
+                let parent_is_proof = brace_kinds
+                    .last()
+                    .is_some_and(|(_, parent_proof)| *parent_proof);
+                let proof = pending_proof_blocks != 0 || parent_is_proof;
+                pending_proof_blocks = pending_proof_blocks.saturating_sub(1);
+                brace_kinds.push((quantifier, proof));
+                if quantifier {
+                    if quantifier_depth + 1 >= STRUCTURAL_NESTING_LIMIT {
+                        return Err(source_nesting_error(
+                            index,
+                            positions,
+                            "quantifier",
+                            STRUCTURAL_NESTING_LIMIT,
+                        ));
+                    }
+                    quantifier_depth += 1;
+                }
+                if proof {
+                    if proof_depth + 1 >= STRUCTURAL_NESTING_LIMIT {
+                        return Err(source_nesting_error(
+                            index,
+                            positions,
+                            "proof",
+                            STRUCTURAL_NESTING_LIMIT,
+                        ));
+                    }
+                    proof_depth += 1;
+                }
+                if structural_depth > DELIMITER_NESTING_LIMIT {
+                    return Err(delimiter_nesting_error(index, positions));
+                }
             }
             Token::RParen => {
+                structural_depth = structural_depth.saturating_sub(1);
                 if let Some(open) = openings.pop() {
                     matching[open] = Some(index);
                     matching[index] = Some(open);
+                }
+            }
+            Token::RBracket => {
+                structural_depth = structural_depth.saturating_sub(1);
+                bracket_depth = bracket_depth.saturating_sub(1);
+            }
+            Token::RBrace => {
+                structural_depth = structural_depth.saturating_sub(1);
+                if let Some((quantifier, proof)) = brace_kinds.pop() {
+                    if quantifier {
+                        quantifier_depth = quantifier_depth.saturating_sub(1);
+                    }
+                    if proof {
+                        proof_depth = proof_depth.saturating_sub(1);
+                    }
                 }
             }
             _ => {}
         }
     }
     Ok(matching)
+}
+
+fn delimiter_nesting_error(index: usize, positions: &[SourcePosition]) -> ClickError {
+    source_nesting_error_message("delimiter", DELIMITER_NESTING_LIMIT, index, positions)
+}
+
+fn source_nesting_error(
+    index: usize,
+    positions: &[SourcePosition],
+    kind: &str,
+    limit: usize,
+) -> ClickError {
+    source_nesting_error_message(kind, limit, index, positions)
+}
+
+fn source_nesting_error_message(
+    kind: &str,
+    limit: usize,
+    index: usize,
+    positions: &[SourcePosition],
+) -> ClickError {
+    let message = format!("{kind} nesting exceeds Click's supported depth of {limit}");
+    match positions.get(index) {
+        Some(position) => ClickError::new(format!("{position}: {message}")),
+        None => ClickError::new(message),
+    }
 }
 
 /// `aligned(p, n)` is sugar for `address(p) & (n - 1) == 0`; the kernel

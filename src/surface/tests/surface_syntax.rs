@@ -391,6 +391,119 @@ fn parser_rejects_excessive_parenthesis_depth_with_a_source_diagnostic() {
 }
 
 #[test]
+fn parser_bounds_non_parenthesized_surface_nesting_before_ast_construction() {
+    let supported_not = "not ".repeat(32);
+    let supported_source = format!(
+        "theorem shallow() {{ requires {supported_not}0 == 0; ensures 0 == 0 by {{ normalize(); }} }}"
+    );
+    let supported = parse(&supported_source).expect("the supported unary boundary should validate");
+    verify_click_theorems(&supported_source)
+        .expect("the supported unary boundary should verify through the public API");
+    let requirement = supported.theorem_definitions()[0].requires()[0]
+        .theorem_proposition()
+        .expect("the test requirement should be a proposition");
+    let rendered = diagnostics::describe_click_proposition(&requirement);
+    assert!(rendered.starts_with("!"));
+    drop(rendered);
+    drop(requirement);
+    drop(supported);
+
+    let too_deep_not = "not ".repeat(128);
+    let not_error = parser::parse_file_items(&format!(
+        "theorem too_deep_not() {{ requires {too_deep_not}0 == 0; ensures 0 == 0; }}"
+    ))
+    .expect_err("an over-deep unary proposition should fail at the parser boundary");
+    assert!(
+        not_error
+            .message()
+            .contains("proposition unary nesting exceeds Click's supported depth")
+    );
+    assert!(not_error.message().len() < 1024);
+
+    let implications = (0..=512)
+        .map(|_| "0 == 0")
+        .collect::<Vec<_>>()
+        .join(" implies ");
+    let implication_error = parser::parse_file_items(&format!(
+        "theorem too_deep_implies() {{ requires {implications}; ensures 0 == 0; }}"
+    ))
+    .expect_err("an over-deep implication chain should fail at the parser boundary");
+    assert!(
+        implication_error
+            .message()
+            .contains("proposition operator nesting exceeds Click's supported depth")
+    );
+
+    let additions = (0..=1024).map(|_| "0").collect::<Vec<_>>().join(" + ");
+    let addition_error = parser::parse_file_items(&format!(
+        "theorem too_deep_add() {{ requires {additions} == 0; ensures 0 == 0; }}"
+    ))
+    .expect_err("an over-deep left-associated expression should fail at the parser boundary");
+    assert!(
+        addition_error
+            .message()
+            .contains("expression operator nesting exceeds Click's supported depth")
+    );
+
+    let mut quantifier_body = String::from("0 == 0");
+    for index in 0..parser::STRUCTURAL_NESTING_LIMIT {
+        quantifier_body = format!("forall (q{index}: Integer) {{ {quantifier_body} }}");
+    }
+    let structural_error = parser::parse_file_items(&format!(
+        "theorem too_deep_braces() {{ requires {quantifier_body}; ensures 0 == 0; }}"
+    ))
+    .expect_err("over-deep quantifier bodies should fail during proposition parsing");
+    assert!(
+        structural_error
+            .message()
+            .contains("quantifier nesting exceeds Click's supported depth")
+    );
+    assert!(structural_error.message().len() < 1024);
+
+    let mut nested_sequence = String::from("0");
+    for _ in 0..=parser::STRUCTURAL_NESTING_LIMIT {
+        nested_sequence = format!("[{nested_sequence}]");
+    }
+    let bracket_error = parser::parse_file_items(&format!(
+        "theorem too_deep_brackets() {{ ensures {nested_sequence} == {nested_sequence}; }}"
+    ))
+    .expect_err("over-deep bracket expressions should fail during expression parsing");
+    assert!(
+        bracket_error
+            .message()
+            .contains("bracket nesting exceeds Click's supported depth")
+    );
+
+    let mut proof_body = String::from("normalize();");
+    for _ in 0..=parser::STRUCTURAL_NESTING_LIMIT {
+        proof_body = format!("both {{ {proof_body} }} and {{ normalize(); }}");
+    }
+    let proof_error = parser::parse_file_items(&format!(
+        "theorem too_deep_proof() {{ ensures 0 == 0 by {{ {proof_body} }} }}"
+    ))
+    .expect_err("over-deep proof blocks should fail during proof parsing");
+    assert!(
+        proof_error
+            .message()
+            .contains("proof nesting exceeds Click's supported depth")
+    );
+
+    let body_expression = (0..=parser::EXPRESSION_CHAIN_LIMIT)
+        .map(|_| "0")
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let body_error = parser::parse_file_items(&format!(
+        "function too_deep_body() -> int32 {{ {body_expression} }}"
+    ))
+    .expect_err("over-deep C0 result expressions should fail at the parser boundary");
+    assert!(
+        body_error
+            .message()
+            .contains("expression operator nesting exceeds Click's supported depth")
+    );
+}
+
+#[test]
 fn parser_preserves_mixed_grouped_proposition_and_contract_expression_syntax() {
     let source = r#"
         theorem mixed_parentheses(x: int32, y: int32) {
