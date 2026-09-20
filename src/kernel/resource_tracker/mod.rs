@@ -37,11 +37,14 @@
 //! evidence is re-derived in the querying context instead of being recorded
 //! (`docs/internals/memory-dag.md`, `docs/internals/resource-tracker.md`).
 //!
-//! **Known inconsistencies between the two walks** are tabulated in
-//! `docs/internals/resource-tracker.md`; they are deliberately preserved
-//! here, not unified.
+//! **One rule decides every step.** Both walks ask
+//! [`step_effect::affects`] — "does this recorded step affect this resource?"
+//! — so a step kind has one answer per resource rather than one per walk. The
+//! answer table is in that rule's doc comment and in
+//! `docs/internals/resource-tracker.md`.
 
 pub(in crate::kernel) mod cell_source;
+pub(in crate::kernel) mod step_effect;
 
 use crate::kernel::memory_provenance::with_extended_dag_bridging;
 use crate::kernel::primitives::*;
@@ -144,7 +147,12 @@ impl Stop {
     /// Reads the stop off the point the walk stopped at: the step below a
     /// point is the edge the walk did not cross. Computing this is what a
     /// diagnostic asks for and the naming path never pays for.
-    fn at_point(point: &ProgramPoint, resource: Resource<'_>, wrote_it: bool) -> Self {
+    ///
+    /// The classification comes from [`step_effect::affects`], the same rule
+    /// the walk itself asked, run with the same evidence the naming walk has —
+    /// none — so a refusal explains the answer the term actually got rather
+    /// than a second opinion about it.
+    fn at_point(point: &ProgramPoint, resource: Resource<'_>) -> Self {
         let Some(derivation) = point.snapshot().derivation() else {
             return Self {
                 change: Change::BeginningOfHistory,
@@ -152,11 +160,25 @@ impl Stop {
             };
         };
         let change = Change::of_derivation(derivation.as_ref());
-        let reason = if wrote_it || change.affects_directly(resource) {
-            StopReason::Affected
-        } else {
-            StopReason::NotShownSeparate(SeparationCheck::for_step(&change, resource))
-        };
+        let reason =
+            match step_effect::affects(
+                derivation.as_ref(),
+                point.snapshot(),
+                resource,
+                &step_effect::Evidence {
+                    assumptions: &PureFactContext::new(),
+                    cross_loop_havoc: false,
+                },
+            ) {
+                step_effect::StepEffect::Affected => StopReason::Affected,
+                // A walk that stopped here found the step neither separate nor
+                // about the resource itself, so it wanted this check to succeed —
+                // and that is what a repair has to establish.
+                step_effect::StepEffect::Separate(_)
+                | step_effect::StepEffect::NotShownSeparate(_) => StopReason::NotShownSeparate(
+                    step_effect::separation_check(derivation.as_ref(), resource),
+                ),
+            };
         Self { change, reason }
     }
 }
@@ -224,40 +246,6 @@ impl Change {
             CMemoryDerivation::CellsForgotten { .. } => Self::CellsForgotten,
         }
     }
-
-    /// True when the step is about this very resource rather than about
-    /// something the tracker failed to separate from it: a store inside the
-    /// resource's own block, or a lifetime event on that block.
-    fn affects_directly(&self, resource: Resource<'_>) -> bool {
-        let block = match resource {
-            Resource::Cell(pointer) => &pointer.block,
-            Resource::Block(block) => block,
-        };
-        match self {
-            // A cell's own address is decided by the walk, which pins the
-            // value; reaching here means only the blocks agree, and for one
-            // cell that is not yet a claim that this cell was written.
-            Self::Store { pointer } => {
-                matches!(resource, Resource::Block(_)) && &pointer.block == block
-            }
-            Self::Allocation {
-                block: changed_block,
-            }
-            | Self::Declaration {
-                block: changed_block,
-            }
-            | Self::LifetimeEnd {
-                block: changed_block,
-            } => changed_block == block,
-            Self::Free { allocation } => &allocation.block == block,
-            Self::Call { .. }
-            | Self::Loop { .. }
-            | Self::AllocationPending
-            | Self::ContractAllocationClaims
-            | Self::CellsForgotten
-            | Self::BeginningOfHistory => false,
-        }
-    }
 }
 
 /// Why a walk stopped where it did.
@@ -290,40 +278,10 @@ pub(crate) enum SeparationCheck {
     NoCheckedWriteSet,
     /// A fact about a block as a whole is only carried across a step that
     /// leaves the block's cells, overlays, extent, liveness and heap status
-    /// all untouched, which only a store the kernel proves is in another
-    /// object does. Stated separations are not consulted, because this
-    /// answer is embedded in a name and memoized per snapshot.
+    /// all untouched, which the step the walk stopped at was not shown to do.
+    /// Stated separations are not consulted, because this answer is embedded
+    /// in a name and memoized per snapshot.
     WholeBlockAgreement,
-}
-
-impl SeparationCheck {
-    fn for_step(change: &Change, resource: Resource<'_>) -> Self {
-        if matches!(resource, Resource::Block(_)) {
-            return match change {
-                Change::Store { .. } => Self::PointerDistinctness,
-                _ => Self::WholeBlockAgreement,
-            };
-        }
-        match change {
-            Change::Store { .. } => Self::PointerDistinctness,
-            Change::Call { .. } => Self::RangeDisjointness,
-            Change::Loop { ranges } => {
-                if ranges.is_some() {
-                    Self::RangeDisjointness
-                } else {
-                    Self::NoCheckedWriteSet
-                }
-            }
-            Change::Free { .. } => Self::HeapAllocationSeparation,
-            Change::Allocation { .. }
-            | Change::Declaration { .. }
-            | Change::LifetimeEnd { .. }
-            | Change::AllocationPending
-            | Change::ContractAllocationClaims
-            | Change::CellsForgotten
-            | Change::BeginningOfHistory => Self::PointerDistinctness,
-        }
-    }
 }
 
 /// Whether one resource is known to hold the same version at two points.
@@ -404,13 +362,12 @@ pub(crate) fn last_same(resource: Resource<'_>, at: &ProgramPoint) -> Option<Las
         Resource::Cell(pointer) => {
             let cell = cell_source_for_naming(at.snapshot(), pointer)?;
             let point = ProgramPoint(cell.node().clone());
-            let wrote_it = matches!(cell, MemoryDagCell::Stored { .. });
-            let stopped_by = Stop::at_point(&point, resource, wrote_it);
+            let stopped_by = Stop::at_point(&point, resource);
             Some(LastSame { point, stopped_by })
         }
         Resource::Block(block) => {
             let point = ProgramPoint(block_last_same_point(at.snapshot(), block));
-            let stopped_by = Stop::at_point(&point, resource, false);
+            let stopped_by = Stop::at_point(&point, resource);
             Some(LastSame { point, stopped_by })
         }
     }
@@ -555,14 +512,11 @@ pub(crate) fn clear_version_memos() {
 /// block's own extent and liveness, and the heap status that decides whether
 /// a read of `block` is defined at all.
 ///
-/// **How that is obtained.** By crossing one edge kind and stopping at every
-/// other. A `Store` into a block *proven distinct* from `block` writes exactly
-/// one cell, in another object, and drops union overlays only at that same
-/// pointer; it therefore changes nothing about `block`, its overlays, the
-/// `blocks` map, the ended-local set, or the heap. Crossing only that edge
-/// makes the agreement above hold by construction, with no snapshot
-/// comparison and no fact context — which is also what lets the answer be
-/// memoized per interned snapshot and block.
+/// **How that is obtained.** By asking [`step_effect::affects`] about
+/// `Resource::Block` at every recorded edge and stopping at the first one it
+/// does not answer `Separate`. That rule's `Resource::Block` arm is where the
+/// per-step argument lives, kind by kind; it is handed no fact context at all,
+/// which is what lets this answer be memoized per interned snapshot and block.
 ///
 /// **Why the separation has to be proven, not spelled.** This walk is
 /// assumption-free: it has no `PureFactContext` to read a `separate(..)`
@@ -588,28 +542,6 @@ pub(crate) fn clear_version_memos() {
 /// on either side, which also makes an entry gate on the subject unnecessary:
 /// a subject this walk cannot separate from anything simply never crosses.
 ///
-/// Every `CMemoryDerivation` variant and its decision:
-///
-/// * `Store` — cross **only** when the written pointer's block is proven
-///   distinct from `block`. Merely differing spellings, and a symbolic block on
-///   either side, stop the walk.
-/// * `BlockDeclared` — stops. It changes the `blocks` map, which decides the
-///   extent a read of `block` is checked against.
-/// * `HeapAllocated`, `HeapAllocationPending`, `HeapFreed` — stop. They
-///   change heap status, which decides whether a read is defined, is zeroed,
-///   or has a pending reallocation.
-/// * `ContractAllocationClaimsChanged` — stops. It writes no bytes, but the
-///   claims it moves are what authorize a read.
-/// * `CellsForgotten` — stops. The state is the same but the cell map is not,
-///   so a read that resolves concretely at one end resolves symbolically at
-///   the other, and the two argument snapshots would name forms this rule
-///   has no business equating.
-/// * `LocalLifetimeEnded` — stops. It retires an object every alias to which
-///   must stop reading, and this walk decides no aliases.
-/// * `LoopHavoc`, `CallHavoc` — stop. Both are exactly the barriers whose
-///   write sets must be justified in a querying context, which this walk
-///   does not have.
-///
 /// The walk is assumption-free and terminates: snapshot ids strictly decrease
 /// along `base`. It always reports an epoch, because a subject it can separate
 /// from nothing crosses nothing and so answers `memory` itself.
@@ -634,6 +566,13 @@ fn block_last_same_point(memory: &SharedCMemory, block: &PointerBlock) -> Shared
         "canonical form",
         "array-ref block epoch walk",
         || {
+            // A block's answer is shared across proof paths, so this walk
+            // offers the rule nothing to spend; the `Resource::Block` arm
+            // reads none of it. Built once, because a walk is one question.
+            let evidence = step_effect::Evidence {
+                assumptions: &PureFactContext::new(),
+                cross_loop_havoc: false,
+            };
             let mut current = memory.clone();
             loop {
                 crate::instrumentation::record_deterministic_work(1);
@@ -643,20 +582,17 @@ fn block_last_same_point(memory: &SharedCMemory, block: &PointerBlock) -> Shared
                 let Some(derivation) = current.derivation() else {
                     return current;
                 };
-                let crossable = match derivation.as_ref() {
-                    CMemoryDerivation::Store { pointer, .. } => {
-                        pointer.block.proven_distinct(block)
-                    }
-                    CMemoryDerivation::BlockDeclared { .. }
-                    | CMemoryDerivation::HeapAllocated { .. }
-                    | CMemoryDerivation::HeapAllocationPending { .. }
-                    | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
-                    | CMemoryDerivation::HeapFreed { .. }
-                    | CMemoryDerivation::CellsForgotten { .. }
-                    | CMemoryDerivation::LocalLifetimeEnded { .. }
-                    | CMemoryDerivation::LoopHavoc { .. }
-                    | CMemoryDerivation::CallHavoc { .. } => false,
-                };
+                let crossable = matches!(
+                    step_effect::affects(
+                        derivation.as_ref(),
+                        &current,
+                        Resource::Block(block),
+                        &evidence,
+                    ),
+                    // A cell hop cannot be the answer to a block question, and
+                    // if one ever were, stopping is the fail-closed reading.
+                    step_effect::StepEffect::Separate(step_effect::Separation::Block(_))
+                );
                 if !crossable {
                     return current;
                 }

@@ -86,26 +86,37 @@ are cleared with the other canonical-form caches when a `VerificationSession`
 starts, because interning dedups by content and one verification's history
 must not answer the next one's question.
 
-## Known inconsistencies between the two walks
+## One rule, and its answers
 
-The tracker preserves these differences exactly as it found them. They are
-findings to decide, not to paper over; chunk 2 routes every "does this step
-matter to this read" decision through `same` one at a time and each difference
-is settled on its own.
+There is one decider, `resource_tracker::step_effect::affects`, and both walks
+call it: "does this recorded step affect this resource?", answered `Affected`,
+`Separate(how)` or `NotShownSeparate(check)`. A step kind is therefore answered
+once, and a new one has to be answered for every resource before it compiles.
+`Separate` carries what justified it — a checkable hop for a cell, a structural
+claim about objects for a block — so `explain` and retained evidence say only
+what was actually established.
 
 | Recorded step | A cell | A block, as an array argument |
 | --- | --- | --- |
-| `Store` | crosses on proven-distinct blocks, a common-base offset inequality, typed `separate(..)` evidence, an explicit range, or general distinctness | crosses **only** on `PointerBlock::proven_distinct` |
-| `BlockDeclared` | crosses: it writes nothing | **stops**: it changes the extent a read of the block is checked against |
-| `HeapAllocationPending` | crosses | **stops** |
-| `ContractAllocationClaimsChanged` | crosses | **stops** |
-| `CellsForgotten` | crosses | **stops**: the state is the same, the cell map is not |
-| `HeapAllocated` | crosses when the block differs | **stops** |
-| `LocalLifetimeEnded` | crosses on proven distinctness | **stops** |
-| `HeapFreed` | crosses on three separation ladders | **stops** |
-| `CallHavoc` | crosses on range disjointness | **stops** |
-| `LoopHavoc(Some)` | crosses under the extended-bridging and explicit-check gates, and never on the naming path | **stops** |
-| `LoopHavoc(None)` | never crosses | **stops** |
+| `Store` | separate on proven-distinct blocks, a common-base offset inequality, typed `separate(..)` evidence, an explicit range, or general distinctness | separate **only** on `PointerBlock::proven_distinct` |
+| `BlockDeclared` | separate: it writes nothing | **stops**: it changes the extent a read of the block is checked against |
+| `HeapAllocationPending` | separate | **stops** |
+| `ContractAllocationClaimsChanged` | separate | **stops** |
+| `CellsForgotten` | separate | **stops**: the state is the same, the cell map is not |
+| `HeapAllocated` | separate when the block differs | **stops** |
+| `LocalLifetimeEnded` | separate on proven distinctness | **stops** |
+| `HeapFreed` | separate on three separation ladders | **stops** |
+| `CallHavoc` | separate on range disjointness | **stops** |
+| `LoopHavoc(Some)` | separate under the extended-bridging and explicit-check gates, and never on the naming path | **stops** |
+| `LoopHavoc(None)` | never separate | **stops** |
+
+The block column's blanket refusals are what two separate sets of hard-coded
+answers left behind; they are findings to settle one at a time, each with its
+own regression, now that there is one place to settle them in. The difference
+that stays is *what evidence a resource may spend*: a block may use only the
+kernel's structural separation, because its answer is embedded in a name that
+is shared across proof paths, and the rule enforces that by handing the block
+arm no fact context at all.
 
 Two consequences a user meets today:
 
@@ -157,8 +168,9 @@ may carry it, since a span is path-independent.
 
 ## Next chunks
 
-- **Chunk 2** — one question, asked one way. Route the step-side deciders
-  through `same`, one commit each, and settle the differences above.
+- **Chunk 2** — one question, asked one way. The step-side deciders are one
+  rule now; what is left is settling the block column's remaining blanket
+  refusals, one commit and one regression each.
 - **Chunk 3** — the other resource kinds. Register the "changed here" events
   for composite instances, occurrence identities and loans, so `same` and
   `explain` cover model fields too.
