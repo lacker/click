@@ -2894,6 +2894,101 @@ fn a_store_to_a_local_is_not_framed_away_for_an_unresolved_pointer() {
     );
 }
 
+/// What a snapshot comparison with **no load pointer** may drop.
+///
+/// `memories_proven_equal_for_memory_resolution` and its certification twin
+/// `c_memories_definitionally_equal` are whole-state equalities: neither is
+/// handed a pointer, so neither can ask `observable_by_load` which cells a
+/// read could see. Both used to drop every cell and block spelled `local:`,
+/// which is the withdrawn `Symbolic` exception with the sides swapped — the
+/// claim that no automatic object is memory a pointer reads. `q = echo(&x)`
+/// refutes it.
+///
+/// What is left is the claim that needs no pointer: an object whose address
+/// the program never forms is memory no pointer value designates at all. So
+/// `local:hidden` may be dropped and `local:addressed` may not, and the two
+/// comparisons must answer that identically because they are one rule.
+///
+/// The last pair is the order-path caller's question, which does have a
+/// pointer and now asks it: two snapshots differing in an address-taken local
+/// are not one state for a load through a pointer nothing resolves, and two
+/// differing only in a local no pointer can reach are.
+#[test]
+fn a_pointerless_snapshot_equality_drops_only_a_local_no_pointer_can_reach() {
+    use crate::kernel::api::contract_certification::c_memories_definitionally_equal;
+
+    let at = |block: PointerBlock| Pointer {
+        block,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let addressed = at("local:addressed".into());
+    let hidden = at("local:hidden".into());
+    let symbolic = at(PointerBlock::Symbolic(Variable(1_000_001)));
+    let bare = PureFactContext::new();
+
+    // `hidden` is the only name this session's sources never take the
+    // address of; `addressed` is one a `&addressed` somewhere reaches.
+    crate::kernel::primitives::set_never_address_taken_locals(
+        ["hidden".to_string()].into_iter().collect(),
+    );
+
+    let entry = CMemory::new()
+        .with_block("local:addressed", 4)
+        .with_block("local:hidden", 4);
+    let before = entry
+        .store(addressed.clone(), crate::kernel::api::int32(5))
+        .store(hidden.clone(), crate::kernel::api::int32(5));
+    let wrote_addressed = before
+        .clone()
+        .store(addressed.clone(), crate::kernel::api::int32(1));
+    let wrote_hidden = before
+        .clone()
+        .store(hidden.clone(), crate::kernel::api::int32(1));
+
+    assert!(
+        !memories_proven_equal_for_memory_resolution(&before, &wrote_addressed, &bare),
+        "a store to an automatic object the program can form the address of \
+         changes the state a pointerless comparison is about"
+    );
+    assert!(
+        memories_proven_equal_for_memory_resolution(&before, &wrote_hidden, &bare),
+        "an object no pointer value designates cannot tell two snapshots apart"
+    );
+    assert!(
+        !c_memories_definitionally_equal(&before, &wrote_addressed, &bare),
+        "the certification twin is the same rule and must answer the same"
+    );
+    assert!(
+        c_memories_definitionally_equal(&before, &wrote_hidden, &bare),
+        "the certification twin is the same rule and must answer the same"
+    );
+
+    // The declared-block half of both comparisons narrows the same way.
+    let declared_addressed = CMemory::new().with_block("local:addressed", 4);
+    let declared_neither = CMemory::new();
+    let declared_hidden = CMemory::new().with_block("local:hidden", 4);
+    assert!(
+        !memories_proven_equal_for_memory_resolution(&declared_addressed, &declared_neither, &bare),
+        "an addressable automatic object's extent is part of the state"
+    );
+    assert!(
+        memories_proven_equal_for_memory_resolution(&declared_hidden, &declared_neither, &bare),
+        "an object no pointer can reach has no extent a load consults"
+    );
+
+    // And the caller that does have a pointer now asks about it.
+    assert!(
+        !memory_snapshots_proven_equal_at_pointer(&before, &wrote_addressed, &symbolic, &bare),
+        "the pointer may be `&addressed`"
+    );
+    assert!(
+        memory_snapshots_proven_equal_at_pointer(&before, &wrote_hidden, &symbolic, &bare),
+        "no pointer value designates `hidden`"
+    );
+
+    crate::kernel::primitives::clear_never_address_taken_locals();
+}
+
 #[test]
 fn memory_resolution_alias_check_uses_explicit_separation() {
     let left_base = Pointer {

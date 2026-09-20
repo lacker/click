@@ -485,6 +485,14 @@ fn memory_range_lists_definitionally_equal(
         })
 }
 
+/// Whether two memory snapshots are the same state, up to definitional
+/// equality of the terms in their cells.
+///
+/// The `local:` blocks this skips are the ones
+/// [`local_block_no_pointer_can_reach`] allows a pointerless comparison to
+/// skip, and that function carries the argument. This is the certification
+/// side of one rule, so it must select cells and blocks with exactly that
+/// filter and nothing wider.
 pub(in crate::kernel) fn c_memories_definitionally_equal(
     left: &CMemory,
     right: &CMemory,
@@ -496,11 +504,11 @@ pub(in crate::kernel) fn c_memories_definitionally_equal(
     if !left
         .blocks
         .iter()
-        .filter(|(block, _)| !block.starts_with("local:"))
+        .filter(|(block, _)| !local_block_no_pointer_can_reach(block))
         .eq(right
             .blocks
             .iter()
-            .filter(|(block, _)| !block.starts_with("local:")))
+            .filter(|(block, _)| !local_block_no_pointer_can_reach(block)))
     {
         return false;
     }
@@ -519,7 +527,7 @@ fn memory_cells_definitionally_contained(
     for (source_pointer, source_value) in source
         .cells
         .iter()
-        .filter(|(pointer, _)| !pointer.block.starts_with("local:"))
+        .filter(|(pointer, _)| !local_block_no_pointer_can_reach(&pointer.block))
     {
         let matching = target.cells.iter().find(|(target_pointer, _)| {
             pointers_proven_equal_for_memory_resolution(source_pointer, target_pointer, assumptions)
@@ -536,7 +544,7 @@ fn memory_cells_definitionally_contained(
     for ((source_pointer, source_type), source_value) in source
         .union_cells
         .iter()
-        .filter(|((pointer, _), _)| !pointer.block.starts_with("local:"))
+        .filter(|((pointer, _), _)| !local_block_no_pointer_can_reach(&pointer.block))
     {
         let matching = target
             .union_cells

@@ -225,7 +225,7 @@ The four classes:
 | `ResourceContext::invalidate_memory_support` → `memory_derivation_affects_footprint` `src/kernel/primitives/resource_algebra.rs` | **routed** | Walks the edges between two snapshots and drops every resource projection a step could have written. It now asks `affects` about `Resource::Ranges` for a stated footprint and `Resource::AnyMemory` for one the kernel could not name. |
 | `ResourceContext::entries_affected_by_memory_derivation` | another question | Chooses *candidates* from the interval index; the rule then decides. Its one obligation is to stay a superset of the steps `affects` does not answer `Separate` for — narrowing it would silently keep a stale projection. |
 | `statement_call_havoc_views` `src/kernel/proof/execution.rs` | another question | Collects the call nodes between two states; asks nothing about a resource. |
-| `matching_recomputed_call_havoc_views`, `c_memories_definitionally_equal` `src/kernel/api/contract_certification/contract_claims.rs` | another question | Matches two derivation chains edge for edge, to certify a recomputation. A whole-state equality, not a footprint. |
+| `matching_recomputed_call_havoc_views`, `c_memories_definitionally_equal` `src/kernel/api/contract_certification/contract_claims.rs` | another question | Matches two derivation chains edge for edge, to certify a recomputation. A whole-state equality, not a footprint. It skips the same `local:` blocks as its kernel twin and by the same one filter — below. |
 
 ### The eager half: a step applying its own write set
 
@@ -258,7 +258,7 @@ them without losing every pair the DAG does not connect.
 | `memories_match_for_pointer_load` `src/kernel/reasoning/memory_resolution.rs` | disagrees | Assumption-free structural agreement about one load: equal havoc markers, equal extent for the load's block, and equal cells under `observable_by_load`. Decides pairs with no common ancestor. |
 | `memory_snapshots_match_for_resolution`, `memories_match_for_pointer_load_bounded_alias`, `memories_match_for_pointer_load_under_assumptions` `src/kernel/reasoning/memory_resolution.rs` | disagrees | The same question with assumptions: every cell the two snapshots differ on must be proven distinct from the load. All three refuse a load whose own block is `local:`, and all three select the cells to check with `cell_is_observable_by_load`, the one filter — *not*, as they used to, by dropping every differing `local:` cell unasked. See below. |
 | `canonical_memory_for_pointer_load` | separation | A normal form, so that two snapshots can be compared at all. Its filters are `observable_by_load` and `cell_disjoint_from_load_by_constant_offset`, one shared function each. |
-| `memories_proven_equal_for_memory_resolution`, `memory_cells_definitionally_contained` | another question | Whole-state equality under assumptions. |
+| `memories_proven_equal_for_memory_resolution`, `memory_cells_definitionally_contained` | another question | Whole-state equality under assumptions, with no load pointer. The only `local:` cells and blocks either drops are the ones `local_block_no_pointer_can_reach` allows — see below. |
 | `differing_cell_pointers_possibly_aliasing` | separation | One call to `observable_by_load`. |
 
 ### The separation predicates, which stay one function each
@@ -348,15 +348,74 @@ answered on the first rung of the ladder rather than skipped.
 `a_store_to_a_local_is_not_framed_away_for_an_unresolved_pointer`
 (`src/kernel/tests/memory_reasoning_tests.rs`) pins the history directly.
 
-One pointerless neighbour still carries the shortcut and is not part of this
-fix: `memories_proven_equal_for_memory_resolution` compares whole snapshots
-with the `local:` cells and blocks filtered out, and
-`PureFactContext::has_order_path_for_memory_resolution`
-(`src/kernel/assumptions/condition_reasoning/order_paths.rs`) uses it to decide
-that two memory loads at one pointer are the same term. It has no load pointer
-to ask about, so making it exact is a separate change with its own blast
-radius. The false theorem above does not reach it: the order-fact form of the
-same attack (`have q[0] < 6`) is refused.
+##### And the same shortcut with no pointer at all
+
+Two neighbours carried it a third time, and neither had a load pointer to ask
+`observable_by_load` about: `memories_proven_equal_for_memory_resolution` and
+its certification twin `c_memories_definitionally_equal`, whole-snapshot
+equalities that each dropped every `local:` cell and block before comparing.
+
+The one caller that decides a *load* question with them has a pointer and now
+passes it. `PureFactContext::has_order_path_for_memory_resolution`
+(`src/kernel/assumptions/condition_reasoning/order_paths.rs`) hops an order
+path through an assumed equality, and its `order_terms_match` asks whether two
+`MemoryLoad` terms at one pointer are the same term. That is exactly the
+question `memory_snapshots_proven_equal_at_pointer` answers, so it asks it
+there, and the two disjuncts it had — the pointerless equality, plus the
+bounded per-load bridge that a whole-memory equality needs across a call's
+havoc block — are both inside that one function. The only pairs it stops
+accepting are the ones the shortcut was wrong about: for a load whose pointer
+is in another `local:` block, or in `ExternalArgument`, `ExternalObject`,
+`Heap` or `Temporary`, a differing `local:` cell is answered on the first rung
+of the distinctness ladder rather than skipped, and what is left over is a
+load through a pointer nothing resolves, or one in the differing cell's own
+block — which is the case the comparison exists to decide.
+
+What is left is genuinely pointerless. The remaining callers of
+`c_memories_definitionally_equal` — the effect-chain endpoint checks in
+`checked_interface_effect_facts`, the resource-rewrite and
+resource-observation evidence checks in `src/kernel/proof/execution.rs`,
+`function_entry_representation_states_match`, the two outcome comparisons and
+the recomputed-havoc matcher — are comparing two whole states with no read in
+hand. They may still skip a `local:` block, but only for the reason that needs
+no pointer, and that reason is one function:
+`local_block_no_pointer_can_reach` (`src/kernel/reasoning/memory_resolution.rs`)
+is `primitives::block_is_never_address_taken_local`, so the only automatic
+objects a pointerless comparison ignores are the ones no pointer value in the
+program designates. Both comparisons and both of the twin's own filters read
+that one function, so the kernel and the certification side cannot drift.
+
+The object read under **its own name** is a different question and not this
+filter's: a scalar local's program-visible value is in the `CLocalEnvironment`
+binding, which these callers either compare exactly as part of `CState`
+equality or do not ask about, and a caller that needs the slot cell compares
+`CState::local_cell_values` beside the memory, as
+`function_entry_representation_states_match` does.
+
+No witness was found for the shortcut in either place, and that is a report
+about the other locks rather than an argument. The order-path caller is
+reached only from `bitvector_index_within_range`, so the load would have to be
+a range bound; reading through an unresolved pointer in *executed* C needs a
+`views`/`owns` resource fact the caller of such a function does not hold
+(`missing resource fact views symbolic-pointer:…`), a local array cannot be
+lent to a callee that `owns` it (`missing resource fact owns local:arr@…`), and
+the value equality itself no longer transports, because
+`bitvector_terms_proven_equal_for_memory_resolution` already asks about the
+pointer. The certification twin's callers validate recorded sidecar evidence,
+which a surface program does not author. A kernel filter that is sound only
+because three other checks happen to refuse first is not sound; the
+regressions are the two polarities in
+`a_pointerless_snapshot_equality_drops_only_a_local_no_pointer_can_reach`
+(`src/kernel/tests/memory_reasoning_tests.rs`), where a snapshot pair differing
+in an address-taken local is not equal — for the pointerless comparison, for
+its certification twin, and for a symbolic-pointer load — while a pair
+differing only in a local no pointer can reach is.
+
+One relative of these two is deliberately wider and stays so:
+`c_effect_memories_definitionally_equal` strips *every* local from both sides
+before comparing, because an effect memory is the externally visible state an
+effect summary is about. That is a statement about what the comparison is for,
+not a shortcut inside it.
 
 ##### The local nobody can point at
 

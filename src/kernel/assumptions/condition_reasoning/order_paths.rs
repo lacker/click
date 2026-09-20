@@ -712,17 +712,31 @@ impl PureFactContext {
             else {
                 return false;
             };
+            // The question is about *this* load, so it is asked about this
+            // load's pointer. `memory_snapshots_proven_equal_at_pointer` is
+            // the one comparison that answers it: it tries structural
+            // agreement, the canonical projection for this pointer, the
+            // bounded per-load bridge — which is what carries the cell across
+            // a call's havoc block where a whole-memory equality would fail —
+            // and finally every cell the two snapshots differ on, kept or
+            // dropped by `observable_by_load` and then proven distinct from
+            // this pointer.
+            //
+            // This used to try the pointerless whole-snapshot equality first,
+            // and that equality drops every `local:` cell before comparing.
+            // For a load through a pointer the verifier cannot resolve, that
+            // is the withdrawn `Symbolic` exception spelled on the other side:
+            // it claims no automatic object is memory such a load reads, which
+            // `q = echo(&x)` refutes. Two snapshots differing only in
+            // `local:x` were therefore the same term here, so an order fact
+            // about `q[0]` outlived `x = 1`.
             left_pointer == right_pointer
-                && (memories_proven_equal_for_memory_resolution(left_memory, right_memory, self)
-                    // Whole-memory equality fails across a call's havoc block
-                    // even when the loaded cell is provably framed; the
-                    // bounded per-load bridge accepts effect-summary framing
-                    // for exactly this pointer.
-                    || self.memory_snapshots_directly_proven_equal_for_memory_resolution(
-                        left_memory,
-                        right_memory,
-                        left_pointer,
-                    ))
+                && memory_snapshots_proven_equal_at_pointer(
+                    left_memory,
+                    right_memory,
+                    left_pointer,
+                    self,
+                )
         };
         let mut stack = vec![(left.clone(), false)];
         let mut seen = BTreeSet::new();

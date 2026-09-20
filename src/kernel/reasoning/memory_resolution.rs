@@ -932,6 +932,46 @@ pub(in crate::kernel) fn c_values_proven_equal_for_memory_resolution(
     }
 }
 
+/// The only `local:` block a snapshot comparison with **no load pointer** may
+/// drop before comparing.
+///
+/// [`memories_proven_equal_for_memory_resolution`] and its certification twin
+/// `c_memories_definitionally_equal` are whole-snapshot equalities. They are
+/// handed no pointer, so they cannot ask
+/// [`PointerBlock::observable_by_load`] which cells a particular read could
+/// see, and both used to drop every cell and block spelled `local:` instead.
+/// That is the withdrawn `Symbolic` exception of `observable_by_load` with the
+/// sides swapped: instead of claiming an unresolved load reads only its own
+/// block, it claims no automatic object is memory such a load reads.
+/// `int32* echo(int32* p) { return p; } … q = echo(&x); x = 1;` refutes it —
+/// `q` *is* `&x`, so two snapshots differing only in `local:x` are two
+/// different states for a read through `q`
+/// (`mdtests/an_unresolved_pointer_sees_the_store_to_a_local.md` is the false
+/// theorem the pointer-aware spelling of the same shortcut admitted).
+///
+/// What survives is the half of the claim that needs no pointer. An automatic
+/// object whose address no function in this session's sources ever forms is
+/// not memory any pointer value in the program designates, so *no* load
+/// anywhere can tell two snapshots apart by it. That is
+/// [`crate::kernel::primitives::block_is_never_address_taken_local`], whose
+/// soundness argument lives on that function; it is a property of the whole
+/// program's source rather than of one proof path, which is exactly why a
+/// comparison may spend it with neither a pointer nor a fact context — the
+/// same reason the two naming walks may.
+///
+/// The object read under **its own name** is a different question, and not
+/// this filter's to answer. A scalar local's program-visible value lives in
+/// the `CLocalEnvironment` binding, which the callers of these two
+/// comparisons either compare exactly as part of `CState` equality or do not
+/// ask about at all (an effect chain's two endpoints). A caller that needs the
+/// slot cell itself compares `CState::local_cell_values` beside the memory,
+/// as `function_entry_representation_states_match` does.
+///
+/// Cost: one registry lookup on a name of bounded length.
+pub(in crate::kernel) fn local_block_no_pointer_can_reach(block: &PointerBlock) -> bool {
+    crate::kernel::primitives::block_is_never_address_taken_local(block)
+}
+
 pub(in crate::kernel) fn memories_proven_equal_for_memory_resolution(
     left: &CMemory,
     right: &CMemory,
@@ -943,11 +983,11 @@ pub(in crate::kernel) fn memories_proven_equal_for_memory_resolution(
     if !left
         .blocks
         .iter()
-        .filter(|(block, _)| !block.starts_with("local:"))
+        .filter(|(block, _)| !local_block_no_pointer_can_reach(block))
         .eq(right
             .blocks
             .iter()
-            .filter(|(block, _)| !block.starts_with("local:")))
+            .filter(|(block, _)| !local_block_no_pointer_can_reach(block)))
     {
         return false;
     }
@@ -957,7 +997,7 @@ pub(in crate::kernel) fn memories_proven_equal_for_memory_resolution(
     left.cells
         .keys()
         .chain(right.cells.keys())
-        .filter(|pointer| !pointer.block.starts_with("local:"))
+        .filter(|pointer| !local_block_no_pointer_can_reach(&pointer.block))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .all(|pointer| {
@@ -978,7 +1018,7 @@ pub(in crate::kernel) fn memories_proven_equal_for_memory_resolution(
             .union_cells
             .keys()
             .chain(right.union_cells.keys())
-            .filter(|(pointer, _)| !pointer.block.starts_with("local:"))
+            .filter(|(pointer, _)| !local_block_no_pointer_can_reach(&pointer.block))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .all(|(pointer, value_type)| {
