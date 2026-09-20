@@ -130,7 +130,6 @@ Semantics and reasoning:
 Proof language and tooling:
 
 - [Extend modules and imports beyond the delivered rbtree slice](specification-imports.md)
-- [Preserve source context when expansion writes to another directory](expansion-output-source-context.md)
 - [Reduce repeated work in deeply nested `Integer` quantifiers](deep-quantifier-scaling.md)
 - [Complete general-purpose algebraic data type support](algebraic-data-types.md)
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
