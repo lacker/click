@@ -144,6 +144,12 @@ retain, nonfinal release, final release, and free across opaque calls.
   values.
 - `mdtests/pointer_params_may_alias_without_separate.md`: aliasing is allowed by
   default.
+- `mdtests/pointer_params_separate_by_transfer_and_loan.md`: transferring one
+  parameter and lending the other separates them.
+- `mdtests/a_views_clause_is_separate_from_an_owns_clause.md`: a contract's
+  `views` and `owns` clauses denote disjoint memory.
+- `mdtests/a_caller_cannot_lend_and_transfer_one_range.md`: the call that would
+  break that, refused during planning.
 - `mdtests/separate_symbolic_unwritten_read.md`: symbolic memory separation.
 - `mdtests/shifted_copy_effect_uses_covering_separate.md`: effect summary plus
   covering separation.

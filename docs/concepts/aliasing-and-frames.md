@@ -29,6 +29,8 @@ cell.
 That fact can come from:
 
 - a `separate(memory(...), memory(...))` requirement,
+- the contract's own split between what it transfers and what it borrows
+  (below),
 - a precise owned footprint,
 - the loop's owned resources,
 - or an explicit invariant.
@@ -62,9 +64,48 @@ Two file-scope objects are two declarations and stay separate with nothing
 said, and so does a function-scope `static` array; the argument is the case
 where the caller decides.
 
-Declaring `views a[0..n]` instead settles the call site rather than the body:
-a caller cannot hand the same bytes over as the owned global and lend them as
-a view at the same time, so `f(g, 4)` is refused during planning.
+## A contract's `owns` and `views` clauses denote disjoint memory
+
+Declaring `views a[0..n]` says the same thing as that `separate(...)`, without
+writing one:
+
+<!-- verified-example: mdtests/a_views_clause_is_separate_from_an_owns_clause.md -->
+```click
+views a[0..n];
+owns g[0..1];
+```
+
+A contract's transferred clauses (`owns`, `consumes`) and its borrowed `views`
+clauses are disjoint memory, so the store to `g[0]` cannot be the store that
+changed `a[0]`. This is not an extra assumption the body gets for free: it is
+a promise the caller keeps, and every call site checks it. A caller cannot
+hand the same bytes over as the owned global and lend them as a view at the
+same time, so `f(g, 4)` is refused during planning — as is the same call
+through a function pointer, and a recursive call that does it to itself.
+
+It is the same rule the two-pointer case at the top of this page follows.
+Given
+
+<!-- verified-example: mdtests/pointer_params_separate_by_transfer_and_loan.md -->
+```click
+consumes dst[0..1];
+views src[0..1];
+```
+
+a write through `dst` preserves `src[0]`, with no `separate(...)` stated.
+Without a `views` clause for `src` — reading it under a bare
+`viewable(src[0..1])` requirement — the contract says nothing about where
+`src` is, and the two may alias again.
+
+Two `views` clauses are not disjoint: lending the same range twice is exactly
+what a shared borrow permits. Two `owns` clauses are disjoint, for the older
+reason that a context cannot own one byte twice.
+
+A clause that is not a plain range contributes nothing here. `owns object(r)`
+is a plain range — the whole struct — and does separate from a `views` clause,
+but a folded composite's footprint has no spelling as a range, so pairing it
+with a view yields nothing and a `separate(...)` requirement is still the way
+to say it.
 
 ## Ownership is the frame
 

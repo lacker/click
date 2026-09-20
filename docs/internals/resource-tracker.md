@@ -173,8 +173,7 @@ reader to write a `separate(..)` the walk will never consult.
 
 The two cases that can spell both ranges offer two clauses, because two say the
 same thing: a stated `separate(..)`, and — since a contract's transferred and
-borrowed clauses denote disjoint memory
-(`kernel::contract_entry_partition_facts`) — a `views` clause over the read.
+borrowed clauses denote disjoint memory, below — a `views` clause over the read.
 The second names its condition ("where the contract already transfers
 `g[0..1]`") rather than asserting it: this renderer is handed two addresses, not
 the contract's clause list, and a range transferred only inside a folded
@@ -475,39 +474,27 @@ body would cover the cell, a single member asked to separate an address from
 itself, and a retained hop offered to a context that no longer holds its
 composition.
 
-##### Parked proofs
+##### The entry partition
 
-One proof states a true claim that this route does not reach. It is
-quarantined rather than weakened: its C and its sidecar are untouched, so it
-is the regression for the route it waits on
-(`docs/internals/testing.md`, *Quarantine*). Unquarantine it in the change
-that gives it that route.
+The composition rule above must *not* be widened to cover
+`mdtests/const_callback_field.md`. `read_view(struct reader *r, const int *p)`
+holds `owns object(r)` and `views p[0..1]`, both spelled in one `external`
+block with symbolic offsets, and its claim is true: a caller cannot both
+transfer `object(r)` and lend a window inside it, because suspending the write
+authority for the loan leaves no usable copy to transfer
+(`docs/internals/stable-views.md`, law 1, and "usable ownership and an active
+independent view of overlapping memory cannot coexist"). But that is a
+statement about the `views p[0..1]` **clause**, and the context the body proof
+runs under also holds `views r[0..2]` beside `owns r[0..2]` — an owner
+observation of the very range it describes. Owner-beside-view therefore cannot
+mean separation; the discriminator is the origin of the clause.
 
-| Parked | Needs |
-| --- | --- |
-| `mdtests/const_callback_field.md` | a live borrow's backing as evidence for one cell |
-
-`const_callback_field` is the case the composition rule must *not* be widened
-to cover. `read_view(struct reader *r, const int *p)` holds `owns object(r)`
-and `views p[0..1]`, both spelled in one `external` block with symbolic
-offsets, and its claim is true: a caller cannot both transfer `object(r)` and
-lend a window inside it, because suspending the write authority for the loan
-leaves no usable copy to transfer (`docs/internals/stable-views.md`, law 1,
-and "usable ownership and an active independent view of overlapping memory
-cannot coexist"). But that is a statement about the `views p[0..1]` occurrence
-carrying a **live loan binding**, and the same context also holds
-`views r[0..2]` beside `owns r[0..2]` — an owner observation of the very range
-it describes. Owner-beside-view therefore cannot mean separation; the
-discriminator is the origin of the clause.
-
-###### The entry partition, and why it is not built yet
-
-The route this proof waits on is an **entry partition**: a contract's
-transferred members (`owns`/`consumes`) and its *borrowed* members (a `views`
-clause the caller lends) denote disjoint memory, so a store through one can be
-framed from a load through the other. That claim holds, and it holds the way
-the ownership partition itself does — inductively, with the outer boundary as
-an environment assumption.
+So the rule is written over clauses. The **entry partition**: a contract's
+transferred memory clauses (`owns`/`consumes`) and its *borrowed* memory
+clauses (a `views` clause the caller lends) denote disjoint memory, so a store
+through one is framed from a load through the other. It holds the way the
+ownership partition itself does — inductively, with the outer boundary as an
+environment assumption.
 
 Every way a contract can be entered checks it, and each check is **fail-closed**:
 
@@ -540,27 +527,80 @@ b[0..1]; }`:
   is the induction step: the callee's pair is a reborrow of the caller's own
   pair.
 
-What is missing is not the claim but a place to record it. The evidence has to
-reach the load-framing site as a path fact, and the only emission point the
-body proof and contract certification share is
-`ResourceContext::observable_facts_assuming_valid` — which sees a context, not
-an entry, and cannot tell a borrowed contract input from a view a callee
-produced or a frontier piece of a viewed composite. Emitting there would
-assert the partition for **every** bound view in every context, which is a
-strictly larger claim than the one established above, and the retained hop
-would need an (owner, borrowed) form beside the (owner, owner) one that
-`proves_owned_memory_ranges_separate_shallow` checks today. Recording it at
-the two sites that *do* know they are at a contract entry — the proof's
-`install_borrowed_contract_inputs` caller and
-`contract_certification::contract_claims` — makes the two sides responsible
-for producing byte-identical compositions, and a mismatch there is a rejected
-certificate. Either shape is a change of its own, not a disjunct.
+###### Where the fact lives
+
+It needed no new fact kind and no new framing route. At contract entry, each
+(transferred memory clause, borrowed `views` clause) pair of one contract
+yields the ordinary explicit separation `separate(memory(X), memory(Y))` —
+`Proposition::CResourceSeparate` over two `CResource::Memory` operands, exactly
+what a written `requires separate(memory(a[0..n]), memory(g[0..1]))` lowers to
+(`mdtests/a_separated_array_argument_survives_a_global_store.md`). The Store
+ladder therefore spends it at `typed_store_separated_ranges_evidence`, where it
+spends a stated one, and the havoc side reads it at
+`typed_range_disjoint_from_pointer_evidence`.
+
+`functions::contract_entry_partition_facts` is the rule, and it reads the
+contract's evaluated **clause list** — the `Vec<CCheckedResourceFact>` that
+`evaluate_function_resource_context_with_metadata` returns, one fact per
+written clause — never a context. That is the whole discriminator: a context
+holds the owner observation above, and the clause list does not.
+
+Four pairs it does not build:
+
+- **an owner and the observation of its own range.** Not in the clause list,
+  so it never reaches the rule;
+- **two borrowed views.** Two `views` clauses may overlap freely; lending
+  twice is what a shared borrow is;
+- **two owners.** That is `owned_composition_store_separated_evidence` above,
+  and a second spelling of one rule is a second place a fix has to find;
+- **a clause that is not plain memory.** A composite's owned footprint is its
+  expansion, and `separate(memory(..), memory(..))` cannot name it without
+  expanding it, so the pair is skipped outright rather than approximated.
+  `owns object(r)` is *not* such a clause: `object(r)` lowers to the plain
+  range `r[0..size/4]`, which is what makes `const_callback_field` expressible.
+
+The two sites that know they are at a contract entry produce it independently
+from the same list, so neither trusts the other: the body proof's
+`initial_claim_context_with_caller_owner` (`src/surface/proof.rs`), and
+`contract_certification::c_function_contract_certification_assumptions`, which
+authorizes such an entry premise as derivable from the contract's own clauses
+the way it already authorizes a `viewable` one from the resources those clauses
+supply. Emitting instead at `ResourceContext::observable_facts_assuming_valid`
+— the one point the two sides share — was the shape rejected: it sees a
+context, not an entry, and would assert the partition for every bound view in
+every context, which is a strictly larger claim than the one above.
+
+The caller owes nothing new. The fail-closed planner is what discharges the
+assumption, and it already runs at every call.
+
+Cost: `#owned × #viewed` clauses of one contract, built once at that contract's
+entry and never on a query path.
+
+The attacks are `mdtests/a_caller_cannot_lend_and_transfer_one_range.md`,
+`…_a_function_pointer_caller_…` and `a_self_call_cannot_lend_and_transfer_one_range.md`
+on the call side; `an_owner_is_not_separate_from_its_own_observation.md`, where
+a store through the owner is still seen through the owner's own observation
+view; and `an_entry_view_names_the_entry_address.md`, where a `views
+p->buf[0..n]` clause is followed by `p->buf = other` and the read through the
+*new* `p->buf` is not separated, because the fact names the entry address. The
+clause-list pairing itself is pinned by
+`the_entry_partition_pairs_a_transferred_clause_only_with_a_borrowed_one`
+(`src/kernel/tests/memory_reasoning_tests.rs`). On the true side,
+`const_callback_field.md` is unquarantined,
+`a_views_clause_is_separate_from_an_owns_clause.md` is the minimal shape, and
+`pointer_params_separate_by_transfer_and_loan.md` is the two-parameter one.
+
+Loop `owns`/`views` clauses are **not** part of this. A loop head is not a
+contract entry: there is no call-site planner between an iteration and the
+next, so the induction above does not run, and a loop's clause list gets no
+partition facts of its own. A function's entry facts reach its loops the way
+every other entry fact does, as path facts of the context the loop starts from.
 
 The loan family — `LoanLedger::permits_memory_access`,
 `protected_range_proven_overlapping`, `active_memory_overlaps` — is **not** in
-that list. It is fail-open by design and its soundness rests on the ownership
-partition rather than on the predicate (`src/kernel/loans.rs`), so it must
-never be merged with the fail-closed families above.
+the entry table above. It is fail-open by design and its soundness rests on the
+ownership partition rather than on the predicate (`src/kernel/loans.rs`), so it
+must never be merged with the fail-closed families there.
 
 ### Sites that only look like this question
 
