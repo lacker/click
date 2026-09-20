@@ -122,7 +122,8 @@ pub use expansion::{
     expand_c0_tactic_source_at, expand_cpp_prepared_claim_source_by_label,
     expand_cpp_prepared_project_claim_source_by_label,
     expand_cpp_prepared_project_tactic_source_at, expand_cpp_prepared_tactic_source_at,
-    selected_c_target, selected_project_c_target, verifying_source_paths,
+    map_verifying_source_paths, selected_c_target, selected_project_c_target,
+    verifying_source_paths,
 };
 use expansion::{
     ExpansionCapture, ProofSite, VerificationTarget, verification_target_at,

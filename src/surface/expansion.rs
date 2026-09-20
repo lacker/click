@@ -25,6 +25,45 @@ pub fn verifying_source_paths(click_source: &str) -> Result<Vec<String>, ClickEr
     Ok(paths)
 }
 
+/// Rewrites the path literal of every `verifying "..."` declaration whose
+/// current spelling selects a rebased file, keeping all other source text
+/// byte-identical. Callers supply the mapping: `None` keeps a declaration
+/// unchanged, and the caller guarantees the mapped spelling resolves to the
+/// same source from its own loading rules.
+pub fn map_verifying_source_paths(
+    click_source: &str,
+    map: impl Fn(&str) -> Option<String>,
+) -> Result<String, ClickError> {
+    let tokens = scan_source_tokens(click_source)?;
+    let mut replacements = Vec::new();
+    for window in tokens.windows(2) {
+        if window[0].text == "verifying"
+            && window[1].text.starts_with('"')
+            && window[1].text.ends_with('"')
+        {
+            let declared = &window[1].text[1..window[1].text.len() - 1];
+            let Some(rebased) = map(declared) else {
+                continue;
+            };
+            if rebased.contains('\\') || rebased.contains('"') {
+                return Err(ClickError::new(format!(
+                    "rebased verifying declaration `{rebased}` is not a supported path literal"
+                )));
+            }
+            replacements.push((window[1].span.clone(), format!("\"{rebased}\"")));
+        }
+    }
+    let mut rebased = String::with_capacity(click_source.len());
+    let mut cursor = 0;
+    for (Range { start, end }, spelled) in replacements {
+        rebased.push_str(&click_source[cursor..start]);
+        rebased.push_str(&spelled);
+        cursor = end;
+    }
+    rebased.push_str(&click_source[cursor..]);
+    Ok(rebased)
+}
+
 /// Finds the top-level `target "..."` directive that selects the C
 /// implementation target, before any C source is preprocessed. Include
 /// expansion needs the target, and expansion happens before the sidecar is

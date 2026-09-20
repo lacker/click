@@ -57,6 +57,31 @@ selected type instance; expansion preserves the generic declaration.
 `--output` and `--in-place` are mutually exclusive. Repeating a single-use
 option is an error.
 
+## Output location and source context
+
+A sidecar's `verifying "..."` declarations and its adjacent import manifest
+resolve relative to the sidecar's own directory, so the emitted artifact must
+stay verifiable at its output path:
+
+- Writing into the source directory (`--output` there or `--in-place`)
+  preserves the artifact byte for byte apart from the rewrite itself.
+- Writing to another directory rebases every relative `verifying` declaration
+  so it selects the same C file from the output location — for example
+  `verifying "identity.c"` becomes `verifying "../source/identity.c"` — and
+  re-verifies the rebased artifact through the output path's own loading
+  rules. The requested path stays unwritten when that verification fails, and
+  a destination whose adjacent import manifest would hijack the artifact is
+  refused.
+- A sidecar with an adjacent import manifest is anchored there: its manifest,
+  roots, and locked artifacts resolve beside the sidecar by filename, so an
+  `--output` that would move or rename it is refused before anything is
+  written. Use `--in-place` for those sidecars.
+- An mdtest expansion writes the whole `.md` file, whose C input fences live
+  in the file itself, so no rebasing applies.
+
+The rebasing never changes C sources or other sidecar text: only `verifying`
+path literals move, so unselected source text is preserved.
+
 ## Output and exit behavior
 
 Without an output option, the command writes the complete rewritten source to
