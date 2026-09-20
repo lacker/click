@@ -573,8 +573,38 @@ every context, which is a strictly larger claim than the one above.
 The caller owes nothing new. The fail-closed planner is what discharges the
 assumption, and it already runs at every call.
 
-Cost: `#owned × #viewed` clauses of one contract, built once at that contract's
-entry and never on a query path.
+###### What may not read it
+
+A check that decides the partition may not consult a claim of it. Two
+questions short-circuit on an explicit memory separation —
+`memory_ranges_proven_overlapping` answers "not overlapping" and
+`memory_range_covers` answers "does not cover" as soon as the context holds
+one — and the entry partition is exactly such a separation over exactly the
+clauses those questions are about. So `install_borrowed_contract_inputs` asks
+both of its halves (`protected_range_proven_overlapping`, and
+`directly_supporting_owned_entry` for a view the contract already owns) under
+assumptions with *every* explicit memory separation removed. Dropping them all
+rather than the derived ones by name means nothing rests on the two producing
+sides spelling one fact identically, and it can only make that check refuse
+more. `root_view_refuses_an_owned_alias_of_the_viewed_range`
+(`src/surface/verification.rs`) is the regression: `requires q == p; views
+p[0..1]; owns q[0..1];` stopped being refused when this was missed.
+
+The other check of the same family needs no such care, because of the order
+things happen in. `MemoryResourceAlgebra::pair_validity_error` refuses two
+*owned* ranges that overlap, and it runs while the clause list is composed —
+which is what the facts are derived from, so at that point they do not exist.
+Both producing sides evaluate the clause section before they build the
+partition, so the composition that yields the facts is always validated
+without them.
+
+Cost: at most `#owned × #viewed` clauses of one contract, built once at that
+contract's entry and never on a query path. A pair whose two blocks are
+already `proven_distinct` is skipped: every memory separation the context
+holds is one more entry in the block-pair bucket each coverage and overlap
+query walks, so recording an answer those queries reach anyway is paid for on
+every query and buys nothing. An `ExternalArgument` range beside a global is
+not such a pair — an argument may point at the global — so the skip is narrow.
 
 The attacks are `mdtests/a_caller_cannot_lend_and_transfer_one_range.md`,
 `…_a_function_pointer_caller_…` and `a_self_call_cannot_lend_and_transfer_one_range.md`
