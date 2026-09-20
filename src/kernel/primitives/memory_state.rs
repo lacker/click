@@ -1324,6 +1324,57 @@ fn call_havoc_keeps_cell(
         || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
 }
 
+/// Whether a havoc that preserves loans keeps the cell at this address: the
+/// one rule, asked by the loop head and by the interface join.
+///
+/// Unlike a call havoc this is not a separation question at all. A loop body,
+/// or the arm of a branch the join is merging, may write through any pointer
+/// it can reach, so the only cells that survive are the ones something else
+/// guarantees: storage the function declared and did not expose
+/// (`preserved_blocks`), and bytes an active loan protects from being written
+/// at all. That is why it consults the ledger rather than the assumptions, and
+/// why the resource tracker's havoc arms cannot answer it.
+///
+/// A cell whose width is unknown fails closed, because keeping its value on a
+/// loan the ledger would have permitted a write through is a promise nothing
+/// proved (`docs/internals/stable-views.md`).
+fn loan_preserving_havoc_keeps_cell(
+    pointer: &Pointer,
+    value: &CValue,
+    union_widths: &BTreeMap<Pointer, u32>,
+    preserved_blocks: &BTreeSet<PointerBlock>,
+    ledger: Option<&crate::kernel::loans::LoanLedger>,
+) -> bool {
+    let byte_width = value
+        .byte_width()
+        .max(union_widths.get(pointer).copied().unwrap_or(0));
+    preserved_blocks.contains(&pointer.block)
+        || ledger.is_some_and(|ledger| {
+            byte_width != 0
+                && ledger
+                    .permits_memory_access(&CMemoryRange::new_with_element_width(
+                        pointer.clone(),
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Constant(byte_width),
+                        1,
+                    ))
+                    .is_err()
+        })
+}
+
+/// The widest typed overlay recorded at each address, so that the loan
+/// question above covers every byte the cell can be read as.
+fn union_overlay_widths(memory: &CMemory) -> BTreeMap<Pointer, u32> {
+    let mut widths = BTreeMap::<Pointer, u32>::new();
+    for (pointer, c_type) in memory.union_cells.keys() {
+        widths
+            .entry(pointer.clone())
+            .and_modify(|width| *width = (*width).max(c_type.byte_width()))
+            .or_insert_with(|| c_type.byte_width());
+    }
+    widths
+}
+
 fn heap_allocation_may_contain_pointer(base: &Pointer, pointer: &Pointer) -> bool {
     if base.block != pointer.block {
         return false;
@@ -1873,33 +1924,15 @@ impl CMemory {
         // retained on the derivation edge for disjoint-load transport; the
         // marker block still distinguishes this havoc from ordinary memory.
         let base = Some(intern_c_memory_ref(&self));
-        let mut union_widths = BTreeMap::<Pointer, u32>::new();
-        for (pointer, c_type) in self.union_cells.keys() {
-            union_widths
-                .entry(pointer.clone())
-                .and_modify(|width| *width = (*width).max(c_type.byte_width()))
-                .or_insert_with(|| c_type.byte_width());
-        }
+        let union_widths = union_overlay_widths(&self);
         std::sync::Arc::make_mut(&mut self.cells).retain(|pointer, value| {
-            let byte_width = value
-                .byte_width()
-                .max(union_widths.get(pointer).copied().unwrap_or(0));
-            preserved_blocks.contains(&pointer.block)
-                || ledger.is_some_and(|ledger| {
-                    if byte_width == 0 {
-                        // Nothing proved this cell stable; keeping its value
-                        // would be a fail-open promise (docs/internals/stable-views.md).
-                        return false;
-                    }
-                    ledger
-                        .permits_memory_access(&CMemoryRange::new_with_element_width(
-                            pointer.clone(),
-                            Bitvector32Term::Constant(0),
-                            Bitvector32Term::Constant(byte_width),
-                            1,
-                        ))
-                        .is_err()
-                })
+            loan_preserving_havoc_keeps_cell(
+                pointer,
+                value,
+                &union_widths,
+                preserved_blocks,
+                ledger,
+            )
         });
         std::sync::Arc::make_mut(&mut self.blocks).insert(
             format!("havoc:{}", variable.0).into(),
@@ -2065,33 +2098,15 @@ impl CMemory {
             return Err("interface arms disagree on zeroed pending heap allocations".to_string());
         }
 
-        let mut union_widths = BTreeMap::<Pointer, u32>::new();
-        for (pointer, c_type) in self.union_cells.keys() {
-            union_widths
-                .entry(pointer.clone())
-                .and_modify(|width| *width = (*width).max(c_type.byte_width()))
-                .or_insert_with(|| c_type.byte_width());
-        }
+        let union_widths = union_overlay_widths(&self);
         std::sync::Arc::make_mut(&mut self.cells).retain(|pointer, value| {
-            let byte_width = value
-                .byte_width()
-                .max(union_widths.get(pointer).copied().unwrap_or(0));
-            preserved_blocks.contains(&pointer.block)
-                || ledger.is_some_and(|ledger| {
-                    if byte_width == 0 {
-                        // Nothing proved this cell stable; keeping its value
-                        // would be a fail-open promise (docs/internals/stable-views.md).
-                        return false;
-                    }
-                    ledger
-                        .permits_memory_access(&CMemoryRange::new_with_element_width(
-                            pointer.clone(),
-                            Bitvector32Term::Constant(0),
-                            Bitvector32Term::Constant(byte_width),
-                            1,
-                        ))
-                        .is_err()
-                })
+            loan_preserving_havoc_keeps_cell(
+                pointer,
+                value,
+                &union_widths,
+                preserved_blocks,
+                ledger,
+            )
         });
         blocks.insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
         self.blocks = std::sync::Arc::new(blocks);
