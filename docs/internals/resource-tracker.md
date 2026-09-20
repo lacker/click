@@ -159,8 +159,8 @@ the case that actually applies:
 | Case | What it says |
 | --- | --- |
 | one array, two indexes | ``the store to `a[i]` may have written it. If `m` and `i` differ, state `m != i`.`` |
-| two objects nothing separates | ``the store to `g[0]` may have written it, because `a` may point into `g`. If they are separate, require `separate(memory(a[0..1]), memory(g[0..1]))`.`` |
-| a call or a loop with a write set | ``the call in between may write `g[0..1]` … require `separate(memory(a[0..1]), memory(g[0..1]))`.`` |
+| two objects nothing separates | ``the store to `g[0]` may have written it, because `a` may point into `g`. If they are separate, require `separate(memory(a[0..1]), memory(g[0..1]))`; where the contract already transfers `g[0..1]` with `owns` or `consumes`, declaring `views a[0..1]` says the same.`` |
+| a call or a loop with a write set | ``the call in between may write `g[0..1]` …`` then the same two clauses |
 | the resource was written | ``the store to `a[i]` wrote it.`` |
 | the read has no source spelling | ``the store to `g[0]` may have written it, and nothing tells that address apart from this read.`` |
 | a fact about a block | ``a fact about `a` as a whole does not carry across the store to `b[j]`.`` plus the note below |
@@ -170,6 +170,17 @@ where none does, it says what is missing instead of naming a repair that would
 not work. A whole-array fact is the case with no repair to name: the block walk
 reads no stated separation at all, so the text says so rather than sending the
 reader to write a `separate(..)` the walk will never consult.
+
+The two cases that can spell both ranges offer two clauses, because two say the
+same thing: a stated `separate(..)`, and — since a contract's transferred and
+borrowed clauses denote disjoint memory
+(`kernel::contract_entry_partition_facts`) — a `views` clause over the read.
+The second names its condition ("where the contract already transfers
+`g[0..1]`") rather than asserting it: this renderer is handed two addresses, not
+the contract's clause list, and a range transferred only inside a folded
+composite is not one the entry partition reaches.  Both clauses are ones the
+reader can write, because `SourceCell::element_range` spells only a parameter or
+a file-scope declaration and yields nothing for a local.
 
 An index only the lowering has a name for is printed `a[…]`, never as the
 kernel variable, and no inequality is proposed over a name nobody wrote. It

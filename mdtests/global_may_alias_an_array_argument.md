@@ -7,7 +7,10 @@ let `caller` hold `g[0] == 5` and `g[0] == 1` at one program point.
 
 The two addresses are spelled `arg-memory` and `global:g`, which is a
 difference in names and not in objects. The refusal says so, and says what
-would settle it.
+would settle it — either of the two clauses that do: the `separate(...)` of
+`a_separated_array_argument_survives_a_global_store.md`, or the `views a[0..1]`
+of `a_views_clause_is_separate_from_an_owns_clause.md`, which is the same
+claim made by the contract's own transferred/borrowed split.
 
 ```c filename=global_may_alias_an_array_argument.c
 int32 g[4];
@@ -41,5 +44,5 @@ void caller() {
 ```
 
 ```expect
-fail: `a[0]` may have changed since earlier in this function: the store to `g[0]` may have written it, because `a` may point into `g`. If they are separate, require `separate(memory(a[0..1]), memory(g[0..1]))`.
+fail: `a[0]` may have changed since earlier in this function: the store to `g[0]` may have written it, because `a` may point into `g`. If they are separate, require `separate(memory(a[0..1]), memory(g[0..1]))`; where the contract already transfers `g[0..1]` with `owns` or `consumes`, declaring `views a[0..1]` says the same.
 ```

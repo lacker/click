@@ -1486,9 +1486,7 @@ fn describe_store_cause(
         };
     }
     let repair = match (cell.element_range(), store.element_range()) {
-        (Some(read), Some(written)) => {
-            format!(" If they are separate, require `separate(memory({read}), memory({written}))`.")
-        }
+        (Some(read), Some(written)) => format!(" {}", spelled_separation_repair(&read, &written)),
         _ => format!(
             " If they are separate, require a `separate(memory({}[…]), memory({}[…]))` between \
              them.",
@@ -1527,13 +1525,38 @@ fn describe_havoc_cause(
     let cell_range = cell.and_then(SourceCell::element_range);
     if let ([written], Some(read)) = (spelled.as_slice(), cell_range.as_ref()) {
         return format!(
-            "{step} may write `{written}`, which is not shown separate from it. If they are \
-             separate, require `separate(memory({read}), memory({written}))`."
+            "{step} may write `{written}`, which is not shown separate from it. {}",
+            spelled_separation_repair(read, written)
         );
     }
     format!(
         "{step} may write {}, and none of them is shown separate from it.",
         bounded_range_list(&spelled)
+    )
+}
+
+/// The repair for two objects nothing separates, when both ranges have a
+/// source spelling: the `separate(..)` to state, and the `views` clause that
+/// says the same thing without one.
+///
+/// A contract's transferred clauses and its borrowed `views` clauses denote
+/// disjoint memory at entry
+/// (`kernel::contract_entry_partition_facts`,
+/// `docs/internals/resource-tracker.md`, "The entry partition"), so a
+/// function that already transfers the written range separates it from every
+/// range it lends by declaring the read as a `views` clause. Both halves are
+/// printed only where they verify the situation they are printed for, which
+/// is why the second one names its condition rather than asserting it: this
+/// renderer sees two addresses, not the contract's clause list, and the
+/// entry partition does not reach a range transferred only inside a folded
+/// composite. Every range that reaches here is spelled through a parameter
+/// or a file-scope declaration — `SourceCell::element_range` yields nothing
+/// for a local — so both clauses are ones the reader can write.
+fn spelled_separation_repair(read: &str, written: &str) -> String {
+    format!(
+        "If they are separate, require `separate(memory({read}), memory({written}))`; where the \
+         contract already transfers `{written}` with `owns` or `consumes`, declaring \
+         `views {read}` says the same."
     )
 }
 
