@@ -15,29 +15,7 @@ const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
 /// green gate. Run one with `MDTEST_FILTER=<name>`, or all of them with
 /// `CLICK_RUN_QUARANTINED=1`. Each entry names the reason; remove entries as
 /// they are fixed (see docs/internals/testing.md).
-const QUARANTINED: &[(&str, &str)] = &[
-    // The one below states a true claim and stopped being provable when the
-    // block-name filter for a load through an unresolved pointer was removed
-    // (`PointerBlock::observable_by_load`; the false theorem it admitted is
-    // `mdtests/returned_pointer_may_alias_a_global.md`). It needs one
-    // evidence route that the load-framing path does not have; the route and
-    // why it is not a reuse of an existing predicate are in
-    // `docs/internals/resource-tracker.md` under "Parked proofs".
-    (
-        "const_callback_field.md",
-        "true claim, no longer provable since the name filter for unresolved-pointer loads was \
-         removed (soundness, witness returned_pointer_may_alias_a_global). Telling `p` and `r` \
-         apart inside one `external` block rests on `owns object(r)` beside a *bound* \
-         `views p[0..1]`, and owner-beside-view is not separation: the same context holds \
-         `views r[0..2]` beside `owns r[0..2]`, an owner observation of the very range it \
-         describes (MemoryResourceAlgebra::pair_validity_error). The discriminator is the \
-         clause's origin: a contract `views` clause is disjoint from the same contract's `owns` \
-         clauses, and every entry path enforces that fail-closed, but the fact has nowhere to be \
-         recorded that the body proof and contract certification both see. See \
-         `docs/internals/resource-tracker.md`, \"The entry partition\"; remove when a borrowed \
-         contract input is evidence for one cell",
-    ),
-];
+const QUARANTINED: &[(&str, &str)] = &[];
 
 /// The artifact reuse rejection ratchet (`docs/internals/testing.md`): count
 /// contract certification rejections of checked execution artifacts over the

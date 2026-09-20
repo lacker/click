@@ -16400,6 +16400,97 @@ fn evaluate_function_resource_context_with_normalization(
     Ok(Ok((context, checked)))
 }
 
+/// The **entry partition**, as facts: at a contract's entry, a transferred
+/// memory clause and a borrowed `views` clause of the *same* contract denote
+/// disjoint memory, so a store through one is framed from a load through the
+/// other.
+///
+/// **The rule.** For each pair (an entry clause whose fact is owned, an entry
+/// clause whose fact is viewed) this produces the ordinary explicit separation
+/// `separate(memory(X), memory(Y))` — `Proposition::CResourceSeparate` over
+/// two `CResource::Memory` operands, exactly the proposition a written
+/// `requires separate(memory(a[0..n]), memory(g[0..1]))` lowers to. Nothing
+/// new is invented: the Store ladder already spends it at
+/// `memory_provenance::typed_store_separated_ranges_evidence`, and the caller
+/// of this function installs the result as an entry fact beside the
+/// `viewable(..)` fact and the byte-count guards the same clause already
+/// yields.
+///
+/// **Why it is sound.** The claim is the ownership partition's own induction,
+/// one step down. Every way a contract can be entered checks it, and each
+/// check is fail-closed on the side that matters:
+///
+/// - an ordinary call, a self-call, a call through a function pointer or a
+///   `contract` interface, and contract/implementation refinement all funnel
+///   through `loans::plan_stable_view_transfer_with_bindings_and_composites`,
+///   which reserves *every* owned requirement out of the caller's `residual`
+///   before planning a single view, and then requires each view's backing
+///   owner to still be found in that residual. A caller that hands the same
+///   memory to an `owns` clause and a `views` clause is refused for want of
+///   backing, never admitted;
+/// - the contract's own entry is checked by
+///   `api::install_borrowed_contract_inputs`, which refuses a viewed clause
+///   that provably overlaps an owned one (`protected_range_proven_overlapping`)
+///   and computes its partition from this very clause list;
+/// - at the outer boundary it is an assumption about the environment, in the
+///   same class as the ownership the contract already assumes: a precondition's
+///   clauses are read as a separating conjunction.
+///
+/// So the caller owes nothing new for this fact. `docs/internals/resource-tracker.md`,
+/// "The entry partition", carries the measured attack table.
+///
+/// **What it must not pair.**
+///
+/// - Never an owner and the *owner observation* of its own range. `owns r`
+///   also publishes `views r` into a context
+///   (`ResourceContext::observable_facts_assuming_valid`,
+///   `MemoryResourceAlgebra::pair_validity_error`), and that view is an
+///   observation of the very ownership beside it. The discriminator is the
+///   origin: this reads the contract's own entry *clause list*, which holds
+///   one fact per written clause, never a context's derived facts.
+/// - Never two borrowed views: two `views` clauses may overlap freely.
+/// - Never two owners: that pair is
+///   `memory_provenance::owned_composition_store_separated_evidence` already
+///   (Route B), and duplicating it here would be a second spelling of one rule.
+/// - A clause that is not plain memory — a composite, a token, an instance —
+///   has no `CMemoryRange` to name, and `separate(memory(..), memory(..))`
+///   cannot express its footprint without expanding it. Such a pair is
+///   skipped outright rather than approximated; `owns object(r)` is *not* one
+///   of those, because `object(r)` lowers to the plain range `r[0..size/4]`.
+///
+/// **Cost.** `#owned × #viewed` clauses of one contract, built once at that
+/// contract's entry and never on a query path. This is not the eager pairwise
+/// derivation `CLAUDE.md` bans: that ban is about a verifier hot path, and a
+/// contract's clause list is bounded written syntax that is walked once per
+/// proof.
+pub(crate) fn contract_entry_partition_facts(
+    entry_clauses: &[CCheckedResourceFact],
+) -> Vec<Proposition> {
+    let transferred = entry_clauses
+        .iter()
+        .filter_map(|clause| clause.fact.memory_own_range())
+        .collect::<Vec<_>>();
+    if transferred.is_empty() {
+        return Vec::new();
+    }
+    let borrowed = entry_clauses
+        .iter()
+        .filter_map(|clause| clause.fact.memory_view_range());
+    let mut facts = Vec::new();
+    for viewed in borrowed {
+        for owned in &transferred {
+            let fact = Proposition::CResourceSeparate {
+                left: CResource::Memory((*owned).clone()),
+                right: CResource::Memory(viewed.clone()),
+            };
+            if !facts.contains(&fact) {
+                facts.push(fact);
+            }
+        }
+    }
+    facts
+}
+
 /// Evaluates one contract section's resource clauses against the loadability
 /// the whole section supplies, and returns their resources in source order.
 ///

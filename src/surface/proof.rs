@@ -2369,7 +2369,8 @@ pub(super) fn initial_claim_context_with_caller_owner(
     // this is the authority for both direct and named contracts.  A surface
     // segment diagnostic is used only to enrich a kernel refusal, never to
     // authorize a clause independently.
-    state = evaluate_entry_resource_context(
+    let entry_partition_facts;
+    (state, entry_partition_facts) = evaluate_entry_resource_context(
         function_block,
         parsed_function,
         resource_environment,
@@ -2383,6 +2384,16 @@ pub(super) fn initial_claim_context_with_caller_owner(
         &entry_authority_state.resources().clone(),
         &entry_authority_state.memory().clone(),
     )?;
+    // The entry partition facts are entry assumptions of this contract, on the
+    // same footing as the `viewable(..)` fact a clause yields: they are
+    // derived from the written clause list, and contract certification derives
+    // them again for itself from the same list rather than trusting this one.
+    for fact in entry_partition_facts {
+        if !requirement_pure_facts.contains(&fact) {
+            requirement_pure_facts.push(fact);
+            entry_fact_origins.push(EntryFactOrigin::Derived);
+        }
+    }
     for requirement in function_block.requires() {
         let Requirement::Resource(resource) = requirement.inner() else {
             continue;
@@ -2602,14 +2613,14 @@ fn evaluate_entry_resource_context(
     claim_label: &str,
     entry_resources: &ResourceContext,
     entry_memory: &CMemory,
-) -> Result<CState, ClickError> {
+) -> Result<(CState, Vec<Proposition>), ClickError> {
     let (resource_specs, _) = crate::surface::verification::function_resource_summary(
         function_block,
         parsed_function,
         resource_environment,
     )?;
     if resource_specs.is_empty() {
-        return Ok(state);
+        return Ok((state, Vec::new()));
     }
 
     // The kernel evaluator resolves source parameter names through its local
@@ -2722,46 +2733,55 @@ fn evaluate_entry_resource_context(
     for proposition in quantity_assumptions {
         assumptions = assumptions.assume_proposition(proposition);
     }
-    let evaluated = match crate::kernel::evaluate_function_resource_context(
-        &evaluation_state,
-        &resource_specs,
-        &definitions,
-        &assumptions,
-        &mut budget,
-    ) {
-        Ok(Ok(resources)) => resources,
-        Ok(Err(error)) => {
-            // Keep the established source-rich spelling for a dependent
-            // memory segment.  This is a diagnostic projection of the
-            // kernel's already-final refusal, not a second acceptance path;
-            // declared/composite argument failures have no surface fallback
-            // and retain the kernel's clause-positioned error.
-            if let Err(surface_error) =
-                crate::surface::lowering::check_resource_segment_base_loadability(
-                    function_block,
-                    parsed_function.parameters(),
-                    arguments,
-                    &state,
-                    &assumptions,
-                )
-            {
+    let (evaluated, entry_clauses) =
+        match crate::kernel::evaluate_function_resource_context_with_metadata(
+            &evaluation_state,
+            &resource_specs,
+            &definitions,
+            &assumptions,
+            &mut budget,
+        ) {
+            Ok(Ok(evaluated)) => evaluated,
+            Ok(Err(error)) => {
+                // Keep the established source-rich spelling for a dependent
+                // memory segment.  This is a diagnostic projection of the
+                // kernel's already-final refusal, not a second acceptance path;
+                // declared/composite argument failures have no surface fallback
+                // and retain the kernel's clause-positioned error.
+                if let Err(surface_error) =
+                    crate::surface::lowering::check_resource_segment_base_loadability(
+                        function_block,
+                        parsed_function.parameters(),
+                        arguments,
+                        &state,
+                        &assumptions,
+                    )
+                {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` setup failed: {}",
+                        surface_error.message()
+                    )));
+                }
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` setup failed: {}",
-                    surface_error.message()
+                    "`{claim_label}` setup failed: could not evaluate the contract entry resources: {error:?}"
                 )));
             }
-            return Err(ClickError::new(format!(
-                "`{claim_label}` setup failed: could not evaluate the contract entry resources: {error:?}"
-            )));
-        }
-        Err(limit) => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` setup failed: could not evaluate the contract entry resources: execution limit {limit:?}"
-            )));
-        }
-    };
+            Err(limit) => {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` setup failed: could not evaluate the contract entry resources: execution limit {limit:?}"
+                )));
+            }
+        };
     let state = state.with_resource_context(evaluated);
-    project_initial_composite_resource_cores(
+    // The entry partition (`kernel::contract_entry_partition_facts`): this
+    // contract's transferred memory clauses are separate from its borrowed
+    // `views` clauses. Read off the *clause list* the kernel just evaluated,
+    // never off the resulting context, because a context also holds the
+    // owner observation `views r` that `owns r` publishes, and that view is
+    // not separate from its own owner. Contract certification derives the
+    // same facts from the same clause list, so the two entry contexts agree.
+    let entry_partition_facts = crate::kernel::contract_entry_partition_facts(&entry_clauses);
+    let state = project_initial_composite_resource_cores(
         resource_environment,
         parsed_function.parameters(),
         arguments,
@@ -2771,7 +2791,8 @@ fn evaluate_entry_resource_context(
         include_owned_composite_cores,
         predicate_environment,
         click_function_environment,
-    )
+    )?;
+    Ok((state, entry_partition_facts))
 }
 
 fn click_proposition_mentions_defined(proposition: &ClickProposition) -> bool {

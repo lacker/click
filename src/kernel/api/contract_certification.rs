@@ -1501,27 +1501,40 @@ pub(super) fn c_function_contract_certification_assumptions(
     for proposition in quantity_assumptions {
         assumptions = assumptions.assume_proposition(proposition);
     }
-    let required_resources = match evaluate_function_resource_context(
-        &entry_state,
-        function.resource_requires(),
-        function.composite_resource_definitions(),
-        &assumptions,
-        &mut budget,
-    ) {
-        Ok(Ok(resources)) => resources,
-        Ok(Err(error)) => {
-            return Err(format!(
-                "could not evaluate the contract entry resources: {}",
-                describe_certification_runtime_error(&error)
-            ));
-        }
-        Err(limit) => {
-            return Err(format!(
-                "evaluating the contract entry resources stopped at {}",
-                describe_execution_limit(limit)
-            ));
-        }
-    };
+    let (required_resources, required_entry_clauses) =
+        match evaluate_function_resource_context_with_metadata(
+            &entry_state,
+            function.resource_requires(),
+            function.composite_resource_definitions(),
+            &assumptions,
+            &mut budget,
+        ) {
+            Ok(Ok(evaluated)) => evaluated,
+            Ok(Err(error)) => {
+                return Err(format!(
+                    "could not evaluate the contract entry resources: {}",
+                    describe_certification_runtime_error(&error)
+                ));
+            }
+            Err(limit) => {
+                return Err(format!(
+                    "evaluating the contract entry resources stopped at {}",
+                    describe_execution_limit(limit)
+                ));
+            }
+        };
+    // The entry partition, authorized here rather than accepted from the
+    // proof: a transferred clause and a borrowed `views` clause of this
+    // contract denote disjoint memory. The premise is derivable from the
+    // contract's own clause list, which is what this recomputes from
+    // `function.resource_requires()` — the analogue of the way a `viewable`
+    // entry fact is authorized above from the resources the same clauses
+    // supply. `functions::contract_entry_partition_facts` carries the rule
+    // and its soundness argument; the fail-closed call-site planner is what
+    // discharges the claim, so a caller owes nothing extra for it.
+    for fact in crate::kernel::contract_entry_partition_facts(&required_entry_clauses) {
+        assumptions = assumptions.assume_proposition(fact);
+    }
     for fact in required_resources.facts() {
         // Owned ranges carry their byte-count guards exactly as viewed ranges
         // do: the clause states the same range, and the loadability rules read

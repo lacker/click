@@ -102,7 +102,7 @@ pub(crate) use functions::symbolic_call_result;
 pub(crate) use functions::unreturned_allocation_at_function_exit;
 pub(crate) use functions::unreturned_allocation_with_checked_returned_resources;
 pub(crate) use functions::{
-    evaluate_function_resource_context, evaluate_function_resource_context_with_metadata,
+    contract_entry_partition_facts, evaluate_function_resource_context_with_metadata,
     project_contract_memory_effects, quantified_resource_requirement_assumptions,
     resource_clause_position_note, resource_clause_stall_note,
     validate_resource_derived_loop_frames,

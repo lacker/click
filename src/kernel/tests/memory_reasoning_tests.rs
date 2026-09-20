@@ -3063,6 +3063,134 @@ fn a_composition_separates_a_store_from_a_load_only_through_two_owners() {
     );
 }
 
+/// The entry partition pairs a contract's *transferred* clauses with its
+/// *borrowed* ones, and nothing else. This pins the three pairs it must never
+/// build and the one clause shape it has to skip rather than approximate;
+/// `docs/internals/resource-tracker.md`, "The entry partition", carries the
+/// argument, and the mdtests beginning `a_caller_cannot_lend_` carry the
+/// call-site attacks.
+#[test]
+fn the_entry_partition_pairs_a_transferred_clause_only_with_a_borrowed_one() {
+    use crate::kernel::CResourceTransferRole;
+    use crate::kernel::contract_entry_partition_facts;
+    use crate::kernel::functions::CCheckedResourceFact;
+
+    let argument = |index: u64| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(index)), 4),
+    };
+    let (owned_base, viewed_base) = (argument(95_001), argument(95_002));
+    let owned_cell = memory_range(owned_base.clone(), 0, 2);
+    let viewed_cell = memory_range(viewed_base.clone(), 0, 1);
+    let clause = |fact: CResourceFact, role: CResourceTransferRole| CCheckedResourceFact {
+        fact,
+        role,
+        snapshot: CResourceSnapshot::Entry,
+        clause_position: None,
+    };
+    let separation = |left: &CMemoryRange, right: &CMemoryRange| Proposition::CResourceSeparate {
+        left: CResource::Memory(left.clone()),
+        right: CResource::Memory(right.clone()),
+    };
+
+    // The shape `mdtests/const_callback_field.md` needs: `owns object(r)`
+    // beside `views p[0..1]`, both spelled in one `external` block.
+    let partition = contract_entry_partition_facts(&[
+        clause(
+            CResourceFact::own_memory(owned_cell.clone()),
+            CResourceTransferRole::Consume,
+        ),
+        clause(
+            CResourceFact::view_memory(viewed_cell.clone()),
+            CResourceTransferRole::Borrow,
+        ),
+    ]);
+    assert_eq!(
+        partition,
+        vec![separation(&owned_cell, &viewed_cell)],
+        "a transferred clause and a borrowed clause of one contract are disjoint"
+    );
+
+    // Two borrowed views may overlap freely: the caller lends both, and
+    // lending twice is exactly what a shared borrow permits.
+    assert!(
+        contract_entry_partition_facts(&[
+            clause(
+                CResourceFact::view_memory(owned_cell.clone()),
+                CResourceTransferRole::Borrow,
+            ),
+            clause(
+                CResourceFact::view_memory(viewed_cell.clone()),
+                CResourceTransferRole::Borrow,
+            ),
+        ])
+        .is_empty(),
+        "two borrowed views are not a partition"
+    );
+
+    // Two owners are `owned_composition_store_separated_evidence` (Route B)
+    // already. Emitting the pair here as well would be one rule written
+    // twice, in two places a fix would then have to find.
+    assert!(
+        contract_entry_partition_facts(&[
+            clause(
+                CResourceFact::own_memory(owned_cell.clone()),
+                CResourceTransferRole::Consume,
+            ),
+            clause(
+                CResourceFact::own_memory(viewed_cell.clone()),
+                CResourceTransferRole::Consume,
+            ),
+        ])
+        .is_empty(),
+        "two owners are Route B, not the entry partition"
+    );
+
+    // An owner beside the owner observation of its own range. The context a
+    // body proof runs under holds exactly this pair — `owns r` publishes
+    // `views r` (`ResourceContext::observable_facts_assuming_valid`) — and
+    // separating a range from itself would be a false theorem. The
+    // discriminator is that this rule reads the contract's clause list, which
+    // holds one fact per written clause, so the observation never reaches it;
+    // were it to, the fact below is what it would produce.
+    let self_observation = contract_entry_partition_facts(&[
+        clause(
+            CResourceFact::own_memory(owned_cell.clone()),
+            CResourceTransferRole::Consume,
+        ),
+        clause(
+            CResourceFact::view_memory(owned_cell.clone()),
+            CResourceTransferRole::Borrow,
+        ),
+    ]);
+    assert_eq!(
+        self_observation,
+        vec![separation(&owned_cell, &owned_cell)],
+        "the clause list is the only filter: a context's derived views must never be passed here"
+    );
+
+    // A clause that is not plain memory has no range to name. `separate` over
+    // two memory operands cannot express a folded composite's footprint
+    // without expanding it, so the pair is skipped outright.
+    assert!(
+        contract_entry_partition_facts(&[
+            clause(
+                CResourceFact::own(CResource::Composite {
+                    name: "Cell".to_string(),
+                    arguments: vec![CValue::pointer(owned_base.clone()).into()].into(),
+                }),
+                CResourceTransferRole::Consume,
+            ),
+            clause(
+                CResourceFact::view_memory(viewed_cell.clone()),
+                CResourceTransferRole::Borrow,
+            ),
+        ])
+        .is_empty(),
+        "a folded composite owns no range this rule may approximate"
+    );
+}
+
 #[test]
 fn memory_resolution_uses_compact_resource_composition_with_shallow_equalities() {
     let member_left_index = Bitvector32Term::Variable(Variable(93_410));
