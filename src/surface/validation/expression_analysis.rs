@@ -708,6 +708,42 @@ pub(in crate::surface) fn collect_click_function_calls(
     expression: &ContractExpression,
     calls: &mut BTreeSet<String>,
 ) {
+    let mut depth = 0;
+    let mut current = expression;
+    while let ContractExpression::Add(left, _) = current {
+        depth += 1;
+        current = left;
+    }
+    if depth > 128 {
+        let mut pending = vec![expression];
+        while let Some(expression) = pending.pop() {
+            match expression {
+                ContractExpression::Add(left, right)
+                | ContractExpression::Subtract(left, right)
+                | ContractExpression::Multiply(left, right)
+                | ContractExpression::Divide(left, right)
+                | ContractExpression::Remainder(left, right)
+                | ContractExpression::ShiftLeft(left, right)
+                | ContractExpression::ShiftRight(left, right)
+                | ContractExpression::BitwiseAnd(left, right)
+                | ContractExpression::BitwiseOr(left, right)
+                | ContractExpression::BitwiseXor(left, right)
+                | ContractExpression::Index(left, right) => {
+                    pending.push(right);
+                    pending.push(left);
+                }
+                ContractExpression::Negate(inner) | ContractExpression::BitwiseNot(inner) => {
+                    pending.push(inner)
+                }
+                expression => collect_click_function_calls_one(expression, calls),
+            }
+        }
+        return;
+    }
+    collect_click_function_calls_one(expression, calls);
+}
+
+fn collect_click_function_calls_one(expression: &ContractExpression, calls: &mut BTreeSet<String>) {
     match expression {
         ContractExpression::IntegerLiteral(_) => {}
         ContractExpression::Negate(inner) => collect_click_function_calls(inner, calls),

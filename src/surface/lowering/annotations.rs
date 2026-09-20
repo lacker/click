@@ -3186,6 +3186,18 @@ impl AnnotationLowerer<'_> {
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> bool {
+        let mut depth = 0;
+        let mut current = expression;
+        while let ContractExpression::Add(left, right) = current {
+            if !matches!(right.as_ref(), ContractExpression::IntegerLiteral(_)) {
+                break;
+            }
+            depth += 1;
+            current = left;
+        }
+        if depth > 128 && matches!(current, ContractExpression::IntegerLiteral(_)) {
+            return false;
+        }
         self.contract_expression_click_type(expression, environment)
             .is_some_and(|click_type| click_type == ClickType::Integer)
     }
@@ -3835,6 +3847,35 @@ impl AnnotationLowerer<'_> {
     }
 
     fn lower_contract_expression_to_spec(
+        &mut self,
+        expression: &ContractExpression,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecExpression, String> {
+        let mut operands = Vec::new();
+        let mut current = expression;
+        while let ContractExpression::Add(left, right) = current {
+            if !matches!(right.as_ref(), ContractExpression::IntegerLiteral(_)) {
+                return self.lower_contract_expression_to_spec_one(expression, environment);
+            }
+            operands.push(right.as_ref());
+            current = left;
+        }
+        if operands.len() > 128 && matches!(current, ContractExpression::IntegerLiteral(_)) {
+            operands.push(current);
+            let mut lowered = self.lower_contract_expression_to_spec_one(
+                operands.pop().expect("the additive base is present"),
+                environment,
+            )?;
+            for operand in operands.into_iter().rev() {
+                let right = self.lower_contract_expression_to_spec_one(operand, environment)?;
+                lowered = SpecExpression::Add(Box::new(lowered), Box::new(right));
+            }
+            return Ok(lowered);
+        }
+        self.lower_contract_expression_to_spec_one(expression, environment)
+    }
+
+    fn lower_contract_expression_to_spec_one(
         &mut self,
         expression: &ContractExpression,
         environment: &SpecElaborationContext,

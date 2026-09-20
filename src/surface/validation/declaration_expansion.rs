@@ -1331,6 +1331,31 @@ fn expand_declared_resource_expression(
     expression: ContractExpression,
     resource_definitions: &DeclaredResourceScope,
 ) -> Result<ContractExpression, ClickError> {
+    let mut add_depth = 0;
+    let mut add_cursor = &expression;
+    while let ContractExpression::Add(left, _) = add_cursor {
+        add_depth += 1;
+        add_cursor = left;
+    }
+    if add_depth > 128 {
+        let mut operands = Vec::with_capacity(add_depth);
+        let mut current = expression;
+        while let ContractExpression::Add(left, right) = current {
+            operands.push(*right);
+            current = *left;
+        }
+        let mut expanded = expand_declared_resource_expression(current, resource_definitions)?;
+        for operand in operands.into_iter().rev() {
+            expanded = ContractExpression::Add(
+                Box::new(expanded),
+                Box::new(expand_declared_resource_expression(
+                    operand,
+                    resource_definitions,
+                )?),
+            );
+        }
+        return Ok(expanded);
+    }
     // Let chains are common in generated specifications and can be much
     // deeper than the surrounding expression tree. Peel consecutive lets
     // iteratively so expanding their bodies does not retain one large match

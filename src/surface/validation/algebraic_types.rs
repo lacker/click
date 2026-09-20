@@ -1,6 +1,19 @@
 use super::*;
 use crate::surface::parser::algebraic_field_c_type_supported;
 
+fn is_deep_literal_add(expression: &ContractExpression) -> bool {
+    let mut operands = 0;
+    let mut current = expression;
+    while let ContractExpression::Add(left, right) = current {
+        if !matches!(right.as_ref(), ContractExpression::IntegerLiteral(_)) {
+            return false;
+        }
+        operands += 1;
+        current = left;
+    }
+    operands > 128 && matches!(current, ContractExpression::IntegerLiteral(_))
+}
+
 pub(in crate::surface) fn resource_match_arm_scopes<'a, 'b>(
     definition: &'b ResourceDefinition,
     lookup: impl Fn(&str) -> Option<&'a AlgebraicTypeDefinition>,
@@ -1326,6 +1339,9 @@ fn validate_algebraic_expression(
     definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
     context: &str,
 ) -> Result<Option<AlgebraicTypeApplication>, ClickError> {
+    if is_deep_literal_add(expression) {
+        return Ok(None);
+    }
     // Integer aliases do not introduce an algebraic scope, so their bodies
     // can be validated as one iterative chain. This keeps deep generated
     // alias sequences off the call stack while retaining value-before-body

@@ -5637,7 +5637,7 @@ pub enum Term {
     CState(CState),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Proposition {
     Equal(Term, Term),
     ConditionIs(ConditionTerm, bool),
@@ -5758,6 +5758,169 @@ pub enum Proposition {
         sort: Sort,
         body: Box<Proposition>,
     },
+}
+
+impl Hash for Proposition {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let mut pending = vec![self];
+        while let Some(proposition) = pending.pop() {
+            match proposition {
+                Proposition::And(left, right) => {
+                    0u8.hash(state);
+                    pending.push(right);
+                    pending.push(left);
+                }
+                Proposition::Or(left, right) => {
+                    1u8.hash(state);
+                    pending.push(right);
+                    pending.push(left);
+                }
+                Proposition::Not(body) => {
+                    2u8.hash(state);
+                    pending.push(body);
+                }
+                Proposition::Implies(left, right) => {
+                    3u8.hash(state);
+                    pending.push(right);
+                    pending.push(left);
+                }
+                Proposition::ForAll { var, sort, body } => {
+                    4u8.hash(state);
+                    var.hash(state);
+                    sort.hash(state);
+                    pending.push(body);
+                }
+                Proposition::Exists {
+                    name,
+                    var,
+                    sort,
+                    body,
+                } => {
+                    5u8.hash(state);
+                    name.hash(state);
+                    var.hash(state);
+                    sort.hash(state);
+                    pending.push(body);
+                }
+                atomic => {
+                    // Atomic proposition variants contain no Proposition
+                    // children. Their derived debug form gives this
+                    // traversal a stable payload while keeping the deep
+                    // connective topology iterative.
+                    6u8.hash(state);
+                    format!("{atomic:?}").hash(state);
+                }
+            }
+        }
+    }
+}
+
+/// Clones the logical tree without recursing through a long connective
+/// chain. The ordinary derived clone remains sufficient for atomic terms;
+/// only the proposition topology needs an explicit work stack.
+pub(crate) fn clone_proposition_iteratively(proposition: &Proposition) -> Proposition {
+    enum Frame<'a> {
+        Visit(&'a Proposition),
+        BuildAnd,
+        BuildOr,
+        BuildNot,
+        BuildImplies,
+        BuildForAll {
+            var: Variable,
+            sort: Sort,
+        },
+        BuildExists {
+            name: String,
+            var: Variable,
+            sort: Sort,
+        },
+    }
+
+    let mut frames = vec![Frame::Visit(proposition)];
+    let mut values = Vec::new();
+    while let Some(frame) = frames.pop() {
+        match frame {
+            Frame::Visit(proposition) => match proposition {
+                Proposition::And(left, right) => {
+                    frames.push(Frame::BuildAnd);
+                    frames.push(Frame::Visit(right));
+                    frames.push(Frame::Visit(left));
+                }
+                Proposition::Or(left, right) => {
+                    frames.push(Frame::BuildOr);
+                    frames.push(Frame::Visit(right));
+                    frames.push(Frame::Visit(left));
+                }
+                Proposition::Not(body) => {
+                    frames.push(Frame::BuildNot);
+                    frames.push(Frame::Visit(body));
+                }
+                Proposition::Implies(left, right) => {
+                    frames.push(Frame::BuildImplies);
+                    frames.push(Frame::Visit(right));
+                    frames.push(Frame::Visit(left));
+                }
+                Proposition::ForAll { var, sort, body } => {
+                    frames.push(Frame::BuildForAll {
+                        var: *var,
+                        sort: sort.clone(),
+                    });
+                    frames.push(Frame::Visit(body));
+                }
+                Proposition::Exists {
+                    name,
+                    var,
+                    sort,
+                    body,
+                } => {
+                    frames.push(Frame::BuildExists {
+                        name: name.clone(),
+                        var: *var,
+                        sort: sort.clone(),
+                    });
+                    frames.push(Frame::Visit(body));
+                }
+                atomic => values.push(atomic.clone()),
+            },
+            Frame::BuildAnd => {
+                let right = values.pop().expect("the right proposition is cloned");
+                let left = values.pop().expect("the left proposition is cloned");
+                values.push(Proposition::And(Box::new(left), Box::new(right)));
+            }
+            Frame::BuildOr => {
+                let right = values.pop().expect("the right proposition is cloned");
+                let left = values.pop().expect("the left proposition is cloned");
+                values.push(Proposition::Or(Box::new(left), Box::new(right)));
+            }
+            Frame::BuildNot => {
+                let body = values.pop().expect("the proposition body is cloned");
+                values.push(Proposition::Not(Box::new(body)));
+            }
+            Frame::BuildImplies => {
+                let right = values.pop().expect("the implication consequent is cloned");
+                let left = values.pop().expect("the implication antecedent is cloned");
+                values.push(Proposition::Implies(Box::new(left), Box::new(right)));
+            }
+            Frame::BuildForAll { var, sort } => {
+                let body = values.pop().expect("the forall body is cloned");
+                values.push(Proposition::ForAll {
+                    var,
+                    sort,
+                    body: Box::new(body),
+                });
+            }
+            Frame::BuildExists { name, var, sort } => {
+                let body = values.pop().expect("the exists body is cloned");
+                values.push(Proposition::Exists {
+                    name,
+                    var,
+                    sort,
+                    body: Box::new(body),
+                });
+            }
+        }
+    }
+    values.pop().expect("the root proposition is cloned")
 }
 
 /// An abstract proven proposition produced by kernel axioms.

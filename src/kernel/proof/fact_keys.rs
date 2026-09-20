@@ -218,6 +218,84 @@ impl SnapshotBlindPointerOffsetKey {
 pub(crate) fn snapshot_blind_proposition_key(
     proposition: &Proposition,
 ) -> SnapshotBlindPropositionKey {
+    enum Frame<'a> {
+        Visit(&'a Proposition),
+        BuildImplies,
+        BuildAnd,
+        BuildOr,
+        BuildNot,
+    }
+
+    if !matches!(
+        proposition,
+        Proposition::Implies(_, _)
+            | Proposition::And(_, _)
+            | Proposition::Or(_, _)
+            | Proposition::Not(_)
+    ) {
+        return snapshot_blind_proposition_key_one(proposition);
+    }
+
+    let mut frames = vec![Frame::Visit(proposition)];
+    let mut values = Vec::new();
+    while let Some(frame) = frames.pop() {
+        match frame {
+            Frame::Visit(proposition) => match proposition {
+                Proposition::Implies(left, right) => {
+                    frames.push(Frame::BuildImplies);
+                    frames.push(Frame::Visit(right));
+                    frames.push(Frame::Visit(left));
+                }
+                Proposition::And(left, right) => {
+                    frames.push(Frame::BuildAnd);
+                    frames.push(Frame::Visit(right));
+                    frames.push(Frame::Visit(left));
+                }
+                Proposition::Or(left, right) => {
+                    frames.push(Frame::BuildOr);
+                    frames.push(Frame::Visit(right));
+                    frames.push(Frame::Visit(left));
+                }
+                Proposition::Not(body) => {
+                    frames.push(Frame::BuildNot);
+                    frames.push(Frame::Visit(body));
+                }
+                proposition => values.push(snapshot_blind_proposition_key_one(proposition)),
+            },
+            Frame::BuildImplies => {
+                let right = values.pop().expect("the implication consequent is keyed");
+                let left = values.pop().expect("the implication antecedent is keyed");
+                values.push(SnapshotBlindPropositionKey::Implies(
+                    Box::new(left),
+                    Box::new(right),
+                ));
+            }
+            Frame::BuildAnd => {
+                let right = values.pop().expect("the conjunction right side is keyed");
+                let left = values.pop().expect("the conjunction left side is keyed");
+                values.push(SnapshotBlindPropositionKey::And(
+                    Box::new(left),
+                    Box::new(right),
+                ));
+            }
+            Frame::BuildOr => {
+                let right = values.pop().expect("the disjunction right side is keyed");
+                let left = values.pop().expect("the disjunction left side is keyed");
+                values.push(SnapshotBlindPropositionKey::Or(
+                    Box::new(left),
+                    Box::new(right),
+                ));
+            }
+            Frame::BuildNot => {
+                let body = values.pop().expect("the negated proposition is keyed");
+                values.push(SnapshotBlindPropositionKey::Not(Box::new(body)));
+            }
+        }
+    }
+    values.pop().expect("the root proposition is keyed")
+}
+
+fn snapshot_blind_proposition_key_one(proposition: &Proposition) -> SnapshotBlindPropositionKey {
     match proposition {
         Proposition::ConditionIs(
             ConditionTerm::IntegerLessThan(_, _)
@@ -2122,6 +2200,12 @@ fn alpha_proposition_key<const ALLOW_LOADS: bool>(
 pub(crate) fn proposition_identity_key(
     proposition: &Proposition,
 ) -> Option<PropositionIdentityKey> {
+    if implication_chain_depth(proposition) > 128 {
+        // The identity index is an optimization for exact fact lookup. Keep
+        // very deep source-shaped chains in the authoritative fact set
+        // without asking the alpha-key builder to recreate their topology.
+        return None;
+    }
     let mut environment = AlphaBindings {
         integer: BTreeMap::new(),
         bitvector: BTreeMap::new(),
@@ -2136,6 +2220,16 @@ pub(crate) fn proposition_identity_key(
     };
     alpha_proposition_key_with_bindings::<true>(proposition, &mut environment, &mut 0)
         .map(PropositionIdentityKey)
+}
+
+fn implication_chain_depth(proposition: &Proposition) -> usize {
+    let mut depth = 0;
+    let mut current = proposition;
+    while let Proposition::Implies(_, body) = current {
+        depth += 1;
+        current = body;
+    }
+    depth
 }
 
 /// Compare propositions up to alpha-renaming of binders, while retaining
