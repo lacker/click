@@ -290,16 +290,51 @@ load. Two things were `Symbolic` before, and only one of them still is:
   selection — stays `Symbolic`, and a load through it now observes every cell
   not proven distinct from it.
 
-Framing a load of the second kind therefore needs evidence, and the
-load-framing path does not yet have the routes to use the evidence such
-contracts state. Specifically, `pointers_proven_distinct_for_memory_resolution`
-does not follow an exact `PointerEqual` fact from a symbolic pointer to the
-block the program names, the way `resolve_symbolic_pointer_alias` already does
-for resource-range membership; it reads no disjunction of such equalities; and
-neither it nor `memories_directly_match_for_pointer_load` consults a separating
-resource composition. Until those exist, a proof that reads through a returned
-pointer after any store — including the store of that pointer into the caller's
-own local — is refused.
+Framing a load of the second kind therefore needs evidence, and one route
+spends it: `pointers_proven_distinct_for_memory_resolution` takes **one hop**
+through the index of assumed `PointerEqual` facts to a non-symbolic spelling and
+asks the same question there
+(`pointers_distinct_through_one_exact_alias`). `ensures result == &g[0]` and
+`ensures result == p` are what that reads, and
+`stored_value_at_equal_pointer` — which used to search only the load's own block
+for a stored cell, and so answered "no stored value" for exactly those reads —
+now filters by `observable_by_load` instead of by block name. A stated
+*disjunction* of equalities needs no rule of its own: `simp` splits it and each
+case holds its exact equality
+(`mdtests/proof_branch_pointer_local.md`). The hop is substitution of equals,
+so it is also what keeps the attack refused: resolving a returned `&x` moves the
+read to `x`, which is not distinct from a store to `x`
+(`mdtests/returned_pointer_to_a_caller_local_may_alias_it.md`).
+
+Two kinds of evidence a contract can state still do not reach a load:
+
+- **a separating resource composition.** `owns value[0..1]` beside
+  `owns Cell(result)` in one context says the two are disjoint, and nothing on
+  the load path asks. The predicate cannot simply be reused: the rule's `Store`
+  arm (`src/kernel/resource_tracker/step_effect.rs`, `cell_effect`) has no
+  composition disjunct at all — its ladder is `blocks_proven_distinct`,
+  common-base offsets, `typed_store_separated_ranges_evidence`, shallow explicit
+  ranges, then the general query — and the composition route
+  (`ranges_proven_disjoint_from_pointer_for_frame`) is *deliberately* kept off
+  the per-cell path: "whose per-cell store-drop callers must not pay for an
+  expansion they never need". Adding it is a new route and a per-cell cost
+  decision, not a reuse.
+- **that a local's address is never taken.** When a call returns a pointer,
+  the store of that pointer into the caller's own local is itself a store the
+  load must be told apart from, and no contract can state anything about a
+  callee's caller's local. The sound rule is that C offers no way to form a
+  pointer into an object whose address is never taken, so a never-address-taken
+  local is separate from every pointer value; the kernel already has the
+  syntactic pre-pass this needs (`statement_takes_address_of`,
+  `src/kernel/termination.rs`, used to refuse an address-escaped `decreases`
+  measure). Two things stand in the way of reading it from
+  `proven_distinct`, which sees only two block identities and no function body:
+  putting the answer in the block's *spelling* gives one object two names if any
+  of the four `local:`-minting sites disagrees, which is a false theorem rather
+  than a lost proof; and putting it in a registry beside the block, as block
+  alignment is, is keyed by a spelling that two functions with a same-named
+  local share, while the resolution memo and the canonical-projection cache are
+  scoped per verification and not per function.
 
 The loan family — `LoanLedger::permits_memory_access`,
 `protected_range_proven_overlapping`, `active_memory_overlaps` — is **not** in
