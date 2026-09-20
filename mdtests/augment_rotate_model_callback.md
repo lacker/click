@@ -227,8 +227,8 @@ struct node* rotate_left(
                         unfold(shape_right(Shape::Node(pivot_node, middle_model, far_model)));
                         normalize();
                     }
-                    unfold(t) as { left: l, right: rs };
-                    unfold(rs) as { left: m, right: z };
+                    let { left: l, right: rs } = unfold(t);
+                    let { left: m, right: z } = unfold(rs);
                     step();
                     step();
                     step();

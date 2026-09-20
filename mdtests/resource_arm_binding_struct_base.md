@@ -120,7 +120,7 @@ int frame_parent_value(struct tree_node* child, struct tree_node* parent) {
     ensures result == 7;
     ensures ctx.model == old(ctx.model);
 } by {
-    unfold(ctx) as { sibling: s, up: u };
+    let { sibling: s, up: u } = unfold(ctx);
     have s.model == HeapTree::Empty by { simp(); }
     unfold(s);
     execute();
@@ -135,7 +135,7 @@ struct tree_node* frame_focus(struct tree_node* child, struct tree_node* parent)
     ensures result == child;
     ensures ctx.model == old(ctx.model);
 } by {
-    unfold(ctx) as { sibling: s, up: u };
+    let { sibling: s, up: u } = unfold(ctx);
     execute();
     let ctx = fold(ctx_at(child), { model: old(ctx.model) }, { sibling: s, up: u });
     simp();

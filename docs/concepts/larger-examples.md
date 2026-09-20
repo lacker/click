@@ -344,7 +344,7 @@ One iteration is five steps, and each is an ordinary tactic:
    model at an arbitrary loop head is a fresh symbolic value, so nothing can
    `unfold` it until a proof `match` names the arm; the `HeapTree::Empty` arm
    closes by `contradiction` on the first invariant.
-2. `unfold(t) as { left: l, right: rt }` takes the node apart into its three
+2. `let { left: l, right: rt } = unfold(t)` takes the node apart into its three
    cells and its two child instances.
 3. `fold(ctx_at(root->left), { model: Context::Left(...) }, { sibling: rt, up:
    ctx })` builds the new frame from the parent's cells, the untaken sibling,

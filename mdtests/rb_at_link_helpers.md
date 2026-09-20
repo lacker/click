@@ -253,7 +253,7 @@ struct rb_node* node_parent(struct rb_node* node) {
     match t.model {
         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
         RbTree::Node(identity, parent, color, left_model, right_model) => {
-            unfold(t) as { left: l, right: r };
+            let { left: l, right: r } = unfold(t);
             have rb_parent_is(old(t.model), parent) == 1 by {
                 rewrite(old(t.model)
                     == RbTree::Node(identity, parent, color, left_model, right_model));
@@ -282,7 +282,7 @@ unsigned long node_color(struct rb_node* node) {
     match t.model {
         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
         RbTree::Node(identity, parent, color, left_model, right_model) => {
-            unfold(t) as { left: l, right: r };
+            let { left: l, right: r } = unfold(t);
             have (node->__rb_parent_color & 1) == rb_color_bit(old(t.model)) by {
                 rewrite(old(t.model)
                     == RbTree::Node(identity, parent, color, left_model, right_model));
@@ -307,7 +307,7 @@ void set_parent(struct rb_node* node, struct rb_node* parent) {
     match t.model {
         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
         RbTree::Node(identity, old_parent, color, left_model, right_model) => {
-            unfold(t) as { left: l, right: r };
+            let { left: l, right: r } = unfold(t);
             have rb_reparent(
                     RbTree::Node(identity, old_parent, color, left_model, right_model), parent)
                 == RbTree::Node(identity, parent, color, left_model, right_model) by {
@@ -343,7 +343,7 @@ void set_parent_black(struct rb_node* node, struct rb_node* parent) {
     match t.model {
         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
         RbTree::Node(identity, old_parent, color, left_model, right_model) => {
-            unfold(t) as { left: l, right: r };
+            let { left: l, right: r } = unfold(t);
             have color_bit(Color::Black) == 1 by {
                 unfold(color_bit(Color::Black));
                 normalize();
@@ -377,7 +377,7 @@ void set_parent_red(struct rb_node* node, struct rb_node* parent) {
     match t.model {
         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
         RbTree::Node(identity, old_parent, color, left_model, right_model) => {
-            unfold(t) as { left: l, right: r };
+            let { left: l, right: r } = unfold(t);
             have color_bit(Color::Red) == 0 by {
                 unfold(color_bit(Color::Red));
                 normalize();
@@ -411,7 +411,7 @@ void set_black(struct rb_node* node) {
     match t.model {
         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
         RbTree::Node(identity, parent, color, left_model, right_model) => {
-            unfold(t) as { left: l, right: r };
+            let { left: l, right: r } = unfold(t);
             have (node->__rb_parent_color & 1) == rb_color_bit(old(t.model)) by {
                 rewrite(old(t.model)
                     == RbTree::Node(identity, parent, color, left_model, right_model));
@@ -461,7 +461,7 @@ struct rb_node* red_parent_of(struct rb_node* node) {
     match t.model {
         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
         RbTree::Node(identity, parent, color, left_model, right_model) => {
-            unfold(t) as { left: l, right: r };
+            let { left: l, right: r } = unfold(t);
             have (node->__rb_parent_color & 1) == rb_color_bit(old(t.model)) by {
                 rewrite(old(t.model)
                     == RbTree::Node(identity, parent, color, left_model, right_model));

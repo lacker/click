@@ -226,7 +226,7 @@ void replace_root_node(struct rb_node* victim, struct rb_node* new_node,
     ensures d.model == old(c.model);
     ensures u.model == rb_substitute(old(t.model), new_node);
 } by {
-    unfold(t) as { left: l, right: r };
+    let { left: l, right: r } = unfold(t);
     unfold(c);
     unfold(l);
     unfold(r);
@@ -276,8 +276,8 @@ void replace_left_child(struct rb_node* victim, struct rb_node* new_node,
     ensures d.model == old(c.model);
     ensures u.model == rb_substitute(old(t.model), new_node);
 } by {
-    unfold(t) as { left: l, right: r };
-    unfold(c) as { sibling: s, up: up };
+    let { left: l, right: r } = unfold(t);
+    let { sibling: s, up: up } = unfold(c);
     unfold(l);
     unfold(r);
     have color_bit(Color::Black) == 1 by {
@@ -324,8 +324,8 @@ void replace_right_child(struct rb_node* victim, struct rb_node* new_node,
     ensures d.model == old(c.model);
     ensures u.model == rb_substitute(old(t.model), new_node);
 } by {
-    unfold(t) as { left: l, right: r };
-    unfold(c) as { sibling: s, up: up };
+    let { left: l, right: r } = unfold(t);
+    let { sibling: s, up: up } = unfold(c);
     unfold(s);
     unfold(l);
     unfold(r);

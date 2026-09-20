@@ -179,7 +179,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 output,
                 &prefix,
                 &format!(
-                    "unfold({}) as {{ {children} }};",
+                    "let {{ {children} }} = unfold({});",
                     format_resource_call(resource)
                 ),
             );

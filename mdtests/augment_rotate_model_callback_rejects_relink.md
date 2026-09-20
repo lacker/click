@@ -146,7 +146,7 @@ struct node* rotate_left(
     match r.model {
         Shape::Empty => { contradiction(r.model == Shape::Empty); },
         Shape::Node(pivot_node, middle_model, far_model) => {
-            unfold(r) as { left: m, right: z };
+            let { left: m, right: z } = unfold(r);
             step();
             step();
             step();

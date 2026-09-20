@@ -214,7 +214,7 @@ One iteration is one proof:
 1. `match t.model` inside `preserve` supplies the constructor the head's fresh
    model does not have. The `HeapTree::Empty` arm closes by `contradiction` on
    the invariant.
-2. `unfold(t) as { left: l, right: rt }` takes the node apart into its three
+2. `let { left: l, right: rt } = unfold(t)` takes the node apart into its three
    cells and the two child instances.
 3. `fold(ctx_at(root->left), { model: Context::Left(root, value, right_model,
    ctx.model) }, { sibling: rt, up: ctx })` builds the new frame from the

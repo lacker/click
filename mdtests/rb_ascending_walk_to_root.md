@@ -316,7 +316,7 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
                                               sibling_model, up_model) == c.model);
                         assumption();
                     }
-                    unfold(c) as { sibling: s, up: u };
+                    let { sibling: s, up: u } = unfold(c);
                     step();
                     step();
                     have rb_parent_is(RbTree::Node(identity, grandparent, color,
@@ -374,7 +374,7 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
                                                sibling_model, up_model) == c.model);
                         assumption();
                     }
-                    unfold(c) as { sibling: s, up: u };
+                    let { sibling: s, up: u } = unfold(c);
                     step();
                     step();
                     have rb_parent_is(RbTree::Node(identity, grandparent, color,
@@ -414,7 +414,7 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
                     == t.model);
                 assumption();
             }
-            unfold(t) as { left: l, right: r };
+            let { left: l, right: r } = unfold(t);
             let sub = fold(rb_at(node), {
                 model: RbTree::Node(identity, parent_model, color, left_model, right_model)
             }, { left: l, right: r });

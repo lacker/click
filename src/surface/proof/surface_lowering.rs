@@ -735,7 +735,7 @@ impl<'a> Proof<'a> {
 
     /// A written theorem application with every proof-local name it spells
     /// resolved: goal binders first, then the proof locals a match arm, an
-    /// `unfold ... as`, a `let ... = step(...)`, or a loop binder introduced.
+    /// `let { ... } = unfold(...)`, a `let ... = step(...)`, or a loop binder introduced.
     /// Every position that takes a written application resolves it here, so
     /// a name in scope for a `have` goal is in scope as a theorem argument.
     pub(in crate::surface::proof) fn resolve_theorem_application(

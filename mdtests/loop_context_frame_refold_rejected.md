@@ -174,7 +174,7 @@ struct tree_node* tree_leftmost(struct tree_node* root) {
                         rewrite(HeapTree::Node(identity, value, left_model, right_model) == t.model);
                         assumption();
                     }
-                    unfold(t) as { left: l, right: rt };
+                    let { left: l, right: rt } = unfold(t);
                     have plug(Context::Left(root, value, right_model, ctx.model), left_model)
                         == old(t.model) by {
                         rewrite(root == identity);
@@ -200,7 +200,7 @@ struct tree_node* tree_leftmost(struct tree_node* root) {
                 rewrite(HeapTree::Node(identity, value, left_model, right_model) == t.model);
                 assumption();
             }
-            unfold(t) as { left: l, right: rt };
+            let { left: l, right: rt } = unfold(t);
             have heap_left(HeapTree::Node(identity, value, left_model, right_model))
                 == left_model by {
                 unfold(heap_left(HeapTree::Node(identity, value, left_model, right_model)));

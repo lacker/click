@@ -174,8 +174,8 @@ that constructor. See [resources](resources.md) for the rule and
 unfolded child this way.
 
 The `contradiction` need not be the arm's only tactic. It closes the path it
-stands on wherever it is reached, so an arm may run a `have`, an `unfold`, or
-any other checked operation first to bring the refuting fact into its own
+stands on wherever it is reached, so an arm may run a `have`, a resource
+unfold, or any other checked operation first to bring the refuting fact into its own
 spelling, and then close. Nothing written after it on that path is executed or
 proved (`mdtests/preserve_arm_contradiction_after_an_unfold.md`).
 
@@ -183,10 +183,10 @@ proved (`mdtests/preserve_arm_contradiction_after_an_unfold.md`).
 
 C often uses a call's result without ever storing it: `if (f(x))` and
 `return f(x);` both leave the callee's guarantee and the branch or return
-fact attached to a value the proof has no word for. The call step's existing
-`let` binder names it. On a callee that declares a `produces` binder the `let`
-introduces that instance; on a callee that declares none it names the call's
-scalar result:
+fact attached to a value the proof has no word for. The call step's `let`
+binder names it. On a callee that declares a `produces` binder, the resource
+output form names that instance; on a callee that declares none, the scalar
+result form names the call's value:
 
 <!-- verified-example: mdtests/call_result_in_condition.md -->
 ```click

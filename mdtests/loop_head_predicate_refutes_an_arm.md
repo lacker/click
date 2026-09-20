@@ -91,7 +91,7 @@ void bump_n(struct cell* node, int32 n) {
                 CellList::Cons(identity, value, tail_model) => {
                     have 0 <= n - i - 1 by { arithmetic() using { i < n; i >= 0; n >= 0; } }
                     have n - i - 1 < n - i by { arithmetic() using { i < n; i >= 0; n >= 0; } }
-                    unfold(l) as { tail: t };
+                    let { tail: t } = unfold(l);
                     have list_head_is(CellList::Cons(node, 7, tail_model), node) == 1 by {
                         unfold(list_head_is(CellList::Cons(node, 7, tail_model), node));
                         normalize();

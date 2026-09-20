@@ -85,7 +85,7 @@ authority. The positive end-to-end regression is
 `mdtests/resource_match_payload_memory_endpoint.md`.
 
 The same experiment fixed one adjacent parser gap. A child introduced by
-`unfold(parent) as { slot: child }` initially has only its parent's provisional
+`let { slot: child } = unfold(parent)` initially has only its parent's provisional
 family in parser state; a loop binder may now take over that child under the
 family declared by the selected arm, with declaration expansion still checking
 the actual slot family. The regression is
@@ -102,7 +102,7 @@ The matched quantified-fact boundary is now fixed. A proof `match` on the
 model field of an exactly named folded resource publishes a flat selected
 arm's facts in the kernel-issued constructor partition, including facts that
 name a constructor payload. Arms that contain child instances retain the
-existing explicit `unfold(parent) as { ... }` boundary, because matching their
+existing explicit `let { ... } = unfold(parent)` boundary, because matching their
 model must not implicitly unfold child ownership. The kernel resolves the one
 flat instance by its resource field projection, evaluates the facts against
 the arm's own contained memory, and records the exact additions that

@@ -2,7 +2,7 @@
 
 The rbtree context `ctx_at(child, root)` keyed by node (package C1b). A frame's
 arm owns the cells of the node its `identity` payload carries and holds the
-frame above it as the child `up`, so `unfold(c) as { up: u }` is how every
+frame above it as the child `up`, so `let { up: u } = unfold(c)` is how every
 fixup step reaches its grandparent frame — and the question it asks next is
 whether that frame is `Context::Top`.
 
@@ -215,7 +215,7 @@ struct rb_node* rb_focus(struct rb_node* node, struct rb_root* root) {
                                       sibling_model, up_model) == c.model);
                 assumption();
             }
-            unfold(c) as { sibling: s, up: u };
+            let { sibling: s, up: u } = unfold(c);
             have ctx_is_framed(u.model) == 1 by {
                 rewrite(u.model == up_model);
                 assumption();
@@ -248,7 +248,7 @@ struct rb_node* rb_focus(struct rb_node* node, struct rb_root* root) {
                                        sibling_model, up_model) == c.model);
                 assumption();
             }
-            unfold(c) as { sibling: s, up: u };
+            let { sibling: s, up: u } = unfold(c);
             have ctx_is_framed(u.model) == 1 by {
                 rewrite(u.model == up_model);
                 assumption();

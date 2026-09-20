@@ -312,7 +312,7 @@ Some` in this issue.
 
 **D8. Matched arms may own children of another declared resource.** The
 same-family restriction in `algebraic_types.rs` is lifted. Child field
-equations, the explicit child map on fold, `unfold ... as { }` naming, and
+equations, the explicit child map on fold, `let { ... } = unfold(...)` naming, and
 the acyclicity check across definitions all apply unchanged. Mutual
 resource-definition cycles remain rejected.
 

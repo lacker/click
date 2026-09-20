@@ -30,7 +30,7 @@ int32 read_root(int32* p, int32* next) {
     requires root.model == Chain::More(next, Chain::End);
     ensures root.model == old(root.model);
 } by {
-    unfold(root) as { tail: t };
+    let { tail: t } = unfold(root);
     unfold(t);
     execute();
     let t = fold(chain(next), { model: Chain::End });
@@ -61,7 +61,7 @@ int32 read_left(int32* p, int32* left, int32* right) {
     ensures result == 2;
     ensures root.model == old(root.model);
 } by {
-    unfold(root) as { left: l, right: r };
+    let { left: l, right: r } = unfold(root);
     unfold(l);
     execute();
     let l = fold(tree(left), { model: Tree::Leaf(2) });

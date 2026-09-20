@@ -81,7 +81,7 @@ void countdown(int32 n) {
             match c.model {
                 Chain::Nil => { contradiction(c.model == Chain::Nil); },
                 Chain::Link(rest_model) => {
-                    unfold(c) as { rest: r };
+                    let { rest: r } = unfold(c);
                     match r.model {
                         Chain::Nil => {
                             unfold(r);
@@ -92,7 +92,7 @@ void countdown(int32 n) {
                             close_invariants();
                         },
                         Chain::Link(rest2_model) => {
-                            unfold(r) as { rest: r2 };
+                            let { rest: r2 } = unfold(r);
                             step();
                             step();
                             step();

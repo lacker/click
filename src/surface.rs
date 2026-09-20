@@ -849,18 +849,18 @@ impl CallBinderBinding {
 }
 
 /// `step(callee(arguments), { binder: instance, ... })`: one ordinary C call
-/// with every instance binder of the callee bound explicitly. A callee
-/// `produces` binder is introduced by the surrounding
-/// `let name = step(...)` and is carried in `produced`. When the callee
-/// declares no `produces` binder, the same `let` names the call's scalar
-/// result instead and is carried in `result`; at most one of the two is
-/// ever set.
+/// with every instance binder of the callee bound explicitly. Produced
+/// instances are introduced by the surrounding `let { binder: name, ... } =
+/// step(...)` pattern and are carried in `produced`. For compatibility, the
+/// older `let name = step(...)` spelling is accepted when there is exactly one
+/// produced instance. When the callee declares no `produces` binder, the same
+/// `let` names the call's scalar result instead and is carried in `result`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallBinderTransport {
     callee: String,
     arguments: Vec<ContractExpression>,
     binders: Vec<CallBinderBinding>,
-    produced: Option<CallBinderBinding>,
+    produced: Vec<CallBinderBinding>,
     result: Option<String>,
 }
 
@@ -877,8 +877,8 @@ impl CallBinderTransport {
         &self.binders
     }
 
-    pub fn produced(&self) -> Option<&CallBinderBinding> {
-        self.produced.as_ref()
+    pub fn produced(&self) -> &[CallBinderBinding] {
+        &self.produced
     }
 
     /// The proof-local name this step gives the call's scalar result, when
@@ -890,8 +890,15 @@ impl CallBinderTransport {
 
 impl std::fmt::Display for CallBinderTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(produced) = &self.produced {
-            write!(f, "let {} = ", produced.instance)?;
+        if !self.produced.is_empty() {
+            write!(f, "let {{ ")?;
+            for (index, produced) in self.produced.iter().enumerate() {
+                if index != 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}: {}", produced.binder, produced.instance)?;
+            }
+            write!(f, " }} = ")?;
         } else if let Some(result) = &self.result {
             write!(f, "let {result} = ")?;
         }
@@ -1095,7 +1102,7 @@ pub struct StructuralClause {
     diverges: bool,
     items: Vec<StructuralItem>,
     /// The proof locals in scope where a frontier loop clause was written: a
-    /// proof `match` arm's bindings, `unfold ... as` names, call-result
+    /// proof `match` arm's bindings, `let { ... } = unfold(...)` names, call-result
     /// binders. The clause keeps its written spelling, which expansion
     /// prints; every lowering reads it through [`StructuralClause::resolved`].
     scope: BTreeMap<String, ContractExpression>,
@@ -6181,7 +6188,7 @@ impl StructuralClause {
 
     /// This clause with the proof locals it names resolved: invariants,
     /// declared-resource arguments, and the `decreases` measure may spell a
-    /// proof `match` arm's bindings or an `unfold ... as` name, which are in
+    /// proof `match` arm's bindings or a `let { ... } = unfold(...)` name, which are in
     /// scope for a loop written inside that arm exactly as for a `have` goal
     /// there. Memory segments are left as written; they name C places.
     pub(in crate::surface) fn with_substituted_bindings(

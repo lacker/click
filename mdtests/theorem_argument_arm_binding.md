@@ -8,7 +8,7 @@ a fixup step's `have` is "apply the case theorem at the arm's bindings".
 
 Every position that takes a written theorem application resolves it the way
 a `have` goal is resolved: goal binders first, then the proof locals that a
-match arm, an `unfold ... as`, a `let ... = step(...)`, or a loop binder
+match arm, a `let { ... } = unfold(...)`, a `let ... = step(...)`, or a loop binder
 introduced. Here the pointer binding `id`, the integer binding `value`, and
 the model binding `left_model` are all theorem arguments. Before this rule
 the pointer and integer bindings lowered to no path at all, and the model
@@ -71,7 +71,7 @@ int peek(struct node* p) {
     match t.model {
         Tree::Empty => { contradiction(t.model == Tree::Empty); },
         Tree::Node(id, value, left_model) => {
-            unfold(t) as { left: l };
+            let { left: l } = unfold(t);
             step();
             have depth_ok(Tree::Node(id, value, left_model)) == 1 by {
                 apply(depth_ok_node(id, value, left_model));

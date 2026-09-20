@@ -92,7 +92,7 @@ struct tree_node* maybe_swap(struct tree_node* root, int flag) {
             match t.model {
                 HeapTree::Empty => { contradiction(t.model == HeapTree::Empty); },
                 HeapTree::Node(node, value, left_model, right_model) => {
-                    unfold(t) as { left: lt, right: rt };
+                    let { left: lt, right: rt } = unfold(t);
                     step();
                     step();
                     if flag == 0 {

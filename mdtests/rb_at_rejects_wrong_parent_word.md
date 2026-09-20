@@ -89,7 +89,7 @@ void set_parent_elsewhere(struct rb_node* node, struct rb_node* old_parent,
     match t.model {
         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
         RbTree::Node(identity, parent, color, left_model, right_model) => {
-            unfold(t) as { left: l, right: r };
+            let { left: l, right: r } = unfold(t);
             execute();
             let u = fold(rb_at(node), { model: old(t.model) }, { left: l, right: r });
             simp();

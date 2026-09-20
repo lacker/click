@@ -53,7 +53,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
     let function_with_prior_loops = function_block
         .with_bound_frontier_loop_clauses(&execution.presentation.frontier_loop_clauses.to_vec());
     // The loop's clauses were written inside this frontier's proof scope: a
-    // proof `match` arm's bindings, `unfold ... as` names, call-result
+    // proof `match` arm's bindings, `let { ... } = unfold(...)` names, call-result
     // binders. The bound clause keeps its written spelling, which expansion
     // prints, and carries that scope, which every lowering of it resolves.
     let scoped_template = loop_template.with_scope(proof_locals.clone());

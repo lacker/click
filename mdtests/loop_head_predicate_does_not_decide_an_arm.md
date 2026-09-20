@@ -81,7 +81,7 @@ void bump_n(struct cell* node, int32 n) {
             match l.model {
                 CellList::Nil => { contradiction(l.model == CellList::Nil); },
                 CellList::Cons(identity, value, tail_model) => {
-                    unfold(l) as { tail: t };
+                    let { tail: t } = unfold(l);
                     have list_nonempty_or_null(CellList::Cons(node, 7, tail_model), node) == 1 by {
                         unfold(list_nonempty_or_null(CellList::Cons(node, 7, tail_model), node));
                         normalize();

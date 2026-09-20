@@ -1357,7 +1357,7 @@ impl<'a> Proof<'a> {
     }
 
     /// Every proof local in scope at this point, by name: a proof `match`
-    /// arm's bindings, `unfold ... as` names, call-result binders, loop
+    /// arm's bindings, `let { ... } = unfold(...)` names, call-result binders, loop
     /// binders. Loop clauses written in this scope are resolved through it.
     pub(in crate::surface::proof) fn proof_local_values(
         &self,

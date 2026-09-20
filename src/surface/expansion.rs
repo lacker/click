@@ -3279,7 +3279,11 @@ fn direct_tactic_token_ranges(
                     })?;
                     if braces == 0 && parentheses == 0 && brackets == 0 {
                         let continuation = tokens.get(cursor + 1).map(|token| token.text.as_str());
-                        if !(matches!(continuation, Some("else" | "by"))
+                        // A destructuring proof binding starts with a brace,
+                        // but its `}` is followed by `=` rather than ending
+                        // the tactic: `let { slot: child } = unfold(parent)`
+                        // and `let { binder: instance } = step(...)`.
+                        if !(matches!(continuation, Some("else" | "by" | "="))
                             || (tokens[start].text == "both" && continuation == Some("and"))
                             || (tokens[start].text == "match" && continuation == Some("{")))
                         {

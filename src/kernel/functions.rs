@@ -2149,29 +2149,38 @@ fn execute_verified_function_applications(
     // Every named instance the callee declares must be bound by the selected
     // application. The check is one map lookup per declared binder, so an
     // unbound binder is refused here rather than transported silently.
-    if let Some(unbound) = applications
-        .iter()
-        .enumerate()
-        .find_map(|(index, application)| {
-            let bindings = resource_application
-                .filter(|(selected, _)| *selected == index)
-                .map(|(_, application)| &application.bindings);
-            application
-                .interface
-                .resource_requires()
-                .iter()
-                .chain(application.interface.resource_ensures())
-                .find(|resource| {
-                    resource.instance_identity().is_some_and(|identity| {
-                        !bindings.is_some_and(|bindings| bindings.contains_key(&identity))
+    if let Some((unbound_function, unbound_binder)) =
+        applications
+            .iter()
+            .enumerate()
+            .find_map(|(index, application)| {
+                let bindings = resource_application
+                    .filter(|(selected, _)| *selected == index)
+                    .map(|(_, application)| &application.bindings);
+                application
+                    .interface
+                    .resource_requires()
+                    .iter()
+                    .chain(application.interface.resource_ensures())
+                    .find(|resource| {
+                        resource.instance_identity().is_some_and(|identity| {
+                            !bindings.is_some_and(|bindings| bindings.contains_key(&identity))
+                        })
                     })
-                })
-                .map(|_| application.name.to_string())
-        })
+                    .map(|resource| {
+                        (
+                            application.name.to_string(),
+                            resource
+                                .instance_binder()
+                                .unwrap_or("<unnamed>")
+                                .to_string(),
+                        )
+                    })
+            })
     {
         return Ok(vec![CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                "calls with named resource instances require checked binder transport: `{unbound}` has an unbound instance binder"
+                "calls with named resource instances require checked binder transport: `{unbound_function}` has an unbound instance binder `{unbound_binder}`; bind it in `step(..., {{ {unbound_binder}: instance }})`"
             ))),
             facts: vec![],
             obligations: vec![],
@@ -14314,7 +14323,7 @@ pub(in crate::kernel) fn matched_resource_instance_case_clauses(
     // facts about it without performing the explicit child-selection rewrite
     // would conflate the parent's proof match with an ownership unfold. Keep
     // this read-only publication to flat arms; recursive arms still acquire
-    // their facts through `unfold(parent) as { ... }`.
+    // their facts through `let { ... } = unfold(parent)`.
     if !arm.children.is_empty() {
         return Vec::new();
     }

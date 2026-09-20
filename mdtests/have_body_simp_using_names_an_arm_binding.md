@@ -90,7 +90,7 @@ unsigned long peek(struct node* p) {
     match t.model {
         Tree::Empty => { contradiction(t.model == Tree::Empty); },
         Tree::Node(id, color, left_model) => {
-            unfold(t) as { left: l };
+            let { left: l } = unfold(t);
             have color_bit(color) == (p->word & 1) by {
                 simp() using { (p->word & 1) == color_bit(color); }
             }

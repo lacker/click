@@ -65,7 +65,7 @@ int32 tree_depth_ok(struct node* root) {
             simp();
         },
         HeapTree::Node(identity, value, left_model, right_model) => {
-            unfold(t) as { left: l, right: r };
+            let { left: l, right: r } = unfold(t);
             branch {
                 then { step(); simp(); }
                 else {}

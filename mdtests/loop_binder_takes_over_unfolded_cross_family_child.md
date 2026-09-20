@@ -1,6 +1,6 @@
 # A loop binder can take over an unfolded cross-family child
 
-An `unfold ... as` child initially carries its parent's family in parser state
+An unfolded child initially carries its parent's family in parser state
 because the selected resource arm is resolved later. A loop binder may reuse
 that child name with its declared family; declaration expansion remains the
 authority that checks the slot actually has that family.
@@ -44,7 +44,7 @@ void drain(int32 n) {
 } by {
     match r.model {
         RootModel::Has(child_model) => {
-            unfold(r) as { child: child };
+            let { child: child } = unfold(r);
             loop {
                 decreases n;
                 owns child: leaf();

@@ -216,10 +216,10 @@ void replace_node_with_children(struct rb_node* victim, struct rb_node* new_node
     ensures d.model == old(c.model);
     ensures u.model == rb_substitute(old(t.model), new_node);
 } by {
-    unfold(t) as { left: l, right: r };
+    let { left: l, right: r } = unfold(t);
     unfold(c);
-    unfold(l) as { left: ll, right: lr };
-    unfold(r) as { left: rl, right: rr };
+    let { left: ll, right: lr } = unfold(l);
+    let { left: rl, right: rr } = unfold(r);
     execute();
     let l2 = fold(rb_at(new_node->rb_left), {
         model: RbTree::Node(left_child, new_node, Color::Red, RbTree::Empty, RbTree::Empty)

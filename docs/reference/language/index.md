@@ -1031,7 +1031,8 @@ introduce names:
 - the `executes` parameter list introduces the call's C parameters;
 - `as { parameter: name }` on the conclusion introduces one arbitrary instance
   per proof parameter of the target contract;
-- `let name = step(...)` introduces an instance a callee `produces`.
+- `let { binder: name, ... } = step(...)` introduces instances a callee
+  `produces`.
 
 Every other name in the block is one of those, a theorem parameter, or
 `result`.
@@ -1564,18 +1565,19 @@ names, then pass their owned instances explicitly when constructing a parent:
 
 <!-- verified-example: mdtests/resource_independent_children.md -->
 ```click
-unfold(root) as { left: l, right: r };
+let { left: l, right: r } = unfold(root);
 unfold(l);
 execute();
 let l = fold(tree(left), { model: Tree::Leaf(2) });
 let root = fold(tree(p), { model: old(root.model) }, { left: l, right: r });
 ```
 
-`unfold(root) as { ... }` consumes `root`, exposes its immediate memory, and
-introduces folded children. No parent handle or `root.left` path remains.
+`let { ... } = unfold(root)` consumes `root`, exposes its immediate memory,
+and introduces folded children. No parent handle or `root.left` path remains.
 Each selected-arm child must be named exactly once. An introduced name must
 not already own a resource. `unfold(l)` exposes the child's immediate body;
-an arm with no children needs no bindings (explicit `as {}` is also accepted).
+an arm with no children needs no bindings (an empty output pattern is also
+accepted).
 
 The third fold argument maps child slots to owned resource names. Folding
 consumes those children and the parent's immediate memory, checking each
@@ -1647,7 +1649,7 @@ resource ctx_at(child: struct tree_node*) {
 ```
 
 `Context::Left`'s first field is declared `struct tree_node*`, so `parent`
-carries that layout for the arm. After `unfold(ctx) as { sibling: s, up: u }`
+carries that layout for the arm. After `let { sibling: s, up: u } = unfold(ctx)`
 the arm's facts hold of the exposed cells, so `fact parent->left == child`
 is what lets a proof read the focused node back out of the frame.
 
@@ -1916,13 +1918,19 @@ caller introduces it with `let`:
 
 <!-- verified-example: mdtests/c_call_binder_transport_produces.md -->
 ```click
-let node = step(init(p, left, right, value), { l: a, r: b });
+let { root: node } = step(init(p, left, right, value), { l: a, r: b });
 ```
 
 The introduced name is an ordinary owned instance afterwards: it can be folded
 into a parent as a child, or returned by the caller's own `produces` clause.
-A `produces` binder that no `let` introduces is an error. A callee that
-produces more than one instance is not yet callable this way.
+Multiple named outputs use a destructuring pattern:
+
+<!-- verified-example: mdtests/c_call_binder_transport_multiple_produces.md -->
+```click
+let { left: l, right: r } = step(make_pair(left, right), {});
+```
+
+A produced binder that no output pattern introduces is an error.
 
 On a callee that declares no `produces` binder, the same `let` names the
 call's scalar result:

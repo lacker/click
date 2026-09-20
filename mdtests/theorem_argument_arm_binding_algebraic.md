@@ -70,7 +70,7 @@ int peek(struct node* p) {
     match t.model {
         Tree::Empty => { contradiction(t.model == Tree::Empty); },
         Tree::Node(id, value, left_model) => {
-            unfold(t) as { left: l };
+            let { left: l } = unfold(t);
             step();
             have depth_ok(left_model) == 1 by {
                 apply(depth_ok_of(left_model));

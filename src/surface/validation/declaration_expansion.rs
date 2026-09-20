@@ -17,7 +17,7 @@ struct DeclaredResourceInfo {
 }
 
 /// Declared resources plus what the expansion has learned about the resource
-/// instances a proof names. `unfold(parent) as { slot: name }` introduces
+/// instances a proof names. `let { slot: name } = unfold(parent)` introduces
 /// `name` before any definition is available to the parser, so the parser
 /// records the parent's family provisionally and the slot decides the real
 /// one here.

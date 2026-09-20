@@ -78,7 +78,7 @@ int read_value(struct tree_node* node) {
     ensures result == 7;
     ensures root.model == old(root.model);
 } by {
-    unfold(root) as { left: l, right: r };
+    let { left: l, right: r } = unfold(root);
     execute();
     let root = fold(tree_at(node), { model: old(root.model) }, { left: l, right: r });
     simp();

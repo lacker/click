@@ -80,7 +80,7 @@ void set_parent_black(struct rb_node* node, struct rb_node* old_parent, struct r
     match t.model {
         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
         RbTree::Node(identity, parent, color, left_model, right_model) => {
-            unfold(t) as { left: l, right: r };
+            let { left: l, right: r } = unfold(t);
             have color_bit(Color::Red) == 0 by {
                 unfold(color_bit(Color::Red));
                 normalize();

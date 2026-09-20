@@ -452,7 +452,7 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
     match t.model {
         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
         RbTree::Node(identity, node_parent, color, left_model, right_model) => {
-            unfold(t) as { left: l, right: r };
+            let { left: l, right: r } = unfold(t);
             have (node->__rb_parent_color & 1) == rb_color_bit(old(t.model)) by {
                 rewrite(old(t.model)
                     == RbTree::Node(identity, node_parent, color, left_model, right_model));
@@ -535,7 +535,7 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
                         RbTree::Node(nid, nparent, ncolor, nleft, nright) => {
                             if parent == 0 {
-                                unfold(t) as { left: l, right: r };
+                                let { left: l, right: r } = unfold(t);
                                 step();
                                 step();
                                 have (node->__rb_parent_color & 1)
@@ -578,7 +578,7 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                                 == c.model);
                                             assumption();
                                         }
-                                        unfold(c) as { sibling: cs, up: cu };
+                                        let { sibling: cs, up: cu } = unfold(c);
                                         step();
                                         step();
                                         match ccolor {
@@ -679,7 +679,7 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                                         assumption();
                                                     }
                                                     have gparent == uid by { simp(); }
-                                                    unfold(cu) as { sibling: us, up: uu };
+                                                    let { sibling: us, up: uu } = unfold(cu);
                                                     step();
                                                     match us.model {
                                                         RbTree::Empty => {
@@ -691,7 +691,7 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                                             step();
                                                         },
                                                         RbTree::Node(unid, unp, uncolor, unl, unr) => {
-                                                            unfold(us) as { left: ul, right: ur };
+                                                            let { left: ul, right: ur } = unfold(us);
                                                             step();
                                                         },
                                                     }
@@ -713,7 +713,7 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                                         assumption();
                                                     }
                                                     have gparent == uid by { simp(); }
-                                                    unfold(cu) as { sibling: us, up: uu };
+                                                    let { sibling: us, up: uu } = unfold(cu);
                                                     step();
                                                     match us.model {
                                                         RbTree::Empty => {
@@ -725,7 +725,7 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                                             step();
                                                         },
                                                         RbTree::Node(unid, unp, uncolor, unl, unr) => {
-                                                            unfold(us) as { left: ul, right: ur };
+                                                            let { left: ul, right: ur } = unfold(us);
                                                             step();
                                                         },
                                                     }
@@ -760,7 +760,7 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                                 == c.model);
                                             assumption();
                                         }
-                                        unfold(c) as { sibling: cs, up: cu };
+                                        let { sibling: cs, up: cu } = unfold(c);
                                         step();
                                         step();
                                         match ccolor {
@@ -861,7 +861,7 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                                         assumption();
                                                     }
                                                     have gparent == uid by { simp(); }
-                                                    unfold(cu) as { sibling: us, up: uu };
+                                                    let { sibling: us, up: uu } = unfold(cu);
                                                     step();
                                                     match us.model {
                                                         RbTree::Empty => {
@@ -873,7 +873,7 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                                             step();
                                                         },
                                                         RbTree::Node(unid, unp, uncolor, unl, unr) => {
-                                                            unfold(us) as { left: ul, right: ur };
+                                                            let { left: ul, right: ur } = unfold(us);
                                                             step();
                                                         },
                                                     }
@@ -895,7 +895,7 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                                         assumption();
                                                     }
                                                     have gparent == uid by { simp(); }
-                                                    unfold(cu) as { sibling: us, up: uu };
+                                                    let { sibling: us, up: uu } = unfold(cu);
                                                     step();
                                                     match us.model {
                                                         RbTree::Empty => {
@@ -907,7 +907,7 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                                                             step();
                                                         },
                                                         RbTree::Node(unid, unp, uncolor, unl, unr) => {
-                                                            unfold(us) as { left: ul, right: ur };
+                                                            let { left: ul, right: ur } = unfold(us);
                                                             step();
                                                         },
                                                     }

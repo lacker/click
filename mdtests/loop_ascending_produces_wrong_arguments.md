@@ -148,7 +148,7 @@ struct tree_node* tree_root_of(struct tree_node* node, struct tree_node* parent)
                                               sibling_model, up_model) == c.model);
                         assumption();
                     }
-                    unfold(c) as { sibling: s, up: u };
+                    let { sibling: s, up: u } = unfold(c);
                     step();
                     step();
                     let lifted = fold(ptree_at(node, parent), {
@@ -170,7 +170,7 @@ struct tree_node* tree_root_of(struct tree_node* node, struct tree_node* parent)
                                                sibling_model, up_model) == c.model);
                         assumption();
                     }
-                    unfold(c) as { sibling: s, up: u };
+                    let { sibling: s, up: u } = unfold(c);
                     step();
                     step();
                     let lifted = fold(ptree_at(node, parent), {
@@ -200,7 +200,7 @@ struct tree_node* tree_root_of(struct tree_node* node, struct tree_node* parent)
                 rewrite(HeapTree::Node(identity, value, left_model, right_model) == t.model);
                 assumption();
             }
-            unfold(t) as { left: l, right: r };
+            let { left: l, right: r } = unfold(t);
             let sub = fold(ptree_at(node, parent), {
                 model: HeapTree::Node(identity, value, left_model, right_model)
             }, { left: l, right: r });

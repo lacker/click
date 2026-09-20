@@ -1105,7 +1105,7 @@ pub(in crate::surface::proof) fn plan_smart_have_in_current_state(
     unfolded_predicates: &[String],
     prelowered_goal: Option<&Proposition>,
     // The proof locals in scope where this `have` was written: a proof
-    // `match` arm's bindings, `unfold ... as` names, call-result binders.
+    // `match` arm's bindings, `let { ... } = unfold(...)` names, call-result binders.
     // The goal and each `simp() using` premise are lowered with them
     // resolved, exactly as the enclosing script resolves a `have` goal; the
     // written spellings stay what certificates record and expansion prints.

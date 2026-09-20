@@ -205,7 +205,7 @@ pub(in crate::surface::proof) struct ExecutionProofEnvironment<'a> {
         Option<&'a std::cell::RefCell<LoopProofCertificates>>,
     pub(in crate::surface::proof) frontier_loop_source: Option<&'a FrontierLoopProofSource>,
     /// The proof locals in scope where a frontier loop was written: a proof
-    /// `match` arm's bindings, `unfold ... as` names, call-result binders.
+    /// `match` arm's bindings, `let { ... } = unfold(...)` names, call-result binders.
     /// The planners resolve them into the loop's written clauses before
     /// lowering, as a `have` goal at that point would.
     pub(in crate::surface::proof) proof_locals: BTreeMap<String, ContractExpression>,

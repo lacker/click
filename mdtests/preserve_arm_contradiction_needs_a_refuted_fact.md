@@ -74,7 +74,7 @@ void bump_n(struct cell* node, int32 n) {
                     contradiction(n >= 0);
                 },
                 CellList::Cons(identity, value, tail_model) => {
-                    unfold(l) as { tail: t };
+                    let { tail: t } = unfold(l);
                     step();
                     step();
                     let l = fold(list_at(node), {

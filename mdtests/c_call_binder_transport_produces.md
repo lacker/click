@@ -56,7 +56,7 @@ void build(int32* p, int32* left, int32* right, int32 value) {
     produces node: tree(p);
     ensures node.model == Tree::Branch(value, left, old(a.model), right, old(b.model));
 } by {
-    let node = step(init(p, left, right, value), { l: a, r: b });
+    let { root: node } = step(init(p, left, right, value), { l: a, r: b });
     execute();
     simp();
 }
@@ -72,7 +72,7 @@ void build_parent(int32* q, int32* p, int32* left, int32* right, int32* other,
     ensures top.model == Tree::Branch(value, p,
         Tree::Branch(value, left, old(a.model), right, old(b.model)), other, old(far.model));
 } by {
-    let node = step(init(p, left, right, value), { l: a, r: b });
+    let { root: node } = step(init(p, left, right, value), { l: a, r: b });
     execute();
     let top = fold(tree(q), { model: Tree::Branch(value, p,
         Tree::Branch(value, left, old(a.model), right, old(b.model)), other, old(far.model)) },

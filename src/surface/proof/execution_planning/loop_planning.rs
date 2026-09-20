@@ -4,7 +4,7 @@ use std::sync::Arc;
 /// The proof scope a loop's phase proofs are written in.
 ///
 /// `initialize` and `preserve` bodies are written where the `loop` tactic
-/// was written: inside whatever proof `match` arm, `unfold ... as` binding,
+/// was written: inside whatever proof `match` arm, `let { ... } = unfold(...)` binding,
 /// or call-result binder reached that frontier. Their sub-proofs are built
 /// from fresh roots, so the scope has to be attached explicitly or a `have`
 /// goal inside a phase body would fail to resolve a name the loop's own

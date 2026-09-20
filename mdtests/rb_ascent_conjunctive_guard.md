@@ -209,7 +209,7 @@ struct rb_node* rb_up_while_no_right_child(struct rb_node* node, struct rb_node*
                                               sibling_model, up_model) == c.model);
                         assumption();
                     }
-                    unfold(c) as { sibling: s, up: u };
+                    let { sibling: s, up: u } = unfold(c);
                     step();
                     step();
                     let lifted = fold(rb_at(node, parent), {
@@ -231,7 +231,7 @@ struct rb_node* rb_up_while_no_right_child(struct rb_node* node, struct rb_node*
                                                sibling_model, up_model) == c.model);
                         assumption();
                     }
-                    unfold(c) as { sibling: s, up: u };
+                    let { sibling: s, up: u } = unfold(c);
                     step();
                     step();
                     let lifted = fold(rb_at(node, parent), {
@@ -245,7 +245,7 @@ struct rb_node* rb_up_while_no_right_child(struct rb_node* node, struct rb_node*
     match t.model {
         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
         RbTree::Node(identity, color, left_model, right_model) => {
-            unfold(t) as { left: l, right: r };
+            let { left: l, right: r } = unfold(t);
             step();
             simp();
         },

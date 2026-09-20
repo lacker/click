@@ -54,7 +54,7 @@ int32 touch(int32 n) {
     match c.model {
         Chain::Nil => { contradiction(c.model == Chain::Nil); },
         Chain::Link(rest_model) => {
-            unfold(c) as { rest: r };
+            let { rest: r } = unfold(c);
             let d = fold(chain(n), { model: Chain::Link(rest_model) }, { rest: r });
             have d.model == old(c.model) by { simp(); }
             step();
@@ -80,7 +80,7 @@ void caller(int32 n) {
             match c.model {
                 Chain::Nil => { contradiction(c.model == Chain::Nil); },
                 Chain::Link(rest_model) => {
-                    unfold(c) as { rest: r };
+                    let { rest: r } = unfold(c);
                     step();
                     close_invariants();
                 },

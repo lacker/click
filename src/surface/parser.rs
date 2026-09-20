@@ -60,6 +60,14 @@ pub(super) struct GlobalArrayShape {
     pub(super) element_type: CType,
 }
 
+/// The output pattern a call step may bind. The single-name form is kept as a
+/// compatibility spelling for calls with exactly one produced instance or a
+/// scalar result.
+enum CallOutputPattern {
+    Single(String),
+    Named(Vec<(String, String)>),
+}
+
 pub(super) fn parse(source: &str) -> Result<ClickFile, ClickError> {
     Parser::new(source)?.parse_file()
 }
@@ -286,7 +294,7 @@ struct Parser {
     contract_proof_bindings: BTreeMap<String, Vec<(String, Variable, String)>>,
     next_resource_identity: u64,
     current_resource_bindings: BTreeMap<String, (Variable, String)>,
-    /// Instances introduced by `unfold(parent) as { slot: name }`. The slot's
+    /// Instances introduced by `let { slot: name } = unfold(parent)`. The slot's
     /// resource is declared by the parent's matched arm, which may not be
     /// parsed yet, so the recorded family is the parent's and every family
     /// comparison against these instances is left to declaration expansion.
@@ -3195,11 +3203,11 @@ impl Parser {
     }
 
     /// `callee(arguments), { binder: instance, ... }`, positioned after the
-    /// opening parenthesis of `step(`. `produced` is the name a surrounding
-    /// `let` introduces for the callee's `produces` binder.
+    /// opening parenthesis of `step(`. Produced instances are named by the
+    /// surrounding `let` output pattern.
     fn parse_call_binder_transport(
         &mut self,
-        produced: Option<String>,
+        output: Option<CallOutputPattern>,
     ) -> Result<CallBinderTransport, ClickError> {
         let callee = self.expect_ident("call step callee")?;
         self.expect(Token::LParen)?;
@@ -3272,27 +3280,29 @@ impl Parser {
         }) {
             return Err(self.error(format!("call map omits `{callee}` binder `{missing}`")));
         }
-        let mut produced_declarations = declared
+        let produced_declarations = declared
             .iter()
             .filter(|(_, entry)| entry.kind == CalleeResourceBinderKind::Produced);
-        let produced_declaration = produced_declarations.next();
-        if produced_declarations.next().is_some() {
-            return Err(self.error(format!(
-                "`{callee}` produces more than one resource instance; a call step introduces one"
-            )));
-        }
+        let produced_declarations = produced_declarations.collect::<Vec<_>>();
         let mut result = None;
-        let produced = match (produced, produced_declaration) {
-            (None, None) => None,
-            (None, Some((produced, _))) => {
+        let mut produced = Vec::new();
+        match (output, produced_declarations.as_slice()) {
+            (None, []) => {}
+            (None, _) => {
+                let names = produced_declarations
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 return Err(self.error(format!(
-                    "`{callee}` produces `{produced}`; introduce it with `let {produced} = step(...)`"
+                    "`{callee}` produces named resource instance(s) `{names}`; bind them with `let {{ ... }} = step(...)`"
                 )));
             }
-            // The callee produces no instance, so the same `let` names the
-            // call's scalar result. The frontier's call statement decides
-            // whether there is one; the parser only records the name.
-            (Some(name), None) => {
+            // The legacy single-name form binds the only produced instance,
+            // or names the call's scalar result when there is no produced
+            // instance. The frontier's call statement decides whether the
+            // latter actually has a result.
+            (Some(CallOutputPattern::Single(name)), []) => {
                 if self.current_contract_bindings.contains(&name)
                     || self.current_integer_params.contains(&name)
                     || self.current_integer_lets.contains(&name)
@@ -3303,48 +3313,107 @@ impl Parser {
                     )));
                 }
                 result = Some(name);
-                None
             }
-            (Some(name), Some((produced, declaration))) => {
-                if self.current_contract_bindings.contains(&name)
-                    || self.current_integer_params.contains(&name)
-                    || self.current_integer_lets.contains(&name)
-                {
-                    return Err(self.error("produced instance conflicts with a C or pure binding"));
+            (Some(CallOutputPattern::Single(name)), [(produced_name, declaration)]) => {
+                produced.push(self.bind_produced_call_instance(
+                    &name,
+                    produced_name,
+                    declaration,
+                )?);
+            }
+            (Some(CallOutputPattern::Single(_)), _) => {
+                let names = produced_declarations
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(self.error(format!(
+                    "`{callee}` produces multiple named resource instances ({names}); use `let {{ binder: name, ... }} = step(...)`"
+                )));
+            }
+            (Some(CallOutputPattern::Named(bindings)), _) => {
+                if produced_declarations.is_empty() {
+                    return Err(self.error(format!(
+                        "`{callee}` produces no named resource instances; use `let name = step(...)` only for a scalar result"
+                    )));
                 }
-                let identity = match self.current_resource_bindings.get(&name) {
-                    Some((identity, family)) => {
-                        if *family != declaration.family
-                            && !self.child_slot_identities.contains(identity)
-                        {
-                            return Err(
-                                self.error("produced instance changes the named resource family")
-                            );
-                        }
-                        *identity
+                let mut bound = BTreeSet::new();
+                let mut names = BTreeSet::new();
+                for (binder, name) in bindings {
+                    if !bound.insert(binder.clone()) {
+                        return Err(self.error(format!(
+                            "duplicate produced binder `{binder}` in the call output pattern"
+                        )));
                     }
-                    None => {
-                        let identity = Variable(self.next_resource_identity);
-                        self.next_resource_identity += 1;
-                        identity
+                    if !names.insert(name.clone()) {
+                        return Err(self.error(format!(
+                            "call output pattern introduces resource name `{name}` twice"
+                        )));
                     }
-                };
-                self.current_resource_bindings
-                    .insert(name.clone(), (identity, declaration.family.clone()));
-                Some(CallBinderBinding {
-                    binder: produced.clone(),
-                    binder_identity: declaration.identity,
-                    instance: name,
-                    identity,
-                })
+                    let Some((_, declaration)) = produced_declarations
+                        .iter()
+                        .find(|(declared, _)| *declared == &binder)
+                    else {
+                        return Err(self.error(format!(
+                            "`{callee}` does not produce named resource `{binder}`"
+                        )));
+                    };
+                    produced.push(self.bind_produced_call_instance(&name, &binder, declaration)?);
+                }
+                if bound.len() != produced_declarations.len() {
+                    let missing = produced_declarations
+                        .iter()
+                        .filter(|(name, _)| !bound.contains(*name))
+                        .map(|(name, _)| name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Err(self.error(format!(
+                        "call output pattern omits produced resource binder(s) `{missing}`"
+                    )));
+                }
             }
-        };
+        }
         Ok(CallBinderTransport {
             callee,
             arguments,
             binders,
             produced,
             result,
+        })
+    }
+
+    fn bind_produced_call_instance(
+        &mut self,
+        name: &str,
+        produced: &str,
+        declaration: &CalleeResourceBinder,
+    ) -> Result<CallBinderBinding, ClickError> {
+        if self.current_contract_bindings.contains(name)
+            || self.current_integer_params.contains(name)
+            || self.current_integer_lets.contains(name)
+        {
+            return Err(self.error("produced instance conflicts with a C or pure binding"));
+        }
+        let identity = match self.current_resource_bindings.get(name) {
+            Some((identity, family)) => {
+                if *family != declaration.family && !self.child_slot_identities.contains(identity) {
+                    return Err(self.error("produced instance changes the named resource family"));
+                }
+                *identity
+            }
+            None => {
+                let identity = Variable(self.next_resource_identity);
+                self.next_resource_identity += 1;
+                identity
+            }
+        };
+        self.current_resource_bindings
+            .insert(name.to_string(), (identity, declaration.family.clone()));
+        Ok(CallBinderBinding {
+            binder: produced.to_string(),
+            binder_identity: declaration.identity,
+            instance: name.to_string(),
+            identity,
         })
     }
 
@@ -4244,17 +4313,35 @@ impl Parser {
         parent: &ResourceClause,
         introduce: bool,
     ) -> Result<Vec<(String, String, Variable)>, ClickError> {
-        let ResourceClause::Declared { name: family, .. } = parent else {
-            return Err(self.error("child bindings require a declared resource family"));
-        };
         self.expect(Token::LBrace)?;
-        let mut result = Vec::new();
-        let mut slots = BTreeSet::new();
-        let mut names = BTreeSet::new();
+        let mut bindings = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             let slot = self.expect_ident("child slot")?;
             self.expect(Token::Colon)?;
             let name = self.expect_ident("child resource name")?;
+            bindings.push((slot, name));
+            if self.peek() != Some(&Token::Comma) {
+                break;
+            }
+            self.position += 1;
+        }
+        self.expect(Token::RBrace)?;
+        self.bind_resource_child_names(parent, bindings, introduce)
+    }
+
+    fn bind_resource_child_names(
+        &mut self,
+        parent: &ResourceClause,
+        bindings: Vec<(String, String)>,
+        introduce: bool,
+    ) -> Result<Vec<(String, String, Variable)>, ClickError> {
+        let ResourceClause::Declared { name: family, .. } = parent else {
+            return Err(self.error("child bindings require a declared resource family"));
+        };
+        let mut result = Vec::new();
+        let mut slots = BTreeSet::new();
+        let mut names = BTreeSet::new();
+        for (slot, name) in bindings {
             if !slots.insert(slot.clone()) || !names.insert(name.clone()) {
                 return Err(self.error("duplicate child slot or resource name"));
             }
@@ -4294,13 +4381,30 @@ impl Parser {
                 );
             }
             result.push((slot, name, identity));
+        }
+        Ok(result)
+    }
+
+    fn parse_let_output_pattern(&mut self) -> Result<CallOutputPattern, ClickError> {
+        if self.peek() != Some(&Token::LBrace) {
+            return Ok(CallOutputPattern::Single(
+                self.expect_ident("let binding name")?,
+            ));
+        }
+        self.position += 1;
+        let mut bindings = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            let binder = self.expect_ident("output binder")?;
+            self.expect(Token::Colon)?;
+            let name = self.expect_ident("output binding name")?;
+            bindings.push((binder, name));
             if self.peek() != Some(&Token::Comma) {
                 break;
             }
             self.position += 1;
         }
         self.expect(Token::RBrace)?;
-        Ok(result)
+        Ok(CallOutputPattern::Named(bindings))
     }
 
     fn parse_proof_tactic(&mut self) -> Result<ProofTactic, ClickError> {
@@ -4319,21 +4423,52 @@ impl Parser {
         let name = self.expect_ident("tactic")?;
         match name.as_str() {
             "let" => {
-                let name = self.expect_ident("fold result name")?;
+                let output = self.parse_let_output_pattern()?;
                 self.expect(Token::Equal)?;
                 if self.peek_ident() == Some("step") {
                     self.position += 1;
                     self.expect(Token::LParen)?;
                     if !self.call_binder_transport_follows() {
                         return Err(self.error(
-                            "`let name = step(...)` requires a call and a binder map: `step(callee(...), { binder: instance })`",
+                            "a call output binding requires a call and binder map: `let name = step(callee(...), { binder: instance })`",
                         ));
                     }
-                    let transport = self.parse_call_binder_transport(Some(name))?;
+                    let transport = self.parse_call_binder_transport(Some(output))?;
                     self.expect(Token::RParen)?;
                     self.expect(Token::Semicolon)?;
                     return Ok(ProofTactic::StepCall(transport));
                 }
+                if self.peek_ident() == Some("unfold") {
+                    let CallOutputPattern::Named(bindings) = output else {
+                        return Err(self.error(
+                            "resource unfold outputs require a labeled pattern: `let { slot: name } = unfold(resource)`",
+                        ));
+                    };
+                    self.position += 1;
+                    self.expect(Token::LParen)?;
+                    let ResourceClause::Named {
+                        mut binding,
+                        resource,
+                    } = self.parse_owned_resource_target()?
+                    else {
+                        return Err(self.error("resource unfold outputs require a named resource"));
+                    };
+                    self.expect(Token::RParen)?;
+                    binding.child_bindings = Some(
+                        self.bind_resource_child_names(&resource, bindings, true)?
+                            .into(),
+                    );
+                    self.expect(Token::Semicolon)?;
+                    return Ok(ProofTactic::UnfoldResource(ResourceClause::Named {
+                        binding,
+                        resource,
+                    }));
+                }
+                let CallOutputPattern::Single(name) = output else {
+                    return Err(self.error(
+                        "resource construction requires one result name: `let name = fold(resource, { ... })`",
+                    ));
+                };
                 self.expect_ident_spelling("fold")?;
                 self.expect(Token::LParen)?;
                 let resource = self.parse_resource_target(ResourceAccessMode::Own)?;

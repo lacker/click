@@ -431,7 +431,7 @@ struct rb_node* rb_first(const struct rb_root* root) {
         },
         RbTree::Node(entry_identity, entry_parent, entry_color,
                      entry_left, entry_right) => {
-            unfold(t) as { left: entry_l, right: entry_r };
+            let { left: entry_l, right: entry_r } = unfold(t);
             have root->rb_node != 0 by { simp(); }
             let t = fold(rb_at(n), { model: old(t.model) },
                          { left: entry_l, right: entry_r });
@@ -474,7 +474,7 @@ struct rb_node* rb_first(const struct rb_root* root) {
                                                      right_model) == t.model);
                                 assumption();
                             }
-                            unfold(t) as { left: l, right: rt };
+                            let { left: l, right: rt } = unfold(t);
                             have plug(Context::Left(n, parent, color, right_model, ctx.model),
                                       left_model)
                                 == old(t.model) by {
@@ -506,7 +506,7 @@ struct rb_node* rb_first(const struct rb_root* root) {
                             == t.model);
                         assumption();
                     }
-                    unfold(t) as { left: l, right: rt };
+                    let { left: l, right: rt } = unfold(t);
                     have rb_left(RbTree::Node(identity, parent, color, left_model, right_model))
                         == left_model by {
                         unfold(rb_left(RbTree::Node(identity, parent, color, left_model,

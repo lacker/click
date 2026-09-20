@@ -177,7 +177,7 @@ void replace_root_node(struct rb_node* victim, struct rb_node* new_node,
     ensures d.model == old(c.model);
     ensures u.model == old(t.model);
 } by {
-    unfold(t) as { left: l, right: r };
+    let { left: l, right: r } = unfold(t);
     unfold(c);
     unfold(l);
     unfold(r);

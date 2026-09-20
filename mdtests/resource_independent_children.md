@@ -33,7 +33,7 @@ int32 read_left(int32* p, int32* left, int32* right) {
     ensures result == 2;
     ensures root.model == old(root.model);
 } by {
-    unfold(root) as { left: l, right: r };
+    let { left: l, right: r } = unfold(root);
     unfold(l);
     execute();
     let l = fold(tree(left), { model: Tree::Leaf(2) });

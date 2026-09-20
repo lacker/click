@@ -96,8 +96,8 @@ struct tree_node* rotate_left(struct tree_node* root) {
             match right_model {
                 HeapTree::Empty => { contradiction(right_model == HeapTree::Empty); },
                 HeapTree::Node(pivot_node, pivot_value, middle_model, far_right_model) => {
-                    unfold(t) as { left: l, right: r };
-                    unfold(r) as { left: m, right: z };
+                    let { left: l, right: r } = unfold(t);
+                    let { left: m, right: z } = unfold(r);
                     execute();
                     let lower = fold(tree_at(root), {
                         model: HeapTree::Node(node, value, left_model, middle_model)
