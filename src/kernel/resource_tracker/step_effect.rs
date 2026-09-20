@@ -63,6 +63,10 @@ pub(in crate::kernel) enum BlockSeparation {
     /// so the one cell it writes, and the one union overlay it drops, are
     /// both outside this block.
     StoreInDistinctBlock,
+    /// The object that entered the memory model is proven distinct from this
+    /// one, so it has its own `blocks` key and this block's extent entry is
+    /// untouched.
+    DeclarationOfDistinctBlock,
 }
 
 /// What the querying context offers a walk towards an answer.
@@ -83,7 +87,7 @@ pub(in crate::kernel) struct Evidence<'a> {
 /// | Recorded step | A cell | A block, as an array argument |
 /// | --- | --- | --- |
 /// | `Store` | separate on proven-distinct blocks, a common-base offset inequality, typed `separate(..)` evidence, an explicit range, or general distinctness; affected when the written address is provably the loaded one | separate **only** on `PointerBlock::proven_distinct` |
-/// | `BlockDeclared` | separate: it writes nothing | **not shown separate** |
+/// | `BlockDeclared` | separate: it writes nothing | separate when the declared object is proven distinct; affected for this block's own declaration |
 /// | `HeapAllocated` | separate when the block differs | **not shown separate** |
 /// | `HeapAllocationPending` | separate: it writes nothing | **not shown separate** |
 /// | `ContractAllocationClaimsChanged` | separate: it writes nothing | **not shown separate** |
@@ -419,6 +423,13 @@ fn cell_effect(
 ///   a global and an array parameter one object, and carrying a fact across
 ///   the store to `g[0]` there would hold `g[0] == 5` and `g[0] == 1` at one
 ///   point.
+/// * `BlockDeclared` inserts one entry in `blocks` under the declared block's
+///   own key and changes nothing else — no cell, no overlay, no ended-local
+///   entry, no heap status. An object proven distinct from this one therefore
+///   has a different key, so this block's own extent entry is the same entry it
+///   was, and everything a body reads through the pointer is untouched. This is
+///   why `int32 t;` now carries a fact about `a` as a whole, as it has always
+///   carried `a[0] == 5`.
 /// * Every other kind stops the walk, exactly as it did before there was one
 ///   rule. Each blanket refusal below is a finding to settle on its own.
 ///
@@ -452,11 +463,9 @@ fn block_effect(step: &CMemoryDerivation, block: &PointerBlock) -> StepEffect {
         CMemoryDerivation::Store { pointer, .. } => {
             one_object(&pointer.block, BlockSeparation::StoreInDistinctBlock)
         }
-        // It changes the `blocks` map, which decides the extent a read of
-        // this block is checked against.
         CMemoryDerivation::BlockDeclared {
             block: declared, ..
-        } => stops(Some(declared)),
+        } => one_object(declared, BlockSeparation::DeclarationOfDistinctBlock),
         // They change heap status, which decides whether a read is defined,
         // is zeroed, or has a pending reallocation.
         CMemoryDerivation::HeapAllocated {

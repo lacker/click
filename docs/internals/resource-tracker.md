@@ -99,7 +99,7 @@ what was actually established.
 | Recorded step | A cell | A block, as an array argument |
 | --- | --- | --- |
 | `Store` | separate on proven-distinct blocks, a common-base offset inequality, typed `separate(..)` evidence, an explicit range, or general distinctness | separate **only** on `PointerBlock::proven_distinct` |
-| `BlockDeclared` | separate: it writes nothing | **stops**: it changes the extent a read of the block is checked against |
+| `BlockDeclared` | separate: it writes nothing | separate when the declared object is proven distinct: it has its own `blocks` key, so this block's extent is the entry it was |
 | `HeapAllocationPending` | separate | **stops** |
 | `ContractAllocationClaimsChanged` | separate | **stops** |
 | `CellsForgotten` | separate | **stops**: the state is the same, the cell map is not |
@@ -118,12 +118,12 @@ kernel's structural separation, because its answer is embedded in a name that
 is shared across proof paths, and the rule enforces that by handing the block
 arm no fact context at all.
 
-Two consequences a user meets today:
-
-- an array fact dies at a step that writes nothing (a bare `int32 t;`), while a
-  cell fact survives it;
-- a stated `separate(..)` carries a cell fact across a call and does not carry
-  an array fact, because the block walk has no fact context to read it from.
+One consequence a user meets today: a stated `separate(..)` carries a cell fact
+across a call and does not carry an array fact, because the block walk has no
+fact context to read it from. That one is not a difference to settle but the
+corridor itself — a block's answer is shared across paths — so the refusal for
+a whole-array fact says what is missing instead of naming a repair the walk
+would never consult.
 
 The cell walk is also asked a second question by memory-load reasoning — "are
 these two loads equal" — and that caller keeps the whole path as retained

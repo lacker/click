@@ -149,13 +149,13 @@ fn a_loop_without_a_write_set_needs_no_separation_check() {
     );
 }
 
-/// The known inconsistency between the two walks, pinned: a bare declaration
-/// writes nothing and a cell crosses it, while a block fact stops there
-/// because the declaration changes the extent a read of the block is checked
-/// against. `docs/internals/resource-tracker.md` tabulates this; chunk 2
-/// decides it.
+/// A bare declaration writes nothing, so one rule carries both resources
+/// across it: the declared object has its own `blocks` key, and a block
+/// proven distinct from it keeps its extent, cells, overlays, liveness and
+/// heap status. `mdtests/array_fact_survives_a_declaration.md` is the user's
+/// view of the same step.
 #[test]
-fn a_declaration_stops_a_block_fact_but_not_a_cell() {
+fn a_declaration_of_another_object_keeps_one_version() {
     let entry = entry_memory();
     let after = entry.clone().with_block(block("local:f:t"), 4);
     let cell = at(block("global:g"), 0);
@@ -164,18 +164,45 @@ fn a_declaration_stops_a_block_fact_but_not_a_cell() {
         Sameness::Same,
         "a declaration writes no cell"
     );
+    assert_eq!(
+        same(
+            Resource::Block(&block("global:g")),
+            &point(&after),
+            &point(&entry)
+        ),
+        Sameness::Same,
+        "a declaration of another object writes nothing this block contains"
+    );
+}
 
-    let subject = block("global:g");
-    let outcome = same(Resource::Block(&subject), &point(&after), &point(&entry));
-    let Sameness::Unknown { why, .. } = outcome else {
-        panic!("a block fact stops at a declaration, and got {outcome:?}");
+/// The block's *own* declaration is the step that created it, so it is a
+/// change rather than a missing separation — and a declaration nothing
+/// separates from this block still stops the walk.
+#[test]
+fn a_block_does_not_cross_its_own_declaration_or_an_unseparated_one() {
+    let entry = entry_memory();
+    let own = entry.clone().with_block(block("global:k"), 16);
+    let subject = block("global:k");
+    let outcome = same(Resource::Block(&subject), &point(&own), &point(&entry));
+    let Sameness::Changed { by, .. } = outcome else {
+        panic!("a block's own declaration is a change, not {outcome:?}");
     };
     assert_eq!(
-        why.change,
+        by.change,
         Change::Declaration {
-            block: block("local:f:t")
+            block: block("global:k")
         }
     );
+    assert_eq!(by.reason, StopReason::Affected);
+
+    // A symbolic block is a logic variable later facts may constrain to any
+    // address, so nothing separates it from the declared object.
+    let symbolic = PointerBlock::Symbolic(Variable(81));
+    let after = entry.clone().with_block(block("local:f:t"), 4);
+    let outcome = same(Resource::Block(&symbolic), &point(&after), &point(&entry));
+    let Sameness::Unknown { why, .. } = outcome else {
+        panic!("an unseparated declaration stops a block fact, and got {outcome:?}");
+    };
     assert_eq!(
         why.reason,
         StopReason::NotShownSeparate(SeparationCheck::WholeBlockAgreement)
