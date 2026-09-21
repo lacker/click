@@ -13393,6 +13393,13 @@ pub(super) fn prepare_function_contract_entry_state_with_values(
             function.name()
         ))));
     };
+    // Certifying a contract enters the function at the verification root: its
+    // frame is the outermost one, and its memory holds no caller's automatic
+    // objects for a declaration to collide with. Keep the plain `local:<name>`
+    // identity there, both because it is the readable one a diagnostic shows
+    // and because a generation would claim a re-entry that did not happen. A
+    // caller that is already inside a frame passes its own answer down.
+    let callee_state = callee_state.with_in_called_frame(caller_state.in_called_frame());
     let transfer = match crate::instrumentation::measure_operation(
         function.name(),
         "contract resource transition",
@@ -19006,6 +19013,40 @@ fn active_counted_population_supports_allocation(
     })
 }
 
+/// Ends the automatic lifetimes the returning frame created.
+///
+/// A body executed at a call site declares its locals into the caller's own
+/// memory, and nothing else retires them: without this the callee's cells stay
+/// readable under the caller's next declaration of that name, and a pointer to
+/// one of the callee's locals stays dereferenceable after the frame is gone.
+///
+/// Only identities this frame minted are retired — the generational
+/// declarations and the frame-scoped parameter slots. A value-only parameter
+/// is deliberately excluded: its pseudo-slot borrows the bare `local:<name>`
+/// spelling while owning no block, so retiring it would tombstone whatever
+/// object of that name the *caller* has.
+///
+/// Bounded by this frame's own bindings; it reads no caller state.
+fn end_inline_frame_automatic_lifetimes(state: &CState) -> CMemory {
+    let mut memory = state.memory.clone();
+    for slot in state.locals.slots() {
+        if !block_is_frame_scoped_automatic_object(&slot.block) {
+            continue;
+        }
+        if !memory.has_block(&slot.block) {
+            continue;
+        }
+        memory = memory.without_local_block(&slot.block);
+    }
+    memory
+}
+
+/// Whether this block is an automatic object a call frame minted for itself,
+/// rather than the outermost frame's `local:<name>` or a pseudo-slot.
+fn block_is_frame_scoped_automatic_object(block: &PointerBlock) -> bool {
+    block.starts_with("local:lifetime:") || block.starts_with("local:frame:")
+}
+
 /// Returns the caller-visible memory after a function returns.
 pub(in crate::kernel) fn function_exit_memory(
     caller_state: &CState,
@@ -19711,7 +19752,11 @@ pub(super) fn function_outcome_from_body(
             };
 
             let mut caller_state = caller_state.clone();
-            caller_state.set_memory(state.memory.clone());
+            caller_state.set_memory(if function.has_inline_body() {
+                end_inline_frame_automatic_lifetimes(&state)
+            } else {
+                state.memory.clone()
+            });
             if function.has_inline_body() {
                 // Inline bodies execute with a parameter-only local
                 // environment, so pointer stores into caller locals cannot
@@ -19755,7 +19800,11 @@ pub(super) fn function_outcome_from_body(
                 );
             }
             let mut caller_state = caller_state.clone();
-            caller_state.set_memory(state.memory.clone());
+            caller_state.set_memory(if function.has_inline_body() {
+                end_inline_frame_automatic_lifetimes(&state)
+            } else {
+                state.memory.clone()
+            });
             if function.has_inline_body() {
                 let memory = caller_state.memory.clone();
                 caller_state.sync_scalar_locals_from_memory(&memory);

@@ -2274,6 +2274,11 @@ pub fn c_function_entry_state(
     // This API rebinds a proof frontier, including an explicitly unfolded
     // entry representation. It is not the modular call ownership transfer.
     entry.instance_field_scope = caller_state.instance_field_scope.clone();
+    // Nor is it a frame the caller is still standing in: this is the function
+    // the proof is about, entered at whatever depth its caller was. So it
+    // inherits the caller's answer about whether some enclosing frame already
+    // owns automatic objects, rather than assuming one does.
+    entry = entry.with_in_called_frame(caller_state.in_called_frame());
     Some(entry)
 }
 
