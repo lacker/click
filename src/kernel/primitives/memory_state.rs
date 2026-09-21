@@ -2370,18 +2370,34 @@ impl CMemory {
         memory
     }
 
+    /// Forgets every cell of `self` the write of `bytes` bytes at `pointer`
+    /// may invalidate.
+    ///
+    /// Two independent reasons a cell goes. It may be *the same location*
+    /// under some assignment of the symbolic offsets, which the address
+    /// separation ladder below decides. Or its bytes may be *partly* the
+    /// written ones while its address stays a different address: a one-byte
+    /// write at `p + 4` overwrites the upper half of an `int64` cell at `p`,
+    /// and `p + 4` is separate from `p` by every address test there is. Only
+    /// the second reads a width, and it reads both sides' exact widths, so
+    /// the cells that survive a store are the ones whose bytes the store
+    /// provably misses.
     pub(in crate::kernel) fn without_possible_aliasing_cells(
         &self,
         pointer: &Pointer,
+        bytes: u32,
         assumptions: &PureFactContext,
     ) -> Self {
         let normalized_pointer = Pointer {
             block: pointer.block.clone(),
             offset: normalize_exact_memory_loads_in_pointer_offset(&pointer.offset, assumptions),
         };
+        // Computed once for the whole scan; the cells it is compared against
+        // are the same-block ones, so the write's own atoms never change.
+        let written = crate::kernel::reasoning::StoreByteInterval::of(&normalized_pointer, bytes);
         let base = Some(intern_c_memory_ref(self));
         let mut memory = self.clone();
-        std::sync::Arc::make_mut(&mut memory.cells).retain(|cell_pointer, _| {
+        std::sync::Arc::make_mut(&mut memory.cells).retain(|cell_pointer, cell_value| {
             let normalized_cell_pointer = Pointer {
                 block: cell_pointer.block.clone(),
                 offset: normalize_exact_memory_loads_in_pointer_offset(
@@ -2389,6 +2405,13 @@ impl CMemory {
                     assumptions,
                 ),
             };
+            if normalized_cell_pointer.block == normalized_pointer.block
+                && written.as_ref().is_some_and(|written| {
+                    written.overwrites(&normalized_cell_pointer, cell_value)
+                })
+            {
+                return false;
+            }
             pointers_proven_distinct_for_memory_resolution(
                 &normalized_cell_pointer,
                 &normalized_pointer,
@@ -2415,7 +2438,7 @@ impl CMemory {
                 )
                 .is_some()
         });
-        std::sync::Arc::make_mut(&mut memory.union_cells).retain(|(cell_pointer, _), _| {
+        std::sync::Arc::make_mut(&mut memory.union_cells).retain(|(cell_pointer, cell_type), _| {
             let normalized_cell_pointer = Pointer {
                 block: cell_pointer.block.clone(),
                 offset: normalize_exact_memory_loads_in_pointer_offset(
@@ -2423,6 +2446,13 @@ impl CMemory {
                     assumptions,
                 ),
             };
+            if normalized_cell_pointer.block == normalized_pointer.block
+                && written.as_ref().is_some_and(|written| {
+                    written.overwrites_typed(&normalized_cell_pointer, *cell_type)
+                })
+            {
+                return false;
+            }
             pointers_proven_distinct_for_memory_resolution(
                 &normalized_cell_pointer,
                 &normalized_pointer,

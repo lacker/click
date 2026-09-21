@@ -1416,10 +1416,6 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
     canonical
 }
 
-/// The widest scalar load the kernel performs; assuming it when the true
-/// width is unknown only ever shrinks the provable-disjoint set.
-const MAX_SCALAR_LOAD_BYTES: i64 = 4;
-
 /// Splits a pointer offset into its non-constant atoms and total constant
 /// byte shift, folding constants nested inside scaled indices.
 pub(in crate::kernel) fn offset_atoms_and_constant(
@@ -1461,8 +1457,22 @@ pub(in crate::kernel) fn offset_atoms_and_constant(
 
 /// True when a cached cell provably cannot alias the loaded pointer because
 /// both offsets share the same non-constant atoms and their constant byte
-/// intervals are disjoint. This needs no assumptions, so canonicalization
-/// may drop the cell for any load width up to [`MAX_SCALAR_LOAD_BYTES`].
+/// intervals are disjoint. This needs no assumptions, so canonicalization may
+/// drop the cell.
+///
+/// The cell contributes the real width of the value stored in it, taken from
+/// [`CValue::byte_width`] rather than from a second width table here: an
+/// `int64`, a `uint64`, a `double` and an LP64 pointer are eight bytes, and a
+/// cell whose width this function guessed too small would be dropped while
+/// the load still reads part of it.
+///
+/// A `MemoryLoad` term records no width, so the load contributes
+/// [`MAX_SCALAR_ACCESS_BYTES`]. That is the only sound reading of an unknown
+/// width here: dropping a cell makes two snapshots compare equal at this
+/// load, so every byte the load might read has to be considered. An
+/// eight-byte load at the loaded pointer covers the four bytes above it, and
+/// a fixed four here reported a cell exactly four bytes above the load as
+/// disjoint from it.
 fn cell_disjoint_from_load_by_constant_offset(
     cell_pointer: &Pointer,
     value: &CValue,
@@ -1479,19 +1489,76 @@ fn cell_disjoint_from_load_by_constant_offset(
     if cell_atoms != load_atoms {
         return false;
     }
-    let cell_width = match value {
-        CValue::Void => return false,
-        CValue::Bool(_) => 1,
-        CValue::Int16(_) | CValue::UInt16(_) => 2,
-        CValue::Int32(_) => 4,
-        CValue::UInt8(_) => 1,
-        CValue::UInt32(_) => 4,
-        CValue::Int64(_) | CValue::UInt64(_) => 8,
-        CValue::Float32(_) => 4,
-        CValue::Float64(_) => 8,
-        CValue::Pointer(_) => return false,
-    };
-    cell_shift + cell_width <= load_shift || load_shift + MAX_SCALAR_LOAD_BYTES <= cell_shift
+    // A `Void` cell holds no bytes, so it spans no interval to compare.
+    let cell_width = i64::from(value.byte_width());
+    if cell_width == 0 {
+        return false;
+    }
+    crate::kernel::byte_intervals_disjoint(
+        cell_shift,
+        cell_width,
+        load_shift,
+        crate::kernel::MAX_SCALAR_ACCESS_BYTES,
+    )
+}
+
+/// The bytes a store covers, as non-constant offset atoms plus a constant
+/// byte interval, for the cells of the same block to be compared against.
+/// `None` where the write has no constant extent to compare.
+pub(in crate::kernel) struct StoreByteInterval {
+    atoms: Vec<PointerOffsetTerm>,
+    shift: i64,
+    bytes: i64,
+}
+
+impl StoreByteInterval {
+    pub(in crate::kernel) fn of(write_pointer: &Pointer, write_bytes: u32) -> Option<Self> {
+        (write_bytes > 0).then(|| {
+            let (atoms, shift) = offset_atoms_and_constant(&write_pointer.offset);
+            Self {
+                atoms,
+                shift,
+                bytes: i64::from(write_bytes),
+            }
+        })
+    }
+
+    /// Whether this store provably overwrites bytes the cell occupies.
+    ///
+    /// Both widths are exact: the store's comes from the value it writes and
+    /// the cell's from the value it holds, so this decides bytes rather than
+    /// bounding them by the widest scalar. It is deliberately a different
+    /// question from the address-separation checks it is used beside, which
+    /// answer whether two *addresses* denote different locations: `p` and
+    /// `p + 4` are different addresses, and a one-byte write at `p + 4`
+    /// still overwrites part of an `int64` cell at `p`.
+    pub(in crate::kernel) fn overwrites(
+        &self,
+        cell_pointer: &Pointer,
+        cell_value: &CValue,
+    ) -> bool {
+        let cell_width = i64::from(cell_value.byte_width());
+        self.overwrites_bytes(cell_pointer, cell_width)
+    }
+
+    pub(in crate::kernel) fn overwrites_typed(
+        &self,
+        cell_pointer: &Pointer,
+        cell_type: CType,
+    ) -> bool {
+        self.overwrites_bytes(cell_pointer, i64::from(cell_type.byte_width()))
+    }
+
+    fn overwrites_bytes(&self, cell_pointer: &Pointer, cell_width: i64) -> bool {
+        if cell_width == 0 {
+            return false;
+        }
+        let (cell_atoms, cell_shift) = offset_atoms_and_constant(&cell_pointer.offset);
+        if cell_atoms != self.atoms {
+            return false;
+        }
+        !crate::kernel::byte_intervals_disjoint(cell_shift, cell_width, self.shift, self.bytes)
+    }
 }
 
 /// The source snapshot a materialization cell stands for: a cell at `p`

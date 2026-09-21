@@ -2729,7 +2729,7 @@ fn symbolic_store_invalidates_only_possible_aliasing_cells() {
         .store(concrete_cell.clone(), int32(42));
 
     let aliased = memory
-        .without_possible_aliasing_cells(&symbolic_cell, &PureFactContext::new())
+        .without_possible_aliasing_cells(&symbolic_cell, 4, &PureFactContext::new())
         .store(symbolic_cell.clone(), int32(7));
     assert_eq!(aliased.known_value(&concrete_cell), None);
 
@@ -2738,7 +2738,7 @@ fn symbolic_store_invalidates_only_possible_aliasing_cells() {
         false,
     );
     let distinct = memory
-        .without_possible_aliasing_cells(&symbolic_cell, &distinct_assumptions)
+        .without_possible_aliasing_cells(&symbolic_cell, 4, &distinct_assumptions)
         .store(symbolic_cell, int32(7));
     assert_eq!(distinct.known_value(&concrete_cell), Some(int32(42)));
 }
@@ -2850,13 +2850,15 @@ fn a_store_to_a_local_is_not_framed_away_for_an_unresolved_pointer() {
     // `x = 5`, then the call's result stored into the caller's own `q`, then
     // the store this read has to be told apart from.
     let after_call = entry.store(x.clone(), crate::kernel::api::int32(5));
-    let after_binding = after_call.without_possible_aliasing_cells(&q, &bare).store(
-        q.clone(),
-        CValue::Pointer(CPointerValue::new(symbolic.clone(), CType::Int32Pointer)),
-    );
+    let after_binding = after_call
+        .without_possible_aliasing_cells(&q, crate::kernel::C_POINTER_BYTE_WIDTH, &bare)
+        .store(
+            q.clone(),
+            CValue::Pointer(CPointerValue::new(symbolic.clone(), CType::Int32Pointer)),
+        );
     let after_store = after_binding
         .clone()
-        .without_possible_aliasing_cells(&x, &bare)
+        .without_possible_aliasing_cells(&x, 4, &bare)
         .store(x.clone(), crate::kernel::api::int32(1));
 
     assert!(

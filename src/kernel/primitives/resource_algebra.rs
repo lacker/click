@@ -361,6 +361,32 @@ fn memory_derivation_affects_footprint(
     )
 }
 
+/// The widest scalar access the kernel performs. `int64`, `uint64`, `double`
+/// and every LP64 object pointer are eight bytes; no `CValue` is wider, so a
+/// caller that cannot name its own access width may stand in this one and
+/// still bound the bytes touched.
+pub(in crate::kernel) const MAX_SCALAR_ACCESS_BYTES: i64 = 8;
+
+/// Whether the byte intervals `[left_start, left_start + left_bytes)` and
+/// `[right_start, right_start + right_bytes)` are disjoint.
+///
+/// The kernel's one decision point for constant byte-interval overlap. Both
+/// sides are required to supply a width so that no caller can leave one out
+/// by accident: an interval test that carries a real width on one side and a
+/// constant on the other answers a narrower question than it appears to, and
+/// reports overlapping bytes as disjoint whenever the real access is wider
+/// than the constant. A caller with no width of its own passes
+/// [`MAX_SCALAR_ACCESS_BYTES`], which can only shrink the disjoint set.
+pub(in crate::kernel) fn byte_intervals_disjoint(
+    left_start: i64,
+    left_bytes: i64,
+    right_start: i64,
+    right_bytes: i64,
+) -> bool {
+    left_start.saturating_add(left_bytes) <= right_start
+        || right_start.saturating_add(right_bytes) <= left_start
+}
+
 pub(in crate::kernel) fn memory_range_overlaps_pointer(
     range: &CMemoryRange,
     pointer: &Pointer,
@@ -379,10 +405,15 @@ pub(in crate::kernel) fn memory_range_overlaps_pointer(
     let Some(pointer_offset) = pointer.offset.as_const() else {
         return true;
     };
-    let Some(pointer_end) = pointer_offset.checked_add(i64::from(bytes)) else {
+    // An access whose end is not representable is read as reaching everything,
+    // as is a range whose extent is not; neither is a bound to subtract from.
+    let (Some(_), Some(extent)) = (
+        pointer_offset.checked_add(i64::from(bytes)),
+        end.checked_sub(start),
+    ) else {
         return true;
     };
-    pointer_offset < end && pointer_end > start
+    !byte_intervals_disjoint(pointer_offset, i64::from(bytes), start, extent)
 }
 
 fn add_memory_interval_candidates(

@@ -1406,7 +1406,7 @@ fn loadable_bound_check_bridges_len_forms_across_block_and_prune_edges() {
         .with_block("local:i", 4)
         .store(arc_pointer(4), CValue::Int32(Bitvector32Term::Constant(9)))
         .store(arc_pointer(8), CValue::Int32(Bitvector32Term::Constant(2)))
-        .without_possible_aliasing_cells(&arc_pointer(4), &assumptions);
+        .without_possible_aliasing_cells(&arc_pointer(4), 4, &assumptions);
     let len_at_later = Bitvector32Term::MemoryLoad(
         crate::kernel::intern_c_memory_ref(&later),
         Box::new(len_pointer),
@@ -1956,5 +1956,163 @@ fn a_session_reset_empties_the_block_epoch_memo() {
         crate::kernel::resource_tracker::block_epoch_memo_len(),
         0,
         "a session reset must not leave one verification's epochs for the next"
+    );
+}
+
+/// A store forgets every cell whose bytes it overwrites, not only the cell at
+/// its own address. Both widths are exact here — the store's from the value it
+/// writes, the cell's from the value it holds — so the cells that survive are
+/// the ones the written bytes provably miss.
+///
+/// Without this, a one-byte write four bytes into an `int64` cell left the
+/// whole `int64` readable at its old value, because `p + 4` is a different
+/// address from `p` by every address-separation test there is.
+#[test]
+fn a_store_forgets_the_wider_cell_whose_bytes_it_overwrites() {
+    let bare = PureFactContext::new();
+    let wide = CMemory::new().with_block("arg-memory", 32).store(
+        arc_pointer(0),
+        CValue::Int64(Bitvector32Term::Int64Constant(5)),
+    );
+
+    // Above the base, where the address test alone says "separate": the
+    // int64 must still be gone, and nothing takes its place.
+    for offset in 1..8 {
+        let after = wide
+            .clone()
+            .without_possible_aliasing_cells(&arc_pointer(offset), 1, &bare)
+            .store(
+                arc_pointer(offset),
+                CValue::UInt8(Bitvector32Term::Constant(7)),
+            );
+        assert_eq!(
+            after.known_value(&arc_pointer(0)),
+            None,
+            "a one-byte write {offset} bytes into an int64 cell overwrites \
+             part of it, so the int64 must not stay readable"
+        );
+    }
+    // At the base itself the write replaces the cell, so what is readable
+    // there is the byte just written and not the int64.
+    let after = wide
+        .clone()
+        .without_possible_aliasing_cells(&arc_pointer(0), 1, &bare)
+        .store(arc_pointer(0), CValue::UInt8(Bitvector32Term::Constant(7)));
+    assert_eq!(
+        after.known_value(&arc_pointer(0)),
+        Some(CValue::UInt8(Bitvector32Term::Constant(7))),
+        "a one-byte write at the base leaves its own byte, not the int64"
+    );
+
+    // Outside the cell's own bytes, the cell stays: this is what makes the
+    // forgetting worth doing rather than dropping every cell on every store.
+    let after = wide
+        .clone()
+        .without_possible_aliasing_cells(&arc_pointer(8), 1, &bare)
+        .store(arc_pointer(8), CValue::UInt8(Bitvector32Term::Constant(7)));
+    assert_eq!(
+        after.known_value(&arc_pointer(0)),
+        Some(CValue::Int64(Bitvector32Term::Int64Constant(5))),
+        "a write past the int64's last byte leaves it readable"
+    );
+
+    // The symmetric direction: a wide write over the narrow cells it covers.
+    let narrow = CMemory::new()
+        .with_block("arg-memory", 32)
+        .store(arc_pointer(0), CValue::Int32(Bitvector32Term::Constant(1)))
+        .store(arc_pointer(4), CValue::Int32(Bitvector32Term::Constant(2)))
+        .store(arc_pointer(8), CValue::Int32(Bitvector32Term::Constant(3)));
+    let after = narrow
+        .without_possible_aliasing_cells(&arc_pointer(0), 8, &bare)
+        .store(
+            arc_pointer(0),
+            CValue::Int64(Bitvector32Term::Int64Constant(9)),
+        );
+    assert_eq!(
+        after.known_value(&arc_pointer(4)),
+        None,
+        "an eight-byte write at the base overwrites the int32 four bytes up"
+    );
+    assert_eq!(
+        after.known_value(&arc_pointer(8)),
+        Some(CValue::Int32(Bitvector32Term::Constant(3))),
+        "an eight-byte write at the base stops before the int32 eight bytes up"
+    );
+}
+
+/// Canonicalization for a load drops a cell it decides the load cannot
+/// observe, which makes two snapshots compare equal at that load. The
+/// interval it decides that by has to admit the widest load the kernel
+/// performs, because the `MemoryLoad` term it is answering for carries no
+/// width of its own.
+///
+/// Both polarities, over the widths that meet at one address: a cell four
+/// bytes above the load is inside an eight-byte read and must survive, and a
+/// cell eight bytes above it is outside every scalar read and may go.
+#[test]
+fn canonical_load_form_keeps_a_cell_a_wide_read_covers() {
+    let base = CMemory::new().with_block("arg-memory", 32);
+    let read = arc_pointer(0);
+    let canonical_equal_across_store_at = |offset: i64, value: CValue| {
+        let stored = base.clone().store(arc_pointer(offset), value);
+        crate::kernel::reasoning::canonical_memory_for_pointer_load(&base, &read)
+            == crate::kernel::reasoning::canonical_memory_for_pointer_load(&stored, &read)
+    };
+
+    // Inside the widest scalar read at `read`: every one of these cells is a
+    // byte an eight-byte load of `read` returns.
+    for offset in 1..8 {
+        assert!(
+            !canonical_equal_across_store_at(offset, CValue::UInt8(Bitvector32Term::Constant(7))),
+            "a one-byte cell {offset} bytes above the load is inside an \
+             eight-byte read of it and must not be dropped"
+        );
+    }
+    assert!(
+        !canonical_equal_across_store_at(4, CValue::Int32(Bitvector32Term::Constant(7))),
+        "an int32 cell four bytes above the load is the upper half of an \
+         eight-byte read of it and must not be dropped"
+    );
+    assert!(
+        !canonical_equal_across_store_at(6, CValue::Int16(Bitvector32Term::Constant(7))),
+        "an int16 cell six bytes above the load is inside an eight-byte read"
+    );
+    assert!(
+        !canonical_equal_across_store_at(0, CValue::Int64(Bitvector32Term::Int64Constant(7))),
+        "a cell at the loaded pointer itself is never disjoint from the load"
+    );
+
+    // Below the load: the cell's own width decides, and it is known exactly.
+    assert!(
+        canonical_equal_across_store_at(-1, CValue::UInt8(Bitvector32Term::Constant(7))),
+        "a one-byte cell one byte below the load ends where the load starts"
+    );
+    assert!(
+        !canonical_equal_across_store_at(-4, CValue::Int64(Bitvector32Term::Int64Constant(7))),
+        "an int64 cell four bytes below the load covers the load's first four \
+         bytes and must not be dropped"
+    );
+    assert!(
+        canonical_equal_across_store_at(-8, CValue::Int64(Bitvector32Term::Int64Constant(7))),
+        "an int64 cell eight bytes below the load ends where the load starts"
+    );
+    assert!(
+        !canonical_equal_across_store_at(
+            -4,
+            CValue::Pointer(CPointerValue::new(arc_pointer(0), CType::Int32Pointer))
+        ),
+        "a stored pointer is eight bytes, so one four bytes below the load \
+         covers the load's first four bytes"
+    );
+
+    // Outside every scalar read: these may be dropped, and the canonical
+    // form is only useful because they are.
+    assert!(
+        canonical_equal_across_store_at(8, CValue::Int32(Bitvector32Term::Constant(7))),
+        "a cell eight bytes above the load is outside the widest scalar read"
+    );
+    assert!(
+        canonical_equal_across_store_at(16, CValue::UInt8(Bitvector32Term::Constant(7))),
+        "a cell well above the load is outside every scalar read"
     );
 }
