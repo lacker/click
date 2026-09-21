@@ -1878,8 +1878,10 @@ pub fn c_do_while_with_invariant_and_effect_checks(
 }
 
 pub fn c_continue_with_step(step: CStatement) -> CStatement {
-    CStatement::ContinueWithStep {
+    CStatement::ForStep {
         step: Box::new(step),
+        exited_locals: Vec::new(),
+        continue_after: true,
     }
 }
 
@@ -1889,39 +1891,71 @@ pub fn c_continue_with_step(step: CStatement) -> CStatement {
 /// Nested loops are opaque here because their `continue` statements target
 /// those inner loops instead.
 pub fn c_for_body_with_step(body: CStatement, step: CStatement) -> CStatement {
-    fn rewrite(statement: CStatement, step: &CStatement) -> CStatement {
+    fn rewrite(statement: CStatement, step: &CStatement, scopes: &mut Vec<String>) -> CStatement {
         match statement {
-            CStatement::Continue => c_continue_with_step(step.clone()),
+            CStatement::Continue => CStatement::ForStep {
+                step: Box::new(step.clone()),
+                exited_locals: scopes.clone(),
+                continue_after: true,
+            },
             CStatement::Seq(first, second) => c_seq(
-                rewrite((*first).clone(), step),
-                rewrite((*second).clone(), step),
+                rewrite((*first).clone(), step, scopes),
+                rewrite((*second).clone(), step, scopes),
             ),
             CStatement::If {
                 condition,
                 then_branch,
                 else_branch,
-            } => c_if(
-                condition,
-                rewrite(*then_branch, step),
-                rewrite(*else_branch, step),
-            ),
-            CStatement::Switch { expression, cases } => c_switch(
-                expression,
-                cases
+            } => {
+                let mut arm = |body: CStatement| {
+                    let parent_len = scopes.len();
+                    scopes.extend(crate::kernel::eval::scope_declared_names(&body));
+                    let body = rewrite(body, step, scopes);
+                    scopes.truncate(parent_len);
+                    body
+                };
+                c_if(condition, arm(*then_branch), arm(*else_branch))
+            }
+            CStatement::Switch { expression, cases } => {
+                let parent_len = scopes.len();
+                for case in &cases {
+                    scopes.extend(crate::kernel::eval::scope_declared_names(&case.body));
+                }
+                let cases = cases
                     .into_iter()
                     .map(|case| CSwitchCase {
                         value: case.value,
-                        body: Box::new(rewrite(*case.body, step)),
+                        body: Box::new(rewrite(*case.body, step, scopes)),
                     })
-                    .collect(),
-            ),
-            // A nested loop consumes its own `continue` outcome.
-            statement @ CStatement::While { .. } => statement,
+                    .collect();
+                scopes.truncate(parent_len);
+                c_switch(expression, cases)
+            }
             statement => statement,
         }
     }
-
-    c_seq(rewrite(body, &step), step)
+    fn first_step(step: CStatement, names: Vec<String>) -> CStatement {
+        match step {
+            CStatement::Seq(first, rest) => {
+                c_seq(first_step((*first).clone(), names), (*rest).clone())
+            }
+            step => CStatement::ForStep {
+                step: Box::new(step),
+                exited_locals: names,
+                continue_after: false,
+            },
+        }
+    }
+    let names = crate::kernel::eval::scope_declared_names(&body);
+    let rewritten = rewrite(body, &step, &mut names.clone());
+    // No wrapper is needed when the body declares nothing. This preserves
+    // the ordinary scalar update and its direct producer facts.
+    let step = if names.is_empty() {
+        step
+    } else {
+        first_step(step, names)
+    };
+    c_seq(rewritten, step)
 }
 
 pub fn c_parameter(name: impl Into<String>, c_type: CType) -> CParameter {
@@ -2405,7 +2439,10 @@ fn install_borrowed_contract_inputs(
             .map(|owned| {
                 LoanRefusal::ActiveDependency.proven_overlap_diagnostic(
                     LoanRefusalOperation::Entry,
-                    LoanRefusalSubject::for_resource(CResourceFact::own_memory(owned.clone())),
+                    LoanRefusalSubject::for_conflicting_resources(
+                        CResourceFact::view_memory(viewed_range.clone()),
+                        CResourceFact::own_memory(owned.clone()),
+                    ),
                 )
             })
     };
@@ -4042,6 +4079,7 @@ pub(in crate::kernel) fn proof_evidence_initial_state(
         CheckedExecutionEvent::ProofCase(_)
         | CheckedExecutionEvent::Context(_)
         | CheckedExecutionEvent::Call(_) => None,
+        CheckedExecutionEvent::AutomaticLifetimeEnd(end) => Some(end.before_state()),
         CheckedExecutionEvent::ResourceObservation(observation) => Some(observation.before_state()),
         CheckedExecutionEvent::ResourceRewrite(rewrite) => Some(rewrite.before_state()),
         CheckedExecutionEvent::Statement(theorem) | CheckedExecutionEvent::Condition(theorem) => {
@@ -4099,6 +4137,7 @@ pub(in crate::kernel) fn proof_case_partitions_are_exhaustive(
                 | CheckedExecutionEvent::Call(_)
                 | CheckedExecutionEvent::Condition(_)
                 | CheckedExecutionEvent::Context(_)
+                | CheckedExecutionEvent::AutomaticLifetimeEnd(_)
                 | CheckedExecutionEvent::ResourceObservation(_)
                 | CheckedExecutionEvent::ResourceRewrite(_) => {}
             }

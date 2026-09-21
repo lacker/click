@@ -86,6 +86,7 @@ pub(crate) enum CheckedExecutionEvent {
     Branch(CheckedExecutionBranch),
     ProofCase(CheckedProofCaseArm),
     ResourceObservation(CheckedResourceObservation),
+    AutomaticLifetimeEnd(CheckedAutomaticLifetimeEnd),
     ResourceRewrite(CheckedResourceRewrite),
 }
 
@@ -1195,6 +1196,30 @@ impl ResourceDeltaPremises {
             goal: goal.clone(),
             proof,
         })
+    }
+}
+
+/// An exact automatic-storage retirement, retained beside the C transition
+/// that leaves the source scope. Construction is private to the kernel.
+#[derive(Clone)]
+pub(crate) struct CheckedAutomaticLifetimeEnd {
+    before_state: CState,
+    after_state: CState,
+    names: Vec<String>,
+}
+
+impl CheckedAutomaticLifetimeEnd {
+    pub(crate) fn before_state(&self) -> &CState {
+        &self.before_state
+    }
+    fn advance_checked(&self, state: &CState) -> Option<CState> {
+        if state != &self.before_state
+            || self.after_state
+                != crate::kernel::eval::end_scope_automatic_lifetimes(state, &self.names)
+        {
+            return None;
+        }
+        Some(self.after_state.clone())
     }
 }
 
@@ -2353,10 +2378,10 @@ fn arm_effect_deltas_are_exact(
     })
 }
 
-fn memory_diff_is_covered_by_pointers(
+fn memory_diff_is_covered_by_writes(
     before: &CMemory,
     after: &CMemory,
-    changed: &[Pointer],
+    changed: &[(Pointer, u32)],
     assumptions: &PureFactContext,
     fact: &ExecutionPureFact,
 ) -> bool {
@@ -2364,9 +2389,9 @@ fn memory_diff_is_covered_by_pointers(
         fact.certified_store_data().is_some_and(|store| {
             store.before == *before
                 && store.after == *after
-                && changed
-                    .iter()
-                    .any(|changed_pointer| changed_pointer == &store.pointer)
+                && changed.iter().any(|(changed_pointer, bytes)| {
+                    changed_pointer == &store.pointer && *bytes == store.value.byte_width()
+                })
         });
     if erased_cells_are_certified_store_bookkeeping {
         return true;
@@ -2379,11 +2404,17 @@ fn memory_diff_is_covered_by_pointers(
             if !after.has_known_cell_at(&diff_pointer) {
                 return false;
             }
-            changed.iter().any(|changed_pointer| {
-                !crate::kernel::reasoning::pointers_proven_distinct_for_memory_resolution(
+            let Some(value) = after.known_value(&diff_pointer) else {
+                return false;
+            };
+            changed.iter().any(|(changed_pointer, bytes)| {
+                assumptions.pointer_access_in_range(
                     &diff_pointer,
+                    value.byte_width(),
                     changed_pointer,
-                    assumptions,
+                    &Bitvector32Term::Constant(0),
+                    &Bitvector32Term::Constant(1),
+                    *bytes,
                 )
             })
         })
@@ -2411,7 +2442,10 @@ fn memory_diff_is_covered_by_ranges(
             mutable_ranges.iter().any(|range| {
                 assumptions.pointer_access_in_range(
                     &diff_pointer,
-                    range.element_width(),
+                    after.known_value(&diff_pointer).map_or_else(
+                        crate::kernel::resource_tracker::widest_scalar_access_bytes,
+                        |value| value.byte_width(),
+                    ),
                     range.base(),
                     range.start(),
                     range.end(),
@@ -2428,7 +2462,7 @@ fn checked_interface_effect_facts(
     arm_facts: [&ProofFacts; 2],
     arm_effect_facts: [&[ExecutionPureFact]; 2],
 ) -> Result<Vec<ExecutionPureFact>, &'static str> {
-    let mut pointers = Vec::new();
+    let mut writes = Vec::new();
     let mut ranges = Vec::new();
     let mut heap_frees = [Vec::new(), Vec::new()];
     for arm_index in 0..2 {
@@ -2439,7 +2473,7 @@ fn checked_interface_effect_facts(
                 Proposition::CMemoryMutatesOnly {
                     before,
                     after,
-                    pointers: changed,
+                    writes: changed,
                 } => {
                     if !fact.is_certified() {
                         return Err("an interface arm contains an uncertified memory effect");
@@ -2453,21 +2487,16 @@ fn checked_interface_effect_facts(
                             "an interface arm effect chain does not start at its current memory",
                         );
                     }
-                    if !memory_diff_is_covered_by_pointers(
-                        before,
-                        after,
-                        changed,
-                        assumptions,
-                        fact,
-                    ) {
+                    if !memory_diff_is_covered_by_writes(before, after, changed, assumptions, fact)
+                    {
                         return Err(
                             "an interface arm memory effect does not cover its memory diff",
                         );
                     }
                     memory = after.clone();
                     for pointer in changed {
-                        if !pointers.contains(pointer) {
-                            pointers.push(pointer.clone());
+                        if !writes.contains(pointer) {
+                            writes.push(pointer.clone());
                         }
                     }
                 }
@@ -2536,7 +2565,7 @@ fn checked_interface_effect_facts(
         }
     }
 
-    if pointers.is_empty() && ranges.is_empty() {
+    if writes.is_empty() && ranges.is_empty() {
         if heap_frees[0] == heap_frees[1] && !heap_frees[0].is_empty() {
             let facts = heap_frees[0]
                 .iter()
@@ -2557,14 +2586,15 @@ fn checked_interface_effect_facts(
         Proposition::CMemoryMutatesOnly {
             before: split_state.memory().clone(),
             after: joined_state.memory().clone(),
-            pointers,
+            writes,
         }
     } else {
-        for pointer in pointers {
-            let range = CMemoryRange::new(
+        for (pointer, bytes) in writes {
+            let range = CMemoryRange::new_with_element_width(
                 pointer,
                 Bitvector32Term::Constant(0),
                 Bitvector32Term::Constant(1),
+                bytes,
             );
             if !ranges.contains(&range) {
                 ranges.push(range);
@@ -3690,6 +3720,7 @@ fn collect_retained_call_events(
             | CheckedExecutionEvent::Context(_)
             | CheckedExecutionEvent::ProofCase(_)
             | CheckedExecutionEvent::ResourceObservation(_)
+            | CheckedExecutionEvent::AutomaticLifetimeEnd(_)
             | CheckedExecutionEvent::ResourceRewrite(_) => {}
         }
     }
@@ -4127,6 +4158,22 @@ fn check_evidence_events_with_call_events(
             *returned = rewrite.after_state.clone();
             continue;
         }
+        if let CheckedExecutionEvent::AutomaticLifetimeEnd(end) = event {
+            if let Some(outcome) = &mut completed {
+                let returned = match outcome {
+                    CStatementOutcome::Normal(state)
+                    | CStatementOutcome::Break(state)
+                    | CStatementOutcome::Continue(state)
+                    | CStatementOutcome::Return { state, .. }
+                    | CStatementOutcome::Throw { state, .. } => state,
+                    _ => return None,
+                };
+                *returned = end.advance_checked(returned)?;
+            } else {
+                state = end.advance_checked(&state)?;
+            }
+            continue;
+        }
         if completed.is_some() {
             return None;
         }
@@ -4155,6 +4202,9 @@ fn check_evidence_events_with_call_events(
             CheckedExecutionEvent::Call(call) => {
                 call_events.insert(call);
                 continue;
+            }
+            CheckedExecutionEvent::AutomaticLifetimeEnd(_) => {
+                unreachable!("handled before source advance")
             }
             CheckedExecutionEvent::Statement(_)
             | CheckedExecutionEvent::Condition(_)
@@ -4222,7 +4272,8 @@ fn check_evidence_events_with_call_events(
                 unreachable!("handled before source advance")
             }
             CheckedExecutionEvent::Call(_) => unreachable!("handled before source advance"),
-            CheckedExecutionEvent::ResourceObservation(_) => {
+            CheckedExecutionEvent::AutomaticLifetimeEnd(_)
+            | CheckedExecutionEvent::ResourceObservation(_) => {
                 unreachable!("handled before source advance")
             }
             CheckedExecutionEvent::ResourceRewrite(_) => {
@@ -4417,6 +4468,18 @@ fn trace_completion(
                     // facts of this path.
                 }
             }
+            CheckedExecutionEvent::AutomaticLifetimeEnd(end) => {
+                if let Some((outcome, _)) = completed.as_mut().or(fallthrough.as_mut()) {
+                    let state = match outcome {
+                        CStatementOutcome::Return { state, .. }
+                        | CStatementOutcome::Throw { state, .. } => state,
+                        _ => return Err("lifetime end follows a stateless outcome"),
+                    };
+                    *state = end
+                        .advance_checked(state)
+                        .ok_or("lifetime end has mismatched state")?;
+                }
+            }
             CheckedExecutionEvent::Condition(_) | CheckedExecutionEvent::ResourceObservation(_) => {
                 fallthrough = None;
                 if completed.is_some() {
@@ -4465,7 +4528,8 @@ fn events_use_the_function_definitions(
                     events_use_the_function_definitions(function, branch.arm_events(arm_index))
                 })
         }
-        CheckedExecutionEvent::Statement(_)
+        CheckedExecutionEvent::AutomaticLifetimeEnd(_)
+        | CheckedExecutionEvent::Statement(_)
         | CheckedExecutionEvent::Call(_)
         | CheckedExecutionEvent::Condition(_)
         | CheckedExecutionEvent::Context(_)
@@ -4538,7 +4602,8 @@ fn validate_checked_event_shapes(events: &[CheckedExecutionEvent]) -> Result<(),
                 }
                 continue;
             }
-            CheckedExecutionEvent::ResourceObservation(_)
+            CheckedExecutionEvent::AutomaticLifetimeEnd(_)
+            | CheckedExecutionEvent::ResourceObservation(_)
             | CheckedExecutionEvent::ResourceRewrite(_) => {
                 pending_call_views.clear();
                 continue;
@@ -6048,6 +6113,33 @@ impl ExecutionProofCore {
         }
         self.execution_evidence = traces.into();
         Ok(())
+    }
+
+    pub(crate) fn record_automatic_lifetime_end(
+        &mut self,
+        state: &CState,
+        names: &[String],
+    ) -> Result<CState, &'static str> {
+        if names.is_empty() {
+            return Ok(state.clone());
+        }
+        let after_state = crate::kernel::eval::end_scope_automatic_lifetimes(state, names);
+        if after_state == *state {
+            return Ok(after_state);
+        }
+        if self.reached_state() != state {
+            return Err("automatic lifetime end does not start from the running state");
+        }
+        let end = CheckedAutomaticLifetimeEnd {
+            before_state: state.clone(),
+            after_state: after_state.clone(),
+            names: names.to_vec(),
+        };
+        self.evidence_state = Some(after_state.clone());
+        for trace in &mut *self.execution_evidence {
+            trace.push(CheckedExecutionEvent::AutomaticLifetimeEnd(end.clone()));
+        }
+        Ok(after_state)
     }
 
     pub(crate) fn record_resource_observation(
@@ -8411,7 +8503,7 @@ mod tests {
             before
                 .memory()
                 .clone()
-                .store(left_pointer.clone(), int32(1)),
+                .store(left_pointer.clone(), crate::kernel::int64(1)),
         );
         let right = before.clone().with_memory(
             before
@@ -8422,12 +8514,12 @@ mod tests {
         let left_effect = ExecutionPureFact::certified(Proposition::CMemoryMutatesOnly {
             before: before.memory().clone(),
             after: left.memory().clone(),
-            pointers: vec![left_pointer.clone()],
+            writes: vec![(left_pointer.clone(), 8)],
         });
         let right_effect = ExecutionPureFact::certified(Proposition::CMemoryMutatesOnly {
             before: before.memory().clone(),
             after: right.memory().clone(),
-            pointers: vec![right_pointer.clone()],
+            writes: vec![(right_pointer.clone(), 4)],
         });
         let parent = ExecutionProofCore::at_entry(before.clone(), ExecutionFrontier::default());
         let mut left_core = parent.clone();
@@ -8473,10 +8565,10 @@ mod tests {
             summaries.as_slice(),
             [fact] if matches!(
                 fact.proposition(),
-                Proposition::CMemoryMutatesOnly { before: effect_before, after, pointers }
+                Proposition::CMemoryMutatesOnly { before: effect_before, after, writes }
                     if effect_before == before.memory()
                         && after == joined.memory()
-                        && pointers == &vec![left_pointer, right_pointer]
+                        && writes == &vec![(left_pointer, 8), (right_pointer, 4)]
             )
         ));
     }
@@ -8494,7 +8586,7 @@ mod tests {
         let effect = ExecutionPureFact::new(Proposition::CMemoryMutatesOnly {
             before: before.memory().clone(),
             after: after.memory().clone(),
-            pointers: vec![pointer],
+            writes: vec![(pointer, 4)],
         });
         let parent = ExecutionProofCore::at_entry(before.clone(), ExecutionFrontier::default());
         let mut changed_core = parent.clone();
@@ -8535,7 +8627,7 @@ mod tests {
         let mutation = ExecutionPureFact::certified(Proposition::CMemoryMutatesOnly {
             before: before.memory().clone(),
             after: after.memory().clone(),
-            pointers: vec![declared_pointer.clone()],
+            writes: vec![(declared_pointer.clone(), 4)],
         });
         let mut mutation_core = parent.clone();
         mutation_core.state = after.clone().into();
@@ -9820,5 +9912,50 @@ mod loan_scaling_tests {
                 "loop-head havoc cells x symbolic loans exceeded its known quadratic bound: {samples:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod automatic_lifetime_tests {
+    use super::*;
+    use crate::kernel::int32;
+
+    #[test]
+    fn automatic_lifetime_event_ignores_unrelated_locals_and_checks_exact_states() {
+        let samples = [8, 16, 32, 64].map(|size| {
+            let mut state = CState::new()
+                .with_local("selected", int32(5))
+                .with_memory(CMemory::new().with_block("local:selected", 4));
+            for i in 0..size {
+                state = state.with_local(format!("other_{i}"), int32(9));
+            }
+            let mut core =
+                ExecutionProofCore::at_entry(state.clone(), ExecutionFrontier::default());
+            let (after, work) = crate::instrumentation::measure_deterministic_work(|| {
+                core.record_automatic_lifetime_end(&state, &["selected".to_string()])
+                    .unwrap()
+            });
+            assert!(after.locals().get("selected").is_none());
+            assert!(!after.memory().has_block(&"local:selected".into()));
+            assert_eq!(after.locals().get("other_0"), Some(&int32(9)));
+            let events = core.execution_evidence[0].to_vec();
+            let CheckedExecutionEvent::AutomaticLifetimeEnd(end) = &events[0] else {
+                panic!("missing lifetime evidence")
+            };
+            assert_eq!(end.advance_checked(&state), Some(after.clone()));
+            assert!(end.advance_checked(&after).is_none());
+            let mut forged = end.clone();
+            forged.after_state = state.clone();
+            assert!(forged.advance_checked(&state).is_none());
+            work
+        });
+        assert!(samples[0] > 0);
+        assert!(
+            samples
+                .iter()
+                .enumerate()
+                .all(|(i, work)| *work <= samples[0] + i),
+            "{samples:?}"
+        );
     }
 }

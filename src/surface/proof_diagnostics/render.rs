@@ -267,14 +267,23 @@ impl Renderer<'_> {
             Proposition::CMemoryMutatesOnly {
                 before,
                 after,
-                pointers,
+                writes,
             } => {
                 self.push("memory-mutates-only(");
                 self.memory(before);
                 self.push(" -> ");
                 self.memory(after);
-                self.push(", pointers=");
-                self.pointers(pointers);
+                self.push(", writes=");
+                for (index, (pointer, bytes)) in writes.iter().enumerate() {
+                    if self.truncated {
+                        break;
+                    }
+                    if index > 0 {
+                        self.push(", ");
+                    }
+                    self.pointer(pointer);
+                    self.push(&format!(" ({bytes} bytes)"));
+                }
                 self.push(")");
             }
             Proposition::CMemoryEffectSummary {
@@ -922,17 +931,6 @@ impl Renderer<'_> {
         self.push("+");
         self.offset(&p.offset, 0);
         self.push(")");
-    }
-    fn pointers(&mut self, pointers: &[Pointer]) {
-        for (index, pointer) in pointers.iter().enumerate() {
-            if self.truncated {
-                break;
-            }
-            if index > 0 {
-                self.push(", ");
-            }
-            self.pointer(pointer);
-        }
     }
     fn resource(&mut self, resource: &CResource) {
         match resource {

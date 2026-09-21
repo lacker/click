@@ -6269,6 +6269,7 @@ fn deep_contextual_load_order_contradiction_has_no_index_depth_cutoff() {
                 block: block.into(),
                 offset: PointerOffsetTerm::scale_int32(query_index.clone(), 4),
             };
+            crate::kernel::eval::declare_load_access_width(&query_pointer, 4);
             let memory = CMemory::new().store(stored_pointer, CValue::Int32(next));
             next = Bitvector32Term::MemoryLoad(
                 crate::kernel::intern_c_memory(memory),
@@ -6607,7 +6608,7 @@ fn derived_order_contradiction_bridges_snapshot_loads() {
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before,
             after,
-            pointers: vec![written],
+            writes: vec![(written, 4)],
         })
         .assume_condition(
             ConditionTerm::signed_less_than(after_load, before_load),

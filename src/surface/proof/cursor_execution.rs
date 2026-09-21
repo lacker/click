@@ -648,7 +648,6 @@ pub(super) fn execute_branch_step_from_frontier_position(
                 describe_evidence_refusal(&refusal, parameters, arguments)
             ))
         })?;
-    let state: &mut CState = &mut execution.core.state;
     *available_pure_facts = condition_transition.pure_facts;
     current_state = crate::kernel::resolve_pending_heap_allocations(
         &current_state,
@@ -665,7 +664,7 @@ pub(super) fn execute_branch_step_from_frontier_position(
         else_statement_index
     };
     execution.core.frontier.execution_start_state = Some(execution_start_state);
-    *state = current_state;
+    execution.core.state = current_state.into();
     // The selected arm is spliced before the `if`'s tail so the frontier's
     // own statement tree keeps every downstream statement reachable; the
     // patched source layout carries arm-final control successors, so no
@@ -675,6 +674,18 @@ pub(super) fn execute_branch_step_from_frontier_position(
         // layout supplies its control successor and statically completed
         // branch regions.
         let skip_index = execution.core.frontier.next_statement_index;
+        let state = (*execution.core.state).clone();
+        let state = execution
+            .core
+            .record_automatic_lifetime_end(
+                &state,
+                proof_context
+                    .constants
+                    .source_layout
+                    .automatic_exits(skip_index, false),
+            )
+            .map_err(ClickError::new)?;
+        execution.core.state = state.clone().into();
         for exited in proof_context
             .constants
             .source_layout
@@ -729,7 +740,7 @@ pub(super) fn execute_branch_step_from_frontier_position(
     record_current_statement_entry(
         &execution.core.frontier,
         &mut execution.presentation.recorded_snapshots,
-        state,
+        &execution.core.state,
         function_block,
         function,
         arguments,
@@ -978,6 +989,17 @@ fn execute_concrete_loop_head_step(
         return Ok(());
     }
 
+    let current_state = execution
+        .core
+        .record_automatic_lifetime_end(
+            &current_state,
+            proof_context
+                .constants
+                .source_layout
+                .automatic_exits(statement_index, false),
+        )
+        .map_err(ClickError::new)?;
+    execution.core.state = current_state.clone().into();
     record_statement_program_snapshot_state(
         &mut execution.presentation.recorded_snapshots,
         function_block,
@@ -3014,6 +3036,37 @@ fn execute_step_from_frontier_position_selecting_path(
         }
         outcome => outcome,
     };
+    if let Some(loop_index) = loop_index
+        && let CStatementOutcome::Normal(state) = &outcome
+    {
+        record_loop_program_snapshot_state(
+            &mut execution.presentation.recorded_snapshots,
+            function_block,
+            loop_index,
+            ProgramPointKind::Exit,
+            state.clone(),
+        );
+    }
+    let mut outcome = outcome;
+    let abrupt = !matches!(outcome, CStatementOutcome::Normal(_));
+    let ended = proof_context
+        .constants
+        .source_layout
+        .automatic_exits(statement_index, abrupt);
+    match &mut outcome {
+        CStatementOutcome::Normal(state)
+        | CStatementOutcome::Break(state)
+        | CStatementOutcome::Continue(state)
+        | CStatementOutcome::Return { state, .. }
+        | CStatementOutcome::Throw { state, .. }
+        | CStatementOutcome::Jump { state, .. } => {
+            *state = execution
+                .core
+                .record_automatic_lifetime_end(state, ended)
+                .map_err(ClickError::new)?;
+        }
+        _ => {}
+    }
     if let Some(statement_exit_state) = match &outcome {
         CStatementOutcome::Normal(state)
         | CStatementOutcome::Break(state)
@@ -3031,7 +3084,9 @@ fn execute_step_from_frontier_position_selecting_path(
             ProgramPointKind::Exit,
             statement_exit_state,
         );
-        if let Some(loop_index) = loop_index {
+        if let Some(loop_index) = loop_index
+            && !matches!(outcome, CStatementOutcome::Normal(_))
+        {
             record_loop_program_snapshot_state(
                 &mut execution.presentation.recorded_snapshots,
                 function_block,
@@ -4340,7 +4395,11 @@ pub(super) fn describe_statement_head(statement: &CStatement) -> String {
         CStatement::Break => "break".to_string(),
         CStatement::Continue => "continue".to_string(),
         CStatement::Goto { target } => format!("goto target({})", target.0),
-        CStatement::ContinueWithStep { .. } => "continue".to_string(),
+        CStatement::ForStep {
+            continue_after: true,
+            ..
+        } => "continue".to_string(),
+        CStatement::ForStep { step, .. } => describe_statement_head(step),
         CStatement::Declare { name, .. } => format!("declare {name}"),
         CStatement::DeclareAggregate { name, .. } => format!("declare aggregate {name}"),
         CStatement::Assign { name, expression } => {

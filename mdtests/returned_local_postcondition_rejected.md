@@ -28,5 +28,5 @@ int32* return_input(int32* input) {
 ```
 
 ```expect
-fail: unverified claims
+fail: the proposition reads memory that is not viewable here
 ```

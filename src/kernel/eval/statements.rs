@@ -2154,7 +2154,7 @@ fn collect_scope_declared_names(statement: &CStatement, names: &mut Vec<String>)
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Goto { .. }
-        | CStatement::ContinueWithStep { .. }
+        | CStatement::ForStep { .. }
         | CStatement::CopyAggregate { .. }
         | CStatement::Assign { .. }
         | CStatement::CallAssign { .. }
@@ -2199,6 +2199,7 @@ pub(in crate::kernel) fn end_scope_automatic_lifetimes(
     let mut memory = state.memory.clone();
     let mut retired = false;
     for name in declared {
+        crate::instrumentation::record_deterministic_work(1);
         let Some(slot) = state.locals.slot(name).cloned() else {
             continue;
         };
@@ -2306,10 +2307,15 @@ pub(in crate::kernel) fn execute_c_statement_paths(
 
             loan_evidence: empty_checked_loan_evidence_sequence(),
         }],
-        CStatement::ContinueWithStep { step } => {
+        CStatement::ForStep {
+            step,
+            exited_locals,
+            continue_after,
+        } => {
+            let retired = end_scope_automatic_lifetimes(state, exited_locals);
             let mut paths = Vec::new();
             for step_path in execute_c_statement_paths(
-                state,
+                &retired,
                 step,
                 assumptions,
                 environment,
@@ -2317,8 +2323,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                 budget,
             )? {
                 let outcome = match step_path.outcome {
-                    CStatementOutcome::Normal(next_state)
-                    | CStatementOutcome::Continue(next_state) => {
+                    CStatementOutcome::Normal(next_state) if *continue_after => {
                         CStatementOutcome::Continue(next_state)
                     }
                     outcome => outcome,

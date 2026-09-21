@@ -1879,11 +1879,13 @@ pub enum CStatement {
     Goto {
         target: CControlTargetId,
     },
-    /// Internal lowering for a C `for` continue. The update clause is part
-    /// of this atomic control transfer so source proofs still see one
-    /// `continue` statement.
-    ContinueWithStep {
+    /// A for-loop update, after leaving the body scope. On a source
+    /// `continue` this also transfers control to the loop head; on ordinary
+    /// fallthrough it is the first statement of the update clause.
+    ForStep {
         step: Box<CStatement>,
+        exited_locals: Vec<String>,
+        continue_after: bool,
     },
     Declare {
         name: String,
@@ -5876,7 +5878,7 @@ pub enum Proposition {
     CMemoryMutatesOnly {
         before: CMemory,
         after: CMemory,
-        pointers: Vec<Pointer>,
+        writes: Vec<(Pointer, u32)>,
     },
     CMemoryEffectSummary {
         before: CMemory,
@@ -6576,6 +6578,11 @@ pub struct PureFactContext {
     pub(super) pointer_block_aliases: crate::persistent::PersistentMap<
         Pointer,
         crate::persistent::PersistentMap<Pointer, ConditionTerm>,
+    >,
+    /// Normalized same-block pointer equalities, indexed under each offset.
+    pub(super) pointer_offset_aliases: crate::persistent::PersistentMap<
+        PointerOffsetTerm,
+        crate::persistent::PersistentSet<PointerOffsetTerm>,
     >,
     /// Addresses of the first elements of two separated memory ranges of
     /// one block, keyed by the unordered pair and carrying the separation

@@ -10,15 +10,8 @@ two facts and the negative population is never written down.
 `counts_a_total_it_can_state` beside it is the other polarity: constant
 quantities whose sum is a count are still added, and the count is that sum.
 
-The refusal the overflowing half prints is the certifier declining a closure
-the search kept, and it names neither the population nor the quantity. That
-is a separate defect from this one and is recorded here rather than pinned
-somewhere quieter: with the two clauses left unmerged, `simp` still closes
-`count(tok(o)) < 0` from the ledger term the *call transition* composes,
-which is the second modular add and the one this change does not reach, and
-certification then refuses to re-derive it. The soundness answer is right —
-the theorem is refused — and the sentence a reader gets is not yet the one
-that says why.
+The call transition refuses the overflowing population before publishing a
+post-count, and names the population and the missing addition bound.
 
 ```c filename=a_population_count_is_not_a_wrapped_total.c
 void mint_n(int32* o, int32 n) {
@@ -73,5 +66,5 @@ void counts_a_total_it_can_state(int32* o) {
 ```
 
 ```expect
-fail: mismatched proposition completion evidence
+fail: a population count is a nonnegative `int32`
 ```

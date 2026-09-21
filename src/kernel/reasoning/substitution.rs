@@ -471,13 +471,18 @@ pub(crate) fn substitute_bitvector_variable_in_proposition(
         Proposition::CMemoryMutatesOnly {
             before,
             after,
-            pointers,
+            writes,
         } => Proposition::CMemoryMutatesOnly {
             before: substitute_bitvector_variable_in_memory(before, from, to),
             after: substitute_bitvector_variable_in_memory(after, from, to),
-            pointers: pointers
+            writes: writes
                 .iter()
-                .map(|pointer| substitute_bitvector_variable_in_pointer(pointer, from, to))
+                .map(|(pointer, bytes)| {
+                    (
+                        substitute_bitvector_variable_in_pointer(pointer, from, to),
+                        *bytes,
+                    )
+                })
                 .collect(),
         },
         Proposition::CMemoryEffectSummary {
@@ -776,11 +781,11 @@ fn collect_proposition_bound_variables_one(
         Proposition::CMemoryMutatesOnly {
             before,
             after,
-            pointers,
+            writes,
         } => {
             collect_memory_bound_variables(before, variables);
             collect_memory_bound_variables(after, variables);
-            for pointer in pointers {
+            for (pointer, _) in writes {
                 collect_pointer_bound_variables(pointer, variables);
             }
         }
@@ -954,7 +959,7 @@ pub(in crate::kernel) fn collect_c_statement_bound_variables(
         | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. } => {}
-        CStatement::ContinueWithStep { step } => {
+        CStatement::ForStep { step, .. } => {
             collect_c_statement_bound_variables(step, variables);
         }
         CStatement::Assign { expression, .. }
@@ -2809,7 +2814,13 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
         CStatement::Break => CStatement::Break,
         CStatement::Continue => CStatement::Continue,
         CStatement::Goto { target } => CStatement::Goto { target: *target },
-        CStatement::ContinueWithStep { step } => CStatement::ContinueWithStep {
+        CStatement::ForStep {
+            step,
+            exited_locals,
+            continue_after,
+        } => CStatement::ForStep {
+            exited_locals: exited_locals.clone(),
+            continue_after: *continue_after,
             step: Box::new(substitute_bitvector_variable_in_c_statement(step, from, to)),
         },
         CStatement::Declare {
@@ -5517,13 +5528,18 @@ pub(crate) fn substitute_pointer_variable_in_proposition(
         Proposition::CMemoryMutatesOnly {
             before,
             after,
-            pointers,
+            writes,
         } => Proposition::CMemoryMutatesOnly {
             before: substitute_pointer_variable_in_memory(before, from, to),
             after: substitute_pointer_variable_in_memory(after, from, to),
-            pointers: pointers
+            writes: writes
                 .iter()
-                .map(|pointer| substitute_pointer_variable_in_pointer(pointer, from, to))
+                .map(|(pointer, bytes)| {
+                    (
+                        substitute_pointer_variable_in_pointer(pointer, from, to),
+                        *bytes,
+                    )
+                })
                 .collect(),
         },
         Proposition::CMemoryEffectSummary {
@@ -6006,7 +6022,13 @@ fn substitute_pointer_variable_in_c_statement(
         | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. } => statement.clone(),
-        CStatement::ContinueWithStep { step } => CStatement::ContinueWithStep {
+        CStatement::ForStep {
+            step,
+            exited_locals,
+            continue_after,
+        } => CStatement::ForStep {
+            exited_locals: exited_locals.clone(),
+            continue_after: *continue_after,
             step: Box::new(substitute_pointer_variable_in_c_statement(step, from, to)),
         },
         CStatement::Assign { name, expression } => CStatement::Assign {

@@ -111,15 +111,21 @@ impl PureFactContext {
             Proposition::CMemoryMutatesOnly {
                 before,
                 after,
-                pointers,
+                writes,
             } => {
                 let matches = memories_match_for_pointer_load(before, left, pointer)
                     && memories_match_for_pointer_load(after, right, pointer)
                     || memories_match_for_pointer_load(before, right, pointer)
                         && memories_match_for_pointer_load(after, left, pointer);
                 matches
-                    && pointers.iter().all(|write| {
-                        pointers_proven_distinct_for_memory_resolution(write, pointer, self)
+                    && writes.iter().all(|(write, bytes)| {
+                        crate::kernel::memory_provenance::write_access_is_disjoint_from_load(
+                            write,
+                            *bytes,
+                            pointer,
+                            crate::kernel::eval::load_access_width_at_address_or_widest(pointer),
+                            self,
+                        )
                     })
             }
             Proposition::CMemoryEffectSummary {
@@ -182,7 +188,14 @@ impl PureFactContext {
         let Bitvector32Term::MemoryLoad(memory, pointer) = &viewed else {
             return None;
         };
-        let value = match self.resolve_memory_load_value(memory, pointer)? {
+        let byte_width = match term {
+            Bitvector32Term::Variable(variable) => {
+                crate::kernel::eval::registered_load_bytes_for_variable(variable)
+            }
+            _ => None,
+        }
+        .or_else(|| crate::kernel::eval::recorded_load_access_width(memory, pointer))?;
+        let value = match self.resolve_memory_load_value(memory, pointer, byte_width)? {
             CValue::Bool(value)
             | CValue::Int16(value)
             | CValue::Int32(value)
@@ -207,9 +220,10 @@ impl PureFactContext {
         &self,
         memory: &CMemory,
         pointer: &Pointer,
+        byte_width: u32,
     ) -> Option<CValue> {
         if let Some(value) = memory.known_value(pointer) {
-            return Some(value);
+            return (value.byte_width() == byte_width).then_some(value);
         }
 
         let mut unresolved_alias = false;
@@ -218,7 +232,7 @@ impl PureFactContext {
                 continue;
             }
             if pointers_proven_equal_for_memory_resolution(cell_pointer, pointer, self) {
-                return Some(value.clone());
+                return (value.byte_width() == byte_width).then(|| value.clone());
             }
             unresolved_alias = true;
         }
@@ -227,8 +241,15 @@ impl PureFactContext {
             return None;
         }
 
-        memory
-            .is_loadable_concretely(pointer, 4)
-            .then(|| memory.symbolic_int32_load(pointer))
+        if !memory.is_loadable_concretely(pointer, byte_width) {
+            return None;
+        }
+        match byte_width {
+            1 => Some(memory.symbolic_uint8_load(pointer)),
+            2 => Some(memory.symbolic_uint16_load(pointer)),
+            4 => Some(memory.symbolic_int32_load(pointer)),
+            8 => Some(memory.symbolic_int64_load(pointer)),
+            _ => None,
+        }
     }
 }

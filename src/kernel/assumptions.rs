@@ -2467,7 +2467,7 @@ impl PureFactContext {
         };
     }
 
-    /// Files or withdraws one exact cross-block pointer equality under both
+    /// Files or withdraws one exact pointer equality under both
     /// of its sides. Only a *true* equality says two spellings are one
     /// address; a false one is not an alias and never enters the index, which
     /// also makes withdrawal a no-op for the fact values that were never
@@ -2476,7 +2476,7 @@ impl PureFactContext {
         let ConditionTerm::PointerEqual(left, right) = condition else {
             return;
         };
-        if !value || left.block == right.block {
+        if !value || left == right {
             return;
         }
         for (key, alias) in [
@@ -2500,6 +2500,56 @@ impl PureFactContext {
                     .with_inserted(key.clone(), aliases)
             };
         }
+    }
+
+    fn adjust_pointer_offset_alias(
+        &mut self,
+        condition: &ConditionTerm,
+        value: bool,
+        insert: bool,
+    ) {
+        let ConditionTerm::PointerOffsetEqual(left, right) = condition else {
+            return;
+        };
+        if !value || left == right {
+            return;
+        }
+        for (key, alias) in [
+            (left.as_ref(), right.as_ref()),
+            (right.as_ref(), left.as_ref()),
+        ] {
+            let aliases = self
+                .pointer_offset_aliases
+                .get(key)
+                .cloned()
+                .unwrap_or_default();
+            let aliases = if insert {
+                aliases.with_value(alias.clone())
+            } else {
+                aliases.without_value(alias)
+            };
+            self.pointer_offset_aliases = if aliases.is_empty() {
+                self.pointer_offset_aliases.without_key(key)
+            } else {
+                self.pointer_offset_aliases
+                    .with_inserted(key.clone(), aliases)
+            };
+        }
+    }
+
+    pub(crate) fn exact_pointer_offset_aliases(
+        &self,
+        pointer: &Pointer,
+    ) -> impl Iterator<Item = Pointer> + '_ {
+        let block = pointer.block.clone();
+        self.pointer_offset_aliases
+            .get(&pointer.offset)
+            .into_iter()
+            .flat_map(|aliases| aliases.iter())
+            .map(move |offset| Pointer {
+                block: block.clone(),
+                offset: offset.clone(),
+            })
     }
 
     /// The pointers an exact fact proves equal to this one, in the index's
@@ -3821,6 +3871,7 @@ impl PureFactContext {
             self.adjust_signed_order_bound(&condition, old, false);
             self.adjust_null_pointer_offset(&condition, old, false);
             self.adjust_pointer_block_alias(&condition, old, false);
+            self.adjust_pointer_offset_alias(&condition, old, false);
             self.content_fingerprint ^= Self::fingerprint(1, &(condition.clone(), old));
         }
         self.adjust_stated_proposition_index(
@@ -3831,6 +3882,7 @@ impl PureFactContext {
         self.adjust_signed_order_bound(&condition, value, true);
         self.adjust_null_pointer_offset(&condition, value, true);
         self.adjust_pointer_block_alias(&condition, value, true);
+        self.adjust_pointer_offset_alias(&condition, value, true);
         self.adjust_bitvector64_equality(&condition, value, true);
         self.content_fingerprint ^= Self::fingerprint(1, &(condition, value));
         self
@@ -3999,6 +4051,8 @@ impl PureFactContext {
         self.adjust_algebraic_predicate_fact(condition, assumed, false);
         self.adjust_signed_order_bound(condition, assumed, false);
         self.adjust_null_pointer_offset(condition, assumed, false);
+        self.adjust_pointer_block_alias(condition, assumed, false);
+        self.adjust_pointer_offset_alias(condition, assumed, false);
         self.rebuild_memory_load_condition_facts();
         self.content_fingerprint ^= Self::fingerprint(1, &(condition.clone(), assumed));
     }
@@ -5606,7 +5660,7 @@ impl ExecutionPureFact {
             proposition: Proposition::CMemoryMutatesOnly {
                 before: before.clone(),
                 after: after.clone(),
-                pointers: vec![pointer.clone()],
+                writes: vec![(pointer.clone(), value.byte_width())],
             },
             public: false,
             certified: true,

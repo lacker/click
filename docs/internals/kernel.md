@@ -1012,10 +1012,35 @@ with the storage, because the frame no longer holds an object of that name and
 a later declaration of it is a declaration rather than a re-entry the mint
 would tombstone from.
 
-The surface stepper splices a selected `if` arm in front of the statements
-after the `if`, so the arm boundary is not a step it takes and this rule does
-not reach the proofs it drives. A scope exit there has to be evidence the proof
-object records, as a resource observation is.
+The surface stepper records `CheckedAutomaticLifetimeEnd` when its source
+layout leaves a scope. The layout indexes normal and abrupt exits once; each
+exit visits only the declarations it retires. The event retains the exact
+before and after states; branch validation and return certification check the
+retirement. This includes a `for` initializer's scope. The saved loop-exit
+snapshot still names its final index for proof provenance; the subsequent
+execution state has retired its storage.
+
+A lowered `ForStep` ends the body locals before evaluating the update clause,
+including on `continue`. A normal fallthrough update keeps its normal outcome;
+a continue update resumes the loop head. Nested loops keep their own control
+edges. A non-inline function also retires its body locals before postconditions
+are read, so exporting an address through a field or output parameter does not
+extend its lifetime. Address-backed scalar parameters expire too. Aggregate
+parameter copies remain available during contract evaluation and retire before
+caller execution resumes; separating their logical contract values from C
+storage during postcondition evaluation remains an open boundary. Materialized
+aggregate results belong to the caller and survive the callee's exit.
+
+Value-only parameter bindings use a separate pseudo-slot namespace. Concrete
+callee store events refresh the caller's affected scalar bindings by slot, so
+a write through `&local` is visible when the caller next reads that local.
+
+Memory mutation facts pair every written address with its byte width. Branch
+joins preserve those pairs, and conversion to effect ranges preserves their
+widths. Framing and mutable-footprint checks compare complete accesses rather
+than only their starting addresses. Resolving a load to a stored scalar requires
+the load's recorded width to match the stored value; a width-less term cannot
+choose a cell type implicitly.
 
 Call and loop behavior are explicit inputs to kernel execution. The common
 configurations are:

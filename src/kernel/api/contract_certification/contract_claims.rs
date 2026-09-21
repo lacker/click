@@ -1473,7 +1473,7 @@ fn function_claim_holds_on_prepared_path(
                 Proposition::CMemoryMutatesOnly {
                     before,
                     after,
-                    pointers,
+                    writes,
                 } => {
                     let repeats_transition =
                         seen_transitions.iter().any(|(seen_before, seen_after)| {
@@ -1503,15 +1503,15 @@ fn function_claim_holds_on_prepared_path(
                         effect_memory = after.clone();
                         seen_transitions.push((before.clone(), after.clone()));
                     }
-                    pointers
+                    writes
                         .iter()
-                        .filter(|pointer| !pointer.block.starts_with("local:"))
-                        .all(|pointer| {
+                        .filter(|(pointer, _)| !pointer.block.starts_with("local:"))
+                        .all(|(pointer, bytes)| {
                             is_function_fresh_heap_pointer(pointer, before)
                                 || mutable_ranges.iter().any(|range| {
                                     assumptions.pointer_access_in_range(
                                         pointer,
-                                        range.element_width(),
+                                        *bytes,
                                         range.base(),
                                         range.start(),
                                         range.end(),

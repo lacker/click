@@ -217,7 +217,7 @@ fn execution_effect_diagnostics_omit_raw_memory_snapshots() {
         ExecutionPureFact::new(Proposition::CMemoryMutatesOnly {
             before: before.clone(),
             after: after.clone(),
-            pointers: vec![pointer.clone()],
+            writes: vec![(pointer.clone(), 4)],
         }),
         ExecutionPureFact::new(Proposition::CMemoryEffectSummary {
             before: before.clone(),

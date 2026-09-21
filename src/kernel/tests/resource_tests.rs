@@ -3611,6 +3611,10 @@ fn declared_resource_quantity_work_ignores_the_numeric_coefficient() {
             ),
             true,
         );
+        let assumptions = assumptions.assume_condition(
+            ConditionTerm::signed_add_overflows(quantity.clone(), Bitvector32Term::Constant(1)),
+            false,
+        );
         let context = ResourceContext::new().unchecked_with_facts([
             CResourceFact::own_quantity(resource.clone(), quantity.clone()),
             CResourceFact::own(resource.clone()),
@@ -6708,38 +6712,24 @@ mod population_quantity_totals {
         }
     }
 
-    /// Two symbolic quantities are not a total, whatever the context says:
-    /// the merged quantity travels in a resource fact that a recomputation
-    /// checks from a different context, so a rule that merged under one and
-    /// declined under the other would make generation and check disagree
-    /// about a number. `k` and `k` is the witness's own pair.
-    ///
-    /// A symbolic quantity absorbing a constant addend is still merged — the
-    /// documented remaining gap, pinned here so that closing it is a visible
-    /// change rather than a silent one.
+    /// A symbolic merge requires its addition bound, for both a pair of
+    /// variables and an increment by one.
     #[test]
-    fn a_symbolic_pair_is_not_a_total() {
+    fn symbolic_totals_require_checked_addition_bounds() {
         let quantity = Bitvector32Term::Variable(Variable(7));
         let other = Bitvector32Term::Variable(Variable(8));
-        let overflow = ConditionTerm::signed_add_overflows(quantity.clone(), quantity.clone());
-        for assumptions in [
-            PureFactContext::new(),
-            PureFactContext::new().assume_proposition(Proposition::ConditionIs(overflow, false)),
-        ] {
+        for right in [quantity.clone(), other, Bitvector32Term::Constant(1)] {
             assert_eq!(
-                merged_quantity(quantity.clone(), quantity.clone(), &assumptions),
+                merged_quantity(quantity.clone(), right.clone(), &PureFactContext::new()),
                 None
             );
-            assert_eq!(
-                merged_quantity(quantity.clone(), other.clone(), &assumptions),
-                None
+            let assumptions = PureFactContext::new().assume_condition(
+                ConditionTerm::signed_add_overflows(quantity.clone(), right.clone()),
+                false,
             );
             assert_eq!(
-                merged_quantity(quantity.clone(), Bitvector32Term::Constant(1), &assumptions),
-                Some(Bitvector32Term::add(
-                    quantity.clone(),
-                    Bitvector32Term::Constant(1)
-                ))
+                merged_quantity(quantity.clone(), right.clone(), &assumptions),
+                Some(Bitvector32Term::add(quantity.clone(), right))
             );
         }
     }

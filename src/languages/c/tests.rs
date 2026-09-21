@@ -6706,6 +6706,12 @@ fn c0_syntax_targets_kernel_address_of_array_index() {
                 .store(local_q, crate::kernel::CValue::pointer(second.clone())),
         )
         .with_resource_context(resources);
+    let final_state = final_state.clone().with_memory(
+        final_state
+            .memory()
+            .clone()
+            .without_local_block(&"local:q".into()),
+    );
     let arguments = vec![crate::kernel::c_pointer_value(base)];
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
@@ -6919,6 +6925,12 @@ fn c0_syntax_targets_kernel_local_address_of() {
             .with_block("local:x", 4)
             .store(local_pointer, crate::kernel::int32(5)),
     );
+    let final_state = final_state.clone().with_memory(
+        final_state
+            .memory()
+            .clone()
+            .without_local_block(&"local:x".into()),
+    );
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
@@ -6970,6 +6982,12 @@ fn c0_syntax_targets_kernel_local_array_storage() {
             .with_block("local:a", 12)
             .store(a0, crate::kernel::int32(5))
             .store(a1, crate::kernel::int32(7)),
+    );
+    let final_state = final_state.clone().with_memory(
+        final_state
+            .memory()
+            .clone()
+            .without_local_block(&"local:a".into()),
     );
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
@@ -7026,6 +7044,12 @@ fn c0_syntax_lowers_local_array_initializer_stores() {
             .store(a1, crate::kernel::int32(2))
             .store(a2, crate::kernel::int32(0)),
     );
+    let final_state = final_state.clone().with_memory(
+        final_state
+            .memory()
+            .clone()
+            .without_local_block(&"local:a".into()),
+    );
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
@@ -7077,6 +7101,12 @@ fn c0_syntax_flattens_multidimensional_local_array_indices() {
             .with_block("local:values", 24)
             .store(first, crate::kernel::int32(1))
             .store(last, crate::kernel::int32(7)),
+    );
+    let final_state = final_state.clone().with_memory(
+        final_state
+            .memory()
+            .clone()
+            .without_local_block(&"local:values".into()),
     );
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
@@ -7160,6 +7190,12 @@ fn c0_syntax_lowers_nested_multidimensional_array_initializers() {
                 crate::kernel::int32(6),
             ),
     );
+    let final_state = final_state.clone().with_memory(
+        final_state
+            .memory()
+            .clone()
+            .without_local_block(&"local:values".into()),
+    );
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
@@ -7216,6 +7252,12 @@ fn c0_syntax_lowers_local_struct_array_fields_with_abi_stride() {
             .with_block("local:items", 16)
             .store(tag, crate::kernel::uint8(3))
             .store(value, crate::kernel::int32(7)),
+    );
+    let final_state = final_state.clone().with_memory(
+        final_state
+            .memory()
+            .clone()
+            .without_local_block(&"local:items".into()),
     );
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
@@ -7345,6 +7387,12 @@ fn c0_syntax_lowers_local_struct_array_initializers() {
                 crate::kernel::int32(4),
             ),
     );
+    let final_state = final_state.clone().with_memory(
+        final_state
+            .memory()
+            .clone()
+            .without_local_block(&"local:items".into()),
+    );
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
@@ -7464,6 +7512,13 @@ fn c0_syntax_local_array_decays_to_pointer_argument() {
             .with_block("local:result", 4)
             .store(a0, crate::kernel::int32(11))
             .store(result_pointer, crate::kernel::int32(11)),
+    );
+    let final_state = final_state.clone().with_memory(
+        final_state
+            .memory()
+            .clone()
+            .without_local_block(&"local:a".into())
+            .without_local_block(&"local:result".into()),
     );
     let theorem = crate::kernel::prove_symbolic_c_function_execution_with_environment(
         state.clone(),
@@ -8721,6 +8776,12 @@ fn c0_struct_scalar_array_element_address_executes_at_element_width() {
                 .store(value, crate::kernel::int32(7)),
         )
         .with_resource_context(resources);
+    let final_state = final_state.clone().with_memory(
+        final_state
+            .memory()
+            .clone()
+            .without_local_block(&"local:value_pointer".into()),
+    );
     let arguments = vec![crate::kernel::c_pointer_value(packet)];
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
@@ -8794,6 +8855,12 @@ fn c0_struct_byte_array_element_address_executes_at_byte_width() {
                 .store(byte, crate::kernel::uint8(9)),
         )
         .with_resource_context(resources);
+    let final_state = final_state.clone().with_memory(
+        final_state
+            .memory()
+            .clone()
+            .without_local_block(&"local:byte_pointer".into()),
+    );
     let arguments = vec![crate::kernel::c_pointer_value(packet)];
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
@@ -9809,6 +9876,12 @@ fn c0_syntax_targets_kernel_known_function_call_assignment() {
             .with_block("local:result", 4)
             .store(local_pointer, crate::kernel::int32(42)),
     );
+    let final_state = final_state.clone().with_memory(
+        final_state
+            .memory()
+            .clone()
+            .without_local_block(&"local:result".into()),
+    );
     let theorem = crate::kernel::prove_symbolic_c_function_execution_with_environment(
         state.clone(),
         caller.clone(),
@@ -10150,19 +10223,22 @@ fn c0_assignment_expression_loop_guard_reexecutes_once_after_continue() {
     )
     .expect("the guard call should execute once on each of three condition checks");
     let crate::kernel::Proposition::CFunctionExecutes {
-        outcome: crate::kernel::CFunctionOutcome::Return { state, .. },
+        outcome: crate::kernel::CFunctionOutcome::Return { state, value },
         ..
     } = theorem.proposition()
     else {
         panic!("the loop should return normally");
     };
+    assert_eq!(value, &crate::kernel::int32(3));
     let calls = crate::kernel::Pointer {
         block: "local:calls".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     assert_eq!(
         state.memory().load(&calls),
-        crate::kernel::CExpressionOutcome::Value(crate::kernel::int32(3))
+        crate::kernel::CExpressionOutcome::UndefinedBehavior(
+            crate::kernel::CUndefinedBehavior::InvalidMemory
+        )
     );
 }
 
@@ -10387,6 +10463,8 @@ fn c0_function_pointers_preserve_signature_and_dispatch_callback() {
                                 },
                                 crate::kernel::int32(38),
                             )
+                            .without_local_block(&"local:result".into())
+                            .without_local_block(&"local:lifetime:0:result".into())
                     )
                     .with_next_local_lifetime(1),
             },
@@ -10901,6 +10979,7 @@ fn c0_memory_safety_demo_fill_three_ints() {
         .store(second, crate::kernel::int32(1))
         .store(third, crate::kernel::int32(2))
         .store(local_i, crate::kernel::int32(3));
+    let final_memory = final_memory.without_local_block(&"local:i".into());
     let arguments = vec![crate::kernel::c_pointer_value(base)];
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
@@ -11249,6 +11328,12 @@ fn c0_struct_pointer_indirection_updates_one_pointer_cell() {
                 .store(replacement.clone(), crate::kernel::int32(42)),
         )
         .with_resource_context(resources);
+    let final_state = final_state.clone().with_memory(
+        final_state
+            .memory()
+            .clone()
+            .without_local_block(&"local:link".into()),
+    );
     let arguments = vec![
         crate::kernel::c_pointer_value(root),
         crate::kernel::c_pointer_value(replacement),
@@ -11644,5 +11729,40 @@ fn c0_conditional_call_temporary_keeps_its_common_type() {
             .contains("conditional operator branches have incompatible types"),
         "{}",
         error.message()
+    );
+}
+
+#[test]
+fn c0_body_call_updates_a_local_array_without_rebinding_it_as_a_scalar() {
+    let functions = syntax::parse_functions(
+        r#"
+        void set(int32* p) { p[0] = 9; }
+        int32 caller() { int32 cells[1]; cells[0] = 3; set(cells); return cells[0]; }
+    "#,
+    )
+    .unwrap();
+    let callee = functions
+        .iter()
+        .find(|function| function.name() == "set")
+        .unwrap()
+        .to_kernel_function();
+    let caller = functions
+        .iter()
+        .find(|function| function.name() == "caller")
+        .unwrap()
+        .to_kernel_function();
+    let theorem = crate::kernel::prove_symbolic_c_function_execution_with_environment(
+        crate::kernel::CState::new(),
+        caller,
+        Vec::new(),
+        Default::default(),
+        crate::kernel::CExecutionEnvironment::new().with_function(callee),
+        crate::kernel::CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .unwrap();
+    assert!(
+        matches!(theorem.proposition(), crate::kernel::Proposition::CFunctionExecutes {
+        outcome: crate::kernel::CFunctionOutcome::Return { value, .. }, ..
+    } if value == &crate::kernel::int32(9))
     );
 }

@@ -2340,3 +2340,30 @@ fn integer_resource_field_observes_unchanged_c_memory_read() {
     "#;
     verify_c0_sources(source, &[("read.c", c_source)]).unwrap();
 }
+
+#[test]
+fn automatic_scope_exit_preserves_expanded_execution() {
+    let c = "int32 f(int32 n) { if (n == 0) { int32 a[2]; a[0] = 5; return a[0]; } else { int32 b[2]; b[0] = 5; return b[0]; } }";
+    let source = r#"verifying "scope.c"; int32 f(int32 n) { ensures result == 5; } by { execute(); simp(); }"#;
+    let inputs = [("scope.c", c)];
+    verify_c0_sources(source, &inputs).unwrap();
+    let expanded = expand_c0_claim_source(source, &inputs, "f", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &inputs).unwrap();
+}
+
+#[test]
+fn bounded_population_increment_expands_and_checks() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/population_symbolic_increment_bounded.md");
+    let fixture = crate::cli::read_mdtest(&path).unwrap();
+    let source = fixture.click_source.as_deref().unwrap();
+    let inputs = fixture
+        .c_sources
+        .iter()
+        .map(|(name, body)| (name.as_str(), body.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(source, &inputs).unwrap();
+    let expanded =
+        expand_c0_claim_source(source, &inputs, "increment", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &inputs).unwrap();
+}

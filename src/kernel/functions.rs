@@ -1401,6 +1401,73 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
     Ok(paths)
 }
 
+/// Refresh only caller slots named by the completed body's store events.
+/// Callee execution has its own bindings and cannot update these by name.
+fn refresh_returned_local_bindings_from_stores(
+    outcome: &mut CFunctionOutcome,
+    facts: &[ExecutionPureFact],
+) {
+    let state = match outcome {
+        CFunctionOutcome::Return { state, .. } | CFunctionOutcome::Throw { state, .. } => state,
+        _ => return,
+    };
+    for fact in facts {
+        let Some(store) = fact.certified_store_data() else {
+            continue;
+        };
+        crate::instrumentation::record_deterministic_work(1);
+        let Some(name) = state
+            .locals
+            .name_for_slot(&store.pointer)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let Some(value) = state.memory.known_value(&store.pointer) else {
+            continue;
+        };
+        if let Some(
+            CLocalBinding::Object {
+                c_type,
+                slot,
+                volatile,
+                pointee_volatile,
+                constant,
+                pointee_constant,
+                ..
+            }
+            | CLocalBinding::UninitializedObject {
+                c_type,
+                slot,
+                volatile,
+                pointee_volatile,
+                constant,
+                pointee_constant,
+            },
+        ) = state.locals.binding(&name)
+        {
+            let (c_type, slot, volatile, pointee_volatile, constant, pointee_constant) = (
+                *c_type,
+                slot.clone(),
+                *volatile,
+                *pointee_volatile,
+                *constant,
+                *pointee_constant,
+            );
+            state.locals.set_typed_qualified_with_all_qualifiers(
+                name,
+                value,
+                c_type,
+                slot,
+                volatile,
+                pointee_volatile,
+                constant,
+                pointee_constant,
+            );
+        }
+    }
+}
+
 pub(super) fn execute_c_function_verification_paths(
     state: &CState,
     function: &CFunction,
@@ -1932,6 +1999,8 @@ pub(super) fn execute_c_function_call_paths(
                     budget,
                 )?;
 
+            let mut outcome = outcome;
+            refresh_returned_local_bindings_from_stores(&mut outcome, &facts);
             paths.push(CFunctionPath {
                 outcome,
                 facts,
@@ -5269,7 +5338,7 @@ pub(crate) fn establish_resource_derived_loop_frames(
                     rewrite(&mut case.body, ranges);
                 }
             }
-            CStatement::ContinueWithStep { step } => rewrite(step, ranges),
+            CStatement::ForStep { step, .. } => rewrite(step, ranges),
             _ => {}
         }
     }
@@ -5310,7 +5379,7 @@ pub(crate) fn validate_resource_derived_loop_frames(
             CStatement::Switch { cases, .. } => cases
                 .iter()
                 .any(|case| has_inherited_loop_frame(&case.body)),
-            CStatement::ContinueWithStep { step } => has_inherited_loop_frame(step),
+            CStatement::ForStep { step, .. } => has_inherited_loop_frame(step),
             _ => false,
         }
     }
@@ -5372,7 +5441,7 @@ pub(crate) fn validate_resource_derived_loop_frames(
                 }
                 Ok(Ok(()))
             }
-            CStatement::ContinueWithStep { step } => check_statement(step),
+            CStatement::ForStep { step, .. } => check_statement(step),
             _ => Ok(Ok(())),
         }
     }
@@ -7682,7 +7751,7 @@ fn statement_writes_aggregate_parameter(
             statement_writes_aggregate_parameter(try_body, parameter_name, writes, unknown_write);
             statement_writes_aggregate_parameter(handler, parameter_name, writes, unknown_write);
         }
-        CStatement::ContinueWithStep { step } => {
+        CStatement::ForStep { step, .. } => {
             statement_writes_aggregate_parameter(step, parameter_name, writes, unknown_write);
         }
         CStatement::While { body, .. } => {
@@ -9328,7 +9397,7 @@ fn collect_c_memory_read_expressions(statement: &CStatement, reads: &mut Vec<CEx
         | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. } => {}
-        CStatement::ContinueWithStep { step } => collect_c_memory_read_expressions(step, reads),
+        CStatement::ForStep { step, .. } => collect_c_memory_read_expressions(step, reads),
         CStatement::CopyAggregate { target, source, .. } => {
             lvalue_address(target, reads);
             values(source, reads);
@@ -9488,8 +9557,8 @@ pub(super) fn bind_c_function_arguments(
     function: &CFunction,
     values: &[CValue],
 ) -> Option<CState> {
-    // Preserve the historical value-only representation for parameters whose
-    // addresses never escape. Besides avoiding unnecessary memory cells, this
+    // Preserve the value-only representation for parameters whose addresses
+    // never escape. Besides avoiding unnecessary memory cells, this
     // keeps ordinary call summaries unchanged. A frame is needed only when
     // the function body actually contains an address-taking expression for a
     // parameter.
@@ -9611,10 +9680,11 @@ pub(super) fn bind_c_function_arguments(
                 parameter.pointee_is_constant(),
             );
         } else {
-            callee_state.locals.set_typed_with_all_qualifiers(
+            callee_state.locals.set_typed_qualified_with_all_qualifiers(
                 parameter.name().to_string(),
                 value,
                 parameter.c_type(),
+                CMemory::value_parameter_pointer(parameter.name()),
                 parameter.is_volatile(),
                 parameter.pointee_is_volatile(),
                 parameter.is_constant(),
@@ -9697,10 +9767,11 @@ fn bind_c_contract_arguments(
         let value = coerce_c_function_argument_without_obligations(value, parameter)?
             .with_pointer_pointee_volatile(parameter.pointee_is_volatile())
             .with_pointer_pointee_constant(parameter.pointee_is_constant());
-        callee_state.locals.set_typed_with_all_qualifiers(
+        callee_state.locals.set_typed_qualified_with_all_qualifiers(
             parameter.name().to_string(),
             value,
             parameter.c_type(),
+            CMemory::value_parameter_pointer(parameter.name()),
             parameter.is_volatile(),
             parameter.pointee_is_volatile(),
             parameter.is_constant(),
@@ -12903,9 +12974,10 @@ fn counted_population_quantities(
                 entry.insert(quantity.clone());
             }
             std::collections::btree_map::Entry::Occupied(mut entry) => {
-                let total = population_quantity_sum(entry.get(), quantity).ok_or_else(|| {
-                    population_total_overflow_message(name, entry.get(), quantity)
-                })?;
+                let total = population_quantity_sum(entry.get(), quantity, assumptions)
+                    .ok_or_else(|| {
+                        population_total_overflow_message(name, entry.get(), quantity)
+                    })?;
                 entry.insert(total);
             }
         }
@@ -13176,7 +13248,13 @@ fn apply_counted_population_transitions_with_interface(
             let prior = tracked_prior.clone().or_else(|| visible_prior.clone());
             if let Some(prior) = prior {
                 if ensured >= required {
-                    Bitvector32Term::add(prior, Bitvector32Term::Constant(ensured - required))
+                    let delta = Bitvector32Term::Constant(ensured - required);
+                    let Some(total) = population_quantity_sum(&prior, &delta, assumptions) else {
+                        return Ok(Err(CRuntimeError::FunctionContract(
+                            population_total_overflow_message(&name, &prior, &delta),
+                        )));
+                    };
+                    total
                 } else {
                     Bitvector32Term::subtract(prior, Bitvector32Term::Constant(required - ensured))
                 }
@@ -13205,10 +13283,15 @@ fn apply_counted_population_transitions_with_interface(
             if population_quantities_are_equal(&prior_count, &required_quantity, assumptions) {
                 ensured_quantity.clone()
             } else {
-                Bitvector32Term::add(
-                    Bitvector32Term::subtract(prior_count, required_quantity.clone()),
-                    ensured_quantity.clone(),
-                )
+                let remainder = Bitvector32Term::subtract(prior_count, required_quantity.clone());
+                let Some(total) =
+                    population_quantity_sum(&remainder, &ensured_quantity, assumptions)
+                else {
+                    return Ok(Err(CRuntimeError::FunctionContract(
+                        population_total_overflow_message(&name, &remainder, &ensured_quantity),
+                    )));
+                };
+                total
             }
         };
         let population_was_initialized =
@@ -15700,7 +15783,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                 let total = entry
                     .get()
                     .as_ref()
-                    .and_then(|total| population_quantity_sum(total, quantity));
+                    .and_then(|total| population_quantity_sum(total, quantity, assumptions));
                 entry.insert(total);
             }
         }
@@ -19087,9 +19170,8 @@ fn active_counted_population_supports_allocation(
 ///
 /// Only identities this frame minted are retired — the generational
 /// declarations and the frame-scoped parameter slots. A value-only parameter
-/// is deliberately excluded: its pseudo-slot borrows the bare `local:<name>`
-/// spelling while owning no block, so retiring it would tombstone whatever
-/// object of that name the *caller* has.
+/// is deliberately excluded: its pseudo-slot uses a separate value-parameter
+/// namespace and owns no block.
 ///
 /// Bounded by this frame's own bindings; it reads no caller state.
 fn end_inline_frame_automatic_lifetimes(state: &CState) -> CMemory {
@@ -19102,6 +19184,38 @@ fn end_inline_frame_automatic_lifetimes(state: &CState) -> CMemory {
             continue;
         }
         memory = memory.without_local_block(&slot.block);
+    }
+    memory
+}
+
+/// A non-inline body's declared locals have ended before its postconditions
+/// are read, including locals exported through a pointer field or out-parameter.
+/// Aggregate parameter slots remain available during by-value contract
+/// evaluation and retire before returning to a caller. Preserve the materialized
+/// aggregate result, which belongs to the caller, and caller-owned objects.
+fn end_function_body_automatic_lifetimes(
+    state: &CState,
+    function: &CFunction,
+    caller: &CMemory,
+    returned: Option<&CValue>,
+) -> CMemory {
+    let parameters: BTreeSet<_> = function
+        .parameters()
+        .iter()
+        .filter(|parameter| parameter.aggregate_layout().is_some())
+        .filter_map(|parameter| state.locals.slot(parameter.name()))
+        .collect();
+    let mut memory = state.memory.clone();
+    for slot in state.locals.slots() {
+        if slot.block.starts_with("local:")
+            && !parameters.contains(slot)
+            && !(function.return_aggregate_layout().is_some()
+                && matches!(returned, Some(CValue::Pointer(pointer)) if pointer.pointer().block == slot.block))
+            && !caller.has_block(&slot.block)
+            && memory.has_block(&slot.block)
+        {
+            memory = memory.without_local_block(&slot.block);
+        }
     }
     memory
 }
@@ -19423,6 +19537,33 @@ fn function_outcome_from_body_with_resource_transfer(
         ));
     };
 
+    // A body return still names its aggregate source; copy it to the
+    // caller-visible result object before retiring the source's activation.
+    // Resource completion over an already completed outcome keeps its result.
+    let value = if reestablish_population_invariants && function.return_aggregate_layout().is_some()
+    {
+        let layout = function.return_aggregate_layout().expect("checked above");
+        if let CValue::Pointer(pointer) = &value
+            && aggregate_copy_reads_uninitialized(&state.memory, pointer.pointer(), layout)
+        {
+            return Ok((
+                CFunctionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
+                obligations,
+                None,
+            ));
+        }
+        let Some(value) = materialize_aggregate_return(&mut state, function, value) else {
+            return Ok((
+                CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                obligations,
+                None,
+            ));
+        };
+        value
+    } else {
+        value
+    };
+
     if function.return_type() != CType::Void {
         set_function_result(&mut state, function, value.clone());
     }
@@ -19549,7 +19690,23 @@ fn function_outcome_from_body_with_resource_transfer(
         };
 
     let mut return_state = caller_state.clone();
-    return_state.set_memory(state.memory.clone());
+    let mut exit_memory = end_function_body_automatic_lifetimes(
+        &state,
+        function,
+        caller_state.memory(),
+        Some(&value),
+    );
+    // Contract checks above used the callee's by-value parameter storage.
+    // No parameter object remains alive when caller execution resumes.
+    for parameter in function.parameters() {
+        if let Some(slot) = state.locals.slot(parameter.name())
+            && !caller_state.memory().has_block(&slot.block)
+            && exit_memory.has_block(&slot.block)
+        {
+            exit_memory = exit_memory.without_local_block(&slot.block);
+        }
+    }
+    return_state.set_memory(exit_memory);
     return_state.resources = return_resources;
     return_state.loan_ledger = return_ledger;
     return_state.loan_participant = return_participant;
@@ -19820,7 +19977,12 @@ pub(super) fn function_outcome_from_body(
             caller_state.set_memory(if function.has_inline_body() {
                 end_inline_frame_automatic_lifetimes(&state)
             } else {
-                state.memory.clone()
+                end_function_body_automatic_lifetimes(
+                    &state,
+                    function,
+                    caller_state.memory(),
+                    Some(&value),
+                )
             });
             if function.has_inline_body() {
                 // Inline bodies execute with a parameter-only local
@@ -19868,7 +20030,7 @@ pub(super) fn function_outcome_from_body(
             caller_state.set_memory(if function.has_inline_body() {
                 end_inline_frame_automatic_lifetimes(&state)
             } else {
-                state.memory.clone()
+                end_function_body_automatic_lifetimes(&state, function, caller_state.memory(), None)
             });
             if function.has_inline_body() {
                 let memory = caller_state.memory.clone();

@@ -1520,7 +1520,7 @@ impl CMemory {
     /// or before a declaration is re-entered. The tombstone is semantic: it
     /// makes aliases to the old object invalid instead of merely making an
     /// eventual load unresolved because the block disappeared.
-    pub(in crate::kernel) fn without_local_block(&self, block: &PointerBlock) -> Self {
+    pub(crate) fn without_local_block(&self, block: &PointerBlock) -> Self {
         if !self.blocks.contains_key(block) && self.forgotten.ended_local_blocks.contains(block) {
             return self.clone();
         }
@@ -2606,6 +2606,16 @@ impl CMemory {
         memory
     }
 
+    /// Value-only parameters never own storage. Give their pseudo-slots a
+    /// separate namespace so a caller's same-named local cannot supply a cell
+    /// or be overwritten by a parameter assignment.
+    pub(in crate::kernel) fn value_parameter_pointer(name: &str) -> Pointer {
+        Pointer {
+            block: format!("local:value-parameter:{name}").into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
     pub(in crate::kernel) fn local_pointer(name: &str) -> Pointer {
         Pointer {
             block: format!("local:{name}").into(),
@@ -3292,6 +3302,7 @@ impl CState {
                 crate::kernel::primitives::resource_algebra::population_quantity_sum(
                     &total,
                     &population.count,
+                    assumptions,
                 )
             })
     }

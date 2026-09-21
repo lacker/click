@@ -1265,7 +1265,7 @@ mod tests {
             PureFactContext::new().assume_proposition(Proposition::CMemoryMutatesOnly {
                 before: before.clone(),
                 after: after.clone(),
-                pointers: vec![written],
+                writes: vec![(written, 4)],
             });
         // The canonical memories are the cells' epochs. Snapshots that
         // differ only by a declared block or a write to another cell share

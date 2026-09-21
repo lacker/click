@@ -335,36 +335,75 @@ pub(crate) fn protected_range_proven_overlapping(
     protected: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> bool {
-    if query.base() == protected.base() {
-        // One object at one base term: element offsets scaled to bytes are
-        // enough, and the kernel's arithmetic decides them exactly. Both
-        // endpoints are the signed numbers `memory_range_byte_count` scales;
-        // zero-extending them put `p[-1..1]` four gigabytes above `p[0..1]`
-        // and reported the two as separate. A range that is not forward has
-        // no bounds to compare and goes on to `byte_range` below, exactly as
-        // `concrete_memory_range_bounds` answers `None` for one.
-        let byte_bounds = |range: &CMemoryRange| {
-            let width = i64::from(range.element_width());
-            let start = signed_bitvector_constant(range.start())?;
-            let end = signed_bitvector_constant(range.end())?;
-            (start < end).then_some(())?;
-            Some((start.checked_mul(width)?, end.checked_mul(width)?))
-        };
-        if let (Some((query_start, query_end)), Some((protected_start, protected_end))) =
-            (byte_bounds(query), byte_bounds(protected))
-        {
-            return query_start < protected_end && protected_start < query_end;
+    // Rebase through the indexed, directly stated equalities before scaling
+    // element offsets. An equality such as w == p + 1 relates different pointer
+    // spellings, which syntactic pointer subtraction alone cannot see.
+    let aliases = |range: &CMemoryRange| {
+        std::iter::once(range.base().clone())
+            .chain(assumptions.exact_pointer_aliases(range.base()).cloned())
+            .chain(assumptions.exact_pointer_offset_aliases(range.base()))
+            .map(|base| range.with_bounds(base, range.start().clone(), range.end().clone()))
+            .collect::<Vec<_>>()
+    };
+    let queries = aliases(query);
+    let protected_ranges = aliases(protected);
+    // Exact aliases can settle the whole comparison without initializing any
+    // arithmetic search over unrelated facts, including when they are adjacent.
+    let mut separated = false;
+    for (query_index, query) in queries.iter().enumerate() {
+        for (protected_index, protected) in protected_ranges.iter().enumerate() {
+            // The original range comparison is charged by the loan query;
+            // each additional alias is extra work for this check.
+            if query_index != 0 || protected_index != 0 {
+                crate::instrumentation::record_deterministic_work(1);
+            }
+            match protected_ranges_constant_overlap(query, protected) {
+                Some(true) => return true,
+                Some(false) => separated = true,
+                None => {}
+            }
         }
+    }
+    if separated {
+        return false;
     }
     let byte_range = |range: &CMemoryRange| {
         let (base, bytes) = range.byte_footprint();
         CMemoryRange::new_with_element_width(base, Bitvector32Term::Constant(0), bytes, 1)
     };
-    let (query, protected) = (byte_range(query), byte_range(protected));
-    // The kernel oracle relates the second base to the first syntactically,
-    // so ask in both orders; overlap itself is symmetric.
-    memory_ranges_proven_overlapping(&query, &protected, assumptions)
-        || memory_ranges_proven_overlapping(&protected, &query, assumptions)
+    queries.iter().any(|query| {
+        protected_ranges.iter().any(|protected| {
+            let (query, protected) = (byte_range(query), byte_range(protected));
+            memory_ranges_proven_overlapping(&query, &protected, assumptions)
+                || memory_ranges_proven_overlapping(&protected, &query, assumptions)
+        })
+    })
+}
+
+fn protected_ranges_constant_overlap(
+    query: &CMemoryRange,
+    protected: &CMemoryRange,
+) -> Option<bool> {
+    // Compare concrete intervals in exact byte arithmetic. Negative offsets
+    // and large widths must not wrap through a 32-bit byte-count term.
+    let byte_bounds = |range: &CMemoryRange| {
+        let width = i64::from(range.element_width());
+        let start = signed_bitvector_constant(range.start())?;
+        let end = signed_bitvector_constant(range.end())?;
+        (start < end).then_some(())?;
+        Some((start.checked_mul(width)?, end.checked_mul(width)?))
+    };
+    let (query_start, query_end) = byte_bounds(query)?;
+    let (protected_start, protected_end) = byte_bounds(protected)?;
+    let delta = protected
+        .base()
+        .exact_element_delta_from_base(query.base(), 1, None)?;
+    if !delta.is_constant() {
+        return None;
+    }
+    let start = protected_start.checked_add(delta.constant)?;
+    let end = protected_end.checked_add(delta.constant)?;
+    Some(query_start < end && start < query_end)
 }
 
 /// Whether an active loan protects memory: any byte-backed loan, and any
@@ -667,6 +706,17 @@ impl LoanRefusalSubject {
             conflicting: Some(Box::new(protected)),
             origin: Some(origin),
             loan: Some((loan.arena, loan.ordinal)),
+            ..Self::none()
+        }
+    }
+
+    pub(crate) fn for_conflicting_resources(
+        resource: CResourceFact,
+        conflicting: CResourceFact,
+    ) -> Self {
+        Self {
+            resource: Some(resource),
+            conflicting: Some(Box::new(conflicting)),
             ..Self::none()
         }
     }
@@ -6596,6 +6646,70 @@ mod tests {
             &range(u32::MAX - 4, u32::MAX),
             &assumptions
         ));
+    }
+
+    #[test]
+    fn offset_alias_overlap_uses_exact_bytes_and_ignores_unrelated_facts() {
+        use crate::kernel::{ConditionTerm, Pointer, PointerOffsetTerm, Proposition};
+        let p = Pointer {
+            block: "overlap".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let q = Pointer {
+            block: p.block.clone(),
+            offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(600)), 1),
+        };
+        let protected = CMemoryRange::new_with_element_width(
+            p.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+            4,
+        );
+        let mut samples = Vec::new();
+        for size in [8, 32, 128, 512] {
+            let mut assumptions = PureFactContext::new();
+            for index in 0..size {
+                assumptions = assumptions.assume_condition(
+                    ConditionTerm::equal(
+                        Bitvector32Term::Variable(Variable(1000 + index)),
+                        Bitvector32Term::Constant(0),
+                    ),
+                    true,
+                );
+            }
+            for (offset, width, overlaps) in [
+                (3, 1, true),
+                (4, 1, false),
+                (-1, 2, true),
+                (4_294_967_297, 8, false),
+            ] {
+                let equality = ConditionTerm::pointer_offset_equal(
+                    q.offset.clone(),
+                    PointerOffsetTerm::Constant(offset),
+                );
+                let context = assumptions.clone().assume_condition(equality.clone(), true);
+                let query = CMemoryRange::new_with_element_width(
+                    q.clone(),
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(1),
+                    width,
+                );
+                let (actual, work) = crate::instrumentation::measure_deterministic_work(|| {
+                    protected_range_proven_overlapping(&query, &protected, &context)
+                });
+                assert_eq!(actual, overlaps);
+                if offset == 3 {
+                    samples.push(work);
+                }
+                let withdrawn =
+                    context.without_exact_fact(&Proposition::ConditionIs(equality, true));
+                assert!(withdrawn.exact_pointer_offset_aliases(&q).next().is_none());
+            }
+        }
+        assert!(
+            samples.iter().all(|work| *work <= samples[0] * 2 + 16),
+            "overlap query scanned unrelated facts: {samples:?}"
+        );
     }
 
     fn composite(name: &str, own: bool) -> CResourceFact {

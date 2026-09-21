@@ -1087,7 +1087,7 @@ fn statement_takes_address_of(statement: &CStatement, name: &str) -> bool {
         | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. } => false,
-        CStatement::ContinueWithStep { step } => statement_takes_address_of(step, name),
+        CStatement::ForStep { step, .. } => statement_takes_address_of(step, name),
         CStatement::Assign { expression, .. }
         | CStatement::Return(expression)
         | CStatement::Throw(expression) => escapes(expression),
@@ -1375,7 +1375,7 @@ fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
                 statement_calls(&case.body, calls);
             }
         }
-        CStatement::ContinueWithStep { step } => statement_calls(step, calls),
+        CStatement::ForStep { step, .. } => statement_calls(step, calls),
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
@@ -1434,7 +1434,7 @@ fn statement_declared_variables(statement: &CStatement, names: &mut BTreeSet<Str
                 statement_declared_variables(&case.body, names);
             }
         }
-        CStatement::ContinueWithStep { step } => statement_declared_variables(step, names),
+        CStatement::ForStep { step, .. } => statement_declared_variables(step, names),
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
@@ -1572,7 +1572,7 @@ fn walk_termination_paths<W: TerminationWalk>(
         walk_termination_paths(walk, statement, paths)
     };
     match statement {
-        CStatement::ContinueWithStep { step } => descend(step, paths),
+        CStatement::ForStep { step, .. } => descend(step, paths),
         CStatement::Return(_) | CStatement::Throw(_) => Ok(WalkPaths::none()),
         // A `break` leaves the innermost `switch` or loop and resumes after
         // it, carrying what it holds here. It does not reach the next
@@ -2414,7 +2414,7 @@ fn loop_at_index<'a>(
             try_body, handler, ..
         } => loop_at_index(try_body, target, next_index)
             .or_else(|| loop_at_index(handler, target, next_index)),
-        CStatement::ContinueWithStep { step } => loop_at_index(step, target, next_index),
+        CStatement::ForStep { step, .. } => loop_at_index(step, target, next_index),
         // Spelled out, as in `check_loops`: the two walks number the same
         // loops only while they descend into the same statements, so a new
         // statement kind must be placed in both.
@@ -2500,9 +2500,21 @@ fn same_statement_shape(left: &CStatement, right: &CStatement) -> bool {
                 })
         }
         (
-            CStatement::ContinueWithStep { step: left_step },
-            CStatement::ContinueWithStep { step: right_step },
-        ) => same_statement_shape(left_step, right_step),
+            CStatement::ForStep {
+                step: left_step,
+                exited_locals: left_locals,
+                continue_after: left_continue,
+            },
+            CStatement::ForStep {
+                step: right_step,
+                exited_locals: right_locals,
+                continue_after: right_continue,
+            },
+        ) => {
+            left_locals == right_locals
+                && left_continue == right_continue
+                && same_statement_shape(left_step, right_step)
+        }
         _ => left == right,
     }
 }
@@ -2702,7 +2714,7 @@ fn collect_loops<'a>(statement: &'a CStatement, loops: &mut Vec<&'a CStatement>)
                 collect_loops(&case.body, loops);
             }
         }
-        CStatement::ContinueWithStep { step } => collect_loops(step, loops),
+        CStatement::ForStep { step, .. } => collect_loops(step, loops),
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
@@ -2925,7 +2937,7 @@ fn check_loops(
             }
             Ok(())
         }
-        CStatement::ContinueWithStep { step } => check_loops(
+        CStatement::ForStep { step, .. } => check_loops(
             step,
             supplied,
             certified,
@@ -3137,7 +3149,7 @@ fn statement_function_addresses(statement: &CStatement, taken: &mut BTreeSet<Str
             visit(target);
             visit(operand);
         }
-        CStatement::ContinueWithStep { step } => statement_function_addresses(step, taken),
+        CStatement::ForStep { step, .. } => statement_function_addresses(step, taken),
         CStatement::Seq(first, second) => {
             statement_function_addresses(first, taken);
             statement_function_addresses(second, taken);
@@ -3464,7 +3476,7 @@ pub(super) fn statement_calls_function(statement: &CStatement, callee: &str) -> 
         CStatement::Switch { cases, .. } => cases
             .iter()
             .any(|case| statement_calls_function(&case.body, callee)),
-        CStatement::ContinueWithStep { step } => statement_calls_function(step, callee),
+        CStatement::ForStep { step, .. } => statement_calls_function(step, callee),
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
@@ -3541,7 +3553,7 @@ fn self_call_loop_indices(
                 descend(&case.body, next_index);
             }
         }
-        CStatement::ContinueWithStep { step } => descend(step, next_index),
+        CStatement::ForStep { step, .. } => descend(step, next_index),
         // Spelled out, as in `loop_at_index` and `check_loops`: these walks
         // number the same loops only while they descend into the same
         // statements, so a new statement kind must be placed in all of them.

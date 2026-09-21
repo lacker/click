@@ -5,6 +5,7 @@ mod memory_loads;
 mod operators;
 pub(in crate::kernel) mod pointer_tags;
 mod statements;
+pub(in crate::kernel) use statements::end_scope_automatic_lifetimes;
 
 /// Retain each sequential volatile access as a unique, kernel-certified fact.
 /// The event id is allocated from the execution's existing fresh-variable
@@ -61,6 +62,7 @@ pub(crate) use memory_loads::offsets_have_same_canonical_form;
 pub(crate) use memory_loads::proposition_mentions_registered_load_variable;
 #[cfg(test)]
 pub(crate) use memory_loads::record_load_variable_defining_fact;
+pub(crate) use memory_loads::recorded_load_access_width;
 pub(crate) use memory_loads::registered_load_bytes_for_variable;
 pub(crate) use memory_loads::registered_load_for_variable;
 pub(crate) use memory_loads::registered_load_origin_for_variable;

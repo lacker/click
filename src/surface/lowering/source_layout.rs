@@ -32,6 +32,9 @@ pub(in crate::surface) struct SourceExecutionLayout {
 #[derive(Default)]
 struct SourceExecutionLayoutData {
     statements: BTreeMap<usize, SourceStatementRegion>,
+    automatic_exits: BTreeMap<usize, Vec<String>>,
+    automatic_abrupt_exits: BTreeMap<usize, Vec<String>>,
+    automatic_break_heads: BTreeMap<usize, usize>,
     loop_bodies: BTreeMap<usize, usize>,
     /// The C `if` statement indices whose regions complete when the keyed
     /// statement completes normally: the chain of enclosing branches this
@@ -364,6 +367,7 @@ impl SourceExecutionLayout {
 
         let mut data = SourceExecutionLayoutData::default();
         visit(statement, &mut 0, &mut 0, &mut data);
+        collect_automatic_exits(statement, &mut data);
         Self {
             data: std::sync::Arc::new(data),
         }
@@ -376,6 +380,15 @@ impl SourceExecutionLayout {
             .exited_branch_regions
             .get(&index)
             .map_or(&[], Vec::as_slice)
+    }
+
+    pub(in crate::surface) fn automatic_exits(&self, index: usize, abrupt: bool) -> &[String] {
+        let exits = if abrupt {
+            &self.data.automatic_abrupt_exits
+        } else {
+            &self.data.automatic_exits
+        };
+        exits.get(&index).map_or(&[], Vec::as_slice)
     }
 
     pub(in crate::surface) fn statement(&self, index: usize) -> Option<SourceStatementRegion> {
@@ -480,6 +493,133 @@ pub(in crate::surface) fn collect_c_expression_referenced_names(
     }
 }
 
+/// Index lexical lifetime boundaries once. Normal exits are attached to every
+/// terminal source node of a scope (including a whole branch executed at once).
+/// Abrupt exits visit only the scopes they leave; ordinary statements do not
+/// copy their enclosing declarations or scan the function.
+fn collect_automatic_exits(source: &syntax::C0Statement, layout: &mut SourceExecutionLayoutData) {
+    use syntax::C0Statement as S;
+    fn declarations(s: &S, names: &mut Vec<String>) {
+        match s {
+            S::Declare { name, .. } | S::DeclareStructValue { name, .. } => {
+                names.push(name.clone())
+            }
+            S::Seq(a, b) => {
+                declarations(a, names);
+                declarations(b, names);
+            }
+            S::Label { statement, .. } => declarations(statement, names),
+            _ => {}
+        }
+    }
+    fn scope(
+        s: &S,
+        index: &mut usize,
+        scopes: &mut Vec<(Vec<String>, Option<usize>)>,
+        loop_head: Option<usize>,
+        layout: &mut SourceExecutionLayoutData,
+    ) -> Vec<usize> {
+        let mut names = Vec::new();
+        declarations(s, &mut names);
+        scopes.push((names, loop_head));
+        let tails = visit(s, index, scopes, layout);
+        let (names, _) = scopes.pop().unwrap();
+        for tail in &tails {
+            layout
+                .automatic_exits
+                .entry(*tail)
+                .or_default()
+                .extend(names.iter().cloned());
+        }
+        tails
+    }
+    fn visit(
+        s: &S,
+        index: &mut usize,
+        scopes: &mut Vec<(Vec<String>, Option<usize>)>,
+        layout: &mut SourceExecutionLayoutData,
+    ) -> Vec<usize> {
+        if let S::Seq(a, b) = s {
+            visit(a, index, scopes, layout);
+            return visit(b, index, scopes, layout);
+        }
+        if let S::For {
+            initializer,
+            body,
+            step,
+            ..
+        } = s
+        {
+            visit(initializer, index, scopes, layout);
+            let head = *index;
+            *index += 1;
+            let mut names = Vec::new();
+            declarations(initializer, &mut names);
+            // The initializer belongs to the for statement, not its body.
+            scopes.push((names.clone(), None));
+            scope(body, index, scopes, Some(head), layout);
+            visit(step, index, scopes, layout);
+            scopes.pop();
+            layout
+                .automatic_exits
+                .entry(head)
+                .or_default()
+                .extend(names);
+            return vec![head];
+        }
+        let head = *index;
+        *index += 1;
+        match s {
+            S::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let mut tails = vec![head];
+                tails.extend(scope(then_branch, index, scopes, None, layout));
+                tails.extend(scope(else_branch, index, scopes, None, layout));
+                tails
+            }
+            S::While { body, .. } | S::DoWhile { body, .. } => {
+                scope(body, index, scopes, Some(head), layout);
+                vec![head]
+            }
+            S::Break | S::Continue | S::Return(_) | S::Goto { .. } => {
+                let mut names = Vec::new();
+                for (declared, loop_head) in scopes.iter().rev() {
+                    names.extend(declared.iter().cloned());
+                    if let Some(loop_head) = loop_head
+                        && matches!(s, S::Break | S::Continue)
+                    {
+                        if matches!(s, S::Break) {
+                            layout.automatic_break_heads.insert(head, *loop_head);
+                        }
+                        break;
+                    }
+                }
+                layout.automatic_abrupt_exits.insert(head, names);
+                vec![head]
+            }
+            // Switches are executed as a unit by the kernel, which retires
+            // their own declarations. They still may end an enclosing scope.
+            _ => vec![head],
+        }
+    }
+    visit(source, &mut 0, &mut Vec::new(), layout);
+    for (at, head) in std::mem::take(&mut layout.automatic_break_heads) {
+        let exited = layout
+            .automatic_exits
+            .get(&head)
+            .cloned()
+            .unwrap_or_default();
+        layout
+            .automatic_abrupt_exits
+            .entry(at)
+            .or_default()
+            .extend(exited);
+    }
+}
+
 #[cfg(test)]
 mod source_execution_layout_tests {
     use super::*;
@@ -500,6 +640,9 @@ mod source_execution_layout_tests {
         let layout = SourceExecutionLayout {
             data: std::sync::Arc::new(SourceExecutionLayoutData {
                 statements,
+                automatic_exits: BTreeMap::new(),
+                automatic_abrupt_exits: BTreeMap::new(),
+                automatic_break_heads: BTreeMap::new(),
                 loop_bodies: BTreeMap::new(),
                 exited_branch_regions: BTreeMap::new(),
             }),

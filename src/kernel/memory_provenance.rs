@@ -2531,6 +2531,41 @@ pub(crate) fn c_memories_connected_by_effects(
     false
 }
 
+/// Address inequality frames a load only when the two typed accesses fit
+/// inside the gap it proves. Keep explicit range separation available even
+/// when an address-only comparison cannot establish that gap.
+pub(crate) fn write_access_is_disjoint_from_load(
+    write: &Pointer,
+    write_bytes: u32,
+    read: &Pointer,
+    read_bytes: u32,
+    assumptions: &PureFactContext,
+) -> bool {
+    if write_bytes == 0 || read_bytes == 0 {
+        return false;
+    }
+    if write.blocks_proven_distinct(read) {
+        return true;
+    }
+    use crate::kernel::reasoning::{AccessByteOverlap, access_byte_overlap};
+    let overlap = access_byte_overlap(write, write_bytes, read, read_bytes, assumptions);
+    if overlap == AccessByteOverlap::Overlaps {
+        return false;
+    }
+    (overlap == AccessByteOverlap::Separate
+        && pointers_proven_distinct_for_memory_resolution(write, read, assumptions))
+        || assumptions.ranges_directly_disjoint_from_access(
+            &[CMemoryRange::new_with_element_width(
+                write.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+                write_bytes,
+            )],
+            read,
+            read_bytes,
+        )
+}
+
 fn c_memory_load_is_directly_unchanged(
     before: &CMemory,
     after: &CMemory,
@@ -2551,7 +2586,7 @@ fn c_memory_load_is_directly_unchanged(
             Proposition::CMemoryMutatesOnly {
                 before: effect_before,
                 after: effect_after,
-                pointers,
+                writes,
             } => {
                 (effect_before == before
                     || memory_materializes_atomic_load(effect_before, before, pointer)
@@ -2568,28 +2603,14 @@ fn c_memory_load_is_directly_unchanged(
                             pointer,
                             assumptions,
                         ))
-                    && pointers.iter().all(|write| {
-                        write.blocks_proven_distinct(pointer)
-                            || pointer_offsets_with_common_base_proven_distinct(
-                                write,
-                                pointer,
-                                assumptions,
-                            )
-                            || pointers_proven_distinct_for_memory_resolution(
-                                write,
-                                pointer,
-                                assumptions,
-                            )
-                            || pointer_byte_offset_from_base(write, pointer)
-                                .and_then(|offset| offset.as_const())
-                                .is_some_and(|offset| offset != 0)
-                            // Last: a separating composition owns the written
-                            // address and the read address through different
-                            // members.
-                            || owned_composition_store_separated_evidence(
-                                write, pointer, assumptions,
-                            )
-                            .is_some()
+                    && writes.iter().all(|(write, bytes)| {
+                        write_access_is_disjoint_from_load(
+                            write,
+                            *bytes,
+                            pointer,
+                            crate::kernel::eval::load_access_width_at_address_or_widest(pointer),
+                            assumptions,
+                        )
                     })
             }
             Proposition::CMemoryEffectSummary {

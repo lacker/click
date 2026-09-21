@@ -2020,7 +2020,11 @@ fn count_leaves(leaves: &[Proof<'_>], control: LoopControlExit) -> usize {
 fn remaining_body_exits(statement: &CStatement) -> (usize, usize) {
     match statement {
         CStatement::Break => (1, 0),
-        CStatement::Continue | CStatement::ContinueWithStep { .. } => (0, 1),
+        CStatement::Continue
+        | CStatement::ForStep {
+            continue_after: true,
+            ..
+        } => (0, 1),
         CStatement::Seq(first, rest) => {
             let (first_breaks, first_continues) = remaining_body_exits(first);
             let (rest_breaks, rest_continues) = remaining_body_exits(rest);

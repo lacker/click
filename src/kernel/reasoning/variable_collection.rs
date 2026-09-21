@@ -179,11 +179,11 @@ fn collect_proposition_bitvector_variables_one(
         Proposition::CMemoryMutatesOnly {
             before,
             after,
-            pointers,
+            writes,
         } => {
             collect_memory_bitvector_variables(before, variables);
             collect_memory_bitvector_variables(after, variables);
-            for pointer in pointers {
+            for (pointer, _) in writes {
                 collect_pointer_bitvector_variables(pointer, variables);
             }
         }
@@ -396,7 +396,7 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
         | CStatement::Goto { .. }
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. } => {}
-        CStatement::ContinueWithStep { step } => {
+        CStatement::ForStep { step, .. } => {
             collect_c_statement_bitvector_variables(step, variables);
         }
         CStatement::Assign { expression, .. }

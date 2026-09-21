@@ -151,114 +151,41 @@ development machine varies by ±50% run to run.
 
 ## Open — false theorems with a witness on master
 
-### S1. A local's address outlives its scope
+### S1. Remaining aggregate-parameter contract storage boundary
 
-```c
-int32 f(int32 n) {
-    int32* q; int32 z;
-    if (n == 0) { int32 a[2]; a[0] = 5; q = &a[0]; } else { int32 b[2]; b[0] = 5; q = &b[0]; }
-    z = q[0];            /* dangling in C */
-    return z;            /* `ensures result == 5` verifies */
-}
-```
+The surface scope exits, for-update ordering, callee body locals, and scalar
+parameter storage now retire. Regressions live in
+`mdtests/automatic_scope_exit_*.md`; valid paths and expansion are checked too.
+Callee stores through caller-local pointers also refresh their named bindings.
 
-Also verifies for: nested `if` scopes, a `while` body local read after the loop
-(including after `break`), a `switch` case local, a `for`-init variable read
-through a pointer after the loop, and an arm local's address stored in a struct
-field. `mdtests/automatic_block_reentry_lifetime_alias.md` states the intended
-verdict (`undefined behavior: invalid memory access`) for the re-entry variant.
+Aggregate parameter copies still supply logical field values during contract
+postcondition evaluation. They now retire before caller execution resumes, but
+separating their logical contract values from the C objects during postcondition
+evaluation remains open. The previous investigation did not find an ordinary
+caller exploit through this path.
 
-Cause: the surface proof stepper never executes an `if` as a unit —
-`execute_branch_step_from_frontier_position`
-(`src/surface/proof/cursor_execution.rs`) splices the selected arm in front of
-the `if`'s tail, so there is no step at which the arm is left and nothing ends
-the arm's locals. The kernel's own executors do retire a scope's locals at every
-exit (`end_scope_automatic_lifetimes`, `paths_after_scope_exit`, landed in
-b99f30c0 with five kernel tests), but no sidecar proof goes through that route,
-so the witness above still verifies.
+S2's offset-alias partition witness is rejected by indexed pointer and offset
+equalities, with exact byte comparisons for concrete extents. Its regression is
+`mdtests/contract_view_offset_alias.md`; negative offsets, mixed widths, adjacent
+ranges, and indexed query scaling are checked in kernel/surface tests.
 
-Fix shape: a recorded execution event, `CheckedAutomaticLifetimeEnd
-{ before_state, after_state, blocks }`, modelled on `CheckedResourceObservation`
-(`src/kernel/proof/execution.rs`), recorded where the stepper leaves a region
-(the `exited_branch_regions(...)` sites), including `break`/`continue`/`return`
-out of an arm. A silent state change is rejected by the proof object
-("evidence does not start from the running state") — that was tried. `for`-init
-variables are lowered as a sibling of the loop (`src/languages/c/syntax.rs`), so
-they need a frontend scope or the same event keyed on the `for` region.
-
-Related, not exploitable from a caller today: a non-inline callee body that is
-executed in place never retires its locals or its `local:frame:` parameter slots
-(`src/kernel/functions.rs`, `end_inline_frame_automatic_lifetimes` runs only for
-inline bodies), so such a callee can certify `ensures *out[0] == 3` about its own
-local. Retiring parameter slots must wait until postconditions have been read
-(struct-by-value `ensures` read them).
-
-### S2. A contract whose own clauses alias under its `requires`
-
-```c
-int32 aliased(int32* p, int32* w) { int32 t; w[0] = 7; t = p[1]; return t; }
-```
-```click
-int32 aliased(int32* p, int32* w) {
-    requires w == p + 1;
-    requires p[1] == 3;
-    views p[0..3];
-    consumes w[0..3];
-    ensures result == 3;          // verifies; the C returns 7
-} by { execute(); simp(); }
-```
-
-`w[0]` is `p[1]`. The entry fact "a contract's owned and viewed clauses are
-separate" (`contract_entry_partition_facts`, `src/kernel/functions.rs`) frames the
-store away. No ordinary caller can enter (the stable-view planner refuses every
-call that satisfies the `requires`), and a recursive self-call only re-enters the
-same context, so this is a vacuous contract rather than an escape — but Click
-issues a verified claim about real C that is false under a satisfiable `requires`.
-The guard exists and fires for `requires w == p`
-("the contract's `views` clause overlaps its own `owns` clause"), not for
-`w == p + 1`: `install_borrowed_contract_inputs` (`src/kernel/api.rs`) strips
-memory separations and asks `protected_range_proven_overlapping`
-(`src/kernel/loans.rs`), whose cross-base route does not spend the `requires`
-pointer-offset equality to place `w`'s range against `p`'s. That is the repair.
-
-### S3. A symbolic resource count can still wrap
-
-Constant totals are now exact (`population_quantity_sum`; regression
-`mdtests/a_population_count_is_not_a_wrapped_total.md`, which refuses
-`produces k of tok(o)` twice at `k == 2000000000` proving `count(tok(o)) < 0`).
-Two gaps remain underneath: `c_counted_population_transition`'s ledger update
-`prior + (ensured - required)` is still a modular add, and the merge of a symbolic
-quantity with a constant `1` (`own_quantity(R, n) + own(R)`, the shape every
-refcount contract uses) is kept unguarded on purpose. Closing both means carrying
-`0 <= q <= i32::MAX` with every population quantity. The refusal for the symbolic
-case is also unusable: `claim Ensure(2) on path 0 has mismatched proposition
-completion evidence` (`src/surface/proof/claim_proofs.rs`).
+S3's symbolic count merges and call-ledger additions now require an established
+no-overflow bound. The negative and bounded positive examples are
+`mdtests/population_symbolic_increment_*.md`; the bounded example also expands
+and rechecks. The earlier constant-total regression now names the population
+count bound instead of reporting a certificate-completion mismatch.
 
 ## Open — unsound or unexamined reasoning, no witness yet
 
 Ranked by how likely a witness is.
 
-1. **A call's or loop's write set carries no widths.** `Proposition::CMemoryMutatesOnly`
-   holds `pointers: Vec<Pointer>` only, the branch join in
-   `src/kernel/proof/execution.rs` unions arm writes and drops widths, and the
-   consumers — `c_memory_load_is_directly_unchanged`'s `CMemoryMutatesOnly` arm
-   (`src/kernel/memory_provenance.rs`, including a plain
-   `pointer_byte_offset_from_base != 0` rung) and
-   `memory_snapshots_directly_proven_equal_for_memory_resolution`
-   (`memory_conditions.rs`) — frame a write away from a read on address
-   inequality alone. Attack: a callee whose `mutable` clause writes an `int64` at
-   `q` while the caller keeps a fact about the `int32` at `q + 4`. Gating with the
-   widest scalar for both sides would make every `a[i]`/`a[j]` pair `Unknown` and
-   kill array framing, so the fix needs real widths: derive the write width by
-   diffing the effect's two snapshots, carry it in the proposition (~30 sites), or
-   thread the load width through the four call sites. When gating a ladder, call
-   the explicit-range rung beside the gate, not under it — gating it away once
-   cost +545% work on `rb_replace_node_with_children`.
-2. **`resolve_memory_load_value`** (`memory_conditions.rs`) has no width parameter
-   and returns the stored value of a pointer-equal cell whatever width that cell
-   holds, so a 2-byte stored value can answer a 4-byte load. Narrow and cheap to
-   attack. Also `heap_allocation_may_contain_pointer`'s `base.block !=
-   pointer.block` test is fail-open on a block spelling.
+The two width findings have been repaired: `CMemoryMutatesOnly` carries
+`(Pointer, byte_width)` writes through joins and substitutions; framing and
+mutable-footprint checks use complete byte accesses. Load-value resolution
+requires the requested width to match the stored cell. Mixed-width effect and
+load-resolution regressions are in the kernel memory-reasoning tests.
+`heap_allocation_may_contain_pointer`'s block-spelling test remains unexamined.
+
 3. **`separate(memory(a[s..s + 2]), …)` with `s` unconstrained is accepted**, where
    `owns a[s..s + 2]` would owe `not signed_add_overflows`. A provably reversed
    range is refused; an undecided one is not

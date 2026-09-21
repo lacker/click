@@ -1938,9 +1938,9 @@ fn proposition_mentions_integer_variable(proposition: &Proposition, variable: Va
             integer_carrier_in_bitvector(bytes, variable)
                 || integer_carrier_in_pointer(base, variable)
         }
-        Proposition::CMemoryMutatesOnly { pointers, .. } => pointers
+        Proposition::CMemoryMutatesOnly { writes, .. } => writes
             .iter()
-            .any(|pointer| integer_carrier_in_pointer(pointer, variable)),
+            .any(|(pointer, _)| integer_carrier_in_pointer(pointer, variable)),
         Proposition::CMemoryEffectSummary { mutable_ranges, .. } => {
             mutable_ranges.iter().any(|range| {
                 integer_carrier_in_bitvector(&range.start, variable)

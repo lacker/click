@@ -311,10 +311,13 @@ pub(super) fn describe_pure_fact(
             describe_c_resource(parent, parameters, arguments),
             describe_c_resource(child, parameters, arguments)
         ),
-        Proposition::CMemoryMutatesOnly { pointers, .. } => format!(
+        Proposition::CMemoryMutatesOnly { writes, .. } => format!(
             "memory mutates only at {}",
-            describe_bounded_list(pointers, |pointer| {
-                describe_pointer(pointer, parameters, arguments)
+            describe_bounded_list(writes, |(pointer, bytes)| {
+                format!(
+                    "{} ({bytes} bytes)",
+                    describe_pointer(pointer, parameters, arguments)
+                )
             })
         ),
         Proposition::CMemoryEffectSummary { mutable_ranges, .. } => format!(
@@ -2803,8 +2806,16 @@ pub(super) fn describe_c_statement_head(statement: &CStatement) -> String {
         CStatement::Break => "break;".to_string(),
         CStatement::Continue => "continue;".to_string(),
         CStatement::Goto { target } => format!("goto target({});", target.0),
-        CStatement::ContinueWithStep { step } => {
-            format!("continue; (with {})", describe_c_statement_head(step))
+        CStatement::ForStep {
+            step,
+            continue_after,
+            ..
+        } => {
+            if *continue_after {
+                format!("continue; (with {})", describe_c_statement_head(step))
+            } else {
+                describe_c_statement_head(step)
+            }
         }
         CStatement::Declare { name, .. } => format!("declaration of `{name}`"),
         CStatement::DeclareAggregate { name, .. } => format!("aggregate declaration of `{name}`"),

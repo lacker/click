@@ -2161,8 +2161,11 @@ pub(in crate::kernel) fn collect_memory_effect_write_pointers(
     // memories would mistake join abstraction and call havoc for writes.
     let mut writes = BTreeSet::new();
     for fact in facts {
-        if let Proposition::CMemoryMutatesOnly { pointers, .. } = fact.proposition() {
-            writes.extend(pointers.iter().cloned());
+        if let Proposition::CMemoryMutatesOnly {
+            writes: accesses, ..
+        } = fact.proposition()
+        {
+            writes.extend(accesses.iter().map(|(pointer, _)| pointer.clone()));
         }
     }
 

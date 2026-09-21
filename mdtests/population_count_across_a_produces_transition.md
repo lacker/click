@@ -20,6 +20,7 @@ verifying "population_count_across_a_produces_transition.c";
 
 void object_retain(int32* obj) {
     owns object_ref(obj);
+    requires count(object_ref(obj)) <= 1000;
     produces object_ref(obj);
     ensures count(object_ref(obj)) == 1;
 } by {

@@ -2230,7 +2230,7 @@ impl CFunctionContract {
 fn statement_contains_internal_throw(statement: &CStatement) -> bool {
     match statement {
         CStatement::Throw(_) => true,
-        CStatement::ContinueWithStep { step } => statement_contains_internal_throw(step),
+        CStatement::ForStep { step, .. } => statement_contains_internal_throw(step),
         CStatement::Seq(first, second) => {
             statement_contains_internal_throw(first) || statement_contains_internal_throw(second)
         }

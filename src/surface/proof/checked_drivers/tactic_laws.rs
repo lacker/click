@@ -296,13 +296,23 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         None,
     )?;
     let state: &mut CState = &mut execution.core.state;
-    if let Some(exit_condition) = loop_exit_condition {
+    if let Some(exit_condition) = loop_exit_condition.filter(|_| {
+        execution
+            .presentation
+            .recorded_snapshots
+            .get(&SnapshotSelector::ProgramPoint(ProgramPointRef {
+                region: CodeRegionRef::Loop(loop_index),
+                kind: ProgramPointKind::Exit,
+            }))
+            .is_some()
+    }) {
         let exit_point = ProgramPointRef {
             region: CodeRegionRef::Loop(loop_index),
             kind: ProgramPointKind::Exit,
         };
+        let exit_surface = surface_at_snapshot(&exit_condition, &exit_point)?;
         let lowered_exit_condition = lower_fixed_state_proposition(
-            &exit_condition,
+            &exit_surface,
             available_pure_facts,
             parsed_function.parameters(),
             arguments,
@@ -319,7 +329,6 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
             ))
         })?;
         if available_pure_facts.contains(&lowered_exit_condition) {
-            let exit_surface = surface_at_snapshot(&exit_condition, &exit_point)?;
             execution
                 .presentation
                 .surface_propositions

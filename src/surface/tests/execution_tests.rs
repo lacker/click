@@ -598,7 +598,8 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
         .store(first, int32(0))
         .store(second, int32(1))
         .store(third, int32(2))
-        .store(local_i, int32(3));
+        .store(local_i, int32(3))
+        .without_local_block(&"local:i".into());
 
     assert_eq!(
         verified.specification.state(),

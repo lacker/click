@@ -1230,9 +1230,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 CStatement::Break => "verification statement: break",
                 CStatement::Continue => "verification statement: continue",
                 CStatement::Goto { .. } => "verification statement: goto",
-                CStatement::ContinueWithStep { .. } => {
-                    "verification statement: continue with for step"
-                }
+                CStatement::ForStep { .. } => "verification statement: continue with for step",
                 CStatement::Declare { .. } => "verification statement: declare",
                 CStatement::DeclareAggregate { .. } => "verification statement: declare aggregate",
                 CStatement::CopyAggregate { .. } => "verification statement: aggregate copy",
@@ -4707,17 +4705,31 @@ pub(super) fn collect_loop_effect_check_obligations(
                     &effective_assumptions,
                 )
         })
-        .collect::<BTreeSet<_>>();
-    writes.extend(
-        facts
-            .iter()
-            .filter_map(|fact| match fact.proposition() {
-                Proposition::CMemoryMutatesOnly { pointers, .. } => Some(pointers.as_slice()),
-                _ => None,
-            })
-            .flatten()
-            .cloned(),
-    );
+        .map(|pointer| {
+            let bytes = after_state
+                .memory()
+                .known_value(&pointer)
+                .or_else(|| before_state.memory().known_value(&pointer))
+                .map_or_else(
+                    crate::kernel::resource_tracker::widest_scalar_access_bytes,
+                    |value| value.byte_width(),
+                );
+            (pointer, bytes)
+        })
+        .collect::<BTreeMap<_, _>>();
+    for (pointer, bytes) in facts
+        .iter()
+        .filter_map(|fact| match fact.proposition() {
+            Proposition::CMemoryMutatesOnly { writes, .. } => Some(writes.as_slice()),
+            _ => None,
+        })
+        .flatten()
+    {
+        writes
+            .entry(pointer.clone())
+            .and_modify(|known| *known = (*known).max(*bytes))
+            .or_insert(*bytes);
+    }
     let effect_summary_ranges = facts
         .iter()
         .filter_map(|fact| match fact.proposition() {
@@ -4794,9 +4806,14 @@ pub(super) fn collect_loop_effect_check_obligations(
             continue;
         }
 
-        for pointer in &writes {
+        for (pointer, bytes) in &writes {
             if !segments.iter().any(|segment| {
-                loop_effect_segment_contains_pointer(segment, pointer, &effective_assumptions)
+                loop_effect_segment_contains_pointer(
+                    segment,
+                    pointer,
+                    *bytes,
+                    &effective_assumptions,
+                )
             }) {
                 push_false_loop_effect_obligation(
                     &mut obligations,
@@ -5016,19 +5033,16 @@ fn evaluate_loop_effect_segment_value_with_facts(
 pub(super) fn loop_effect_segment_contains_pointer(
     segment: &EvaluatedMemorySegment,
     pointer: &Pointer,
+    bytes: u32,
     assumptions: &PureFactContext,
 ) -> bool {
-    let Some(index) =
-        pointer.element_index_from_base_with_width(&segment.base, segment.element_width)
-    else {
-        return false;
-    };
-    condition_is_decided_true(
-        assumptions,
-        &ConditionTerm::signed_less_equal(segment.start.clone(), index.clone()),
-    ) && condition_is_decided_true(
-        assumptions,
-        &ConditionTerm::signed_less_than(index, segment.end.clone()),
+    assumptions.pointer_access_in_range(
+        pointer,
+        bytes,
+        &segment.base,
+        &segment.start,
+        &segment.end,
+        segment.element_width,
     )
 }
 
@@ -5604,7 +5618,7 @@ pub(super) fn statement_may_write_memory(state: &CState, statement: &CStatement)
             statement_may_write_memory(state, then_branch)
                 || statement_may_write_memory(state, else_branch)
         }
-        CStatement::ContinueWithStep { step } => statement_may_write_memory(state, step),
+        CStatement::ForStep { step, .. } => statement_may_write_memory(state, step),
         CStatement::While { body, .. } => statement_may_write_memory(state, body),
         CStatement::Switch { cases, .. } => cases
             .iter()
@@ -5733,7 +5747,7 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
             collect_loop_modified_locals(then_branch, names);
             collect_loop_modified_locals(else_branch, names);
         }
-        CStatement::ContinueWithStep { step } => {
+        CStatement::ForStep { step, .. } => {
             collect_loop_modified_locals(step, names);
         }
         CStatement::While { body, .. } => {
@@ -5845,7 +5859,7 @@ pub(crate) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
             collect_address_taken_locals(then_branch, names);
             collect_address_taken_locals(else_branch, names);
         }
-        CStatement::ContinueWithStep { step } => {
+        CStatement::ForStep { step, .. } => {
             collect_address_taken_locals(step, names);
         }
         CStatement::While {

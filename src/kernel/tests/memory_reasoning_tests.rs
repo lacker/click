@@ -508,6 +508,7 @@ fn byte_store_does_not_change_a_proven_distinct_byte_load() {
     };
     let written = base.offset_by_elements(i.clone(), 1);
     let read = base.offset_by_elements(j.clone(), 1);
+    crate::kernel::eval::declare_load_access_width(&read, 1);
     let before = CMemory::new();
     let after = before.clone().store(written.clone(), uint8(7));
     let assumptions = PureFactContext::new()
@@ -515,7 +516,7 @@ fn byte_store_does_not_change_a_proven_distinct_byte_load() {
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before: before.clone(),
             after: after.clone(),
-            pointers: vec![written],
+            writes: vec![(written, 1)],
         });
 
     assert!(assumptions.proves(&Proposition::ConditionIs(
@@ -629,7 +630,7 @@ fn mutable_frame_proves_unwritten_load_equal_across_stack_locals() {
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before: loop_entry_memory,
             after: loop_exit_memory.clone(),
-            pointers: vec![written_cell],
+            writes: vec![(written_cell, 4)],
         });
 
     assert!(assumptions.proves(&Proposition::ConditionIs(
@@ -672,12 +673,12 @@ fn mutable_frame_transports_load_across_certified_effect_chain() {
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before: before.clone(),
             after: middle.clone(),
-            pointers: vec![first_write],
+            writes: vec![(first_write, 4)],
         })
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before: middle,
             after: after.clone(),
-            pointers: vec![second_write],
+            writes: vec![(second_write, 4)],
         });
 
     assert!(assumptions.proves(&Proposition::ConditionIs(
@@ -717,7 +718,7 @@ fn loadability_transports_across_long_certified_effect_chain() {
         assumptions = assumptions.assume_proposition(Proposition::CMemoryMutatesOnly {
             before: after,
             after: next.clone(),
-            pointers: vec![written.clone()],
+            writes: vec![(written.clone(), 4)],
         });
         after = next;
     }
@@ -1310,7 +1311,7 @@ fn disjoint_range_proves_mutable_frame_cell_distinct() {
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before: before_memory.clone(),
             after: after_memory.clone(),
-            pointers: vec![written_cell],
+            writes: vec![(written_cell, 4)],
         });
 
     assert!(assumptions.proves(&Proposition::ConditionIs(
@@ -1368,7 +1369,7 @@ fn disjoint_ranges_frame_metadata_across_symbolic_index_store() {
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before: before_memory.clone(),
             after: after_memory.clone(),
-            pointers: vec![written_cell],
+            writes: vec![(written_cell, 4)],
         });
 
     assert!(assumptions.proves(&Proposition::ConditionIs(
@@ -1449,7 +1450,7 @@ fn equivalent_field_derived_bases_frame_symbolic_index_store() {
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before: execution_memory.clone(),
             after: after_memory.clone(),
-            pointers: vec![written_cell],
+            writes: vec![(written_cell, 4)],
         });
 
     assert!(assumptions.proves(&Proposition::ConditionIs(
@@ -1520,7 +1521,7 @@ fn direct_transport_composes_framed_loads_inside_an_indexed_address() {
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before,
             after: after.clone(),
-            pointers: vec![written_cell],
+            writes: vec![(written_cell, 4)],
         });
 
     let theorem = prove_c_condition_fact_direct_transport(&fact, &after, &assumptions)
@@ -5832,4 +5833,73 @@ mod snapshot_object_agreement {
             &PureFactContext::new(),
         ));
     }
+}
+
+#[test]
+fn wide_effect_does_not_frame_an_overlapping_narrow_load() {
+    let write = Pointer {
+        block: "wide-effect".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let read = Pointer {
+        block: write.block.clone(),
+        offset: PointerOffsetTerm::Constant(4),
+    };
+    crate::kernel::eval::declare_load_access_width(&read, 4);
+    let before = CMemory::new();
+    let after = before.clone().store(write.clone(), int64(0));
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::CMemoryMutatesOnly {
+        before: before.clone(),
+        after: after.clone(),
+        writes: vec![(write, 8)],
+    });
+    assert!(!assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(before.into(), Box::new(read.clone())),
+            Bitvector32Term::MemoryLoad(after.into(), Box::new(read)),
+        ),
+        true
+    )));
+}
+
+#[test]
+fn memory_resolution_requires_the_loaded_cell_width() {
+    let stored = Pointer {
+        block: "typed-cell".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let alias = Pointer {
+        block: stored.block.clone(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(601_001)), 2),
+    };
+    let memory = CMemory::new()
+        .with_block("typed-cell", 8)
+        .store(stored.clone(), uint16(7));
+    let assumptions = PureFactContext::new().assume_condition(
+        ConditionTerm::pointer_equal(alias.clone(), stored.clone()),
+        true,
+    );
+    for pointer in [&stored, &alias] {
+        assert_eq!(
+            assumptions.resolve_memory_load_value(&memory, pointer, 4),
+            None
+        );
+        assert_eq!(
+            assumptions.resolve_memory_load_value(&memory, pointer, 2),
+            Some(uint16(7))
+        );
+    }
+    let snapshot = crate::kernel::intern_c_memory(memory);
+    let narrow = crate::kernel::eval::load_variable_for_exact_cell(&snapshot, &stored, 2);
+    assert_eq!(
+        assumptions.resolve_memory_load_term(&Bitvector32Term::Variable(narrow)),
+        Some(Bitvector32Term::Constant(7))
+    );
+    // The shared load name conservatively widens when another access is
+    // recorded; it can no longer resolve through the narrow stored cell.
+    let wide = crate::kernel::eval::load_variable_for_exact_cell(&snapshot, &stored, 4);
+    assert_eq!(
+        assumptions.resolve_memory_load_term(&Bitvector32Term::Variable(wide)),
+        None
+    );
 }

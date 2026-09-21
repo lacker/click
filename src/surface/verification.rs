@@ -7359,6 +7359,54 @@ int32 reader(int32 p[], int32 q[]) {
         );
     }
 
+    #[test]
+    fn root_view_checks_pointer_offset_aliases() {
+        for equality in ["q == p + 1", "p == q - 1", "q == p - 1"] {
+            let click = format!(
+                r#"
+verifying "reader.c";
+int32 reader(int32 p[], int32 q[]) {{
+    requires {equality};
+    requires p[1] == 3;
+    views p[0..3];
+    consumes q[0..3];
+    ensures result == 3;
+}} by {{ execute(); simp(); }}
+"#
+            );
+            let error = verify_sources(
+                &click,
+                "int reader(int *p, int *q) { q[0] = 7; return p[1]; }",
+            )
+            .err()
+            .unwrap_or_else(|| panic!("offset aliases must be checked for {equality}"));
+            assert!(
+                error.message().contains("overlaps"),
+                "{equality}: {}",
+                error.message()
+            );
+        }
+    }
+
+    #[test]
+    fn root_view_accepts_adjacent_pointer_offset_aliases() {
+        let click = r#"
+verifying "reader.c";
+int32 reader(int32 p[], int32 q[]) {
+    requires q == p + 3;
+    requires p[1] == 3;
+    views p[0..3];
+    consumes q[0..1];
+    ensures result == 3;
+} by { execute(); simp(); }
+"#;
+        verify_sources(
+            click,
+            "int reader(int *p, int *q) { q[0] = 7; return p[1]; }",
+        )
+        .expect("adjacent owned and viewed ranges form a valid partition");
+    }
+
     const RETARGET_SOURCE: &str = "struct buffer { int *data; };\n\
 int read_entry(struct buffer *owner, int *other) { return owner->data[0]; }\n\
 int read_retargeted(struct buffer *owner, int *other) {\n\
