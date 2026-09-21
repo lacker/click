@@ -668,8 +668,10 @@ inconsistently; it {detail}; this is a Click implementation error, not an invali
                 .same_exchange_from(&after_state.resources, &before_state.resources)
             {
                 return Err(
-                    "instance rewrite resource context is not the exchange its definition requires"
-                        .to_string(),
+                    "internal error while checking an instance rewrite: the resource context is not "
+                        .to_string()
+                        + "the exchange its definition requires; this is a Click implementation "
+                        + "error, not an invalid proof",
                 );
             }
             let introduced = after_facts.introduced_since(before_facts).ok_or_else(|| {
