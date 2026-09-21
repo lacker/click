@@ -1088,7 +1088,7 @@ fn project_selected_instance_arm_cells(
     ) else {
         return state;
     };
-    let state = state.with_memory(memory);
+    let state = state.with_materialized_memory(memory);
     if !include_owned {
         return state;
     }

@@ -32,6 +32,10 @@ int32 parent_read_payload(struct parent* p) {
     return kid->payload;
 }
 
+void caller(struct parent* p, struct child* kid) {
+    parent_attach(p, kid);
+}
+
 ```
 
 ```click
@@ -120,6 +124,18 @@ int32 parent_read_payload(struct parent* p) {
             simp();
         },
     }
+}
+
+void caller(struct parent* p, struct child* kid) {
+    consumes p->kid;
+    requires kid != 0;
+    owns child_ref(kid);
+} by {
+    let { link: link } = step(parent_attach(p, kid), {});
+    unfold(link);
+    let link = fold(parent(p), { link: ParentLink::Linked(kid) });
+    step();
+    simp();
 }
 ```
 

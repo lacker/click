@@ -2963,6 +2963,19 @@ impl CState {
         self
     }
 
+    /// Replace the memory snapshot after proof-only cell naming.
+    ///
+    /// Materializing a canonical load does not write program memory or
+    /// invalidate an existing view. The ordinary [`Self::with_memory`] path
+    /// deliberately invalidates memory-dependent projections for evaluator
+    /// writes, but using it for this proof representation step would discard
+    /// unrelated resource views and make a resource rewrite appear to change
+    /// more authority than its definition exchanges.
+    pub(crate) fn with_materialized_memory(mut self, memory: CMemory) -> Self {
+        self.memory = memory;
+        self
+    }
+
     /// Replace memory through the single checked-state transition hook.
     /// Keeping this beside `with_memory` prevents evaluator paths that already
     /// own a mutable state from bypassing resource-observation invalidation.
