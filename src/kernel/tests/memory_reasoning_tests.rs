@@ -5722,3 +5722,114 @@ mod membership_needs_an_unwrapped_difference {
         ));
     }
 }
+
+/// The three assumption-carrying snapshot comparisons decide whether two
+/// snapshots agree about one load. Their cell filter is
+/// `PointerBlock::observable_by_load`; the filter on the `blocks` extent map
+/// beside it was a block-name shortcut, `!block.starts_with("local:")`, which
+/// dropped every local's extent from the comparison and never looked at the
+/// retirement tombstones at all.
+mod snapshot_object_agreement {
+    use super::*;
+    use crate::kernel::primitives::{
+        clear_never_address_taken_locals, set_never_address_taken_locals,
+    };
+    use crate::kernel::reasoning::memory_snapshots_proven_equal_at_pointer;
+    use std::collections::BTreeSet;
+
+    /// A pointer the verifier cannot resolve to a named object: `&a` handed to
+    /// a callee and returned is spelled like this, so it may designate the
+    /// local whose extent the two snapshots disagree about.
+    fn unresolved_pointer() -> Pointer {
+        Pointer {
+            block: PointerBlock::Symbolic(Variable(94_100)),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    fn local_cell() -> Pointer {
+        Pointer {
+            block: PointerBlock::from("local:a"),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    fn hidden_cell() -> Pointer {
+        Pointer {
+            block: PointerBlock::from("local:unreachable"),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    fn agree(left: &CMemory, right: &CMemory) -> bool {
+        memory_snapshots_proven_equal_at_pointer(
+            left,
+            right,
+            &unresolved_pointer(),
+            &PureFactContext::new(),
+        )
+    }
+
+    /// A local whose lifetime has ended in one snapshot and not the other, and
+    /// a local whose *cells* differ across the end: both are differences a
+    /// load through a pointer that may designate it can see. The tombstone is
+    /// the only record left once the cells are gone, and none of the four
+    /// comparisons looked at it.
+    #[test]
+    fn a_local_a_load_may_reach_is_part_of_the_comparison() {
+        clear_never_address_taken_locals();
+        let bare = CMemory::new().with_block("arg-memory", 32);
+        let stored = bare
+            .clone()
+            .with_block("local:a", 8)
+            .store(local_cell(), int32(5));
+        let ended = stored.without_local_block(&PointerBlock::from("local:a"));
+        assert!(!agree(&stored, &ended));
+        assert!(!agree(&ended, &stored));
+        // Only the tombstone tells these two apart: neither holds the block
+        // or any of its cells.
+        assert!(!agree(&bare, &ended));
+        assert!(!agree(&ended, &bare));
+    }
+
+    /// The other polarity, and it has three parts. Declaring a block writes
+    /// nothing, so an extent alone never decides a load — which is what
+    /// `canonical_memory_for_pointer_load` says by keeping only the load's own
+    /// block. A local whose address is never taken anywhere in the program is
+    /// not memory any pointer value designates, so its retirement is invisible
+    /// too. And a load that cannot reach the block at all is unaffected by
+    /// either.
+    #[test]
+    fn what_a_load_cannot_reach_stays_out_of_the_comparison() {
+        clear_never_address_taken_locals();
+        let bare = CMemory::new().with_block("arg-memory", 32);
+        let declared = bare.clone().with_block("local:a", 8);
+        assert!(agree(&bare, &declared));
+        assert!(agree(&declared, &bare.clone().with_block("local:a", 16)));
+
+        set_never_address_taken_locals(BTreeSet::from(["unreachable".to_string()]));
+        let hidden = bare
+            .clone()
+            .with_block("local:unreachable", 8)
+            .store(hidden_cell(), int32(5));
+        let hidden_ended = hidden.without_local_block(&PointerBlock::from("local:unreachable"));
+        assert!(agree(&bare, &hidden_ended));
+        clear_never_address_taken_locals();
+
+        // A load in a block the retired local is proven distinct from: an
+        // `ExternalArgument` pointer is never one of this function's own
+        // automatic objects.
+        let stored = declared.store(local_cell(), int32(5));
+        let ended = stored.without_local_block(&PointerBlock::from("local:a"));
+        let argument = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        assert!(memory_snapshots_proven_equal_at_pointer(
+            &stored,
+            &ended,
+            &argument,
+            &PureFactContext::new(),
+        ));
+    }
+}
