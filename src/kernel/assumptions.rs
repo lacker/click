@@ -4855,10 +4855,68 @@ fn bitvector_index_in_range_shallow(
     })
 }
 
+/// An upper bound on the number of elements `start..end` can really span, for
+/// a rule about to read an affine constant difference as an order.
+///
+/// [`affine_bitvector_difference_constant`] computes in `i64` while its
+/// arguments are modular 32-bit terms, so what it returns is the true
+/// difference only *modulo* `2^32`. That is enough for a disequality — the
+/// residue is nonzero — and not enough for an order: `i + 1` is one above `i`
+/// only while the 32-bit add does not wrap. What an order conclusion can still
+/// get from a residue is membership, because an index whose residue from the
+/// range's start is at least the range's element count is outside the range
+/// whichever way the terms wrapped. That needs the count bounded, and this is
+/// the bound.
+///
+/// Two sources, in order of cost. A constant affine element count *is* the
+/// count when it sits in `0..=i32::MAX`, so the ordinary shapes — `p[i..i + 1]`,
+/// `p[0..3]` — carry their own bound and consult nothing. Otherwise the range's
+/// own valid-byte-extent facts supply it, which is the condition a stated
+/// `owns`/`views` range already brings. A range with neither is refused:
+/// default-deny, since an unbounded span admits a residue that wrapped all the
+/// way around.
+pub(in crate::kernel) fn affine_range_element_count_bound(
+    start: &Bitvector32Term,
+    end: &Bitvector32Term,
+    element_width: u32,
+    assumptions: &PureFactContext,
+) -> Option<i64> {
+    if let Some(count) = affine_bitvector_difference_constant(end, start)
+        && (0..=i64::from(i32::MAX)).contains(&count)
+    {
+        return Some(count);
+    }
+    assumptions.established_range_element_count_bound(start, end, element_width)
+}
+
+/// Whether an affine constant difference from a range's start places the index
+/// outside a range spanning at most `count_bound` elements.
+///
+/// The difference is the true one modulo `2^32`; taking its residue, the index
+/// sits `residue` elements above the start or `residue - 2^32` below it. The
+/// second is negative, so below the start either way; the first is outside once
+/// it reaches the element count. A residue above any bound on that count is
+/// therefore outside the range under both readings, with no no-overflow fact
+/// needed.
+fn affine_offset_from_start_is_outside(difference: i64, count_bound: i64) -> bool {
+    difference.rem_euclid(1i64 << 32) > count_bound
+}
+
+/// Whether an affine constant difference from a range's *end* places the index
+/// at or above the range, for a range spanning at most `count_bound` elements.
+///
+/// The index sits `residue` elements above the end, so its offset from the
+/// start is `residue + count`. That stays at or above the count — outside —
+/// unless it wraps, which it cannot while `residue + count` is below `2^32`.
+fn affine_offset_from_end_is_outside(difference: i64, count_bound: i64) -> bool {
+    difference.rem_euclid(1i64 << 32) < (1i64 << 32) - count_bound
+}
+
 fn bitvector_index_outside_range_shallow(
     index: &Bitvector32Term,
     start: &Bitvector32Term,
     end: &Bitvector32Term,
+    element_width: u32,
     assumptions: &PureFactContext,
 ) -> bool {
     if let (Some(index), Some(start), Some(end)) = (
@@ -4881,8 +4939,19 @@ fn bitvector_index_outside_range_shallow(
     {
         return true;
     }
-    affine_bitvector_difference_constant(index, start).is_some_and(|offset| offset < 0)
-        || affine_bitvector_difference_constant(index, end).is_some_and(|offset| 0 <= offset)
+    // The affine routes read a constant difference as a signed order, which it
+    // is not: the terms are modular, so the difference is the true one only
+    // modulo 2^32. What survives is membership, against a bound on how far the
+    // range reaches; without such a bound this concludes nothing.
+    let Some(count_bound) =
+        affine_range_element_count_bound(start, end, element_width, assumptions)
+    else {
+        return false;
+    };
+    affine_bitvector_difference_constant(index, start)
+        .is_some_and(|offset| affine_offset_from_start_is_outside(offset, count_bound))
+        || affine_bitvector_difference_constant(index, end)
+            .is_some_and(|offset| affine_offset_from_end_is_outside(offset, count_bound))
 }
 
 fn pointer_in_range_shallow(

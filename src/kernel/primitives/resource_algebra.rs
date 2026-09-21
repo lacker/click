@@ -5192,10 +5192,17 @@ fn consumed_range_is_well_formed(
     end: &Bitvector32Term,
     assumptions: &PureFactContext,
 ) -> bool {
+    // An affine constant difference is the true one only modulo 2^32, so
+    // `difference >= 0` is not "runs forward": a difference of 2^32 is a range
+    // of zero elements, and one of -2^32 is too. The residue is the count, and
+    // reading it as a forward span needs it inside the signed range a count
+    // may occupy; anything else falls through to the decision procedure rather
+    // than answering from arithmetic that wrapped.
     if let Some(difference) =
         crate::kernel::assumptions::affine_bitvector_difference_constant(end, start)
+        && (0..=i64::from(i32::MAX)).contains(&difference)
     {
-        return difference >= 0;
+        return true;
     }
     assumptions.decide(&ConditionTerm::signed_less_equal(
         start.clone(),

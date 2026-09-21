@@ -781,6 +781,48 @@ impl PureFactContext {
         )
     }
 
+    /// An upper bound on the number of elements a range can really span, from
+    /// the range's own established extent facts, or `None` when it has none.
+    ///
+    /// This is what an affine constant difference needs before it may be read
+    /// as an order. [`crate::kernel::assumptions::affine_bitvector_difference_constant`]
+    /// works in `i64` while the endpoints are modular `Bitvector32Term`s, so
+    /// its result is the true difference only modulo `2^32`; a residue is
+    /// outside the range exactly when it is at least the range's element
+    /// count, and that comparison needs the count bounded.
+    ///
+    /// The bound comes from the one shared definition of a valid 32-bit byte
+    /// extent, [`crate::kernel::memory_range_element_count_guards`]. Its
+    /// signed `0 <= count` half is the load-bearing one here: it pins the
+    /// count below `2^31`, whatever the element width. The width's own
+    /// element-count limit tightens it where that limit constrains an `int32`
+    /// count at all — for four-byte elements to `1073741823`.
+    pub(super) fn established_range_element_count_bound(
+        &self,
+        start: &Bitvector32Term,
+        end: &Bitvector32Term,
+        element_width: u32,
+    ) -> Option<i64> {
+        crate::instrumentation::record_deterministic_work(1);
+        let count = Bitvector32Term::subtract(end.clone(), start.clone());
+        let guards = crate::kernel::memory_range_element_count_guards(count, element_width);
+        guards
+            .iter()
+            .all(|guard| match guard {
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessEqual(lower, upper),
+                    true,
+                ) => self.proves_element_endpoint_order(lower, upper),
+                guard => self.proves_exact(guard),
+            })
+            .then(|| {
+                i64::from(crate::kernel::memory_range_element_count_limit(
+                    element_width,
+                ))
+                .min(i64::from(i32::MAX))
+            })
+    }
+
     /// `lower <= upper` for two element endpoints, by the exact routes the
     /// loadability rules already use: identical terms, two constants, an
     /// exact assumed comparison, or the bounded order-fact walk. A strict
@@ -2313,7 +2355,13 @@ impl PureFactContext {
             let Some(index) = direct_index else {
                 return false;
             };
-            bitvector_index_outside_range_shallow(&index, &range.start, &range.end, self)
+            bitvector_index_outside_range_shallow(
+                &index,
+                &range.start,
+                &range.end,
+                range.element_width(),
+                self,
+            )
         })
     }
 

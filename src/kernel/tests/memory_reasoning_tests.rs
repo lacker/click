@@ -4883,3 +4883,118 @@ mod stated_range_guard_derivation {
         assert!(crate::kernel::stated_loadable_extent_guards(&cell).is_empty());
     }
 }
+
+/// The four tests below pin the two polarities of the element-count bound an
+/// affine constant difference needs before it may place an index outside a
+/// range. `affine_bitvector_difference_constant` works in `i64` while the
+/// endpoints are modular, so the difference it returns is the true one only
+/// modulo `2^32`; a residue is outside the range exactly when it reaches the
+/// range's element count, and nothing else follows.
+fn outside_range_probe(
+    range_start: Bitvector32Term,
+    range_end: Bitvector32Term,
+    query_index: Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let range = CMemoryRange::new(base.clone(), range_start, range_end);
+    let pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(query_index, 4),
+    };
+    assumptions.ranges_directly_disjoint_from_pointer(&[range], &pointer)
+}
+
+#[test]
+fn a_constant_length_range_bounds_its_own_outside_conclusion() {
+    let index = Bitvector32Term::Variable(Variable(93_940));
+    // `p[i..i + 1]` carries its element count structurally, so placing `i + 2`
+    // outside it consults nothing.
+    assert!(outside_range_probe(
+        index.clone(),
+        Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(1)),
+        Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(2)),
+        &PureFactContext::new(),
+    ));
+    // And the other side of the range, by the difference from its start.
+    assert!(outside_range_probe(
+        index.clone(),
+        Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(1)),
+        Bitvector32Term::subtract(index, Bitvector32Term::Constant(1)),
+        &PureFactContext::new(),
+    ));
+}
+
+#[test]
+fn a_stated_ranges_extent_facts_bound_its_outside_conclusion() {
+    let count = Bitvector32Term::Variable(Variable(93_941));
+    let assumptions = PureFactContext::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), count.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(
+                count.clone(),
+                Bitvector32Term::Constant(crate::kernel::memory_range_element_count_limit(4)),
+            ),
+            true,
+        );
+    // `p[0..n]` has no constant count, so the bound is the valid-byte-extent
+    // condition the stated range carries.
+    assert!(outside_range_probe(
+        Bitvector32Term::Constant(0),
+        count.clone(),
+        Bitvector32Term::add(count.clone(), Bitvector32Term::Constant(1)),
+        &assumptions,
+    ));
+    // Without those facts the same range bounds nothing, so the same query is
+    // refused rather than answered from arithmetic that may have wrapped.
+    assert!(!outside_range_probe(
+        Bitvector32Term::Constant(0),
+        count.clone(),
+        Bitvector32Term::add(count, Bitvector32Term::Constant(1)),
+        &PureFactContext::new(),
+    ));
+}
+
+#[test]
+fn a_difference_that_wrapped_places_no_index_outside_a_range() {
+    let index = Bitvector32Term::Variable(Variable(93_942));
+    // Three constants summing to `2^32`. Each addition is a modular 32-bit
+    // add, so this term's value is `i` itself and the cell it names is `p[i]`,
+    // which `p[i..i + 1]` contains. The affine difference from the range's end
+    // is nonetheless `2^32 - 1`, which the unguarded rule read as "at or above
+    // the end".
+    let wrapped = Bitvector32Term::add(
+        Bitvector32Term::add(
+            Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(1_431_655_765)),
+            Bitvector32Term::Constant(1_431_655_765),
+        ),
+        Bitvector32Term::Constant(1_431_655_766),
+    );
+    assert!(!outside_range_probe(
+        index.clone(),
+        Bitvector32Term::add(index, Bitvector32Term::Constant(1)),
+        wrapped,
+        &PureFactContext::new(),
+    ));
+}
+
+#[test]
+fn an_unbounded_range_places_no_index_outside_itself() {
+    let start = Bitvector32Term::Variable(Variable(93_943));
+    let end = Bitvector32Term::Variable(Variable(93_944));
+    // Two unrelated endpoints: the range may span most of the index space, so
+    // a residue one below its start proves nothing — at `start == INT_MIN` the
+    // predecessor is `INT_MAX`, which such a range can contain.
+    assert!(!outside_range_probe(
+        start.clone(),
+        end,
+        Bitvector32Term::subtract(start, Bitvector32Term::Constant(1)),
+        &PureFactContext::new(),
+    ));
+}
