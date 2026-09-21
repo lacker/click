@@ -242,6 +242,12 @@ fn algebraic_equality_lookup_for_constructor_disequality_is_goal_local() {
         Term::Algebraic(model),
         Term::Algebraic(maybe_constructor(&algebraic_type, "None", vec![])),
     )));
+    let assumptions = PureFactContext::new().assume_proposition(source.clone());
+    let derivation = assumptions
+        .derive_atomic_proposition(&goal)
+        .expect("a known constructor proves disequality from every other constructor");
+    assert!(derivation.has_typed_atomic_evidence());
+    assert!(derivation.check(&assumptions));
     let facts = crate::kernel::proof::ProofFacts::from_ordered(&[source.clone(), unrelated]);
     assert_eq!(facts.algebraic_equalities_mentioning(&goal), vec![source]);
     let unmatched = Proposition::Not(Box::new(Proposition::Equal(

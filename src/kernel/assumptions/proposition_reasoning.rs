@@ -302,7 +302,11 @@ impl PureFactContext {
                 Proposition::ConditionIs(condition, value) => {
                     self.decide(condition) == Some(!*value)
                 }
-                _ => self.prop_facts.contains(proposition),
+                _ => {
+                    self.algebraic_constructor_no_confusion_source(proposition)
+                        .is_some()
+                        || self.prop_facts.contains(proposition)
+                }
             },
             Proposition::CMemoryLoadable {
                 memory,
@@ -403,6 +407,58 @@ impl PureFactContext {
             }
             _ => self.prop_facts.contains(proposition),
         }
+    }
+
+    /// Find an exact variable-to-constructor equality that proves a
+    /// constructor disequality. The lookup is indexed by the variable named
+    /// by the goal, so a call postcondition such as `link.link == Linked(kid)`
+    /// can discharge the next call's `link.link != Empty` prerequisite
+    /// without scanning unrelated facts.
+    fn algebraic_constructor_no_confusion_source(
+        &self,
+        proposition: &Proposition,
+    ) -> Option<Proposition> {
+        let Proposition::Not(body) = proposition else {
+            return None;
+        };
+        let Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) = body.as_ref()
+        else {
+            return None;
+        };
+        if left.algebraic_type != right.algebraic_type
+            || !left.is_well_formed()
+            || !right.is_well_formed()
+        {
+            return None;
+        }
+        let (variable, forbidden_variant) = match (&left.node, &right.node) {
+            (
+                AlgebraicTermNode::Variable(variable),
+                AlgebraicTermNode::Constructor { variant, .. },
+            ) => (*variable, variant),
+            (
+                AlgebraicTermNode::Constructor { variant, .. },
+                AlgebraicTermNode::Variable(variable),
+            ) => (*variable, variant),
+            _ => return None,
+        };
+        self.algebraic_variable_constructors
+            .get(&variable)?
+            .iter()
+            .inspect(|_| crate::instrumentation::record_deterministic_work(1))
+            .find_map(|(source, known_constructor)| {
+                if known_constructor.algebraic_type != left.algebraic_type {
+                    return None;
+                }
+                let AlgebraicTermNode::Constructor {
+                    variant: known_variant,
+                    ..
+                } = &known_constructor.node
+                else {
+                    return None;
+                };
+                (known_variant != forbidden_variant).then(|| source.clone())
+            })
     }
 
     /// Proves an existential goal without search: an assumed existential over
@@ -1209,6 +1265,13 @@ impl PureFactContext {
                 }),
             _ => None,
         };
+        let algebraic_constructor_no_confusion_evidence = self
+            .algebraic_constructor_no_confusion_source(proposition)
+            .map(|source| {
+                AtomicPropositionDerivationEvidence::AlgebraicConstructorNoConfusion(Box::new(
+                    source,
+                ))
+            });
         let result = memory_evidence
             .or(load_address_congruence_evidence)
             .or(equality_path_evidence)
@@ -1243,6 +1306,7 @@ impl PureFactContext {
             .or(forall_instantiation_evidence)
             .or(pointer_alignment_evidence)
             .or(pointer_word_evidence)
+            .or(algebraic_constructor_no_confusion_evidence)
             .or_else(|| {
                 let proved = if for_simp {
                     match proposition {
@@ -1328,6 +1392,14 @@ impl PureFactContext {
                 None => PureFactContext::new(),
             };
             return premises.decide_pointer_alignment(pointer, alignment) == Some(*value);
+        }
+        if let AtomicPropositionDerivationEvidence::AlgebraicConstructorNoConfusion(source) =
+            evidence
+        {
+            return self.contains_assumed_exact(source)
+                && self
+                    .algebraic_constructor_no_confusion_source(proposition)
+                    .is_some_and(|candidate| candidate == **source);
         }
         if let AtomicPropositionDerivationEvidence::MemoryDag(evidence) = evidence {
             return evidence.checks(proposition, self);

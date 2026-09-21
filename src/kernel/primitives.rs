@@ -6515,6 +6515,10 @@ pub(crate) enum AtomicPropositionDerivationEvidence {
     Int32GeAndNotGtImpliesEquality(Box<Int32GeAndNotGtEqualityEvidence>),
     PointerAlignment(Box<PointerAlignmentEvidence>),
     PointerWord(Box<PointerWordEvidence>),
+    /// Constructor disjointness: an exact equality that identifies a
+    /// symbolic value with one constructor makes it unequal to a different
+    /// constructor of the same algebraic type.
+    AlgebraicConstructorNoConfusion(Box<Proposition>),
     Legacy,
 }
 
