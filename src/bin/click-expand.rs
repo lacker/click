@@ -1235,6 +1235,7 @@ mod prepared_output_tests {
             fs::remove_dir_all(&directory).unwrap();
         }
         fs::create_dir_all(&directory).unwrap();
+        fs::create_dir_all(directory.join("configured")).unwrap();
         for (path, contents) in [
             (
                 "main.c",
@@ -1247,6 +1248,10 @@ mod prepared_output_tests {
             (
                 "main.click",
                 include_str!("../../tests/fixtures/compiler-import/main.click"),
+            ),
+            (
+                "configured/configured.h",
+                include_str!("../../tests/fixtures/compiler-import/configured/configured.h"),
             ),
         ] {
             fs::write(directory.join(path), contents).unwrap();
@@ -1261,7 +1266,7 @@ mod prepared_output_tests {
             "compiler": "/usr/bin/gcc",
             "working_directory": ".",
             "environment": {"allow": {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "SOURCE_DATE_EPOCH": "0"}},
-            "sources": [{"logical_source": "main.c", "path": "main.c", "args": ["-DVARIANT=2"], "artifact": "main.i"}]
+            "sources": [{"logical_source": "main.c", "path": "main.c", "args": ["-DVARIANT=2", "-isystem", "configured"], "artifact": "main.i"}]
         });
         let config_path = directory.join("main.click.import.json");
         fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
