@@ -657,6 +657,41 @@ pub(in crate::kernel) fn pointer_offsets_equal_for_memory_resolution(
     )) {
         return Some(value);
     }
+    // A field displacement plus one signed index is an exact byte offset,
+    // not a modular sum of element indices. Move the constant displacement
+    // to the concrete side before consulting the existing equality facts.
+    // This lets `4 + 4*i == 8` use `i == 1` without general arithmetic search.
+    if let Some(width) = common_pointer_offset_element_width(left, right) {
+        for (indexed, concrete) in [(left, right), (right, left)] {
+            let Some(concrete) = concrete.as_const() else {
+                continue;
+            };
+            if concrete % i64::from(width) != 0 {
+                continue;
+            }
+            let Some(delta) = exact_element_delta_from_offset(indexed, width) else {
+                continue;
+            };
+            let Some(expected) = (concrete / i64::from(width)).checked_sub(delta.constant) else {
+                continue;
+            };
+            let Ok(expected) = i32::try_from(expected) else {
+                return Some(false);
+            };
+            let expected = Bitvector32Term::Constant(expected as u32);
+            if delta.index == expected {
+                return Some(true);
+            }
+            if let Some(value) = assumptions
+                .exact_condition_value(&ConditionTerm::equal(delta.index.clone(), expected.clone()))
+            {
+                return Some(value);
+            }
+            if assumptions.bitvector_terms_equal_from_facts(&delta.index, &expected) {
+                return Some(true);
+            }
+        }
+    }
     if let Some(element_width) = common_pointer_offset_element_width(left, right)
         && let (Some(left), Some(right)) = (
             element_index_from_offset_with_facts(left, element_width, assumptions),
@@ -678,6 +713,51 @@ pub(in crate::kernel) fn pointer_offsets_equal_for_memory_resolution(
         (Some(left), Some(right)) => Some(left == right),
         _ => None,
     }
+}
+
+#[cfg(test)]
+#[test]
+fn indexed_field_offsets_use_exact_displacements() {
+    let index = Bitvector32Term::Variable(Variable(849));
+    let offset = PointerOffsetTerm::add(
+        PointerOffsetTerm::Constant(4),
+        PointerOffsetTerm::scale_int32(index.clone(), 4),
+    );
+    let assumptions = PureFactContext::new().assume_condition(
+        ConditionTerm::equal(index.clone(), Bitvector32Term::Constant(1)),
+        true,
+    );
+    let concrete = PointerOffsetTerm::Constant(8);
+    assert_eq!(
+        pointer_offsets_equal_for_memory_resolution(&offset, &concrete, &assumptions),
+        Some(true)
+    );
+    assert_eq!(
+        pointer_offsets_equal_for_memory_resolution(&concrete, &offset, &assumptions),
+        Some(true)
+    );
+    let boundary = PureFactContext::new().assume_condition(
+        ConditionTerm::equal(index, Bitvector32Term::Constant(i32::MAX as u32)),
+        true,
+    );
+    // Adding the field offset happens after sign extension: it must not
+    // wrap i32::MAX + 1 to i32::MIN before comparing byte addresses.
+    assert_eq!(
+        pointer_offsets_equal_for_memory_resolution(
+            &offset,
+            &PointerOffsetTerm::Constant(i64::from(i32::MIN) * 4),
+            &boundary
+        ),
+        Some(false)
+    );
+    assert_eq!(
+        pointer_offsets_equal_for_memory_resolution(
+            &offset,
+            &PointerOffsetTerm::Constant((i64::from(i32::MAX) + 1) * 4),
+            &boundary
+        ),
+        Some(true)
+    );
 }
 
 /// The value stored at `pointer` or at a pointer proven equal to it: the

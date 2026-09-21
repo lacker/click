@@ -2385,3 +2385,20 @@ fn aggregate_parameter_values_expand_and_check() {
         verify_c0_sources(&expanded, &inputs).unwrap();
     }
 }
+
+#[test]
+fn aggregate_parameter_symbolic_index_expands_and_checks() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/aggregate_parameter_symbolic_index.md");
+    let fixture = crate::cli::read_mdtest(&path).unwrap();
+    let source = fixture.click_source.as_deref().unwrap();
+    let inputs = fixture
+        .c_sources
+        .iter()
+        .map(|(name, body)| (name.as_str(), body.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(source, &inputs).unwrap();
+    let expanded =
+        expand_c0_claim_source(source, &inputs, "indexed", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &inputs).unwrap();
+}

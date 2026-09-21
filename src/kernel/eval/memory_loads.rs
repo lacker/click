@@ -532,9 +532,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                                     &pointer,
                                     stored_pointer,
                                     assumptions,
-                                )
-                                && (assumptions.should_defer_non_exact_condition_reasoning()
-                                    || !alias_cache.equal(&pointer, stored_pointer, assumptions)))
+                                ))
                             .then(|| (stored_pointer.clone(), stored_value.clone()))
                         })
                 },
@@ -543,16 +541,23 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         .flatten();
     if let Some((stored_pointer, stored_value)) = unresolved {
         let mut paths = Vec::new();
+        // General equality can resolve an indexed address that the narrower
+        // memory resolver leaves open. A proven alias supplies this cell's
+        // value; merely skipping its alias branch would lose an initialized
+        // cell and eventually report an uninitialized read.
+        let known_equal = !assumptions.should_defer_non_exact_condition_reasoning()
+            && alias_cache.equal(&pointer, &stored_pointer, assumptions);
 
         let mut equal_facts = facts.clone();
-        if add_pointer_offset_equality_execution_pure_facts(
-            &mut equal_facts,
-            assumptions,
-            pointer.offset.clone(),
-            stored_pointer.offset.clone(),
-            true,
-        )
-        .is_some()
+        if known_equal
+            || add_pointer_offset_equality_execution_pure_facts(
+                &mut equal_facts,
+                assumptions,
+                pointer.offset.clone(),
+                stored_pointer.offset.clone(),
+                true,
+            )
+            .is_some()
         {
             let equal_outcome = if let Some(value) = canonicalized_pointer_value_from_int_cell(
                 &pointer,
@@ -577,6 +582,9 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 facts: equal_facts,
                 obligations: obligations.clone(),
             });
+        }
+        if known_equal {
+            return paths;
         }
 
         let mut distinct_facts = facts;
@@ -2886,6 +2894,56 @@ pub(in crate::kernel) fn symbolic_load_value(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn indexed_local_load_uses_proven_alias_without_inventing_initialization() {
+        let index = Bitvector32Term::Variable(Variable(839));
+        let base = Pointer {
+            block: "local:indexed".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let pointer = Pointer {
+            block: base.block.clone(),
+            offset: PointerOffsetTerm::add(
+                PointerOffsetTerm::Constant(4),
+                PointerOffsetTerm::scale_int32(index.clone(), 4),
+            ),
+        };
+        let assumptions = PureFactContext::new().assume_condition(
+            ConditionTerm::equal(index, Bitvector32Term::Constant(1)),
+            true,
+        );
+        let memory = CMemory::new()
+            .with_block(base.block.clone(), 12)
+            .store(base.offset_by_bytes(4), int32(3));
+        for initialized in [false, true] {
+            let memory = if initialized {
+                memory.clone().store(base.offset_by_bytes(8), int32(7))
+            } else {
+                memory.clone()
+            };
+            let paths = evaluate_c_memory_load_paths(
+                &memory,
+                pointer.clone(),
+                CType::Int32,
+                Vec::new(),
+                Vec::new(),
+                &assumptions,
+                false,
+                None,
+            );
+            assert_eq!(paths.len(), 1);
+            assert_eq!(
+                paths[0].outcome,
+                if initialized {
+                    CExpressionOutcome::Value(int32(7))
+                } else {
+                    CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead)
+                }
+            );
+            assert!(paths[0].facts.is_empty());
+        }
+    }
 
     fn test_load_source(occurrence: u32) -> LoadSourceId {
         LoadSourceId {
