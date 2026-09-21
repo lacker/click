@@ -5416,13 +5416,24 @@ pub(in crate::kernel) fn split_memory_range(
                 .then_some(Bitvector32Term::Constant(0))
             })
     }?;
-    let required_start = exact_shifted_endpoint(&base_delta, required.start(), assumptions)?;
-    let required_end = exact_shifted_endpoint(&base_delta, required.end(), assumptions)?;
+    let required_start = Bitvector32Term::add(base_delta.clone(), required.start().clone());
+    let required_end = Bitvector32Term::add(base_delta.clone(), required.end().clone());
     let keeps_prefix =
         !bitvector_terms_proven_equal(available.start(), &required_start, assumptions)
             && !range_endpoint_terms_equal(available.start(), &required_start, assumptions);
     let keeps_suffix = !bitvector_terms_proven_equal(&required_end, available.end(), assumptions)
         && !range_endpoint_terms_equal(&required_end, available.end(), assumptions);
+    // A join that becomes a residue's own bound has to be the sum and not its
+    // residue; see `exact_shifted_endpoint`. A join that bounds no residue is
+    // never read as a position — it has just been shown equal to an endpoint
+    // the owner already carried — so it owes nothing.
+    if keeps_prefix && exact_shifted_endpoint(&base_delta, required.start(), assumptions).is_none()
+    {
+        return None;
+    }
+    if keeps_suffix && exact_shifted_endpoint(&base_delta, required.end(), assumptions).is_none() {
+        return None;
+    }
     if keeps_prefix
         && keeps_suffix
         && !consumed_range_is_well_formed(&required_start, &required_end, assumptions)
