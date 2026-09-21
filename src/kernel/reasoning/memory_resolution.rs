@@ -1226,6 +1226,18 @@ fn memory_snapshots_match_for_resolution(
         })
 }
 
+/// How many bytes a cell holding this value occupies.
+///
+/// A cell that is only a union view, or one holding `Void`, has no value width
+/// to read and stands in the widest scalar: over-stating a width can only
+/// shrink the separated set.
+pub(in crate::kernel) fn cell_access_byte_width(value: &CValue) -> u32 {
+    match value.byte_width() {
+        0 => crate::kernel::resource_tracker::widest_scalar_access_bytes(),
+        bytes => bytes,
+    }
+}
+
 /// How wide the cell the two snapshots differ on is, in bytes.
 ///
 /// The width comes from the value the cell holds, on whichever side holds
@@ -1259,7 +1271,7 @@ fn differing_cell_byte_width(left: &CMemory, right: &CMemory, cell_pointer: &Poi
 /// returns. Only where the bytes are shown separate may the ladder stand in
 /// for them; provable overlap and an unknown gap both mean the snapshots are
 /// not shown to agree.
-fn differing_cell_bytes_miss_the_load(
+pub(in crate::kernel) fn differing_cell_bytes_miss_the_load(
     left: &CMemory,
     right: &CMemory,
     cell_pointer: &Pointer,
