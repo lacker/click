@@ -103,6 +103,8 @@ const CONSTEXPR_MAX_MONEY_RANGE_SIDECAR: &str =
 const CONSTEXPR_MAX_MONEY_CSTDINT: &str =
     include_str!("fixtures/cpp-verification/constexpr-max-money/cstdint");
 const ONE_GUARD_UNWIND_MDTEST: &str = include_str!("../mdtests/cpp_one_guard_unwind.md");
+const GUARD_BEFORE_SECOND_MDTEST: &str =
+    include_str!("../mdtests/cpp_guard_unwind_before_second.md");
 
 struct Project {
     directory: PathBuf,
@@ -1211,6 +1213,89 @@ fn scalar_int32_profile_unwinds_one_guard_on_both_paths() {
     let click_project = read_click_project(&sidecar, &sidecar_source).unwrap();
     verify_cpp_prepared_project(&click_project, &prepared)
         .expect("normal and caught exceptional paths must restore the original value");
+}
+
+#[test]
+fn scalar_int32_profile_rejects_hostile_cleanup_proofs() {
+    let mdtest = parse_mdtest(
+        Path::new("cpp_guard_unwind_before_second.md"),
+        GUARD_BEFORE_SECOND_MDTEST,
+    )
+    .unwrap();
+    let cpp = mdtest.cpp_source.unwrap();
+    let sidecar_source = mdtest.click_source.unwrap();
+    let project = Project::with_fixture(&cpp.filename, &cpp.function, &cpp.source);
+    project.write_exception_enabled_compilation_database();
+    project.write_config_with_exception_behavior(&cpp.function, &cpp.filename, true, &cpp.profile);
+    refresh_import(&project.config()).expect("export the conditional cleanup frontier");
+    let prepared = load_import(&project.config()).expect("load the cleanup artifact");
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, &sidecar_source).unwrap();
+    fs::remove_file(&project.exporter).expect("verification must use the locked artifact");
+
+    let click_project = read_click_project(&sidecar, &sidecar_source).unwrap();
+    verify_cpp_prepared_project(&click_project, &prepared)
+        .expect("the unmodified conditional cleanup proof must pass");
+
+    let cases = [
+        (
+            "wrong_cleanup_order",
+            sidecar_source.replacen(
+                "            step();\n            step();\n            step();\n            step();\n            have second_cell[0] == old(second_cell[0]) by { simp(); }",
+                "            step();\n            step();\n            have first_cell[0] == old(first_cell[0]) by { simp(); }\n            step();\n            step();\n            have second_cell[0] == old(second_cell[0]) by { simp(); }",
+                1,
+            ),
+            "the first guard cannot be restored before the second cleanup",
+        ),
+        (
+            "omitted_cleanup",
+            sidecar_source.replacen(
+                "            step();\n            step();\n            step();\n            step();\n            have second_cell[0] == old(second_cell[0]) by { simp(); }",
+                "            step();\n            step();\n            step();\n            have second_cell[0] == old(second_cell[0]) by { simp(); }",
+                1,
+            ),
+            "a proof cannot omit a required destructor",
+        ),
+        (
+            "duplicated_cleanup",
+            sidecar_source.replacen(
+                "            step();\n            step();\n            step();\n            step();\n            have second_cell[0] == old(second_cell[0]) by { simp(); }",
+                "            step();\n            step();\n            step();\n            step();\n            step();\n            have second_cell[0] == old(second_cell[0]) by { simp(); }",
+                1,
+            ),
+            "a proof cannot execute a destructor twice",
+        ),
+        (
+            "unconstructed_second_guard",
+            sidecar_source.replacen(
+                "        threw {\n            step();\n            have second_cell[0] == old(second_cell[0]) by { simp(); }",
+                "        threw {\n            step();\n            step();\n            have second_cell[0] == 9 by { simp(); }",
+                1,
+            ),
+            "the exceptional path cannot destroy the skipped second guard",
+        ),
+        (
+            "normal_value_on_exceptional_path",
+            sidecar_source.replacen(
+                "    exceptional ensures exception == 7;",
+                "    exceptional ensures exception == 5;",
+                1,
+            ),
+            "the normal return value cannot justify the exceptional outcome",
+        ),
+    ];
+
+    for (name, hostile_source, expectation) in cases {
+        assert_ne!(
+            hostile_source, sidecar_source,
+            "{name} did not change the hostile proof"
+        );
+        let hostile_project = read_click_project(&sidecar, &hostile_source).unwrap();
+        assert!(
+            verify_cpp_prepared_project(&hostile_project, &prepared).is_err(),
+            "{expectation}: {name} unexpectedly verified"
+        );
+    }
 }
 
 #[test]
