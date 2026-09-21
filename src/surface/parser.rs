@@ -380,6 +380,13 @@ struct Parser {
 struct CalleeResourceBinder {
     identity: Variable,
     family: String,
+    /// The named resource clause as written by the callee. A call output needs
+    /// this richer target, not just the family used for binder transport, so
+    /// later `unfold(name)` can recover the resource body and its arguments.
+    resource: ResourceClause,
+    /// C parameter names in declaration order, used to instantiate the
+    /// resource arguments with the call's actual expressions.
+    parameter_names: Vec<String>,
     kind: CalleeResourceBinderKind,
 }
 
@@ -1969,6 +1976,11 @@ impl Parser {
             .iter()
             .map(|parameter| parameter.name().to_string())
             .collect::<BTreeSet<_>>();
+        let parameter_names_in_order = signature
+            .parameters()
+            .iter()
+            .map(|parameter| parameter.name().to_string())
+            .collect::<Vec<_>>();
         let previous_integer_params = std::mem::take(&mut self.current_integer_params);
         let previous_integer_lets = std::mem::take(&mut self.current_integer_lets);
         let previous_integer_literal_context =
@@ -2118,9 +2130,13 @@ impl Parser {
                     self.position += 1;
                     let resource = self.parse_owned_resource_binding()?;
                     let proof = self.parse_proof_clause_or_default()?;
+                    let binder_resource =
+                        apply_contract_lets_to_resource_clause(resource.clone(), &contract_lets)
+                            .map_err(|message| self.error(message))?;
                     self.record_callee_resource_binder(
                         signature.name(),
-                        &resource,
+                        &binder_resource,
+                        &parameter_names_in_order,
                         CalleeResourceBinderKind::Supplied,
                     );
                     requires.push(
@@ -2159,9 +2175,13 @@ impl Parser {
                     self.position += 1;
                     let resource = self.parse_owned_resource_binding()?;
                     self.expect(Token::Semicolon)?;
+                    let binder_resource =
+                        apply_contract_lets_to_resource_clause(resource.clone(), &contract_lets)
+                            .map_err(|message| self.error(message))?;
                     self.record_callee_resource_binder(
                         signature.name(),
-                        &resource,
+                        &binder_resource,
+                        &parameter_names_in_order,
                         CalleeResourceBinderKind::Supplied,
                     );
                     requires.push(
@@ -2176,9 +2196,13 @@ impl Parser {
                     self.position += 1;
                     let resource = self.parse_owned_resource_binding()?;
                     let proof = self.parse_proof_clause_or_default()?;
+                    let binder_resource =
+                        apply_contract_lets_to_resource_clause(resource.clone(), &contract_lets)
+                            .map_err(|message| self.error(message))?;
                     self.record_callee_resource_binder(
                         signature.name(),
-                        &resource,
+                        &binder_resource,
+                        &parameter_names_in_order,
                         CalleeResourceBinderKind::Produced,
                     );
                     ensures.push(
@@ -3349,6 +3373,7 @@ impl Parser {
                     &name,
                     produced_name,
                     declaration,
+                    &arguments,
                 )?);
             }
             (Some(CallOutputPattern::Single(_)), _) => {
@@ -3388,7 +3413,12 @@ impl Parser {
                             "`{callee}` does not produce named resource `{binder}`"
                         )));
                     };
-                    produced.push(self.bind_produced_call_instance(&name, &binder, declaration)?);
+                    produced.push(self.bind_produced_call_instance(
+                        &name,
+                        &binder,
+                        declaration,
+                        &arguments,
+                    )?);
                 }
                 if bound.len() != produced_declarations.len() {
                     let missing = produced_declarations
@@ -3417,6 +3447,7 @@ impl Parser {
         name: &str,
         produced: &str,
         declaration: &CalleeResourceBinder,
+        arguments: &[ContractExpression],
     ) -> Result<CallBinderBinding, ClickError> {
         if self.current_contract_bindings.contains(name)
             || self.current_integer_params.contains(name)
@@ -3439,6 +3470,34 @@ impl Parser {
         };
         self.current_resource_bindings
             .insert(name.to_string(), (identity, declaration.family.clone()));
+        let substitutions = declaration
+            .parameter_names
+            .iter()
+            .zip(arguments.iter())
+            .map(|(parameter, argument)| (parameter.clone(), argument.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let target = substitute_resource_clause_bindings(&declaration.resource, &substitutions)
+            .map_err(|message| self.error(message))?;
+        let ResourceClause::Named { binding, resource } = target else {
+            return Err(self.error(format!(
+                "produced resource binder `{produced}` has no named resource target"
+            )));
+        };
+        self.current_resource_targets.insert(
+            name.to_string(),
+            ResourceClause::Named {
+                binding: ResourceInstanceBinding {
+                    name: name.to_string(),
+                    identity,
+                    children: binding.children,
+                    schema: binding.schema,
+                    fields: binding.fields,
+                    fold_fields: None,
+                    child_bindings: binding.child_bindings,
+                },
+                resource,
+            },
+        );
         Ok(CallBinderBinding {
             binder: produced.to_string(),
             binder_identity: declaration.identity,
@@ -3454,6 +3513,7 @@ impl Parser {
         &mut self,
         function: &str,
         resource: &ResourceClause,
+        parameter_names: &[String],
         kind: CalleeResourceBinderKind,
     ) {
         if self.in_contract_definition {
@@ -3474,6 +3534,11 @@ impl Parser {
                 CalleeResourceBinder {
                     identity: binding.identity,
                     family: family.clone(),
+                    resource: ResourceClause::Named {
+                        binding: binding.clone(),
+                        resource: resource.clone(),
+                    },
+                    parameter_names: parameter_names.to_vec(),
                     kind,
                 },
             );
@@ -5113,6 +5178,12 @@ impl Parser {
                     let (name, arguments) =
                         self.parse_call_arguments("function or resource name")?;
                     ProofTactic::UnfoldFunction(ClickFunctionApplication { name, arguments })
+                } else if let Some(name) = self.peek_ident()
+                    && self.current_resource_bindings.contains_key(name)
+                {
+                    return Err(self.error(format!(
+                        "resource instance `{name}` is not available as an unfold target"
+                    )));
                 } else {
                     let predicate = self.expect_ident("predicate name")?;
                     ProofTactic::UnfoldPredicate(predicate)

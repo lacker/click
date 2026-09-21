@@ -321,6 +321,49 @@ fn parses_resource_observe_unfold_and_fold_tactics() {
 }
 
 #[test]
+fn produced_call_output_is_a_resource_unfold_target() {
+    let source = r#"
+            resource parent(p: int32*) {
+                field tag: int32;
+                owns p[0..1];
+            }
+
+            verifying "parent.c";
+
+            void make(int32* p) {
+                produces out: parent(p);
+            }
+
+            void caller(int32* q) {
+                ensures q == q;
+            } by {
+                let out = step(make(q), {});
+                unfold(out);
+            }
+        "#;
+    let file = parse(source).expect("produced resource output should parse");
+    let proof = file
+        .function_blocks()
+        .iter()
+        .find(|function| function.signature().name() == "caller")
+        .and_then(FunctionBlock::grouped_proof)
+        .and_then(SourceProof::tactics)
+        .expect("caller should have a grouped proof");
+
+    let ProofTactic::UnfoldResource(ResourceClause::Named { resource, .. }) = &proof[1] else {
+        panic!("produced output should be an unfoldable named resource");
+    };
+    assert!(matches!(
+        resource.as_ref(),
+        ResourceClause::Declared {
+            name,
+            arguments,
+            ..
+        } if name == "parent" && arguments == &[current_var("q")]
+    ));
+}
+
+#[test]
 fn parses_resource_verb_function_clauses() {
     let source = r#"
             abstract resource socket_open(fd: int32);
