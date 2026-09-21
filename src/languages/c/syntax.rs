@@ -14149,6 +14149,20 @@ impl Parser {
                     ));
                 }
                 let target = self.fresh_synthesized_call_name();
+                // The generated temporary owns the conditional's value, so it
+                // carries the conditional's own common result type. Branches
+                // whose types are both traceable and genuinely incompatible
+                // were rejected by parse-time validation; branches whose types
+                // are untraceable (a call to a function defined in another
+                // translation unit keeps the inherited scalar ABI slot.
+                let c_type = conditional_expression_type(
+                    self.source_expression_type(&then_branch),
+                    self.source_expression_type(&else_branch),
+                    &then_branch,
+                    &else_branch,
+                )
+                .unwrap_or(C0Type::Int32);
+                self.variable_types.insert(target.clone(), c_type);
                 let then_statement = prepend_statements(
                     then_prefix,
                     C0Statement::Assign {
@@ -14164,12 +14178,10 @@ impl Parser {
                     },
                 );
                 // A conditional branch may not execute, so the result needs a
-                // real stack binding before either arm assigns it. C0's
-                // expression calls currently participate in scalar
-                // expressions, whose temporary storage uses the int32 ABI
-                // slot just like an ordinary scalar result.
+                // real stack binding before either arm assigns it, typed so
+                // neither branch's value is silently truncated.
                 prefix.push(C0Statement::Declare {
-                    c_type: C0Type::Int32,
+                    c_type,
                     name: target.clone(),
                     volatile: false,
                     pointee_volatile: false,

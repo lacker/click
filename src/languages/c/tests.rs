@@ -11555,3 +11555,79 @@ fn c0_bool_header_constants_pointer_conversion_and_callbacks_are_typed() {
         "callback signatures must distinguish bool from int32"
     );
 }
+
+/// A conditional expression lowered into lazy branches keeps the
+/// conditional's own common result type; its generated temporary is not
+/// silently retyped to `int32` and cannot truncate a branch's wide value.
+#[test]
+fn c0_conditional_call_temporary_keeps_its_common_type() {
+    let lowered_functions = syntax::parse_functions(
+        r#"
+        double scale(double x) { return x; }
+        double widen(double seed) { return scale(seed) * 2.0; }
+        int32 pick(double flag, double seed) {
+            return (flag ? widen(seed) : 0.5) < seed * 2.0;
+        }
+        "#,
+    )
+    .expect("a conditional with a call in one branch should lower");
+    let lowered = lowered_functions.last().expect("pick is parsed");
+    fn declared_temporary_type(statement: &syntax::C0Statement) -> Option<syntax::C0Type> {
+        match statement {
+            syntax::C0Statement::Declare { c_type, .. } => Some(*c_type),
+            syntax::C0Statement::Seq(first, second) => {
+                declared_temporary_type(first).or_else(|| declared_temporary_type(second))
+            }
+            syntax::C0Statement::If { then_branch, .. } => declared_temporary_type(then_branch),
+            _ => None,
+        }
+    }
+    let temporary_type = declared_temporary_type(lowered.body());
+    assert_eq!(temporary_type, Some(syntax::C0Type::Float64));
+
+    let lowered_functions = syntax::parse_functions(
+        r#"
+        int32* initiated(int32* seed) { return seed; }
+        int32* pick(int32 flag, int32* seed) {
+            return flag ? initiated(seed) : seed;
+        }
+        "#,
+    )
+    .expect("a data-pointer conditional with a call should lower");
+    let lowered = lowered_functions.last().expect("pick is parsed");
+    let temporary_type = declared_temporary_type(lowered.body());
+    assert_eq!(temporary_type, Some(syntax::C0Type::Int32Pointer));
+
+    let lowered_functions = syntax::parse_functions(
+        r#"
+        uint64 zero64(void) { return 0UL; }
+        uint64 call_it(uint64 (*action)(uint64), int32 flag) {
+            return flag ? action(1UL) : zero64();
+        }
+        "#,
+    )
+    .expect("an indirect-call conditional should lower");
+    let lowered = lowered_functions.last().expect("call_it is parsed");
+    // The unselected branch contains the only ordinary call; the indirect
+    // call in the selected branch drives the lowering either way.
+    let temporary_type = declared_temporary_type(lowered.body());
+    assert_eq!(temporary_type, Some(syntax::C0Type::UInt64));
+
+    let error = syntax::parse_functions(
+        r#"
+        int64 wide(void) { return 1L; }
+        int32* initiated(int32* seed) { return seed; }
+        int32 pick(int32 flag, int32* seed) {
+            return flag ? wide() : seed;
+        }
+        "#,
+    )
+    .expect_err("incompatible conditional branch types must fail explicitly");
+    assert!(
+        error
+            .message()
+            .contains("conditional operator branches have incompatible types"),
+        "{}",
+        error.message()
+    );
+}
