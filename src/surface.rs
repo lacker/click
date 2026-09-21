@@ -3082,6 +3082,9 @@ pub struct CertifiedStatementTransition {
     /// output-sized semantic delta; it deliberately excludes inherited
     /// ambient facts without rediscovering them by set difference.
     pub(crate) introduced_facts: Vec<Proposition>,
+    /// Exact clause indices retained by the loop producer, with the same
+    /// checked transports as the emitted facts. No positional inference.
+    pub(crate) loop_invariant_correspondence: Vec<(usize, Proposition)>,
     pub(crate) prerequisite_derivations: Vec<PropositionDerivation>,
     /// Exact entry-state facts consumed while planning this
     /// transition. Kept outside the kernel theorem so collecting certificate

@@ -7312,8 +7312,27 @@ pub(super) struct CLValuePath {
     pub(super) obligations: Vec<ProofObligation>,
 }
 
+/// Source correspondence describes a checked path without distinguishing
+/// semantically identical paths. The empty form allocates nothing, and cloning
+/// a loop path shares its output-sized mapping.
+#[derive(Clone, Debug, Default)]
+pub(super) struct LoopInvariantCorrespondence(
+    pub(super) Option<std::sync::Arc<[(usize, Proposition)]>>,
+);
+
+impl PartialEq for LoopInvariantCorrespondence {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for LoopInvariantCorrespondence {}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CStatementExecutionPath {
+    /// Declaration-indexed source correspondence for this loop's checked exit.
+    /// This is presentation metadata, never an additional assumption.
+    pub(super) loop_invariant_correspondence: LoopInvariantCorrespondence,
     pub(super) outcome: CStatementOutcome,
     pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,

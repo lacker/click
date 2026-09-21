@@ -643,6 +643,16 @@ impl<'a> ProofScope<'a> {
     }
 
     fn join_inner(self) -> Result<Proof<'a>, ClickError> {
+        // Entry lowering threads the original guarded judgments into later
+        // declarations. Keep that exact checked judgment as well as the body
+        // proved after discharging its prefix; otherwise a later declaration
+        // exposes an already-proved internal guard to the user's `intro`.
+        let entry_completion = self
+            .loop_entry_goal
+            .as_ref()
+            .filter(|(_, prefix_len)| *prefix_len != 0)
+            .map(|_| self.completed_loop_entry_goal())
+            .transpose()?;
         match *self.structure {
             ProofScopeStructure::Have {
                 proposition,
@@ -658,6 +668,11 @@ impl<'a> ProofScope<'a> {
                 let mut facts = self.root.facts().clone();
                 facts = facts.with_kernel_checked_fact(kernel.clone());
                 let mut checked_facts = vec![kernel.clone()];
+                if let Some(completion) = entry_completion {
+                    let guarded = completion.proposition();
+                    facts = facts.with_kernel_checked_fact(guarded.clone());
+                    checked_facts.push(guarded.clone());
+                }
                 if let Some((_, body_kernel)) = &retained_body {
                     facts = facts.with_kernel_checked_fact(body_kernel.clone());
                     checked_facts.push(body_kernel.clone());

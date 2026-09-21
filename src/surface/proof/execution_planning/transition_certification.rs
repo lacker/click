@@ -2,26 +2,66 @@ use super::*;
 use crate::kernel::proof::{CheckedBranchSplit, CheckedBranchSplitError};
 use crate::surface::planning::proposition_search::PropositionSearch;
 
-/// The producer-owned portion of a checked loop transition that can be
-/// associated with declared invariant checks.
-///
-/// Verified loop rules emit effect summaries first, distinct invariant facts
-/// in declaration order, and then the false-guard facts. Duplicate clauses
-/// may share one semantic fact in this delta, so callers must retain their
-/// separate declaration correspondence. In particular,
-/// this walks the statement's exact output delta rather than reconstructing
-/// that delta by comparing the successor against an ambient proof context.
-pub(in crate::surface::proof) fn loop_invariant_export_facts(
-    introduced_facts: &[Proposition],
-) -> impl Iterator<Item = &Proposition> {
-    introduced_facts.iter().filter(|fact| {
-        !matches!(
-            fact,
-            Proposition::CMemoryEffectSummary { .. }
-                | Proposition::CMemoryMutatesOnly { .. }
-                | Proposition::CHeapAllocationFreed { .. }
-        )
-    })
+/// Record only associations retained by the loop producer. Missing entries
+/// are normal when a break path does not retain an invariant at the exit.
+pub(in crate::surface::proof) fn record_loop_exit_invariants(
+    presentation: &mut SurfacePropositionMap,
+    clause: &StructuralClause,
+    correspondence: &[(usize, Proposition)],
+    loop_index: usize,
+) -> Result<(), ClickError> {
+    let exit_point = ProgramPointRef {
+        region: CodeRegionRef::Loop(loop_index),
+        kind: ProgramPointKind::Exit,
+    };
+    for (index, target) in correspondence {
+        let item = clause
+            .items()
+            .get(*index)
+            .ok_or_else(|| ClickError::new("loop-exit invariant index exceeds declared clauses"))?;
+        let surface = surface_at_snapshot(item.proposition(), &exit_point)?;
+        presentation.record_lowering(&surface, target)?;
+    }
+    Ok(())
+}
+
+/// Carry source correspondence through the exact same checked transport
+/// sequence as the facts. Index only this output-sized collection; repeated
+/// declarations share the index entry and each keeps its own association.
+fn transport_loop_invariant_correspondence<'a>(
+    correspondence: &mut [(usize, Proposition)],
+    transports: impl Iterator<Item = (&'a Proposition, &'a Proposition)>,
+) {
+    let mut indices = BTreeMap::<Proposition, Vec<usize>>::new();
+    for (position, (_, proposition)) in correspondence.iter().enumerate() {
+        indices
+            .entry(proposition.clone())
+            .or_default()
+            .push(position);
+    }
+    for (source, target) in transports {
+        if let Some(mut positions) = indices.remove(source) {
+            match indices.entry(target.clone()) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(positions);
+                }
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    // Move the smaller group when two facts converge. A long
+                    // transport chain must not revisit every duplicate clause
+                    // at every hop.
+                    if entry.get().len() < positions.len() {
+                        std::mem::swap(entry.get_mut(), &mut positions);
+                    }
+                    entry.get_mut().extend(positions);
+                }
+            }
+        }
+    }
+    for (target, positions) in indices {
+        for position in positions {
+            correspondence[position].1 = target.clone();
+        }
+    }
 }
 
 fn missing_prerequisite_error(
@@ -701,14 +741,18 @@ fn certified_transitions_from_execution(
     let transitions = execution
         .paths()
         .iter()
-        .filter(|path| {
+        .enumerate()
+        .filter(|(_, path)| {
             !path.facts().iter().any(|path_fact| {
                 pure_facts.iter().any(|available| {
                     exact_facts_directly_conflict(available, path_fact.proposition())
                 })
             })
         })
-        .map(|path| {
+        .map(|(path_index, path)| {
+            let mut loop_invariant_correspondence = loop_rule.as_ref()
+                .map(|rule| rule.loop_invariant_correspondence(path_index).to_vec())
+                .unwrap_or_default();
             let mut successor_facts = pure_facts.to_vec();
             let mut statement_facts = path
                 .facts()
@@ -1290,6 +1334,10 @@ fn certified_transitions_from_execution(
                         &transport.target,
                     );
                 }
+                transport_loop_invariant_correspondence(
+                    &mut loop_invariant_correspondence,
+                    transported_facts.iter().map(|transport| (&transport.source, &transport.target)),
+                );
                 for fact in transported_execution_facts {
                     if !execution_facts.contains(&fact) {
                         execution_facts.push(fact);
@@ -1345,6 +1393,7 @@ fn certified_transitions_from_execution(
                     obligations: path.obligations().to_vec(),
                     pure_facts: successor_facts,
                     introduced_facts,
+                    loop_invariant_correspondence,
                     prerequisite_derivations,
                     planning_premises: Vec::new(),
                     fact_transports: transported_facts,
@@ -1370,6 +1419,7 @@ fn certified_transitions_from_execution(
                 obligations: path.obligations().to_vec(),
                 pure_facts: successor_facts,
                 introduced_facts,
+                loop_invariant_correspondence,
                 prerequisite_derivations,
                 planning_premises: Vec::new(),
                 fact_transports: Vec::new(),
@@ -1489,35 +1539,23 @@ mod condition_transition_tests {
     }
 
     #[test]
-    fn loop_invariant_exports_use_the_producer_delta_in_order() {
-        let stable = named_fact("stable");
-        let changing = named_fact("changing");
-        let exit_guard = named_fact("exit_guard");
-        let sibling = named_fact("ambient_sibling");
-
-        // The stable invariant and unrelated sibling are both already in the
-        // ambient context.  The checked transition nevertheless publishes the
-        // stable invariant in its producer-owned delta, in declaration order.
-        let ambient = [sibling.clone(), stable.clone()];
-        let introduced = [stable.clone(), changing.clone(), exit_guard];
-        let exported = loop_invariant_export_facts(&introduced)
-            .take(2)
-            .cloned()
-            .collect::<Vec<_>>();
-
-        assert_eq!(exported, [stable, changing]);
-        assert!(!exported.contains(&ambient[0]));
-    }
-
-    #[test]
-    fn loop_invariant_export_iteration_scales_with_the_produced_delta() {
-        for count in [8usize, 32, 128, 512] {
-            let introduced = (0..=count)
-                .map(|index| named_fact(&format!("fact_{index}")))
-                .collect::<Vec<_>>();
-            let exported = loop_invariant_export_facts(&introduced).take(count).count();
-            assert_eq!(exported, count);
-        }
+    fn loop_invariant_correspondence_follows_checked_transport_chains() {
+        let old = named_fact("old");
+        let middle = named_fact("middle");
+        let new = named_fact("new");
+        let sibling = named_fact("sibling");
+        let mut correspondence = vec![
+            (0, old.clone()),
+            (2, old.clone()),
+            (4, middle.clone()),
+            (5, sibling.clone()),
+        ];
+        let transports = [(&old, &middle), (&middle, &new), (&new, &new)];
+        transport_loop_invariant_correspondence(&mut correspondence, transports.into_iter());
+        assert_eq!(
+            correspondence,
+            [(0, new.clone()), (2, new.clone()), (4, new), (5, sibling)]
+        );
     }
 
     #[test]

@@ -42,7 +42,10 @@ it does not establish any concurrency property.
 `mdtests/fork_join_worker_sequential.md` verifies `fill_range` from this file,
 unchanged, with the contract a spawn will transfer as the worker's task. It is
 the worker half of the eventual proof, not evidence about threads; the parent
-is not yet verified in any form.
+is not yet verified in any form. `mdtests/fork_join_worker_direct_contract.md`
+also verifies that same worker with direct `views`/`owns` clauses, so a future
+spawn can lend the job record at the call boundary. Its generated certificates
+expand and reverify against the unchanged worker.
 
 ## Frozen fork/join program
 

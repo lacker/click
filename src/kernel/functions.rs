@@ -146,6 +146,7 @@ fn execute_c_function_body_verification_paths(
 
 fn invalid_goto_path(path: CStatementExecutionPath, message: &str) -> CStatementExecutionPath {
     CStatementExecutionPath {
+        loop_invariant_correspondence: Default::default(),
         outcome: CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
             message.to_string(),
         )),

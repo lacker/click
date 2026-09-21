@@ -1996,3 +1996,87 @@ fn strlen_guard_prefix_synthesis_scales_linearly_and_fails_closed() {
         );
     }
 }
+
+/// A borrowed pointer field can contain a fresh symbolic value, with no
+/// registered load to recover its source spelling from. Both cast parameters
+/// and locals must select its actual field, not a nearby pointer or old value.
+#[test]
+fn pointer_field_synthesis_through_cast_and_local_selects_current_value() {
+    let function = syntax::parse_function(
+        "struct job { int *decoy; int *selected; }; \
+         void worker(void *argument) { struct job *job = argument; }",
+    )
+    .unwrap();
+    let layout = function.structs().get("job").unwrap().clone();
+    let base = Pointer {
+        block: PointerBlock::Concrete("job".into()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let owner = CValue::typed_pointer(base.clone(), CType::VoidPointer);
+    let field_pointer = base.offset_by_bytes(layout.fields()["selected"].offset_bytes());
+    let selected = PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(711)), 4);
+    let decoy = PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(712)), 4);
+    let value = |offset| {
+        CValue::typed_pointer(
+            Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset,
+            },
+            CType::Int32Pointer,
+        )
+    };
+    let memory = CMemory::new()
+        .with_block("job", 16)
+        .store(base, value(decoy.clone()))
+        .store(field_pointer.clone(), value(selected.clone()));
+    let arguments = [CExpression::Value(owner.clone())];
+    for cast in [true, false] {
+        let mut owners = SynthesisStructOwners::default();
+        let state = if cast {
+            owners
+                .cast_parameters
+                .insert("argument".into(), ("job".into(), layout.clone()));
+            CState::new()
+                .with_memory(memory.clone())
+                .with_local("argument", owner.clone())
+        } else {
+            owners.locals.insert("job".into(), layout.clone());
+            CState::new()
+                .with_memory(memory.clone())
+                .with_local("job", owner.clone())
+        };
+        let _scope = LocalStructLayoutScope(
+            SYNTHESIS_STRUCT_OWNERS.with(|slot| slot.replace(Some(std::sync::Arc::new(owners)))),
+        );
+        let spelled = synthesize_parameter_field_pointer_value(
+            &selected,
+            function.parameters(),
+            &arguments,
+            &state,
+        )
+        .expect("the actual pointer field must have a spelling");
+        assert!(matches!(&spelled, ContractExpression::Field { field, .. } if field == "selected"));
+        let equality = ClickProposition::Comparison {
+            left: spelled,
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(value(selected.clone()))),
+        };
+        let lowered = relower_written_proposition(&equality, &state).unwrap();
+        assert!(PureFactContext::new().proves(&lowered), "{lowered:?}");
+        let changed = state.with_memory(
+            memory
+                .clone()
+                .store(field_pointer.clone(), value(decoy.clone())),
+        );
+        assert!(
+            synthesize_parameter_field_pointer_value(
+                &selected,
+                function.parameters(),
+                &arguments,
+                &changed,
+            )
+            .is_none(),
+            "a previous field value must not be spelled as its current value"
+        );
+    }
+}

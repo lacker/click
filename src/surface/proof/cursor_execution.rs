@@ -2796,41 +2796,12 @@ fn execute_step_from_frontier_position_selecting_path(
             .iter()
             .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
     {
-        // The verified loop rule exports its effect summaries first, followed
-        // by one lowered fact for each invariant check in declaration order,
-        // followed by facts from the false loop-condition path. Preserve that
-        // structural association instead of searching the ambient context for
-        // a proposition that happens to match.
-        // `introduced_facts` is the checked producer's exact, ordered output
-        // delta.  Do not recover it from the ambient successor context: a
-        // stable invariant can already be present there, and transported
-        // sibling facts can prevent the successor from retaining a prefix.
-        let mut invariant_targets = loop_invariant_export_facts(&transition.introduced_facts);
-        let mut mapped_invariants = Vec::new();
-        for surface in loop_clause.items().iter().map(StructuralItem::proposition) {
-            let target = if let Some((_, target)) = mapped_invariants
-                .iter()
-                .find(|(mapped_surface, _)| *mapped_surface == surface)
-            {
-                *target
-            } else {
-                invariant_targets.next().ok_or_else(|| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: verified loop summary omitted an exported fact for an invariant"
-                    ))
-                })?
-            };
-            mapped_invariants.push((surface, target));
-            let exit_point = ProgramPointRef {
-                region: CodeRegionRef::Loop(loop_index),
-                kind: ProgramPointKind::Exit,
-            };
-            let exit_surface = surface_at_snapshot(surface, &exit_point)?;
-            execution
-                .presentation
-                .surface_propositions
-                .record_lowering(&exit_surface, target)?;
-        }
+        record_loop_exit_invariants(
+            &mut execution.presentation.surface_propositions,
+            loop_clause,
+            &transition.loop_invariant_correspondence,
+            loop_index,
+        )?;
     }
     let mut deferred_transport_operations = Vec::new();
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {

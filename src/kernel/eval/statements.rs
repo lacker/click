@@ -42,6 +42,7 @@ pub(in crate::kernel) fn execute_c_lvalue_assignment_paths(
             CLValueOutcome::LValue(lvalue) => lvalue,
             CLValueOutcome::UndefinedBehavior(undefined_behavior) => {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                     facts: target_facts,
                     obligations: target_obligations,
@@ -52,6 +53,7 @@ pub(in crate::kernel) fn execute_c_lvalue_assignment_paths(
             }
             CLValueOutcome::RuntimeError(error) => {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::RuntimeError(error),
                     facts: target_facts,
                     obligations: target_obligations,
@@ -87,6 +89,7 @@ pub(in crate::kernel) fn execute_c_lvalue_assignment_paths(
                 )?),
                 CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
                     paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                         facts,
                         obligations,
@@ -95,6 +98,7 @@ pub(in crate::kernel) fn execute_c_lvalue_assignment_paths(
                     })
                 }
                 CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::RuntimeError(error),
                     facts,
                     obligations,
@@ -136,6 +140,7 @@ fn execute_c_lvalue_update_paths(
                 CLValueOutcome::LValue(_) => unreachable!(),
             };
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome,
                 facts,
                 obligations,
@@ -163,6 +168,7 @@ fn execute_c_lvalue_update_paths(
         );
         if !supported_integer_update && !supported_float_update {
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
                 obligations,
@@ -197,6 +203,7 @@ fn execute_c_lvalue_update_paths(
                     CExpressionOutcome::Value(_) => unreachable!(),
                 };
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome,
                     facts: current_facts,
                     obligations: current_obligations,
@@ -236,6 +243,7 @@ fn execute_c_lvalue_update_paths(
                         CExpressionOutcome::Value(_) => unreachable!(),
                     };
                     paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome,
                         facts,
                         obligations,
@@ -284,6 +292,7 @@ fn execute_c_lvalue_update_paths(
                         )?),
                         CExpressionOutcome::UndefinedBehavior(error) => {
                             paths.push(CStatementExecutionPath {
+                                loop_invariant_correspondence: Default::default(),
                                 outcome: CStatementOutcome::UndefinedBehavior(error),
                                 facts,
                                 obligations,
@@ -293,6 +302,7 @@ fn execute_c_lvalue_update_paths(
                         }
                         CExpressionOutcome::RuntimeError(error) => {
                             paths.push(CStatementExecutionPath {
+                                loop_invariant_correspondence: Default::default(),
                                 outcome: CStatementOutcome::RuntimeError(error),
                                 facts,
                                 obligations,
@@ -370,6 +380,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     if lvalue.is_constant() {
         return Ok(vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
             facts,
             obligations,
@@ -423,6 +434,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
         &effective_assumptions,
     ) else {
         return Ok(vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts,
             obligations,
@@ -442,6 +454,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 )
             {
                 return Ok(vec![CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome,
                     facts,
                     obligations,
@@ -469,6 +482,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 pointee_constant,
             );
             Ok(vec![CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::Normal(state),
                 facts,
                 obligations,
@@ -486,6 +500,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 .any(|pending| pending.old_pointer.block == pointer.block)
             {
                 return Ok(vec![CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::RuntimeError(
                         CRuntimeError::UnresolvedAllocationOutcome,
                     ),
@@ -497,6 +512,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             }
             if state.memory.is_ended_local_address(&pointer) {
                 return Ok(vec![CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::UndefinedBehavior(
                         CUndefinedBehavior::InvalidMemory,
                     ),
@@ -508,6 +524,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             }
             if state.memory.is_deallocated_heap_address(&pointer) {
                 return Ok(vec![CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::UndefinedBehavior(
                         CUndefinedBehavior::InvalidMemory,
                     ),
@@ -519,6 +536,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             }
             if state.memory.is_read_only_block(&pointer.block) {
                 return Ok(vec![CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::UndefinedBehavior(
                         CUndefinedBehavior::InvalidMemory,
                     ),
@@ -542,6 +560,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             let has_external_write_resource = is_external && authorized_range.is_some();
             if is_external_memory_pointer(&pointer) && !has_external_write_resource {
                 return Ok(vec![CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
                         resource: CResourceFact::own_memory(CMemoryRange::new(
                             pointer.clone(),
@@ -565,6 +584,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 &effective_assumptions,
             ) {
                 return Ok(vec![CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome,
                     facts,
                     obligations,
@@ -617,6 +637,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 )?);
             }
             Ok(vec![CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::Normal(state),
                 facts,
                 obligations,
@@ -678,6 +699,7 @@ fn execute_c_aggregate_copy_paths(
                 &assumptions_with_path_context(assumptions, &facts, &obligations),
             ) {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
                         resource,
                     }),
@@ -695,6 +717,7 @@ fn execute_c_aggregate_copy_paths(
                 &assumptions_with_path_context(assumptions, &facts, &obligations),
             ) {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome,
                     facts,
                     obligations,
@@ -712,6 +735,7 @@ fn execute_c_aggregate_copy_paths(
                 Ok(memory) => memory,
                 Err(undefined_behavior) => {
                     paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                         facts,
                         obligations,
@@ -723,6 +747,7 @@ fn execute_c_aggregate_copy_paths(
             };
             state.set_memory(next_memory);
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::Normal(state),
                 facts,
                 obligations,
@@ -804,6 +829,7 @@ pub(super) fn execute_c_heap_allocate_paths(
     ) = state.local_object_type(target)
     else {
         return Ok(vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts: Vec::new(),
             obligations: Vec::new(),
@@ -838,6 +864,7 @@ pub(super) fn execute_c_heap_allocate_paths(
                 }
             };
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome,
                 facts,
                 obligations,
@@ -850,6 +877,7 @@ pub(super) fn execute_c_heap_allocate_paths(
             assumptions_with_path_context(assumptions, &facts, &obligations);
         let Some(size) = allocation_size_value(value, &effective_assumptions) else {
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
                 obligations,
@@ -878,6 +906,7 @@ pub(super) fn execute_c_heap_allocate_paths(
         };
         if !valid_size {
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
                 obligations,
@@ -924,6 +953,7 @@ pub(super) fn execute_c_heap_allocate_paths(
                 continue;
             };
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: assigned_path.outcome,
                 facts: merged_facts,
                 obligations: merged_obligations,
@@ -1124,6 +1154,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let [old_expression, size_expression] = arguments else {
         return Ok(vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::WrongArity {
                 expected: 2,
                 actual: arguments.len(),
@@ -1152,6 +1183,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
     ) = state.local_object_type(target)
     else {
         return Ok(vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts: Vec::new(),
             obligations: Vec::new(),
@@ -1181,6 +1213,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 CExpressionOutcome::Value(_) => unreachable!(),
             };
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome,
                 facts,
                 obligations,
@@ -1197,6 +1230,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
             CValue::Int32(bits) if bits.as_const() == Some(0) => Pointer::null(),
             _ => {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     facts,
                     obligations,
@@ -1231,6 +1265,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     continue;
                 };
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: allocation_path.outcome,
                     facts: merged_facts,
                     obligations: merged_obligations,
@@ -1250,6 +1285,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 CInvalidFree::NonHeapPointer
             };
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(error)),
                 facts,
                 obligations,
@@ -1300,6 +1336,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     continue;
                 };
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome,
                     facts: merged_facts,
                     obligations: merged_obligations,
@@ -1315,6 +1352,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
             );
             let Some(size) = allocation_size_value(new_size_value, &size_assumptions) else {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     facts: size_facts,
                     obligations: size_obligations,
@@ -1329,6 +1367,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     allocation_size_fits_element_width(&size, element_width, &size_assumptions);
                 if !positive || !fits {
                     paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                         facts: size_facts,
                         obligations: size_obligations,
@@ -1360,6 +1399,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 assumptions_with_path_context(assumptions, &all_facts, &all_obligations);
             if !allocation_size_is_positive(&new_bytes, &effective_assumptions) {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     facts: all_facts,
                     obligations: all_obligations,
@@ -1385,6 +1425,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                         (old_prefix.as_const(), new_bytes.term.as_const())
                     else {
                         paths.push(CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                             facts: all_facts,
                             obligations: all_obligations,
@@ -1404,6 +1445,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 .without_fact(&allocation, &effective_assumptions)
             else {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
                         resource: allocation,
                     }),
@@ -1423,6 +1465,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
             let Some(resources) = resources.without_fact(&complete_access, &effective_assumptions)
             else {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
                         resource: complete_access,
                     }),
@@ -1442,6 +1485,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 &effective_assumptions,
             ) {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome,
                     facts: all_facts,
                     obligations: all_obligations,
@@ -1466,6 +1510,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     )
             }) {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::RuntimeError(
                         CRuntimeError::StaleResourceAfterFree {
                             resource: stale.clone(),
@@ -1537,6 +1582,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
             }
             if copy_is_unsupported {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     facts: all_facts,
                     obligations: all_obligations,
@@ -1593,6 +1639,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     continue;
                 };
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: assigned_path.outcome,
                     facts: merged_facts,
                     obligations: merged_obligations,
@@ -1639,6 +1686,7 @@ fn execute_c_heap_free_paths(
                 }
             };
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome,
                 facts,
                 obligations,
@@ -1655,6 +1703,7 @@ fn execute_c_heap_free_paths(
                 == Some(true)
         {
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::Normal(state.clone()),
                 facts,
                 obligations,
@@ -1672,6 +1721,7 @@ fn execute_c_heap_free_paths(
             .any(|pending| pending.old_pointer.block == pointer.block)
         {
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(
                     CRuntimeError::UnresolvedAllocationOutcome,
                 ),
@@ -1702,6 +1752,7 @@ fn execute_c_heap_free_paths(
         } else if working_memory.is_deallocated_heap_address(pointer.pointer()) {
             let error = CInvalidFree::DoubleFree;
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(error)),
                 facts,
                 obligations,
@@ -1712,6 +1763,7 @@ fn execute_c_heap_free_paths(
         } else if working_memory.is_live_heap_address(pointer.pointer()) {
             let error = CInvalidFree::InteriorPointer;
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(error)),
                 facts,
                 obligations,
@@ -1724,6 +1776,7 @@ fn execute_c_heap_free_paths(
                 working_memory.with_heap_allocation_claim(pointer.pointer().clone(), bytes.clone())
             else {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(
                         CInvalidFree::NonHeapPointer,
                     )),
@@ -1738,6 +1791,7 @@ fn execute_c_heap_free_paths(
             bytes
         } else {
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(
                     CInvalidFree::NonHeapPointer,
                 )),
@@ -1761,6 +1815,7 @@ fn execute_c_heap_free_paths(
             .without_fact(&allocation, &effective_assumptions)
         else {
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
                     resource: allocation,
                 }),
@@ -1781,6 +1836,7 @@ fn execute_c_heap_free_paths(
         let Some(resources) = resources.without_fact(&complete_access, &effective_assumptions)
         else {
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
                     resource: complete_access,
                 }),
@@ -1797,6 +1853,7 @@ fn execute_c_heap_free_paths(
             stable_loan_memory_range_outcome(state, &full_allocation_range, &effective_assumptions)
         {
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome,
                 facts,
                 obligations,
@@ -1821,6 +1878,7 @@ fn execute_c_heap_free_paths(
                 )
         }) {
             paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::StaleResourceAfterFree {
                     resource: stale.clone(),
                 }),
@@ -1843,6 +1901,7 @@ fn execute_c_heap_free_paths(
             },
         ));
         paths.push(CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: CStatementOutcome::Normal(
                 state
                     .clone()
@@ -2025,6 +2084,7 @@ fn execute_c_return_expression_paths(
                         }
                     };
                     paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome,
                         facts: truthiness_path.facts,
                         obligations: truthiness_path.obligations,
@@ -2043,6 +2103,7 @@ fn execute_c_return_expression_paths(
                     }
                 };
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome,
                     facts,
                     obligations,
@@ -2052,6 +2113,7 @@ fn execute_c_return_expression_paths(
             }
             CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                     facts,
                     obligations,
@@ -2060,6 +2122,7 @@ fn execute_c_return_expression_paths(
                 });
             }
             CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(error),
                 facts,
                 obligations,
@@ -2256,7 +2319,11 @@ pub(in crate::kernel) fn paths_after_scope_exit(
                 | CStatementOutcome::UndefinedBehavior(_)
                 | CStatementOutcome::RuntimeError(_)) => outcome,
             };
-            CStatementExecutionPath { outcome, ..path }
+            CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
+                outcome,
+                ..path
+            }
         })
         .collect()
 }
@@ -2277,6 +2344,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
     }
     let paths = match statement {
         CStatement::Skip => vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: CStatementOutcome::Normal(state.clone()),
             facts: Vec::new(),
             obligations: Vec::new(),
@@ -2284,6 +2352,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             loan_evidence: empty_checked_loan_evidence_sequence(),
         }],
         CStatement::Break => vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: CStatementOutcome::Break(state.clone()),
             facts: Vec::new(),
             obligations: Vec::new(),
@@ -2291,6 +2360,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             loan_evidence: empty_checked_loan_evidence_sequence(),
         }],
         CStatement::Continue => vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: CStatementOutcome::Continue(state.clone()),
             facts: Vec::new(),
             obligations: Vec::new(),
@@ -2298,6 +2368,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             loan_evidence: empty_checked_loan_evidence_sequence(),
         }],
         CStatement::Goto { target } => vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: CStatementOutcome::Jump {
                 target: *target,
                 state: state.clone(),
@@ -2329,6 +2400,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                     outcome => outcome,
                 };
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome,
                     facts: step_path.facts,
                     obligations: step_path.obligations,
@@ -2365,6 +2437,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                 }
             };
             vec![CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome,
                 facts: Vec::new(),
                 obligations: Vec::new(),
@@ -2388,6 +2461,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                 }
             };
             vec![CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome,
                 facts: Vec::new(),
                 obligations: Vec::new(),
@@ -2476,6 +2550,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                     | CStatementOutcome::VerificationDiverges
                     | CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome,
                         facts: first_path.facts,
                         obligations: first_path.obligations,
@@ -2496,6 +2571,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                 }
             };
             vec![CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome,
                 facts: Vec::new(),
                 obligations: Vec::new(),
@@ -2527,6 +2603,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                     }
                 };
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome,
                     facts: path.facts,
                     obligations: path.obligations,
@@ -2557,6 +2634,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                 {
                     if thrown_state.locals.bindings.contains_key(binding) {
                         paths.push(CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
                             outcome: CStatementOutcome::RuntimeError(
                                 CRuntimeError::FunctionContract(format!(
                                     "int32 handler binding `{binding}` is not fresh"
@@ -2673,6 +2751,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                     }
                     CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
                         paths.push(CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
                             outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                             facts,
                             obligations,
@@ -2682,6 +2761,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                     }
                     CExpressionOutcome::RuntimeError(error) => {
                         paths.push(CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
                             outcome: CStatementOutcome::RuntimeError(error),
                             facts,
                             obligations,
@@ -2759,6 +2839,7 @@ fn execute_c_switch_paths(
                     promote_c_int32_path_value(value, &mut facts, &selector_assumptions)
                 else {
                     paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                         facts,
                         obligations,
@@ -2781,6 +2862,7 @@ fn execute_c_switch_paths(
                 )?);
             }
             CExpressionOutcome::UndefinedBehavior(error) => paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::UndefinedBehavior(error),
                 facts,
                 obligations,
@@ -2788,6 +2870,7 @@ fn execute_c_switch_paths(
                 loan_evidence: empty_checked_loan_evidence_sequence(),
             }),
             CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(error),
                 facts,
                 obligations,
@@ -2826,6 +2909,7 @@ fn execute_c_switch_dispatch_paths(
                 budget,
             ),
             None => Ok(vec![CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::Normal(state.clone()),
                 facts,
                 obligations,
@@ -2904,6 +2988,7 @@ fn execute_c_switch_suffix_paths(
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     if case_index == cases.len() {
         return Ok(vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: CStatementOutcome::Normal(state.clone()),
             facts,
             obligations,
@@ -2943,6 +3028,7 @@ fn execute_c_switch_suffix_paths(
                 budget,
             )?),
             CStatementOutcome::Break(next_state) => paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::Normal(next_state),
                 facts: case_facts,
                 obligations: case_obligations,
@@ -2956,6 +3042,7 @@ fn execute_c_switch_suffix_paths(
             | CStatementOutcome::VerificationDiverges
             | CStatementOutcome::UndefinedBehavior(_)
             | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome,
                 facts: case_facts,
                 obligations: case_obligations,
@@ -2990,6 +3077,7 @@ pub(in crate::kernel) fn execute_c_assert_paths(
                         obligations.push(assertion_obligation.clone());
                     }
                     paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome: CStatementOutcome::Normal(state.clone()),
                         facts: truthiness_path.facts,
                         obligations,
@@ -3000,6 +3088,7 @@ pub(in crate::kernel) fn execute_c_assert_paths(
             }
             CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
                 paths.push(CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                     facts,
                     obligations,
@@ -3008,6 +3097,7 @@ pub(in crate::kernel) fn execute_c_assert_paths(
                 })
             }
             CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(error),
                 facts,
                 obligations,
@@ -3138,6 +3228,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
                                 continue;
                             };
                             paths.push(CStatementExecutionPath {
+                                loop_invariant_correspondence: Default::default(),
                                 outcome: CStatementOutcome::Normal(current_state.clone()),
                                 facts,
                                 obligations,
@@ -3200,6 +3291,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
                                 }
                                 CStatementOutcome::Break(next_state) => {
                                     paths.push(CStatementExecutionPath {
+                                        loop_invariant_correspondence: Default::default(),
                                         outcome: CStatementOutcome::Normal(next_state),
                                         facts,
                                         obligations,
@@ -3214,6 +3306,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
                                 | CStatementOutcome::UndefinedBehavior(_)
                                 | CStatementOutcome::RuntimeError(_)) => {
                                     paths.push(CStatementExecutionPath {
+                                        loop_invariant_correspondence: Default::default(),
                                         outcome,
                                         facts,
                                         obligations,
@@ -3236,6 +3329,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
                         continue;
                     };
                     paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                         facts,
                         obligations,
@@ -3254,6 +3348,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
                         continue;
                     };
                     paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome: CStatementOutcome::RuntimeError(error),
                         facts,
                         obligations,

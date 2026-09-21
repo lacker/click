@@ -22,7 +22,7 @@ this milestone also requires modular rules and deterministic scaling tests.
 
 ## Current checkpoint and scope
 
-**Unblocked.** Termination is now Click's only judgment for C (see "C
+**Termination prerequisite complete.** Termination is now Click's only judgment for C (see "C
 termination" in `docs/reference/language/index.md`), so a worker's contract
 says whether it returns and a join on it can state what the parent proves.
 The unfinished fork/join slice is parked, not green, on the branch
@@ -65,22 +65,30 @@ introduced conjunctive guard. A sidecar directive
 `target "x86_64-linux-userspace";` selects the user-space include model and
 binds the target into artifact identities.
 
-Two caller-side findings shape the next slice. A caller cannot fold
-`range_task` for a job it owns, because folding a composite whose body
-packages views over context-owned memory is refused by the stable-views
-rules; the spawn boundary must therefore lend the job view at the call, the
-way an ordinary call backs a callee's `views` clause, rather than transfer a
-folded task instance. Writing the task as direct `views`/`owns` clauses on
-`fill_range` is the shape that allows this, but its quantified invariant
-leaves currently fail certificate planning, and a bundle of more than two
-loop invariants plans too few guard introductions for a later universal
-invariant. Both are certificate-planning gaps with the same C and the same
-proof text; fix them before binding spawn to the real call.
+The caller-compatible worker checkpoint is also complete:
+`mdtests/fork_join_worker_direct_contract.md` verifies the same frozen worker
+with direct `views`/`owns` clauses, including expansion and reverification.
+A caller cannot fold `range_task` for a job it owns, because folding a
+composite whose body packages views over context-owned memory is refused by
+the stable-views rules; the spawn boundary must therefore lend the job view
+at the call, the way an ordinary call backs a callee's `views` clause.
+Certificate synthesis now names fresh pointer-field values through the
+worker's cast `void *` parameter or struct-pointer local. Loop initialization
+also retains the checked guarded judgments of earlier invariants, so splitting
+bounds into separate declarations does not expose extra internal implications
+to a later universal proof. `mdtests/loop_three_invariant_initialization.md`
+pins that case. These repairs add no thread semantics.
+
+Loop exits now retain the kernel's declaration-indexed correspondence through
+semantic deduplication and checked memory transports. Differently written true
+invariants no longer shift a later universal onto the false guard.
+`mdtests/loop_semantically_duplicate_invariants.md` verifies the original array
+reproduction. Changed-state break exits do not assign exit spellings to old
+loop-head facts. This repair also adds no thread semantics.
 
 The modeled header is not a locked import of glibc headers, and no pthread
-external contract,
-checked spawn/join operation, scheduling/memory-model rule, worker proof,
-sidecar, or verified concurrency example has landed. In particular, the
+external contract, checked spawn/join operation, scheduling/memory-model
+rule, concurrent parent sidecar, or verified concurrency example has landed. In particular, the
 numeric representation of `pthread_t` grants no completion authority; only
 a checked success transition may create a joinable right. Do not present a
 successful parse or native compiler syntax check as race-freedom evidence.

@@ -393,6 +393,7 @@ pub(super) fn execute_c_call_assign_paths(
     if function_name == "realloc" {
         if environment.selected_call_contract.is_some() {
             return Ok(vec![CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
                     "step(Contract) requires a function-pointer call".to_string(),
                 )),
@@ -421,6 +422,7 @@ pub(super) fn execute_c_call_assign_paths(
 
     let Some(function) = environment.get_function(function_name) else {
         return Ok(vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::UnknownFunction(
                 function_name.to_string(),
             )),
@@ -446,6 +448,7 @@ pub(super) fn execute_c_call_assign_paths(
             CFunctionOutcome::Return { value, mut state } => {
                 if value == CValue::Void {
                     return CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                         facts: path.facts,
                         obligations: path.obligations,
@@ -459,6 +462,7 @@ pub(super) fn execute_c_call_assign_paths(
                         Some(CLocalBinding::AggregateObject { constant: true, .. })
                     ) {
                         return CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                             facts: path.facts,
                             obligations: path.obligations,
@@ -468,6 +472,7 @@ pub(super) fn execute_c_call_assign_paths(
                     }
                     let Some(target_layout) = state.locals.aggregate_layout(target) else {
                         return CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                             facts: path.facts,
                             obligations: path.obligations,
@@ -477,6 +482,7 @@ pub(super) fn execute_c_call_assign_paths(
                     };
                     if target_layout != layout {
                         return CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                             facts: path.facts,
                             obligations: path.obligations,
@@ -486,6 +492,7 @@ pub(super) fn execute_c_call_assign_paths(
                     }
                     let CValue::Pointer(pointer) = &value else {
                         return CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                             facts: path.facts,
                             obligations: path.obligations,
@@ -495,6 +502,7 @@ pub(super) fn execute_c_call_assign_paths(
                     };
                     if pointer.is_null() {
                         return CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                             facts: path.facts,
                             obligations: path.obligations,
@@ -504,6 +512,7 @@ pub(super) fn execute_c_call_assign_paths(
                     }
                     let Some(slot) = state.locals.slot(target).cloned() else {
                         return CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
                             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                             facts: path.facts,
                             obligations: path.obligations,
@@ -522,6 +531,7 @@ pub(super) fn execute_c_call_assign_paths(
                         ),
                     ) {
                         return CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
                             outcome,
                             facts: path.facts,
                             obligations: path.obligations,
@@ -538,6 +548,7 @@ pub(super) fn execute_c_call_assign_paths(
                         Ok(memory) => memory,
                         Err(undefined_behavior) => {
                             return CStatementExecutionPath {
+                                loop_invariant_correspondence: Default::default(),
                                 outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                                 facts: path.facts,
                                 obligations: path.obligations,
@@ -548,6 +559,7 @@ pub(super) fn execute_c_call_assign_paths(
                     };
                     state.set_memory(next_memory);
                     return CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome: CStatementOutcome::Normal(state),
                         facts: path.facts,
                         obligations: path.obligations,
@@ -557,6 +569,7 @@ pub(super) fn execute_c_call_assign_paths(
                 }
                 if state.locals.is_array_object(target) {
                     return CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                         facts: path.facts,
                         obligations: path.obligations,
@@ -587,6 +600,7 @@ pub(super) fn execute_c_call_assign_paths(
         };
 
         CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome,
             facts: path.facts,
             obligations: path.obligations,
@@ -621,6 +635,7 @@ pub(super) fn execute_c_call_paths(
         )?
         .into_iter()
         .map(|path| CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: match path.outcome {
                 CFunctionOutcome::Return { state, .. } => CStatementOutcome::Normal(state),
                 CFunctionOutcome::Throw { value, state } => {
@@ -643,6 +658,7 @@ pub(super) fn execute_c_call_paths(
 
     let Some(function) = environment.get_function(function_name) else {
         return Ok(vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::UnknownFunction(
                 function_name.to_string(),
             )),
@@ -664,6 +680,7 @@ pub(super) fn execute_c_call_paths(
     )?
     .into_iter()
     .map(|path| CStatementExecutionPath {
+        loop_invariant_correspondence: Default::default(),
         outcome: match path.outcome {
             CFunctionOutcome::Return { state, .. } => CStatementOutcome::Normal(state),
             CFunctionOutcome::Throw { value, state } => CStatementOutcome::Throw { value, state },
@@ -734,6 +751,7 @@ fn execute_c_indirect_call_assign_paths(
                 CFunctionOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
             };
             CStatementExecutionPath {
+                loop_invariant_correspondence: Default::default(),
                 outcome,
                 facts: path.facts,
                 obligations: path.obligations,
@@ -965,6 +983,7 @@ pub(super) fn execute_c_statement_paths_with_prefix(
             assumptions,
         )?;
         Some(CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: path.outcome,
             facts,
             obligations,
@@ -1065,6 +1084,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 variables,
             )? {
                 let CStatementExecutionPath {
+                    loop_invariant_correspondence: _,
                     outcome,
                     facts,
                     obligations,
@@ -1107,6 +1127,7 @@ pub(super) fn execute_c_statement_verification_paths(
                     | CStatementOutcome::VerificationDiverges
                     | CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome,
                         facts,
                         obligations,
@@ -1168,6 +1189,7 @@ pub(super) fn execute_c_statement_verification_paths(
                     }
                     CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
                         paths.push(CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
                             outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                             facts,
                             obligations,
@@ -1177,6 +1199,7 @@ pub(super) fn execute_c_statement_verification_paths(
                     }
                     CExpressionOutcome::RuntimeError(error) => {
                         paths.push(CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
                             outcome: CStatementOutcome::RuntimeError(error),
                             facts,
                             obligations,
@@ -1304,6 +1327,7 @@ pub(super) fn execute_c_statement_verification_paths_with_prefix(
             assumptions,
         )?;
         Some(CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: path.outcome,
             facts,
             obligations,
@@ -1655,10 +1679,9 @@ pub(super) fn guard_path_disjunction(own_facts: &[Vec<Proposition>]) -> Option<P
 /// reasons from the disjunction by cases.
 ///
 /// Obligations are the union: an obligation any exit path owes is owed by the
-/// join, which can only refuse more, never less. Ordering is load-bearing —
-/// the verified loop rule's consumers read the exported invariant facts
-/// positionally — so the common prefix keeps its order and the disjunction is
-/// appended after it.
+/// join, which can only refuse more, never less. Keep deterministic fact
+/// order; invariant source correspondence is retained separately by clause
+/// index and never inferred from this ordering.
 fn join_loop_exit_paths(
     mut exits: Vec<LoopExitFacts>,
 ) -> Option<(
@@ -1724,8 +1747,8 @@ fn join_loop_exit_paths(
 /// One exit's contribution to a loop's join.
 ///
 /// `stated` is what that path actually holds, and the join's common prefix is
-/// the intersection of those — the loop rule's consumers read the exported
-/// invariant facts there, so it keeps the names the head stated them under.
+/// the intersection of those. These facts keep the symbolic names under
+/// which they were established; they are not necessarily exit invariants.
 /// `disjunct` is the same path restated about the successor the join builds:
 /// with no abstraction it is exactly `stated`, and when a component was
 /// abstracted it is that path's own description of the fresh names instead of
@@ -1780,6 +1803,7 @@ impl LoopExitFacts {
 /// that way.
 fn join_loop_exits(
     head: &CLoopHead,
+    invariant_propositions: &crate::kernel::proof::PersistentSequence<Proposition>,
     binders: &[CLoopBinder],
     exits: Vec<(
         CState,
@@ -1797,16 +1821,15 @@ fn join_loop_exits(
         .map(|(state, _, _, _)| state)
         .collect::<Vec<_>>();
     let unchanged = || vec![LoopExitRestatement::default(); exits.len()];
-    let (exit_state, restatements, mismatch) =
-        if states[1..].iter().all(|other| **other == exit_state) {
-            (exit_state, unchanged(), None)
-        } else {
-            match abstract_loop_exit_states(head, binders, &states, assumptions, variables, budget)
-            {
-                Ok((state, restatements)) => (state, restatements, None),
-                Err(mismatch) => (exit_state, unchanged(), Some(mismatch)),
-            }
-        };
+    let invariant_state_unchanged = states[1..].iter().all(|other| **other == exit_state);
+    let (exit_state, restatements, mismatch) = if invariant_state_unchanged {
+        (exit_state, unchanged(), None)
+    } else {
+        match abstract_loop_exit_states(head, binders, &states, assumptions, variables, budget) {
+            Ok((state, restatements)) => (state, restatements, None),
+            Err(mismatch) => (exit_state, unchanged(), Some(mismatch)),
+        }
+    };
     let (facts, mut obligations, loan_evidence) = join_loop_exit_paths(
         exits
             .into_iter()
@@ -1824,13 +1847,108 @@ fn join_loop_exits(
                 )),
         );
     }
+    // Only name invariants whose source still denotes this successor. A
+    // changed-state break can leave old head facts in the intersection; those
+    // facts must not acquire spellings about fresh exit values.
+    let loop_invariant_correspondence = if invariant_state_unchanged {
+        retained_loop_invariant_correspondence(invariant_propositions, &facts)
+    } else {
+        Default::default()
+    };
     Some(CStatementExecutionPath {
+        loop_invariant_correspondence,
         outcome: CStatementOutcome::Normal(exit_state),
         facts,
         obligations,
 
         loan_evidence,
     })
+}
+
+/// Associate only this producer's surviving facts with the original clause
+/// indices. Semantic duplicates retain each index; guard and lowering side
+/// facts never consume a clause slot. Work is confined to the output delta.
+fn retained_loop_invariant_correspondence(
+    declarations: &crate::kernel::proof::PersistentSequence<Proposition>,
+    facts: &[ExecutionPureFact],
+) -> LoopInvariantCorrespondence {
+    if declarations.is_empty() {
+        return Default::default();
+    }
+    let correspondence = retained_loop_invariant_declarations(
+        declarations.iter(),
+        facts.iter().map(ExecutionPureFact::proposition),
+    )
+    .into_iter()
+    .map(|(index, proposition)| (index, proposition.clone()))
+    .collect::<Vec<_>>();
+    LoopInvariantCorrespondence((!correspondence.is_empty()).then(|| correspondence.into()))
+}
+
+fn retained_loop_invariant_declarations<'a, T: Ord + 'a>(
+    declarations: impl Iterator<Item = &'a T>,
+    facts: impl Iterator<Item = &'a T>,
+) -> Vec<(usize, &'a T)> {
+    let emitted = facts.collect::<BTreeSet<_>>();
+    declarations
+        .enumerate()
+        .filter(|(_, proposition)| emitted.contains(proposition))
+        .collect()
+}
+
+#[cfg(test)]
+mod loop_invariant_correspondence_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn declaration_identity_survives_duplicates_missing_facts_and_guard_facts() {
+        let declarations = [3, 3, 8, 9, 9];
+        let emitted = [42, 9, 3, 17];
+        assert_eq!(
+            retained_loop_invariant_declarations(declarations.iter(), emitted.iter()),
+            [(0, &3), (1, &3), (3, &9), (4, &9)],
+        );
+    }
+
+    #[test]
+    fn loop_invariant_correspondence_has_output_logarithmic_indexing_cost() {
+        #[derive(Eq)]
+        struct Counted<'a>(usize, &'a Cell<usize>);
+        impl PartialEq for Counted<'_> {
+            fn eq(&self, other: &Self) -> bool {
+                self.cmp(other).is_eq()
+            }
+        }
+        impl PartialOrd for Counted<'_> {
+            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+        impl Ord for Counted<'_> {
+            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                self.1.set(self.1.get() + 1);
+                self.0.cmp(&other.0)
+            }
+        }
+        for size in [32usize, 128, 512, 2048] {
+            let comparisons = Cell::new(0);
+            let declarations = (0..size)
+                .flat_map(|i| [Counted(i, &comparisons), Counted(i, &comparisons)])
+                .collect::<Vec<_>>();
+            let facts = (0..size)
+                .rev()
+                .map(|i| Counted(i, &comparisons))
+                .collect::<Vec<_>>();
+            let retained = retained_loop_invariant_declarations(declarations.iter(), facts.iter());
+            assert_eq!(retained.len(), size * 2);
+            assert!(
+                comparisons.get() <= 16 * size * (size.ilog2() as usize + 1),
+                "size {size}: {} comparisons",
+                comparisons.get()
+            );
+        }
+    }
 }
 
 /// The one post-loop state several exits join into, and the equations each
@@ -1988,8 +2106,8 @@ impl LoopExitRestatement {
     /// path restated about the successor's fresh names for its disjunct.
     ///
     /// The restated reading never replaces what the path stated — the loop
-    /// rule's consumers read the exported invariant facts under the names the
-    /// head stated them — but the disjunct is built from the restated reading
+    /// may retain historical facts under the names the head stated them —
+    /// but the disjunct is built from the restated reading
     /// alone, because a name the loop left behind is one no proof after the
     /// loop can spell, and a `cases` over the exported disjunction has to
     /// spell it.
@@ -2684,6 +2802,7 @@ fn execute_c_while_exit_paths(
                 // outcome.
                 if let Some(outcome) = assumption.undecided_outcome() {
                     paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome: outcome.clone(),
                         facts,
                         obligations,
@@ -2767,7 +2886,7 @@ fn execute_c_while_exit_paths(
         .chain(candidate_exit_entries)
         .collect::<Vec<_>>();
     if initial_may_exit {
-        for (invariant_facts, invariant_obligations, _) in invariant_contexts {
+        for (invariant_facts, invariant_obligations, invariant_propositions) in invariant_contexts {
             let condition_contexts = assume_condition_truthiness(
                 &guard_state,
                 condition,
@@ -2797,6 +2916,7 @@ fn execute_c_while_exit_paths(
                 // an exit state the C never reaches that way.
                 if let CConditionBranch::Undecided(outcome) = branch {
                     paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
                         outcome,
                         facts,
                         obligations,
@@ -2840,14 +2960,21 @@ fn execute_c_while_exit_paths(
                 })
                 .chain(break_exit_entries.iter().cloned())
                 .collect::<Vec<_>>();
-            if let Some(path) =
-                join_loop_exits(&head, &binders, exits, assumptions, variables, budget)
-            {
+            if let Some(path) = join_loop_exits(
+                &head,
+                &invariant_propositions,
+                &binders,
+                exits,
+                assumptions,
+                variables,
+                budget,
+            ) {
                 paths.push(path);
             }
         }
     } else if let Some(path) = join_loop_exits(
         &head,
+        &Default::default(),
         &binders,
         break_exit_entries,
         assumptions,
@@ -2868,6 +2995,7 @@ fn execute_c_while_exit_paths(
             );
         }
         paths.push(CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
             outcome: CStatementOutcome::VerificationDiverges,
             facts: whole_loop_effect_facts,
             obligations,
@@ -3479,6 +3607,7 @@ pub(super) fn collect_loop_preservation_summary(
                                     &final_path_obligations,
                                 );
                                 final_exit_paths.push(CStatementExecutionPath {
+                                    loop_invariant_correspondence: Default::default(),
                                     outcome: CStatementOutcome::Normal(
                                         head.restored_exit_state(&next_state),
                                     ),

@@ -2556,6 +2556,17 @@ impl CExecutionEnvironment {
 }
 
 impl CVerifiedLoopRule {
+    pub(crate) fn loop_invariant_correspondence(
+        &self,
+        path_index: usize,
+    ) -> &[(usize, Proposition)] {
+        self.paths[path_index]
+            .loop_invariant_correspondence
+            .0
+            .as_deref()
+            .unwrap_or_default()
+    }
+
     pub(crate) fn with_loop_index(mut self, loop_index: usize) -> Self {
         self.loop_index = Some(loop_index);
         self

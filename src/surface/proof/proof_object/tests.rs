@@ -2534,6 +2534,10 @@ fn fixed_state_context_have_publishes_checked_fact_for_later_scope() {
             .unwrap();
         assert_eq!(scope.goal(), Some(&entry_kernel));
         assert!(Arc::ptr_eq(&root.context, &scope.body.context));
+        assert!(
+            scope.clone().join().is_err(),
+            "an unfinished entry cannot publish its guard"
+        );
         let checked_scope = scope.apply_step(ProofStep::Normalize).unwrap();
         let completion = checked_scope.completed_loop_entry_goal().unwrap();
         assert!(
@@ -2544,12 +2548,38 @@ fn fixed_state_context_have_publishes_checked_fact_for_later_scope() {
         let phase = checked_scope.join().unwrap();
         assert_eq!(phase.certificate().steps().len(), 1);
         assert_eq!(completion.proposition(), entry_obligation.proposition());
+        assert!(phase.facts().contains(entry_obligation.proposition()));
+        assert!(phase.facts().contains(&entry_kernel));
+        assert!(!root.facts().contains(entry_obligation.proposition()));
         let allocations = fact_node_allocations() - entry_before;
         let height = (u32::BITS - size.leading_zeros()) as usize;
         assert!(
             allocations <= 40 * height + 160,
             "entry scope at size {size} allocated {allocations} fact nodes"
         );
+
+        // Later declarations name the original guarded judgment, not only
+        // its proved body. Several successive scopes must discharge those
+        // producer guards without consuming a source-level introduction.
+        let mut phase = phase;
+        let mut previous = entry_obligation.proposition().clone();
+        for _ in 0..4 {
+            let obligation = crate::kernel::ProofObligation::new(Proposition::Implies(
+                Box::new(previous),
+                Box::new(entry_kernel.clone()),
+            ));
+            let scope = phase
+                .begin_loop_entry_goal(proposition.clone(), &obligation)
+                .unwrap();
+            assert_eq!(scope.goal(), Some(&entry_kernel));
+            phase = scope
+                .apply_step(ProofStep::Normalize)
+                .unwrap()
+                .join()
+                .unwrap();
+            assert!(phase.facts().contains(obligation.proposition()));
+            previous = obligation.proposition().clone();
+        }
 
         let retained_root = root.clone();
         let before = fact_node_allocations();

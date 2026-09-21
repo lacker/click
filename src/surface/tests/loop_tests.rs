@@ -46,6 +46,12 @@ fn expanded_loop_phase_proofs_are_certificates() {
         ("c_decreases_count_up", "count_to_n"),
         // An explicit `close_invariants by` body.
         ("loop_invariant_body", "count"),
+        // Guarded entry judgments survive more than two declarations.
+        ("loop_three_invariant_initialization", "probe_fill"),
+        // Different source clauses can share one semantic fact at exit.
+        ("loop_semantically_duplicate_invariants", "probe_fill"),
+        // Readability certificates name a pointer field through void*.
+        ("fork_join_worker_direct_contract", "fill_range"),
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("mdtests")
@@ -64,7 +70,7 @@ fn expanded_loop_phase_proofs_are_certificates() {
             !expanded.contains("close_invariants();"),
             "{filename}: {expanded}"
         );
-        let parsed = crate::surface::parse(&expanded)
+        let parsed = crate::surface::verification::parse_c0_click_file(&expanded, &sources)
             .unwrap_or_else(|e| panic!("{filename}: {}", e.message()));
         let block = parsed
             .function_blocks()
@@ -2321,4 +2327,78 @@ fn whole_claim_expansion_reconstructs_nested_decided_branch_and_loop_match() {
     .expect("the reduced whole claim should expand");
     verify_c0_sources(&expanded, &sources)
         .expect("the reduced whole-claim expansion should independently verify");
+}
+
+#[test]
+fn loop_exit_duplicate_invariants_verify_and_reject_false_claims() {
+    let c = r#"int32 count(int32 n) {
+        int32 i = 0;
+        while (i < n) { i = i + 1; }
+        return i;
+    }"#;
+    let source = r#"
+        verifying "count.c";
+        int32 count(int32 n) {
+            requires 0 <= n and n <= 1000;
+            ensures result == n;
+        } by {
+            step(); step();
+            loop {
+                decreases n - i;
+                invariant 0 <= i and i <= n;
+                invariant 0 == 0;
+                invariant 1 == 1;
+                invariant forall (k: int32) { k == k };
+            }
+            step(); simp();
+        }
+    "#;
+    for source in [
+        source.to_owned(),
+        source.replace("invariant 1 == 1;", "invariant 0 == 0;"),
+    ] {
+        verify_c0_sources(&source, &[("count.c", c)]).unwrap();
+        let expanded =
+            expand_c0_claim_source(&source, &[("count.c", c)], "count", CProofClaim::Grouped)
+                .unwrap();
+        verify_c0_sources(&expanded, &[("count.c", c)]).unwrap();
+        let false_claim = source.replace("ensures result == n;", "ensures result == n + 1;");
+        let error = verify_c0_sources(&false_claim, &[("count.c", c)]).unwrap_err();
+        assert!(
+            error.message().contains("unclosed goal"),
+            "{}",
+            error.message()
+        );
+    }
+}
+
+#[test]
+fn changed_break_exit_does_not_label_head_invariants_as_exit_facts() {
+    let (source, sources) = loop_fixture("loop_body_break_exit_joined_state");
+    let sources = borrowed_sources(&sources);
+    let source = source.replace(
+        "invariant r == 0;",
+        r#"invariant r == 0;
+        invariant 0 == 0;
+        invariant 1 == 1;
+        invariant forall (k: int32) { k == k };"#,
+    );
+    verify_c0_sources(&source, &sources).unwrap();
+    let expanded =
+        expand_c0_claim_source(&source, &sources, "assign_then_break", CProofClaim::Grouped)
+            .unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+    for fact in ["r == 0", "at(loop(0).exit, r) == at(loop(0).exit, 0)"] {
+        let false_have = source.replace(
+            "    step();\n    simp();",
+            &format!("    have {fact} by {{ assumption(); }}\n    step();\n    simp();"),
+        );
+        assert_ne!(source, false_have);
+        let error = verify_c0_sources(&false_have, &sources).unwrap_err();
+        assert!(
+            error.message().contains("`assumption` requires"),
+            "{}",
+            error.message()
+        );
+    }
 }

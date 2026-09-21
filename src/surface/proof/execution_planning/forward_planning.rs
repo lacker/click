@@ -721,26 +721,12 @@ fn advance_execution_proof_statement(
                         .iter()
                         .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
                     {
-                        let mut invariant_targets =
-                            loop_invariant_export_facts(&transition.introduced_facts);
-                        let mut mapped_invariants = Vec::new();
-                        for surface in loop_clause.items().iter().map(StructuralItem::proposition) {
-                            let target = if let Some((_, target)) = mapped_invariants
-                                .iter()
-                                .find(|(mapped_surface, _)| *mapped_surface == surface)
-                            {
-                                *target
-                            } else {
-                                invariant_targets.next().ok_or_else(|| {
-                                    ClickError::new(format!(
-                                        "execution proof traversal loop({loop_index}) omitted an exported fact for an invariant"
-                                    ))
-                                })?
-                            };
-                            mapped_invariants.push((surface, target));
-                            let exit_surface = surface_at_snapshot(surface, &exit_point)?;
-                            surface_propositions.record_lowering(&exit_surface, target)?;
-                        }
+                        record_loop_exit_invariants(
+                            &mut surface_propositions,
+                            loop_clause,
+                            &transition.loop_invariant_correspondence,
+                            loop_index,
+                        )?;
                     }
                     if let CStatement::While { condition, .. } = statement {
                         let exit_condition =
