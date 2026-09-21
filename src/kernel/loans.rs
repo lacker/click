@@ -337,13 +337,18 @@ pub(crate) fn protected_range_proven_overlapping(
 ) -> bool {
     if query.base() == protected.base() {
         // One object at one base term: element offsets scaled to bytes are
-        // enough, and the kernel's arithmetic decides them exactly.
+        // enough, and the kernel's arithmetic decides them exactly. Both
+        // endpoints are the signed numbers `memory_range_byte_count` scales;
+        // zero-extending them put `p[-1..1]` four gigabytes above `p[0..1]`
+        // and reported the two as separate. A range that is not forward has
+        // no bounds to compare and goes on to `byte_range` below, exactly as
+        // `concrete_memory_range_bounds` answers `None` for one.
         let byte_bounds = |range: &CMemoryRange| {
             let width = i64::from(range.element_width());
-            Some((
-                i64::from(range.start().as_const()?).checked_mul(width)?,
-                i64::from(range.end().as_const()?).checked_mul(width)?,
-            ))
+            let start = signed_bitvector_constant(range.start())?;
+            let end = signed_bitvector_constant(range.end())?;
+            (start < end).then_some(())?;
+            Some((start.checked_mul(width)?, end.checked_mul(width)?))
         };
         if let (Some((query_start, query_end)), Some((protected_start, protected_end))) =
             (byte_bounds(query), byte_bounds(protected))
@@ -6541,6 +6546,56 @@ mod tests {
             ledger.permits_memory_access_with_assumptions(&below, &assumptions),
             Ok(())
         );
+    }
+
+    /// The same-base constant fast path in `protected_range_proven_overlapping`
+    /// short-circuits above the sound `byte_range` route, so reading an
+    /// endpoint as `u32` there is a final wrong answer. `p[-1..1]` and
+    /// `p[0..2]` share element `0`; zero-extension put the query's start four
+    /// gigabytes above the protected range's end and called them separate.
+    #[test]
+    fn a_protected_range_is_reached_from_below_its_base() {
+        let assumptions = PureFactContext::new();
+        let protected = range(0, 2);
+        for query in [range(u32::MAX, 1), range(u32::MAX, 2), range(u32::MAX, 8)] {
+            assert!(protected_range_proven_overlapping(
+                &query,
+                &protected,
+                &assumptions
+            ));
+            assert!(protected_range_proven_overlapping(
+                &protected,
+                &query,
+                &assumptions
+            ));
+        }
+    }
+
+    /// The other polarity: ranges that really are separate stay separate,
+    /// including two that both start below the base, and a backwards range —
+    /// which has no bounds to compare — is not reported as overlapping
+    /// everything.
+    #[test]
+    fn ranges_below_a_base_that_do_not_meet_are_still_separate() {
+        let assumptions = PureFactContext::new();
+        let protected = range(0, 2);
+        for query in [
+            range(u32::MAX - 2, u32::MAX),
+            range(2, 4),
+            range(u32::MAX, 0),
+        ] {
+            assert!(!protected_range_proven_overlapping(
+                &query,
+                &protected,
+                &assumptions
+            ));
+        }
+        // Two ranges wholly below the base, one inside the other.
+        assert!(protected_range_proven_overlapping(
+            &range(u32::MAX - 3, u32::MAX - 2),
+            &range(u32::MAX - 4, u32::MAX),
+            &assumptions
+        ));
     }
 
     fn composite(name: &str, own: bool) -> CResourceFact {
