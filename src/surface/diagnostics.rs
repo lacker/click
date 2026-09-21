@@ -1461,7 +1461,7 @@ pub(super) fn describe_resource_version_mismatch(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> Option<String> {
-    let (_, stop) = explanation.outcome.blocking_step()?;
+    let (at, stop) = explanation.outcome.blocking_step()?;
     if stop.reason == resource_tracker::StopReason::HistoryEnds {
         return Some(format!(
             "the recorded execution does not connect {since} to here."
@@ -1471,9 +1471,17 @@ pub(super) fn describe_resource_version_mismatch(
         resource_tracker::OwnedResource::Block(block) => {
             describe_block_fact_stop(block, &stop.change, parameters, arguments)
         }
-        resource_tracker::OwnedResource::Cell { pointer, .. } => {
-            describe_cell_version_stop(pointer, stop, since, parameters, arguments)
-        }
+        resource_tracker::OwnedResource::Cell { pointer, bytes } => describe_cell_version_stop(
+            pointer,
+            AccessWidths {
+                read: *bytes,
+                store: recorded_store_byte_width(at),
+            },
+            stop,
+            since,
+            parameters,
+            arguments,
+        ),
         // No term names a memory footprint, so no goal or premise a refusal
         // compares reads one. There is nothing to say rather than something
         // vague to say.
@@ -1629,9 +1637,39 @@ fn describe_block_fact_stop(
     )
 }
 
+/// The two access widths a separation question is really about, carried to
+/// the renderer beside the two addresses.
+///
+/// Separation is a question about bytes, not addresses
+/// (`docs/internals/resource-tracker.md`, "The byte question, which is not one
+/// of them"), so a refusal that names only the addresses names half of what
+/// was compared. `read` is the width the resource was asked about with, and
+/// may be the widest scalar where the load recorded none — over-stating it can
+/// only withhold a repair, never invent one. `store` is exact where it is
+/// present: it is read off the recorded edge, which carries the value.
+#[derive(Clone, Copy)]
+struct AccessWidths {
+    read: u32,
+    store: Option<u32>,
+}
+
+/// How many bytes the blocking step wrote.
+///
+/// `Change::Store` keeps the address and drops the width, and the width is
+/// the whole byte question, so it is read back off the recorded edge the walk
+/// stopped below — the same edge the tracker classified. `None` for every
+/// other step, and for a point that records no edge at all.
+fn recorded_store_byte_width(at: Option<&resource_tracker::ProgramPoint>) -> Option<u32> {
+    match at?.snapshot().derivation()?.as_ref() {
+        crate::kernel::CMemoryDerivation::Store { value, .. } => Some(value.c_type().byte_width()),
+        _ => None,
+    }
+}
+
 /// One cell, and the step that ended the stretch its version was known over.
 fn describe_cell_version_stop(
     pointer: &Pointer,
+    widths: AccessWidths,
     stop: &resource_tracker::Stop,
     since: &str,
     parameters: &[syntax::C0Parameter],
@@ -1653,13 +1691,14 @@ fn describe_cell_version_stop(
     };
     format!(
         "{named} {changed} since {since}: {}",
-        describe_cell_cause(cell.as_ref(), stop, certain, parameters, arguments)
+        describe_cell_cause(cell.as_ref(), widths, stop, certain, parameters, arguments)
     )
 }
 
 /// Why this cell's chain broke, and the clause that would mend it.
 fn describe_cell_cause(
     cell: Option<&SourceCell>,
+    widths: AccessWidths,
     stop: &resource_tracker::Stop,
     certain: bool,
     parameters: &[syntax::C0Parameter],
@@ -1667,7 +1706,7 @@ fn describe_cell_cause(
 ) -> String {
     match &stop.change {
         resource_tracker::Change::Store { pointer } => {
-            describe_store_cause(cell, pointer, certain, parameters, arguments)
+            describe_store_cause(cell, pointer, widths, certain, parameters, arguments)
         }
         resource_tracker::Change::Call { ranges } => {
             describe_havoc_cause("the call in between", cell, ranges, parameters, arguments)
@@ -1730,9 +1769,17 @@ fn describe_cell_cause(
 /// they address two objects. Both are printed with the reader's own terms,
 /// and only when the terms are the reader's — an index the lowering owns is
 /// spelled `a[…]`, and no inequality is proposed over a name nobody wrote.
+///
+/// An index inequality is offered only where the indexes really are the
+/// undecided part. A store wider than the array's element reaches past the
+/// element it names, so differing indexes do not separate it from the
+/// neighbour it covers, and asking for `i != j` there sends the reader to
+/// state a premise that will not close the goal. That case is answered by
+/// [`describe_wide_store_byte_reach`] instead.
 fn describe_store_cause(
     cell: Option<&SourceCell>,
     written: &Pointer,
+    widths: AccessWidths,
     certain: bool,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -1761,22 +1808,7 @@ fn describe_store_cause(
         };
     };
     if cell.object == store.object {
-        return match (cell.named_index(), store.named_index()) {
-            (Some(read), Some(written)) if read != written => format!(
-                "the store to `{}` may have written it. If `{read}` and `{written}` differ, state \
-                 `{read} != {written}`.",
-                store.text()
-            ),
-            (Some(read), _) => format!(
-                "the store to `{}` may have written it. Nothing states that its index differs \
-                 from `{read}`.",
-                store.text()
-            ),
-            _ => format!(
-                "the store to `{}` may have written it, and nothing tells the two indexes apart.",
-                store.text()
-            ),
-        };
+        return describe_same_object_store_cause(cell, store, widths);
     }
     let repair = match (cell.element_range(), store.element_range()) {
         (Some(read), Some(written)) => format!(" {}", spelled_separation_repair(&read, &written)),
@@ -1792,6 +1824,129 @@ fn describe_store_cause(
         cell.object,
         store.object
     )
+}
+
+/// A read and a store that address one object, where the only thing that can
+/// tell them apart is where they sit inside it.
+///
+/// The byte question is asked before the address one: a store the reader
+/// cannot separate by index at all must not be answered with an index
+/// inequality. Where the store fits inside the element it names, the indexes
+/// really are the undecided part and the inequality is the answer.
+fn describe_same_object_store_cause(
+    cell: &SourceCell,
+    store: &SourceCell,
+    widths: AccessWidths,
+) -> String {
+    match (cell.named_index(), store.named_index()) {
+        (Some(read), Some(written)) if read != written => {
+            if let Some(byte_reach) =
+                describe_wide_store_byte_reach(cell, store, read, written, widths)
+            {
+                return byte_reach;
+            }
+            format!(
+                "the store to `{}` may have written it. If `{read}` and `{written}` differ, state \
+                 `{read} != {written}`.",
+                store.text()
+            )
+        }
+        (Some(read), _) => format!(
+            "the store to `{}` may have written it. Nothing states that its index differs from \
+             `{read}`.",
+            store.text()
+        ),
+        _ => format!(
+            "the store to `{}` may have written it, and nothing tells the two indexes apart.",
+            store.text()
+        ),
+    }
+}
+
+/// [`describe_same_object_store_cause`] driven from the surface tests with
+/// the plain data the byte question is asked with: one object, the two
+/// element spellings, and the three widths. The renderer's own types stay
+/// private; this is the shape a test can state a case in.
+#[cfg(test)]
+pub(in crate::surface) fn store_cause_between_indexes_for_tests(
+    object: &str,
+    read_index: &str,
+    written_index: &str,
+    element_bytes: Option<u32>,
+    read_bytes: u32,
+    store_bytes: Option<u32>,
+) -> String {
+    let spelled = |index: &str| SourceCell {
+        object: object.to_string(),
+        index: CellIndex::Named(index.to_string()),
+        element_bytes,
+    };
+    describe_same_object_store_cause(
+        &spelled(read_index),
+        &spelled(written_index),
+        AccessWidths {
+            read: read_bytes,
+            store: store_bytes,
+        },
+    )
+}
+
+/// The refusal for a store whose *bytes* reach this cell, as opposed to one
+/// whose *address* is merely undecided. `None` where the store fits inside
+/// the element it names, which is the case the index inequality answers.
+///
+/// A store wider than the array's element covers the element it names and the
+/// ones above it, so `i != j` leaves `i == j + 1` open and states a premise
+/// that does not close the goal. What does separate them is the rule
+/// `one_element_gap_separates_bytes` runs
+/// (`src/kernel/reasoning/memory_resolution.rs`): an address ladder
+/// establishes a gap of one element, a bare disequality leaves the direction
+/// open so both accesses must fit in it, and a strict order fixes the
+/// direction so only the *lower* access must — the upper one extends away
+/// from the gap. So the repair is the strict order that puts the read below
+/// the store, and it is printed only where the read fits in one element,
+/// because that is the only case the rule clears. Where the read is wider
+/// than an element too — including where its width is the widest-scalar
+/// fallback rather than a recorded one — no order is offered and the text
+/// says what an order would have to establish.
+fn describe_wide_store_byte_reach(
+    cell: &SourceCell,
+    store: &SourceCell,
+    read_index: &str,
+    written_index: &str,
+    widths: AccessWidths,
+) -> Option<String> {
+    let element = cell.element_bytes.filter(|bytes| *bytes > 0)?;
+    // One object is one element width; comparing the two spellings is cheap
+    // insurance against a pair that reached here through different bases.
+    if store.element_bytes != cell.element_bytes {
+        return None;
+    }
+    let store_bytes = widths.store?;
+    if store_bytes <= element {
+        return None;
+    }
+    let spanned = store_bytes.div_ceil(element);
+    let cause = format!(
+        "the store to `{}` writes {store_bytes} bytes where `{}` has {element}-byte elements, so \
+         it covers the {spanned} elements from `{}` up and `{read_index} != {written_index}` \
+         rules out only the first of them.",
+        store.text(),
+        store.object,
+        store.text()
+    );
+    Some(if widths.read <= element {
+        format!(
+            "{cause} State `{read_index} < {written_index}`, which puts `{}` below every byte the \
+             store writes.",
+            cell.text()
+        )
+    } else {
+        format!(
+            "{cause} Only a stated order between the indexes can separate them, and it has to put \
+             an access of at most {element} bytes below the other."
+        )
+    })
 }
 
 /// A call or a loop, which declares the ranges it may write. The repair is a
@@ -1932,6 +2087,12 @@ enum CellIndex {
 struct SourceCell {
     object: String,
     index: CellIndex,
+    /// The width of one element of the object the index counts in, where the
+    /// spelling came from a declared pointer or array type. `None` where the
+    /// address was spelled through a block name rather than a typed base, and
+    /// then no byte question is asked of it: a width nobody declared is not
+    /// one a refusal may reason from.
+    element_bytes: Option<u32>,
 }
 
 impl SourceCell {
@@ -1999,13 +2160,12 @@ fn describe_source_cell(
             return Some(SourceCell {
                 object: field,
                 index: CellIndex::Whole,
+                element_bytes: None,
             });
         }
-        let Some(index) = diagnostic_pointer_element_index_from_base(
-            pointer,
-            base,
-            diagnostic_parameter_element_width(parameter),
-        ) else {
+        let element_width = diagnostic_parameter_element_width(parameter);
+        let Some(index) = diagnostic_pointer_element_index_from_base(pointer, base, element_width)
+        else {
             continue;
         };
         let spelled = SourceCell {
@@ -2017,6 +2177,7 @@ fn describe_source_cell(
             } else {
                 CellIndex::Unnamed
             },
+            element_bytes: u32::try_from(element_width).ok(),
         };
         if best
             .as_ref()
@@ -2039,20 +2200,24 @@ fn describe_source_cell(
         PointerOffsetTerm::Constant(0) if pointer.block.starts_with("local:") => Some(SourceCell {
             object: declared,
             index: CellIndex::Whole,
+            element_bytes: None,
         }),
         PointerOffsetTerm::Constant(0) => Some(SourceCell {
             object: declared,
             index: CellIndex::Named("0".to_string()),
+            element_bytes: None,
         }),
         PointerOffsetTerm::Constant(_) => Some(SourceCell {
             object: format!("{declared}+{}", describe_pointer_offset(&pointer.offset)),
             index: CellIndex::Whole,
+            element_bytes: None,
         }),
         // Any other offset is a term the lowering owns; the object is still
         // the reader's, so it is named and the index is not.
         _ => Some(SourceCell {
             object: declared,
             index: CellIndex::Unnamed,
+            element_bytes: None,
         }),
     }
 }

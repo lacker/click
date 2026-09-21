@@ -835,3 +835,76 @@ fn identical_load_renders_name_distinct_snapshot_loads() {
         "{message}"
     );
 }
+
+/// The store-cause renderer, driven directly at the two cases it now
+/// distinguishes.
+///
+/// Separation is a question about bytes, not addresses, so a store wider than
+/// the array's element must not be answered with an index inequality: it
+/// covers the element it names and the one above it, and `i != j` leaves
+/// `i == j + 1` open. The order it names instead is the one the gap rule
+/// clears, and `mdtests/an_index_order_separates_a_narrow_read_from_a_wide_store.md`
+/// is that order verifying. Where the store fits in an element the indexes
+/// really are the undecided part, and that sentence is unchanged.
+#[test]
+fn a_store_wider_than_an_element_is_refused_by_bytes_not_by_index() {
+    let byte_reach = super::diagnostics::store_cause_between_indexes_for_tests(
+        "a",
+        "i",
+        "j",
+        Some(4),
+        4,
+        Some(8),
+    );
+    assert_eq!(
+        byte_reach,
+        "the store to `a[j]` writes 8 bytes where `a` has 4-byte elements, so it covers the 2 \
+         elements from `a[j]` up and `i != j` rules out only the first of them. State `i < j`, \
+         which puts `a[i]` below every byte the store writes."
+    );
+
+    // A read that does not fit in an element either has no order to be put
+    // below the store by, so none is offered. The widest-scalar fallback
+    // reaches this arm too, which is why it may not promise a repair.
+    let both_wide = super::diagnostics::store_cause_between_indexes_for_tests(
+        "a",
+        "i",
+        "j",
+        Some(4),
+        8,
+        Some(8),
+    );
+    assert_eq!(
+        both_wide,
+        "the store to `a[j]` writes 8 bytes where `a` has 4-byte elements, so it covers the 2 \
+         elements from `a[j]` up and `i != j` rules out only the first of them. Only a stated \
+         order between the indexes can separate them, and it has to put an access of at most 4 \
+         bytes below the other."
+    );
+
+    // The undecided-index case, unregressed: a store that fits in the element
+    // it names is separated by the index inequality, and that is what is
+    // printed. Width unavailable falls here too, because a width nobody
+    // recorded is not one a refusal may reason from.
+    let undecided_index = "the store to `a[j]` may have written it. If `i` and `j` differ, state \
+                           `i != j`.";
+    assert_eq!(
+        super::diagnostics::store_cause_between_indexes_for_tests(
+            "a",
+            "i",
+            "j",
+            Some(4),
+            4,
+            Some(4)
+        ),
+        undecided_index
+    );
+    assert_eq!(
+        super::diagnostics::store_cause_between_indexes_for_tests("a", "i", "j", Some(4), 4, None),
+        undecided_index
+    );
+    assert_eq!(
+        super::diagnostics::store_cause_between_indexes_for_tests("a", "i", "j", None, 4, Some(8)),
+        undecided_index
+    );
+}
