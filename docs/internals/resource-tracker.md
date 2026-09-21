@@ -185,33 +185,70 @@ must not answer the next one's question.
 
 ## One rule, and its answers
 
-There is one decider, `resource_tracker::step_effect::affects`, and both walks
-call it: "does this recorded step affect this resource?", answered `Affected`,
+There is one decider, `resource_tracker::step_effect::affects`, and every walk
+calls it: "does this recorded step affect this resource?", answered `Affected`,
 `Separate(how)` or `NotShownSeparate(check)`. A step kind is therefore answered
 once, and a new one has to be answered for every resource before it compiles.
 `Separate` carries what justified it — a checkable hop for a cell, a structural
-claim about objects for a block — so `explain` and retained evidence say only
-what was actually established.
+claim about objects for a block, the step's own write set missing every range
+for a footprint — so `explain` and retained evidence say only what was actually
+established.
 
-| Recorded step | A cell | A block, as an array argument |
-| --- | --- | --- |
-| `Store` | separate on proven-distinct blocks, a common-base offset inequality, typed `separate(..)` evidence, an explicit range, general distinctness, or two owned members of one composition | separate **only** on `PointerBlock::proven_distinct` |
-| `BlockDeclared` | separate: it writes nothing | separate when the declared object is proven distinct: it has its own `blocks` key, so this block's extent is the entry it was |
-| `HeapAllocationPending` | separate | separate: a request with no address yet records nothing a read of a block consults |
-| `ContractAllocationClaimsChanged` | separate | **stops** |
-| `CellsForgotten` | separate | **stops**: the state is the same, the cell map is not |
-| `HeapAllocated` | separate when the block differs | separate when the fresh object is proven distinct |
-| `LocalLifetimeEnded` | separate on proven distinctness | separate when the retired object is proven distinct |
-| `HeapFreed` | separate on three separation ladders | separate when the released allocation's object is proven distinct |
-| `CallHavoc` | separate on range disjointness | separate when every declared range's object is proven distinct |
-| `LoopHavoc(Some)` | separate under the extended-bridging and explicit-check gates, and never on the naming path | separate when every declared range's object is proven distinct |
-| `LoopHavoc(None)` | never separate | never separate |
+| Recorded step | A cell | A block, as an array argument | A stated footprint |
+| --- | --- | --- | --- |
+| `Store` | separate on proven-distinct blocks, a common-base offset inequality, typed `separate(..)` evidence, an explicit range, general distinctness, or two owned members of one composition | separate **only** on `PointerBlock::proven_distinct` | separate when the written bytes miss every range |
+| `BlockDeclared` | separate under the extended-bridging gate: it writes nothing | separate when the declared object is proven distinct: it has its own `blocks` key, so this block's extent is the entry it was | separate: it writes nothing |
+| `HeapAllocationPending` | separate under the extended-bridging gate | separate: a request with no address yet records nothing a read of a block consults | separate: it writes nothing |
+| `ContractAllocationClaimsChanged` | separate under the extended-bridging gate | **stops** | separate: it writes nothing |
+| `CellsForgotten` | separate under the extended-bridging gate | **stops**: the state is the same, the cell map is not | separate: it writes nothing |
+| `HeapAllocated` | separate under the extended-bridging gate when the block differs | separate when the fresh object is proven distinct | separate: a stated footprint names objects that already existed, so the fresh one's bytes are in no range of it |
+| `LocalLifetimeEnded` | separate under the extended-bridging gate, on general distinctness | separate when the retired object is proven distinct | separate when the retired object is proven distinct from the object every range is in |
+| `HeapFreed` | separate on three separation ladders, all inside the extended-bridging gate | separate when the released allocation's object is proven distinct | separate when the released bytes miss every range |
+| `CallHavoc` | separate on range disjointness | separate when every declared range's object is proven distinct | separate when every declared range misses every range |
+| `LoopHavoc(Some)` | separate under the extended-bridging and explicit-check gates, and never on the naming path | separate when every declared range's object is proven distinct | separate when every declared range misses every range |
+| `LoopHavoc(None)` | never separate | never separate | never separate |
 
 Two kinds still refuse a block outright, and both for want of a name on the
 edge: `ContractAllocationClaimsChanged` names no allocation, and a contract
 claim may cover a subrange of `ExternalArgument` memory; `CellsForgotten` names
 no cell, so nothing says the values it dropped were not this block's. Recording
 what they concern is what would settle either.
+
+Where the cell column names a gate, the answer is one a scope decides rather
+than the edge. `extended_dag_bridging_active` and `explicit_dag_check_active`
+(`src/kernel/memory_provenance.rs`) are scoped flags, set for the duration of
+the memory-load prover and of explicit certificate validation and cleared
+outside them. The wider answers are confined to those scopes because the
+narrower ones are what execution pruning, load canonicalization and `simp`
+planning check a certified form against, and a rule that widened everywhere at
+once would make generation and check of the same query disagree. So the gate
+belongs on the row: outside the scope the cell arm is the pre-arc walk, which
+crosses no declaration, no forgotten-cell edge and no free, and inside it the
+rows above hold. The two arms that then still answer `Affected` say so either
+way — a free of this very allocation is a change, gate or no gate — because a
+scope may withdraw a claim of separation and may not withdraw a recorded write.
+
+The `Store` row is the one that is gated rung by rung rather than whole.
+Proven-distinct blocks, the common-base offset inequality and the owned
+composition are spent in every scope; the typed `separate(..)` evidence and the
+explicit range are spent under the explicit-check gate, and general
+distinctness under the extended-bridging one. Two of those rungs also stand or
+fall with the byte question — `access_byte_overlap` below — because they prove
+two addresses differ and a gap narrower than the wider access is no separation
+at all.
+
+The third column is `footprint_effect`, the arm `Resource::Ranges` and
+`Resource::AnyMemory` reach. A footprint is a list of byte ranges a resource
+fact was derived from, and the answer is spent *dropping* that fact, never
+naming a term and never retained as a premise. That is why it may be coarser
+than the cell arm and is: a write through a block that may be any object
+(`memory_block_may_alias`) affects every footprint outright, rather than being
+asked whether that block is proven distinct from each range. It is also why the
+arm is handed no fact context — for the opposite reason to the block arm's,
+which is that removing a resource fact more often is always sound, while
+naming a term with an answer one path's facts decided is not. `AnyMemory` is
+the footprint the kernel could not name: nothing bounds what it covers, so only
+the kinds that write no byte are separate from it, and every other kind stops.
 
 The difference that stays is *what evidence a resource may spend*: a block may
 use only the kernel's structural separation, because its answer is embedded in a
@@ -314,11 +351,13 @@ may carry it, since a span is path-independent.
 
 ## Every site that decides whether a change matters
 
-This is the map of the kernel outside `src/kernel/resource_tracker/`, taken
-against `origin/master` **48f960f8**. It exists so that the next reader does
-not have to rediscover which of these sites are copies of the tracker's rule
-and which are different questions wearing similar predicates. Line numbers
-drift; the function names do not.
+This is the map of the kernel outside `src/kernel/resource_tracker/`. It exists
+so that the next reader does not have to rediscover which of these sites are
+copies of the tracker's rule and which are different questions wearing similar
+predicates. It names functions and no commit, as the rest of
+`docs/internals/` does: a commit pin records that the page was true once, which
+is the one claim a reader cannot check against the tree in front of them, while
+a function name is something `grep` either finds or does not.
 
 The four classes:
 
@@ -335,10 +374,10 @@ The four classes:
 
 | Site | Class | Note |
 | --- | --- | --- |
-| `ResourceContext::invalidate_memory_support` → `memory_derivation_affects_footprint` `src/kernel/primitives/resource_algebra.rs` | **routed** | Walks the edges between two snapshots and drops every resource projection a step could have written. It now asks `affects` about `Resource::Ranges` for a stated footprint and `Resource::AnyMemory` for one the kernel could not name. |
+| `ResourceContext::invalidate_memory_support` → `memory_derivation_affects_footprint` `src/kernel/primitives/resource_algebra.rs` | **routed** | Walks the edges between two snapshots and drops every resource projection a step could have written. It now asks `affects` about `Resource::Ranges` for a stated footprint and `Resource::AnyMemory` for one the kernel could not name, and keeps the projection only where the answer is `Separate(Footprint(..))` — so this site is where `footprint_effect` is spent, and the only place it is. |
 | `ResourceContext::entries_affected_by_memory_derivation` | another question | Chooses *candidates* from the interval index; the rule then decides. Its one obligation is to stay a superset of the steps `affects` does not answer `Separate` for — narrowing it would silently keep a stale projection. |
 | `statement_call_havoc_views` `src/kernel/proof/execution.rs` | another question | Collects the call nodes between two states; asks nothing about a resource. |
-| `matching_recomputed_call_havoc_views`, `c_memories_definitionally_equal` `src/kernel/api/contract_certification/contract_claims.rs` | another question | Matches two derivation chains edge for edge, to certify a recomputation. A whole-state equality, not a footprint. It skips the same `local:` blocks as its kernel twin and by the same one filter — below. |
+| `matching_recomputed_call_havoc_views`, `c_memories_definitionally_equal` `src/kernel/api/contract_certification/contract_claims.rs` | another question | Matches two derivation chains edge for edge, to certify a recomputation. A whole-state equality, not a footprint. The second skips the `local:` blocks its kernel twin skips, and by the same one filter — below. The chain walk is where the two part: `transparent_base` descends past an edge that recomputation would not have minted — a store or a declaration whose block is spelled `local:`, a store whose value is the base's own load at that very pointer (a tactic materializing a symbolic load, which independent certification never does), and the two edges that name nothing, `ContractAllocationClaimsChanged` and `CellsForgotten`. That is a structural skip over *edges*, decided by spelling and by interned identity, and it is not the pointerless filter the twin spends; a `local:` name is what it reads, so an addressed local's store is stepped past here as well. Nothing is claimed about a version by descending, because the pair the descent reaches is still compared in full. |
 
 ### The eager half: a step applying its own write set
 
@@ -348,15 +387,16 @@ edge exists. Each decides the same abstract question as the matching arm of
 
 | Site | Class | Why it differs |
 | --- | --- | --- |
-| `CMemory::with_call_memory_havoc` retain `src/kernel/primitives/memory_state.rs` | disagrees | Keeps a cell on `local:` **or** `ranges_proven_disjoint_from_pointer`. The rule's `CallHavoc` arm has neither the `local:` disjunct nor the plain variant: it reads typed range evidence and the `_for_frame` expansion, which looks through composite definitions. Weaker in one direction, stronger in the other. The `local:` disjunct is sound only because a call's checked write set can never be based in a `local:` block — nothing in this function says so, and passing `&t` to a callee that owns `t[0..1]` is refused for want of `owns local:t@0[0..1]`, which is what enforces it today. |
-| `CMemory::matches_call_memory_havoc_result` | disagrees | The same retain rule again, for the checker that re-derives the producer. It must stay identical to the producer, not to the rule. |
-| `CMemory::with_loop_memory_havoc_preserving_loans` retain | disagrees | Preserved-block membership plus `LoanLedger::permits_memory_access`. An ownership question, with fail-open polarity, and no pointer-alias reasoning at all. |
-| `CMemory::with_interface_memory_havoc_preserving_loans` retain | disagrees | Byte for byte the loop retain, in a second function. A join records no edge, so no rule covers it. |
-| `CMemory::without_possible_aliasing_cells` | disagrees | `pointers_proven_distinct_for_memory_resolution`, **or** `pointers_directly_disjoint_by_range`, **or** `owned_composition_store_separated_evidence`. The second exists only here, deliberately: it is a range-index scan the rule's hot `Store` arm must not pay for. The third is shared with the rule's `Store` arm and the two transport sites, and it has to be here too: a cell this function drops is lost to every later route, because the two snapshots then differ at the read's own address. |
+| `call_havoc_keeps_cell` `src/kernel/primitives/memory_state.rs` | disagrees | Keeps a cell on `local:` **or** `ranges_proven_disjoint_from_pointer`. The rule's `CallHavoc` arm has neither the `local:` disjunct nor the plain variant: it reads typed range evidence and the `_for_frame` expansion, which looks through composite definitions. Weaker in one direction, stronger in the other. The `local:` disjunct is sound only because a call's checked write set can never be based in a `local:` block — a write set is the callee's owned ranges resolved at the call site, and passing `&t` to a callee that owns `t[0..1]` is refused for want of `owns local:t@0[0..1]`, which is what enforces it today. |
+| `CMemory::with_call_memory_havoc`, `CMemory::matches_call_memory_havoc_result` | disagrees | The producer that applies a call's write set and the checker that re-derives what it would have written. Both now ask `call_havoc_keeps_cell`, so the retain rule is one function: the checker has to stay identical to the producer, not to the rule, and sharing the function is what makes that structural instead of remembered. |
+| `loan_preserving_havoc_keeps_cell` | disagrees | Preserved-block membership **or** bytes `LoanLedger::permits_memory_access` refuses a write through. An ownership question, with fail-open polarity, and no pointer-alias reasoning at all — a loop body or a joined branch arm may write through any pointer it can reach, so separation has nothing to decide. The width it asks the ledger about is the wider of the cell's value and the widest typed overlay recorded there (`union_overlay_widths`), and an unknown width fails closed. |
+| `CMemory::with_loop_memory_havoc_preserving_loans`, `CMemory::with_interface_memory_havoc_preserving_loans` | disagrees | The loop head and the interface join, which both ask `loan_preserving_havoc_keeps_cell`. Neither records an edge, so no rule covers either; what used to be the same retain written twice is now one function asked twice. |
+| `CMemory::forget_zeroed_allocations_written_by` | disagrees | The other half of a call's write set: it drops the zeroed reading of every allocation the declared ranges may reach, because "reads as zero where unwritten" is a claim about contents that an unseen write invalidates exactly as it invalidates a stored cell. It drops the status for the whole allocation rather than narrowing it to a prefix, since a write set bounds where a callee may store and not where it did. The rule has no arm for it: a zeroed reading is not a resource the tracker names. |
+| `CMemory::without_possible_aliasing_cells` | disagrees | A store's own eager drop, and the one site on this list that shares the rule's byte question: the address ladder is conjoined with `access_byte_overlap`, exactly as the rule's `Store` arm conjoins it, so a ladder that proves two addresses differ may stand in for byte separation only where the gap it establishes clears both accesses. The ladder itself is `pointers_proven_distinct_for_memory_resolution`, **or** `pointers_proven_disjoint_by_explicit_range_for_memory_resolution`, **or** `pointers_directly_disjoint_by_range`, **or** `owned_composition_store_separated_evidence`. The two range rungs are the cross-base pairs offset reasoning cannot decide and the byte question answers `Unknown` for; they are a range-index scan the rule's hot `Store` arm must not pay for. The last is shared with the rule's `Store` arm and the two transport sites, and it has to be here too: a cell this function drops is lost to every later route, because the two snapshots then differ at the read's own address. |
 | `CMemory::without_field_cells` | disagrees | Same-block equality and a constant byte interval. Across blocks it removes too little, which for a copy is the safe direction; a completeness difference only. |
-| `heap_allocation_may_contain_pointer` | disagrees | `base.block != pointer.block` answers "not contained", which is fail-open on a spelling. The rule's `HeapFreed` arm is three separation ladders instead. Reaching it needs a freed allocation whose base block is not proven distinct from a live cell's block. |
+| `heap_allocation_may_contain_pointer`, `CMemory::freed_heap_allocation_may_contain` | disagrees | `base.block != pointer.block` answers "not contained", which is fail-open on a spelling. The rule's `HeapFreed` arm is three separation ladders instead. Reaching it needs a freed allocation whose base block is not proven distinct from a live cell's block. The second is the same test over every deallocated allocation, and it is what the zeroed drop, the availability check below and contract certification all read, so the spelling is at least in one place. |
 | loop frame assembly `src/kernel/loops.rs`, `collect_loop_effect_check_obligations`, the multi-exit join | disagrees | Each reinstates or drops cells against the loop's *stated* effect summaries rather than a recorded edge, with a hardcoded `local:` skip. |
-| `memory_diff_is_covered_by_changed_pointers`, `memory_diff_is_covered_by_ranges` `src/kernel/proof/execution.rs` | another question | The containment direction: is every observed change *inside* the declared write set. The tracker has no containment question. |
+| `memory_diff_is_covered_by_pointers`, `memory_diff_is_covered_by_ranges` `src/kernel/proof/execution.rs` | another question | The containment direction: is every observed change *inside* the declared write set. The tracker has no containment question. |
 
 ### State versus state: "do these two snapshots agree about this read"
 
@@ -368,10 +408,16 @@ them without losing every pair the DAG does not connect.
 | Site | Class | Note |
 | --- | --- | --- |
 | `c_memory_load_is_directly_unchanged`, `memories_directly_match_for_pointer_load` `src/kernel/memory_provenance.rs` | disagrees | The transport rule. It already asks the tracker as one disjunct — two snapshots that name the cell by one point hold the same cell — and the rest reads `CMemoryMutatesOnly`, `CMemoryEffectSummary` and `CHeapAllocationFreed` over *stated* endpoints. Its per-write ladder is the same four predicates the rule's `Store` arm uses, applied to a stated write list. |
-| `memories_match_for_pointer_load` `src/kernel/reasoning/memory_resolution.rs` | disagrees | Assumption-free structural agreement about one load: equal havoc markers, equal extent for the load's block, and equal cells under `observable_by_load`. Decides pairs with no common ancestor. |
-| `memory_snapshots_match_for_resolution`, `memories_match_for_pointer_load_bounded_alias`, `memories_match_for_pointer_load_under_assumptions` `src/kernel/reasoning/memory_resolution.rs` | disagrees | The same question with assumptions: every cell the two snapshots differ on must be proven distinct from the load. All three refuse a load whose own block is `local:`, and all three select the cells to check with `cell_is_observable_by_load`, the one filter — *not*, as they used to, by dropping every differing `local:` cell unasked. See below. |
+| `memories_match_for_pointer_load` `src/kernel/reasoning/memory_resolution.rs` | disagrees | Assumption-free structural agreement about one load: equal havoc markers, an equal extent entry for the load's own block, agreement about the retirement tombstones, and equal cells and union cells under `observable_by_load`. Decides pairs with no common ancestor. |
+| `memory_snapshots_match_for_resolution`, `memory_snapshots_proven_equal_at_pointer`, `memories_match_for_pointer_load_bounded_alias`, `memories_match_for_pointer_load_under_assumptions` `src/kernel/reasoning/memory_resolution.rs` | disagrees | The same question with assumptions: every cell the two snapshots differ on must both miss the load's bytes and be proven distinct from the load. All refuse a load whose own block is `local:`, and all select the cells to check with `cell_is_observable_by_load`, the one filter — *not*, as they used to, by dropping every differing `local:` cell unasked. See below. The second is a thin name for the first, so that a caller asking "are these two snapshots one state as far as this pointer is concerned" reads as that question rather than as a resolution internal. |
+| `snapshot_objects_agree`, `retirements_agree_for_load` | separation | The object half, as against the values in the cells: an extent is what says an object is there and how big it is, and a tombstone is the only record that an automatic object's lifetime ended once its cells are gone. The first is the assumption-carrying comparisons' extent check, and the only extents it leaves out are the ones `local_block_no_pointer_can_reach` allows. The second is the tombstone check, which all four comparisons ask, and it allows a difference only where the load's block is proven distinct from the retired object or no pointer value in the program designates it — two exclusions, each catching what the other does not. A load through a stale alias is exactly the load these comparisons are asked about, which is why neither half may be skipped on a spelling. |
+| `differing_cell_bytes_miss_the_load`, `differing_cell_byte_width` | separation | The byte half, asked of each differing cell before the address ladder may speak. A cell at `p + 1` holding one byte is a different address from `p` and is still the second byte a four-byte read there returns, so an address ladder alone is not an answer. The width is read from whichever side holds a value, the wider where both do and disagree, and the widest scalar where neither does, since over-stating a width can only shrink the separated set. |
+| `memory_matches_effect_summary_endpoint` | disagrees | Whether a recorded effect summary's endpoint is the snapshot in hand: interned identity, else the assumption-free structural agreement above. An endpoint pair has no ancestry to walk, which is the whole reason this section exists. |
+| `memory_load_terms_equal_for_fact_transport` | another question | Whether a fact about one load *term* is a fact about another: the two pointers proven equal, or one recorded offset equality between them, and then the snapshot comparison. A term question that ends in a listed state comparison, not a staleness decision of its own. |
+| `memory_has_materialized_load_from` | another question | Whether one snapshot is the other with this load materialized into a cell — the cell holds exactly a load at this pointer from a snapshot the comparison then matches. A tactic that forces a symbolic load into a concrete cell mints such a pair, so the two are one state with different cells recorded, and both the pointerless equality and the per-load comparison ask it before they compare anything. |
 | `canonical_memory_for_pointer_load` | separation | A normal form, so that two snapshots can be compared at all. Its filters are `observable_by_load` and `cell_disjoint_from_load_by_constant_offset`, one shared function each. |
 | `memories_proven_equal_for_memory_resolution`, `memory_cells_definitionally_contained` | another question | Whole-state equality under assumptions, with no load pointer. The only `local:` cells and blocks either drops are the ones `local_block_no_pointer_can_reach` allows — see below. |
+| `memory_range_still_available` `src/kernel/reasoning/path_facts.rs` | disagrees | Whether a memory fact established at one snapshot still describes an available region at another: the block present in both or absent in both, the same ended-local answer, and the same freed-allocation answer for its base. A staleness question decided from two states with no path between them, and about *availability* rather than about a version — the fact may be perfectly current and still describe storage that is gone. The freed-allocation half is what separates the two snapshots for an `ExternalArgument` allocation, whose block survives the `free`. |
 | `differing_cell_pointers_possibly_aliasing` | separation | One call to `observable_by_load`. |
 
 #### And the history has a veto over all of them
@@ -442,12 +488,33 @@ that a fix lands in one of them rather than beside it.
 
 | Predicate | Home |
 | --- | --- |
-| `PointerBlock::proven_distinct`, `may_alias`, `observable_by_load`; `Pointer::blocks_proven_distinct` | `src/kernel/primitives.rs` |
-| `pointers_proven_distinct_for_memory_resolution`, `pointer_offsets_with_common_base_proven_distinct`, `cell_disjoint_from_load_by_constant_offset` | `src/kernel/reasoning/memory_resolution.rs` |
-| `range_proven_disjoint_from_pointer`, `ranges_proven_disjoint_from_pointer`, `ranges_directly_disjoint_from_pointer`, `ranges_proven_disjoint_from_pointer_for_frame`, `frame_frontier_compositions`, `pointers_directly_disjoint_by_range` | `src/kernel/assumptions/memory_reasoning.rs` |
-| `typed_store_separated_ranges_evidence`, `typed_ranges_disjoint_from_pointer_evidence`, `heap_allocation_proven_separate_from_pointer`, `owned_composition_store_separated_evidence` | `src/kernel/memory_provenance.rs` |
+| `PointerBlock::proven_distinct`, `may_alias`, `observable_by_load`; `Pointer::blocks_proven_distinct`; `block_is_never_address_taken_local` | `src/kernel/primitives.rs` |
+| `pointers_proven_distinct_for_memory_resolution`, `pointers_distinct_through_one_exact_alias`, `never_address_taken_local_versus_pointer_value`, `pointer_offsets_with_common_base_proven_distinct` and its `_distinctness_condition`, `cell_disjoint_from_load_by_constant_offset`, `cell_is_observable_by_load`, `local_block_no_pointer_can_reach` | `src/kernel/reasoning/memory_resolution.rs` |
+| `range_proven_disjoint_from_pointer`, `ranges_proven_disjoint_from_pointer`, `ranges_directly_disjoint_from_pointer`, `ranges_proven_disjoint_from_pointer_for_frame`, `frame_frontier_compositions`, `pointers_directly_disjoint_by_range`, `pointers_proven_disjoint_by_explicit_range_for_memory_resolution`, `pointers_proven_disjoint_by_shallow_explicit_range` | `src/kernel/assumptions/memory_reasoning.rs` |
+| `typed_store_separated_ranges_evidence`, `typed_range_disjoint_from_pointer_evidence`, `typed_ranges_disjoint_from_pointer_evidence`, `heap_allocation_proven_separate_from_pointer`, `owned_composition_store_separated_evidence` | `src/kernel/memory_provenance.rs` |
 | `memory_block_may_alias`, `memory_range_overlaps_pointer`, `memory_ranges_overlap`, `proves_resource_separate`, `proves_owned_range_separate_from_pointer_with`, `resources_structurally_separate` | `src/kernel/primitives/resource_algebra.rs` |
 | `MemoryLoadAliasCache::resolution_distinct` | `src/kernel/eval/memory_loads.rs` — a per-load memo over the first of these, not a rule of its own |
+
+#### The byte question, which is not one of them
+
+Every predicate above decides whether two *addresses* are different, and that
+is a weaker claim than the one a framing route needs. A one-byte store at
+`p + 4` is a different address from `p` by every test there is, and it still
+overwrites the upper half of an eight-byte cell read at `p`. So the answer the
+routes conjoin with an address ladder is a separate function over the two
+accesses' widths, `access_byte_overlap` (`src/kernel/reasoning/memory_resolution.rs`),
+with `StoreByteInterval`, `cell_access_byte_width`, `one_element_gap_separates_bytes`
+and `constant_byte_shift_between` beneath it. It has three answers, and the
+third is the point: bytes provably separate, bytes provably overlapping, and an
+unknown gap, which blocks the ladder rather than contradicting it.
+
+It is in this list's neighbourhood rather than in it because it answers about
+accesses and not about resources, and because it has no counterpart for the
+cross-base pairs: two pointers with no common additive base get `Unknown`, and
+those are exactly the pairs the range rungs exist to decide. The rule's `Store`
+arm, `CMemory::without_possible_aliasing_cells` and the snapshot comparisons
+all conjoin it, which is what keeps one store from being separate at one site
+and overlapping at the next.
 
 #### A load whose own block the verifier cannot resolve
 
@@ -522,6 +589,21 @@ answered on the first rung of the ladder rather than skipped.
 `a_store_to_a_local_is_not_framed_away_for_an_unresolved_pointer`
 (`src/kernel/tests/memory_reasoning_tests.rs`) pins the history directly.
 
+The cells were only half of what these comparisons hold. Beside them sits the
+object map — each block's extent, and the tombstones that say an automatic
+object's lifetime has ended — and it carried the shortcut in its own spelling:
+the three assumption-carrying comparisons compared the extent of every block
+*not* spelled `local:`, and none of the four compared the tombstones at all. An
+extent is what says an object is there and how big it is, and a tombstone is
+the only record left once the object's cells are gone, so two snapshots
+disagreeing about either disagree about what a load through a pointer that may
+designate it reads. The extent check is now `snapshot_objects_agree`, dropping
+only what `local_block_no_pointer_can_reach` allows, which is the same thing
+the pointerless equality below spends; the tombstone check is
+`retirements_agree_for_load`, which all four ask, and which allows a difference
+only where the load's block is proven distinct from the retired object or no
+pointer value designates that object at all.
+
 ##### And the same shortcut with no pointer at all
 
 Two neighbours carried it a third time, and neither had a load pointer to ask
@@ -568,7 +650,10 @@ equality or do not ask about, and a caller that needs the slot cell compares
 
 No witness was found for the shortcut in either place, and that is a report
 about the other locks rather than an argument. The order-path caller is
-reached only from `bitvector_index_within_range`, so the load would have to be
+reached only from the two rules that place an index in a range —
+`bitvector_index_in_range_shallow` and
+`element_delta_in_range_by_affine_arithmetic` (`src/kernel/assumptions.rs`) —
+so the load would have to be
 a range bound; reading through an unresolved pointer in *executed* C needs a
 `views`/`owns` resource fact the caller of such a function does not hold
 (`missing resource fact views symbolic-pointer:…`), a local array cannot be
@@ -915,8 +1000,13 @@ the final answer there is open.
   version) print the field's source spelling now but do not yet reach
   `describe_resource_version_mismatch`: their callers hold two propositions and
   not the two saved states the answer needs.
-- **From the map above** — the two duplicated retain closures (call havoc
-  against its own checker, loop havoc against the interface join) are one rule
-  written twice in one file each, which the map calls *disagrees* only because
-  they disagree with `affects`. Making each pair share one function is a
-  behaviour-preserving change that the next chunk can take first.
+- **From the map above** — the two duplicated retain closures are one function
+  each now, `call_havoc_keeps_cell` and `loan_preserving_havoc_keeps_cell`, so
+  a producer and the checker that re-derives it can no longer drift apart by an
+  edit to one of them. What the map still calls *disagrees* is the difference
+  that is left: `call_havoc_keeps_cell` keeps a cell on a `local:` spelling or
+  plain range disjointness, while the rule's `CallHavoc` arm reads typed range
+  evidence and the `_for_frame` expansion. That one is a behaviour change
+  rather than a refactor, so it needs a regression in each direction — a
+  program the eager half keeps and the rule would not, and one the other way
+  round — before either side moves.
