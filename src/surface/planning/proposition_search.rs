@@ -513,6 +513,7 @@ impl PropositionSearch for PureFactContext {
         evidence.map(|evidence| (self.clone(), premises_id, evidence))
     }
 
+    #[inline(never)]
     fn derive_proposition_using(
         &self,
         proposition: &Proposition,

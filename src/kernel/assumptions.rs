@@ -4068,6 +4068,7 @@ pub(crate) fn proposition_derivation(
 impl PropositionDerivation {
     /// Check this proof tree against an available context without searching for
     /// alternate proofs.
+    #[inline(never)]
     pub fn check(&self, available: &PureFactContext) -> bool {
         let id_scope = PureFactContextIdScope::enter(available);
         match &self.rule {
