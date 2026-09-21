@@ -953,6 +953,34 @@ value-only parameter is deliberately left alone — its pseudo-slot borrows the
 plain `local:<name>` spelling while owning no block, so retiring it would
 tombstone whatever object of that name the caller has.
 
+### When an automatic lifetime ends
+
+An automatic object's lifetime ends when control leaves the block that
+declared it. Its storage stops existing, so a pointer into it designates no
+object and a load through one is undefined behaviour, not a way to read what
+the block wrote.
+
+The kernel has no statement that stands for a block — C0 lowers a source block
+to a `Seq` tree — so a scope's own declarations are the `Declare` and
+`DeclareAggregate` statements reachable from its root through that tree.
+`scope_declared_names` collects them, stopping at a nested scope, which retires
+what it declared itself. The cost of a scope exit is therefore the declarations
+of the scope being left, not a walk of the frame's locals or of memory.
+
+The scopes the kernel's own execution rules know are an `if` arm, a loop body,
+and a `switch` body — one block for all of its cases, because control falls
+from one case into the next. Every outcome of a scope's body leaves that scope,
+so the retirement applies to all of them: falling off the end, the back edge,
+`break`, `continue`, `return`, a jump, a thrown outcome. The name is unbound
+with the storage, because the frame no longer holds an object of that name and
+a later declaration of it is a declaration rather than a re-entry the mint
+would tombstone from.
+
+The surface stepper splices a selected `if` arm in front of the statements
+after the `if`, so the arm boundary is not a step it takes and this rule does
+not reach the proofs it drives. A scope exit there has to be evidence the proof
+object records, as a resource observation is.
+
 Call and loop behavior are explicit inputs to kernel execution. The common
 configurations are:
 
