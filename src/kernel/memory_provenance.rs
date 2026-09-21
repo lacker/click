@@ -364,9 +364,13 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
 /// The program point a cell's load variable is named by, asked of the
 /// resource tracker: the one place that decides which resources are the same
 /// at which points (`crate::kernel::resource_tracker`).
-fn cell_version_point(memory: &SharedCMemory, pointer: &Pointer) -> Option<SharedCMemory> {
+fn cell_version_point(
+    memory: &SharedCMemory,
+    pointer: &Pointer,
+    bytes: u32,
+) -> Option<SharedCMemory> {
     crate::kernel::resource_tracker::last_same_point(
-        crate::kernel::resource_tracker::Resource::Cell(pointer),
+        crate::kernel::resource_tracker::Resource::Cell { pointer, bytes },
         &crate::kernel::resource_tracker::ProgramPoint::at(memory),
     )
     .map(|point| point.snapshot().clone())
@@ -715,8 +719,20 @@ fn checked_call_load_equality_evidence(
     if left_pointer != right_pointer {
         return None;
     }
-    let left = memory_dag_cell_source(left_memory, left_pointer, assumptions, true)?;
-    let right = memory_dag_cell_source(right_memory, right_pointer, assumptions, true)?;
+    let left = memory_dag_cell_source(
+        left_memory,
+        left_pointer,
+        crate::kernel::load_access_width_or_widest(left_memory, left_pointer),
+        assumptions,
+        true,
+    )?;
+    let right = memory_dag_cell_source(
+        right_memory,
+        right_pointer,
+        crate::kernel::load_access_width_or_widest(right_memory, right_pointer),
+        assumptions,
+        true,
+    )?;
     if !left.has_only_typed_hops()
         || !right.has_only_typed_hops()
         || !matches!(
@@ -832,6 +848,7 @@ impl CheckedLoadEquality {
         } else if allow_canonical_fallback
             && crate::kernel::eval::canonical_term(left)
                 == crate::kernel::eval::canonical_term(right)
+            && !crate::kernel::reasoning::load_equality_refuted_by_history(left, right, assumptions)
         {
             CheckedLoadEqualityEvidence::Canonical
         } else {
@@ -882,7 +899,15 @@ impl CheckedLoadEquality {
                 };
                 endpoint.matches_term(load)
                     && cell.has_only_typed_hops()
-                    && cell.checks_walk_from(&endpoint.memory, &endpoint.pointer, assumptions)
+                    && cell.checks_walk_from(
+                        &endpoint.memory,
+                        &endpoint.pointer,
+                        crate::kernel::load_access_width_or_widest(
+                            &endpoint.memory,
+                            &endpoint.pointer,
+                        ),
+                        assumptions,
+                    )
                     && pointer.block == endpoint.pointer.block
                     && offset.checks(&pointer.offset, &endpoint.pointer.offset, assumptions)
                     && stored == value
@@ -951,10 +976,14 @@ impl CheckedLoadEquality {
                     && right.memory.memory() == expected_right
                     && assumptions.contains_assumed_exact(summary)
                     && ranges.len() == mutable_ranges.len()
-                    && ranges
-                        .iter()
-                        .zip(mutable_ranges)
-                        .all(|(evidence, range)| evidence.checks(range, &left.pointer, assumptions))
+                    && ranges.iter().zip(mutable_ranges).all(|(evidence, range)| {
+                        evidence.checks(
+                            range,
+                            &left.pointer,
+                            crate::kernel::load_access_width_or_widest(&left.memory, &left.pointer),
+                            assumptions,
+                        )
+                    })
             }
             CheckedLoadEqualityEvidence::SameCheckedCallEvent(evidence) => {
                 let (
@@ -977,12 +1006,18 @@ impl CheckedLoadEquality {
                         evidence.right.node().derivation().as_deref(),
                         Some(CMemoryDerivation::CallHavoc { .. })
                     )
-                    && evidence
-                        .left
-                        .checks_walk_from(left_memory, left_pointer, assumptions)
-                    && evidence
-                        .right
-                        .checks_walk_from(right_memory, right_pointer, assumptions)
+                    && evidence.left.checks_walk_from(
+                        left_memory,
+                        left_pointer,
+                        crate::kernel::load_access_width_or_widest(left_memory, left_pointer),
+                        assumptions,
+                    )
+                    && evidence.right.checks_walk_from(
+                        right_memory,
+                        right_pointer,
+                        crate::kernel::load_access_width_or_widest(right_memory, right_pointer),
+                        assumptions,
+                    )
             }
         }
     }
@@ -1067,7 +1102,13 @@ pub(crate) fn checked_stored_origin_equality(
         };
         let previous = EXPLICIT_DAG_CHECK.with(|flag| flag.replace(true));
         let cell = with_extended_dag_bridging(|| {
-            memory_dag_cell_source(&endpoint.memory, &endpoint.pointer, assumptions, true)
+            memory_dag_cell_source(
+                &endpoint.memory,
+                &endpoint.pointer,
+                crate::kernel::load_access_width_or_widest(&endpoint.memory, &endpoint.pointer),
+                assumptions,
+                true,
+            )
         });
         EXPLICIT_DAG_CHECK.with(|flag| flag.set(previous));
         let Some(cell) = cell else {
@@ -1135,6 +1176,19 @@ pub(crate) fn checked_origin_load_equality(
         return false;
     };
     if left_endpoint.pointer.block != right_endpoint.pointer.block {
+        return false;
+    }
+    // The arms below compare the two origin snapshots' cell maps, and a cell
+    // map does not record the stores it dropped. Ask the history about the
+    // endpoints this comparison is about to take as equal.
+    if left_endpoint.pointer == right_endpoint.pointer
+        && crate::kernel::reasoning::loads_separated_by_recorded_history(
+            &left_endpoint.memory,
+            &right_endpoint.memory,
+            &left_endpoint.pointer,
+            assumptions,
+        )
+    {
         return false;
     }
 
@@ -1211,6 +1265,10 @@ pub(crate) fn checked_origin_load_equality(
                         typed_ranges_disjoint_from_pointer_evidence(
                             mutable_ranges,
                             &left_endpoint.pointer,
+                            crate::kernel::load_access_width_or_widest(
+                                &left_endpoint.memory,
+                                &left_endpoint.pointer,
+                            ),
                             assumptions,
                         )
                     })
@@ -1386,8 +1444,17 @@ impl AtomicMemoryLoadEqualityEvidence {
     /// evidence. Unsupported terminal-value and assumption-dependent edge
     /// proofs return false instead of invoking a solver.
     pub(super) fn checks(&self, proposition: &Proposition, assumptions: &PureFactContext) -> bool {
-        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
-            proposition
+        // Both equality widths, because what this evidence proves is
+        // width-independent: that the two snapshots hold one version of the
+        // cell at one address. How many bytes the C access reads is the
+        // walk's own input, taken from the load registry on both the
+        // construction and the checking side, not something the goal's
+        // carrier decides.
+        let Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(left, right)
+            | ConditionTerm::Bitvector64Equal(left, right),
+            true,
+        ) = proposition
         else {
             return false;
         };
@@ -1433,8 +1500,18 @@ impl AtomicMemoryLoadEqualityEvidence {
         };
         left_pointer == right_pointer
             && left_evidence.node() == right_evidence.node()
-            && left_evidence.checks_walk_from(left_start, left_pointer, assumptions)
-            && right_evidence.checks_walk_from(right_start, right_pointer, assumptions)
+            && left_evidence.checks_walk_from(
+                left_start,
+                left_pointer,
+                crate::kernel::load_access_width_or_widest(left_start, left_pointer),
+                assumptions,
+            )
+            && right_evidence.checks_walk_from(
+                right_start,
+                right_pointer,
+                crate::kernel::load_access_width_or_widest(right_start, right_pointer),
+                assumptions,
+            )
     }
 }
 
@@ -1529,29 +1606,30 @@ pub(in crate::kernel) fn exact_separation_fact_covers_range_and_pointer(
     fact: &Proposition,
     range: &CMemoryRange,
     pointer: &Pointer,
+    assumptions: &PureFactContext,
 ) -> bool {
     let (left, right) = match fact {
-        Proposition::CMemoryDisjoint {
-            left_base,
-            left_start,
-            left_end,
-            right_base,
-            right_start,
-            right_end,
-        } => (
-            CMemoryRange::new(left_base.clone(), left_start.clone(), left_end.clone()),
-            CMemoryRange::new(right_base.clone(), right_start.clone(), right_end.clone()),
-        ),
         Proposition::CResourceSeparate {
             left: CResource::Memory(left),
             right: CResource::Memory(right),
         } => (left.clone(), right.clone()),
         _ => return false,
     };
-    super::assumptions::memory_range_shallowly_contained(range, &left)
-        && super::assumptions::pointer_in_memory_range_shallow(pointer, &right)
-        || super::assumptions::memory_range_shallowly_contained(range, &right)
-            && super::assumptions::pointer_in_memory_range_shallow(pointer, &left)
+    super::assumptions::memory_range_shallowly_contained_with_facts(range, &left, assumptions)
+        && super::assumptions::pointer_in_memory_range_shallow_with_facts(
+            pointer,
+            &right,
+            assumptions,
+        )
+        || super::assumptions::memory_range_shallowly_contained_with_facts(
+            range,
+            &right,
+            assumptions,
+        ) && super::assumptions::pointer_in_memory_range_shallow_with_facts(
+            pointer,
+            &left,
+            assumptions,
+        )
 }
 
 pub(in crate::kernel) fn forward_range_offset_from_pointer(
@@ -1573,39 +1651,83 @@ pub(in crate::kernel) fn forward_range_offset_from_pointer(
     }
 }
 
+/// The whole-element index of `pointer` in a range based at `base` whose
+/// elements are `element_width` bytes wide.
+///
+/// Two units meet here and are easy to confuse: the byte distance this
+/// computes between two addresses, and the element counts a range's bounds
+/// are written in. Dividing the bytes by anything but the range's own
+/// element width answers in a unit the bounds are not written in, so a
+/// `uint8` range's bounds would be read as `int32` indices and a pointer
+/// range's element one would be its own byte four.
+///
+/// An address part-way into an element has no element index at all. Byte four
+/// of an eight-byte element is *inside* element zero, not element one, and a
+/// caller asking "is this outside the range" must not be handed "element one"
+/// for it. `None` is the honest answer, and it declines the ladder.
 pub(in crate::kernel) fn direct_constant_element_index(
     pointer: &Pointer,
     base: &Pointer,
+    element_width: u32,
 ) -> Option<i64> {
+    let element_width = i64::from(element_width);
+    if element_width <= 0 {
+        return None;
+    }
     let bytes = signed_bitvector_constant(&pointer_byte_offset_from_base(pointer, base)?)?;
-    (bytes % 4 == 0).then_some(bytes / 4)
+    (bytes % element_width == 0).then_some(bytes / element_width)
 }
 
+/// How many of a range's elements a `bytes`-wide access covers, rounded up: an
+/// access is only outside the range when *every* element it touches is.
+pub(in crate::kernel) fn access_element_span(bytes: u32, element_width: u32) -> Option<i64> {
+    (element_width > 0).then(|| i64::from(bytes.div_ceil(element_width).max(1)))
+}
+
+/// Whether the `bytes` bytes at `pointer` can be shown to miss every byte of
+/// `range`.
+///
+/// `bytes` is the access width, and it is not decoration: a range is a byte
+/// footprint, and an access wider than one element reaches past the element
+/// its address names. Each route below therefore has to clear the whole
+/// access, not just its first byte.
 pub(in crate::kernel) fn typed_range_disjoint_from_pointer_evidence(
     range: &CMemoryRange,
     pointer: &Pointer,
+    bytes: u32,
     assumptions: &PureFactContext,
 ) -> Option<RangeDisjointFromPointerEvidence> {
     if range.base.blocks_proven_distinct(pointer) {
         return Some(RangeDisjointFromPointerEvidence::DistinctBlocks);
     }
-    if let Some(fact) = assumptions
-        .prop_facts
-        .iter()
-        .find(|fact| exact_separation_fact_covers_range_and_pointer(fact, range, pointer))
-    {
+    if let Some(fact) = assumptions.prop_facts.iter().find(|fact| {
+        exact_separation_fact_covers_range_and_pointer(fact, range, pointer, assumptions)
+    }) {
         crate::kernel::record_implicit_reasoning_provenance(assumptions, fact);
         return Some(RangeDisjointFromPointerEvidence::ExactSeparationFact(
             fact.clone(),
         ));
     }
-    if let (Some(index), Some(start), Some(end)) = (
-        direct_constant_element_index(pointer, range.base()),
+    let element_width = range.element_width();
+    if let (Some(index), Some(span), Some(start), Some(end)) = (
+        direct_constant_element_index(pointer, range.base(), element_width),
+        access_element_span(bytes, element_width),
         signed_bitvector_constant(range.start()),
         signed_bitvector_constant(range.end()),
-    ) && (index < start || end <= index)
+    ) && (index.checked_add(span).is_some_and(|last| last <= start) || end <= index)
     {
-        return Some(RangeDisjointFromPointerEvidence::DirectConstantOutside { index, start, end });
+        return Some(RangeDisjointFromPointerEvidence::DirectConstantOutside {
+            index,
+            bytes,
+            start,
+            end,
+        });
+    }
+    // The forward-offset route proves the range begins strictly after this
+    // address, which is a gap of one element. That clears an access only as
+    // wide as an element; anything wider reaches into the range's first one.
+    if bytes > element_width {
+        return None;
     }
     let offset = forward_range_offset_from_pointer(range, pointer)?;
     let range_start = Bitvector32Term::add(offset.clone(), range.start.clone());
@@ -1773,11 +1895,12 @@ pub(in crate::kernel) fn owned_composition_store_separated_evidence(
 pub(in crate::kernel) fn typed_ranges_disjoint_from_pointer_evidence(
     ranges: &[CMemoryRange],
     pointer: &Pointer,
+    bytes: u32,
     assumptions: &PureFactContext,
 ) -> Option<Vec<RangeDisjointFromPointerEvidence>> {
     ranges
         .iter()
-        .map(|range| typed_range_disjoint_from_pointer_evidence(range, pointer, assumptions))
+        .map(|range| typed_range_disjoint_from_pointer_evidence(range, pointer, bytes, assumptions))
         .collect()
 }
 
@@ -1806,7 +1929,13 @@ pub(crate) fn pointer_load_offset_proven_equal(
     let Some((memory, pointer)) = load else {
         return false;
     };
-    let Some(cell) = memory_dag_cell_source(&memory, &pointer, assumptions, true) else {
+    let Some(cell) = memory_dag_cell_source(
+        &memory,
+        &pointer,
+        crate::kernel::load_access_width_or_widest(&memory, &pointer),
+        assumptions,
+        true,
+    ) else {
         return false;
     };
     let Some(CValue::Pointer(stored)) = cell.resolved_value(&pointer) else {
@@ -1866,39 +1995,160 @@ pub(super) fn memory_load_equality_evidence_at(
     pointer: &Pointer,
     assumptions: &PureFactContext,
 ) -> Option<MemoryDagLoadEqualityEvidence> {
-    if left_memory == right_memory {
+    if let Some(common) = one_snapshot_equality_evidence(left_memory, right_memory) {
+        return Some(common);
+    }
+    LoadCellWalks::run(left_memory, right_memory, pointer, assumptions)?.equality(pointer)
+}
+
+/// The equality two identical snapshots have without walking anything.
+fn one_snapshot_equality_evidence(
+    left_memory: &SharedCMemory,
+    right_memory: &SharedCMemory,
+) -> Option<MemoryDagLoadEqualityEvidence> {
+    (left_memory == right_memory).then(|| {
         let cell = MemoryDagCell::Unwritten {
             node: left_memory.clone(),
             path: Vec::new(),
         };
-        return Some(MemoryDagLoadEqualityEvidence {
+        MemoryDagLoadEqualityEvidence {
             left: cell.clone(),
             right: cell,
             reason: MemoryDagLoadEqualityReason::CommonSource,
-        });
-    }
-    let (Some(left), Some(right)) = (
-        memory_dag_cell_source(left_memory, pointer, assumptions, true),
-        memory_dag_cell_source(right_memory, pointer, assumptions, true),
-    ) else {
-        return None;
-    };
-    if left.node() == right.node() {
-        return Some(MemoryDagLoadEqualityEvidence {
+        }
+    })
+}
+
+/// The one pair of cell-source walks every question about two loads of one
+/// cell is answered from.
+///
+/// Both halves of the answer come off the same traversal. The nodes the walks
+/// reached say whether the two snapshots hold *one* version of the cell; the
+/// reasons they stopped say whether they hold two *different* versions. A
+/// caller that wanted only the first used to walk twice over — once here and
+/// once for the stored-value arm beside it — and the history's refutation was
+/// thrown away with the stop reason.
+struct LoadCellWalks {
+    left: MemoryDagCell,
+    right: MemoryDagCell,
+    left_stop: CellWalkStop,
+    right_stop: CellWalkStop,
+}
+
+impl LoadCellWalks {
+    fn run(
+        left_memory: &SharedCMemory,
+        right_memory: &SharedCMemory,
+        pointer: &Pointer,
+        assumptions: &PureFactContext,
+    ) -> Option<Self> {
+        let (left, left_stop) = memory_dag_cell_source_with_stop(
+            left_memory,
+            pointer,
+            crate::kernel::load_access_width_or_widest(left_memory, pointer),
+            assumptions,
+            true,
+        )?;
+        let (right, right_stop) = memory_dag_cell_source_with_stop(
+            right_memory,
+            pointer,
+            crate::kernel::load_access_width_or_widest(right_memory, pointer),
+            assumptions,
+            true,
+        )?;
+        Some(Self {
             left,
             right,
-            reason: MemoryDagLoadEqualityReason::CommonSource,
-        });
+            left_stop,
+            right_stop,
+        })
     }
-    match (left.resolved_value(pointer), right.resolved_value(pointer)) {
-        (Some(left_value), Some(right_value)) if left_value == right_value => {
-            Some(MemoryDagLoadEqualityEvidence {
-                left,
-                right,
-                reason: MemoryDagLoadEqualityReason::EqualResolvedValue(left_value),
-            })
+
+    /// Why the two walks make the loads equal, when they do: they stopped at
+    /// one node, or they pinned down one value.
+    fn equality_reason(&self, pointer: &Pointer) -> Option<MemoryDagLoadEqualityReason> {
+        if self.left.node() == self.right.node() {
+            return Some(MemoryDagLoadEqualityReason::CommonSource);
         }
-        _ => None,
+        match (
+            self.left.resolved_value(pointer),
+            self.right.resolved_value(pointer),
+        ) {
+            (Some(left_value), Some(right_value)) if left_value == right_value => {
+                Some(MemoryDagLoadEqualityReason::EqualResolvedValue(left_value))
+            }
+            _ => None,
+        }
+    }
+
+    /// The equality the two walks establish between the loads themselves,
+    /// with both retained walks as its evidence.
+    fn equality(self, pointer: &Pointer) -> Option<MemoryDagLoadEqualityEvidence> {
+        let reason = self.equality_reason(pointer)?;
+        Some(MemoryDagLoadEqualityEvidence {
+            left: self.left,
+            right: self.right,
+            reason,
+        })
+    }
+
+    /// Whether a recorded step that provably acts on this access's bytes
+    /// stands between the two snapshots.
+    ///
+    /// A walk stops on such a step having proved something, not having given
+    /// up: the cell one step older is a different *version* of this cell. Two
+    /// loads separated by one of those are not one value by any structural
+    /// route, whatever the snapshots' cell maps happen to have kept. The
+    /// other two stops prove nothing — the history simply ran out, or a step
+    /// could not be classified — and leave every other route to speak.
+    fn cross_an_affecting_step(&self) -> bool {
+        self.left_stop == CellWalkStop::Affected || self.right_stop == CellWalkStop::Affected
+    }
+
+    /// [`Self::equality`], and then, where stored-value pinning is in scope,
+    /// the arm that reads one side's walk as pinning the *other side's whole
+    /// load term*.
+    ///
+    /// One side's walk may land on a `Store` whose recorded value IS the
+    /// other side verbatim — the common case for a load-caching store
+    /// (`cells[p] := load(older, p)`): the newer snapshot's cell literally
+    /// pins the older form. That is still a pure history answer (the value
+    /// comes off a derivation edge, compared structurally), so it stays
+    /// inside the exact-facts-plus-edges determinism boundary.
+    fn equality_or_resolved_endpoint(
+        self,
+        left_memory: &SharedCMemory,
+        right_memory: &SharedCMemory,
+        pointer: &Pointer,
+        pinning: bool,
+    ) -> Option<AtomicMemoryLoadEqualityEvidence> {
+        if self.equality_reason(pointer).is_some() || !pinning {
+            return self
+                .equality(pointer)
+                .map(AtomicMemoryLoadEqualityEvidence::SameCell);
+        }
+        let load = |memory: &SharedCMemory| {
+            Bitvector32Term::MemoryLoad(memory.clone(), Box::new(pointer.clone()))
+        };
+        let pins = |cell: &MemoryDagCell, other: &Bitvector32Term| {
+            matches!(
+                cell.resolved_value(pointer),
+                Some(
+                    CValue::Int16(value)
+                        | CValue::Int32(value)
+                        | CValue::UInt8(value)
+                        | CValue::UInt16(value)
+                        | CValue::UInt32(value)
+                ) if &value == other
+            )
+        };
+        if pins(&self.left, &load(right_memory)) {
+            Some(AtomicMemoryLoadEqualityEvidence::LeftResolvesToRight { left: self.left })
+        } else if pins(&self.right, &load(left_memory)) {
+            Some(AtomicMemoryLoadEqualityEvidence::RightResolvesToLeft { right: self.right })
+        } else {
+            None
+        }
     }
 }
 
@@ -1937,94 +2187,140 @@ pub(super) fn atomic_memory_load_equality_evidence(
     if left_pointer != right_pointer {
         return None;
     }
-    if !extended_dag_bridging_active() {
-        // Pre-arc behavior outside the loadable prover: node-identity
-        // comparison only, no memo, no value pinning.
-        return memory_load_equality_evidence_at(
-            left_memory,
-            right_memory,
-            left_pointer,
-            assumptions,
-        )
-        .map(AtomicMemoryLoadEqualityEvidence::SameCell);
+    match recorded_load_history(left_memory, right_memory, left_pointer, assumptions) {
+        LoadHistory::OneVersion(evidence) => Some(evidence),
+        LoadHistory::DifferentVersions | LoadHistory::Undecided => None,
     }
+}
+
+/// What the recorded history says about two loads of one cell at one address.
+///
+/// The three answers are the three a history can give, and the middle one is
+/// the one a snapshot comparison cannot reconstruct. A cell map records what
+/// is *known* at a snapshot, not what *happened* to it: a store drops the
+/// cell it partly overwrites, and the naming projection discards what it
+/// leaves behind, so two snapshots a store separates can be cell-identical.
+/// Absence of a differing cell is therefore never evidence that no store
+/// happened. The history has the store either way.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::kernel) enum LoadHistory {
+    /// The two snapshots hold one version of the cell, with this evidence.
+    OneVersion(AtomicMemoryLoadEqualityEvidence),
+    /// A recorded step that provably acts on this access's bytes stands
+    /// between the two snapshots, so they hold two different versions of it.
+    /// No structural route may call the two loads equal; a stated or assumed
+    /// equality fact still can, and is consulted before this ever is.
+    DifferentVersions,
+    /// The recorded history decides neither. Every other route may speak.
+    Undecided,
+}
+
+/// The one memoized question every consumer of the load history asks.
+///
+/// Both halves of the answer come from one pair of cell-source walks, so
+/// asking for the refutation after asking for the equality costs a memo
+/// lookup rather than a second traversal.
+pub(in crate::kernel) fn recorded_load_history(
+    left_memory: &SharedCMemory,
+    right_memory: &SharedCMemory,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> LoadHistory {
     // The same (snapshot, snapshot, pointer) triple is asked thousands of
     // times per proof. A proven equality stays true as new first-wins DAG
     // edges are recorded: the edges only add faithful derivations of already
     // existing snapshots. Cache those positive answers independently of the
-    // derivation generation. A negative answer only means "not connected
-    // yet", so it remains generation-scoped and is retried after any new
-    // edge. Only top-level answers participate: a nested lookup may meet
-    // an in-progress cell and its weaker answer must not shadow the full one.
+    // derivation generation. The other two answers only mean "not connected
+    // yet" and "not separated yet": a new edge can extend a walk that had run
+    // out of history, so both remain generation-scoped and are retried after
+    // any new edge. Only top-level answers participate: a nested lookup may
+    // meet an in-progress cell and its weaker answer must not shadow the full
+    // one.
     let memo_key = memory_dag_cell_lookup_depth_is_zero()
         .then(|| super::assumptions::dag_memo_assumptions_id(assumptions))
         .map(|assumptions_id| DagLoadEqualityMemoKey {
             assumptions_id,
+            bridging: extended_dag_bridging_active(),
+            explicit: explicit_dag_check_active(),
             left_memory: left_memory.arena_id(),
             right_memory: right_memory.arena_id(),
-            pointer: left_pointer.as_ref().clone(),
+            pointer: pointer.clone(),
         });
     if let Some(key) = &memo_key
         && let Some(evidence) =
             DAG_LOAD_EQUALITY_POSITIVE_MEMO.with(|memo| memo.borrow().get(key).cloned())
     {
-        return Some(evidence);
+        return LoadHistory::OneVersion(evidence);
     }
     let derivation_generation = c_memory_derivation_generation();
     if let Some(key) = &memo_key
-        && DAG_LOAD_EQUALITY_NEGATIVE_MEMO.with(|memo| {
+        && let Some(answer) = DAG_LOAD_EQUALITY_UNPROVEN_MEMO.with(|memo| {
             memo.borrow()
-                .contains(&(derivation_generation, key.clone()))
+                .get(&(derivation_generation, key.clone()))
+                .copied()
         })
     {
-        return None;
-    }
-    let result =
-        memory_load_equality_evidence_at(left_memory, right_memory, left_pointer, assumptions)
-            .map(AtomicMemoryLoadEqualityEvidence::SameCell)
-            .or_else(|| {
-                let (Some(left_cell), Some(right_cell)) = (
-                    memory_dag_cell_source(left_memory, left_pointer, assumptions, true),
-                    memory_dag_cell_source(right_memory, right_pointer, assumptions, true),
-                ) else {
-                    return None;
-                };
-                if matches!(
-                    left_cell.resolved_value(left_pointer),
-                    Some(CValue::Int16(value) | CValue::Int32(value) | CValue::UInt8(value) | CValue::UInt16(value) | CValue::UInt32(value)) if &value == right
-                ) {
-                    Some(AtomicMemoryLoadEqualityEvidence::LeftResolvesToRight { left: left_cell })
-                } else if matches!(
-                    right_cell.resolved_value(right_pointer),
-                    Some(CValue::Int16(value) | CValue::Int32(value) | CValue::UInt8(value) | CValue::UInt16(value) | CValue::UInt32(value)) if &value == left
-                ) {
-                    Some(AtomicMemoryLoadEqualityEvidence::RightResolvesToLeft {
-                        right: right_cell,
-                    })
-                } else {
-                    None
-                }
-            });
-    if let Some(key) = memo_key {
-        if let Some(evidence) = &result {
-            DAG_LOAD_EQUALITY_POSITIVE_MEMO.with(|memo| {
-                let mut memo = memo.borrow_mut();
-                if memo.len() >= DAG_LOAD_EQUALITY_MEMO_LIMIT {
-                    memo.clear();
-                }
-                memo.insert(key, evidence.clone());
-            });
+        return if answer {
+            LoadHistory::DifferentVersions
         } else {
-            DAG_LOAD_EQUALITY_NEGATIVE_MEMO.with(|memo| {
-                let mut memo = memo.borrow_mut();
-                if memo.len() >= DAG_LOAD_EQUALITY_MEMO_LIMIT {
-                    memo.clear();
-                }
-                memo.insert((derivation_generation, key));
-            });
+            LoadHistory::Undecided
+        };
+    }
+    let result = recorded_load_history_uncached(left_memory, right_memory, pointer, assumptions);
+    if let Some(key) = memo_key {
+        match &result {
+            LoadHistory::OneVersion(evidence) => {
+                DAG_LOAD_EQUALITY_POSITIVE_MEMO.with(|memo| {
+                    let mut memo = memo.borrow_mut();
+                    if memo.len() >= DAG_LOAD_EQUALITY_MEMO_LIMIT {
+                        memo.clear();
+                    }
+                    memo.insert(key, evidence.clone());
+                });
+            }
+            LoadHistory::DifferentVersions | LoadHistory::Undecided => {
+                let separated = matches!(result, LoadHistory::DifferentVersions);
+                DAG_LOAD_EQUALITY_UNPROVEN_MEMO.with(|memo| {
+                    let mut memo = memo.borrow_mut();
+                    if memo.len() >= DAG_LOAD_EQUALITY_MEMO_LIMIT {
+                        memo.clear();
+                    }
+                    memo.insert((derivation_generation, key), separated);
+                });
+            }
         }
     }
     result
+}
+
+fn recorded_load_history_uncached(
+    left_memory: &SharedCMemory,
+    right_memory: &SharedCMemory,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> LoadHistory {
+    if let Some(common) = one_snapshot_equality_evidence(left_memory, right_memory) {
+        return LoadHistory::OneVersion(AtomicMemoryLoadEqualityEvidence::SameCell(common));
+    }
+    let Some(walks) = LoadCellWalks::run(left_memory, right_memory, pointer, assumptions) else {
+        return LoadHistory::Undecided;
+    };
+    let separated = walks.cross_an_affecting_step();
+    // Outside the loadable prover the equality half keeps its pre-arc
+    // behavior — node-identity comparison only, no value pinning — because
+    // certified forms and case-split structure check against it. The
+    // refutation half is uniform: it withholds equalities rather than adding
+    // any, and a veto that fired in one scope and not another would leave the
+    // routes disagreeing about the same store.
+    let pinning = extended_dag_bridging_active();
+    let evidence = walks
+        .equality_or_resolved_endpoint(left_memory, right_memory, pointer, pinning)
+        .map(LoadHistory::OneVersion);
+    evidence.unwrap_or(if separated {
+        LoadHistory::DifferentVersions
+    } else {
+        LoadHistory::Undecided
+    })
 }
 
 /// Resolves an equality from the execution-recorded memory DAG for explicit
@@ -2044,7 +2340,13 @@ pub(crate) fn resolve_load_along_memory_derivations(
     let _assumptions_id_scope = assumptions.enter_id_scope();
     let previous = EXPLICIT_DAG_CHECK.with(|flag| flag.replace(true));
     let result = with_extended_dag_bridging(|| {
-        match memory_dag_cell_source(memory, pointer, assumptions, true)? {
+        match memory_dag_cell_source(
+            memory,
+            pointer,
+            crate::kernel::load_access_width_or_widest(memory, pointer),
+            assumptions,
+            true,
+        )? {
             MemoryDagCell::Stored { value, .. } => match value {
                 CValue::Int16(value)
                 | CValue::Int32(value)
@@ -2126,7 +2428,7 @@ pub(crate) fn explicit_atomic_equality_from_memory_derivations(
                 return false;
             };
             matches!(
-                memory_dag_cell_source(memory, pointer, assumptions, true)
+                memory_dag_cell_source(memory, pointer, crate::kernel::load_access_width_or_widest(memory, pointer), assumptions, true)
                     .and_then(|cell| cell.resolved_value(pointer)),
                 Some(CValue::Int16(resolved) | CValue::Int32(resolved) | CValue::UInt8(resolved) | CValue::UInt16(resolved) | CValue::UInt32(resolved))
                     if resolved == *value
@@ -2141,6 +2443,16 @@ pub(crate) fn explicit_atomic_equality_from_memory_derivations(
 #[derive(Clone, Eq, Hash, PartialEq)]
 struct DagLoadEqualityMemoKey {
     assumptions_id: u64,
+    /// The two scopes that decide which recorded edges a walk may cross, and
+    /// so which answers it can reach. They are part of the question, not
+    /// ambient state the answer is independent of: explicit certificate
+    /// validation crosses store hops justified by the certificate's own
+    /// separation ranges, and the pre-arc scope crosses no bookkeeping edge
+    /// at all. Before the history's refutation was read off these walks, the
+    /// pre-arc scope simply bypassed the memo and the explicit scope shared
+    /// the ordinary one, which let a weaker answer stand in for a stronger.
+    bridging: bool,
+    explicit: bool,
     left_memory: (u32, u32),
     right_memory: (u32, u32),
     pointer: Pointer,
@@ -2150,9 +2462,12 @@ thread_local! {
     static DAG_LOAD_EQUALITY_POSITIVE_MEMO: std::cell::RefCell<
         std::collections::HashMap<DagLoadEqualityMemoKey, AtomicMemoryLoadEqualityEvidence>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
-    static DAG_LOAD_EQUALITY_NEGATIVE_MEMO: std::cell::RefCell<
-        std::collections::HashSet<(u64, DagLoadEqualityMemoKey)>,
-    > = std::cell::RefCell::new(std::collections::HashSet::new());
+    /// The two answers that are not an equality, keyed by derivation
+    /// generation: `true` is a store between the snapshots, `false` is a
+    /// history that decides nothing.
+    static DAG_LOAD_EQUALITY_UNPROVEN_MEMO: std::cell::RefCell<
+        std::collections::HashMap<(u64, DagLoadEqualityMemoKey), bool>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 const DAG_LOAD_EQUALITY_MEMO_LIMIT: usize = 200_000;
@@ -2360,8 +2675,22 @@ fn memories_directly_match_for_pointer_load(
     // effect summary whose `before` is the later live snapshot.
     if !pointer.block.starts_with("local:")
         && let (Some(left_epoch), Some(right_epoch)) = (
-            cell_version_point(&crate::kernel::intern_c_memory(left.clone()), pointer),
-            cell_version_point(&crate::kernel::intern_c_memory(right.clone()), pointer),
+            cell_version_point(
+                &crate::kernel::intern_c_memory(left.clone()),
+                pointer,
+                crate::kernel::load_access_width_or_widest(
+                    &crate::kernel::intern_c_memory(left.clone()),
+                    pointer,
+                ),
+            ),
+            cell_version_point(
+                &crate::kernel::intern_c_memory(right.clone()),
+                pointer,
+                crate::kernel::load_access_width_or_widest(
+                    &crate::kernel::intern_c_memory(right.clone()),
+                    pointer,
+                ),
+            ),
         )
         && left_epoch == right_epoch
     {
@@ -2772,7 +3101,7 @@ pub(crate) fn atomic_canonicalization_term_visits() -> usize {
 
 pub(crate) fn clear_provenance_memos() {
     DAG_LOAD_EQUALITY_POSITIVE_MEMO.with(|memo| memo.borrow_mut().clear());
-    DAG_LOAD_EQUALITY_NEGATIVE_MEMO.with(|memo| memo.borrow_mut().clear());
+    DAG_LOAD_EQUALITY_UNPROVEN_MEMO.with(|memo| memo.borrow_mut().clear());
 }
 
 pub(crate) fn clear_canonical_form_caches() {
@@ -3089,7 +3418,14 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                             // could not cross anything. Walking the original
                             // snapshot lets two loads of one unwritten cell at
                             // different points share one canonical form.
-                            let epoch = cell_version_point(memory, &canonical_pointer);
+                            let epoch = cell_version_point(
+                                memory,
+                                &canonical_pointer,
+                                crate::kernel::load_access_width_or_widest(
+                                    memory,
+                                    &canonical_pointer,
+                                ),
+                            );
                             let epoch = epoch.as_ref().unwrap_or(memory);
                             results.push(Bitvector32Term::MemoryLoad(
                                 canonical_projected_load_memory(epoch, &canonical_pointer),
@@ -3133,7 +3469,14 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                                 value = next;
                                 continue;
                             }
-                            let epoch = cell_version_point(next_memory, &canonical_pointer);
+                            let epoch = cell_version_point(
+                                next_memory,
+                                &canonical_pointer,
+                                crate::kernel::load_access_width_or_widest(
+                                    next_memory,
+                                    &canonical_pointer,
+                                ),
+                            );
                             let epoch = epoch.as_ref().unwrap_or(next_memory);
                             results.push(Bitvector32Term::MemoryLoad(
                                 canonical_projected_load_memory(epoch, &canonical_pointer),

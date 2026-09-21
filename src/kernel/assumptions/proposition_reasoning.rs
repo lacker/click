@@ -248,30 +248,6 @@ impl PureFactContext {
                 pointer,
                 byte_width,
             } => self.proves_memory_access(memory, pointer, *byte_width),
-            Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } => {
-                self.proves_memory_disjoint(
-                    left_base,
-                    left_start,
-                    left_end,
-                    right_base,
-                    right_start,
-                    right_end,
-                ) || self.proves_memory_disjoint_from_resource_separate(
-                    left_base,
-                    left_start,
-                    left_end,
-                    right_base,
-                    right_start,
-                    right_end,
-                )
-            }
             Proposition::CResourceSeparate { left, right } => {
                 self.proves_resource_separate(left, right)
             }
@@ -304,12 +280,21 @@ impl PureFactContext {
                     // including under folds and conditionals) are equal by
                     // deep canonicalization; both calls use complete,
                     // input-linear worklists.
+                    //
+                    // Canonicalization drops what it can prove irrelevant to
+                    // the load, which makes it exactly the kind of structural
+                    // route that cannot see a store the snapshots no longer
+                    // record. It answers to the recorded history like the
+                    // others; see `load_equality_refuted_by_history`.
                     || *value
                         && matches!(
                             condition,
                             ConditionTerm::Bitvector32Equal(left, right)
                                 if crate::kernel::api::canonicalize_atomic_loads(left)
                                         == crate::kernel::api::canonicalize_atomic_loads(right)
+                                    && !crate::kernel::reasoning::load_equality_refuted_by_history(
+                                        left, right, self,
+                                    )
                         )
                     || self.proves_condition_from_facts(condition, *value)
             }
@@ -374,32 +359,6 @@ impl PureFactContext {
                 pointer,
                 byte_width,
             } => self.proves_memory_access(memory, pointer, *byte_width),
-            Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } => {
-                self.prop_facts.contains(proposition)
-                    || self.proves_memory_disjoint(
-                        left_base,
-                        left_start,
-                        left_end,
-                        right_base,
-                        right_start,
-                        right_end,
-                    )
-                    || self.proves_memory_disjoint_from_resource_separate(
-                        left_base,
-                        left_start,
-                        left_end,
-                        right_base,
-                        right_start,
-                        right_end,
-                    )
-            }
             Proposition::CResourceSeparate { left, right } => {
                 self.prop_facts.contains(proposition) || self.proves_resource_separate(left, right)
             }
@@ -717,12 +676,21 @@ impl PureFactContext {
         }
         let epoch_before = INCOMPLETE_REASONING_EPOCH.with(Cell::get);
         let memory_evidence = match proposition {
-            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
-                crate::kernel::api::atomic_memory_load_equality_evidence(left, right, self)
-                    .filter(AtomicMemoryLoadEqualityEvidence::is_fully_typed)
-                    .map(Box::new)
-                    .map(AtomicPropositionDerivationEvidence::MemoryDag)
-            }
+            // Both equality widths reach the history. An `int64` load is a
+            // `Bitvector32Term::MemoryLoad` under a 64-bit equality, and the
+            // walk that decides whether two of them read one version of a
+            // cell takes its byte width from the load registry, so it has
+            // always been the same question. Only this arm was narrower than
+            // the question, which left a 64-bit load equality neither proved
+            // nor refuted by the recorded history.
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(left, right)
+                | ConditionTerm::Bitvector64Equal(left, right),
+                true,
+            ) => crate::kernel::api::atomic_memory_load_equality_evidence(left, right, self)
+                .filter(AtomicMemoryLoadEqualityEvidence::is_fully_typed)
+                .map(Box::new)
+                .map(AtomicPropositionDerivationEvidence::MemoryDag),
             Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) => {
                 crate::kernel::api::pointer_offset_equality_evidence(left, right, self)
                     .map(Box::new)

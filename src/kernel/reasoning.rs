@@ -15,6 +15,7 @@ pub(in crate::kernel) mod memory_resolution;
 pub(in crate::kernel) mod variable_collection;
 pub(super) use memory_resolution::*;
 pub(super) use order_reasoning::*;
+pub(super) use path_facts::{ExactElementDelta, exact_element_delta_from_offset};
 pub use path_facts::{LoweringIntroduction, LoweringIntroductions};
 pub(super) use path_facts::{
     add_condition_path_fact, add_internal_condition_path_fact, add_path_fact,

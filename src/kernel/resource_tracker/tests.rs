@@ -38,7 +38,14 @@ fn a_store_to_another_object_keeps_one_version() {
     let after = entry.clone().store(at(block("local:f:i"), 0), one());
     let cell = at(block("global:g"), 0);
     assert_eq!(
-        same(Resource::Cell(&cell), &point(&after), &point(&entry)),
+        same(
+            Resource::Cell {
+                pointer: &cell,
+                bytes: 4
+            },
+            &point(&after),
+            &point(&entry)
+        ),
         Sameness::Same
     );
     assert_eq!(
@@ -58,7 +65,14 @@ fn a_store_to_the_cell_reports_changed() {
     let entry = entry_memory();
     let written = at(block("global:g"), 0);
     let after = entry.clone().store(written.clone(), one());
-    let outcome = same(Resource::Cell(&written), &point(&after), &point(&entry));
+    let outcome = same(
+        Resource::Cell {
+            pointer: &written,
+            bytes: 4,
+        },
+        &point(&after),
+        &point(&entry),
+    );
     let Sameness::Changed { at: stopped, by } = outcome else {
         panic!("a store to the cell is a change, not {outcome:?}");
     };
@@ -72,6 +86,56 @@ fn a_store_to_the_cell_reports_changed() {
     assert_eq!(by.reason, StopReason::Affected);
 }
 
+/// A narrow store inside a wide cell changed it, whatever the addresses are
+/// called. Carrying a width on a cell resource is exactly what makes this
+/// answer reachable: `global:g + 4` is a different address from `global:g` by
+/// every ladder there is, and it writes the fifth byte of the eight-byte cell
+/// at `global:g`. The same store does miss a four-byte cell there.
+#[test]
+fn a_narrow_store_inside_a_wide_cell_reports_changed() {
+    let entry = entry_memory();
+    let cell = at(block("global:g"), 0);
+    for offset in 1..8 {
+        let written = at(block("global:g"), offset);
+        let after = entry
+            .clone()
+            .store(written, CValue::UInt8(Bitvector32Term::Constant(7)));
+        assert_ne!(
+            same(
+                Resource::Cell {
+                    pointer: &cell,
+                    bytes: 8,
+                },
+                &point(&after),
+                &point(&entry)
+            ),
+            Sameness::Same,
+            "a one-byte store at offset {offset} writes the eight-byte cell at offset 0"
+        );
+        let four_byte_answer = same(
+            Resource::Cell {
+                pointer: &cell,
+                bytes: 4,
+            },
+            &point(&after),
+            &point(&entry),
+        );
+        if offset >= 4 {
+            assert_eq!(
+                four_byte_answer,
+                Sameness::Same,
+                "a one-byte store at offset {offset} misses the four-byte cell at offset 0"
+            );
+        } else {
+            assert_ne!(
+                four_byte_answer,
+                Sameness::Same,
+                "a one-byte store at offset {offset} writes the four-byte cell at offset 0"
+            );
+        }
+    }
+}
+
 /// A store through a spelling the kernel cannot separate from the cell is
 /// `Unknown`, not `Changed`: the cell may well be untouched, and what is
 /// missing is a proof of distinctness, which the answer names.
@@ -81,7 +145,14 @@ fn a_store_that_may_alias_reports_unknown_and_the_check_it_needs() {
     let written = at(PointerBlock::Symbolic(Variable(77)), 0);
     let after = entry.clone().store(written.clone(), one());
     let cell = at(block("global:g"), 0);
-    let outcome = same(Resource::Cell(&cell), &point(&after), &point(&entry));
+    let outcome = same(
+        Resource::Cell {
+            pointer: &cell,
+            bytes: 4,
+        },
+        &point(&after),
+        &point(&entry),
+    );
     let Sameness::Unknown { at: stopped, why } = outcome else {
         panic!("an unseparated store is unknown, not {outcome:?}");
     };
@@ -109,13 +180,27 @@ fn a_call_havoc_carries_a_cell_outside_its_write_set_only() {
             .with_call_memory_havoc(Variable(901), &ranges, &PureFactContext::new());
     let outside = at(block("global:h"), 0);
     assert_eq!(
-        same(Resource::Cell(&outside), &point(&after), &point(&entry)),
+        same(
+            Resource::Cell {
+                pointer: &outside,
+                bytes: 4
+            },
+            &point(&after),
+            &point(&entry)
+        ),
         Sameness::Same,
         "a cell in another object is outside every range the call declared"
     );
 
     let inside = at(block("global:g"), 0);
-    let outcome = same(Resource::Cell(&inside), &point(&after), &point(&entry));
+    let outcome = same(
+        Resource::Cell {
+            pointer: &inside,
+            bytes: 4,
+        },
+        &point(&after),
+        &point(&entry),
+    );
     let Sameness::Unknown { why, .. } = outcome else {
         panic!("a call that may write the cell is unknown, not {outcome:?}");
     };
@@ -244,7 +329,14 @@ fn a_loop_without_a_write_set_needs_no_separation_check() {
         None,
     );
     let cell = at(block("global:g"), 0);
-    let outcome = same(Resource::Cell(&cell), &point(&after), &point(&entry));
+    let outcome = same(
+        Resource::Cell {
+            pointer: &cell,
+            bytes: 4,
+        },
+        &point(&after),
+        &point(&entry),
+    );
     let Sameness::Unknown { why, .. } = outcome else {
         panic!("an unchecked loop havoc is unknown, not {outcome:?}");
     };
@@ -266,7 +358,14 @@ fn a_declaration_of_another_object_keeps_one_version() {
     let after = entry.clone().with_block(block("local:f:t"), 4);
     let cell = at(block("global:g"), 0);
     assert_eq!(
-        same(Resource::Cell(&cell), &point(&after), &point(&entry)),
+        same(
+            Resource::Cell {
+                pointer: &cell,
+                bytes: 4
+            },
+            &point(&after),
+            &point(&entry)
+        ),
         Sameness::Same,
         "a declaration writes no cell"
     );
@@ -439,7 +538,10 @@ fn a_pending_allocation_records_nothing_a_block_can_observe() {
     assert_eq!(entry.blocks, requested.blocks);
     assert_eq!(entry.cells, requested.cells);
     assert_eq!(entry.union_cells, requested.union_cells);
-    assert_eq!(entry.ended_local_blocks, requested.ended_local_blocks);
+    assert_eq!(
+        entry.forgotten.ended_local_blocks,
+        requested.forgotten.ended_local_blocks
+    );
     let same_heap_but_pending = CHeapMemory {
         pending_allocations: entry.heap.pending_allocations.clone(),
         ..requested.heap.as_ref().clone()
@@ -474,18 +576,36 @@ fn a_pending_allocation_records_nothing_a_block_can_observe() {
 fn one_sided_explanation_reaches_the_beginning_of_the_history() {
     let entry = entry_memory();
     let cell = at(block("global:g"), 0);
-    let explanation = explain_last_same(Resource::Cell(&cell), &point(&entry));
+    let explanation = explain_last_same(
+        Resource::Cell {
+            pointer: &cell,
+            bytes: 4,
+        },
+        &point(&entry),
+    );
     assert_eq!(explanation.outcome, Sameness::Same);
     assert_eq!(explanation.there, None);
 
     let written = at(PointerBlock::Symbolic(Variable(78)), 0);
     let after = entry.store(written.clone(), one());
-    let explanation = explain_last_same(Resource::Cell(&cell), &point(&after));
+    let explanation = explain_last_same(
+        Resource::Cell {
+            pointer: &cell,
+            bytes: 4,
+        },
+        &point(&after),
+    );
     let Some((_, stop)) = explanation.outcome.blocking_step() else {
         panic!("an unseparated store is a blocking step");
     };
     assert_eq!(stop.change, Change::Store { pointer: written });
-    assert_eq!(explanation.resource, OwnedResource::Cell(cell));
+    assert_eq!(
+        explanation.resource,
+        OwnedResource::Cell {
+            pointer: cell,
+            bytes: 4
+        }
+    );
 }
 
 /// The bounded report counts the steps it crossed after the blocking one
@@ -501,7 +621,14 @@ fn an_explanation_counts_the_steps_it_crossed() {
         .store(at(block("local:f:i"), 0), one())
         .store(at(block("global:h"), 0), one());
     let cell = at(block("global:g"), 0);
-    let explanation = explain(Resource::Cell(&cell), &point(&after), &point(&entry));
+    let explanation = explain(
+        Resource::Cell {
+            pointer: &cell,
+            bytes: 4,
+        },
+        &point(&after),
+        &point(&entry),
+    );
     assert_eq!(
         explanation
             .outcome
@@ -538,7 +665,12 @@ fn a_version_mismatch_names_the_resource_and_both_points() {
     assert_eq!(
         version_mismatch(&fact(&after), &fact(&entry)),
         Some((
-            OwnedResource::Cell(cell.clone()),
+            // The fact spells a raw `MemoryLoad`, which carries no width, so
+            // the resource stands in the widest scalar access.
+            OwnedResource::Cell {
+                pointer: cell.clone(),
+                bytes: super::widest_scalar_access_bytes(),
+            },
             point(&after),
             point(&entry)
         ))

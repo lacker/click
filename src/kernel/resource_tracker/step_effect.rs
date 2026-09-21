@@ -162,7 +162,7 @@ pub(in crate::kernel) fn affects(
     evidence: &Evidence<'_>,
 ) -> StepEffect {
     match resource {
-        Resource::Cell(pointer) => cell_effect(step, produced, pointer, evidence),
+        Resource::Cell { pointer, bytes } => cell_effect(step, produced, pointer, bytes, evidence),
         // The block arm is handed no evidence, which is how "assumption-free"
         // is enforced rather than remembered: it has no parameter a fact
         // could arrive through.
@@ -195,7 +195,7 @@ pub(in crate::kernel) fn separation_check(
     resource: Resource<'_>,
 ) -> SeparationCheck {
     match resource {
-        Resource::Cell(_) => match step {
+        Resource::Cell { .. } => match step {
             CMemoryDerivation::CallHavoc { .. }
             | CMemoryDerivation::LoopHavoc {
                 mutable_ranges: Some(_),
@@ -270,13 +270,19 @@ fn cell_effect(
     step: &CMemoryDerivation,
     produced: &SharedCMemory,
     pointer: &Pointer,
+    bytes: u32,
     evidence: &Evidence<'_>,
 ) -> StepEffect {
     let assumptions = evidence.assumptions;
     let hop = |justification| StepEffect::Separate(Separation::Cell(justification));
-    let unknown = || StepEffect::NotShownSeparate(separation_check(step, Resource::Cell(pointer)));
+    let unknown =
+        || StepEffect::NotShownSeparate(separation_check(step, Resource::Cell { pointer, bytes }));
     match step {
-        CMemoryDerivation::Store { pointer: write, .. } => {
+        CMemoryDerivation::Store {
+            pointer: write,
+            value,
+            ..
+        } => {
             if write == pointer
                 || explicit_dag_check_active()
                     && write.block == pointer.block
@@ -293,6 +299,28 @@ fn cell_effect(
             {
                 return StepEffect::Affected;
             }
+            // The ladders below prove the two ADDRESSES are different. That
+            // is not the question: the question is whether the store writes
+            // any of this cell's bytes, and `write + 4` is a different
+            // address from `write` while still overwriting the upper half of
+            // an eight-byte cell there.
+            //
+            // A known constant gap between the addresses answers the byte
+            // question outright, so take that answer first: overlapping
+            // bytes mean the store wrote this cell, whatever the addresses
+            // are called.
+            let overlap =
+                access_byte_overlap(write, value.byte_width(), pointer, bytes, assumptions);
+            if overlap == AccessByteOverlap::Overlaps {
+                return StepEffect::Affected;
+            }
+            // Otherwise the ladders may speak, but the two that rest on
+            // address inequality alone may only stand in for byte separation
+            // when the gap they establish is at least as wide as the wider
+            // access. Where it is not, they are skipped rather than
+            // contradicted: the answer becomes "not shown separate", which
+            // is both the truth and the refusal that explains itself.
+            let address_inequality_separates_bytes = overlap == AccessByteOverlap::Separate;
             // The recorded-range fallback covers writes into a
             // proven-separate region (a buffer store crossed while resolving
             // a struct field); extended-bridging scope only, and under its
@@ -300,7 +328,8 @@ fn cell_effect(
             // enclosing query's fuel.
             if write.blocks_proven_distinct(pointer) {
                 hop(MemoryDagHopJustification::StoreDistinctBlocks)
-            } else if pointer_offsets_with_common_base_proven_distinct(write, pointer, assumptions)
+            } else if address_inequality_separates_bytes
+                && pointer_offsets_with_common_base_proven_distinct(write, pointer, assumptions)
             {
                 let condition =
                     pointer_offsets_with_common_base_distinctness_condition(write, pointer)
@@ -345,6 +374,7 @@ fn cell_effect(
                     MemoryDagAssumptionKind::StoreExplicitRange,
                 ))
             } else if extended_dag_bridging_active()
+                && address_inequality_separates_bytes
                 && pointers_proven_distinct_for_memory_resolution(write, pointer, assumptions)
             {
                 hop(MemoryDagHopJustification::AssumptionDependent(
@@ -449,9 +479,12 @@ fn cell_effect(
             }
         }
         CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
-            if let Some(ranges) =
-                typed_ranges_disjoint_from_pointer_evidence(mutable_ranges, pointer, assumptions)
-            {
+            if let Some(ranges) = typed_ranges_disjoint_from_pointer_evidence(
+                mutable_ranges,
+                pointer,
+                bytes,
+                assumptions,
+            ) {
                 hop(MemoryDagHopJustification::CallHavocRanges { ranges })
             } else if assumptions.ranges_proven_disjoint_from_pointer_for_frame(
                 mutable_ranges,
@@ -475,9 +508,12 @@ fn cell_effect(
             {
                 return unknown();
             }
-            if let Some(ranges) =
-                typed_ranges_disjoint_from_pointer_evidence(mutable_ranges, pointer, assumptions)
-            {
+            if let Some(ranges) = typed_ranges_disjoint_from_pointer_evidence(
+                mutable_ranges,
+                pointer,
+                bytes,
+                assumptions,
+            ) {
                 hop(MemoryDagHopJustification::LoopHavocRanges { ranges })
             } else if assumptions.ranges_proven_disjoint_from_pointer_for_frame(
                 mutable_ranges,

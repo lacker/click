@@ -374,6 +374,67 @@ them without losing every pair the DAG does not connect.
 | `memories_proven_equal_for_memory_resolution`, `memory_cells_definitionally_contained` | another question | Whole-state equality under assumptions, with no load pointer. The only `local:` cells and blocks either drops are the ones `local_block_no_pointer_can_reach` allows — see below. |
 | `differing_cell_pointers_possibly_aliasing` | separation | One call to `observable_by_load`. |
 
+#### And the history has a veto over all of them
+
+Every row above reads *state*. A cell map records what is known at a point,
+and a canonical form drops what it can prove irrelevant to the load. Neither
+records that a store happened, and a store into the middle of a cell drops
+the cell it partly overwrote while the naming projection discards what it
+leaves behind — so two snapshots a store separates can be identical
+everywhere these sites look. Absence of a differing cell is not evidence that
+no store happened, and reading it as such made `*q` provably equal to
+`old(q[0])` across a one-byte write into the same `int32`.
+
+So the loads' recorded history is asked first, and it can refuse. One
+memoized query, `recorded_load_history` in `src/kernel/memory_provenance.rs`,
+answers for a pair of snapshots and a pointer:
+
+| Answer | What the history established | What the state routes may do |
+| --- | --- | --- |
+| one version | both cell walks reach one node, or one walk's store pins the other side's load | the equality is already proved; nothing else is consulted |
+| different versions | a walk is stopped by a step `affects` reports `Affected` — a store whose bytes provably overlap the read, or the allocation, retirement or free of this very cell | nothing. The cell maps are not consulted for this pair |
+| undecided | a walk ran out of history, or stopped at a step it could not classify | everything, exactly as before |
+
+The answer is read off the two cell-source walks the equality question
+already runs — `memory_dag_cell_source_with_stop` returns the node *and*
+`CellWalkStop` — so asking the refutation after asking the equality costs a
+memo lookup, not a traversal. Stated and assumed equalities never reach the
+veto: the fact graph is consulted before the load arms are, at every site
+that consults it, so a premise about the two values still outranks what the
+history says about the cell.
+
+The consumers are `loads_separated_by_recorded_history` for a pair of
+snapshots and `load_equality_refuted_by_history` for a pair of terms, both in
+`src/kernel/reasoning/memory_resolution.rs`. They reach the
+`(MemoryLoad, MemoryLoad)` arm of the resolution equality, the deep
+canonical-form comparison in `proves_atomic_without_search`, the origin-snapshot
+comparison in `checked_origin_load_equality`, and the bounded matcher behind
+`pointer_offsets_equal_after_exact_materialization`, so one store is seen the
+same way by an integer goal, a pointer-offset goal and a 64-bit goal alike.
+Where a comparison holds a naming projection rather than a derived snapshot,
+`canonical_load_projection_source` leads back to the snapshot the projection's
+materialized cells were loaded from, and the pair is asked again from there.
+
+Two things the veto deliberately does not cover, both recorded here because
+they are what a later repair has to start from.
+
+A walk that stops at a step it could not show separate has proved nothing,
+so the cell comparison still speaks. That is sound only while the comparison
+can see the blocking store, and it cannot when a later possibly-aliasing
+store has already dropped that store's cell from both snapshots: `a[i] = 7;
+a[j] = 0; return a[m];` under `m != j` and nothing about `i` compares one
+differing cell, separates it, and reads `a[m]` as unchanged. Making the stop
+itself refuse is the principled repair, and it is not free: the walk's own
+`Store` ladder is narrower in practice than the differing-cell scan, so a
+blanket refusal withdraws field-derived and symbolic-index framing the corpus
+depends on. The repair is to give the two one ladder, not to widen the veto.
+
+Snapshots the history does not connect at all keep the cell comparison
+unconditionally. What that rests on is `memories_match_for_pointer_load`'s
+own claim — equal havoc markers, equal extent, and equal observable cells —
+which is a statement about two states and not about any path between them.
+Where no path exists there is nothing for the history to say.
+
 ### The separation predicates, which stay one function each
 
 `affects` has no overlap logic of its own; it asks these. They are listed so

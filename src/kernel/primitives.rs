@@ -21,7 +21,7 @@ pub(crate) use contracts::{
     memory_range_byte_count_extent, memory_range_byte_count_guards, memory_range_element_count,
     memory_range_element_count_guards, memory_range_element_count_limit,
     scaled_extent_element_width, stated_loadable_extent_guard_spellings,
-    stated_loadable_extent_guards,
+    stated_loadable_extent_guards, stated_separation_extent_guards,
 };
 mod integer;
 pub use integer::{
@@ -3341,6 +3341,13 @@ pub struct ExecutionBudget {
     /// count says nothing about why. Diagnostic only: no evaluation reads it
     /// back.
     pub(super) dropped_fold_body: Option<DroppedFoldBody>,
+    /// Set when a stated resource relation was dropped because this context
+    /// already proves one of its memory ranges is not a valid byte extent.
+    /// Unlike [`Self::dropped_range_extent`] the endpoints here need not be
+    /// constants — the surrounding facts are what decide it — so there is no
+    /// element count to report, only the reason. Diagnostic only: no
+    /// evaluation reads it back.
+    pub(super) dropped_relation_range_extent: bool,
 }
 
 /// A constant element range a lowering refused as a byte extent, for the
@@ -3486,6 +3493,80 @@ pub(super) enum CLocalBinding {
     },
 }
 
+/// The snapshot a snapshot forgot knowledge from.
+///
+/// A snapshot is interned by content, so two states with the same known
+/// cells are one node. That is only sound while the known cells decide what
+/// every address holds *relative to a fixed starting state* — and dropping a
+/// cached value breaks exactly that. After `a[i] = 7; a[j] = 0;` the write to
+/// `a[j]` drops the possibly aliasing `a[i]` cell, and the cell map is empty
+/// again, just as it was at function entry. Without this mark that state *is*
+/// the entry node, so `a[m]` is named `old(a[m])` and the two are equal by
+/// spelling with no rule having decided it.
+///
+/// So the forget is part of the content. `{cells, forgotten_from = S}` reads
+/// "the memory `S` denotes, with these cells known on top of it". Two
+/// executions that reach the same cells over the same `S` really are in the
+/// same state, so interning stays sound, deterministic and
+/// path-independent — and an entry state, which carries no mark, can no
+/// longer be the state something was forgotten into.
+/// The mark is the base's *identity*, never the base itself. Holding the
+/// snapshot would put a chain of `Arc<CMemory>` inside every snapshot that
+/// ever forgot anything, and equality, ordering and dropping would all
+/// recurse down it — one stack frame per forget, on a hot path, in a
+/// structure the arena already keeps alive. Every field here is O(1) to
+/// compare and to hash.
+///
+/// It is held behind an `Arc` rather than inline for the same reason the
+/// cell map is: `CMemory` travels by value through deeply recursive
+/// evaluation, so a snapshot pays one pointer for the mark and the snapshots
+/// that inherit it share the one allocation.
+///
+/// `content_hash` comes first so that the derived ordering is the one a
+/// verification can reproduce: it is a function of the base's content, while
+/// arena tokens count process-wide and would order snapshots differently from
+/// run to run. Within one verification every mark shares the token, so the
+/// remaining comparison is by dense arena id.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+pub(crate) struct ForgottenFrom {
+    content_hash: u64,
+    arena_id: (u32, u32),
+}
+
+impl std::hash::Hash for ForgottenFrom {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Only the content hash, because this feeds the identity a load is
+        // named by: a name has to be the same in every run that reaches this
+        // state, and an arena token is not.
+        state.write_u64(self.content_hash);
+    }
+}
+
+impl std::fmt::Debug for ForgottenFrom {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (arena, id) = self.arena_id;
+        write!(formatter, "forgotten-from({arena}.{id})")
+    }
+}
+
+/// What a snapshot no longer knows, beside its cells.
+///
+/// Two facts of the same kind, behind one pointer. `CMemory` travels by value
+/// inside `Term`, whose clone recurses once per nested operator, so a snapshot
+/// pays one word for both rather than one each.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
+pub struct CForgottenKnowledge {
+    /// Automatic-storage blocks whose lifetimes have ended. Unlike removing
+    /// the block alone, retaining this tombstone makes stale aliases invalid
+    /// even when a later proof step forgets or rejoins ordinary cells.
+    pub(super) ended_local_blocks: BTreeSet<PointerBlock>,
+    /// Set where cached values were dropped without the memory itself being
+    /// known unchanged; see [`ForgottenFrom`]. Carried by later stores and by
+    /// the projections used for load naming, so a state that has forgotten
+    /// something can never re-intern as the state it forgot it from.
+    pub(super) forgotten_from: Option<ForgottenFrom>,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CMemory {
     pub(super) blocks: std::sync::Arc<BTreeMap<PointerBlock, CBlock>>,
@@ -3495,10 +3576,7 @@ pub struct CMemory {
     /// two members at one address must remain independently readable after a
     /// by-value aggregate copy.
     pub(super) union_cells: std::sync::Arc<BTreeMap<(Pointer, CType), CValue>>,
-    /// Automatic-storage blocks whose lifetimes have ended. Unlike removing
-    /// the block alone, retaining this tombstone makes stale aliases invalid
-    /// even when a later proof step forgets or rejoins ordinary cells.
-    pub(super) ended_local_blocks: std::sync::Arc<BTreeSet<PointerBlock>>,
+    pub(super) forgotten: std::sync::Arc<CForgottenKnowledge>,
     pub(super) heap: std::sync::Arc<CHeapMemory>,
 }
 
@@ -3511,9 +3589,22 @@ impl CMemory {
             std::sync::Arc::as_ptr(&self.blocks) as usize,
             std::sync::Arc::as_ptr(&self.cells) as usize,
             std::sync::Arc::as_ptr(&self.union_cells) as usize,
-            std::sync::Arc::as_ptr(&self.ended_local_blocks) as usize,
+            std::sync::Arc::as_ptr(&self.forgotten) as usize,
             std::sync::Arc::as_ptr(&self.heap) as usize,
         )
+    }
+
+    /// Records that this snapshot dropped cached values that `base` knew,
+    /// without the memory the two describe having changed.
+    ///
+    /// Overwriting an older mark keeps the whole history: `base` carries its
+    /// own mark, and `base`'s content hash — which is what is stored here —
+    /// already depends on it.
+    pub(in crate::kernel) fn mark_forgotten_from(&mut self, base: &SharedCMemory) {
+        std::sync::Arc::make_mut(&mut self.forgotten).forgotten_from = Some(ForgottenFrom {
+            content_hash: base.content_hash,
+            arena_id: base.arena_id(),
+        });
     }
 
     /// Whether two snapshots are the same stored snapshot, by the storage
@@ -3577,10 +3668,15 @@ impl std::hash::Hash for CMemory {
         if !self.union_cells.is_empty() {
             self.union_cells.hash(state);
         }
-        if !self.ended_local_blocks.is_empty() {
-            std::hash::Hash::hash(&self.ended_local_blocks, state);
+        if !self.forgotten.ended_local_blocks.is_empty() {
+            std::hash::Hash::hash(&self.forgotten.ended_local_blocks, state);
         }
         self.heap.hash(state);
+        // Likewise skipped when absent, so every snapshot that never forgot
+        // anything keeps the load identities it had before marks existed.
+        if let Some(forgotten_from) = &self.forgotten.forgotten_from {
+            forgotten_from.hash(state);
+        }
     }
 }
 
@@ -3590,8 +3686,17 @@ impl Ord for CMemory {
             .cmp(&other.blocks)
             .then_with(|| self.cells.cmp(&other.cells))
             .then_with(|| self.union_cells.cmp(&other.union_cells))
-            .then_with(|| self.ended_local_blocks.cmp(&other.ended_local_blocks))
+            .then_with(|| {
+                self.forgotten
+                    .ended_local_blocks
+                    .cmp(&other.forgotten.ended_local_blocks)
+            })
             .then_with(|| self.heap.cmp(&other.heap))
+            .then_with(|| {
+                self.forgotten
+                    .forgotten_from
+                    .cmp(&other.forgotten.forgotten_from)
+            })
     }
 }
 
@@ -4016,6 +4121,23 @@ pub enum CMemoryDerivation {
 }
 
 impl CMemoryDerivation {
+    /// The edge kind's name, for census rows that must stay readable
+    /// without carrying a snapshot.
+    pub(crate) fn kind_name(&self) -> &'static str {
+        match self {
+            Self::Store { .. } => "Store",
+            Self::BlockDeclared { .. } => "BlockDeclared",
+            Self::HeapAllocated { .. } => "HeapAllocated",
+            Self::HeapAllocationPending { .. } => "HeapAllocationPending",
+            Self::ContractAllocationClaimsChanged { .. } => "ContractAllocationClaimsChanged",
+            Self::HeapFreed { .. } => "HeapFreed",
+            Self::CellsForgotten { .. } => "CellsForgotten",
+            Self::LocalLifetimeEnded { .. } => "LocalLifetimeEnded",
+            Self::LoopHavoc { .. } => "LoopHavoc",
+            Self::CallHavoc { .. } => "CallHavoc",
+        }
+    }
+
     /// The snapshot this one was derived from.
     pub fn base(&self) -> &SharedCMemory {
         match self {
@@ -4050,7 +4172,7 @@ struct CMemoryShallowIdentity {
     blocks: usize,
     cells: usize,
     union_cells: usize,
-    ended_local_blocks: usize,
+    forgotten: usize,
     heap: usize,
 }
 
@@ -4060,7 +4182,7 @@ impl CMemoryShallowIdentity {
             blocks: std::sync::Arc::as_ptr(&memory.blocks) as usize,
             cells: std::sync::Arc::as_ptr(&memory.cells) as usize,
             union_cells: std::sync::Arc::as_ptr(&memory.union_cells) as usize,
-            ended_local_blocks: std::sync::Arc::as_ptr(&memory.ended_local_blocks) as usize,
+            forgotten: std::sync::Arc::as_ptr(&memory.forgotten) as usize,
             heap: std::sync::Arc::as_ptr(&memory.heap) as usize,
         }
     }
@@ -4121,7 +4243,22 @@ pub(crate) fn record_c_memory_derivation(result: &CMemory, derivation: CMemoryDe
         let Some(slot) = arena.derivations.get_mut(derived.id as usize) else {
             return;
         };
-        if slot.is_some() || derivation.base().id >= derived.id {
+        if slot.is_some() {
+            return;
+        }
+        if derivation.base().id >= derived.id {
+            // A step that ends on a node older than itself is recorded
+            // nowhere — so whatever happened in between is on no history,
+            // and every history-based rule inherits a chain that silently
+            // re-rooted. Where the step lost knowledge that is a
+            // false-theorem shape, which is what the forget mark rules out
+            // at the producer. Where it lost nothing the older node is an
+            // ancestor whose history is this path's own prefix, which is
+            // why this stays a census rather than an assertion here.
+            crate::instrumentation::record_backwards_memory_derivation(
+                derivation.kind_name(),
+                derivation.base().id == derived.id,
+            );
             return;
         }
         *slot = Some(std::sync::Arc::new(derivation));
@@ -4141,7 +4278,7 @@ fn record_c_memory_structural_lookup_work(memory: &CMemory) {
         memory.blocks.len()
             + memory.cells.len()
             + memory.union_cells.len()
-            + memory.ended_local_blocks.len()
+            + memory.forgotten.ended_local_blocks.len()
             + memory.heap.live_allocations.len()
             + memory.heap.deallocated_allocations.len()
             + memory.heap.pending_allocations.len()
@@ -5706,14 +5843,6 @@ pub enum Proposition {
         memory: CMemory,
         base: Pointer,
         bytes: Bitvector32Term,
-    },
-    CMemoryDisjoint {
-        left_base: Pointer,
-        left_start: Bitvector32Term,
-        left_end: Bitvector32Term,
-        right_base: Pointer,
-        right_start: Bitvector32Term,
-        right_end: Bitvector32Term,
     },
     CResourceSeparate {
         left: CResource,

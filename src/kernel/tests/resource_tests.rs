@@ -4019,29 +4019,6 @@ fn composite_resource_arguments_respect_proven_pointer_equality() {
 }
 
 #[test]
-fn resource_separation_proves_memory_disjointness() {
-    let base = Pointer {
-        block: "p".into(),
-        offset: PointerOffsetTerm::Constant(0),
-    };
-    let left = memory_range(base.clone(), 0, 1);
-    let right = memory_range(base.clone(), 1, 2);
-    let assumptions = PureFactContext::new().assume_proposition(Proposition::CResourceSeparate {
-        left: CResource::Memory(left),
-        right: CResource::Memory(right),
-    });
-
-    assert!(assumptions.proves(&Proposition::CMemoryDisjoint {
-        left_base: base.clone(),
-        left_start: Bitvector32Term::Constant(0),
-        left_end: Bitvector32Term::Constant(1),
-        right_base: base,
-        right_start: Bitvector32Term::Constant(1),
-        right_end: Bitvector32Term::Constant(2),
-    }));
-}
-
-#[test]
 fn resource_separation_covers_larger_memory_range() {
     let base = Pointer {
         block: "p".into(),

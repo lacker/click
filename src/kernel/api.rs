@@ -956,7 +956,7 @@ fn abstract_c_state_for_join_across_with_policy(
                 + sibling.memory.blocks.len()
                 + sibling.memory.cells.len()
                 + sibling.memory.union_cells.len()
-                + sibling.memory.ended_local_blocks.len()
+                + sibling.memory.forgotten.ended_local_blocks.len()
                 + sibling.resources().facts().len()
                 + sibling.counted_populations.len(),
         );
@@ -1082,7 +1082,7 @@ fn abstract_c_state_for_join_across_with_policy(
             state.memory.blocks.len()
                 + state.memory.cells.len()
                 + state.memory.union_cells.len()
-                + state.memory.ended_local_blocks.len(),
+                + state.memory.forgotten.ended_local_blocks.len(),
         );
         let mut memory = state.memory.clone();
         std::sync::Arc::make_mut(&mut memory.blocks)
@@ -1178,7 +1178,7 @@ fn validate_branch_memory_delta_against_loans(
     }
     if base.blocks != sibling.blocks
         || base.heap != sibling.heap
-        || base.ended_local_blocks != sibling.ended_local_blocks
+        || base.forgotten.ended_local_blocks != sibling.forgotten.ended_local_blocks
     {
         return Err("branch memory join has an unsupported allocation or block delta while a stable-view loan is active".to_string());
     }
@@ -2082,6 +2082,12 @@ fn no_single_path_message<T>(what: &str, paths: &[T], budget: &ExecutionBudget) 
             )
         };
     }
+    if paths.is_empty() && budget.dropped_relation_range_extent() {
+        return format!(
+            "the kernel {what} produced no path: it relates a memory range this context already \
+             proves is not a byte extent, because its end is before its start"
+        );
+    }
     match (paths.len(), budget.dropped_runtime_error()) {
         (0, Some(error)) => format!(
             "the kernel {what} produced no path: every evaluation path ended in a runtime error: {}",
@@ -2325,11 +2331,10 @@ fn assumptions_without_memory_separations(assumptions: &PureFactContext) -> Pure
         .filter(|fact| {
             matches!(
                 fact,
-                Proposition::CMemoryDisjoint { .. }
-                    | Proposition::CResourceSeparate {
-                        left: CResource::Memory(_),
-                        right: CResource::Memory(_),
-                    }
+                Proposition::CResourceSeparate {
+                    left: CResource::Memory(_),
+                    right: CResource::Memory(_),
+                }
             )
         })
         .cloned()

@@ -16,7 +16,7 @@ fn memory() -> SharedCMemory {
 }
 
 fn exact_load(memory: &SharedCMemory, pointer: &Pointer) -> Variable {
-    crate::kernel::eval::load_variable_for_exact_cell(memory, pointer)
+    crate::kernel::eval::load_variable_for_exact_cell(memory, pointer, 4)
 }
 
 fn int32_fold(accumulator: Variable, item: Variable, body: IntegerTerm) -> IntegerTerm {

@@ -460,21 +460,6 @@ pub(crate) fn substitute_bitvector_variable_in_proposition(
             base: substitute_bitvector_variable_in_pointer(base, from, to),
             bytes: substitute_bitvector_variable(bytes, from, to),
         },
-        Proposition::CMemoryDisjoint {
-            left_base,
-            left_start,
-            left_end,
-            right_base,
-            right_start,
-            right_end,
-        } => Proposition::CMemoryDisjoint {
-            left_base: substitute_bitvector_variable_in_pointer(left_base, from, to),
-            left_start: substitute_bitvector_variable(left_start, from, to),
-            left_end: substitute_bitvector_variable(left_end, from, to),
-            right_base: substitute_bitvector_variable_in_pointer(right_base, from, to),
-            right_start: substitute_bitvector_variable(right_start, from, to),
-            right_end: substitute_bitvector_variable(right_end, from, to),
-        },
         Proposition::CResourceSeparate { left, right } => Proposition::CResourceSeparate {
             left: substitute_bitvector_variable_in_c_resource(left, from, to),
             right: substitute_bitvector_variable_in_c_resource(right, from, to),
@@ -774,21 +759,6 @@ fn collect_proposition_bound_variables_one(
             collect_memory_bound_variables(memory, variables);
             collect_pointer_bound_variables(base, variables);
             collect_bitvector_bound_variables(bytes, variables);
-        }
-        Proposition::CMemoryDisjoint {
-            left_base,
-            left_start,
-            left_end,
-            right_base,
-            right_start,
-            right_end,
-        } => {
-            collect_pointer_bound_variables(left_base, variables);
-            collect_bitvector_bound_variables(left_start, variables);
-            collect_bitvector_bound_variables(left_end, variables);
-            collect_pointer_bound_variables(right_base, variables);
-            collect_bitvector_bound_variables(right_start, variables);
-            collect_bitvector_bound_variables(right_end, variables);
         }
         Proposition::CResourceSeparate { left, right }
         | Proposition::CResourceContains {
@@ -5244,7 +5214,10 @@ fn substitute_bitvector_variable_in_memory_contents(
                 })
                 .collect(),
         ),
-        ended_local_blocks: memory.ended_local_blocks.clone(),
+        // Carried unrewritten. The mark inside is an identity, not an
+        // address or a value, and a rewritten snapshot that dropped it could
+        // re-intern as a state that forgot nothing.
+        forgotten: memory.forgotten.clone(),
         heap: std::sync::Arc::new(CHeapMemory {
             live_allocations: memory
                 .heap
@@ -5528,21 +5501,6 @@ pub(crate) fn substitute_pointer_variable_in_proposition(
             memory: substitute_pointer_variable_in_memory(memory, from, to),
             base: substitute_pointer_variable_in_pointer(base, from, to),
             bytes: bytes.clone(),
-        },
-        Proposition::CMemoryDisjoint {
-            left_base,
-            left_start,
-            left_end,
-            right_base,
-            right_start,
-            right_end,
-        } => Proposition::CMemoryDisjoint {
-            left_base: substitute_pointer_variable_in_pointer(left_base, from, to),
-            left_start: left_start.clone(),
-            left_end: left_end.clone(),
-            right_base: substitute_pointer_variable_in_pointer(right_base, from, to),
-            right_start: right_start.clone(),
-            right_end: right_end.clone(),
         },
         Proposition::CResourceSeparate { left, right } => Proposition::CResourceSeparate {
             left: substitute_pointer_variable_in_c_resource(left, from, to),
@@ -6612,13 +6570,17 @@ pub(crate) fn substitute_pointer_variable_in_memory(
                 })
                 .collect(),
         ),
-        ended_local_blocks: std::sync::Arc::new(
-            memory
+        forgotten: std::sync::Arc::new(CForgottenKnowledge {
+            ended_local_blocks: memory
+                .forgotten
                 .ended_local_blocks
                 .iter()
                 .map(|block| substitute_pointer_variable_in_block(block, from, to))
                 .collect(),
-        ),
+            // Carried unrewritten, for the reason given in
+            // `substitute_bitvector_variable_in_memory_contents`.
+            forgotten_from: memory.forgotten.forgotten_from,
+        }),
         heap: std::sync::Arc::new(CHeapMemory {
             live_allocations: memory
                 .heap
@@ -8460,6 +8422,7 @@ mod integer_mixed_quantifier_tests {
                     byte_width: 4,
                 },
             },
+            4,
         );
         let replacement = IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
             MachineIntegerType::Int32,

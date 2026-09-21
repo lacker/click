@@ -446,6 +446,7 @@ fn retained_store_hops_carry_locally_checkable_distinctness_proofs() {
     assert!(constant_hop.justification.checks(
         constant_hop.derivation.as_ref(),
         &constant_read,
+        4,
         &PureFactContext::new(),
     ));
     let constant_left = Bitvector32Term::MemoryLoad(
@@ -471,6 +472,9 @@ fn retained_store_hops_carry_locally_checkable_distinctness_proofs() {
     let read_index = Bitvector32Term::Variable(Variable(102));
     let symbolic_write = root.offset_by_int32_elements(write_index.clone());
     let symbolic_read = root.offset_by_int32_elements(read_index.clone());
+    // An `int32` element read. A width-less load would stand in eight bytes
+    // and reach into the next element, which `i != j` cannot separate.
+    crate::kernel::eval::declare_load_access_width(&symbolic_read, 4);
     let inequality = ConditionTerm::equal(write_index, read_index);
     let assumptions = PureFactContext::new().assume_condition(inequality.clone(), false);
     let after_symbolic = base.store(symbolic_write, CValue::Int32(Bitvector32Term::Constant(9)));
@@ -491,12 +495,14 @@ fn retained_store_hops_carry_locally_checkable_distinctness_proofs() {
     assert!(symbolic_hop.justification.checks(
         symbolic_hop.derivation.as_ref(),
         &symbolic_read,
+        4,
         &assumptions,
     ));
     assert!(
         !symbolic_hop.justification.checks(
             symbolic_hop.derivation.as_ref(),
             &symbolic_read,
+            4,
             &PureFactContext::new(),
         ),
         "the retained exact premise must still be present during check"
@@ -591,12 +597,13 @@ fn retained_common_base_store_hop_carries_a_signed_order_path() {
     );
     assert!(
         hop.justification
-            .checks(hop.derivation.as_ref(), &read, &assumptions,)
+            .checks(hop.derivation.as_ref(), &read, 4, &assumptions)
     );
     assert!(
         !hop.justification.checks(
             hop.derivation.as_ref(),
             &read,
+            4,
             &PureFactContext::new().assume_condition(second, true),
         ),
         "the retained path must still have every named premise"
@@ -704,7 +711,7 @@ fn store_hop_retains_direct_or_composed_separated_range_authority() {
         .derivation()
         .expect("the written snapshot retains its store");
     assert!(
-        !composed.checks(derivation.as_ref(), &load, &PureFactContext::new(),),
+        !composed.checks(derivation.as_ref(), &load, 4, &PureFactContext::new()),
         "the retained composition must still be present during checking"
     );
 }
@@ -776,7 +783,7 @@ fn separated_range_store_hop_retains_symbolic_membership_bounds() {
     ));
     assert!(
         hop.justification
-            .checks(hop.derivation.as_ref(), &load, &assumptions)
+            .checks(hop.derivation.as_ref(), &load, 4, &assumptions)
     );
 
     let missing_successor = PureFactContext::new()
@@ -786,7 +793,7 @@ fn separated_range_store_hop_retains_symbolic_membership_bounds() {
         .assume_condition(zero_le_load, true);
     assert!(
         !hop.justification
-            .checks(hop.derivation.as_ref(), &load, &missing_successor),
+            .checks(hop.derivation.as_ref(), &load, 4, &missing_successor),
         "the retained successor bound must still be present"
     );
     let retargeted = load_base.offset_by_int32_elements(Bitvector32Term::add(
@@ -795,7 +802,7 @@ fn separated_range_store_hop_retains_symbolic_membership_bounds() {
     ));
     assert!(
         !hop.justification
-            .checks(hop.derivation.as_ref(), &retargeted, &assumptions),
+            .checks(hop.derivation.as_ref(), &retargeted, 4, &assumptions),
         "the membership evidence must remain tied to its exact index"
     );
 }
@@ -1267,6 +1274,10 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
             byte_width: 4,
         },
     };
+    // An `int32` element read. The forward-offset route proves the havoc
+    // range starts one element later, which clears a four-byte access; a
+    // width-less load would stand in eight bytes and reach into it.
+    crate::kernel::eval::declare_load_access_width(&data, 4);
     let len = Bitvector32Term::Variable(Variable(203));
     let separation = Proposition::CResourceSeparate {
         left: CResource::Memory(memory_range(owner.clone(), 0, 4)),
@@ -1358,6 +1369,9 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
 fn loadable_bound_check_bridges_len_forms_across_block_and_prune_edges() {
     let entry = CMemory::new().with_block("arg-memory", 64);
     let len_pointer = arc_pointer(0);
+    // `len` is an `int32` field. A width-less load stands in eight bytes,
+    // which the neighbouring store at offset four overlaps.
+    crate::kernel::eval::declare_load_access_width(&len_pointer, 4);
     let len_at_entry = Bitvector32Term::MemoryLoad(
         crate::kernel::intern_c_memory_ref(&entry),
         Box::new(len_pointer.clone()),
@@ -1406,7 +1420,7 @@ fn loadable_bound_check_bridges_len_forms_across_block_and_prune_edges() {
         .with_block("local:i", 4)
         .store(arc_pointer(4), CValue::Int32(Bitvector32Term::Constant(9)))
         .store(arc_pointer(8), CValue::Int32(Bitvector32Term::Constant(2)))
-        .without_possible_aliasing_cells(&arc_pointer(4), &assumptions);
+        .without_possible_aliasing_cells(&arc_pointer(4), 4, &assumptions);
     let len_at_later = Bitvector32Term::MemoryLoad(
         crate::kernel::intern_c_memory_ref(&later),
         Box::new(len_pointer),
@@ -1957,4 +1971,307 @@ fn a_session_reset_empties_the_block_epoch_memo() {
         0,
         "a session reset must not leave one verification's epochs for the next"
     );
+}
+
+/// A store forgets every cell whose bytes it overwrites, not only the cell at
+/// its own address. Both widths are exact here — the store's from the value it
+/// writes, the cell's from the value it holds — so the cells that survive are
+/// the ones the written bytes provably miss.
+///
+/// Without this, a one-byte write four bytes into an `int64` cell left the
+/// whole `int64` readable at its old value, because `p + 4` is a different
+/// address from `p` by every address-separation test there is.
+#[test]
+fn a_store_forgets_the_wider_cell_whose_bytes_it_overwrites() {
+    let bare = PureFactContext::new();
+    let wide = CMemory::new().with_block("arg-memory", 32).store(
+        arc_pointer(0),
+        CValue::Int64(Bitvector32Term::Int64Constant(5)),
+    );
+
+    // Above the base, where the address test alone says "separate": the
+    // int64 must still be gone, and nothing takes its place.
+    for offset in 1..8 {
+        let after = wide
+            .clone()
+            .without_possible_aliasing_cells(&arc_pointer(offset), 1, &bare)
+            .store(
+                arc_pointer(offset),
+                CValue::UInt8(Bitvector32Term::Constant(7)),
+            );
+        assert_eq!(
+            after.known_value(&arc_pointer(0)),
+            None,
+            "a one-byte write {offset} bytes into an int64 cell overwrites \
+             part of it, so the int64 must not stay readable"
+        );
+    }
+    // At the base itself the write replaces the cell, so what is readable
+    // there is the byte just written and not the int64.
+    let after = wide
+        .clone()
+        .without_possible_aliasing_cells(&arc_pointer(0), 1, &bare)
+        .store(arc_pointer(0), CValue::UInt8(Bitvector32Term::Constant(7)));
+    assert_eq!(
+        after.known_value(&arc_pointer(0)),
+        Some(CValue::UInt8(Bitvector32Term::Constant(7))),
+        "a one-byte write at the base leaves its own byte, not the int64"
+    );
+
+    // Outside the cell's own bytes, the cell stays: this is what makes the
+    // forgetting worth doing rather than dropping every cell on every store.
+    let after = wide
+        .clone()
+        .without_possible_aliasing_cells(&arc_pointer(8), 1, &bare)
+        .store(arc_pointer(8), CValue::UInt8(Bitvector32Term::Constant(7)));
+    assert_eq!(
+        after.known_value(&arc_pointer(0)),
+        Some(CValue::Int64(Bitvector32Term::Int64Constant(5))),
+        "a write past the int64's last byte leaves it readable"
+    );
+
+    // The symmetric direction: a wide write over the narrow cells it covers.
+    let narrow = CMemory::new()
+        .with_block("arg-memory", 32)
+        .store(arc_pointer(0), CValue::Int32(Bitvector32Term::Constant(1)))
+        .store(arc_pointer(4), CValue::Int32(Bitvector32Term::Constant(2)))
+        .store(arc_pointer(8), CValue::Int32(Bitvector32Term::Constant(3)));
+    let after = narrow
+        .without_possible_aliasing_cells(&arc_pointer(0), 8, &bare)
+        .store(
+            arc_pointer(0),
+            CValue::Int64(Bitvector32Term::Int64Constant(9)),
+        );
+    assert_eq!(
+        after.known_value(&arc_pointer(4)),
+        None,
+        "an eight-byte write at the base overwrites the int32 four bytes up"
+    );
+    assert_eq!(
+        after.known_value(&arc_pointer(8)),
+        Some(CValue::Int32(Bitvector32Term::Constant(3))),
+        "an eight-byte write at the base stops before the int32 eight bytes up"
+    );
+}
+
+/// Canonicalization for a load drops a cell it decides the load cannot
+/// observe, which makes two snapshots compare equal at that load. The
+/// interval it decides that by has to admit the widest load the kernel
+/// performs, because the `MemoryLoad` term it is answering for carries no
+/// width of its own.
+///
+/// Both polarities, over the widths that meet at one address: a cell four
+/// bytes above the load is inside an eight-byte read and must survive, and a
+/// cell eight bytes above it is outside every scalar read and may go.
+#[test]
+fn canonical_load_form_keeps_a_cell_a_wide_read_covers() {
+    let base = CMemory::new().with_block("arg-memory", 32);
+    let read = arc_pointer(0);
+    let canonical_equal_across_store_at = |offset: i64, value: CValue| {
+        let stored = base.clone().store(arc_pointer(offset), value);
+        crate::kernel::reasoning::canonical_memory_for_pointer_load(&base, &read)
+            == crate::kernel::reasoning::canonical_memory_for_pointer_load(&stored, &read)
+    };
+
+    // Inside the widest scalar read at `read`: every one of these cells is a
+    // byte an eight-byte load of `read` returns.
+    for offset in 1..8 {
+        assert!(
+            !canonical_equal_across_store_at(offset, CValue::UInt8(Bitvector32Term::Constant(7))),
+            "a one-byte cell {offset} bytes above the load is inside an \
+             eight-byte read of it and must not be dropped"
+        );
+    }
+    assert!(
+        !canonical_equal_across_store_at(4, CValue::Int32(Bitvector32Term::Constant(7))),
+        "an int32 cell four bytes above the load is the upper half of an \
+         eight-byte read of it and must not be dropped"
+    );
+    assert!(
+        !canonical_equal_across_store_at(6, CValue::Int16(Bitvector32Term::Constant(7))),
+        "an int16 cell six bytes above the load is inside an eight-byte read"
+    );
+    assert!(
+        !canonical_equal_across_store_at(0, CValue::Int64(Bitvector32Term::Int64Constant(7))),
+        "a cell at the loaded pointer itself is never disjoint from the load"
+    );
+
+    // Below the load: the cell's own width decides, and it is known exactly.
+    assert!(
+        canonical_equal_across_store_at(-1, CValue::UInt8(Bitvector32Term::Constant(7))),
+        "a one-byte cell one byte below the load ends where the load starts"
+    );
+    assert!(
+        !canonical_equal_across_store_at(-4, CValue::Int64(Bitvector32Term::Int64Constant(7))),
+        "an int64 cell four bytes below the load covers the load's first four \
+         bytes and must not be dropped"
+    );
+    assert!(
+        canonical_equal_across_store_at(-8, CValue::Int64(Bitvector32Term::Int64Constant(7))),
+        "an int64 cell eight bytes below the load ends where the load starts"
+    );
+    assert!(
+        !canonical_equal_across_store_at(
+            -4,
+            CValue::Pointer(CPointerValue::new(arc_pointer(0), CType::Int32Pointer))
+        ),
+        "a stored pointer is eight bytes, so one four bytes below the load \
+         covers the load's first four bytes"
+    );
+
+    // Outside every scalar read: these may be dropped, and the canonical
+    // form is only useful because they are.
+    assert!(
+        canonical_equal_across_store_at(8, CValue::Int32(Bitvector32Term::Constant(7))),
+        "a cell eight bytes above the load is outside the widest scalar read"
+    );
+    assert!(
+        canonical_equal_across_store_at(16, CValue::UInt8(Bitvector32Term::Constant(7))),
+        "a cell well above the load is outside every scalar read"
+    );
+}
+
+/// Two snapshots a store separates do not agree about a load whose bytes it
+/// wrote, however clean the two addresses look.
+///
+/// "Do these snapshots hold one value for this load" is answered by scanning
+/// the cells they differ on and asking whether each is separate from the
+/// load. That question used to be asked of the *addresses* alone, and `p + 1`
+/// is a different address from `p` under every test the kernel has while
+/// holding the second byte a four-byte read at `p` returns. With the address
+/// answer standing in for the byte answer, an `unsigned char` write one byte
+/// into an `int32` left the whole `int32` readable at its old value.
+///
+/// Both directions are pinned: a write the read's bytes cover blocks the
+/// agreement, and one past its last byte still does not.
+#[test]
+fn a_store_inside_a_read_stops_two_snapshots_agreeing_about_it() {
+    let bare = PureFactContext::new();
+    let read = arc_pointer(0);
+    crate::kernel::eval::declare_load_access_width(&read, 4);
+    let base = CMemory::new().with_block("arg-memory", 32);
+    let byte_written_at = |offset: i64| {
+        base.clone()
+            .without_possible_aliasing_cells(&arc_pointer(offset), 1, &bare)
+            .store(
+                arc_pointer(offset),
+                CValue::UInt8(Bitvector32Term::Constant(7)),
+            )
+    };
+
+    for offset in 1..4 {
+        let after = byte_written_at(offset);
+        assert!(
+            !crate::kernel::reasoning::memory_snapshots_proven_equal_at_pointer(
+                &base, &after, &read, &bare
+            ),
+            "a one-byte write {offset} bytes into a four-byte read is a byte the read \
+             returns, so the two snapshots do not agree about it"
+        );
+    }
+
+    let after = byte_written_at(4);
+    assert!(
+        crate::kernel::reasoning::memory_snapshots_proven_equal_at_pointer(
+            &base, &after, &read, &bare
+        ),
+        "a write past the read's last byte leaves the two snapshots agreeing about it"
+    );
+}
+
+/// A recorded store inside a read refutes the equality of the two loads
+/// around it, at every offset its bytes reach, whatever the snapshots kept.
+///
+/// This is the rule the snapshot comparisons and the canonical-form
+/// comparison now answer to. Both are read from *state*: a cell map records
+/// what is known at a point, and a canonical form drops what it can prove
+/// irrelevant. Neither records that a store happened, and a store into the
+/// middle of a cell drops the cell it partly overwrites, so the two
+/// snapshots around it can be identical where it is concerned. The recorded
+/// history has the store either way, and one walk over it is all three
+/// routes' answer.
+///
+/// The sweep is the whole width of each access: a one-byte write at any
+/// offset a four-byte read covers, and at any offset an eight-byte read
+/// covers, is a byte that read returns. The offset one past the last is the
+/// negative control, and it must stay unrefuted — that is the adjacent
+/// element every framing proof in the corpus rests on.
+#[test]
+fn a_store_inside_a_read_refutes_the_load_equality_at_every_offset() {
+    let bare = PureFactContext::new();
+    for (block, read_bytes) in [("narrow-arg-memory", 4u32), ("wide-arg-memory", 8u32)] {
+        let read = Pointer {
+            block: block.into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        crate::kernel::eval::declare_load_access_width(&read, read_bytes);
+        let base = CMemory::new().with_block(block, 32);
+        let byte_written_at = |offset: i64| {
+            let write = Pointer {
+                block: block.into(),
+                offset: PointerOffsetTerm::Constant(offset),
+            };
+            base.clone()
+                .without_possible_aliasing_cells(&write, 1, &bare)
+                .store(write, CValue::UInt8(Bitvector32Term::Constant(7)))
+        };
+        let history_about = |after: &CMemory| {
+            crate::kernel::memory_provenance::recorded_load_history(
+                &crate::kernel::intern_c_memory_ref(&base),
+                &crate::kernel::intern_c_memory_ref(after),
+                &read,
+                &bare,
+            )
+        };
+        let load_in = |memory: &CMemory| {
+            Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory_ref(memory),
+                Box::new(read.clone()),
+            )
+        };
+
+        for offset in 1..i64::from(read_bytes) {
+            let after = byte_written_at(offset);
+            assert_eq!(
+                with_extended_dag_bridging(|| history_about(&after)),
+                crate::kernel::memory_provenance::LoadHistory::DifferentVersions,
+                "a one-byte write {offset} bytes into a {read_bytes}-byte read is a byte that \
+                 read returns, so the history holds two versions of the cell"
+            );
+            assert_eq!(
+                with_extended_dag_bridging(|| history_about(&after)),
+                crate::kernel::memory_provenance::LoadHistory::DifferentVersions,
+                "the memoized answer to the repeated question is the same answer"
+            );
+            assert!(
+                !crate::kernel::reasoning::memory_snapshots_proven_equal_at_pointer(
+                    &base, &after, &read, &bare
+                ),
+                "the snapshot comparison answers to that history"
+            );
+            assert!(
+                !bare.proves_atomic_without_search(&Proposition::ConditionIs(
+                    ConditionTerm::equal(load_in(&base), load_in(&after)),
+                    true
+                )),
+                "the canonical-form comparison answers to that history"
+            );
+        }
+
+        let past_the_end = byte_written_at(i64::from(read_bytes));
+        assert_ne!(
+            with_extended_dag_bridging(|| history_about(&past_the_end)),
+            crate::kernel::memory_provenance::LoadHistory::DifferentVersions,
+            "a write past the read's last byte writes none of its bytes"
+        );
+        assert!(
+            crate::kernel::reasoning::memory_snapshots_proven_equal_at_pointer(
+                &base,
+                &past_the_end,
+                &read,
+                &bare
+            ),
+            "and the two snapshots still agree about the read"
+        );
+    }
 }

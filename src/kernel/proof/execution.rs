@@ -454,7 +454,10 @@ fn describe_unnamed_cell_addition(
     let expected = truncate_debug(load, 240);
     let (base_arena, base_id) = base.arena_id();
     let epoch_note = match crate::kernel::resource_tracker::last_same_point(
-        crate::kernel::resource_tracker::Resource::Cell(pointer),
+        crate::kernel::resource_tracker::Resource::Cell {
+            pointer,
+            bytes: crate::kernel::resource_tracker::widest_scalar_access_bytes(),
+        },
         &crate::kernel::resource_tracker::ProgramPoint::at(base),
     ) {
         Some(epoch) => {

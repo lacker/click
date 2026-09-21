@@ -2563,9 +2563,13 @@ mod proposition_identity_tests {
         };
         let memory = CMemory::new().with_block("identity-registered-load", 8);
         let shared_memory = crate::kernel::intern_c_memory_ref(&memory);
+        // The spelled side is a raw `MemoryLoad` term, which records no
+        // width, so the named side must stand in the same width the
+        // term-derived naming path assumes for it.
         let load = crate::kernel::load_variable_for_cell_with_origin(
             &shared_memory,
             &pointer,
+            crate::kernel::load_access_width_or_widest(&shared_memory, &pointer),
             &shared_memory,
         );
         let (load_memory, load_pointer) = crate::kernel::registered_load_for_variable(&load)
@@ -2596,6 +2600,7 @@ mod proposition_identity_tests {
         let changed_load = crate::kernel::load_variable_for_cell_with_origin(
             &changed_shared,
             &pointer,
+            crate::kernel::load_access_width_or_widest(&changed_shared, &pointer),
             &changed_shared,
         );
         let (changed_memory, changed_pointer) =
@@ -3238,9 +3243,9 @@ mod snapshot_alpha_tests {
             CValue::Int32(Bitvector32Term::Constant(11)),
         ));
         let before_load =
-            crate::kernel::load_variable_for_cell_with_origin(&before, &pointer, &before);
+            crate::kernel::load_variable_for_cell_with_origin(&before, &pointer, 4, &before);
         let after_load =
-            crate::kernel::load_variable_for_cell_with_origin(&after, &pointer, &after);
+            crate::kernel::load_variable_for_cell_with_origin(&after, &pointer, 4, &after);
 
         let make = |load: Variable, accumulator: Variable, item: Variable| {
             IntegerTerm::range_fold(
@@ -3286,13 +3291,13 @@ mod snapshot_alpha_tests {
             offset: PointerOffsetTerm::Constant(0),
         };
         let first_load =
-            crate::kernel::load_variable_for_cell_with_origin(&memory, &first_pointer, &memory);
+            crate::kernel::load_variable_for_cell_with_origin(&memory, &first_pointer, 4, &memory);
         let nested_pointer = Pointer {
             block: block.into(),
             offset: PointerOffsetTerm::Variable(first_load),
         };
         let nested_load =
-            crate::kernel::load_variable_for_cell_with_origin(&memory, &nested_pointer, &memory);
+            crate::kernel::load_variable_for_cell_with_origin(&memory, &nested_pointer, 4, &memory);
         // The load registry keeps the provenance-projected snapshot used by
         // the minted variable.  Use those exact identities for the explicit
         // forms below; the original `memory` may project to a different DAG
@@ -3506,13 +3511,13 @@ mod snapshot_alpha_tests {
             offset: PointerOffsetTerm::Constant(0),
         };
         let mut load =
-            crate::kernel::load_variable_for_cell_with_origin(&memory, &pointer, &memory);
+            crate::kernel::load_variable_for_cell_with_origin(&memory, &pointer, 4, &memory);
         for _ in 0..depth {
             pointer = Pointer {
                 block: pointer.block.clone(),
                 offset: PointerOffsetTerm::Variable(load),
             };
-            load = crate::kernel::load_variable_for_cell_with_origin(&memory, &pointer, &memory);
+            load = crate::kernel::load_variable_for_cell_with_origin(&memory, &pointer, 4, &memory);
         }
         (memory, load)
     }
@@ -3525,7 +3530,7 @@ mod snapshot_alpha_tests {
             offset: PointerOffsetTerm::Constant(0),
         };
         let mut load =
-            crate::kernel::load_variable_for_cell_with_origin(&memory, &pointer, &memory);
+            crate::kernel::load_variable_for_cell_with_origin(&memory, &pointer, 4, &memory);
         for _ in 0..depth {
             pointer = Pointer {
                 block: pointer.block.clone(),
@@ -3534,7 +3539,7 @@ mod snapshot_alpha_tests {
                     Box::new(PointerOffsetTerm::Variable(load)),
                 ),
             };
-            load = crate::kernel::load_variable_for_cell_with_origin(&memory, &pointer, &memory);
+            load = crate::kernel::load_variable_for_cell_with_origin(&memory, &pointer, 4, &memory);
         }
         (memory, load)
     }

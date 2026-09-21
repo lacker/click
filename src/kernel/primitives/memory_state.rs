@@ -1432,7 +1432,7 @@ impl CMemory {
 
     pub(crate) fn has_same_snapshot_markers(&self, other: &Self) -> bool {
         self.blocks == other.blocks
-            && self.ended_local_blocks == other.ended_local_blocks
+            && self.forgotten.ended_local_blocks == other.forgotten.ended_local_blocks
             && self.heap == other.heap
     }
 
@@ -1498,7 +1498,7 @@ impl CMemory {
     /// makes aliases to the old object invalid instead of merely making an
     /// eventual load unresolved because the block disappeared.
     pub(in crate::kernel) fn without_local_block(&self, block: &PointerBlock) -> Self {
-        if !self.blocks.contains_key(block) && self.ended_local_blocks.contains(block) {
+        if !self.blocks.contains_key(block) && self.forgotten.ended_local_blocks.contains(block) {
             return self.clone();
         }
 
@@ -1508,7 +1508,9 @@ impl CMemory {
         std::sync::Arc::make_mut(&mut memory.cells).retain(|pointer, _| &pointer.block != block);
         std::sync::Arc::make_mut(&mut memory.union_cells)
             .retain(|(pointer, _), _| &pointer.block != block);
-        std::sync::Arc::make_mut(&mut memory.ended_local_blocks).insert(block.clone());
+        std::sync::Arc::make_mut(&mut memory.forgotten)
+            .ended_local_blocks
+            .insert(block.clone());
         record_c_memory_derivation(
             &memory,
             CMemoryDerivation::LocalLifetimeEnded {
@@ -2005,7 +2007,7 @@ impl CMemory {
                     ));
                 }
             }
-            ended_local_blocks.extend(memory.ended_local_blocks.iter().cloned());
+            ended_local_blocks.extend(memory.forgotten.ended_local_blocks.iter().cloned());
         }
 
         let mut live_allocations = BTreeMap::new();
@@ -2113,7 +2115,7 @@ impl CMemory {
         });
         blocks.insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
         self.blocks = std::sync::Arc::new(blocks);
-        self.ended_local_blocks = std::sync::Arc::new(ended_local_blocks);
+        std::sync::Arc::make_mut(&mut self.forgotten).ended_local_blocks = ended_local_blocks;
         self.heap = std::sync::Arc::new(CHeapMemory {
             live_allocations,
             deallocated_allocations,
@@ -2349,6 +2351,7 @@ impl CMemory {
         };
         let field_end = field_start + i64::from(c_type.byte_width());
         let mut memory = self.clone();
+        let source = intern_c_memory_ref(&memory);
         let overlaps = |pointer: &Pointer| {
             pointer.block == base.block
                 && pointer
@@ -2359,6 +2362,15 @@ impl CMemory {
         std::sync::Arc::make_mut(&mut memory.cells).retain(|pointer, _| !overlaps(pointer));
         std::sync::Arc::make_mut(&mut memory.union_cells)
             .retain(|(pointer, _), _| !overlaps(pointer));
+        // Nothing restores these cells — the copy could not carry the field —
+        // so the result knows strictly less than its source and must not be
+        // able to re-intern as a state that never knew it. See
+        // [`CMemory::mark_forgotten_from`].
+        if memory.cells.len() != self.cells.len()
+            || memory.union_cells.len() != self.union_cells.len()
+        {
+            memory.mark_forgotten_from(&source);
+        }
         memory
     }
 
@@ -2370,18 +2382,41 @@ impl CMemory {
         memory
     }
 
+    /// Forgets every cell of `self` the write of `bytes` bytes at `pointer`
+    /// may invalidate.
+    ///
+    /// Two independent reasons a cell goes. It may be *the same location*
+    /// under some assignment of the symbolic offsets, which the address
+    /// separation ladder below decides. Or its bytes may be *partly* the
+    /// written ones while its address stays a different address: a one-byte
+    /// write at `p + 4` overwrites the upper half of an `int64` cell at `p`,
+    /// and `p + 4` is separate from `p` by every address test there is. Only
+    /// the second reads a width, and it reads both sides' exact widths, so
+    /// the cells that survive a store are the ones whose bytes the store
+    /// provably misses.
     pub(in crate::kernel) fn without_possible_aliasing_cells(
         &self,
         pointer: &Pointer,
+        bytes: u32,
         assumptions: &PureFactContext,
     ) -> Self {
         let normalized_pointer = Pointer {
             block: pointer.block.clone(),
             offset: normalize_exact_memory_loads_in_pointer_offset(&pointer.offset, assumptions),
         };
+        // Computed once for the whole scan; the cells it is compared against
+        // are the same-block ones, so the write's own atoms never change.
+        let written = crate::kernel::reasoning::StoreByteInterval::of(&normalized_pointer, bytes);
         let base = Some(intern_c_memory_ref(self));
         let mut memory = self.clone();
-        std::sync::Arc::make_mut(&mut memory.cells).retain(|cell_pointer, _| {
+        // Whether any cell went for the *aliasing* reason rather than because
+        // this store overwrites every one of its bytes. An overwritten cell
+        // is stale, not forgotten: the store about to run replaces exactly
+        // what was dropped, so the result still says everything about the
+        // state it describes. A possibly aliasing cell is knowledge the
+        // result no longer has, and that is what has to show in the content.
+        let mut forgot_live_knowledge = false;
+        std::sync::Arc::make_mut(&mut memory.cells).retain(|cell_pointer, cell_value| {
             let normalized_cell_pointer = Pointer {
                 block: cell_pointer.block.clone(),
                 offset: normalize_exact_memory_loads_in_pointer_offset(
@@ -2389,7 +2424,14 @@ impl CMemory {
                     assumptions,
                 ),
             };
-            pointers_proven_distinct_for_memory_resolution(
+            if normalized_cell_pointer.block == normalized_pointer.block
+                && written.as_ref().is_some_and(|written| {
+                    written.overwrites(&normalized_cell_pointer, cell_value)
+                })
+            {
+                return false;
+            }
+            let kept = pointers_proven_distinct_for_memory_resolution(
                 &normalized_cell_pointer,
                 &normalized_pointer,
                 assumptions,
@@ -2413,9 +2455,11 @@ impl CMemory {
                     &normalized_cell_pointer,
                     assumptions,
                 )
-                .is_some()
+                .is_some();
+            forgot_live_knowledge |= !kept;
+            kept
         });
-        std::sync::Arc::make_mut(&mut memory.union_cells).retain(|(cell_pointer, _), _| {
+        std::sync::Arc::make_mut(&mut memory.union_cells).retain(|(cell_pointer, cell_type), _| {
             let normalized_cell_pointer = Pointer {
                 block: cell_pointer.block.clone(),
                 offset: normalize_exact_memory_loads_in_pointer_offset(
@@ -2423,7 +2467,14 @@ impl CMemory {
                     assumptions,
                 ),
             };
-            pointers_proven_distinct_for_memory_resolution(
+            if normalized_cell_pointer.block == normalized_pointer.block
+                && written.as_ref().is_some_and(|written| {
+                    written.overwrites_typed(&normalized_cell_pointer, *cell_type)
+                })
+            {
+                return false;
+            }
+            let kept = pointers_proven_distinct_for_memory_resolution(
                 &normalized_cell_pointer,
                 &normalized_pointer,
                 assumptions,
@@ -2434,7 +2485,9 @@ impl CMemory {
                     &normalized_cell_pointer,
                     assumptions,
                 )
-                .is_some()
+                .is_some();
+            forgot_live_knowledge |= !kept;
+            kept
         });
         // Forgetting nothing is not a transition: the memory is the same
         // snapshot, so a later load keeps resolving through it unchanged
@@ -2445,6 +2498,24 @@ impl CMemory {
             return self.clone();
         }
         if let Some(base) = base {
+            // The mark goes on before interning, because it is what the
+            // result is interned *as*. Without it the emptied cell map can
+            // re-intern as an older node — in the smallest case the function
+            // entry state — and then this edge would run backwards, be
+            // dropped, and leave the store that filled those cells off every
+            // recorded history.
+            if forgot_live_knowledge {
+                memory.mark_forgotten_from(&base);
+                // The mark is what makes this edge recordable, so check it
+                // where it is set rather than where it is used: a result
+                // that is not younger than its base would be dropped by
+                // `record_c_memory_derivation` and take the forgotten
+                // store off every recorded history with it.
+                debug_assert!(
+                    intern_c_memory_ref(&memory).arena_id() > base.arena_id(),
+                    "a forget that lost knowledge landed on an older snapshot"
+                );
+            }
             record_c_memory_derivation(&memory, CMemoryDerivation::CellsForgotten { base });
         }
         memory
@@ -2508,7 +2579,7 @@ impl CMemory {
     }
 
     pub(in crate::kernel) fn is_ended_local_address(&self, pointer: &Pointer) -> bool {
-        self.ended_local_blocks.contains(&pointer.block)
+        self.forgotten.ended_local_blocks.contains(&pointer.block)
     }
 
     /// A sufficient, search-free condition for transporting loadability of
@@ -2518,7 +2589,7 @@ impl CMemory {
         crate::instrumentation::record_deterministic_work(1);
         ReadRegionIdentity {
             block_size: self.block_size(&base.block).cloned(),
-            local_lifetime_ended: self.ended_local_blocks.contains(&base.block),
+            local_lifetime_ended: self.forgotten.ended_local_blocks.contains(&base.block),
             heap: self.heap.clone(),
         }
     }

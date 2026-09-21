@@ -1206,6 +1206,17 @@ impl ExecutionBudget {
     }
 
     /// Records such a refusal. Diagnostic only; it decides nothing.
+    /// Whether a stated resource relation was dropped because a memory range
+    /// it names is already proven not to be a valid byte extent.
+    pub fn dropped_relation_range_extent(&self) -> bool {
+        self.dropped_relation_range_extent
+    }
+
+    /// Records such a refusal. Diagnostic only; it decides nothing.
+    pub(in crate::kernel) fn record_dropped_relation_range_extent(&mut self) {
+        self.dropped_relation_range_extent = true;
+    }
+
     pub(in crate::kernel) fn record_dropped_range_extent(
         &mut self,
         element_count: i64,
@@ -1259,6 +1270,7 @@ impl ExecutionBudget {
             refuses_execution_identities: false,
             dropped_runtime_error: None,
             dropped_range_extent: None,
+            dropped_relation_range_extent: false,
             dropped_fold_body: None,
         }
     }

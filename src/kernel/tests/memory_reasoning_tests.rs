@@ -226,15 +226,33 @@ fn byte_range_containment_expands_constant_stride_arithmetic() {
         },
     };
 
-    assert!(crate::kernel::assumptions::pointer_in_memory_range_shallow(
-        &pointer,
-        &CMemoryRange::new_with_element_width(
-            base,
+    let range = CMemoryRange::new_with_element_width(
+        base,
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(4),
+        1,
+    );
+    // `4 * i + 3` is three bytes above `i + i + i + i` only while the scaling
+    // does not wrap: at `4 * i == i32::MAX` the sum is `i32::MIN + 2`, nearly
+    // `2^32` bytes *below* the base, and the range contains nothing of it. The
+    // stride arithmetic is still expanded, and the offset it yields is still
+    // read as an offset — once something pins the sum out of the wrapped
+    // reading.
+    let index_is_nonnegative = PureFactContext::new().assume_condition(
+        ConditionTerm::signed_less_equal(
             Bitvector32Term::Constant(0),
-            Bitvector32Term::Constant(4),
-            1,
+            pointer.offset.scaled_values()[0].clone(),
         ),
-    ));
+        true,
+    );
+    assert!(
+        crate::kernel::assumptions::pointer_in_memory_range_shallow_with_facts(
+            &pointer,
+            &range,
+            &index_is_nonnegative,
+        )
+    );
+    assert!(!crate::kernel::assumptions::pointer_in_memory_range_shallow(&pointer, &range,));
 }
 
 #[test]
@@ -440,6 +458,10 @@ fn mutable_frame_transports_load_across_certified_effect_chain() {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(8),
     };
+    // The transported load is the `int32` at offset zero. Say so: a
+    // width-less load stands in eight bytes, which the first write at offset
+    // four overlaps, and the two snapshots then do not agree about it.
+    crate::kernel::eval::declare_load_access_width(&preserved, 4);
     let before = CMemory::new();
     let middle = before.clone().store(first_write.clone(), int32(1));
     let after = middle.clone().store(second_write.clone(), int32(2));
@@ -1078,13 +1100,9 @@ fn disjoint_range_proves_mutable_frame_cell_distinct() {
             ConditionTerm::signed_less_than(j_bits.clone(), j_plus_one.clone()),
             true,
         )
-        .assume_proposition(Proposition::CMemoryDisjoint {
-            left_base: base.clone(),
-            left_start: i_bits.clone(),
-            left_end: i_plus_one,
-            right_base: base,
-            right_start: j_bits.clone(),
-            right_end: j_plus_one,
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(base.clone(), i_bits.clone(), i_plus_one)),
+            right: CResource::Memory(CMemoryRange::new(base, j_bits.clone(), j_plus_one)),
         })
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before: before_memory.clone(),
@@ -1132,13 +1150,17 @@ fn disjoint_ranges_frame_metadata_across_symbolic_index_store() {
             ConditionTerm::signed_less_than(index, capacity.clone()),
             true,
         )
-        .assume_proposition(Proposition::CMemoryDisjoint {
-            left_base: owner,
-            left_start: Bitvector32Term::Constant(0),
-            left_end: Bitvector32Term::Constant(4),
-            right_base: data,
-            right_start: Bitvector32Term::Constant(0),
-            right_end: capacity,
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                owner,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(4),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                data,
+                Bitvector32Term::Constant(0),
+                capacity,
+            )),
         })
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before: before_memory.clone(),
@@ -1614,13 +1636,17 @@ fn covering_disjoint_fact_handles_shifted_mutable_range() {
             ConditionTerm::signed_less_than(k_bits, n_bits.clone()),
             true,
         )
-        .assume_proposition(Proposition::CMemoryDisjoint {
-            left_base: dst_base,
-            left_start: Bitvector32Term::Constant(0),
-            left_end: n_bits.clone(),
-            right_base: src_base,
-            right_start: Bitvector32Term::Constant(0),
-            right_end: n_bits.clone(),
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                dst_base,
+                Bitvector32Term::Constant(0),
+                n_bits.clone(),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                src_base,
+                Bitvector32Term::Constant(0),
+                n_bits.clone(),
+            )),
         })
         .assume_proposition(Proposition::CMemoryEffectSummary {
             before: before_memory.clone(),
@@ -1726,6 +1752,9 @@ fn atomic_condition_fact_transport_ignores_distinct_materialized_cell() {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
+    // The framed load is the `int32` at offset zero. Say so: a width-less
+    // load stands in eight bytes, which the store at offset four overlaps.
+    crate::kernel::eval::declare_load_access_width(&preserved, 4);
     let after = before
         .clone()
         .store(materialized, CValue::Int32(Bitvector32Term::Constant(9)));
@@ -1989,6 +2018,27 @@ fn atomic_condition_fact_transport_does_not_plan_from_a_separate_range() {
     );
 }
 
+/// A range restated in another base's coordinates as `data - owner` names the
+/// real delta between the two bases only while that subtraction stays inside
+/// `int32`: at `owner == -1` and `data == i32::MAX` the difference is `2^31`,
+/// the restated start is `i32::MIN`, and the two sit `2^32` elements apart. The
+/// restatement is still how a relative separation fact is read; both indices
+/// being nonnegative is the premise that makes it the delta rather than the
+/// delta modulo `2^32`.
+fn with_nonnegative_owner_and_data_indices(assumptions: PureFactContext) -> PureFactContext {
+    [92, 93]
+        .into_iter()
+        .fold(assumptions, |assumptions, index| {
+            assumptions.assume_condition(
+                ConditionTerm::signed_less_equal(
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Variable(Variable(index)),
+                ),
+                true,
+            )
+        })
+}
+
 #[test]
 fn direct_condition_transport_uses_relative_separate_range() {
     let before = CMemory::new();
@@ -2024,7 +2074,7 @@ fn direct_condition_transport_uses_relative_separate_range() {
             Bitvector32Term::Constant(1),
         )],
     };
-    let assumptions = PureFactContext::new()
+    let assumptions = with_nonnegative_owner_and_data_indices(PureFactContext::new())
         .assume_condition(
             ConditionTerm::signed_less_than(
                 data_index_from_owner.clone(),
@@ -2050,7 +2100,9 @@ fn direct_condition_transport_uses_relative_separate_range() {
         .expect("relative exact separation should directly frame the data load");
     let (premises, target) = c_condition_fact_transport_parts(&theorem, &fact)
         .expect("transport theorem must retain its explicit source");
-    assert_eq!(premises.len(), 2);
+    // Two more premises than the separation and the effect: the nonnegativity
+    // of each index, which is what makes the restated start the real delta.
+    assert_eq!(premises.len(), 4);
     assert!(premises.contains(&&effect));
     assert!(
         premises
@@ -2106,7 +2158,7 @@ fn direct_condition_transport_uses_indexed_relative_separate_range() {
             Bitvector32Term::Constant(1),
         )],
     };
-    let assumptions = PureFactContext::new()
+    let assumptions = with_nonnegative_owner_and_data_indices(PureFactContext::new())
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length.clone()),
             true,
@@ -2129,7 +2181,9 @@ fn direct_condition_transport_uses_indexed_relative_separate_range() {
         .expect("an indexed pointer in a relative separate range should be directly framed");
     let (premises, target) = c_condition_fact_transport_parts(&theorem, &fact)
         .expect("transport theorem must retain its explicit source");
-    assert_eq!(premises.len(), 3);
+    // Two more premises than the separation and the effect: the nonnegativity
+    // of each index, which is what makes the restated start the real delta.
+    assert_eq!(premises.len(), 5);
     assert!(premises.contains(&&effect));
     assert!(
         premises
@@ -2209,30 +2263,42 @@ fn adjacent_disjoint_fact_ranges_cover_larger_disjoint_goal() {
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(88)), 4),
     };
     let assumptions = PureFactContext::new()
-        .assume_proposition(Proposition::CMemoryDisjoint {
-            left_base: p_base.clone(),
-            left_start: Bitvector32Term::Constant(0),
-            left_end: Bitvector32Term::Constant(1),
-            right_base: q_base.clone(),
-            right_start: Bitvector32Term::Constant(0),
-            right_end: n_bits.clone(),
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                p_base.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                q_base.clone(),
+                Bitvector32Term::Constant(0),
+                n_bits.clone(),
+            )),
         })
-        .assume_proposition(Proposition::CMemoryDisjoint {
-            left_base: p_plus_one,
-            left_start: Bitvector32Term::Constant(0),
-            left_end: Bitvector32Term::Constant(2),
-            right_base: q_base.clone(),
-            right_start: Bitvector32Term::Constant(0),
-            right_end: n_bits.clone(),
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                p_plus_one,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(2),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                q_base.clone(),
+                Bitvector32Term::Constant(0),
+                n_bits.clone(),
+            )),
         });
 
-    assert!(assumptions.proves(&Proposition::CMemoryDisjoint {
-        left_base: p_base,
-        left_start: Bitvector32Term::Constant(0),
-        left_end: Bitvector32Term::Constant(2),
-        right_base: q_base,
-        right_start: Bitvector32Term::Constant(0),
-        right_end: n_bits,
+    assert!(assumptions.proves(&Proposition::CResourceSeparate {
+        left: CResource::Memory(CMemoryRange::new(
+            p_base,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(2)
+        )),
+        right: CResource::Memory(CMemoryRange::new(
+            q_base,
+            Bitvector32Term::Constant(0),
+            n_bits
+        ))
     }));
 }
 
@@ -2278,13 +2344,17 @@ fn symbolic_disjoint_fact_proves_itself() {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(90)), 4),
     };
-    let fact = Proposition::CMemoryDisjoint {
-        left_base: p_base,
-        left_start: Bitvector32Term::Constant(0),
-        left_end: n_bits.clone(),
-        right_base: q_base,
-        right_start: Bitvector32Term::Constant(0),
-        right_end: n_bits,
+    let fact = Proposition::CResourceSeparate {
+        left: CResource::Memory(CMemoryRange::new(
+            p_base,
+            Bitvector32Term::Constant(0),
+            n_bits.clone(),
+        )),
+        right: CResource::Memory(CMemoryRange::new(
+            q_base,
+            Bitvector32Term::Constant(0),
+            n_bits,
+        )),
     };
     let assumptions = PureFactContext::new().assume_proposition(fact.clone());
 
@@ -2729,7 +2799,7 @@ fn symbolic_store_invalidates_only_possible_aliasing_cells() {
         .store(concrete_cell.clone(), int32(42));
 
     let aliased = memory
-        .without_possible_aliasing_cells(&symbolic_cell, &PureFactContext::new())
+        .without_possible_aliasing_cells(&symbolic_cell, 4, &PureFactContext::new())
         .store(symbolic_cell.clone(), int32(7));
     assert_eq!(aliased.known_value(&concrete_cell), None);
 
@@ -2738,7 +2808,7 @@ fn symbolic_store_invalidates_only_possible_aliasing_cells() {
         false,
     );
     let distinct = memory
-        .without_possible_aliasing_cells(&symbolic_cell, &distinct_assumptions)
+        .without_possible_aliasing_cells(&symbolic_cell, 4, &distinct_assumptions)
         .store(symbolic_cell, int32(7));
     assert_eq!(distinct.known_value(&concrete_cell), Some(int32(42)));
 }
@@ -2850,13 +2920,15 @@ fn a_store_to_a_local_is_not_framed_away_for_an_unresolved_pointer() {
     // `x = 5`, then the call's result stored into the caller's own `q`, then
     // the store this read has to be told apart from.
     let after_call = entry.store(x.clone(), crate::kernel::api::int32(5));
-    let after_binding = after_call.without_possible_aliasing_cells(&q, &bare).store(
-        q.clone(),
-        CValue::Pointer(CPointerValue::new(symbolic.clone(), CType::Int32Pointer)),
-    );
+    let after_binding = after_call
+        .without_possible_aliasing_cells(&q, crate::kernel::C_POINTER_BYTE_WIDTH, &bare)
+        .store(
+            q.clone(),
+            CValue::Pointer(CPointerValue::new(symbolic.clone(), CType::Int32Pointer)),
+        );
     let after_store = after_binding
         .clone()
-        .without_possible_aliasing_cells(&x, &bare)
+        .without_possible_aliasing_cells(&x, 4, &bare)
         .store(x.clone(), crate::kernel::api::int32(1));
 
     assert!(
@@ -2883,7 +2955,10 @@ fn a_store_to_a_local_is_not_framed_away_for_an_unresolved_pointer() {
         &crate::kernel::intern_c_memory_ref(&after_store),
     );
     let stop = crate::kernel::resource_tracker::last_same(
-        crate::kernel::resource_tracker::Resource::Cell(&symbolic),
+        crate::kernel::resource_tracker::Resource::Cell {
+            pointer: &symbolic,
+            bytes: 4,
+        },
         &point,
     )
     .expect("a cell always has a naming point");
@@ -3019,8 +3094,23 @@ fn memory_resolution_alias_check_uses_explicit_separation() {
         Bitvector32Term::Variable(Variable(91)),
         Bitvector32Term::Variable(Variable(90)),
     );
+    // The restated start `v91 - v90` is the real delta between the two bases
+    // only while that subtraction stays inside `int32`, so the normalized form
+    // of the fact needs what the unnormalized one did not.
+    let nonnegative_indices =
+        [90, 91]
+            .into_iter()
+            .fold(PureFactContext::new(), |assumptions, index| {
+                assumptions.assume_condition(
+                    ConditionTerm::signed_less_equal(
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Variable(Variable(index)),
+                    ),
+                    true,
+                )
+            });
     let normalized_assumptions =
-        PureFactContext::new().assume_proposition(Proposition::CResourceSeparate {
+        nonnegative_indices.assume_proposition(Proposition::CResourceSeparate {
             left: CResource::Memory(memory_range(left_base.clone(), 0, 4)),
             right: CResource::Memory(memory_range(
                 left_base.clone(),
@@ -3149,11 +3239,11 @@ fn a_composition_separates_a_store_from_a_load_only_through_two_owners() {
         value: crate::kernel::api::int32(1),
     };
     assert!(
-        hop.checks(&store, &acquired, &owners),
+        hop.checks(&store, &acquired, 4, &owners),
         "the hop re-checks against the composition it named"
     );
     assert!(
-        !hop.checks(&store, &acquired, &PureFactContext::new()),
+        !hop.checks(&store, &acquired, 4, &PureFactContext::new()),
         "a retained hop is worthless in a context that does not hold its composition"
     );
 }
@@ -4013,6 +4103,9 @@ fn added_composition_carrier_keeps_snapshot_premise_work_bounded() {
         block: PointerBlock::ExternalArgument,
         offset: PointerOffsetTerm::Constant(4),
     };
+    // The framed load is the `int32` at offset zero; the neighbour store is
+    // four bytes away, which only a declared width keeps clear of it.
+    crate::kernel::eval::declare_load_access_width(&target, 4);
     let before = CMemory::new().with_block("arena", 64);
     let after = before.clone().store(neighbor, int32(7));
     let premise = Proposition::ConditionIs(
@@ -4093,17 +4186,17 @@ fn load_variable_registry_fails_loudly_at_capacity_instead_of_clearing() {
             .with_block("local:c", 4),
     );
     crate::kernel::with_load_variable_registry_capacity(2, || {
-        let first = load_variable_for_cell_with_origin(&memory, &pointer("local:a"), &memory);
-        load_variable_for_cell_with_origin(&memory, &pointer("local:b"), &memory);
+        let first = load_variable_for_cell_with_origin(&memory, &pointer("local:a"), 4, &memory);
+        load_variable_for_cell_with_origin(&memory, &pointer("local:b"), 4, &memory);
         // Re-registering an identity the registry already knows is not growth
         // and must keep returning the same variable.
-        let again = load_variable_for_cell_with_origin(&memory, &pointer("local:a"), &memory);
+        let again = load_variable_for_cell_with_origin(&memory, &pointer("local:a"), 4, &memory);
         assert_eq!(first, again);
         assert_eq!(crate::kernel::load_variable_registry_len(), 2);
         // The third distinct identity exceeds the capacity: the registry must
         // fail loudly here rather than forget the entries that guard against
         // id collisions.
-        load_variable_for_cell_with_origin(&memory, &pointer("local:c"), &memory);
+        load_variable_for_cell_with_origin(&memory, &pointer("local:c"), 4, &memory);
     });
 }
 
@@ -4881,5 +4974,431 @@ mod stated_range_guard_derivation {
             bytes: Bitvector32Term::Constant(4),
         };
         assert!(crate::kernel::stated_loadable_extent_guards(&cell).is_empty());
+    }
+
+    fn int32_range_resource(start: Bitvector32Term, end: Bitvector32Term) -> CResource {
+        CResource::Memory(CMemoryRange::new(
+            Pointer {
+                block: "arg-memory".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            start,
+            end,
+        ))
+    }
+
+    /// A stated separation carries the extent guards of both ranges it names.
+    /// Naming a range in `separate(…)` means what naming it in `owns` means,
+    /// so the two directions of that meaning come from one derivation.
+    #[test]
+    fn a_stated_separation_carries_both_ranges_extents() {
+        let left_end = Bitvector32Term::Variable(Variable(9_200_010));
+        let right_end = Bitvector32Term::Variable(Variable(9_200_011));
+        let separation = Proposition::CResourceSeparate {
+            left: int32_range_resource(Bitvector32Term::Constant(0), left_end.clone()),
+            right: int32_range_resource(Bitvector32Term::Constant(0), right_end.clone()),
+        };
+        let guards = crate::kernel::stated_separation_extent_guards(&separation);
+        for end in [left_end, right_end] {
+            assert!(
+                guards.contains(&Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), end.clone()),
+                    true,
+                )),
+                "the forward half of {end:?} is owed: {guards:?}"
+            );
+        }
+    }
+
+    /// A reversed constant range contributes the impossible guard, which is
+    /// what lets the lowering refuse `separate(memory(a[0..-1]), …)` rather
+    /// than relate a range that denotes no bytes.
+    #[test]
+    fn a_reversed_constant_separation_range_cannot_hold() {
+        let separation = Proposition::CResourceSeparate {
+            left: int32_range_resource(
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant((-1i32) as u32),
+            ),
+            right: int32_range_resource(Bitvector32Term::Constant(0), Bitvector32Term::Constant(1)),
+        };
+        assert!(
+            crate::kernel::stated_separation_extent_guards(&separation).contains(
+                &Proposition::ConditionIs(ConditionTerm::Constant(false), true)
+            ),
+            "a reversed constant range is not a byte extent"
+        );
+    }
+
+    /// A composite or token resource names no range, so a separation over one
+    /// owes nothing. Only memory carries an extent.
+    #[test]
+    fn a_separation_of_opaque_resources_carries_nothing() {
+        let separation = Proposition::CResourceSeparate {
+            left: CResource::Token {
+                name: "t".into(),
+                arguments: Vec::new().into(),
+            },
+            right: CResource::Composite {
+                name: "c".into(),
+                arguments: Vec::new().into(),
+            },
+        };
+        assert!(
+            crate::kernel::stated_separation_extent_guards(&separation).is_empty(),
+            "an opaque ownership atom has no endpoints"
+        );
+    }
+}
+
+/// The four tests below pin the two polarities of the element-count bound an
+/// affine constant difference needs before it may place an index outside a
+/// range. `affine_bitvector_difference_constant` works in `i64` while the
+/// endpoints are modular, so the difference it returns is the true one only
+/// modulo `2^32`; a residue is outside the range exactly when it reaches the
+/// range's element count, and nothing else follows.
+fn outside_range_probe(
+    range_start: Bitvector32Term,
+    range_end: Bitvector32Term,
+    query_index: Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let range = CMemoryRange::new(base.clone(), range_start, range_end);
+    let pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(query_index, 4),
+    };
+    assumptions.ranges_directly_disjoint_from_pointer(&[range], &pointer)
+}
+
+#[test]
+fn a_constant_length_range_bounds_its_own_outside_conclusion() {
+    let index = Bitvector32Term::Variable(Variable(93_940));
+    // `p[i..i + 1]` carries its element count structurally, so placing `i + 2`
+    // outside it consults nothing.
+    assert!(outside_range_probe(
+        index.clone(),
+        Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(1)),
+        Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(2)),
+        &PureFactContext::new(),
+    ));
+    // And the other side of the range, by the difference from its start.
+    assert!(outside_range_probe(
+        index.clone(),
+        Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(1)),
+        Bitvector32Term::subtract(index, Bitvector32Term::Constant(1)),
+        &PureFactContext::new(),
+    ));
+}
+
+#[test]
+fn a_stated_ranges_extent_facts_bound_its_outside_conclusion() {
+    let count = Bitvector32Term::Variable(Variable(93_941));
+    let assumptions = PureFactContext::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), count.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(
+                count.clone(),
+                Bitvector32Term::Constant(crate::kernel::memory_range_element_count_limit(4)),
+            ),
+            true,
+        );
+    // `p[0..n]` has no constant count, so the bound is the valid-byte-extent
+    // condition the stated range carries.
+    assert!(outside_range_probe(
+        Bitvector32Term::Constant(0),
+        count.clone(),
+        Bitvector32Term::add(count.clone(), Bitvector32Term::Constant(1)),
+        &assumptions,
+    ));
+    // Without those facts the same range bounds nothing, so the same query is
+    // refused rather than answered from arithmetic that may have wrapped.
+    assert!(!outside_range_probe(
+        Bitvector32Term::Constant(0),
+        count.clone(),
+        Bitvector32Term::add(count, Bitvector32Term::Constant(1)),
+        &PureFactContext::new(),
+    ));
+}
+
+#[test]
+fn a_difference_that_wrapped_places_no_index_outside_a_range() {
+    let index = Bitvector32Term::Variable(Variable(93_942));
+    // Three constants summing to `2^32`. Each addition is a modular 32-bit
+    // add, so this term's value is `i` itself and the cell it names is `p[i]`,
+    // which `p[i..i + 1]` contains. The affine difference from the range's end
+    // is nonetheless `2^32 - 1`, which the unguarded rule read as "at or above
+    // the end".
+    let wrapped = Bitvector32Term::add(
+        Bitvector32Term::add(
+            Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(1_431_655_765)),
+            Bitvector32Term::Constant(1_431_655_765),
+        ),
+        Bitvector32Term::Constant(1_431_655_766),
+    );
+    assert!(!outside_range_probe(
+        index.clone(),
+        Bitvector32Term::add(index, Bitvector32Term::Constant(1)),
+        wrapped,
+        &PureFactContext::new(),
+    ));
+}
+
+#[test]
+fn an_unbounded_range_places_no_index_outside_itself() {
+    let start = Bitvector32Term::Variable(Variable(93_943));
+    let end = Bitvector32Term::Variable(Variable(93_944));
+    // Two unrelated endpoints: the range may span most of the index space, so
+    // a residue one below its start proves nothing — at `start == INT_MIN` the
+    // predecessor is `INT_MAX`, which such a range can contain.
+    assert!(!outside_range_probe(
+        start.clone(),
+        end,
+        Bitvector32Term::subtract(start, Bitvector32Term::Constant(1)),
+        &PureFactContext::new(),
+    ));
+}
+
+/// The tests below pin both polarities of the premise a *positive* membership
+/// conclusion needs, for each rule that draws one from an affine constant
+/// difference of modular terms. The mirror image of the four above: an
+/// "outside" conclusion survives reduction modulo `2^32` and an "inside" one
+/// does not, because the wrapped reading of a residue is outside.
+mod membership_needs_an_unwrapped_difference {
+    use super::*;
+
+    /// A pointer `base + index * 4 + bytes`.
+    fn scaled_pointer(index: Bitvector32Term, bytes: i64) -> Pointer {
+        let offset = PointerOffsetTerm::scale_int32(index, 4);
+        Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: if bytes == 0 {
+                offset
+            } else {
+                PointerOffsetTerm::add(offset, PointerOffsetTerm::Constant(bytes))
+            },
+        }
+    }
+
+    fn range(start: Bitvector32Term, end: Bitvector32Term) -> CMemoryRange {
+        CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            start,
+            end,
+        )
+    }
+
+    fn index_is_nonnegative(index: &Bitvector32Term) -> PureFactContext {
+        PureFactContext::new().assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone()),
+            true,
+        )
+    }
+
+    /// `i` written so that every addition wraps and the value is `i` again:
+    /// three constants summing to `2^32`. Its affine difference from `i` is
+    /// `2^32`, whose residue is `0` — which is exactly what the difference
+    /// means.
+    fn wrapped_identity(index: &Bitvector32Term) -> Bitvector32Term {
+        Bitvector32Term::add(
+            Bitvector32Term::add(
+                Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(1_431_655_765)),
+                Bitvector32Term::Constant(1_431_655_765),
+            ),
+            Bitvector32Term::Constant(1_431_655_766),
+        )
+    }
+
+    #[test]
+    fn a_pointer_at_a_constant_byte_offset_is_placed_in_a_range_by_arithmetic_alone() {
+        let index = Bitvector32Term::Variable(Variable(93_950));
+        let owned = range(
+            index.clone(),
+            Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(4)),
+        );
+        // A byte displacement is mathematical `i64`, so `&p[i] + 8` is two
+        // elements above `p[i]` whatever `i` is, and no fact is needed.
+        for elements in 0..4 {
+            assert!(crate::kernel::assumptions::pointer_in_memory_range_shallow(
+                &scaled_pointer(index.clone(), elements * 4),
+                &owned,
+            ));
+        }
+        assert!(
+            !crate::kernel::assumptions::pointer_in_memory_range_shallow(
+                &scaled_pointer(index.clone(), 16),
+                &owned,
+            )
+        );
+        // The same element reached through a start term that wrapped all the
+        // way around is still that element.
+        assert!(crate::kernel::assumptions::pointer_in_memory_range_shallow(
+            &scaled_pointer(index.clone(), 0),
+            &range(
+                wrapped_identity(&index),
+                Bitvector32Term::add(index, Bitvector32Term::Constant(4)),
+            ),
+        ));
+    }
+
+    #[test]
+    fn a_pointer_at_a_wrapping_index_term_needs_the_index_pinned() {
+        let index = Bitvector32Term::Variable(Variable(93_951));
+        // `i + 2` is two elements above `i` only while the 32-bit add does not
+        // wrap; at `i == i32::MAX - 1` it is `i32::MIN`, nearly `2^32`
+        // elements below.
+        let bumped = Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(2));
+        let owned = range(
+            index.clone(),
+            Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(4)),
+        );
+        assert!(
+            !crate::kernel::assumptions::pointer_in_memory_range_shallow(
+                &scaled_pointer(bumped.clone(), 0),
+                &owned,
+            )
+        );
+        assert!(
+            crate::kernel::assumptions::pointer_in_memory_range_shallow_with_facts(
+                &scaled_pointer(bumped.clone(), 0),
+                &owned,
+                &index_is_nonnegative(&bumped),
+            )
+        );
+        // A start that cannot be positive settles it without any fact, since
+        // the wrapped reading needs one.
+        assert!(crate::kernel::assumptions::pointer_in_memory_range_shallow(
+            &scaled_pointer(Bitvector32Term::Constant(2), 0),
+            &range(Bitvector32Term::Constant(0), Bitvector32Term::Constant(4)),
+        ));
+    }
+
+    #[test]
+    fn a_child_range_is_contained_by_its_count_or_by_a_forward_parent() {
+        let index = Bitvector32Term::Variable(Variable(93_952));
+        let parent = range(
+            index.clone(),
+            Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(4)),
+        );
+        // Same start term: the offset is zero however the endpoints wrapped,
+        // and the two counts decide the rest.
+        assert!(
+            crate::kernel::assumptions::memory_range_shallowly_contained(
+                &range(
+                    index.clone(),
+                    Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(1)),
+                ),
+                &parent,
+            )
+        );
+        assert!(
+            !crate::kernel::assumptions::memory_range_shallowly_contained(
+                &range(
+                    index.clone(),
+                    Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(5)),
+                ),
+                &parent,
+            )
+        );
+        // A child one element in needs that one element not to have wrapped.
+        let bumped = Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(1));
+        let child = range(
+            bumped.clone(),
+            Bitvector32Term::add(index, Bitvector32Term::Constant(2)),
+        );
+        assert!(!crate::kernel::assumptions::memory_range_shallowly_contained(&child, &parent));
+        assert!(
+            crate::kernel::assumptions::memory_range_shallowly_contained_with_facts(
+                &child,
+                &parent,
+                &index_is_nonnegative(&bumped),
+            )
+        );
+    }
+
+    #[test]
+    fn a_parent_without_a_count_must_be_known_to_hold_one() {
+        let count = Bitvector32Term::Variable(Variable(93_953));
+        let parent = range(Bitvector32Term::Constant(0), count.clone());
+        let child = range(Bitvector32Term::Constant(3), count.clone());
+        // `p[0..n]` has no constant count, so containment is decided by
+        // comparing the two ends. That reads the parent's `end` as
+        // `start + count`, which `p[i32::MAX..i32::MIN]` — a forward range of
+        // exactly one element — shows is not free.
+        assert!(!crate::kernel::assumptions::memory_range_shallowly_contained(&child, &parent));
+        assert!(
+            crate::kernel::assumptions::memory_range_shallowly_contained_with_facts(
+                &child,
+                &parent,
+                &index_is_nonnegative(&count),
+            )
+        );
+    }
+
+    #[test]
+    fn the_fact_graph_membership_rule_needs_the_same_premise() {
+        let index = Bitvector32Term::Variable(Variable(93_954));
+        let base = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let bumped = Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(2));
+        let pointer = scaled_pointer(bumped.clone(), 0);
+        let start = index.clone();
+        let end = Bitvector32Term::add(index, Bitvector32Term::Constant(4));
+        assert!(
+            !PureFactContext::new().pointer_in_range_by_shallow_fact_graph_with_width(
+                &pointer, &base, &start, &end, 4,
+            )
+        );
+        assert!(
+            index_is_nonnegative(&bumped).pointer_in_range_by_shallow_fact_graph_with_width(
+                &pointer, &base, &start, &end, 4,
+            )
+        );
+    }
+
+    #[test]
+    fn the_affine_tail_reads_a_residue_only_as_a_count_may_occupy_it() {
+        use crate::kernel::assumptions::element_delta_in_range_by_affine_arithmetic;
+        use crate::kernel::reasoning::ExactElementDelta;
+
+        let index = Bitvector32Term::Variable(Variable(93_955));
+        let delta = |term: Bitvector32Term, constant: i64| ExactElementDelta {
+            index: term,
+            constant,
+        };
+        let start = index.clone();
+        let end = Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(4));
+        // A residue in the upper half is refused outright: reading it as an
+        // offset would place the index `2^31` elements above the start, and no
+        // valid extent reaches that far.
+        assert!(!element_delta_in_range_by_affine_arithmetic(
+            &delta(
+                Bitvector32Term::subtract(index.clone(), Bitvector32Term::Constant(1)),
+                0,
+            ),
+            &start,
+            &end,
+            &PureFactContext::new(),
+        ));
+        // The exact `i64` constant beside the index is not a residue and needs
+        // no premise of its own.
+        assert!(element_delta_in_range_by_affine_arithmetic(
+            &delta(index, 3),
+            &start,
+            &end,
+            &PureFactContext::new(),
+        ));
     }
 }

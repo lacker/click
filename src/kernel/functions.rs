@@ -4931,24 +4931,30 @@ pub(crate) fn storage_writes_outside_owned_footprint(
     let mut outside = Vec::new();
     for pointer in &storage_writes {
         let covered = owned.iter().any(|range| {
-            super::assumptions::pointer_in_memory_range_shallow(pointer, range)
-                || assumptions.pointer_in_range_by_shallow_fact_graph_with_width(
-                    pointer,
-                    range.base(),
-                    range.start(),
-                    range.end(),
-                    range.element_width(),
-                )
+            super::assumptions::pointer_in_memory_range_shallow_with_facts(
+                pointer,
+                range,
+                assumptions,
+            ) || assumptions.pointer_in_range_by_shallow_fact_graph_with_width(
+                pointer,
+                range.base(),
+                range.start(),
+                range.end(),
+                range.element_width(),
+            )
         });
         if !covered {
             outside.push(format!("{pointer:?}"));
         }
     }
     for range in storage_summaries {
-        if !owned
-            .iter()
-            .any(|parent| super::assumptions::memory_range_shallowly_contained(range, parent))
-        {
+        if !owned.iter().any(|parent| {
+            super::assumptions::memory_range_shallowly_contained_with_facts(
+                range,
+                parent,
+                assumptions,
+            )
+        }) {
             outside.push(format!("{range:?}"));
         }
     }
@@ -14280,6 +14286,11 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     for guard in facts
         .iter()
         .flat_map(crate::kernel::stated_loadable_extent_guards)
+        .chain(
+            facts
+                .iter()
+                .flat_map(crate::kernel::stated_separation_extent_guards),
+        )
         .collect::<Vec<_>>()
     {
         body_assumptions = body_assumptions.assume_proposition(guard);
@@ -14507,7 +14518,10 @@ pub(in crate::kernel) fn matched_resource_instance_case_clauses(
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
     for fact in supporting_facts {
-        for guard in crate::kernel::stated_loadable_extent_guards(&fact) {
+        for guard in crate::kernel::stated_loadable_extent_guards(&fact)
+            .into_iter()
+            .chain(crate::kernel::stated_separation_extent_guards(&fact))
+        {
             body_assumptions = body_assumptions.assume_proposition(guard);
         }
         body_assumptions = body_assumptions.assume_proposition(fact);

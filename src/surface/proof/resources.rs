@@ -388,24 +388,6 @@ fn dynamic_body_fact_dependency(
                 temporary_views,
                 selected,
             ),
-            Proposition::CMemoryDisjoint {
-                left_start,
-                left_end,
-                right_start,
-                right_end,
-                ..
-            } => {
-                for term in [left_start, left_end, right_start, right_end] {
-                    walk_term(
-                        &Term::Bitvector32(term.clone()),
-                        state,
-                        assumptions,
-                        temporary_views,
-                        selected,
-                    )?;
-                }
-                Ok(())
-            }
             Proposition::CMemoryCanStore { .. }
             | Proposition::CMemoryMutatesOnly { .. }
             | Proposition::CMemoryEffectSummary { .. }

@@ -37,7 +37,7 @@ kinds:
 | `LoopHavoc` | A loop may have changed memory; verified whole-loop effects carry a checked write set. |
 | `CallHavoc` | A call may have changed the callee's owned ranges. |
 | `BlockDeclared` | A new non-havoc block entered the memory model. |
-| `CellsForgotten` | Possibly aliasing cached cells were discarded on a write path. |
+| `CellsForgotten` | Possibly aliasing cached cells were discarded on a write path, or cells the loaded pointer is separate from were discarded on a read path. |
 | `HeapAllocationPending` | An allocation request has an unresolved base and extent but no successful storage yet. |
 | `HeapAllocated` | A fresh allocation identity and extent became live. |
 | `HeapFreed` | An allocation identity and extent stopped being live. |
@@ -45,12 +45,69 @@ kinds:
 Entry states have no parent edge. Failed allocation returns to the existing
 pre-allocation identity instead of recording a backward edge.
 
+## What a snapshot's identity is
+
+A snapshot is its known cells plus the snapshot it was forgotten from.
+
+Interning by content is what lets one node stand for every execution that
+reaches it, and a load reads its name from the snapshot it happens at. Both
+rely on the content deciding the state. Known cells alone don't: dropping a
+cached value leaves the memory unchanged and the knowledge of it gone, and a
+cell map that has forgotten a store looks exactly like the cell map before
+that store. After `a[i] = 7; a[j] = 0;` the second write drops the possibly
+aliasing `a[i]` cell and the map is empty again, as it was at function entry.
+
+So `CMemory` carries a `forgotten_from` mark: the interned identity of the
+snapshot cached values were dropped from, part of equality, hashing, ordering
+and the interning key. A snapshot means "the memory the mark denotes, with
+these cells known on top of it", so two executions reaching the same cells
+over the same mark really are in the same state and interning stays sound,
+deterministic and path-independent. An entry state carries no mark, so no
+forget can land on one.
+
+The mark is set where cached values go without the memory being known
+unchanged, and only there:
+
+- the write path's narrowing (`without_possible_aliasing_cells`) sets it for
+  cells dropped because the store *may* alias them. A cell whose every byte
+  the store writes is stale rather than forgotten — the store about to run
+  replaces exactly what was dropped — so those alone leave no mark, and a
+  sequence of writes to one cell mints no chain;
+- the aggregate copy's `without_field_cells` sets it: nothing restores a field
+  the copy could not carry;
+- havoc keeps its own marker blocks, and an ended automatic lifetime its own
+  tombstone. Both are already visible in the content, and neither needs a
+  second mark.
+
+Later stores carry the mark they were given, and so do the projections used
+for load naming: the pointer-observable form may drop cells this load is
+proven not to read, but not the mark.
+
+A load's name is not usually this snapshot's hash, because
+`load_variable_for_cell_with_origin` first asks the resource tracker for the
+cell's epoch — the last program point at which this cell holds the same value
+— and names the load there. A cell whose epoch the tracker can reach keeps the
+name it had; the mark decides the name only where the walk stops. It decides
+the *history* everywhere, which is the point.
+
 ## Structural invariants
 
 Every recorded parent identifier is smaller than its child identifier. The
 parent must therefore exist first and a derivation cycle can't be constructed.
 Recording is first-wins: if interning finds an existing equal memory value, it
 keeps that node's established provenance.
+
+An edge whose base is not older than its result is dropped, and a step dropped
+that way is on no recorded history at all. For a step that lost knowledge that
+is a false theorem waiting to happen — it is how the write to `a[j]` above came
+to be recorded off the entry state, with the write to `a[i]` on no chain — and
+the forget mark is what makes it unrepresentable, checked where the mark is
+set. Where a step lost nothing, the older node is an ancestor whose history is
+this path's own prefix: the load path's distinct-cell reduction drops only
+cells the loaded pointer is proven distinct from, so every step between that
+ancestor and here is one of those stores. `record_c_memory_derivation` counts
+the edges it drops by kind, and the mdtest harness prints the corpus totals, so
+a new producer that records its steps nowhere is named by a gate run.
 
 Derivations are advisory evidence. Missing provenance can make a reasoning
 query fail to establish an equality, but it can't make an invalid equality

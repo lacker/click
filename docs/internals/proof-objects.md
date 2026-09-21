@@ -444,7 +444,7 @@ Three standing rules keep the boundary where the 2026-09 cleanup left it.
 
 - **The atomic theory checkers are frozen.** `PureFactContext::decide` and
   the atomic memory and resource checkers (`proves_memory_loadable`,
-  `proves_memory_access`, `proves_memory_disjoint`, `proves_resource_separate`,
+  `proves_memory_access`, `proves_resource_separate`,
   `proves_resource_contains`, and the memory-DAG and canonicalization
   equality walks) decide one named condition or atomic proposition by a
   fixed rule set over indexed facts. Add no rule to them. Their remaining

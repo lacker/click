@@ -89,7 +89,6 @@ pub(in crate::surface::proof) fn plan_explicit_fact_transport(
                         | Proposition::CMemoryEffectSummary { .. }
                         | Proposition::CHeapAllocationFreed { .. }
                         | Proposition::CResourceSeparate { .. }
-                        | Proposition::CMemoryDisjoint { .. }
                         | Proposition::CResourceComposition(_)
                 )
             })
@@ -114,7 +113,6 @@ pub(in crate::surface::proof) fn plan_explicit_fact_transport(
     if !checks(&selected) {
         let rank = |proposition: &Proposition| match proposition {
             Proposition::CResourceSeparate { .. }
-            | Proposition::CMemoryDisjoint { .. }
             | Proposition::CMemoryLoadable { .. }
             | Proposition::CMemoryCanStore { .. } => 0,
             Proposition::ConditionIs(_, _) => 1,
@@ -438,7 +436,6 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
                         | Proposition::CMemoryEffectSummary { .. }
                         | Proposition::CHeapAllocationFreed { .. }
                         | Proposition::CResourceSeparate { .. }
-                        | Proposition::CMemoryDisjoint { .. }
                         | Proposition::CResourceComposition(_)
                 )
             })

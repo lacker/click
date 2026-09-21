@@ -590,7 +590,11 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             let next_memory = state
                 .memory
                 .clone()
-                .without_possible_aliasing_cells(&pointer, &effective_assumptions)
+                .without_possible_aliasing_cells(
+                    &pointer,
+                    value.byte_width(),
+                    &effective_assumptions,
+                )
                 .store_with_context(pointer.clone(), value.clone(), &effective_assumptions);
             state.set_memory(next_memory);
             let mut facts = facts;

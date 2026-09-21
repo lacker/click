@@ -20,9 +20,7 @@ fn check_selected_premise_spelling(
     let matches = (selected_key.is_some() && selected_key == lowered_key)
         || (matches!(
             selected,
-            Proposition::CResourceSeparate { .. }
-                | Proposition::CResourceContains { .. }
-                | Proposition::CMemoryDisjoint { .. }
+            Proposition::CResourceSeparate { .. } | Proposition::CResourceContains { .. }
         ) && lowered == *selected);
     if matches {
         Ok(())
@@ -2301,7 +2299,6 @@ fn plan_explicit_unchanged_load_transport(
     if !checks(&selected) {
         let rank = |proposition: &Proposition| match proposition {
             Proposition::CResourceSeparate { .. }
-            | Proposition::CMemoryDisjoint { .. }
             | Proposition::CMemoryLoadable { .. }
             | Proposition::CMemoryCanStore { .. } => 0,
             Proposition::ConditionIs(_, _) => 1,

@@ -2421,7 +2421,7 @@ pub(crate) fn propositions_alpha_equivalent(left: &Proposition, right: &Proposit
                 // cached cell values. Retired automatic blocks are part of
                 // the snapshot marker too.
                 && left_memory.blocks == right_memory.blocks
-                && left_memory.ended_local_blocks == right_memory.ended_local_blocks
+                && left_memory.forgotten.ended_local_blocks == right_memory.forgotten.ended_local_blocks
         }
         _ => false,
     }

@@ -297,7 +297,7 @@ impl PureFactContext {
                 // cannot silently retarget the earlier region.
                 || (fact_memory.blocks.get(&fact_base.block)
                     == memory.blocks.get(&fact_base.block)
-                    && fact_memory.ended_local_blocks == memory.ended_local_blocks
+                    && fact_memory.forgotten.ended_local_blocks == memory.forgotten.ended_local_blocks
                     && fact_memory.heap == memory.heap)
                 || memory_range_still_available(fact_memory, memory, fact_base)
                 || crate::kernel::api::c_memories_canonically_equal(fact_memory, memory)
@@ -781,11 +781,53 @@ impl PureFactContext {
         )
     }
 
+    /// An upper bound on the number of elements a range can really span, from
+    /// the range's own established extent facts, or `None` when it has none.
+    ///
+    /// This is what an affine constant difference needs before it may be read
+    /// as an order. [`crate::kernel::assumptions::affine_bitvector_difference_constant`]
+    /// works in `i64` while the endpoints are modular `Bitvector32Term`s, so
+    /// its result is the true difference only modulo `2^32`; a residue is
+    /// outside the range exactly when it is at least the range's element
+    /// count, and that comparison needs the count bounded.
+    ///
+    /// The bound comes from the one shared definition of a valid 32-bit byte
+    /// extent, [`crate::kernel::memory_range_element_count_guards`]. Its
+    /// signed `0 <= count` half is the load-bearing one here: it pins the
+    /// count below `2^31`, whatever the element width. The width's own
+    /// element-count limit tightens it where that limit constrains an `int32`
+    /// count at all — for four-byte elements to `1073741823`.
+    pub(super) fn established_range_element_count_bound(
+        &self,
+        start: &Bitvector32Term,
+        end: &Bitvector32Term,
+        element_width: u32,
+    ) -> Option<i64> {
+        crate::instrumentation::record_deterministic_work(1);
+        let count = Bitvector32Term::subtract(end.clone(), start.clone());
+        let guards = crate::kernel::memory_range_element_count_guards(count, element_width);
+        guards
+            .iter()
+            .all(|guard| match guard {
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessEqual(lower, upper),
+                    true,
+                ) => self.proves_element_endpoint_order(lower, upper),
+                guard => self.proves_exact(guard),
+            })
+            .then(|| {
+                i64::from(crate::kernel::memory_range_element_count_limit(
+                    element_width,
+                ))
+                .min(i64::from(i32::MAX))
+            })
+    }
+
     /// `lower <= upper` for two element endpoints, by the exact routes the
     /// loadability rules already use: identical terms, two constants, an
     /// exact assumed comparison, or the bounded order-fact walk. A strict
     /// path also answers the non-strict question.
-    fn proves_element_endpoint_order(
+    pub(super) fn proves_element_endpoint_order(
         &self,
         lower: &Bitvector32Term,
         upper: &Bitvector32Term,
@@ -801,8 +843,38 @@ impl PureFactContext {
             return lower <= upper;
         }
         let condition = ConditionTerm::signed_less_equal(lower.clone(), upper.clone());
-        self.exact_condition_value(&condition) == Some(true)
+        if self.exact_condition_value(&condition) == Some(true)
             || self.has_exact_order_path(lower, upper, false)
+        {
+            return true;
+        }
+        // `c <= x - d` is `c + d <= x`, and the rewriting is exact when both
+        // constants and their sum fit `int32`: `x - d` is then the number it
+        // looks like, since `c + d <= x` puts it at or above `c`. This is the
+        // shape a range carved one element short leaves — `p[0..n - 1]`, whose
+        // own extent guard is `0 <= n - 1` while what the contract states is
+        // `1 <= n` — and without it such a range has no established count.
+        let Bitvector32Term::Subtract(base, decrement) = upper else {
+            return false;
+        };
+        let (Some(lower), Some(decrement)) = (
+            signed_bitvector_constant(lower),
+            signed_bitvector_constant(decrement),
+        ) else {
+            return false;
+        };
+        // Subtracting a negative would be an addition, which can overflow out
+        // of the bound rather than into it.
+        if decrement < 0 {
+            return false;
+        }
+        let Some(shifted) = lower
+            .checked_add(decrement)
+            .and_then(|shifted| i32::try_from(shifted).ok())
+        else {
+            return false;
+        };
+        self.proves_element_endpoint_order(&Bitvector32Term::Constant(shifted as u32), base)
     }
 
     pub(in crate::kernel) fn proves_loadable_region_from_range(
@@ -999,7 +1071,7 @@ impl PureFactContext {
         end: &Bitvector32Term,
         element_width: u32,
     ) -> bool {
-        if pointer_in_range_shallow(pointer, base, start, end, element_width) {
+        if pointer_in_range_shallow(pointer, base, start, end, element_width, Some(self)) {
             return true;
         }
         if pointer.block != base.block {
@@ -1008,38 +1080,41 @@ impl PureFactContext {
         let offset_matches = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
             pointer_offsets_match_by_shallow_fact_graph(left, right, self)
         };
-        let index = match &pointer.offset {
+        // The exact split, not `element_index_from_offset`: this rule ends in a
+        // membership conclusion, and the index that function returns names the
+        // pointer's element delta only modulo `2^32`.
+        let delta = match &pointer.offset {
             PointerOffsetTerm::Add(left, right) if offset_matches(left, &base.offset) => {
-                element_index_from_offset(right, element_width)
+                exact_element_delta_from_offset(right, element_width)
             }
             PointerOffsetTerm::Add(left, right) if offset_matches(right, &base.offset) => {
-                element_index_from_offset(left, element_width)
+                exact_element_delta_from_offset(left, element_width)
             }
-            _ if offset_matches(&pointer.offset, &base.offset) => {
-                Some(Bitvector32Term::Constant(0))
-            }
+            _ if offset_matches(&pointer.offset, &base.offset) => Some(ExactElementDelta::zero()),
             _ => None,
         };
-        let Some(index) = index else {
+        let Some(delta) = delta else {
             return false;
         };
-        if self.exact_condition_value(&ConditionTerm::signed_less_equal(
-            start.clone(),
-            index.clone(),
-        )) == Some(true)
+        // The exact bounds arm still wants the index as one term, which is what
+        // a wholly symbolic or wholly constant delta already is.
+        if let Some(index) = delta.as_index_term()
+            && self.exact_condition_value(&ConditionTerm::signed_less_equal(
+                start.clone(),
+                index.clone(),
+            )) == Some(true)
             && self
                 .exact_condition_value(&ConditionTerm::signed_less_than(index.clone(), end.clone()))
                 == Some(true)
         {
             return true;
         }
-        let (Some(offset), Some(length)) = (
-            affine_bitvector_difference_constant(&index, start),
-            affine_bitvector_difference_constant(end, start),
-        ) else {
+        let Some(count) = affine_range_element_count(start, end) else {
             return false;
         };
-        0 <= offset && offset < length
+        exact_affine_index_difference(&delta.index, start, Some(self))
+            .and_then(|difference| difference.checked_add(delta.constant))
+            .is_some_and(|offset| 0 <= offset && offset < count)
     }
 
     /// One indexed explicit-fact step beyond structural containment. This is
@@ -1048,7 +1123,7 @@ impl PureFactContext {
     /// bounds, so a named separation candidate does not need recursive
     /// memory resolution merely because its member index is symbolic.
     fn pointer_in_range_by_exact_facts(&self, pointer: &Pointer, range: &CMemoryRange) -> bool {
-        if pointer_in_memory_range_shallow(pointer, range) {
+        if pointer_in_memory_range_shallow_with_facts(pointer, range, self) {
             return true;
         }
         if pointer.block != range.base().block {
@@ -1121,10 +1196,20 @@ impl PureFactContext {
                         #[cfg(test)]
                         MEMORY_SEPARATION_CANDIDATE_CHECKS
                             .with(|checks| checks.set(checks.get() + 1));
-                        let proved = pointer_in_memory_range_shallow(left, left_range)
-                            && pointer_in_memory_range_shallow(right, right_range)
-                            || pointer_in_memory_range_shallow(right, left_range)
-                                && pointer_in_memory_range_shallow(left, right_range);
+                        let proved =
+                            pointer_in_memory_range_shallow_with_facts(left, left_range, self)
+                                && pointer_in_memory_range_shallow_with_facts(
+                                    right,
+                                    right_range,
+                                    self,
+                                )
+                                || pointer_in_memory_range_shallow_with_facts(
+                                    right, left_range, self,
+                                ) && pointer_in_memory_range_shallow_with_facts(
+                                    left,
+                                    right_range,
+                                    self,
+                                );
                         if proved {
                             record_candidate(proposition, composition);
                         }
@@ -1281,13 +1366,13 @@ impl PureFactContext {
             else {
                 return false;
             };
-            memory_range_shallowly_contained(left, fact_left)
+            memory_range_shallowly_contained_with_facts(left, fact_left, self)
                 && memory_range_contained_for_memory_resolution(right, fact_right, self)
-                || memory_range_shallowly_contained(right, fact_right)
+                || memory_range_shallowly_contained_with_facts(right, fact_right, self)
                     && memory_range_contained_for_memory_resolution(left, fact_left, self)
-                || memory_range_shallowly_contained(right, fact_left)
+                || memory_range_shallowly_contained_with_facts(right, fact_left, self)
                     && memory_range_contained_for_memory_resolution(left, fact_right, self)
-                || memory_range_shallowly_contained(left, fact_right)
+                || memory_range_shallowly_contained_with_facts(left, fact_right, self)
                     && memory_range_contained_for_memory_resolution(right, fact_left, self)
         }) {
             return true;
@@ -1571,39 +1656,6 @@ impl PureFactContext {
                         )
                 })
         })
-    }
-
-    pub(crate) fn proves_memory_disjoint(
-        &self,
-        left_base: &Pointer,
-        left_start: &Bitvector32Term,
-        left_end: &Bitvector32Term,
-        right_base: &Pointer,
-        right_start: &Bitvector32Term,
-        right_end: &Bitvector32Term,
-    ) -> bool {
-        let left = CMemoryRange::new(left_base.clone(), left_start.clone(), left_end.clone());
-        let right = CMemoryRange::new(right_base.clone(), right_start.clone(), right_end.clone());
-        self.range_covered_by_disjoint_fact_ranges(&left, &right)
-            || self.range_covered_by_disjoint_fact_ranges(&right, &left)
-    }
-
-    pub(crate) fn proves_memory_disjoint_from_resource_separate(
-        &self,
-        left_base: &Pointer,
-        left_start: &Bitvector32Term,
-        left_end: &Bitvector32Term,
-        right_base: &Pointer,
-        right_start: &Bitvector32Term,
-        right_end: &Bitvector32Term,
-    ) -> bool {
-        let left = CMemoryRange::new(left_base.clone(), left_start.clone(), left_end.clone());
-        let right = CMemoryRange::new(right_base.clone(), right_start.clone(), right_end.clone());
-        self.proves_resource_separate(
-            &CResource::Memory(left.clone()),
-            &CResource::Memory(right.clone()),
-        ) || self.range_covered_by_resource_separate_ranges(&left, &right)
-            || self.range_covered_by_resource_separate_ranges(&right, &left)
     }
 
     pub(crate) fn proves_resource_contains(&self, parent: &CResource, child: &CResource) -> bool {
@@ -1929,41 +1981,6 @@ impl PureFactContext {
         range_intervals_cover_target(target, intervals)
     }
 
-    fn range_covered_by_disjoint_fact_ranges(
-        &self,
-        target: &CMemoryRange,
-        other: &CMemoryRange,
-    ) -> bool {
-        let mut intervals = Vec::new();
-        for proposition in self.prop_facts.iter() {
-            let Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } = proposition
-            else {
-                continue;
-            };
-
-            if self.range_covered_by_fact_range(other, right_base, right_start, right_end)
-                && let Some(interval) =
-                    self.fact_range_interval_on_target(target, left_base, left_start, left_end)
-            {
-                intervals.push(interval);
-            }
-            if self.range_covered_by_fact_range(other, left_base, left_start, left_end)
-                && let Some(interval) =
-                    self.fact_range_interval_on_target(target, right_base, right_start, right_end)
-            {
-                intervals.push(interval);
-            }
-        }
-        range_intervals_cover_target(target, intervals)
-    }
-
     fn fact_range_interval_on_target(
         &self,
         target: &CMemoryRange,
@@ -2172,7 +2189,7 @@ impl PureFactContext {
                     range,
                     pointer,
                     |range, available| {
-                        memory_range_shallowly_contained(range, available)
+                        memory_range_shallowly_contained_with_facts(range, available, self)
                             || self.memory_range_contained_by_decided_endpoints(range, available)
                     },
                     |pointer, available| {
@@ -2208,7 +2225,7 @@ impl PureFactContext {
             if range.base.blocks_proven_distinct(pointer) {
                 return true;
             }
-            if pointer_in_memory_range_shallow(pointer, range) {
+            if pointer_in_memory_range_shallow_with_facts(pointer, range, self) {
                 return false;
             }
             if self.resource_compositions.iter().any(|resources| {
@@ -2246,52 +2263,39 @@ impl PureFactContext {
                 self.prop_facts
                     .iter()
                     .find(|proposition| match proposition {
-                        Proposition::CMemoryDisjoint {
-                            left_base,
-                            left_start,
-                            left_end,
-                            right_base,
-                            right_start,
-                            right_end,
-                        } => {
-                            memory_range_shallowly_contained_in_parts(
-                                range, left_base, left_start, left_end,
-                            ) && pointer_in_range_shallow(
-                                pointer,
-                                right_base,
-                                right_start,
-                                right_end,
-                                4,
-                            ) || memory_range_shallowly_contained_in_parts(
-                                range,
-                                right_base,
-                                right_start,
-                                right_end,
-                            ) && pointer_in_range_shallow(
-                                pointer, left_base, left_start, left_end, 4,
-                            )
-                        }
                         Proposition::CResourceSeparate {
                             left: CResource::Memory(left_range),
                             right: CResource::Memory(right_range),
                         } => {
-                            memory_range_shallowly_contained(range, left_range)
-                                && (pointer_in_memory_range_shallow(pointer, right_range)
-                                    || self.pointer_directly_in_memory_range(pointer, right_range))
-                                || memory_range_shallowly_contained(range, right_range)
-                                    && (pointer_in_memory_range_shallow(pointer, left_range)
-                                        || self
-                                            .pointer_directly_in_memory_range(pointer, left_range))
-                                || pointer_in_memory_range_shallow(pointer, left_range)
-                                    && memory_range_contained_for_memory_resolution(
-                                        range,
-                                        right_range,
-                                        self,
-                                    )
-                                || pointer_in_memory_range_shallow(pointer, right_range)
-                                    && memory_range_contained_for_memory_resolution(
-                                        range, left_range, self,
-                                    )
+                            memory_range_shallowly_contained_with_facts(range, left_range, self)
+                                && (pointer_in_memory_range_shallow_with_facts(
+                                    pointer,
+                                    right_range,
+                                    self,
+                                ) || self
+                                    .pointer_directly_in_memory_range(pointer, right_range))
+                                || memory_range_shallowly_contained_with_facts(
+                                    range,
+                                    right_range,
+                                    self,
+                                ) && (pointer_in_memory_range_shallow_with_facts(
+                                    pointer, left_range, self,
+                                ) || self
+                                    .pointer_directly_in_memory_range(pointer, left_range))
+                                || pointer_in_memory_range_shallow_with_facts(
+                                    pointer, left_range, self,
+                                ) && memory_range_contained_for_memory_resolution(
+                                    range,
+                                    right_range,
+                                    self,
+                                )
+                                || pointer_in_memory_range_shallow_with_facts(
+                                    pointer,
+                                    right_range,
+                                    self,
+                                ) && memory_range_contained_for_memory_resolution(
+                                    range, left_range, self,
+                                )
                                 || self.pointer_directly_in_memory_range(pointer, left_range)
                                     && memory_range_contained_for_memory_resolution(
                                         range,
@@ -2313,8 +2317,39 @@ impl PureFactContext {
             let Some(index) = direct_index else {
                 return false;
             };
-            bitvector_index_outside_range_shallow(&index, &range.start, &range.end, self)
+            bitvector_index_outside_range_shallow(
+                &index,
+                &range.start,
+                &range.end,
+                range.element_width(),
+                self,
+            )
         })
+    }
+
+    /// Whether two pointer offsets name the same displacement, by equality of
+    /// the offsets themselves or of two equally scaled indices.
+    fn pointer_offsets_equal_from_facts(
+        &self,
+        left: &PointerOffsetTerm,
+        right: &PointerOffsetTerm,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+        match (left, right) {
+            (
+                PointerOffsetTerm::Int32Scaled {
+                    value: left,
+                    byte_width: left_width,
+                },
+                PointerOffsetTerm::Int32Scaled {
+                    value: right,
+                    byte_width: right_width,
+                },
+            ) => left_width == right_width && self.bitvector_terms_equal_from_facts(left, right),
+            _ => false,
+        }
     }
 
     fn direct_pointer_element_index_from_base_with_width(
@@ -2326,47 +2361,70 @@ impl PureFactContext {
         if pointer.block != base.block {
             return None;
         }
-        let offsets_equal = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
-            if left == right {
-                return true;
-            }
-            match (left, right) {
-                (
-                    PointerOffsetTerm::Int32Scaled {
-                        value: left,
-                        byte_width: left_width,
-                    },
-                    PointerOffsetTerm::Int32Scaled {
-                        value: right,
-                        byte_width: right_width,
-                    },
-                ) => {
-                    left_width == right_width && self.bitvector_terms_equal_from_facts(left, right)
-                }
-                _ => false,
-            }
-        };
-        if offsets_equal(&pointer.offset, &base.offset) {
+        if self.pointer_offsets_equal_from_facts(&pointer.offset, &base.offset) {
             return Some(Bitvector32Term::Constant(0));
         }
         if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
-            if offsets_equal(left, &base.offset) {
+            if self.pointer_offsets_equal_from_facts(left, &base.offset) {
                 return element_index_from_offset(right, element_width);
             }
-            if offsets_equal(right, &base.offset) {
+            if self.pointer_offsets_equal_from_facts(right, &base.offset) {
                 return element_index_from_offset(left, element_width);
             }
         }
         pointer.element_index_from_base_with_width(base, element_width)
     }
 
+    /// [`Self::direct_pointer_element_index_from_base_with_width`] for a caller
+    /// that concludes *membership* rather than exclusion.
+    ///
+    /// The same shapes, refusing the ones where the index it would return is
+    /// the pointer's element delta only modulo `2^32`. An exclusion survives
+    /// that reduction and a membership does not; see
+    /// [`crate::kernel::reasoning::ExactElementDelta`].
+    fn direct_pointer_exact_element_delta_from_base_with_width(
+        &self,
+        pointer: &Pointer,
+        base: &Pointer,
+        element_width: u32,
+    ) -> Option<ExactElementDelta> {
+        if pointer.block != base.block {
+            return None;
+        }
+        if self.pointer_offsets_equal_from_facts(&pointer.offset, &base.offset) {
+            return Some(ExactElementDelta::zero());
+        }
+        if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
+            if self.pointer_offsets_equal_from_facts(left, &base.offset) {
+                return exact_element_delta_from_offset(right, element_width);
+            }
+            if self.pointer_offsets_equal_from_facts(right, &base.offset) {
+                return exact_element_delta_from_offset(left, element_width);
+            }
+        }
+        pointer.exact_element_delta_from_base(base, element_width, Some(self))
+    }
+
     fn pointer_directly_in_memory_range(&self, pointer: &Pointer, range: &CMemoryRange) -> bool {
-        let Some(index) = self.direct_pointer_element_index_from_base_with_width(
+        let Some(delta) = self.direct_pointer_exact_element_delta_from_base_with_width(
             pointer,
             &range.base,
             range.element_width(),
         ) else {
             return false;
+        };
+        // The rule below states the index as a term, so a delta that is one
+        // term — a symbolic index, or a wholly constant one — gets all of it.
+        // A symbolic index beside a nonzero constant can only be joined by a
+        // modular add, so that shape takes the affine tail directly, which
+        // keeps the constant in `i64`.
+        let Some(index) = delta.as_index_term() else {
+            return element_delta_in_range_by_affine_arithmetic(
+                &delta,
+                &range.start,
+                &range.end,
+                self,
+            );
         };
         if let (Some(index), Some(start), Some(end)) = (
             super::exact_signed_constant(&index, self),
@@ -2484,7 +2542,7 @@ impl PureFactContext {
         if range.base.blocks_proven_distinct(pointer) {
             return true;
         }
-        if pointer_in_memory_range_shallow(pointer, range) {
+        if pointer_in_memory_range_shallow_with_facts(pointer, range, self) {
             return false;
         }
         let owned_member_holds_pointer = |resources: &ResourceContext| {
@@ -2513,34 +2571,14 @@ impl PureFactContext {
             .prop_facts
             .iter()
             .find(|proposition| match proposition {
-                Proposition::CMemoryDisjoint {
-                    left_base,
-                    left_start,
-                    left_end,
-                    right_base,
-                    right_start,
-                    right_end,
-                } => {
-                    memory_range_shallowly_contained_in_parts(
-                        range, left_base, left_start, left_end,
-                    ) && pointer_in_range_shallow(pointer, right_base, right_start, right_end, 4)
-                        || memory_range_shallowly_contained_in_parts(
-                            range,
-                            right_base,
-                            right_start,
-                            right_end,
-                        ) && pointer_in_range_shallow(
-                            pointer, left_base, left_start, left_end, 4,
-                        )
-                }
                 Proposition::CResourceSeparate {
                     left: CResource::Memory(left_range),
                     right: CResource::Memory(right_range),
                 } => {
-                    memory_range_shallowly_contained(range, left_range)
-                        && pointer_in_memory_range_shallow(pointer, right_range)
-                        || memory_range_shallowly_contained(range, right_range)
-                            && pointer_in_memory_range_shallow(pointer, left_range)
+                    memory_range_shallowly_contained_with_facts(range, left_range, self)
+                        && pointer_in_memory_range_shallow_with_facts(pointer, right_range, self)
+                        || memory_range_shallowly_contained_with_facts(range, right_range, self)
+                            && pointer_in_memory_range_shallow_with_facts(pointer, left_range, self)
                 }
                 _ => false,
             })
